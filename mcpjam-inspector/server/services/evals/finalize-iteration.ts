@@ -599,12 +599,7 @@ function buildSelectionToolCatalogMetadata(args: {
 export function buildIterationFinishParams(args: {
   iterationId: string | undefined;
   passed: boolean;
-  /**
-   * Whether this iteration showed any agent activity. @see assessAgentActivity
-   *
-   * Optional: absent means the caller did not ask, and every existing fixture
-   * produces exactly the metadata it always did.
-   */
+  /** @see assessAgentActivity */
   agentActivity?: AgentActivityAssessment;
   /** `evaluation` drives both `toolsCalled` and `buildIterationMetadata`. */
   evaluation: { toolsCalled: ToolCallRecord[] } & Record<string, unknown>;
@@ -966,10 +961,7 @@ export function buildIterationFinishParams(args: {
       ...(toolPolicy ? { toolPolicy } : {}),
       ...stageMetadata,
       ...(frictionSignals ? { frictionSignals } : {}),
-      // ONLY WHEN THE GUARD SAID SOMETHING. `active` and every `exempt` reason
-      // are facts about a run that behaved, and writing them would put a new
-      // key on every persisted iteration — including every recorded golden —
-      // to say nothing.
+      // Only when the guard fired, so normal iterations gain no new key.
       ...(args.agentActivity?.status === "no_agent_activity"
         ? { agentActivity: args.agentActivity }
         : {}),

@@ -4236,26 +4236,18 @@ const runLocalIteration = async ({
         ...browser.scriptedCheckFailures,
         ...stepScriptedFailures,
       ],
-      // NOTHING RAN? A trial can report a pass having run nothing at all: the
-      // matcher is satisfied when every expected call was made and none was
-      // forbidden, and a model that never ran made no forbidden call either.
-      // @see assessAgentActivity for why each exemption is there.
+      // Guards against vacuous passes. @see assessAgentActivity
       agentActivity: assessAgentActivity({
         modelFree: isModelFreeCase(test),
         isNegativeTest: test.isNegativeTest === true,
-        // RESOLVED, not the raw field. A steps-authored case — which is what
-        // the backend emits now — carries its expectations inside `steps` and
-        // leaves the top-level list undefined, so reading it raw made every such
-        // case exempt as `no_tool_expected`: the guard was off for exactly the
-        // cases it was written to cover.
+        // Resolved: steps-authored cases leave the top-level list undefined.
         expectedToolCalls: resolveEvalTestCase(test).expectedToolCalls.length,
         toolSurface: {
           mcpTools: Object.keys(prepared?.allTools ?? {}).length,
           browserTools:
             parseBrowserToolPolicy(resolvedExecution.browserToolPolicy, {
               source: "agent-activity",
-              // Only deciding whether the case EXPECTED browser work; the
-              // delivery parse above already reported a malformed policy.
+              // The delivery parse above already reported a malformed policy.
               quiet: true,
             }) !== undefined,
         },
@@ -4976,17 +4968,8 @@ const runHostedIterationWithBrowser = async (
           })
         : undefined,
     );
-    // WHAT THIS ITERATION'S BROWSER MAY TYPE.
-    //
-    // An eval run delivers NO materialized secrets into its box — see the note
-    // in `resolve-turn-runtime.ts` about why that is still waiting on its own
-    // review — and this does not change that. These values reach one browser
-    // command, are substituted inside the daemon and scrubbed back out; nothing
-    // here becomes an environment variable a harness or a shell can read.
-    //
-    // PER ITERATION, which is affordable precisely because the flag is checked
-    // before the credential is asked for: off, this is not a cheap fetch but no
-    // fetch at all. Asked only when the run actually declared a browser.
+    // Secrets the browser may type. They are substituted inside the daemon and
+    // never become env vars; the box itself still receives none.
     const browserSecrets = browserApprovalDelivery
       ? await resolveBrowserSecrets({
           bearer: convexAuthToken,
@@ -5019,10 +5002,7 @@ const runHostedIterationWithBrowser = async (
                   },
                 }
               : {}),
-            // WHICH RUN AND WHICH ITERATION, on every browser ledger row. An
-            // eval's browser trace is read after the fact, by somebody asking
-            // why one iteration of a hundred behaved differently — and until
-            // now the rows named neither.
+            // Tag browser ledger rows with the iteration they belong to.
             ...(iterationId
               ? { browserCorrelation: { iterationId: String(iterationId) } }
               : {}),
@@ -5760,18 +5740,11 @@ const runHostedIterationWithBrowser = async (
       ...browser.scriptedCheckFailures,
       ...hostedStepScriptedFailures,
     ],
-    // NOTHING RAN? A trial can report a pass having run nothing at all: the
-    // matcher is satisfied when every expected call was made and none was
-    // forbidden, and a model that never ran made no forbidden call either.
-    // @see assessAgentActivity for why each exemption is there.
+    // Guards against vacuous passes. @see assessAgentActivity
     agentActivity: assessAgentActivity({
       modelFree: isModelFreeCase(test),
       isNegativeTest: test.isNegativeTest === true,
-      // RESOLVED, not the raw field. A steps-authored case — which is what
-      // the backend emits now — carries its expectations inside `steps` and
-      // leaves the top-level list undefined, so reading it raw made every such
-      // case exempt as `no_tool_expected`: the guard was off for exactly the
-      // cases it was written to cover.
+      // Resolved: steps-authored cases leave the top-level list undefined.
       expectedToolCalls: resolveEvalTestCase(test).expectedToolCalls.length,
       toolSurface: {
         mcpTools: Object.keys(prepared?.allTools ?? {}).length,

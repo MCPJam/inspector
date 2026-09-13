@@ -225,22 +225,10 @@ export const localBrowserdWebMcpProvider: WebMcpBrowserProvider = {
             contextMode: "ephemeral",
             headless,
             channel: "chromium",
-            // THIS MACHINE, not the hosted desktop. Without it the Inspector's
-            // local Chromium took the sandbox pins — `--disable-gpu` and
-            // `--use-angle=swiftshader-webgl`, which are right for a GPU-less
-            // E2B box and a lie on a laptop — and skipped the UA correction
-            // that keeps a headless run from announcing `HeadlessChrome` to
-            // sites that block it.
+            // Local surface: skips the GPU-less sandbox pins and applies the
+            // headless UA correction.
             surface: "local",
-            // NO `extraArgs: buildWebMcpLaunchArgs()`. The WebMCP feature flag
-            // and `--disable-dev-shm-usage` are already in the shared args
-            // `buildBrowserdLaunchArgs` builds from `WEBMCP_LAUNCH_ARGS`, and
-            // passing them again emitted a SECOND `--enable-features=WebMCP`
-            // last — which Chromium honours in place of the first, discarding
-            // `CDPScreenshotNewSurface` and moving every capture back to the
-            // legacy screenshot surface. Folding now also happens in
-            // `buildBrowserdLaunchArgs`, so this is belt and braces; not
-            // passing what is already there is the honest fix.
+            // No `extraArgs`: the WebMCP args are already in the shared args.
             deviceScaleFactor: options.devicePixelRatio ?? 1,
           });
     } catch (error) {
@@ -265,8 +253,7 @@ export const localBrowserdWebMcpProvider: WebMcpBrowserProvider = {
     }
     driver = new ChromiumDriver(context, {
       webmcpOutputBytes: WEBMCP_RESULT_CAP_BYTES,
-      // The Inspector's Chromium runs in THIS process, so the flags come from
-      // this process's environment rather than from a boot recipe.
+      // Chromium runs in this process, so flags come from its environment.
       features: parseBrowserdFeatures(),
       onPopupOpened: options.callbacks.onPopupOpened,
       onTabLimit: () =>

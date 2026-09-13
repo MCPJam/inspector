@@ -483,8 +483,6 @@ export function deriveIterationPayload(args: {
   const predicateRows = (asArray(metadata.predicates) ?? []).filter(
     isPredicateRow,
   );
-  // What the first pass concluded about activity, read back rather than
-  // re-derived: this pass has the stored metadata and no trace.
   const storedAgentActivity = isNoAgentActivity(metadata.agentActivity)
     ? metadata.agentActivity
     : undefined;
@@ -604,13 +602,9 @@ export function deriveIterationPayload(args: {
     // different `implementationHash` and orphan the first pass's row.
     ...(iteration.matchOptions ? { matchOptions: iteration.matchOptions } : {}),
     ...(iteration.isNegativeTest ? { isNegativeTest: true } : {}),
-    // REDECLARED from the FIRST PASS'S OWN metadata, for exactly the reason
-    // `toolMatchAuthored` above exists. The backend merges scores by
-    // `scorerId` and REPLACES `evaluationConfig` wholesale, so a definition
-    // this pass omits leaves the first pass's row unjoinable — a per-case
-    // `EVAL_RUN_CONFIG_CONFLICT`, and at `enforce` a GATING scorer silently
-    // dropped from the verdict. This pass cannot RE-ASSESS activity (it has no
-    // trace), so it reads what the first pass recorded rather than guessing.
+    // Redeclared from first-pass metadata (this pass has no trace), for the
+    // same reason as `toolMatchAuthored`: an omitted definition leaves the
+    // first pass's row unjoinable.
     ...(storedAgentActivity ? { agentActivity: storedAgentActivity } : {}),
     ...(judgeVerdict && isFiniteNumber(judgeVerdict.threshold)
       ? { judgeVerdict }
@@ -621,13 +615,7 @@ export function deriveIterationPayload(args: {
     : { stage };
 }
 
-/**
- * Is this stored metadata the first pass's `no_agent_activity` verdict?
- *
- * Narrow on PURPOSE: only that status redeclares a scorer, so an `active` or
- * `exempt` assessment — and anything a future build writes here — is ignored
- * rather than forwarded into a definition it would not belong in.
- */
+/** Narrow on purpose: only `no_agent_activity` redeclares a scorer. */
 function isNoAgentActivity(
   value: unknown,
 ): value is { status: "no_agent_activity"; detail: string } {

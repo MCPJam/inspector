@@ -12,18 +12,9 @@ var BROWSERD_WEBMCP_FEATURES = [
   "webmcp-eager",
   "webmcp-binding",
   /**
-   * `POST /v1/commands` accepts a `secrets` array beside the command, and the
-   * driver substitutes `{{secret:NAME}}` from it.
-   *
-   * A FEATURE STRING RATHER THAN A PROTOCOL BUMP, for the reason above: the
-   * addition is strictly additive on the wire (an older daemon ignores an
-   * unknown body field), and bumping the version would kill every live hosted
-   * browser on deploy — a session somebody was signing into included — to gain
-   * a capability the server can simply ask about.
-   *
-   * A server talking to a daemon WITHOUT this must refuse the placeholder
-   * rather than send it: an old daemon would ignore `secrets` and type the
-   * literal `{{secret:NAME}}` into the field.
+   * `POST /v1/commands` accepts `secrets` beside the command. A feature string,
+   * not a protocol bump, so deploys don't kill live browsers. Without it the
+   * server must refuse placeholders: an old daemon would type them literally.
    */
   "secret-placeholders"
 ];
@@ -82,13 +73,8 @@ var BROWSERD_ERROR_CODES = [
   /** An `a11yRef` whose node has left the page — distinct from not found. */
   "stale_ref",
   /**
-   * A `{{secret:NAME}}` reached the browser with no value for it.
-   *
-   * NOTHING WAS TYPED, which is the point. The server's planner refuses an
-   * unusable name before the command is sent, but it is not the only caller
-   * that reaches the driver — the `/v1` routes and the CLI do too — and a
-   * daemon that typed a literal `{{secret:GITHUB_PASSWORD}}` into a login form
-   * would report success while the model read the failure as a wrong password.
+   * A `{{secret:NAME}}` reached the browser with no value; nothing was typed.
+   * The `/v1` routes and CLI reach the driver without the server's planner.
    */
   "secret_unresolved",
   /**
@@ -129,10 +115,7 @@ var BROWSERD_ERROR_CODES = [
   "origin_not_allowed",
   /** The session policy does not admit this command. */
   "tool_not_allowed",
-  // --- secret placeholders, refused BEFORE the daemon ---------------------
-  // Every one of these is decided by the server: the daemon never sees the
-  // command at all, because the alternative is a literal `{{secret:NAME}}`
-  // typed into a real field on a real site.
+  // --- secret placeholders, refused by the server before the daemon -------
   /** No secret by that name is available to this turn. */
   "secret_unknown",
   /** The name exists but is BROKERED — its value never enters this process. */
@@ -144,16 +127,8 @@ var BROWSERD_ERROR_CODES = [
   /** This engine does not deliver secrets to a browser (phase 1: the local one). */
   "secret_engine_unsupported",
   /**
-   * The sender and this daemon do not speak the same wire.
-   *
-   * Refused BEFORE the lease gate and before anything runs, because the
-   * failure it prevents is a command that reports success: a `fill_form` sent
-   * to a protocol-1 daemon falls through its verb switch and answers `ok` for
-   * a form with every field still empty.
-   *
-   * Also the SERVER-side name for the same condition when a relaunch could not
-   * fix it, where it replaces a bare "browserd did not report listening within
-   * 30000ms" — a timeout that tells the user nothing about what went wrong.
+   * The sender and this daemon speak different protocol versions; nothing ran.
+   * Also used server-side when a relaunch could not fix the mismatch.
    */
   "protocol_mismatch"
 ];
@@ -2182,9 +2157,6 @@ var BrowserdRequestHandler = class {
         status: 409,
         body: {
           error: "protocol_mismatch",
-          // NAMED, both of them. "A protocol mismatch" is not actionable; "you
-          // speak 3 and I speak 2" tells the caller to relaunch and tells
-          // whoever reads the log which half is behind.
           protocolVersion: BROWSERD_PROTOCOL_VERSION,
           bootId: this.bootId
         }
@@ -3296,8 +3268,7 @@ function redactSecretShapes(text, replacement = "[redacted]") {
   if (parts.length === 1) return redactSegment(text, replacement);
   return parts.map(
     (part, index) => (
-      // The odd segments are the capture group — the NAME — which is the
-      // thing being protected from the redactor rather than by it.
+      // Odd segments are the captured names.
       index % 2 === 1 ? `{{secret:${part}}}` : redactSegment(part, replacement)
     )
   ).join("");
@@ -3341,9 +3312,8 @@ function withSecretScrub(registry, executor) {
     if (record !== void 0) {
       const { screenshot, ...rest } = record;
       if (suppress) {
-        const { screenshotCompressed: _wentWithIt, ...noPicture } = rest;
         scrubbedOutput = {
-          ...scrubber ? scrubber.scrubDeep(noPicture) : noPicture,
+          ...scrubber ? scrubber.scrubDeep(rest) : rest,
           screenshotSuppressed: true
         };
       } else {
@@ -4645,17 +4615,14 @@ async function pressKeyOn(cdp, chord) {
   }
   const text = insertsText(modifiers) ? key.text : void 0;
   await cdp.send("Input.dispatchKeyEvent", {
-    // `keyDown` with text, `rawKeyDown` without: sending `keyDown` and no
-    // text makes Chromium synthesise a `char` event for some keys and not
-    // others, which is how a shortcut ends up typing its own letter.
+    // `keyDown` with no text makes Chromium synthesise a `char` for some keys,
+    // so a shortcut can type its own letter.
     type: text === void 0 ? "rawKeyDown" : "keyDown",
     key: key.key,
     code: key.code,
     windowsVirtualKeyCode: key.keyCode,
     modifiers,
-    // `code` alone does not reach `KeyboardEvent.location`, so without this
-    // the page sees a keypad press at location 0 — indistinguishable from
-    // the number row to anything that routes them differently.
+    // `code` alone does not set `KeyboardEvent.location` for keypad keys.
     ...key.keypad ? { isKeypad: true } : {},
     ...text === void 0 ? {} : { text }
   });
@@ -5446,11 +5413,7 @@ function createBrowserSecretRegistry() {
       if (stale) {
         scrubber = createSecretScrubber(
           [...byValue].map(([value, name]) => ({ name, value })),
-          // THE PLACEHOLDER THE MODEL WROTE, not `[secret:NAME]`. The value was
-          // typed on purpose, through a placeholder the model chose; giving it
-          // back the same spelling means the tree it reads afterwards says
-          // exactly what it asked for, and it can carry on reasoning about the
-          // field without ever learning the value.
+          // Give back the placeholder the model wrote, never the value.
           { replacement: placeholderFor }
         );
         stale = false;
@@ -5504,46 +5467,6 @@ function resolveActSecrets(action, secrets) {
     ...value === void 0 ? {} : { value },
     ...fields === void 0 ? {} : { fields }
   };
-}
-
-// server/services/browserd/daemon/a11y-diff.ts
-var REF_ATTR = /\bref=e\d+/g;
-function keyOf(line2) {
-  return line2.replace(REF_ATTR, "ref=\u2022");
-}
-function stripRefs(line2) {
-  return line2.replace(REF_ATTR, "ref=gone");
-}
-var MAX_CHANGED_LINES = 200;
-function linesOf(rendered) {
-  return rendered.split("\n").filter((line2) => line2.length > 0);
-}
-function diffA11yLines(previous, next) {
-  const previousLines = linesOf(previous);
-  const nextLines = linesOf(next);
-  const previousKeys = new Set(previousLines.map(keyOf));
-  const nextKeys = new Set(nextLines.map(keyOf));
-  const added = [];
-  const seenAdded = /* @__PURE__ */ new Set();
-  for (const line2 of nextLines) {
-    const key = keyOf(line2);
-    if (previousKeys.has(key) || seenAdded.has(key)) continue;
-    seenAdded.add(key);
-    added.push(line2);
-  }
-  const removed = [];
-  const seenRemoved = /* @__PURE__ */ new Set();
-  for (const line2 of previousLines) {
-    const key = keyOf(line2);
-    if (nextKeys.has(key) || seenRemoved.has(key)) continue;
-    seenRemoved.add(key);
-    removed.push(stripRefs(line2));
-  }
-  if (added.length > MAX_CHANGED_LINES || removed.length > MAX_CHANGED_LINES) {
-    return null;
-  }
-  if (added.length === 0 && removed.length === 0) return null;
-  return { added, removed };
 }
 
 // server/services/browserd/daemon/page-text.ts
@@ -5793,9 +5716,7 @@ function assignRefs(root) {
         role,
         name,
         ...(seen.get(key) ?? 0) > 1 ? { nth: index } : {},
-        // Stamped by `readAxForest` during the splice; absent on every node of
-        // a page with no frames, which is what keeps those entries identical
-        // to what they were before any of this existed.
+        // Stamped by `readAxForest`; absent on pages with no frames.
         ...typeof node.frameId === "string" ? { frameId: node.frameId } : {},
         ...typeof node.sessionFrameId === "string" ? { sessionFrameId: node.sessionFrameId } : {}
       });
@@ -5819,14 +5740,7 @@ var FLAG_ATTRS = [
   "required",
   "focused",
   "readonly",
-  /**
-   * This element moves its own content when you wheel over it.
-   *
-   * Appended rather than inserted, so every existing line is byte-identical:
-   * no node carries this key unless `readScrollableNodes` found it, and the
-   * order of the flags before it is unchanged. It renders as
-   * `- generic [scrollable ref=e4]`.
-   */
+  /** A scroll container. Appended last so existing flag order is unchanged. */
   "scrollable"
 ];
 var TRISTATE_ATTRS = ["checked", "pressed", "expanded"];
@@ -6430,20 +6344,8 @@ var WebMcpBridge = class {
     return [...this.sessions.values()].filter((session) => !session.isMain).map((session) => session.frameId);
   }
   /**
-   * The attached CHILD-FRAME sessions, for a reader outside this bridge.
-   *
-   * READ-ONLY, and never the page's own session: the caller already has that
-   * one (it is how it reached this bridge), and handing it back under a frame
-   * id would invite a reader to treat the main document as a child.
-   *
-   * WHY A BRIDGE METHOD AT ALL. These sessions exist because the WebMCP
-   * bridge needs them, and it attaches them eagerly at tab creation. The
-   * accessibility reader needs exactly the same set — a document's AX tree
-   * does not descend into child documents, so without them NO iframe content
-   * is visible to the model at all — and the alternative, hoisting a shared
-   * frame-session registry out of this class, would re-wire the one piece of
-   * frame plumbing that has measured OOPIF semantics and a large test surface.
-   * This method NEVER triggers an attach; it reports what is already there.
+   * The attached child-frame sessions (never the main one), for the a11y
+   * reader, which needs them to see iframe content. Never triggers an attach.
    */
   attachedFrameSessions() {
     return [...this.sessions.values()].filter((session) => !session.isMain).map((session) => ({ frameId: session.frameId, cdp: session.cdp }));
@@ -7428,30 +7330,6 @@ function emptyWebmcpState() {
 var MAX_TRACKED_INVOCATIONS = 256;
 var MAX_PENDING_CANCELS = 64;
 var PENDING_CANCEL_TTL_MS = 6e4;
-var SCREENSHOT_QUALITY_LADDER = [70, 40, 25, 10];
-async function captureScreenshotWithinBudget(page, maxBytes) {
-  if (maxBytes === void 0) {
-    const shot = await page.screenshotBase64().catch(() => void 0);
-    return shot === void 0 ? void 0 : { screenshot: shot, compressed: false };
-  }
-  let last;
-  for (const [index, quality] of SCREENSHOT_QUALITY_LADDER.entries()) {
-    const shot = await page.screenshotBase64({ quality }).catch(() => void 0);
-    if (shot === void 0) break;
-    last = shot;
-    if (Buffer.byteLength(shot) <= maxBytes) {
-      return { screenshot: shot, compressed: index > 0 };
-    }
-  }
-  return last === void 0 ? void 0 : { screenshot: last, compressed: true };
-}
-function screenshotFields(captured) {
-  if (!captured) return {};
-  return {
-    screenshot: captured.screenshot,
-    ...captured.compressed ? { screenshotCompressed: true } : {}
-  };
-}
 var DEFAULT_WEBMCP_OUTPUT_BYTES = 16e3;
 function parsePoint(value) {
   if (!value) return null;
@@ -7506,12 +7384,7 @@ var ChromiumDriver = class {
   pageTextMaxBytes;
   /** Behaviour this build has but does not do by default. @see BrowserdFeatures */
   features;
-  /**
-   * Values this boot has typed into a page, and what to show instead.
-   *
-   * Always constructed, never populated except by a command that CARRIED a
-   * secret — so a session nobody has typed a credential into pays nothing.
-   */
+  /** Values this boot has typed into a page, and what to show instead. */
   secrets;
   lease;
   tabs = /* @__PURE__ */ new Map();
@@ -7540,18 +7413,6 @@ var ChromiumDriver = class {
    * that minted them can tell the difference.
    */
   refs = /* @__PURE__ */ new Map();
-  /**
-   * The last PAGE-SCOPED a11y render per tab, so an act can say what changed.
-   *
-   * Page-scoped only: a `rootRef`/`rootSelector` render describes a subtree,
-   * and diffing a whole page against one would report the rest of the page as
-   * removed. `filter` is recorded for the same reason — an `interactive` tree
-   * and an `all` tree of the same page differ on almost every line.
-   *
-   * Written at BOTH commit sites (an `observe {mode:"a11y"}` and an act's own
-   * post-capture), because the two alternate: observe, act, act, observe.
-   */
-  lastRender = /* @__PURE__ */ new Map();
   /**
    * What was decided about a dialog, waiting to ride the next observation.
    *
@@ -7691,12 +7552,7 @@ var ChromiumDriver = class {
   sessionViewportPolicy() {
     return this.viewportPolicy;
   }
-  /**
-   * The values this boot has typed, for the scrub on the way back out.
-   *
-   * @see BrowserDriver.secretRegistry — shared by accessor so the stack's
-   * scrub wrapper and this driver can never hold different instances.
-   */
+  /** Shared by accessor so the scrub wrapper and driver hold one instance. */
   secretRegistry() {
     return this.secrets;
   }
@@ -7982,10 +7838,7 @@ var ChromiumDriver = class {
         tabId,
         entry,
         permit,
-        wantsFor(action.observe),
-        void 0,
-        void 0,
-        action
+        wantsFor(action.observe)
       );
       return observed2.ok ? { settled: settledAfter, ...observed2 } : observed2;
     }
@@ -8029,15 +7882,7 @@ var ChromiumDriver = class {
       }
       const message = error instanceof Error ? error.message : String(error);
       const kind = error instanceof ActError2 ? error.code : /timeout|not found|no element|strict mode/i.test(message) ? "target_not_found" : "act_failed";
-      const fresh = await this.afterAct(
-        tabId,
-        entry,
-        permit,
-        wants,
-        before,
-        void 0,
-        action
-      );
+      const fresh = await this.afterAct(tabId, entry, permit, wants, before);
       if (fresh.leaseBlocked) return fresh;
       return {
         ok: false,
@@ -8083,8 +7928,7 @@ var ChromiumDriver = class {
       permit,
       wants,
       before,
-      "the action ran, but a person took control of this browser before its result could be observed; re-observe after they hand it back",
-      action
+      "the action ran, but a person took control of this browser before its result could be observed; re-observe after they hand it back"
     );
     return observed.ok ? { settled, ...observed } : observed;
   }
@@ -8270,23 +8114,14 @@ var ChromiumDriver = class {
         const text = action.value ?? "";
         if (refNode) {
           await replaceTextInNode(
-            // THE OWNER for focus and select-all, which are node-id calls.
             await needOwnerCdp(),
             refNode.backendNodeId,
             text,
             stillOurs,
-            // REF ONLY in this release. `fillSelector` is Playwright's own
-            // fill, which the model is steered away from anyway (a selector is
-            // CSS invented for a page seen as a tree), and changing both at
-            // once would make a regression report ambiguous about which path
-            // caused it.
+            // Ref path only; `fillSelector` keeps Playwright's fill.
             {
               keystrokes: this.features.keystrokeTyping === true,
-              // …AND THE PAGE for the text itself. Input goes to whatever has
-              // focus in the BROWSER, and an out-of-process frame's session
-              // does not own the browser's focus — keystrokes sent there type
-              // into nothing. Only set when the two actually differ, so a page
-              // without cross-origin frames sends exactly what it sent before.
+              // Text goes to the page session; set only when it differs.
               ...refNode.cdp ? { inputCdp: await needCdp() } : {}
             }
           );
@@ -8332,10 +8167,7 @@ var ChromiumDriver = class {
         if (refNode || point) {
           const at = refNode && page.scrollAt ? (
             // NO OCCLUSION CHECK. A scroll container is very often under a
-            // sticky header or an overlay, and a wheel event reaches the
-            // scroller regardless — refusing here would refuse the case
-            // this exists for. `"none"` still refuses a target that is
-            // off-viewport, where a wheel would land on nothing.
+            // sticky header, and a wheel event reaches the scroller anyway.
             await this.pointForRef(page, refNode, refLabel, "none", refs)
           ) : point;
           if (refNode) stillOurs();
@@ -8711,7 +8543,7 @@ var ChromiumDriver = class {
         );
       }
       case "screenshot":
-        return this.observeScreenshot(tabId, entry, permit, action);
+        return this.observeScreenshot(tabId, entry, permit);
       case "text": {
         return this.observeText(tabId, entry, permit);
       }
@@ -8727,7 +8559,6 @@ var ChromiumDriver = class {
           permit
         );
         this.commitRefs(tabId, result, rendered.refMap, rendered.frames);
-        this.rememberRender(tabId, action, rendered.fields, result);
         return result;
       }
       case "dialog": {
@@ -8885,7 +8716,7 @@ var ChromiumDriver = class {
    * `settled: false` (its token from the post-capture read) so the caller
    * re-observes rather than pinning an act to it.
    */
-  async observeScreenshot(tabId, entry, permit, action) {
+  async observeScreenshot(tabId, entry, permit) {
     const STABLE_ATTEMPTS = 2;
     for (let attempt = 0; attempt < STABLE_ATTEMPTS; attempt++) {
       if (!permit()) {
@@ -8894,19 +8725,10 @@ var ChromiumDriver = class {
         );
       }
       const before = await this.snapshot(entry.page);
-      const captured2 = await captureScreenshotWithinBudget(
-        entry.page,
-        this.screenshotMaxBytes(action)
-      );
+      const screenshot2 = await entry.page.screenshotBase64();
       const after2 = await this.snapshot(entry.page);
       if (before.url === after2.url && before.domSignal === after2.domSignal) {
-        return this.observation(
-          tabId,
-          entry,
-          screenshotFields(captured2),
-          after2,
-          permit
-        );
+        return this.observation(tabId, entry, { screenshot: screenshot2 }, after2, permit);
       }
     }
     if (!permit()) {
@@ -8914,19 +8736,10 @@ var ChromiumDriver = class {
         "a person has taken control of this browser; nothing was observed"
       );
     }
-    const captured = await captureScreenshotWithinBudget(
-      entry.page,
-      this.screenshotMaxBytes(action)
-    );
+    const screenshot = await entry.page.screenshotBase64();
     const after = await this.snapshot(entry.page);
     return {
-      ...this.observation(
-        tabId,
-        entry,
-        screenshotFields(captured),
-        after,
-        permit
-      ),
+      ...this.observation(tabId, entry, { screenshot }, after, permit),
       settled: false
     };
   }
@@ -9444,10 +9257,8 @@ var ChromiumDriver = class {
           ])
         ),
         ...omittedSubtrees > 0 ? { omittedSubtrees, totalNodes } : {},
-        // OUTSIDE the untrusted fence, and a number: a page cannot write a
-        // sentence into a count. It is there so a model reading a page with
-        // thirty ad iframes knows the tree is incomplete rather than
-        // concluding the frames are empty.
+        // Outside the untrusted fence, and a number a page cannot forge into
+        // prose; tells the model the tree is incomplete.
         ...raw.framesOmitted ? { framesOmitted: raw.framesOmitted } : {}
       },
       refMap: refs,
@@ -9469,66 +9280,6 @@ var ChromiumDriver = class {
    * carries, so a ref used after the page moved is refused rather than
    * resolved by name against whatever is there now.
    */
-  /**
-     * Record this render so the NEXT act can say what changed, or forget it.
-     *
-     * Forgetting is the important half and it happens on every path that is not
-     * a clean page-scoped render: a scoped read, a failed observation, a
-     * different filter. A stale `lastRender` is worse than none — it produces a
-     * confident `changed` describing a transition that did not happen.
-     */
-  rememberRender(tabId, action, fields, result) {
-    const lines = fields.a11y;
-    if (!result.ok || typeof lines !== "string" || action.rootRef !== void 0 || action.rootSelector !== void 0) {
-      this.lastRender.delete(tabId);
-      return;
-    }
-    this.lastRender.set(tabId, {
-      lines,
-      stateToken: result.stateToken,
-      filter: action.filter === "all" ? "all" : "interactive"
-    });
-  }
-  /**
-   * The lines this act added and removed, when that can be said honestly.
-   *
-   * Returns nothing — and the act's result carries no `changed` — unless ALL
-   * of these hold. Each is a way the section would otherwise lie:
-   *
-   *  - a previous PAGE-SCOPED render exists, at the same filter;
-   *  - it describes the SAME DOCUMENT (`refsStillDescribe`: same tab, same
-   *    navigation, same URL). After a navigation every line differs and
-   *    "everything changed" is noise;
-   *  - the diff is non-empty and within `MAX_CHANGED_LINES` on both sides.
-   */
-  changedSince(tabId, entry, fields, filter) {
-    const previous = this.lastRender.get(tabId);
-    const lines = fields.a11y;
-    if (!previous || typeof lines !== "string") return void 0;
-    if (previous.filter !== filter) return void 0;
-    if (!previous.stateToken || !this.refsStillDescribe(tabId, entry, {
-      stateToken: previous.stateToken,
-      entries: /* @__PURE__ */ new Map()
-    })) {
-      return void 0;
-    }
-    return diffA11yLines(previous.lines, lines) ?? void 0;
-  }
-  /**
-   * The byte cap for this capture: the command's, else the daemon's, else none.
-   *
-   * PER-COMMAND WINS, because a caller that knows its own context budget knows
-   * it better than the box does — an eval iteration streaming to a small model
-   * and a Playground turn on the same daemon want different answers. Neither
-   * set means today's behaviour exactly: one capture, no measurement.
-   */
-  screenshotMaxBytes(action) {
-    const requested = action?.maxScreenshotBytes;
-    if (typeof requested === "number" && Number.isFinite(requested) && requested > 0) {
-      return Math.floor(requested);
-    }
-    return this.features.screenshotMaxBytes;
-  }
   commitRefs(tabId, result, refMap, frames) {
     if (!result.ok || !refMap) {
       this.refs.delete(tabId);
@@ -9537,9 +9288,7 @@ var ChromiumDriver = class {
     this.refs.set(tabId, {
       stateToken: result.stateToken,
       entries: refMap,
-      // BOUND TO THE SAME TOKEN as the entries, because a frame tree is a fact
-      // about one document: translating a coordinate through a topology from a
-      // different page walks the wrong chain of hosts.
+      // Bound to the same token: a topology is a fact about one document.
       ...frames && frames.size > 0 ? { frames } : {}
     });
   }
@@ -9558,7 +9307,7 @@ var ChromiumDriver = class {
    * reported only when the act actually moved the page, because a URL repeated
    * on every result is noise the model has to read past.
    */
-  async afterAct(tabId, entry, permit, wants, before, blockedDetail, action) {
+  async afterAct(tabId, entry, permit, wants, before, blockedDetail) {
     if (!permit()) {
       return this.leaseBlockedResult(
         blockedDetail ?? "a person has taken control of this browser; nothing was observed"
@@ -9582,11 +9331,7 @@ var ChromiumDriver = class {
         a11yFields = { a11yUnavailable: true };
       }
     }
-    const captured = wants.screenshot ? await captureScreenshotWithinBudget(
-      page,
-      this.screenshotMaxBytes(action)
-    ) : void 0;
-    const screenshot = captured?.screenshot;
+    const screenshot = wants.screenshot ? await page.screenshotBase64().catch(() => void 0) : void 0;
     const frame = await this.snapshot(page).catch(() => void 0);
     if (!frame) {
       if (!permit()) {
@@ -9615,7 +9360,7 @@ var ChromiumDriver = class {
       // on every act.
       ...before && before.url !== frame.url ? { previousUrl: before.url } : {},
       ...a11yFields,
-      ...screenshotFields(captured)
+      ...screenshot ? { screenshot } : {}
     };
     const held = !captures || pre !== void 0 && pre.url === frame.url && pre.domSignal === frame.domSignal;
     if (!held) {
@@ -9634,25 +9379,8 @@ var ChromiumDriver = class {
         settled: false
       };
     }
-    const changed = this.features.changedA11y && wants.a11y && held ? this.changedSince(tabId, entry, a11yFields, "interactive") : void 0;
-    const result = blockedDetail === void 0 ? this.observation(
-      tabId,
-      entry,
-      changed ? { ...output, changed } : output,
-      frame,
-      permit
-    ) : this.observation(
-      tabId,
-      entry,
-      changed ? { ...output, changed } : output,
-      frame,
-      permit,
-      blockedDetail
-    );
+    const result = blockedDetail === void 0 ? this.observation(tabId, entry, output, frame, permit) : this.observation(tabId, entry, output, frame, permit, blockedDetail);
     if (wants.a11y) this.commitRefs(tabId, result, refMap, refFrames);
-    if (wants.a11y) {
-      this.rememberRender(tabId, { filter: "interactive" }, a11yFields, result);
-    }
     return result;
   }
   /**
@@ -9764,9 +9492,7 @@ var ChromiumDriver = class {
       ok: true,
       tree: read.tree,
       filter,
-      // Only when there is something to say. `framesOmitted: 0` on every
-      // observation would be a new key on every result to report nothing,
-      // and the frame map is empty on every page without an OOPIF.
+      // Omitted when empty, so ordinary results gain no new keys.
       ..."framesOmitted" in read && read.framesOmitted > 0 ? { framesOmitted: read.framesOmitted } : {},
       ..."frames" in read && read.frames.size > 0 ? { frames: read.frames } : {}
     };
@@ -9872,7 +9598,6 @@ var ChromiumDriver = class {
       await this.tabs.get(next)?.page.bringToFront?.().catch(() => {
       });
     this.refs.delete(tabId);
-    this.lastRender.delete(tabId);
     await this.dropViewport(tabId);
   }
   /**
@@ -10708,10 +10433,10 @@ function wrapPage(page, localSecurity = false, localBudget) {
     domStructureSignal() {
       return page.evaluate(`(${DOM_SIGNAL_FN})()`);
     },
-    async screenshotBase64(options) {
+    async screenshotBase64() {
       const buffer = await page.screenshot({
         type: "jpeg",
-        quality: options?.quality ?? SCREENSHOT_JPEG_QUALITY,
+        quality: SCREENSHOT_JPEG_QUALITY,
         // CSS PIXELS, always — the model's coordinate space (L5). Without
         // this, Playwright captures at the device scale factor, so raising the
         // display's sharpness would silently hand the model a 1536×1152 or
@@ -10742,12 +10467,8 @@ function wrapPage(page, localSecurity = false, localBudget) {
     fillSelector: (selector, text) => page.fill(selector, text, { timeout: ACT_TIMEOUT_MS }),
     press: (key) => page.keyboard.press(key),
     scrollBy: ({ dx, dy }) => page.mouse.wheel(dx, dy),
-    // MOVE FIRST, and that is the whole difference from `scrollBy` above.
-    // `mouse.wheel` delivers at the pointer's CURRENT position, which on a
-    // fresh page is (0, 0) and after an act is wherever the last click landed
-    // — so a scroll aimed at a list moved whatever happened to be under the
-    // mouse. Moving there first makes the wheel land on the element the
-    // caller named.
+    // Move first: `mouse.wheel` delivers at the pointer's current position,
+    // not at the element the caller named.
     async scrollAt(point, { dx, dy }) {
       await page.mouse.move(point.x, point.y);
       await page.mouse.wheel(dx, dy);
@@ -11172,34 +10893,30 @@ async function resizeHostedDisplay(deps, next, previous) {
 // server/services/browserd/daemon/config.ts
 import { createHash as createHash2, randomBytes as randomBytes4 } from "node:crypto";
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
-var BROWSERD_FEATURE_NAMES = [
+var DEFAULT_ON_FEATURES = [
   "a11yFrames",
-  "keystrokeTyping",
-  "scrollableMarkers",
-  "changedA11y"
+  "scrollableMarkers"
 ];
-function parseBrowserdFeatures(env = process.env) {
-  const named = new Set(
-    (env.MCPJAM_BROWSERD_FEATURES ?? "").split(",").map((name) => name.trim()).filter((name) => name.length > 0)
+var OPT_IN_FEATURES = [
+  "keystrokeTyping"
+];
+function namedIn(raw) {
+  return new Set(
+    (raw ?? "").split(",").map((name) => name.trim()).filter((name) => name.length > 0)
   );
+}
+function parseBrowserdFeatures(env = process.env) {
+  const enabled = namedIn(env.MCPJAM_BROWSERD_FEATURES);
+  const disabled = namedIn(env.MCPJAM_BROWSERD_DISABLE_FEATURES);
   const features = {};
-  for (const name of BROWSERD_FEATURE_NAMES) {
-    if (named.has(name)) features[name] = true;
+  for (const name of DEFAULT_ON_FEATURES) {
+    if (!disabled.has(name)) features[name] = true;
   }
-  const maxBytes = readScreenshotMaxBytes(env);
-  if (maxBytes !== void 0) features.screenshotMaxBytes = maxBytes;
+  for (const name of OPT_IN_FEATURES) {
+    if (enabled.has(name) && !disabled.has(name)) features[name] = true;
+  }
   return features;
 }
-function readScreenshotMaxBytes(env) {
-  const raw = env.MCPJAM_BROWSERD_SCREENSHOT_MAX_BYTES;
-  if (raw === void 0 || raw.trim().length === 0) return void 0;
-  const bytes = Number(raw);
-  if (!Number.isFinite(bytes) || bytes < MIN_SCREENSHOT_MAX_BYTES) {
-    return void 0;
-  }
-  return Math.floor(bytes);
-}
-var MIN_SCREENSHOT_MAX_BYTES = 8 * 1024;
 var DEFAULT_BROWSERD_PORT = 8791;
 var DEFAULT_BROWSERD_HOST = "0.0.0.0";
 var DEFAULT_BROWSERD_USER_DATA_DIR = "/home/user/.mcpjam-browserd";

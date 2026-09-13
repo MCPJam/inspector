@@ -108,24 +108,16 @@ export interface BrowserdConfig {
 }
 
 /**
- * Browser behaviours that can be switched per deployment.
- *
- * Two kinds, and the difference is the default. `a11yFrames` and
- * `scrollableMarkers` only ADD to what the model sees, so they are on unless
- * `MCPJAM_BROWSERD_DISABLE_FEATURES` names them; that variable is the kill
- * switch. `keystrokeTyping` changes how text reaches a page, which can change
- * what a page does with it, so it stays off unless `MCPJAM_BROWSERD_FEATURES`
- * names it.
+ * Per-deployment browser behaviours. Additive ones default on (disable via
+ * `MCPJAM_BROWSERD_DISABLE_FEATURES`); `keystrokeTyping` changes page behaviour,
+ * so it is opt-in via `MCPJAM_BROWSERD_FEATURES`.
  */
 export interface BrowserdFeatures {
   /** Read child frames' accessibility trees and splice them in. */
   a11yFrames?: boolean;
   /** Type by key events rather than `Input.insertText`. */
   keystrokeTyping?: boolean;
-  /**
-   * Keep scroll containers in the tree and mark them `[scrollable]`. Scrolling
-   * at a ref is not gated; that is a bug fix.
-   */
+  /** Keep scroll containers in the tree and mark them `[scrollable]`. */
   scrollableMarkers?: boolean;
 }
 
@@ -147,11 +139,7 @@ function namedIn(raw: string | undefined): Set<string> {
   );
 }
 
-/**
- * Read the feature bag from the environment. Names are exact; an unknown name
- * is ignored rather than fatal, so a box whose environment still names a
- * removed flag keeps booting.
- */
+/** Read features from the environment; unknown names are ignored, not fatal. */
 export function parseBrowserdFeatures(
   env: NodeJS.ProcessEnv = process.env,
 ): BrowserdFeatures {

@@ -1,17 +1,10 @@
 /**
- * Putting a secret's VALUE into an act, at the last possible moment.
+ * Substitutes a secret's value into an act at the last moment. The recorded
+ * action (ledger, `/v1/trace`, mirror) keeps its `{{secret:NAME}}`
+ * placeholders; the values travel beside the command.
  *
- * The action that reached this daemon carries `{{secret:NAME}}` — and it is
- * that action, placeholders intact, which the ledger row, `/v1/trace` and the
- * durable mirror record. The value arrives beside the command rather than
- * inside it, and this is the only place the two meet.
- *
- * IT THROWS RATHER THAN PASSING A PLACEHOLDER THROUGH. The server's planner
- * refuses an unusable name before the command is even sent, but the planner is
- * not the only caller that can reach here: the `/v1` browser routes, the CLI,
- * and whatever is written next all go through `execute`. A daemon that typed a
- * literal `{{secret:GITHUB_PASSWORD}}` into somebody's login form would report
- * success, and the model would read the failure as a wrong password.
+ * Throws on an unresolved placeholder: callers other than the planner reach
+ * `execute`, and typing a literal placeholder would look like a wrong password.
  */
 import type { BrowserAction } from "../protocol";
 import { formatBrowserdError } from "../protocol";
@@ -20,11 +13,8 @@ import { substituteSecrets } from "../../../utils/secrets/secret-placeholders";
 type ActAction = Extract<BrowserAction, { kind: "act" }>;
 
 /**
- * The same act with every placeholder replaced, or the act unchanged.
- *
- * Returns the ORIGINAL OBJECT when nothing was substituted, which the caller
- * uses as its "did anything resolve?" test — a fresh object on every act would
- * make that test meaningless and register secrets for commands that used none.
+ * Returns the original object when nothing was substituted; the caller uses
+ * that identity to decide whether to register secrets.
  */
 export function resolveActSecrets(
   action: ActAction,

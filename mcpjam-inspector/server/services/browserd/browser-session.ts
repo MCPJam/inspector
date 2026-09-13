@@ -99,25 +99,15 @@ export const BROWSERD_PROFILE_ARCHIVE_PATH =
  * needs `sendCommand` still satisfies this.
  */
 /**
- * Everything that rides BESIDE a command, rather than inside it.
- *
- * Named once and shared, because the last two additions here were each
- * dropped by a wrapper that had been written against the arity of the day: the
- * abort signal (a cancelled turn went on holding a lease read nobody wanted)
- * and then `secrets` (a `{{secret:NAME}}` reached the daemon with no value, so
- * the act refused and the feature did not work on the hosted engine at all).
- * A type every implementation names is what makes the next addition a compile
- * error instead of a silent omission.
+ * Everything that rides beside a command rather than inside it. A shared type
+ * makes a wrapper that drops a new option a compile error.
  */
 export interface SessionCommandOptions {
   timeoutMs?: number;
   signal?: AbortSignal;
   /**
-   * Values for the `{{secret:NAME}}` placeholders this command carries.
-   *
-   * A SIBLING of the command, never a field on it: the command is echoed onto
-   * the ledger row, into `/v1/trace` and into the durable mirror, and a value
-   * there would be written before anything could scrub it.
+   * Values for the command's `{{secret:NAME}}` placeholders. Never a command
+   * field: the command is echoed into the ledger, trace and durable mirror.
    */
   secrets?: ReadonlyArray<{ name: string; value: string }>;
 }
@@ -628,13 +618,8 @@ async function tryReuse(
   // THE WIRE, NOT THE BYTES. A daemon whose protocol number differs (or which
   // is too old to announce one) cannot be proven compatible, and continuing
   // would produce wrong answers rather than merely old ones.
-  //
-  // CHECKED UNCONDITIONALLY. Only the BUNDLE HASH half below is a lazy-upgrade
-  // decision — a hash difference is an upgrade that can wait for an idle
-  // session. A wire difference is not an upgrade at all: it is a daemon that
-  // answers `ok` for a `fill_form` it never ran, and switching the check off
-  // with the rollback flag would restore exactly the failure the version
-  // number exists to prevent.
+  // Checked regardless of the lazy-upgrade flag: only the bundle hash below
+  // can wait for an idle session.
   {
     const running = status.protocolVersion ?? session.protocolVersion;
     if (running !== BROWSERD_PROTOCOL_VERSION) {
@@ -743,15 +728,8 @@ async function trySandboxReuse(
   if (!status || status.kind !== "ok" || status.bootId !== session.bootId) {
     return null;
   }
-  // THE WIRE, NOT THE BYTES — the same unconditional check `tryReuse` makes on
-  // the computer arm, and for the same reason.
-  //
-  // Without it this arm could only fail LATER and FOREVER: the daemon's
-  // per-command gate refuses each stamped command with `protocol_mismatch`,
-  // but nothing here ever decides the session is unusable, so
-  // `ensureBrowserSession` hands back the same incompatible daemon on the next
-  // turn and the next. The relaunch this whole mechanism exists to trigger
-  // never happens, and a per-run browser is stuck until its sandbox dies.
+  // Same wire check as `tryReuse`. Without it every command is refused with
+  // `protocol_mismatch` but the incompatible daemon is never relaunched.
   {
     const running = status.protocolVersion ?? session.protocolVersion;
     if (running !== BROWSERD_PROTOCOL_VERSION) {
@@ -963,22 +941,9 @@ async function fenceForRelaunch(
 }
 
 /**
- * What the reuse gates SAW on the way to deciding to relaunch.
- *
- * Three gates refuse a running daemon on a protocol mismatch — reuse,
- * prelaunch adoption, and the control-plane lookup — and all three do it by
- * returning `null`, which the caller reads as "nothing to reuse" and answers
- * with a kill-and-reboot. That is the RIGHT behaviour and stays: a daemon
- * nobody can prove they can talk to should be replaced, silently, without
- * bothering anyone.
- *
- * The failure is what happens when the relaunch ALSO fails. The `null` carried
- * no reason, so the error the user finally saw was `browserd did not report
- * listening within 30000ms` — a timeout, from a boot that had nothing to do
- * with the actual problem, and nothing anywhere named the wire.
- *
- * So each gate writes here on its way past, and only the failure path reads it.
- * Module-private: it is a breadcrumb for one `ensure`, not a return value.
+ * Why the reuse gates refused a running daemon. The gates return `null` and
+ * trigger a silent relaunch; this lets a relaunch that also fails name the
+ * protocol mismatch instead of a boot timeout. One per `ensure`.
  */
 interface EnsureDiagnostics {
   protocolMismatch?: {
@@ -990,24 +955,15 @@ interface EnsureDiagnostics {
     source: "reuse" | "adopt" | "lookup";
   };
   /**
-   * A replacement daemon came up speaking the wire this build speaks.
-   *
-   * Written by `bootAndPublish` the moment the boot returns, which is the only
-   * place that learns it, and read by `namingProtocolMismatch` to tell a
-   * relaunch that never landed from one that landed and then failed at
-   * something else. @see namingProtocolMismatch
+   * A replacement daemon came up speaking this build's wire. Set by
+   * `bootAndPublish`. @see namingProtocolMismatch
    */
   protocolRecovered?: boolean;
 }
 
 /**
- * Record a protocol refusal, and say so in the log.
- *
- * WARN rather than info: this is a daemon being killed and replaced under
- * whatever was using it, and the whole reason it is invisible today is that
- * nothing wrote it down. The relaunch usually works and nobody ever reads
- * this; when it does not, this line is the difference between a named cause
- * and a boot timeout.
+ * Record a protocol refusal. Warn level: a daemon is about to be killed and
+ * replaced under whatever was using it.
  */
 function noteProtocolMismatch(
   diagnostics: EnsureDiagnostics | undefined,
@@ -1022,17 +978,9 @@ function noteProtocolMismatch(
 }
 
 /**
- * The relaunch failed, and a protocol mismatch is why it was attempted.
- *
- * NOT thrown when the relaunch merely failed: a boot that timed out for its
- * own reasons must keep reporting its own reason, or this error becomes a
- * wrapper that hides whatever actually went wrong. It is thrown only when a
- * gate recorded a mismatch AND the recovery for that mismatch did not land —
- * which is the one case where "the daemon speaks a different wire" is the
- * true and complete explanation.
- *
- * The message is prefixed with the code so `parseBrowserdErrorCode` reads it
- * back out of a result's `error` string, the same as every daemon-side code.
+ * A relaunch triggered by a protocol mismatch failed before the replacement
+ * reached the expected protocol. The message is code-prefixed so
+ * `parseBrowserdErrorCode` can read it back.
  */
 export class BrowserProtocolMismatchError extends Error {
   readonly code = "protocol_mismatch";
@@ -1065,28 +1013,10 @@ export class BrowserProtocolMismatchError extends Error {
 }
 
 /**
- * Run the relaunch; if it fails AND a gate blamed the wire, say the wire.
- *
- * THE WHOLE SHAPE OF THE FIX. The relaunch stays silent and stays first — a
- * daemon speaking the wrong wire should be replaced without bothering anybody,
- * and almost always is. Only when the replacement ALSO fails does the reason
- * matter, and then it is the difference between
- *
- *   browserd did not report listening within 30000ms
- *
- * and a sentence naming both versions. The raw error is RETHROWN UNCHANGED
- * when no mismatch was recorded: a boot that failed for its own reasons must
- * keep reporting its own reason, or this helper becomes a wrapper that hides
- * whatever actually went wrong.
- *
- * AND WHEN THE REPLACEMENT ALREADY SPOKE OUR WIRE. `relaunch` is not only a
- * boot: the daemon comes up, and then the session row is written, the logical
- * boot is recorded and the stream is started — any of which can fail on its
- * own. By then the mismatch is RECOVERED, a daemon on the expected protocol is
- * running, and naming it would report a solved problem as the cause of a live
- * one: it dresses a transient publication failure as the single thing a retry
- * cannot fix, and buries the error that could actually be acted on.
- * `protocolRecovered` is how the two phases are told apart.
+ * Run the relaunch; if it fails and a gate recorded a mismatch, throw
+ * `BrowserProtocolMismatchError`. Errors are rethrown unchanged when no
+ * mismatch was recorded, or when the replacement already reached our protocol
+ * and a later publication step failed.
  */
 async function namingProtocolMismatch<T>(
   diagnostics: EnsureDiagnostics,
@@ -1098,8 +1028,6 @@ async function namingProtocolMismatch<T>(
     const mismatch = diagnostics.protocolMismatch;
     if (!mismatch) throw error;
     if (diagnostics.protocolRecovered) {
-      // The replacement is up and speaks our wire. Whatever went wrong after
-      // that travels unchanged, so it can say what it was.
       logger.warn("[browser-session] browser.protocol_mismatch_recovered", {
         ...mismatch,
         publishError: error instanceof Error ? error.message : String(error),
@@ -1210,12 +1138,7 @@ function withActivityTouches(
       if (deps.touchActivity && computerId && shouldTouchActivity(computerId)) {
         void deps.touchActivity({ computerId }).catch(() => {});
       }
-      // FORWARDED, exactly as the note below demands of the other wrappers in
-      // this file — and for the reason it gives. This one took two arguments
-      // and dropped the third, so a command carrying `secrets` reached the
-      // daemon without them: `{{secret:NAME}}` with no value, refused as
-      // `secret_unresolved`, and the placeholder feature simply did not work
-      // on the hosted engine.
+      // Options forwarded: dropping them loses `secrets` and the abort signal.
       return client.sendCommand(command, expectedBootId, options);
     },
     // ARGUMENTS FORWARDED, not just the call. A wrapper that took none
@@ -1340,9 +1263,7 @@ async function tryAdoptPrelaunched(
   // process under a token the first row does not know.
   if (status.startedBy !== "prelaunch") return null;
   if (status.protocolVersion !== BROWSERD_PROTOCOL_VERSION) {
-    // A BAKED-IN DAEMON GOES STALE ON ITS OWN. The image carries one; the
-    // server rolls forward past it; nothing on the box knows. Until this line
-    // existed, the only trace of that was a relaunch on every single ensure.
+    // An image-baked daemon goes stale as the server rolls forward.
     noteProtocolMismatch(
       diagnostics,
       {
@@ -1557,13 +1478,7 @@ async function bootAndPublish<THandle>(
     publish: (booted: BrowserdHandle) => Promise<BrowserSessionRecordResult>;
     /** Stop the daemon we booted, on the way to adopting somebody else's. */
     onAdopt?: () => void;
-    /**
-     * The ensure's diagnostics bag, when one is being kept.
-     *
-     * WRITE-ONLY from here, and one key: a boot that reaches the expected
-     * protocol is the fact `namingProtocolMismatch` needs and the only place
-     * it can be learned. @see EnsureDiagnostics.protocolRecovered
-     */
+    /** Receives `protocolRecovered`. @see EnsureDiagnostics */
     diagnostics?: EnsureDiagnostics;
   },
 ): Promise<BootOutcome<THandle>> {
@@ -1598,9 +1513,7 @@ async function bootAndPublish<THandle>(
     if (raced) return { kind: "adopted", handle: raced };
     throw bootError;
   }
-  // BEFORE PUBLICATION, because that is the point of it: everything below can
-  // fail for reasons that have nothing to do with the wire, and this is the
-  // line that says the wire is no longer the problem.
+  // Before publication, which can fail for reasons unrelated to the wire.
   if (
     args.diagnostics &&
     booted.protocolVersion === BROWSERD_PROTOCOL_VERSION
@@ -1667,7 +1580,6 @@ async function ensureOnSandbox(
 ): Promise<SandboxHostedBrowserSessionHandle> {
   const bundleHash = deps.bundleHash();
   const logicalContext = logicalContextFromArgs(args);
-  // @see EnsureDiagnostics — one bag per ensure, read only on the failure path.
   const diagnostics: EnsureDiagnostics = {};
   if (!args.expectedExistingBootId)
     await bindLogicalBox(deps, args, { sandboxRowId: target.sandboxRowId });
@@ -1691,9 +1603,6 @@ async function ensureOnSandbox(
       "this control plane does not support a per-run browser session yet",
     );
   }
-  // The control plane refused this row before we reached the daemon at all.
-  // `protocol_changed` is the one staleness that still means "relaunch now";
-  // recording it is what lets a failed relaunch say so.
   if (lookup.stale === "protocol_changed") {
     noteProtocolMismatch(
       diagnostics,
@@ -1737,10 +1646,7 @@ async function ensureOnSandbox(
       lookup.stale ||
       !lookup.reachable)
   ) {
-    // WHY it is not ready, when we know. A watched sandbox is a person waiting
-    // on a pane, and "not ready, retry" is advice that cannot work when the
-    // daemon on the box speaks a wire this server cannot talk to: retrying
-    // reaches the same refusal forever.
+    // Retrying cannot fix a protocol mismatch, so name it.
     if (diagnostics.protocolMismatch) {
       throw new BrowserProtocolMismatchError(diagnostics.protocolMismatch);
     }
@@ -1951,8 +1857,6 @@ async function ensureOnComputer(
 ): Promise<ComputerHostedBrowserSessionHandle> {
   const bundleHash = deps.bundleHash();
   const logicalContext = logicalContextFromArgs(args);
-  // ONE BAG PER ENSURE. Written by whichever gate refuses a running daemon,
-  // read only if the relaunch that refusal triggered then fails.
   const diagnostics: EnsureDiagnostics = {};
   await bindLogicalBox(deps, args, { computerId });
   const lookupArgs = {
@@ -1969,10 +1873,7 @@ async function ensureOnComputer(
   };
 
   const lookup = await deps.store.lookup(lookupArgs);
-  // GATE 3: the control plane refused the row before we ever reached the
-  // daemon. `protocol_changed` is parsed off the wire and, until now, read by
-  // nothing — the caller saw a stale row and relaunched, which is right, and
-  // nobody could tell afterwards why.
+  // The control plane refused the row before we reached the daemon.
   if (lookup.stale === "protocol_changed") {
     noteProtocolMismatch(
       diagnostics,

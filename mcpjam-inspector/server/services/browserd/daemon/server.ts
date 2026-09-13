@@ -263,28 +263,13 @@ export function buildBrowserdStack(
   // The lease check wraps the staleness guard rather than the other way round:
   // reading a tab's current state token to compare it IS an observation of the
   // page, so it must not happen for a command the lease is about to refuse.
-  // OUTERMOST, so they also cover the refusals the guards themselves produce
-  // and, more importantly, so they run INSIDE the queue: the result the queue
-  // retains for a duplicate command and the row `recordRow` writes are both
-  // taken from what comes out of here.
+  // The scrubs wrap the guards (covering their refusals) and sit inside the
+  // queue, so retained duplicates and ledger rows are scrubbed. The secret
+  // scrub is innermost so it runs first on results: a registered secret comes
+  // back as `{{secret:NAME}}`, not the shape scrub's `[redacted]`.
   //
-  // The SECRET scrub is INNERMOST of the two, which is what makes it run
-  // FIRST on the way back out: a result travels inner-to-outer, so the
-  // innermost wrapper sees it before anything else has rewritten it.
-  //
-  // That ordering is the whole point. The secret scrub replaces exact known
-  // values and knows what it is looking for; the shape scrub is a guess about
-  // strings nobody registered. A value that is both a registered secret AND
-  // credential-shaped must come back as its own `{{secret:NAME}}` — which the
-  // model asked for and can reason about — rather than as a generic
-  // `[redacted]`, and only this order produces that.
-  //
-  // ONE registry, and it is the DRIVER'S: the driver writes it (at
-  // substitution time) and this reads it. Reached through the accessor rather
-  // than constructed here so the two cannot drift apart — a driver minting one
-  // and a stack minting another would mean scrubbing for values nobody typed
-  // while typing values nobody scrubs. A driver with no registry (a fake, an
-  // engine that types nothing) yields `null` and the wrapper does nothing.
+  // The registry is the driver's own, read through its accessor so the two
+  // cannot drift; no registry yields `null` and the wrapper does nothing.
   const secrets = {
     scrubber: () => driver.secretRegistry?.().scrubber() ?? null,
     exposedAt: (url: string | undefined) =>

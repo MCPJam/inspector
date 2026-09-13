@@ -201,18 +201,9 @@ export function hostedBrowserEnabled(
  * whatever the environment said when this module first loaded.
  */
 /**
- * Redact credential-SHAPED strings on their way to the model from a browser.
- *
- * DEFAULTS ON, which is safe precisely because of what it touches: it alters a
- * string only when a credential shape is actually present, and it is applied
- * only to MESSAGES — a daemon error, a console line, a network failure —
- * never to the accessibility tree, the page text, the DOM or a page tool's
- * result, where a false positive would hide the content the model is reading.
- *
- * `MCPJAM_BROWSER_SHAPE_REDACTION=0` is the rollback: one environment
- * variable, no deploy, and every one of those strings passes verbatim again.
- *
- * @see shared/secret-shape-redaction.ts
+ * Redact credential-shaped strings in browser messages (errors, console,
+ * network failures) sent to the model; never page content. Defaults on;
+ * `MCPJAM_BROWSER_SHAPE_REDACTION=0` disables it.
  */
 export function browserShapeRedactionEnabled(
   env: NodeJS.ProcessEnv = process.env,
@@ -222,19 +213,8 @@ export function browserShapeRedactionEnabled(
 
 /**
  * Let a model type a credential it has not been shown: `{{secret:NAME}}`.
- *
- * DEFAULTS OFF, for one release, and the reason is not caution about the
- * mechanism — it is that turning it on CHANGES WHAT THE MODEL READS. A turn
- * whose project has secrets gets extra wording on two `browser_act` fields,
- * and eval transcripts are diffed line by line. Off, every description is
- * byte-identical to the release before this existed and no surface can deliver
- * a value, whatever it has wired.
- *
- * `MCPJAM_BROWSER_SECRET_PLACEHOLDERS=1` turns it on: one environment
- * variable, no deploy. READ AT CALL TIME, like the flags around it, so it can
- * be flipped per-process in staging and per-test.
- *
- * @see server/utils/secrets/secret-placeholders.ts
+ * Defaults off because enabling it changes tool descriptions the model reads.
+ * Read at call time so it can be flipped per process or per test.
  */
 export function browserSecretPlaceholdersEnabled(
   env: NodeJS.ProcessEnv = process.env,

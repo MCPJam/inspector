@@ -345,10 +345,8 @@ function buildEnv(
             process.env.MCPJAM_BROWSERD_DISABLE_FEATURES,
         }
       : {}),
-    // The credential-shape scrub is ON by default on both sides, so only the
-    // KILL SWITCH travels — and it travels because a rollback that turned the
-    // scrub off in the server while leaving it on in the daemon would not be
-    // a rollback at all.
+    // The shape scrub defaults on; only its kill switch travels, so a rollback
+    // disables it on both sides.
     ...(process.env.MCPJAM_BROWSER_SHAPE_REDACTION === "0"
       ? { MCPJAM_BROWSER_SHAPE_REDACTION: "0" }
       : {}),

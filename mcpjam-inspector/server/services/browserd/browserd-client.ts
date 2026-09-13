@@ -342,13 +342,8 @@ export class BrowserdClient {
       timeoutMs?: number;
       signal?: AbortSignal;
       /**
-       * Values for the `{{secret:NAME}}` placeholders this command carries.
-       *
-       * An OPTION rather than a field on the command, because the command is
-       * what gets echoed onto the ledger row, into `/v1/trace` and into the
-       * durable mirror. A value on the command would be written to all three
-       * before anything could scrub it; here it cannot reach them, because no
-       * writer is ever handed it.
+       * Values for the command's `{{secret:NAME}}` placeholders. Not a command
+       * field, so the ledger, trace and mirror writers never see them.
        */
       secrets?: ReadonlyArray<{ name: string; value: string }>;
     },
@@ -359,19 +354,9 @@ export class BrowserdClient {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          // STAMPED HERE, once, rather than at each of the dozen callers.
-          // Every command this client sends speaks this build's wire by
-          // definition, and a caller that had to remember would eventually
-          // forget on the one path that mattered.
-          //
-          // EXPLICIT rather than by spread order. A caller that deliberately
-          // stamps its own version still wins — that affordance is what lets a
-          // test drive an old daemon on purpose — but an explicit `undefined`
-          // no longer does: under a leading-default spread it overwrote the
-          // stamp with `undefined`, `JSON.stringify` then dropped the field
-          // entirely, and the daemon's per-command mismatch gate was silently
-          // switched off for that command. `??` says which of the two cases is
-          // meant instead of leaving it to where the spread sits.
+          // Stamped once here for every caller. `??` rather than a spread
+          // default, so an explicit `undefined` cannot erase the stamp while a
+          // test can still pin an old version.
           command: {
             ...command,
             protocolVersion: command.protocolVersion ?? BROWSERD_PROTOCOL_VERSION,

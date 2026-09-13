@@ -645,16 +645,8 @@ async function startSession(
   );
   const driver = new ChromiumDriver(context, {
     lease,
-    // Read from the LOCAL process's own environment: this driver runs in the
-    // inspector, not in a sandbox, so there is no boot recipe to forward a
-    // flag through. A developer dogfooding one sets it where they start the
-    // app.
-    //
-    // Through `deps.env` rather than `process.env` directly, like every other
-    // environment read on this path (`wantsHeadedWindow`,
-    // `resolveLocalBrowserSurface`): it defaults to `process.env`, so the
-    // behaviour is the same, and a test that injects an env gets the session
-    // it configured instead of the one the runner happens to be in.
+    // This driver runs in the inspector process, so flags come from its own
+    // env (via `deps.env`, so tests can inject one).
     features: parseBrowserdFeatures(deps.env),
     /**
      * The Playground's browser follows its panel; every other caller does not.

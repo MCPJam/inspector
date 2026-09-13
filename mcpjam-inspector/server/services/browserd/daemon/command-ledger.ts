@@ -86,27 +86,13 @@ export type BrowserLedgerCommandRecord = {
   /** Present when the value was redacted (`type`). Shape, never content. */
   redactedValue?: { redacted: true; chars: number };
   /**
-   * The `{{secret:NAME}}` text the caller sent, recorded VERBATIM.
-   *
-   * A placeholder is not a credential — it is a NAME the user chose, and the
-   * value it stands for never entered the command at all. So the right record
-   * is the placeholder itself, and `{redacted: true, chars: 13}` beside it
-   * would be worse than useless: thirteen is the length of `{{secret:PW}}`,
-   * which tells a reader nothing true about what was typed.
-   *
-   * This is what makes a login legible in a trace — "typed GITHUB_PASSWORD
-   * into the password field, then submitted" — with nothing in the row a
-   * reader could turn back into the credential.
+   * The `{{secret:NAME}}` text the caller sent, verbatim. A placeholder is a
+   * name, not a credential, so recording it keeps a login legible in a trace.
    */
   placeholderValue?: string;
   /**
-   * `fill_form` only: one entry per field, in the order they were filled.
-   *
-   * Recorded under the SAME policy as a single `type`, field by field — a
-   * form's password box is exactly as sensitive as a `type` into it, and
-   * `fill_form` is how a login is usually done. Before this, a `fill_form` row
-   * named the verb and nothing else, so the one command that fills a whole
-   * login form was the one a trace could say least about.
+   * `fill_form` only: one entry per field, in fill order, redacted under the
+   * same policy as `type`.
    */
   fields?: Array<{
     selector?: string;
@@ -114,13 +100,7 @@ export type BrowserLedgerCommandRecord = {
     redactedValue?: { redacted: true; chars: number };
     placeholderValue?: string;
   }>;
-  /**
-   * Whether Enter followed (`type`, `fill_form`).
-   *
-   * The difference between "typed a credential into a field" and "typed a
-   * credential and submitted the form" is usually the whole question being
-   * asked of the trace, and the row could not answer it.
-   */
+  /** Whether Enter followed (`type`, `fill_form`). */
   submit?: boolean;
   /** `navigate` only, already stripped of query and fragment. */
   url?: string;
@@ -342,12 +322,9 @@ export function sanitizeLedgerUrl(value: unknown): string | undefined {
  * this function records what it was told to record.
  */
 /**
- * The capture policy for ONE typed string, shared by `value` and each field.
- *
- * Three outcomes, and the order matters: a placeholder is recorded verbatim
- * BEFORE the `type` redaction gets a chance to describe it as N characters,
- * because N would be the length of `{{secret:NAME}}` — a true statement about
- * the wrong string.
+ * The capture policy for one typed string, shared by `value` and each field.
+ * Placeholders are checked first, so their length is never reported as the
+ * typed value's.
  */
 function redactTypedValue(
   value: string | undefined,
@@ -358,9 +335,6 @@ function redactTypedValue(
   "value" | "redactedValue" | "placeholderValue"
 > {
   if (typeof value !== "string") return {};
-  // NOT A CREDENTIAL. The value it stands for never entered this command, and
-  // the name is the user's own — so recording it costs nothing and is the only
-  // thing that makes the row explain itself.
   if (hasSecretPlaceholder(value)) return { placeholderValue: value };
   // `press` keys, `select` options and scroll amounts are not secrets and a
   // trace without them cannot explain what happened. `type` is.

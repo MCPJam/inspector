@@ -138,21 +138,9 @@ export { BROWSER_BUILT_IN_TOOL_ID };
 const MODEL_ERROR_MAX_BYTES = 4_000;
 
 /**
- * A message we did NOT write, on its way into the model's context.
- *
- * Two things, in this order:
- *
- *  1. BOUNDED. A daemon error can be a whole Playwright stack trace, and an
- *     unbounded one spends a model's context on a failure.
- *  2. SCRUBBED of credential shapes. The daemon scrubs its own strings now,
- *     but the hosted fleet REUSES running daemons across deploys — a new
- *     server routinely talks to an old daemon, which is exactly the daemon
- *     that has no scrub.
- *
- * Capped before scrubbed, so a cut cannot slice a replacement in half and
- * leave `[reda` at the end of the line.
- *
- * Applied to ERRORS, never to page content. @see shared/secret-shape-redaction
+ * Cap, then scrub credential shapes from, an error message bound for the model.
+ * Needed server-side because hosted daemons are reused across deploys and an
+ * older one does not scrub. Capping first keeps a redaction from being cut.
  */
 function forModel(text: string): string {
   const capped = capText(text, MODEL_ERROR_MAX_BYTES);
@@ -163,19 +151,9 @@ const VIEWPORT_MAX_W = MAX_SESSION_VIEWPORT.width;
 const VIEWPORT_MAX_H = MAX_SESSION_VIEWPORT.height;
 
 /**
- * The act verbs THE MODEL is offered, written out rather than derived.
- *
- * Written out because `z.enum` wants a literal tuple, and derived-and-asserted
- * because the derivation is the actual rule:
- *
- *   published contract − the tab verbs + the daemon-only verbs
- *
- * The model gets `tabId` on every call, so `close_tab`/`activate_tab` would be
- * a second way to say the same thing; `fill_form` goes the other way — the
- * daemon has it, `/v1` does not yet publish it, and the model has always been
- * able to use it. `shared/__tests__/browser-agent-contract-parity.test.ts`
- * checks this list against that formula, so the two cannot drift apart
- * silently the way they did before anything walked them.
+ * Act verbs offered to the model: published contract minus the tab verbs
+ * (the model passes `tabId` instead) plus daemon-only verbs. The parity test
+ * checks this formula.
  */
 export const BROWSER_ACT_TOOL_VERBS = [
   "click",
@@ -247,51 +225,21 @@ export interface BrowserToolsOptions {
   projectId: string;
   executionScope?: ExecutionScope;
   /**
-   * WHAT ELSE this turn's browser commands belong to.
-   *
-   * Echoed onto the ledger row, never interpreted. The daemon has carried it
-   * since the ledger existed and only `routes/mcp/computers.ts` — the CODING
-   * AGENT door — ever produced one: every command the MODEL sent arrived with
-   * a bare `commandId` and nothing joining it to the chat turn, eval iteration
-   * or swarm that caused it. So a ledger row could be read, and could not be
-   * traced back to why it happened.
-   *
-   * `toolCallId` is filled per call from the AI SDK's execute options rather
-   * than here; this carries what the SURFACE knows.
+   * Surface ids echoed onto ledger rows, never interpreted. `toolCallId` is
+   * added per call.
    */
   correlation?: BrowserCommandCorrelation;
   /**
-   * The credentials this turn may type into a page WITHOUT the model reading
-   * them.
-   *
-   * A model with a browser and a password types the password — literally, as a
-   * string, in a tool call — and that value then lands in the tool-call
-   * arguments (persisted verbatim), in the accessibility tree that comes
-   * straight back, in the ledger row and in the model's own context, where it
-   * is re-read on every later step. So the model has to be TOLD the secret in
-   * order to use it, which is the one thing materialized delivery exists to
-   * avoid everywhere else.
-   *
-   * With this, the model writes `{{secret:NAME}}`, the value travels BESIDE
-   * the command, the daemon substitutes at the last moment and scrubs the
-   * placeholder back into everything the page hands over afterwards.
-   *
-   * ABSENT MEANS NO PLACEHOLDER WORKS, and a surface that has not wired this
-   * refuses every name as unknown rather than silently typing one — the same
-   * fail-closed direction `secretEnv` takes for bash. The wording the model
-   * reads is byte-identical when there is nothing to offer, so a turn with no
-   * secrets sends exactly the tool definitions it sent before this existed.
+   * Credentials the model may type as `{{secret:NAME}}` without reading them.
+   * The value travels beside the command and the daemon substitutes it. Absent
+   * means every placeholder is refused.
    */
   secrets?: {
     /** Materialized `{name, value}` pairs, already resolved for this turn. */
     available: ReadonlyArray<{ name: string; value: string }>;
     /**
-     * Names this environment HAS but whose value never enters this process.
-     *
-     * A brokered secret is injected at the egress transform, so there is
-     * nothing here to type. Separate from `available` so the refusal can say
-     * which of the two problems it is; a surface that cannot find out passes
-     * nothing and every unusable name reads as unknown, which is safe.
+     * Brokered names: injected at egress, so never typeable. Kept separate so
+     * the refusal can say why.
      */
     brokered?: readonly string[];
     /** Fired with the NAMES (never values) that actually reached a browser. */
@@ -638,12 +586,6 @@ function unwrapCommand(response: {
   if (!result.ok) {
     return {
       ok: false,
-      // CAPPED THEN SCRUBBED, and both are for a string we did not write. A
-      // daemon error can be a whole Playwright stack trace, and it routinely
-      // quotes the URL that failed — query string, `?api_key=…` and all. The
-      // daemon scrubs its own, so this is what covers a daemon OLDER than the
-      // scrub: the hosted fleet reuses running daemons across deploys, so
-      // "the server is new" never implies "the daemon is".
       error: forModel(
         result.error ?? "the browser could not complete the action",
       ),
@@ -1082,23 +1024,9 @@ export function buildBrowserTools(
   let handoffDeadline: number | undefined;
   const engine: BrowserEngine = opts.engine ?? "hosted";
   /**
-   * The names the model may write as `{{secret:NAME}}`, and whether to say so.
-   *
-   * NAMES ONLY, never values — the entire point is that the model can use a
-   * credential it has not been told. A name is not a secret: the user chose
-   * it, it is already visible wherever secrets are configured, and without it
-   * the feature is unusable (a model cannot reference what it cannot name).
-   *
-   * THE HOSTED ENGINE ONLY. The local engine drives the user's own Chromium
-   * through a different path, and substituting there would mean shipping a
-   * project credential to a machine this server does not run on; advertising
-   * a placeholder that will be refused is worse than not offering it.
-   *
-   * `secretNote` is EMPTY STRING when there is nothing to offer, which makes
-   * the description the model reads byte-identical to what it was before this
-   * existed — that is what keeps the host-configuration hash from rotating for
-   * every turn that has no secrets, and `describeBrowserTools` deliberately
-   * passes none so a tools pane always shows the stable wording.
+   * Secret names (never values) offered to the model, hosted engine only: the
+   * local engine would ship a credential to a machine we do not run. An empty
+   * `secretNote` keeps descriptions, and the host-config hash, unchanged.
    */
   const secretNames =
     engine === "hosted"
@@ -1117,29 +1045,13 @@ export function buildBrowserTools(
         "Pictures resume once the page moves on."
       : "";
   /**
-   * THE SERVER'S OWN BELT, over the daemon's braces.
-   *
-   * The daemon already replaces every value it typed, and that is the real
-   * mechanism — it catches the tree, the page text, the DOM signal, a console
-   * line and the URL after a GET submit, because it knows what it typed and
-   * when. This does not replace it and is not a second implementation of it.
-   *
-   * It exists for the cases the daemon's registry cannot cover, all of which
-   * are real: a browser running a build that predates the substitution (the
-   * command is refused, but an OBSERVATION of a page somebody already signed
-   * into is not), a value that reached the page by some route other than this
-   * turn's typing, and a daemon whose registry was reset by a relaunch while
-   * the page kept its session.
-   *
-   * NULL when this turn has no secrets, which is the overwhelmingly common
-   * case and costs exactly one comparison per tool result.
+   * Server-side backstop to the daemon's scrub of typed values, for daemons
+   * that predate it or lost their registry on relaunch. Null without secrets.
    */
   const serverScrubber =
     secretNames.length > 0
       ? createSecretScrubber(opts.secrets?.available ?? [], {
-          // The same spelling the model wrote and the daemon gives back — a
-          // `[secret:NAME]` here would make the belt and the braces disagree
-          // about what the field says.
+          // Match the daemon's placeholder spelling.
           replacement: (name) => `{{secret:${name}}}`,
         })
       : null;
@@ -1362,25 +1274,11 @@ export function buildBrowserTools(
        * the observation the act was decided from.
        */
       raw?: boolean;
-      /**
-       * The AI SDK's id for the tool call that produced this command.
-       *
-       * Threaded through `send` rather than read at the top, because one model
-       * step can emit several browser calls and each gets its own id — the
-       * whole point of recording it is telling them apart on the ledger.
-       *
-       * Optional: the server's OWN reads (the page-tool revision check, the
-       * origin recovery) are not tool calls and correctly carry nothing.
-       */
+      /** AI SDK tool call id; absent for the server's own internal reads. */
       toolCallId?: string;
       /**
-       * Values for the `{{secret:NAME}}` placeholders this action carries.
-       *
-       * Threaded through `send` rather than folded into the action, and that
-       * is the whole design: the action is what reaches the ledger row,
-       * `/v1/trace` and the durable mirror, so it must keep the placeholders
-       * the model wrote. The values ride alongside as far as the daemon, where
-       * they are substituted at the last moment.
+       * Placeholder values, kept out of the action because the action is
+       * persisted to the ledger and trace.
        */
       secrets?: ReadonlyArray<{ name: string; value: string }>;
     },
@@ -1389,16 +1287,8 @@ export function buildBrowserTools(
     try {
       handle = await state.handle(args.signal);
     } catch (error) {
-      // A WIRE MISMATCH IS AN ANSWER, not a tool crash.
-      //
-      // `ensureBrowserSession` relaunches a daemon it cannot talk to, silently
-      // and first. When that relaunch also fails it now throws a NAMED error —
-      // and before this catch existed the model read the raw boot timeout
-      // ("browserd did not report listening within 30000ms"), which says
-      // nothing about the cause and reads like a transient hiccup worth
-      // retrying forever. Everything else still propagates: a tool that
-      // swallowed unknown failures into `{ok:false}` would hide a real fault
-      // behind a sentence the model would try to work around.
+      // A protocol mismatch (after a failed relaunch) becomes a readable
+      // refusal; any other error still propagates.
       if (error instanceof BrowserProtocolMismatchError) {
         return {
           ok: false,
@@ -1415,21 +1305,13 @@ export function buildBrowserTools(
       ? state.tokenFor(args.tabId, handle.bootId)
       : undefined;
     const commandId = randomUUID();
-    // MERGED PER CALL, surface first: the surface knows the chat session, the
-    // eval iteration or the swarm, and only the AI SDK knows which tool call
-    // this is. `toolCallId` is what joins a ledger row to the exact call in
-    // the transcript, which is the join a person reading a trace actually
-    // wants — and the one nothing produced for a model command.
     const correlation: BrowserCommandCorrelation | undefined = (() => {
       const merged = {
         ...(opts.correlation ?? {}),
         ...(args.toolCallId ? { toolCallId: args.toolCallId } : {}),
       };
       if (Object.keys(merged).length === 0) return undefined;
-      // VALIDATED with the same rule the coding-agent door uses, because this
-      // reaches the same durable rows. An oversized or nested map is dropped
-      // whole rather than half-written: a correlation is a convenience, and
-      // failing a browser command over one would be absurd.
+      // An invalid map is dropped whole rather than failing the command.
       return isBrowserCommandCorrelation(merged) ? merged : undefined;
     })();
     const command: BrowserCommand = {
@@ -1542,12 +1424,8 @@ export function buildBrowserTools(
               command.source,
             )
           : undefined;
-      // ASKED BEFORE IT IS USED, exactly as the page-tool binding gate above
-      // is. A daemon that predates this substitutes nothing, so the literal
-      // `{{secret:NAME}}` would be typed into somebody's login form and
-      // reported as a success — which the model then reads as a wrong
-      // password. Costing a status round trip is fine here: this branch is
-      // only reached by a command that actually carries a credential.
+      // An older daemon would type the literal placeholder and report
+      // success, so check its features first.
       if (args.secrets?.length) {
         try {
           const status = await handle.client.status({
@@ -1579,25 +1457,15 @@ export function buildBrowserTools(
         // Approval, handoff and queue waits may outlive the grant checked at
         // handle resolution. Re-check immediately before sending control.
         await state.verifyConsent();
-        // BEFORE THE AWAIT, which is the whole point and which the placement
-        // after it quietly contradicted. The question this callback answers is
-        // "did anything actually receive it", asked before deleting a
-        // credential believed dormant — so it must fire when the value LEAVES,
-        // not when a reply comes back. A daemon that received the POST and
-        // then timed out, or a socket that dropped after the body went, both
-        // put the credential on a box while recording that nothing ever had
-        // it. False "never delivered" is the dangerous direction here.
-        //
-        // NAMES ONLY, and it never throws into this path: the callback is a
-        // best-effort stamp, and a browser command must not fail over one.
+        // Fired before the await: the value may reach the daemon even if the
+        // reply fails, and a false "never delivered" is the dangerous error.
         if (args.secrets?.length) {
           try {
             opts.secrets?.onDelivered?.(
               args.secrets.map((secret) => secret.name),
             );
           } catch {
-            // Recorded nowhere on purpose: this is a bookkeeping nicety, and
-            // the command it rides is the thing the user is waiting for.
+            // Best-effort; must not fail the command.
           }
         }
         response = await client.sendCommand(
@@ -1605,9 +1473,7 @@ export function buildBrowserTools(
           handle.bootId,
           {
             ...(args.signal ? { signal: args.signal } : {}),
-            // A SIBLING of the command, never a field on it: the command is
-            // echoed onto the ledger row and into the durable mirror, and a
-            // value there would be written before anything could scrub it.
+            // Beside the command, never in it: the command is persisted.
             ...(args.secrets?.length ? { secrets: args.secrets } : {}),
           },
         );
@@ -1759,10 +1625,7 @@ export function buildBrowserTools(
       invokeVerb: built.includes("browser_webmcp_invoke"),
     });
     if (!serverScrubber) return shown;
-    // THE SCREENSHOT IS SPLIT OUT, like the daemon's own wrapper does it: it
-    // is base64 image data, a registered value cannot meaningfully occur in
-    // it, and scanning a megabyte of it per observation for a needle that
-    // cannot be there is pure cost.
+    // Skip the base64 screenshot; a value cannot occur in it.
     const { screenshot, ...rest } = shown;
     return {
       ...serverScrubber.scrubDeep(rest),
@@ -1944,11 +1807,8 @@ export function buildBrowserTools(
               "`viewport`, and pick a point inside it.",
           };
         }
-        // A `{{secret:NAME}}` NEVER REACHES THE PAGE AS ITSELF. Planned here,
-        // before the command is built, so an unusable name is refused while
-        // the page is untouched: every failure shape ends with a literal
-        // `{{secret:GITHUB_PASSWORD}}` typed into a real login form, reported
-        // as a success, and read by the model as a wrong password.
+        // Plan placeholders before building the command so an unusable name
+        // is refused before anything is typed.
         const secretPlan = planSecretPlaceholders({
           verb,
           ...(value !== undefined ? { value } : {}),
@@ -1959,9 +1819,6 @@ export function buildBrowserTools(
         if (secretPlan.refusal) return { error: secretPlan.refusal.message };
         const withSecrets = secretPlan.deliver.length > 0;
         if (withSecrets && engine !== "hosted") {
-          // Reached only when a surface wired secrets for a local turn: the
-          // note above is never shown on this engine, so the model got here
-          // from a placeholder it invented or carried over from a hosted turn.
           return {
             error:
               "secret_engine_unsupported: this browser runs on the user's own " +
@@ -1998,14 +1855,8 @@ export function buildBrowserTools(
               // costs, with one fewer round trip. Flip this to "a11y" once
               // acts accept refs.
               //
-              // EXCEPT WHEN A SECRET WAS JUST TYPED. The scrub on the way back
-              // is a string replacement, and a picture is not a string: a site
-              // that does not mask the field — a "show password" toggle, a
-              // one-time-code box, a plain API-key field — renders the value
-              // into the screenshot, where nothing can take it out again. The
-              // tree still says `{{secret:NAME}}`, so the model loses nothing
-              // it could have acted on. An explicit `none` is left alone: less
-              // is never the unsafe direction.
+              // No screenshot after typing a secret: an unmasked field would
+              // draw the value into the image, which cannot be scrubbed.
               observe: withSecrets
                 ? observe === "none"
                   ? "none"
@@ -3193,24 +3044,9 @@ export function toBrowserModelOutput({ output }: { output: unknown }): {
 }
 
 /**
- * Scrub credential shapes out of the two MESSAGE fields a page can write.
- *
- * `console[].text` and `network[].failure`, and nothing else. Both are
- * page-authored or upstream-authored strings that nobody reads for their
- * content, and both are where a credential actually shows up in practice: a
- * failed fetch logs its own URL with the query string on it, and an SDK logs
- * the token it just refreshed.
- *
- * NOT `a11y`, `text`, `dom`, `dialog` or `result`. Those are the page, and the
- * model is reading them to decide what to do; a false positive there hides the
- * content instead of protecting anything — a field whose visible value happens
- * to look like a key would come back `[redacted]` and the model would type
- * over it.
- *
- * THE DAEMON ALREADY DOES THIS. This exists because the hosted fleet reuses
- * RUNNING daemons across deploys, so a new server routinely talks to a daemon
- * built before the scrub existed. It is idempotent, so doing it twice costs a
- * pass over strings that no longer match.
+ * Scrub credential shapes from `console[].text` and `network[].failure` only;
+ * page content is left alone because a false positive would hide what the
+ * model reads. Duplicates the daemon's idempotent scrub for older daemons.
  */
 function scrubPageMessages(
   rest: Record<string, unknown>,
@@ -3448,9 +3284,7 @@ function present(
 ): Record<string, unknown> {
   if (!outcome.ok) {
     return {
-      // Belt to `unwrapCommand`'s braces: errors reach this function from the
-      // tool's own catch blocks and from the refusal paths too, not only from
-      // a daemon result.
+      // Also covers errors from local catch blocks and refusals.
       error: forModel(outcome.error),
       ...(outcome.output !== undefined ? { page: outcome.output } : {}),
     };

@@ -96,12 +96,7 @@ export interface EvalIterationVerdictInput {
   pinnedToolErrors: ToolErrorRecord[];
   /** Widget interaction-check failures, AFTER the caller flushed active checks. */
   scriptedCheckFailures: { toolName: string; reason: string }[];
-  /**
-   * Whether this iteration shows any agent activity at all.
-   *
-   * OPTIONAL, and absent means "do not ask" — every existing caller and every
-   * existing fixture gets the verdict it always got. @see assessAgentActivity
-   */
+  /** Absent means "do not ask". @see assessAgentActivity */
   agentActivity?: AgentActivityAssessment;
 }
 
@@ -194,16 +189,8 @@ export function buildEvalIterationVerdict(
     passed = false;
   }
 
-  // NOTHING RAN. Last, and at the verdict boundary rather than only as a score
-  // row, because under the `shadow` and `off` grading modes the score rows do
-  // not decide anything and this boolean still does — a guard that only
-  // emitted a row would let a vacuous pass stand in exactly the modes most
-  // runs use.
-  //
-  // The matcher is satisfied when every expected call was made and none was
-  // forbidden, and a model that never ran made no forbidden call either. On a
-  // negative case, or one whose predicates read an empty transcript, "nothing
-  // happened" and "it behaved perfectly" are the same verdict.
+  // Nothing ran. Enforced here as well as by a score row, because under
+  // `shadow` and `off` grading the rows decide nothing and this boolean does.
   if (passed && input.agentActivity?.status === "no_agent_activity") {
     passed = false;
   }

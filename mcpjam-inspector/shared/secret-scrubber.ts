@@ -87,18 +87,12 @@ export type SecretScrubber = {
 };
 
 /**
- * What a registered value is replaced BY.
+ * What a registered value is replaced by.
  *
- * `[secret:NAME]` everywhere a value leaked ACCIDENTALLY — a command that
- * echoed its environment, a client that logged its headers. It reads as a
- * redaction, which is what it is.
+ * `[secret:NAME]` by default, for values that leaked accidentally.
  *
- * The browser path wants `{{secret:NAME}}` instead, and the difference is not
- * cosmetic. There the value was typed on PURPOSE, through a placeholder the
- * model wrote; giving it back the same spelling it sent means the accessibility
- * tree it reads afterwards says exactly what it asked for, and the model can
- * carry on reasoning about the field without ever learning the value. A
- * `[secret:NAME]` there would read as "something was hidden from you".
+ * The browser path passes `{{secret:NAME}}` so the tree the model reads back
+ * shows the placeholder it typed, never the value.
  */
 export type SecretReplacement = (name: string) => string;
 

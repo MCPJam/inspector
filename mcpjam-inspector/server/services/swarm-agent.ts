@@ -473,12 +473,8 @@ export async function createJourneyRun(
       ...(args.environmentIds?.length
         ? { environmentIds: args.environmentIds }
         : {}),
-      // ASSERTED BY THIS PROCESS, never taken from a caller: we are the runner,
-      // so we are the only honest source for what we can execute — the same
-      // rule `eval-disclosure.ts` states for the suite side. A backend that
-      // predates the arg ignores it; one that reads it uses it to decide
-      // whether an environment's materialized secrets make the wave
-      // unrunnable. @see services/evals/runner-capabilities.ts
+      // Asserted by this process, never a caller: the runner is the only
+      // honest source for what it can execute.
       runnerCapabilities: [...runnerCapabilities()],
     },
     NON_LLM_TIMEOUT_MS,

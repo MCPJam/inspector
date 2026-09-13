@@ -1494,10 +1494,8 @@ chatV2.post("/", async (c) => {
           }
         : undefined;
 
-    // WHAT THE BROWSER MAY TYPE, from the list this turn already read. Never a
-    // second fetch: `?? []` folds a FAILED read into "no secrets", which for
-    // this path is the same outcome as none — every placeholder is refused and
-    // nothing is typed — where for the box the two genuinely differ.
+    // Reuses this turn's list; a failed read means no secrets, so every
+    // placeholder is refused.
     const browserSecrets = await resolveBrowserSecrets({
       resolved: runtimeSecrets ?? [],
     });
@@ -1758,17 +1756,11 @@ chatV2.post("/", async (c) => {
         projectId: hostedBody.projectId,
         ...(executionScope ? { executionScope } : {}),
         ...(body.chatSessionId ? { chatSessionId: body.chatSessionId } : {}),
-        // WHAT ELSE this turn's browser commands belong to, echoed onto every
-        // ledger row. The chat session is what this surface knows; the AI SDK
-        // fills in `toolCallId` per call, which is the join a person reading a
-        // browser trace actually wants — "which tool call in the transcript
-        // produced this row".
         ...(body.chatSessionId
           ? { browserCorrelation: { chatSessionId: body.chatSessionId } }
           : {}),
-        // A SEPARATE delivery from `secretEnv` below, with its own gate: this
-        // one never reaches a box's environment, only one browser command, and
-        // only the hosted engine. @see utils/secrets/browser-secrets.ts
+        // Separate from `secretEnv`: these reach browser commands on the
+        // hosted engine only, never a box's environment.
         ...(browserSecrets.length > 0 ? { browserSecrets } : {}),
         ...(markSecretsDelivered
           ? { onBrowserSecretDelivered: markSecretsDelivered }

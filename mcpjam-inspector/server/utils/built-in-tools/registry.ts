@@ -268,33 +268,12 @@ export interface BuiltInToolContext {
   browserSessionScope?: BrowserSessionScope;
   /** Explicit profile pin from a host/eval config. */
   browserProfileId?: string;
-  /**
-   * WHAT ELSE this turn's browser commands belong to. Echoed onto every
-   * ledger row, never interpreted.
-   *
-   * Threaded per surface because only the surface knows: a Playground turn has
-   * a chat session and a turn id, an eval iteration has a run and an iteration
-   * id, a swarm has a swarm id. The daemon has carried this field since the
-   * ledger existed and only the coding-agent door ever filled it, so a row
-   * from a MODEL command could be read and not traced back to why it happened.
-   */
+  /** Surface ids (chat session, eval iteration, swarm) echoed onto browser ledger rows. */
   browserCorrelation?: Parameters<typeof buildBrowserTools>[0]["correlation"];
   /**
-   * MATERIALIZED project secrets this turn's browser may TYPE into a page,
-   * without the model ever reading one.
-   *
-   * A SEPARATE field from {@link secretEnv}, which is the same list for a
-   * different destination — and the separation is the policy, not a wiring
-   * accident. `secretEnv` is delivered only alongside a sandbox binding,
-   * because a shell that echoes its environment is the leak it guards against;
-   * the browser's gate is a different one (an ephemeral or member-owned
-   * Chromium, the hosted engine only), so a field that meant both would make
-   * one of the two gates unstatable.
-   *
-   * Threaded per surface for the same reason `browserCorrelation` is: only the
-   * surface knows what this turn is allowed to hold. ABSENT MEANS NO
-   * PLACEHOLDER RESOLVES — a surface that has not wired this refuses every
-   * name rather than silently typing one.
+   * Materialized secrets the browser may type without the model reading them.
+   * Separate from {@link secretEnv} because the two destinations have
+   * different gates. Absent means every placeholder is refused.
    */
   browserSecrets?: NonNullable<
     Parameters<typeof buildBrowserTools>[0]["secrets"]
@@ -831,15 +810,8 @@ export function resolveHostTools(
         ...(ctx.browserCorrelation
           ? { correlation: ctx.browserCorrelation }
           : {}),
-        // GATED HERE, once, rather than at each of the four surfaces. Off, the
-        // builder sees no secrets, advertises the wording it always did, and
-        // refuses every placeholder — whatever a surface has wired.
-        //
-        // EITHER LIST ADMITS IT. A brokered-only environment has no value to
-        // type and every reason to say so: gating on `browserSecrets` alone
-        // dropped the brokered names too, and a name the user can plainly see
-        // configured came back as `secret_unknown` ("check the spelling")
-        // instead of `secret_not_typeable` ("switch it to materialized").
+        // Gated once here for all surfaces. Brokered names alone also admit it,
+        // so they get `secret_not_typeable` rather than `secret_unknown`.
         ...(browserSecretPlaceholdersEnabled() &&
         (ctx.browserSecrets?.length || ctx.browserBrokeredSecretNames?.length)
           ? {

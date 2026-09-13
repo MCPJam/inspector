@@ -27,12 +27,8 @@ export type BrowserdCommandResponse =
   | { status: "stale_observation"; result?: BrowserCommandResult; bootId: string }
   | { status: "unknown_boot"; bootId: string }
   /**
-   * The daemon refused the command because it does not speak our wire.
-   *
-   * `running` is the version it announced, when it named one. A daemon too old
-   * to answer `protocol_mismatch` at all never produces this — it produces
-   * whatever its own build did with the command, which is the failure mode the
-   * per-command stamp exists to end.
+   * The daemon refused the command because it speaks a different protocol.
+   * `running` is the version it announced, if any.
    */
   | { status: "protocol_mismatch"; running?: number; bootId: string }
   /** A person is holding (or has parked) the browser — see `daemon/lease.ts`.
@@ -326,10 +322,8 @@ export function decodeCommandResponse(
         return { status: "unknown_boot", bootId };
       }
       if (body.error === "protocol_mismatch") {
-        // ITS OWN OUTCOME, not `expired`. Both are 409 and both mean "this did
-        // not run", but the recoveries are opposite: `expired` is retryable on
-        // the same daemon, and a protocol mismatch will refuse every retry
-        // until the daemon is replaced. Flattening them makes the caller loop.
+        // Not `expired`: that is retryable, while a mismatch refuses every
+        // retry until the daemon is replaced.
         return {
           status: "protocol_mismatch",
           running:

@@ -211,11 +211,8 @@ export function buildOtlpExport(input: WebMcpExportInput): unknown {
           ? { code: 1 } // STATUS_CODE_OK
           : {
               code: 2, // STATUS_CODE_ERROR
-              // An OTLP export LEAVES THE MACHINE. The message is a page's own
-              // error string, and a failing request logs its URL with the
-              // query on it — which is how `?api_key=…` ends up in somebody
-              // else's trace backend. Nothing else in this file carries
-              // page-authored free text.
+              // An OTLP export leaves the machine, and a page's error text can
+              // quote a URL with `?api_key=…`.
               message: redactSecretShapes(entry.errorMessage ?? entry.state),
             },
     });
@@ -230,11 +227,7 @@ export function buildOtlpExport(input: WebMcpExportInput): unknown {
     endTimeUnixNano: nanos(latest),
     attributes: [
       attr("webmcp.session.id", sessionId),
-      // REDACTED like the error message below. This is the page a person
-      // pointed the inspector at, and a URL is one of the places a credential
-      // shows up whole — `https://user:pass@host`, or a `?token=` a signed
-      // link carries. The shape redactor rewrites only those parts, so the
-      // span still says which page was inspected.
+      // A session URL can carry credentials (`user:pass@`, `?token=`).
       attr(
         "webmcp.session.url",
         redactSecretShapes(input.session?.url ?? ""),

@@ -9,11 +9,8 @@
 // the desktop template, not shipped in this artifact. The daemon reaches it via
 // the dynamic `import("playwright")` in chromium-launch.ts.
 //
-// `--check` runs the same build with nothing written and compares the source
-// hash it computes against the one already in `dist/`. It is what `pretest`
-// runs: the freshness unit test proves the same property, but only once vitest
-// is up, and a stale bundle is worth catching before a full suite has paid for
-// itself. Writes nothing either way.
+// `--check` writes nothing and fails if the source hash differs from the one
+// stamped in `dist/`; `pretest` runs it to catch a stale bundle early.
 import { build } from "esbuild";
 import { fileURLToPath } from "url";
 import { dirname, resolve } from "path";
@@ -133,11 +130,8 @@ const sourceFiles = metafileInputs;
 
 const sourceHash = computeSourceHash(sourceFiles);
 
-// `--check` stops here, having written nothing. The comparison is against the
-// hash STAMPED IN THE GENERATED FILE rather than against the bundle bytes:
-// esbuild's output is not byte-reproducible across versions, while the digest
-// is over the daemon's own sources, which is the question being asked — "was
-// this bundle generated after the last daemon edit".
+// Compare the stamped source hash, not bundle bytes: esbuild output is not
+// byte-reproducible across versions.
 if (checkOnly) {
   let stamped;
   try {

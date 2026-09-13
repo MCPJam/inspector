@@ -454,12 +454,8 @@ export function wrapPage(
       page.fill(selector, text, { timeout: ACT_TIMEOUT_MS }),
     press: (key) => page.keyboard.press(key),
     scrollBy: ({ dx, dy }) => page.mouse.wheel(dx, dy),
-    // MOVE FIRST, and that is the whole difference from `scrollBy` above.
-    // `mouse.wheel` delivers at the pointer's CURRENT position, which on a
-    // fresh page is (0, 0) and after an act is wherever the last click landed
-    // — so a scroll aimed at a list moved whatever happened to be under the
-    // mouse. Moving there first makes the wheel land on the element the
-    // caller named.
+    // Move first: `mouse.wheel` delivers at the pointer's current position,
+    // not at the element the caller named.
     async scrollAt(point, { dx, dy }) {
       await page.mouse.move(point.x, point.y);
       await page.mouse.wheel(dx, dy);
@@ -530,7 +526,7 @@ export function wrapPage(
         const bridge = session
           ? await attachWebMcp(page, session, localSecurity, localBudget)
           : null;
-        // Held so `frameSessions()` can stay synchronous — see its note.
+        // Held so `frameSessions()` can stay synchronous.
         attachedBridge = bridge;
         return bridge;
       })();
@@ -545,13 +541,9 @@ export function wrapPage(
       return cdpPromise;
     },
     frameSessions() {
-      // READ OFF THE BRIDGE, and only if it has already been built. This is
-      // SYNCHRONOUS on purpose: the a11y read is on the hot path of every
-      // observation, and `webmcp()` attaches a session — awaiting it here
-      // would make reading a tree attach a CDP session to every tab that never
-      // asked for one. The bridge is attached eagerly at tab creation
-      // (`chromium-driver.ts` calls `webmcp()` there), so by the time anything
-      // observes, this promise has almost always resolved.
+      // Synchronous on purpose: awaiting `webmcp()` on the a11y hot path would
+      // attach a session to tabs that never asked. The bridge is attached
+      // eagerly at tab creation, so it has almost always resolved.
       return attachedBridge?.attachedFrameSessions() ?? [];
     },
   };
@@ -991,13 +983,7 @@ export type AnyContext = {
  * visible and permanently outside the driver's tab map, where a headed user could
  * focus it while observations ran against a different tab (P2).
  */
-/**
- * How long a teardown waits on a browser that may never answer.
- *
- * Long enough that an ordinary close — which is milliseconds — is never cut
- * short, short enough that a hung one does not outlive the thing waiting on
- * it. @see adaptContext
- */
+/** How long a teardown waits on a browser that may never answer. @see adaptContext */
 const CONTEXT_CLOSE_GRACE_MS = 10_000;
 
 /** A timer that resolves, and is never the reason a process stays alive. */
@@ -1066,19 +1052,9 @@ export function adaptContext(
       // runs even when the context close fails, which is exactly the case
       // where something is already wrong.
       try {
-        // AND EVEN WHEN IT NEVER ANSWERS, which `finally` alone does not
-        // cover: a rejection runs the block below, an unsettled promise does
-        // not. `context.close()` waits for Chromium to acknowledge, and a
-        // renderer still draining a navigation — a submitted form, a
-        // beforeunload — can leave it pending indefinitely. Unbounded, the
-        // browser kill under `finally` is never reached, the process is
-        // orphaned anyway, and whoever awaited teardown waits forever: a
-        // server shutdown that never exits, or a test hook that times out.
-        //
-        // The close request has already been sent when the grace expires, so
-        // the context usually finishes on its own; and where it does not, the
-        // browser close below reaps it. Dropping the wait is what makes that
-        // line reachable.
+        // Bounded: `context.close()` can stay pending forever while a renderer
+        // drains a navigation, and `finally` does not run for an unsettled
+        // promise. The browser close below reaps whatever is left.
         await Promise.race([context.close(), closeGrace()]);
       } finally {
         await options.onClose?.();

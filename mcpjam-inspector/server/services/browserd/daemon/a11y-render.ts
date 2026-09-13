@@ -39,14 +39,7 @@ const FLAG_ATTRS = [
   "required",
   "focused",
   "readonly",
-  /**
-   * This element moves its own content when you wheel over it.
-   *
-   * Appended rather than inserted, so every existing line is byte-identical:
-   * no node carries this key unless `readScrollableNodes` found it, and the
-   * order of the flags before it is unchanged. It renders as
-   * `- generic [scrollable ref=e4]`.
-   */
+  /** A scroll container. Appended last so existing flag order is unchanged. */
   "scrollable",
 ] as const;
 
@@ -134,18 +127,9 @@ function line(
     String(value).length > 0 &&
     String(value) !== node.name
   ) {
-    // A SHORT SECRET, which no text scrubber can safely replace.
-    //
-    // The scrubber refuses anything under `MIN_SCRUBBABLE_LENGTH` because
-    // replacing a four-character value throughout a page's text would corrupt
-    // unrelated content — a page that says "test" would come back as a
-    // placeholder. Here that objection does not apply: this is the WHOLE
-    // contents of ONE control, so an exact match is not a coincidence, and a
-    // four-digit code typed into a field is exactly the kind of credential
-    // that falls under that floor.
-    //
-    // Exact equality only. A short value occurring INSIDE a longer field is
-    // the ambiguous case the floor exists for, and is left alone.
+    // Short secrets fall under the scrubber's `MIN_SCRUBBABLE_LENGTH`, but a
+    // control whose whole value matches exactly is safe to mask. Exact
+    // equality only; substrings are left alone.
     const masked = maskedValues?.get(String(value));
     // QUOTED, like the name and for the same reason: a textarea holding a
     // newline would otherwise end this line, and everything after it would
@@ -159,16 +143,8 @@ export interface RenderOptions {
   /** Shapes the "nothing to show" answer; the filtering itself happened earlier. */
   interactiveOnly?: boolean;
   /**
-   * Values to show as something else when a control holds one EXACTLY.
-   *
-   * For the short typed secrets the string scrubber will not touch. @see
-   * BrowserSecretRegistry.maskedValues — and note that this is the belt to its
-   * braces, not a replacement: anything long enough is already gone by the
-   * time a rendered tree leaves the daemon.
-   *
-   * Absent (the overwhelmingly common case) renders exactly as before: the
-   * lookup never happens, so a tree from a session that typed no credential is
-   * byte-identical to the one the previous release produced.
+   * Replacements for controls whose value matches exactly, for short typed
+   * secrets the scrubber skips. @see BrowserSecretRegistry.maskedValues
    */
   maskedValues?: ReadonlyMap<string, string>;
 }

@@ -1137,9 +1137,7 @@ export function createElectronPage(
         deltaY: dy,
       });
     },
-    // The same event AT A POINT. `scrollBy` above sends it at (0, 0), which is
-    // the top-left corner of the page and therefore almost never the scroll
-    // container a caller meant — a wheel there moves the document.
+    // `scrollBy` sends the wheel at (0, 0); this targets the scroller at a point.
     async scrollAt(point, { dx, dy }) {
       const cdp = await needCdp();
       await cdp.send("Input.dispatchMouseEvent", {

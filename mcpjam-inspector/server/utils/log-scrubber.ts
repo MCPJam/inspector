@@ -29,22 +29,12 @@ const FORBIDDEN_KEY_SUBSTRINGS = [
 
 const ALLOWLISTED_KEYS = new Set(["emaildomain"]);
 
-// THE CREDENTIAL PATTERNS NOW LIVE IN `shared/secret-shape-redaction.ts`.
+// Credential patterns live in `shared/secret-shape-redaction.ts`, shared with
+// the model path. They are factories: each regex has `g`, and a shared
+// instance's `lastIndex` would skip matches between calls.
 //
-// They were written here, for logs, and stayed here — with `logger.ts` as
-// their only consumer — while the browser path grew three places that hand
-// page-controlled and upstream-controlled text straight to a model. Moving
-// them made that path reachable; importing them back keeps this file the one
-// that decides what a LOG does, which is a stricter question than what a model
-// may read.
-//
-// The factories mint a fresh regex per call. Every one carries `g`, and a
-// global regex is stateful: a shared instance's `lastIndex` survives between
-// calls and silently skips the first match of every other string.
-//
-// `EMAIL_LIKE` stays HERE, deliberately. A log has no reason to carry an
-// address; a model reading a page does, and redacting one from an
-// accessibility tree would blank out the field it is trying to fill.
+// `EMAIL_LIKE` stays here: logs redact addresses, but a model reading a page
+// needs them.
 const EMAIL_LIKE = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
 
 function isForbiddenKey(key: string): boolean {
@@ -55,9 +45,7 @@ function isForbiddenKey(key: string): boolean {
 }
 
 function scrubString(s: string): string {
-  // The SAME patterns as the model path, with this file's own replacement
-  // strings: a log reader benefits from knowing which kind of secret was
-  // there, and existing log-scrubber tests pin these exact words.
+  // Same patterns as the model path, with log-specific replacement strings.
   return s
     .replace(authHeaderLike(), "$1[redacted]")
     .replace(tokenLike(), "Bearer [redacted-token]")

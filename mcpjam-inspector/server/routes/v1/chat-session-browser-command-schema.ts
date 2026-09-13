@@ -1,6 +1,5 @@
 import { z } from "zod";
-// DERIVED, not restated: the published verb list is the contract's, and a
-// hand-copied enum here is a surface that silently stops matching it.
+// Derived from the contract so this enum cannot drift from it.
 import { BROWSER_AGENT_ACT_VERBS } from "@/shared/browser-agent-contract";
 const id = z.string().min(1).max(128);
 export const commandSchema = z.discriminatedUnion("op", [

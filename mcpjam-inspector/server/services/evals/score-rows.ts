@@ -104,13 +104,7 @@ export type HostedScoreRowInputs = {
    * not run it.
    */
   toolMatchAuthored?: boolean;
-  /**
-   * Whether this iteration showed any agent activity. @see assessAgentActivity
-   *
-   * Both the DEFINITION and the ROW key off the same `no_agent_activity`
-   * status, unlike the tool-match pair above — there is no second pass here
-   * and no case where the guard has fired but its evidence is unavailable.
-   */
+  /** @see assessAgentActivity */
   agentActivity?: AgentActivityAssessment;
 };
 
@@ -210,8 +204,6 @@ export function hostedScoreDefinitionInputs(
           },
         }
       : {}),
-    // The DEFINITION exists only when the guard fired, so a normal run's
-    // `evaluationConfigHash` is byte-identical to every one ever recorded.
     ...(inputs.agentActivity?.status === "no_agent_activity"
       ? { agentActivityFired: true }
       : {}),
@@ -278,15 +270,9 @@ export function buildHostedScoreRows(
 
   const activityDefinition = byId.get(HOSTED_AGENT_ACTIVITY_SCORER_ID);
   if (activityDefinition && inputs.agentActivity?.status === "no_agent_activity") {
-    // AN ERROR ROW, not a failed one — the same distinction the judge-absence
-    // branch below makes, for the same reason. "Nothing ran" is a statement
-    // about MEASUREMENT, so the row carries no value, keeps the scorer in
-    // `unresolvedScorerIds`, and leaves its stage `notMeasured`. A 0 would
-    // attribute a defect to the server on a run that never took place.
-    //
-    // The `passed = false` this pairs with lives at the verdict boundary
-    // (`buildEvalIterationVerdict`), because under `shadow` and `off` grading
-    // modes these rows decide nothing and the boolean still does.
+    // An error row, not a 0: nothing was measured. The paired `passed = false`
+    // lives in `buildEvalIterationVerdict`, since rows decide nothing under
+    // `shadow` and `off` grading.
     rows.push(
       errorScoreResult(
         activityDefinition,

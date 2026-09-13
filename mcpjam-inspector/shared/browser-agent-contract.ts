@@ -83,19 +83,8 @@ export type BrowserAgentTarget =
   | { ref: string };
 
 /**
- * The published act verbs, AS A RUNTIME LIST.
- *
- * A list rather than a bare type union because this contract is checked, not
- * merely declared: `shared/__tests__/browser-agent-contract-parity.test.ts`
- * walks it against the daemon's own verbs, the `/v1` request schema, the SDK's
- * allowlist, the OpenAPI enum and the CLI's `--verb` help, and a type union
- * gives a test nothing to walk. Every one of those surfaces was written out by
- * hand, and `fill_form` is what happens when they drift: it reached the daemon
- * and never reached anything else.
- *
- * ADDING A VERB HERE PUBLISHES IT. That is the decision the list exists to
- * make visible — a verb added to the daemon alone stays daemon-only, named in
- * `DAEMON_ONLY_ACT_VERBS`, until someone puts it here on purpose.
+ * The published act verbs as a runtime list, so the parity test can check
+ * every surface against it. Adding a verb here publishes it.
  */
 export const BROWSER_AGENT_ACT_VERBS = [
   "click",
@@ -363,17 +352,8 @@ export type BrowserAgentRefusalCode =
   /** Provisioning or wake failed before a command could be sent. */
   | "browser_unavailable"
   /**
-   * The running browser daemon speaks a wire this server cannot talk to.
-   *
-   * ITS OWN CODE rather than `browser_unavailable`, because the recoveries
-   * differ and an agent can act on the difference: `browser_unavailable` is
-   * transient and worth retrying, where this one refuses every retry until the
-   * daemon has been replaced. The server relaunches automatically and silently
-   * first; this code only reaches a caller when that relaunch also failed.
-   *
-   * What it prevents is worse than a refusal. A daemon one protocol version
-   * behind has no case for `fill_form`, so it falls through its verb switch
-   * and answers `ok` for a form with every field still empty.
+   * The daemon speaks an incompatible wire protocol, and the automatic
+   * relaunch also failed. Unlike `browser_unavailable`, retrying will not help.
    */
   | "protocol_mismatch";
 

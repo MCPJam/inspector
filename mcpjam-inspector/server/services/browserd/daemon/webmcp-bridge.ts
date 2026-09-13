@@ -958,20 +958,8 @@ export class WebMcpBridge {
   }
 
   /**
-   * The attached CHILD-FRAME sessions, for a reader outside this bridge.
-   *
-   * READ-ONLY, and never the page's own session: the caller already has that
-   * one (it is how it reached this bridge), and handing it back under a frame
-   * id would invite a reader to treat the main document as a child.
-   *
-   * WHY A BRIDGE METHOD AT ALL. These sessions exist because the WebMCP
-   * bridge needs them, and it attaches them eagerly at tab creation. The
-   * accessibility reader needs exactly the same set — a document's AX tree
-   * does not descend into child documents, so without them NO iframe content
-   * is visible to the model at all — and the alternative, hoisting a shared
-   * frame-session registry out of this class, would re-wire the one piece of
-   * frame plumbing that has measured OOPIF semantics and a large test surface.
-   * This method NEVER triggers an attach; it reports what is already there.
+   * The attached child-frame sessions (never the main one), for the a11y
+   * reader, which needs them to see iframe content. Never triggers an attach.
    */
   attachedFrameSessions(): ReadonlyArray<{ frameId: string; cdp: CdpLike }> {
     return [...this.sessions.values()]

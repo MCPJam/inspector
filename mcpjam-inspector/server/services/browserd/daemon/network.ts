@@ -208,11 +208,8 @@ export class NetworkRing {
     if (update.statusText) row.statusText = update.statusText;
     if (update.mimeType) row.mimeType = update.mimeType;
     if (update.bytes !== undefined) row.bytes = update.bytes;
-    // SCRUBBED ON INSERT, not on read: the ring is what `dropNetworkSince`
-    // hands back and what a later observation re-reads, so a value stored raw
-    // is a value that survives every filter downstream of it. A failure
-    // message is an upstream string and routinely quotes the whole URL,
-    // query string included.
+    // Scrubbed on insert so no reader of the ring sees the raw value; failure
+    // messages often quote the full URL with its query string.
     if (update.failure) row.failure = redactForModel(update.failure);
     const headers = retainHeaders(update.headers);
     if (headers) row.headers = headers;

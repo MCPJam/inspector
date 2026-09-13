@@ -326,20 +326,11 @@ export interface ChromiumDriverOptions {
   webmcpOutputBytes?: number;
   /** Byte budget for one `observe {mode:"text"}` (L9). */
   pageTextBytes?: number;
-  /**
-   * Behaviour this build has but does not do by default. @see BrowserdFeatures
-   *
-   * Absent means the previous release's behaviour, exactly. Every flag here
-   * changes what the MODEL sees, and eval transcripts are diffed line by line.
-   */
+  /** Opt-in behaviour; absent means the previous release's. @see BrowserdFeatures */
   features?: BrowserdFeatures;
   /**
    * Where typed secrets are remembered, so observations can be scrubbed.
-   *
-   * Constructed here when absent, and exposed again by `secretRegistry()` —
-   * the executor wrapper reads it off the driver rather than being handed one,
-   * so the two cannot end up with different instances. Injectable only so a
-   * test can pre-register a value or read back what a command registered.
+   * Constructed when absent; injectable for tests.
    */
   secrets?: BrowserSecretRegistry;
   /**
@@ -409,13 +400,7 @@ const DEFAULT_SCROLL_STEP = 600;
  */
 const CLOSE_PENDING_TAB_GRACE_MS = 2_000;
 
-/**
- * How long teardown spends closing pages and viewports before moving on.
- *
- * Generous for the ordinary case — closing a handful of pages is milliseconds
- * — and finite for the one that is not, because everything left behind is
- * taken by the context close that follows. @see ChromiumDriver.close
- */
+/** How long teardown spends closing pages and viewports. @see ChromiumDriver.close */
 const CLOSE_SURFACE_GRACE_MS = 5_000;
 
 /**
@@ -477,37 +462,14 @@ function dropIndex(
   return list[last]?.id === activeTabId && list.length > 1 ? last - 1 : last;
 }
 
-/**
- * How long an observation will wait for the tab's WebMCP bridge. @see settleBridge
- *
- * Generous for what it covers — the attach is milliseconds once the page has a
- * CDP session — and short enough that the pathological case costs a pause
- * rather than the command.
- */
+/** How long an observation will wait for the tab's WebMCP bridge. @see settleBridge */
 const BRIDGE_SETTLE_MS = 2_000;
 
 /**
- * Give the bridge a moment to finish attaching, BUT NEVER WAIT ON IT.
- *
- * `frameSessions()` is synchronous on purpose — the a11y read is on the hot
- * path of every observation — and it answers off the bridge the tab started
- * attaching at creation. An observation that lands before that settles sees an
- * EMPTY session list, so `readAxForest` reads no out-of-process frame at all
- * and hands back a tree with the iframes' contents silently missing. That
- * window is small and exactly where it matters: the first observation after
- * opening or navigating a tab.
- *
- * BOUNDED, because the first attempt at this was a bare `await page.webmcp()`
- * and it deadlocked a real browser. `attachWebMcp` talks to the page, so on a
- * browser being torn down — or one whose WebMCP domain never answers — that
- * promise can simply never settle, and an unbounded await turns "an
- * observation missed an iframe" into "the command never returns and teardown
- * hangs behind it". Missing content is a bug; a hang is an outage.
- *
- * A timeout here is therefore not a guess at how long an attach takes. It is
- * the statement that this read does not depend on the attach: the common path
- * resolves in a microtask, and the pathological one degrades to exactly the
- * main-document tree the previous release produced.
+ * Give the bridge a moment to finish attaching, so the first observation after
+ * opening a tab does not see an empty `frameSessions()` and miss iframe content.
+ * Bounded: the attach can never settle on a dying browser, and missing frames
+ * beat a hung command.
  */
 async function settleBridge(page: DriverPage): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -519,8 +481,7 @@ async function settleBridge(page: DriverPage): Promise<void> {
       }),
     ]);
   } finally {
-    // CLEARED, or the pending timer keeps an otherwise-idle process (and a
-    // test runner) alive for two seconds after every observation.
+    // Cleared, or the timer keeps an idle process alive.
     if (timer !== undefined) clearTimeout(timer);
   }
 }
@@ -536,12 +497,7 @@ export class ChromiumDriver implements BrowserDriver {
   private readonly pageTextMaxBytes: number;
   /** Behaviour this build has but does not do by default. @see BrowserdFeatures */
   private readonly features: BrowserdFeatures;
-  /**
-   * Values this boot has typed into a page, and what to show instead.
-   *
-   * Always constructed, never populated except by a command that CARRIED a
-   * secret — so a session nobody has typed a credential into pays nothing.
-   */
+  /** Values this boot has typed into a page, and what to show instead. */
   private readonly secrets: BrowserSecretRegistry;
   private readonly lease:
     | Pick<
@@ -704,8 +660,6 @@ export class ChromiumDriver implements BrowserDriver {
       options.webmcpOutputBytes ?? DEFAULT_WEBMCP_OUTPUT_BYTES;
     this.pageTextMaxBytes =
       options.pageTextBytes ?? DEFAULT_PAGE_TEXT_MAX_BYTES;
-    // An empty bag, never undefined: every read is `features.x === true`, and
-    // a driver built with no options must behave as the last release did.
     this.features = options.features ?? {};
     this.secrets = options.secrets ?? createBrowserSecretRegistry();
     this.lease = options.lease;
@@ -742,12 +696,7 @@ export class ChromiumDriver implements BrowserDriver {
     return this.viewportPolicy;
   }
 
-  /**
-   * The values this boot has typed, for the scrub on the way back out.
-   *
-   * @see BrowserDriver.secretRegistry — shared by accessor so the stack's
-   * scrub wrapper and this driver can never hold different instances.
-   */
+  /** Shared by accessor so the scrub wrapper and driver hold one instance. */
   secretRegistry(): BrowserSecretRegistry {
     return this.secrets;
   }
@@ -1047,14 +996,9 @@ export class ChromiumDriver implements BrowserDriver {
       case "observe":
         return this.observe(tabId, action, permit);
       case "act": {
-        // SUBSTITUTED HERE, at the last moment before the verb runs, and never
-        // earlier: the action that reaches the ledger, `/v1/trace` and the
-        // durable mirror is the one the caller sent, placeholders and all.
-        //
-        // `resolveActSecrets` throws when a placeholder has no value, so a
-        // literal `{{secret:NAME}}` is never typed into somebody's login form
-        // even when the SERVER-side planner was bypassed — the `/v1` routes
-        // reach this same code, and so will whatever is written next.
+        // Substituted at the last moment, so the ledger and trace keep the
+        // placeholders. Throws on a missing value, so a literal
+        // `{{secret:NAME}}` is never typed, even via the `/v1` routes.
         let resolved = action;
         try {
           resolved = resolveActSecrets(action, context?.secrets);
@@ -1064,16 +1008,10 @@ export class ChromiumDriver implements BrowserDriver {
             error: error instanceof Error ? error.message : String(error),
           };
         }
-        // REGISTERED ONLY IF SOMETHING RESOLVED. A daemon nobody has typed a
-        // credential into holds nothing and scrubs nothing.
         if (resolved !== action && context?.secrets?.length) {
           this.secrets.register(context.secrets);
-          // AND WHERE, read BEFORE the verb runs. The value is about to be
-          // typed into the page showing this URL, and a submit may move the
-          // tab before anyone can ask again — so the page that RECEIVES it is
-          // recorded while that is still knowable. `withSecretScrub` reads it
-          // back to decide whether a later screenshot would be a picture of
-          // the credential. @see BrowserSecretRegistry.markTyped
+          // Record the receiving URL before the verb runs; a submit may move
+          // the tab. @see BrowserSecretRegistry.markTyped
           const typedPage = this.tabs.get(tabId)?.page;
           this.secrets.markTyped(typedPage ? safeUrl(typedPage) : undefined);
         }
@@ -1388,25 +1326,16 @@ export class ChromiumDriver implements BrowserDriver {
         "this browser cannot resolve refs; use a selector or coordinates",
       );
     }
-    // WHICH SESSION OWNS THIS NODE. A backend node id is meaningful only to
-    // the session that issued it, so an element inside an out-of-process
-    // iframe has to be resolved, focused and asked about on ITS session —
-    // asking the page's would answer "no such node" for an element that is
-    // plainly there.
-    //
-    // Absent `sessionFrameId` is the page's own session, which is every
-    // element on a page without cross-origin frames and every element of a
-    // same-process child (which shares its parent's session).
+    // A backend node id is meaningful only to the session that issued it, so
+    // an element in an out-of-process iframe must use that frame's session.
+    // Absent `sessionFrameId` means the page's own session.
     const owner = known.sessionFrameId
       ? entry.page
           .frameSessions?.()
           .find((session) => session.frameId === known.sessionFrameId)?.cdp
       : cdp;
     if (!owner) {
-      // The frame was attached when the tree was read and is gone now — it
-      // navigated, or its target went away. `stale_ref` rather than
-      // `target_not_found`: the element is not missing from a page we can see,
-      // the whole document it lived in has left.
+      // The frame navigated or went away since the tree was read.
       throw new ActError(
         "stale_ref",
         `the frame that held ${raw} has gone away; observe again and use a ` +
@@ -1417,10 +1346,7 @@ export class ChromiumDriver implements BrowserDriver {
       // The recovery path RE-READS THE PAGE's accessibility tree, which is an
       // observation — and the lease forbids observing as firmly as it forbids
       // acting. Asked here because the lookup above is an await.
-      //
-      // On the OWNER session: a recovery that re-read the page would look for
-      // the element in the wrong document and either miss it or find a
-      // same-named one outside the frame.
+      // On the owner session, or recovery searches the wrong document.
       const resolved = await resolveRefNode(owner, parsed!, known, permit);
       return {
         ...resolved,
@@ -1460,22 +1386,11 @@ export class ChromiumDriver implements BrowserDriver {
         "this browser cannot resolve refs; use a selector or coordinates",
       );
     }
-    // The element's OWN session, which for an out-of-process iframe is not the
-    // page's. @see resolveActRef
+    // The element's own session. @see resolveActRef
     const cdp = refNode.cdp ?? pageCdp;
-    // ACROSS THE FRAME BOUNDARY, when there is one to cross.
-    //
-    // `DOM.getBoxModel` answers in the TOP frame's viewport — but only for a
-    // node in the session it was asked on. An OOPIF is a different target, so
-    // its session's viewport is the iframe's own box with its origin at
-    // (0, 0); a point read there and dispatched to the page lands wherever
-    // that offset puts it. A SAME-PROCESS child needs none of this, which is
-    // why this only fires for a node with its own session.
-    // A FRAME REF WITH NO TOPOLOGY IS REFUSED, not quietly aimed at. Falling
-    // through to `pointForBackendNodeId` on the frame's own session reads a
-    // point in the IFRAME's coordinate space and dispatches it to the PAGE —
-    // a real coordinate, on whatever happens to sit there. Refusing sends the
-    // model back for a fresh tree, which is the only thing that can fix it.
+    // An OOPIF session's box model is in the iframe's own coordinates, so its
+    // points must be translated through the frame topology. Without topology,
+    // refuse rather than click a wrong page coordinate.
     if (refNode.cdp && refNode.sessionFrameId && !refs?.frames) {
       throw new ActError(
         "stale_ref",
@@ -1562,12 +1477,8 @@ export class ChromiumDriver implements BrowserDriver {
     const refLabel =
       target && "a11yRef" in target ? target.a11yRef : "the target";
     /**
-     * The PAGE's session — where INPUT goes.
-     *
-     * Keyboard input is dispatched to the page whatever document the focused
-     * element is in: `Input.dispatchKeyEvent` and `Input.insertText` go to
-     * whatever has focus in the browser, and an OOPIF's session does not own
-     * the browser's focus. Sending them to a frame session types into nothing.
+     * The page's session, where input goes: an OOPIF session does not own the
+     * browser's focus, so keys sent there type into nothing.
      */
     const needCdp = async () => {
       const cdp = await page.cdp();
@@ -1579,13 +1490,7 @@ export class ChromiumDriver implements BrowserDriver {
       }
       return cdp;
     };
-    /**
-     * The session that owns the REF'd NODE — where DOM calls go.
-     *
-     * `DOM.focus`, `DOM.resolveNode` and `Runtime.callFunctionOn` all take a
-     * backend node id, which only the session that issued it can resolve. The
-     * page's own for everything but an element inside an out-of-process frame.
-     */
+    /** The session that owns the ref'd node, where node-id DOM calls go. */
     const needOwnerCdp = async () => refNode?.cdp ?? (await needCdp());
 
     switch (action.verb) {
@@ -1631,23 +1536,14 @@ export class ChromiumDriver implements BrowserDriver {
         // type into whatever has focus (the model's previous click).
         if (refNode) {
           await replaceTextInNode(
-            // THE OWNER for focus and select-all, which are node-id calls.
             await needOwnerCdp(),
             refNode.backendNodeId,
             text,
             stillOurs,
-            // REF ONLY in this release. `fillSelector` is Playwright's own
-            // fill, which the model is steered away from anyway (a selector is
-            // CSS invented for a page seen as a tree), and changing both at
-            // once would make a regression report ambiguous about which path
-            // caused it.
+            // Ref path only; `fillSelector` keeps Playwright's fill.
             {
               keystrokes: this.features.keystrokeTyping === true,
-              // …AND THE PAGE for the text itself. Input goes to whatever has
-              // focus in the BROWSER, and an out-of-process frame's session
-              // does not own the browser's focus — keystrokes sent there type
-              // into nothing. Only set when the two actually differ, so a page
-              // without cross-origin frames sends exactly what it sent before.
+              // Text goes to the page session; set only when it differs.
               ...(refNode.cdp ? { inputCdp: await needCdp() } : {}),
             },
           );
@@ -1699,9 +1595,7 @@ export class ChromiumDriver implements BrowserDriver {
         // happened to be — the difference between Enter submitting the form
         // the model meant and Enter submitting whatever it clicked last.
         if (refNode) {
-          // Focus is a node-id call and goes to the OWNER; `page.press` goes
-          // through the engine to the browser's focused element, which is what
-          // this focus just made it.
+          // Focus via the owner; `page.press` then hits the focused element.
           const cdp = await needOwnerCdp();
           stillOurs();
           await focusBackendNodeId(cdp, refNode.backendNodeId);
@@ -1712,30 +1606,19 @@ export class ChromiumDriver implements BrowserDriver {
         // Default to one viewport-ish step down, the overwhelmingly common
         // intent, so a bare `scroll` does something useful.
         const [dx, dy] = parseScrollDelta(action.value);
-        // A TARGETED SCROLL, which this verb has always accepted and never
-        // performed. `scroll` with a ref resolved the node, ignored it, and
-        // wheeled at the pointer's current position — reporting success while
-        // the DOCUMENT moved behind the element the model named. A model that
-        // asked a long list to scroll saw the page jump instead and had no way
-        // to tell the two apart from the observation afterwards.
-        //
-        // NOT GATED: this is a bug fix, not a new behaviour. Nothing pins
-        // scroll-with-a-ref today, because there was nothing worth pinning.
+        // Targeted scroll: wheel at the ref or point so the container under it
+        // moves, not the document.
         if (refNode || point) {
           const at =
             refNode && page.scrollAt
               ? // NO OCCLUSION CHECK. A scroll container is very often under a
-                // sticky header or an overlay, and a wheel event reaches the
-                // scroller regardless — refusing here would refuse the case
-                // this exists for. `"none"` still refuses a target that is
-                // off-viewport, where a wheel would land on nothing.
+                // sticky header, and a wheel event reaches the scroller anyway.
                 await this.pointForRef(page, refNode, refLabel, "none", refs)
               : point;
           if (refNode) stillOurs();
           if (at && page.scrollAt) return page.scrollAt(at, { dx, dy });
         }
-        // No point, or an engine with no targeted scroll: the document, as
-        // before.
+        // Otherwise scroll the document.
         return page.scrollBy({ dx, dy });
       }
       case "drag": {
@@ -1765,8 +1648,6 @@ export class ChromiumDriver implements BrowserDriver {
           throw new Error("select needs the option value in `value`");
         }
         if (refNode) {
-          // `DOM.resolveNode` + `Runtime.callFunctionOn`: both node-id calls,
-          // both to the session that issued the id.
           const cdp = await needOwnerCdp();
           stillOurs();
           return selectOptionOnNode(
@@ -1782,10 +1663,8 @@ export class ChromiumDriver implements BrowserDriver {
       case "activate_tab":
       case "accept_dialog":
       case "dismiss_dialog":
-        // Handled by the caller before dispatch — `act` returns for all four
-        // above, so none of them reaches here. Listed anyway so the `never`
-        // in `default` is a real exhaustiveness check rather than one that
-        // only passes because these four keep the union non-empty.
+        // Handled by the caller before dispatch; listed so `never` below is a
+        // real exhaustiveness check.
         return;
       default: {
         // UNREACHABLE for this build's own union, and the reason it is here
@@ -1796,13 +1675,7 @@ export class ChromiumDriver implements BrowserDriver {
         // filled with every field still empty. `BROWSERD_PROTOCOL_VERSION`
         // exists to stop that pairing; this is what it costs if one slips
         // through.
-        //
-        // The `never` is the OTHER half, and it catches the mistake one build
-        // earlier: a verb added to `BROWSERD_ACT_VERBS` with no case above
-        // reaches this arm from THIS build's own union, and that is a
-        // compile error here rather than an `ok: true` for a form nobody
-        // filled. The cast below stays because the runtime value is a real
-        // verb string whatever the type says.
+        // The `never` makes a verb with no case above a compile error.
         const exhaustive: never = action.verb;
         throw new ActError(
           "act_failed",
@@ -2874,15 +2747,8 @@ export class ChromiumDriver implements BrowserDriver {
         (timer as { unref?: () => void }).unref?.();
       }),
     ]);
-    // BOUNDED FOR THE SAME REASON, and this is the half that matters: the
-    // context close below is what actually reaps the browser, and a page that
-    // will not close would otherwise stop us ever reaching it. `.catch` covers
-    // a rejection; neither it nor the loop covers a promise that simply never
-    // settles, which is what a renderer draining a navigation produces.
-    //
-    // Closing pages first is courtesy — it lets Chromium shut them down in
-    // order — so giving up on that courtesy costs nothing. The context close
-    // takes them with it.
+    // Bounded: a page close can hang forever, and the context close below is
+    // what actually reaps the browser.
     await Promise.race([
       this.closeSurfaces(),
       new Promise<void>((resolve) => {
@@ -3321,10 +3187,7 @@ export class ChromiumDriver implements BrowserDriver {
       this.a11yBudget,
     );
     const refs = assignRefs(tree);
-    // The BELT to the scrub wrapper's braces, and it only ever holds the
-    // values that wrapper cannot safely touch: a secret too short for a text
-    // scrubber to replace without corrupting unrelated page text. Empty for
-    // every session that has typed no credential, which is almost all of them.
+    // Secrets too short for the text scrubber to replace safely; masked here.
     const masked = this.secrets.maskedValues();
     const rendered = renderA11yTree(tree, {
       interactiveOnly: raw.filter === "interactive",
@@ -3341,10 +3204,8 @@ export class ChromiumDriver implements BrowserDriver {
           ]),
         ),
         ...(omittedSubtrees > 0 ? { omittedSubtrees, totalNodes } : {}),
-        // OUTSIDE the untrusted fence, and a number: a page cannot write a
-        // sentence into a count. It is there so a model reading a page with
-        // thirty ad iframes knows the tree is incomplete rather than
-        // concluding the frames are empty.
+        // Outside the untrusted fence, and a number a page cannot forge into
+        // prose; tells the model the tree is incomplete.
         ...(raw.framesOmitted ? { framesOmitted: raw.framesOmitted } : {}),
       },
       refMap: refs,
@@ -3381,9 +3242,7 @@ export class ChromiumDriver implements BrowserDriver {
     this.refs.set(tabId, {
       stateToken: result.stateToken,
       entries: refMap,
-      // BOUND TO THE SAME TOKEN as the entries, because a frame tree is a fact
-      // about one document: translating a coordinate through a topology from a
-      // different page walks the wrong chain of hosts.
+      // Bound to the same token: a topology is a fact about one document.
       ...(frames && frames.size > 0 ? { frames } : {}),
     });
   }
@@ -3637,11 +3496,7 @@ export class ChromiumDriver implements BrowserDriver {
     | { ok: false; error: BrowserCommandResult }
   > {
     const filter = action.filter ?? "interactive";
-    // ONLY WHEN SOMETHING IS GOING TO READ A FRAME. `readAxForest` is the sole
-    // consumer of `frameSessions()`, and it runs only under this flag — so
-    // with the flag off (every deployment today) this costs not a bounded wait
-    // but no wait at all, and the read is byte-for-byte the one the previous
-    // release did.
+    // Only `readAxForest` needs frame sessions, so wait only under its flag.
     if (this.features.a11yFrames) await settleBridge(entry.page);
     const cdp = await entry.page.cdp();
     if (!cdp) {
@@ -3705,24 +3560,12 @@ export class ChromiumDriver implements BrowserDriver {
       }
       rootBackendNodeId = resolved;
     }
-    // ONE EXTRA CDP CALL, only when the flag is on. `DOM.getDocument` with
-    // `pierce` is the page's whole node tree, which is not free — so a daemon
-    // with the flag off pays nothing and reads exactly the tree it reads
-    // today.
+    // Flagged: `DOM.getDocument` with `pierce` reads the whole node tree.
     const scrollable = this.features.scrollableMarkers
       ? await readScrollableNodes(cdp)
       : undefined;
-    // PAST THE IFRAMES, when the flag is on and the read is page-scoped.
-    //
-    // A document's AX tree does not descend into child documents, so without
-    // this an `<iframe>` is a leaf and the model cannot see one control inside
-    // it. Scoped to the whole page because a `rootRef`/`rootSelector` read is
-    // asking about one subtree — splicing frames into it would answer a
-    // question nobody asked, and cost a `Page.getFrameTree` to do it.
-    //
-    // Costs NOTHING on a page with no iframes: `readAxForest` reads the root
-    // tree exactly as `readAxTree` does and returns immediately when it
-    // contains no `Iframe` node.
+    // Descend into iframes only for page-scoped reads; a rooted read asks
+    // about one subtree.
     const read =
       this.features.a11yFrames && rootBackendNodeId === undefined
         ? await readAxForest(
@@ -3764,9 +3607,7 @@ export class ChromiumDriver implements BrowserDriver {
       ok: true,
       tree: read.tree,
       filter,
-      // Only when there is something to say. `framesOmitted: 0` on every
-      // observation would be a new key on every result to report nothing,
-      // and the frame map is empty on every page without an OOPIF.
+      // Omitted when empty, so ordinary results gain no new keys.
       ...("framesOmitted" in read && read.framesOmitted > 0
         ? { framesOmitted: read.framesOmitted }
         : {}),
@@ -3904,9 +3745,8 @@ export class ChromiumDriver implements BrowserDriver {
     // handed to a recreated tab of the same name and resolve — by role and
     // name — against a document that never issued them.
     this.refs.delete(tabId);
-    // And the render they were minted from, for the same reason: a `changed`
-    // section diffed against a previous incarnation's tree would report the
-    // whole new page as changes from a page this tab never showed.
+    // And the render they were minted from, so `changed` never diffs against
+    // a previous incarnation's tree.
     await this.dropViewport(tabId);
   }
 

@@ -663,16 +663,8 @@ export async function runSyntheticHostSession(
           })
         : undefined,
     );
-    // WHAT THIS ATTEMPT'S BROWSER MAY TYPE.
-    //
-    // This runner delivers no materialized secrets on either path (see the
-    // `runtimeSecrets` note further down) and that is unchanged: these values
-    // never become an environment variable. They travel beside one browser
-    // command, are substituted inside the daemon, and are scrubbed back out of
-    // everything the page returns.
-    //
-    // Asked only when the run declared a browser policy, and not asked at all
-    // while the placeholder flag is off.
+    // Secrets the browser may type. They are substituted inside the daemon and
+    // never become env vars (see the `runtimeSecrets` note below).
     const browserSecrets = browserApprovalDelivery
       ? await resolveBrowserSecrets({
           bearer: authHeader,
@@ -703,9 +695,7 @@ export async function runSyntheticHostSession(
             persist.sourceType === "swarm" ? "swarm_attempt" : "eval_iteration",
           sessionId: chatSessionId,
         },
-        // A swarm fans out many sessions against one run. Both ids, because
-        // "which run" and "which of its sessions" are different questions and
-        // a browser trace read afterwards asks the second one first.
+        // A swarm runs many sessions per run, so tag rows with both ids.
         browserCorrelation: {
           chatSessionId,
           ...(persist.journeyRunId ? { swarmId: persist.journeyRunId } : {}),

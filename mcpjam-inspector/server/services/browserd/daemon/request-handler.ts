@@ -141,13 +141,8 @@ interface CommandRequestBody {
    */
   expectedBootId?: string;
   /**
-   * Values for the `{{secret:NAME}}` placeholders the command carries.
-   *
-   * OUTSIDE `command`, deliberately and structurally. The command envelope is
-   * echoed onto the ledger row, into `/v1/trace` and into the durable mirror;
-   * a secret value on it would be written to all three before anything could
-   * scrub it. As a sibling it CANNOT reach them — not because every writer
-   * remembers to strip it, but because no writer is ever handed it.
+   * Values for the command's `{{secret:NAME}}` placeholders. Outside `command`
+   * so no ledger, trace or mirror writer is ever handed them.
    */
   secrets?: Array<{ name: string; value: string }>;
 }
@@ -158,13 +153,8 @@ const MAX_COMMAND_SECRETS = 32;
 const SECRET_NAME = /^[A-Z_][A-Z0-9_]*$/;
 
 /**
- * Read the `secrets` sibling, or `undefined` when there is nothing usable.
- *
- * Malformed entries are DROPPED rather than refused, and the difference
- * matters: a dropped value means the placeholder it was for goes unresolved,
- * and `resolveActSecrets` then refuses the act with `secret_unresolved` —
- * naming the problem precisely. A 400 here would report "bad request" for a
- * command whose actual fault is one unusable secret among several.
+ * Read the `secrets` sibling. Malformed entries are dropped, not refused, so
+ * the act fails later with the more precise `secret_unresolved`.
  */
 function readCommandSecrets(
   raw: unknown,
@@ -1362,24 +1352,9 @@ export class BrowserdRequestHandler {
         body: { error: "invalid_command", bootId: this.bootId },
       };
     }
-    // THE WIRE, BEFORE ANYTHING ELSE — before the lease gate, and before
-    // `lastActivityAt`.
-    //
-    // Before the lease gate because this is not a question about who may use
-    // the browser; it is a question about whether the two ends understand each
-    // other, and a mismatch answered `lease_held` sends the caller off to wait
-    // for a person who is not there.
-    //
-    // Before `lastActivityAt` because a command we will not run is not
-    // evidence that this box is in use. The lease refusal below IS such
-    // evidence — somebody is trying to drive — but a caller speaking a wire
-    // this daemon does not know is a caller that will be relaunching it, and
-    // counting its attempts as activity would hold the upgrade off with the
-    // very commands the upgrade exists to fix.
-    //
-    // The reuse gates in `browser-session.ts` already compare versions; this
-    // covers what they cannot see — a daemon replaced under a live session,
-    // where every command afterwards goes to a wire nobody checked.
+    // Protocol check first. Before the lease gate, so a mismatch is not
+    // answered `lease_held`; before `lastActivityAt`, so a caller that will
+    // relaunch this daemon does not keep it looking busy.
     if (
       parsed.command.protocolVersion !== undefined &&
       parsed.command.protocolVersion !== BROWSERD_PROTOCOL_VERSION
@@ -1392,9 +1367,6 @@ export class BrowserdRequestHandler {
         status: 409,
         body: {
           error: "protocol_mismatch",
-          // NAMED, both of them. "A protocol mismatch" is not actionable; "you
-          // speak 3 and I speak 2" tells the caller to relaunch and tells
-          // whoever reads the log which half is behind.
           protocolVersion: BROWSERD_PROTOCOL_VERSION,
           bootId: this.bootId,
         },

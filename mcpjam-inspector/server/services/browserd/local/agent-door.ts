@@ -213,11 +213,7 @@ export interface RunAgentCommandArgs {
   command: BrowserAgentCommand;
   commandId?: string;
   tabId?: string;
-  /**
-   * Typed now that `isBrowserCommandCorrelation` is shared: this used to be a
-   * bare string map because the route's private validator answered one, and a
-   * caller could put any key it liked into a ledger row.
-   */
+  /** @see isBrowserCommandCorrelation */
   correlation?: BrowserCommandCorrelation;
 }
 
@@ -446,10 +442,7 @@ export function toContractResult(args: {
         result: unknownResult({ ...common, reason: "unknown_boot" }),
       };
     case "protocol_mismatch":
-      // REFUSED, not unknown. The daemon checks the wire before its lease gate
-      // and before the queue, so nothing ran and nothing was observed — which
-      // is exactly what `refused` means, and the opposite of what `unknown`
-      // would tell a caller about a form submission.
+      // Refused, not unknown: the daemon checks before the queue, so nothing ran.
       return {
         status: 409,
         result: refusedResult({

@@ -1,5 +1,4 @@
 import { platformBrowserToolPolicySchema } from "./browser-policy.js";
-// DERIVED, not restated. @see BROWSER_AGENT_ACT_VERBS
 import { BROWSER_AGENT_ACT_VERBS } from "./browser-agent-contract.js";
 import type { PlatformSessionBrowserCommand } from "./types.js";
 import type { PlatformSessionBrowserOperationResult } from "./types.js";

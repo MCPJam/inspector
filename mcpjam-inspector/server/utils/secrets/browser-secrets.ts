@@ -1,36 +1,14 @@
 /**
- * The one place a surface asks "what may this turn's browser type?".
+ * Resolves the secrets a turn's browser may type.
  *
- * ## Why it is not `runtimeSecrets`
+ * Deliberately separate from `runtimeSecrets` (sandbox env delivery): these
+ * values travel beside one browser command, are substituted in the daemon, and
+ * are scrubbed from page output. They never become env vars, tool-call
+ * arguments or transcript text.
  *
- * Materialized secrets already reach a turn on one path: `runtimeSecrets` →
- * `secretEnv` → the sandbox's environment, where a harness or a `bash` command
- * can read them. Exactly two surfaces wire that today, and the repo has
- * deliberately NOT wired it on the rest — `resolve-turn-runtime.ts` says so in
- * as many words, because starting to deliver project secrets into the eval and
- * swarm runners' boxes is a security-relevant change with its own review.
- *
- * This is a DIFFERENT delivery with a different blast radius, and keeping the
- * two apart is the point of the module. Nothing here reaches a box's
- * environment, a shell, or a harness. A value fetched here travels beside ONE
- * browser command, is substituted inside the daemon at the last moment, and is
- * scrubbed back out of everything the page returns. It is never an environment
- * variable, never in a tool-call argument, and never in the transcript.
- *
- * So a surface can offer `{{secret:NAME}}` in the browser without taking on the
- * question the other path is still waiting on.
- *
- * ## Fail-closed, and free while the flag is off
- *
- * The flag is checked FIRST, before any credential is asked for: with it off
- * this costs nothing at all — no Convex round trip, no KMS decrypt — which is
- * what makes it safe to call from an eval runner that does this per iteration.
- *
- * And unlike the harness fetch, a FAILURE here is not a tri-state. There, "no
- * secrets" and "could not find out" have different consequences, so collapsing
- * them strips a working session's credentials. Here both end the same way: no
- * placeholder resolves, the model is told `secret_unknown`, and nothing is
- * typed into the page. An empty list IS the safe answer.
+ * The flag is checked before any fetch, so this is free when off. Any failure
+ * returns an empty list, which fails closed: no placeholder resolves and
+ * nothing is typed.
  */
 import { browserSecretPlaceholdersEnabled } from "../../config.js";
 import { fetchRuntimeSecrets } from "../harness/runtime-secrets.js";
@@ -44,13 +22,7 @@ export async function resolveBrowserSecrets(args: {
   /** The GRANT BOUNDARY. No environment means no grant, so no secrets. */
   environmentId?: string;
   chatSessionId?: string;
-  /**
-   * A list this turn ALREADY resolved, used instead of fetching.
-   *
-   * ONE READ PER TURN is the rule the harness path states for itself, and for
-   * the same reason: two reads are two decrypts, and a window in which the two
-   * answers disagree.
-   */
+  /** Already resolved this turn; reused so a turn reads secrets once. */
   resolved?: readonly BrowserSecret[];
   env?: NodeJS.ProcessEnv;
 }): Promise<readonly BrowserSecret[]> {

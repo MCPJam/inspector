@@ -68,11 +68,7 @@ export interface InProcessBrowserdClient {
     command: BrowserCommand,
     expectedBootId?: string,
     options?: {
-      /**
-       * Accepted and IGNORED, so this satisfies every caller typed against the
-       * HTTP client. There is no socket here to time out or abort: the call is
-       * a function call into the stack in this same process.
-       */
+      /** Accepted and ignored for HTTP-client type parity; nothing to abort. */
       timeoutMs?: number;
       signal?: AbortSignal;
       /** @see BrowserdClient.sendCommand — a sibling, never a command field. */

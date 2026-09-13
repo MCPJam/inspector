@@ -39,13 +39,8 @@ import {
 export type CommandExecutor = (
   command: BrowserCommand,
   /**
-   * What travels WITH this command but not INSIDE it.
-   *
-   * A separate argument rather than a field on `BrowserCommand`, because the
-   * command envelope is echoed onto the ledger row, into `/v1/trace` and into
-   * the durable mirror. A secret value on the envelope would be written to all
-   * three before anything had a chance to scrub it; as a sibling it is
-   * structurally impossible for it to land there.
+   * What travels with this command but not inside it. Separate from the
+   * envelope, which is echoed into the ledger, trace and durable mirror.
    */
   context?: CommandContext,
 ) => Promise<BrowserCommandResult>;
@@ -53,11 +48,8 @@ export type CommandExecutor = (
 /** @see CommandExecutor */
 export interface CommandContext {
   /**
-   * Values for the `{{secret:NAME}}` placeholders this command carries.
-   *
-   * Sent per command and only for the names the command references: the daemon
-   * registers what it is given, so delivering the turn's whole set would start
-   * it scrubbing observations for credentials nobody typed.
+   * Values for this command's `{{secret:NAME}}` placeholders, only the names it
+   * references: the daemon scrubs observations for everything it is given.
    */
   secrets?: ReadonlyArray<{ name: string; value: string }>;
 }

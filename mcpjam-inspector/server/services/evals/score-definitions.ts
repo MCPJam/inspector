@@ -207,16 +207,11 @@ export function hostedJudgeScoreDefinition(args: {
 }
 
 /**
- * `platform:agentActivity` — deterministic, GATING, threshold 1.
- *
- * Pushed ONLY when the guard actually fired. Every existing
- * `evaluationConfigHash` fixture stays byte-identical, and a run that behaved
- * normally carries no definition for a scorer that had nothing to say —
- * which is what keeps this from becoming a row on every result.
+ * Emitted only when the agent-activity guard fired, so a normal run's
+ * `evaluationConfigHash` stays unchanged.
  */
 export const HOSTED_AGENT_ACTIVITY_SCORER_ID = "platform:agentActivity";
 
-/** Version of the activity guard's own rule. @see assessAgentActivity */
 export const HOSTED_AGENT_ACTIVITY_VERSION = "1";
 
 export function hostedAgentActivityScoreDefinition(): ScoreDefinition {
@@ -230,9 +225,8 @@ export function hostedAgentActivityScoreDefinition(): ScoreDefinition {
     label: "agent activity",
     deterministic: true,
     passThreshold: 1,
-    // GATING, so the row lands in `unresolvedScorerIds` rather than as a
-    // failed criterion: the honest statement is "this was not measured",
-    // not "the server got it wrong".
+    // Gating, so the row lands in `unresolvedScorerIds` ("not measured")
+    // rather than as a failed criterion.
     role: "gating",
   };
 }
@@ -256,14 +250,7 @@ export type HostedScoreDefinitionInputs = {
     /** From the run's frozen config, via the stamped verdict. Fails closed. */
     role?: "advisory" | "gating";
   };
-  /**
-   * True when the agent-activity guard fired for this iteration.
-   *
-   * A boolean rather than the assessment, because the DEFINITION is the same
-   * whatever the detail says — and because an input that varied with the
-   * detail would put the reason into `implementationHash`, making two runs
-   * that both found no activity disagree about the scorer's identity.
-   */
+  /** A boolean, not the assessment, so the detail never affects the scorer's hash. */
   agentActivityFired?: boolean;
 };
 
@@ -292,9 +279,6 @@ export function buildHostedScoreDefinitions(
   if (inputs.judge) {
     definitions.push(hostedJudgeScoreDefinition(inputs.judge));
   }
-  // ONLY WHEN THE GUARD FIRED. A definition on every iteration would rotate
-  // every recorded `evaluationConfigHash` and put an always-passing row on
-  // every result, to say something true of almost none of them.
   if (inputs.agentActivityFired) {
     definitions.push(hostedAgentActivityScoreDefinition());
   }

@@ -1444,10 +1444,8 @@ async function handleTurn(c: Context): Promise<Response> {
         toolMode: pins.toolMode,
       });
       effectiveBrowserPolicy = resolved.effectivePolicy;
-      // WHAT THE BROWSER MAY TYPE. This surface delivers no materialized
-      // secrets into a box, and this does not change that: the values here
-      // reach one browser command and nothing else. Costs nothing — not even a
-      // round trip — while the placeholder flag is off.
+      // Secrets the browser may type; they reach browser commands only, never
+      // the box.
       const browserSecrets = await resolveBrowserSecrets({
         bearer: authHeader,
         projectId,
@@ -1478,9 +1476,6 @@ async function handleTurn(c: Context): Promise<Response> {
         onToolSuppressed: (item) => {
           browserReason = item.reason;
         },
-        // This surface knows BOTH: the durable session and the turn its lease
-        // is scoped to. A browser ledger row from a v1 turn was previously
-        // traceable to neither.
         browserCorrelation: {
           chatSessionId: runtimeChatSessionId,
           turnId: leaseTurnId,

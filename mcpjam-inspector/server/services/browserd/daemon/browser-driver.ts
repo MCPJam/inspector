@@ -47,17 +47,9 @@ export interface BrowserDriver {
     context?: CommandContext,
   ): Promise<BrowserCommandResult>;
   /**
-   * Where this driver remembers the values it has typed into a page.
-   *
-   * Read by {@link withSecretScrub} so the wrapper and the driver share ONE
-   * registry BY CONSTRUCTION. Two instances would mean the wrapper scrubbing
-   * for values nobody typed while the driver types values nobody scrubs — the
-   * exact failure the feature exists to prevent — and sharing by accessor is
-   * the only arrangement in which that cannot be got wrong at a call site.
-   *
-   * Optional, like `viewport`: a driver that never substitutes a placeholder
-   * (a unit fake, an engine with no typing) has nothing to register, and the
-   * wrapper degrades to doing nothing at all.
+   * The registry of typed values. {@link withSecretScrub} reads it from here
+   * so the wrapper and driver always share one instance; two would let typed
+   * values go unscrubbed. Optional for drivers that never substitute.
    */
   secretRegistry?(): BrowserSecretRegistry;
   /**
@@ -225,19 +217,9 @@ export function stateTokensMatch(
  * fake driver: the real driver never has to special-case staleness.
  */
 /**
- * Scrub a credential SHAPE out of every result's `error` on the way back.
- *
- * The outermost wrapper, and the last thing that touches a result before the
- * queue retains it and `recordRow` writes it to the ledger — which is the
- * whole point of putting it here rather than at the HTTP boundary. A result
- * scrubbed on its way out of the server is a result that was already written
- * down in `/v1/trace` and in the durable mirror.
- *
- * `error` ONLY. `output` is what the model is reading — the accessibility
- * tree, the page's text, a page tool's result — and a false positive there
- * hides the content rather than protecting anything. An `error` is a message
- * nobody reads for its content, and is where an upstream string that quotes a
- * whole URL (query string included) actually arrives.
+ * Scrub credential shapes from a result's `error` before the queue retains it
+ * and the ledger records it. Not `output`: false positives there hide page
+ * content.
  */
 export function guardErrorShapes(executor: CommandExecutor): CommandExecutor {
   return async (
@@ -247,50 +229,17 @@ export function guardErrorShapes(executor: CommandExecutor): CommandExecutor {
     const result = await executor(command, context);
     if (typeof result.error !== "string") return result;
     const scrubbed = redactForModel(result.error);
-    // Identity when nothing matched, which is almost every result: a new
-    // object per command would be pure garbage for the collector.
     return scrubbed === result.error ? result : { ...result, error: scrubbed };
   };
 }
 
 /**
- * Replace every value this boot has typed into a page, on the way back out.
+ * Replace values this boot typed into a page in every result, inside the
+ * queue so the retained result and the ledger row are already scrubbed.
  *
- * A secret typed into a form does not stay in the form: it comes back in the
- * accessibility tree, in the page text, in the DOM signal, in a console line
- * the page logged, and in the URL after a GET submit. Substituting at the last
- * moment kept it off the WIRE; this is what keeps it out of everything the
- * page hands back afterwards.
- *
- * INSIDE THE QUEUE, which is the whole reason it is an executor wrapper and
- * not an HTTP filter. The result the queue RETAINS for a duplicate command,
- * and the row `recordRow` writes to the ledger, are both taken from what comes
- * out of here. A scrub at the boundary would be a scrub of a value that was
- * already recorded.
- *
- * `screenshot` is never SCRUBBED: it is base64 image data, a registered value
- * cannot meaningfully occur in it, and scanning a megabyte of it per
- * observation for a needle that cannot be there is pure cost.
- *
- * It is DROPPED instead, while the page it shows is one a value was typed
- * into. A string scrub is powerless against pixels: a site that does not mask
- * its field renders the credential, and `observe {mode:"screenshot"}` one
- * command later — or the `/v1` `capture_screenshot` that maps to it — carries
- * that picture into the model's context, the ledger row and the eval trace,
- * past every scrub in this file. The act that TYPED it already comes back
- * without one (the tool layer downgrades it to `observe: "a11y"`); this is the
- * same rule applied to every command after it, for as long as the value can
- * still be on screen.
- *
- * NOT a session-wide blackout. `exposedAt` answers per URL, so pictures come
- * back the moment the page moves on — which for a login is the submit, the one
- * navigation a model most needs to see the result of. And a suppressed result
- * says `screenshotSuppressed: true` rather than quietly missing a key, because
- * a model that asked for a picture and got nothing would reasonably ask again.
- *
- * The live pane is untouched: it draws from the frame stream, and its own
- * commands ask for `observe: "none"`. The person holding the browser is
- * looking at the screen already — this is about what leaves for a model.
+ * Pixels cannot be string-scrubbed, so while a result's page is one a value
+ * was typed into, its screenshot is dropped and `screenshotSuppressed` is set.
+ * This is per URL, so it lifts once the page navigates.
  */
 export function withSecretScrub(
   registry: Pick<BrowserSecretRegistry, "scrubber" | "exposedAt">,
@@ -312,10 +261,8 @@ export function withSecretScrub(
       registry.exposedAt(
         typeof record.url === "string" ? record.url : undefined,
       );
-    // NOTHING REGISTERED is the overwhelmingly common case — a session nobody
-    // has typed a credential into — and it costs one map lookup. `suppress`
-    // cannot be true without one, so a session that uses none still gets the
-    // driver's own object back, byte for byte.
+    // With nothing registered `suppress` is false too, so the driver's result
+    // is returned untouched.
     if (!scrubber && !suppress) return result;
     let scrubbedOutput = output;
     if (record !== undefined) {
@@ -345,13 +292,8 @@ export function withSecretScrub(
 }
 
 /**
- * Run the driver, passing a context only when there IS one.
- *
- * `execute(command)` and `execute(command, undefined)` are the same call to
- * every implementation and a DIFFERENT call to anything counting arguments —
- * and a command carrying no secret is every command a browser has run until
- * now. Keeping the shape identical is what makes this feature invisible
- * wherever it is not engaged, which is the bar the rest of it is held to.
+ * Omit `context` when absent so commands without secrets call the driver
+ * exactly as before.
  */
 function runDriver(
   driver: BrowserDriver,

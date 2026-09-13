@@ -47,12 +47,8 @@ export interface ResolvedRefNode {
   backendNodeId: number;
   recovered: boolean;
   /**
-   * The session that can resolve this node id, when it is NOT the page's.
-   *
-   * A backend node id is meaningful only to the session that issued it, so an
-   * element inside an out-of-process iframe has to be focused, resolved and
-   * asked about on ITS session. Absent means the page's own, which is every
-   * element on a page without cross-origin frames.
+   * The session that can resolve this node id, when it is not the page's
+   * (an element in an out-of-process iframe).
    */
   cdp?: CdpLike;
   /**
@@ -235,27 +231,14 @@ export async function replaceTextInNode(
   guard: () => void = () => {},
   options: {
     /**
-     * Send the text as KEY EVENTS rather than as one insertion.
-     *
-     * Behind `features.keystrokeTyping` for a release: `Input.insertText`
-     * fires no `keydown`, so a page that reads `event.key` — an autocomplete,
-     * a React controlled input with its own handler — sees a field that
-     * changed with nobody typing, and some of them ignore it entirely. The
-     * fix is strictly better on those pages and strictly more events on every
-     * other, which is a change worth measuring before it becomes the default.
-     *
-     * @see typeByKeystrokes for what the keystroke path does and does not do.
+     * Send the text as key events (`features.keystrokeTyping`).
+     * @see typeByKeystrokes
      */
     keystrokes?: boolean;
     /**
-     * Where the TEXT goes, when that is not where the node lives.
-     *
-     * Input is dispatched to whatever has focus in the BROWSER, and an
-     * out-of-process frame's session does not own the browser's focus — so a
-     * keystroke sent to the frame session types into nothing. The focus and
-     * select-all above are node-id calls and stay on the node's own session;
-     * only the typing moves. Absent means they are the same session, which is
-     * every page without cross-origin frames.
+     * Session to type on, when it differs from the node's. Input goes to the
+     * browser's focus, which an OOPIF session does not own, so typing must go
+     * to the page session while focus/select stay on the node's session.
      */
     inputCdp?: CdpLike;
   } = {},
@@ -289,11 +272,7 @@ export async function replaceTextInNode(
   // Type even when the selection could not be cleared: typing into a field
   // that kept its old value is a visibly wrong result the model can see and
   // correct, and silently doing nothing is not.
-  //
-  // The guard rides INTO the keystroke path as well. An insertion is one
-  // message and cannot be interrupted halfway; a word typed letter by letter
-  // can, and a person who took the browser mid-word should not watch the rest
-  // of the sentence arrive under their cursor.
+  // The keystroke path also takes the guard, since it can be interrupted.
   if (options.keystrokes) {
     await typeByKeystrokes(input, text, guard);
     return;
@@ -468,27 +447,13 @@ async function resolveObjectId(
 }
 
 /**
- * Where to CLICK an element that lives inside an out-of-process iframe.
+ * Where to click an element inside an out-of-process iframe.
  *
- * The two coordinate spaces at the top of this file are the whole problem.
- * `DOM.getBoxModel` answers in the TOP frame's viewport — but only for a node
- * in the session it was asked on. An OOPIF is a different target, so its
- * session's idea of "the viewport" is the IFRAME's own box with its origin at
- * (0, 0), and a point read there and dispatched to the page lands wherever
- * that offset happens to put it: near the top-left of the window, on whatever
- * is there.
- *
- * A SAME-PROCESS child needs none of this. It shares its parent's session, and
- * that session's `getBoxModel` already answers in the top frame's space — which
- * is why the caller only reaches this function for a frame that has a session
- * of its own.
- *
- * So the point is translated up the chain: each host `<iframe>` element's own
- * content-quad top-left, asked on the session that CONTAINS that element,
- * added in turn. Refuses rather than guessing when a link in the chain is
- * missing, or when the translated point leaves the host's box — an element
- * scrolled out of view inside an iframe is not clickable at the coordinates
- * arithmetic would produce for it.
+ * An OOPIF session's `DOM.getBoxModel` answers relative to the iframe's own
+ * box, so the point is translated up the chain by each host `<iframe>`'s
+ * content-quad origin, asked on the session containing that host. Same-process
+ * children already answer in top-frame space and never reach here. Refuses
+ * when a link is missing or the point falls outside a host's box.
  */
 export async function pointForRefAcrossFrames(
   args: {
@@ -517,9 +482,7 @@ export async function pointForRefAcrossFrames(
   );
   let point = local;
   let current: string | undefined = args.sessionFrameId;
-  // BOUNDED, like every other walk over page-controlled structure here: a
-  // cyclic `frames` map (which a hostile page cannot produce, but a bug
-  // could) must not spin.
+  // Bounded so a cyclic `frames` map cannot spin.
   for (let hop = 0; hop < 16 && current !== undefined; hop += 1) {
     const frame = args.frames.get(current);
     if (!frame) {
@@ -545,10 +508,8 @@ export async function pointForRefAcrossFrames(
           "observe again and pick a target that is showing",
       );
     }
-    // INSIDE THE HOST'S BOX, or the arithmetic has produced a point that is
-    // not on the element. An element scrolled out of view inside an iframe
-    // yields a local point past the frame's height, and adding the offset
-    // would aim at whatever sits below the iframe on the page.
+    // A point outside the host's box is scrolled out of view inside the frame;
+    // translating it would aim at whatever is beside the iframe.
     if (
       point.x < 0 ||
       point.y < 0 ||
@@ -564,12 +525,8 @@ export async function pointForRefAcrossFrames(
     point = { x: Math.round(point.x + host.x), y: Math.round(point.y + host.y) };
     current = frame.parentSessionFrameId;
   }
-  // THE LOOP RAN OUT, NOT THE CHAIN. Sixteen hops without reaching the top
-  // frame means either a nesting depth nothing legitimate produces or a cycle
-  // in the topology — and `point` is then translated through SOME of the
-  // chain, which is worse than not translating it at all: a partial sum is a
-  // real coordinate on the page, so the click lands somewhere plausible and
-  // wrong rather than being refused.
+  // Hop limit hit before the top frame: a partially translated point would
+  // click somewhere plausible and wrong, so refuse.
   if (current !== undefined) {
     throw new ActError(
       "stale_ref",
@@ -603,12 +560,8 @@ async function hostQuad(
 }
 
 /**
- * The error shape this module throws for a classified failure.
- *
- * Declared here rather than imported from `chromium-driver.ts`: that module
- * imports this one, and the reverse import would be a cycle. The driver
- * classifies by the message prefix (`formatBrowserdError`'s wire form), which
- * is the same contract every other throw in this file already meets.
+ * A classified failure, carried in the message prefix the driver parses.
+ * Declared locally because importing `chromium-driver.ts` would be a cycle.
  */
 class ActError extends Error {
   constructor(code: string, detail: string) {

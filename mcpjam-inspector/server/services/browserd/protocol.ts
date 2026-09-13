@@ -103,18 +103,9 @@ export const BROWSERD_WEBMCP_FEATURES = [
   "webmcp-eager",
   "webmcp-binding",
   /**
-   * `POST /v1/commands` accepts a `secrets` array beside the command, and the
-   * driver substitutes `{{secret:NAME}}` from it.
-   *
-   * A FEATURE STRING RATHER THAN A PROTOCOL BUMP, for the reason above: the
-   * addition is strictly additive on the wire (an older daemon ignores an
-   * unknown body field), and bumping the version would kill every live hosted
-   * browser on deploy — a session somebody was signing into included — to gain
-   * a capability the server can simply ask about.
-   *
-   * A server talking to a daemon WITHOUT this must refuse the placeholder
-   * rather than send it: an old daemon would ignore `secrets` and type the
-   * literal `{{secret:NAME}}` into the field.
+   * `POST /v1/commands` accepts `secrets` beside the command. A feature string,
+   * not a protocol bump, so deploys don't kill live browsers. Without it the
+   * server must refuse placeholders: an old daemon would type them literally.
    */
   "secret-placeholders",
 ] as const;
@@ -322,15 +313,9 @@ export function wantsFor(observe: ActObserve | undefined): {
 }
 
 /**
- * The act verbs THIS DAEMON dispatches, as a runtime list.
- *
- * A superset of the published `BROWSER_AGENT_ACT_VERBS`: the daemon's wire is
- * allowed to run ahead of the public contract, and `DAEMON_ONLY_ACT_VERBS`
- * (beside `publishedOpFor` in `agent-contract-mapper.ts`) names exactly what
- * the gap currently is. The parity test walks both lists, so a verb added here
- * and nowhere else is a failing test rather than a capability that quietly
- * exists on one surface — which is how `fill_form` ended up daemon-only in the
- * first place.
+ * The act verbs this daemon dispatches. A superset of the published
+ * `BROWSER_AGENT_ACT_VERBS`; the gap is `DAEMON_ONLY_ACT_VERBS` in
+ * `agent-contract-mapper.ts`, and a parity test checks both.
  */
 export const BROWSERD_ACT_VERBS = [
   "click",
@@ -384,19 +369,11 @@ export type BrowserAction =
   | {
       kind: "act";
       /**
-       * @see BROWSERD_ACT_VERBS for the list, which is what the parity test
-       * walks.
+       * @see BROWSERD_ACT_VERBS
        *
-       * `accept_dialog` / `dismiss_dialog` are SEPARATE FROM THE DEFAULTS the
-       * daemon applies. A default exists so a tab can never wedge, but it is a
-       * guess at what the caller meant — "Delete this account?" is cancelled
-       * because that is the safe answer for an absent user, not because it is
-       * the right one for every client. A client with its own rules (ask the
-       * person, always confirm a known flow) answers here instead, and runs
-       * the daemon with `dialogPolicy: "ask"` so nothing is decided for it.
-       *
-       * `accept_dialog` takes the prompt's reply in `value`, when the dialog
-       * is a `prompt` and the caller has one.
+       * `accept_dialog` / `dismiss_dialog` let a client answer a dialog itself
+       * instead of the daemon's safe defaults (run with `dialogPolicy: "ask"`).
+       * `accept_dialog` takes a prompt's reply in `value`.
        */
       verb: BrowserdActVerb;
       target?: BrowserActTarget;
@@ -570,22 +547,9 @@ export interface BrowserCommand {
   /** Caller reads dimensions from each observation instead of assuming 1024x768. */
   responsiveViewport?: boolean;
   /**
-   * The wire the SENDER speaks, so a mismatch is refused rather than run.
-   *
-   * The reuse gates already compare protocol versions, and they are the right
-   * place for the decision — but they run once per ensure, against a daemon
-   * that was alive then. A daemon can be replaced under a live session (a box
-   * restarts, a prelaunched daemon is adopted, a replica wins a boot race),
-   * and every command after that goes to a wire nobody checked.
-   *
-   * What it costs to skip is specific rather than general: `fill_form` at
-   * protocol 1 falls through the verb switch and answers `ok` for a form it
-   * never touched. A refusal here is a sentence the caller can act on; `ok`
-   * for work that did not happen is not.
-   *
-   * OPTIONAL, and absent means "do not check". A daemon older than this field
-   * ignores it entirely, and a caller that does not send it gets exactly the
-   * behaviour it has always had.
+   * The sender's protocol version, so a daemon replaced under a live session
+   * refuses rather than answering `ok` for work it can't do (e.g. `fill_form`
+   * at protocol 1). Absent means "do not check"; older daemons ignore it.
    */
   protocolVersion?: number;
   commandId: string;
@@ -650,18 +614,8 @@ export interface BrowserCommandCorrelation {
 }
 
 /**
- * Is this a correlation map we are willing to echo onto a ledger row?
- *
- * Echoed and NEVER INTERPRETED, so the only question is whether it is a flat,
- * bounded string map: a nested object here would be an unbounded blob riding
- * into every row of a ring that has to stay cheap to keep and cheap to mirror.
- *
- * Lives here rather than in the one route that had it, because the model tool
- * now produces correlations too and two copies of a validator that decides
- * what reaches durable storage is one copy too many.
- *
- * Shape only, not KEYS: an unknown key from a newer caller is echoed rather
- * than dropped, which is what makes adding one an additive change.
+ * Is this a flat, bounded string map safe to echo onto a ledger row? Checks
+ * shape only, not keys, so a newer caller's unknown key is still echoed.
  */
 export function isBrowserCommandCorrelation(
   value: unknown,
@@ -865,13 +819,8 @@ export const BROWSERD_ERROR_CODES = [
   /** An `a11yRef` whose node has left the page — distinct from not found. */
   "stale_ref",
   /**
-   * A `{{secret:NAME}}` reached the browser with no value for it.
-   *
-   * NOTHING WAS TYPED, which is the point. The server's planner refuses an
-   * unusable name before the command is sent, but it is not the only caller
-   * that reaches the driver — the `/v1` routes and the CLI do too — and a
-   * daemon that typed a literal `{{secret:GITHUB_PASSWORD}}` into a login form
-   * would report success while the model read the failure as a wrong password.
+   * A `{{secret:NAME}}` reached the browser with no value; nothing was typed.
+   * The `/v1` routes and CLI reach the driver without the server's planner.
    */
   "secret_unresolved",
   /**
@@ -913,10 +862,7 @@ export const BROWSERD_ERROR_CODES = [
   "origin_not_allowed",
   /** The session policy does not admit this command. */
   "tool_not_allowed",
-  // --- secret placeholders, refused BEFORE the daemon ---------------------
-  // Every one of these is decided by the server: the daemon never sees the
-  // command at all, because the alternative is a literal `{{secret:NAME}}`
-  // typed into a real field on a real site.
+  // --- secret placeholders, refused by the server before the daemon -------
   /** No secret by that name is available to this turn. */
   "secret_unknown",
   /** The name exists but is BROKERED — its value never enters this process. */
@@ -928,16 +874,8 @@ export const BROWSERD_ERROR_CODES = [
   /** This engine does not deliver secrets to a browser (phase 1: the local one). */
   "secret_engine_unsupported",
   /**
-   * The sender and this daemon do not speak the same wire.
-   *
-   * Refused BEFORE the lease gate and before anything runs, because the
-   * failure it prevents is a command that reports success: a `fill_form` sent
-   * to a protocol-1 daemon falls through its verb switch and answers `ok` for
-   * a form with every field still empty.
-   *
-   * Also the SERVER-side name for the same condition when a relaunch could not
-   * fix it, where it replaces a bare "browserd did not report listening within
-   * 30000ms" — a timeout that tells the user nothing about what went wrong.
+   * The sender and this daemon speak different protocol versions; nothing ran.
+   * Also used server-side when a relaunch could not fix the mismatch.
    */
   "protocol_mismatch",
 ] as const;

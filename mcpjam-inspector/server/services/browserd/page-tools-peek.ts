@@ -71,12 +71,8 @@ export type PageToolsPeekReason =
   | "unreachable"
   | "timeout"
   /**
-   * A browser IS running; this build cannot talk to the daemon on it.
-   *
-   * Distinct from `no_browser_session`, which is what this used to report and
-   * which is a lie a person acts on: told there is no browser, they open one,
-   * and the box already has one — running, holding their logins, and speaking
-   * a wire the server was rolled forward past.
+   * A browser is running but its daemon speaks a different protocol. Distinct
+   * from `no_browser_session`, which would send a person to open another.
    */
   | "protocol_mismatch";
 
@@ -221,10 +217,7 @@ async function peekHosted(
         : await lookupProjectComputerSession(args, signal);
   const session = lookup?.session;
   if (!session) {
-    // The lookup above sends `expectedProtocolVersion`, so a daemon speaking a
-    // wire this build cannot talk to comes back as a STALE ROW rather than as
-    // a session. Saying "no browser session" there sends a person off to open
-    // the browser they already have.
+    // A protocol mismatch comes back as a stale row, not a session.
     return {
       tools: [],
       reason:
@@ -309,13 +302,7 @@ async function lookupConversationSession(
         });
   // The box may have been rebound since the owner lookup. Check the logical
   // identity just as the browser viewer does before using daemon credentials.
-  //
-  // ONLY WHEN THERE IS A SESSION TO MISMATCH. A row the control plane refused
-  // — `protocol_changed`, say — comes back with no session at all, so the
-  // identity comparison is `undefined !== owner.sessionId` and swallows the
-  // reason along with the row. There is nothing to borrow in that case and so
-  // nothing for this guard to prevent; the lookup is returned so the caller
-  // can say WHY it found no browser.
+  // A sessionless (stale) row passes through so the caller can report why.
   if (lookup.session && lookup.session.logicalSessionId !== owner.sessionId) {
     return null;
   }

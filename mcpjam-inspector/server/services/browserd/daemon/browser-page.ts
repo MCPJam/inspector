@@ -73,10 +73,7 @@ export interface DriverPage {
   hoverSelector(selector: string): Promise<void>;
   /**
    * Type into the focused element (a click usually precedes this).
-   *
-   * `keystrokes` asks for key EVENTS rather than one insertion, for a page
-   * that reads `event.key`. Optional and additive: an engine that ignores it
-   * types the same text the same way it always has.
+   * `keystrokes` asks for key events, for pages that read `event.key`.
    */
   typeText(text: string, options?: { keystrokes?: boolean }): Promise<void>;
   /**
@@ -103,15 +100,8 @@ export interface DriverPage {
   press(key: string): Promise<void>;
   scrollBy(delta: { dx: number; dy: number }): Promise<void>;
   /**
-   * Scroll AT a point, so a scroll container under it moves instead of the page.
-   *
-   * `scrollBy` moves the document. A wheel delivered at a point moves whichever
-   * scroller is under that point, which is what `scroll` with a ref has always
-   * claimed to do and never did: the ref was resolved, ignored, and the page
-   * behind the element scrolled while the result reported success.
-   *
-   * Optional so an engine can arrive without it; the driver falls back to
-   * `scrollBy` and behaves exactly as it does today.
+   * Scroll at a point, so the scroll container under it moves instead of the
+   * page. Optional; the driver falls back to `scrollBy`.
    */
   scrollAt?(point: ActPoint, delta: { dx: number; dy: number }): Promise<void>;
   dragTo(from: ActPoint, to: ActPoint): Promise<void>;
@@ -207,19 +197,9 @@ export interface DriverPage {
    */
   cdp(): Promise<CdpLike | null>;
   /**
-   * The CDP sessions this page's CHILD FRAMES have of their own, if any.
-   *
-   * WHY THIS EXISTS. `Accessibility.getFullAXTree` answers for ONE document
-   * and does not descend into child documents, so without these the model sees
-   * an `Iframe` leaf and nothing inside it — same-origin or cross-origin
-   * alike. The WebMCP bridge already attaches exactly this set, eagerly, at
-   * tab creation; this reports what is already attached and never triggers
-   * one.
-   *
-   * OPTIONAL, and absence is not emptiness: an engine that omits the method is
-   * saying "I have no per-frame sessions to offer" (Electron, today), which
-   * the reader answers by reading the page session alone — exactly as it does
-   * now.
+   * CDP sessions of this page's child frames, already attached by the WebMCP
+   * bridge. The AX tree does not descend into child documents, so the reader
+   * needs these to see iframe content. Never triggers an attach.
    */
   frameSessions?(): ReadonlyArray<{ frameId: string; cdp: CdpLike }>;
   /** Resolve after a brief window with no in-flight requests, or on abort. */

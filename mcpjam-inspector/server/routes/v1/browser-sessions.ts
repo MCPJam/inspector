@@ -279,11 +279,8 @@ for (const op of [
               : refusedResult({
                   commandId,
                   ledger,
-                  // NAMED when we know the name. `browser_unavailable` reads
-                  // as transient and worth retrying; a wire mismatch refuses
-                  // every retry until the daemon has been replaced, so an
-                  // agent given the generic code loops on a box that will
-                  // never answer differently.
+                  // A wire mismatch fails every retry until the daemon is
+                  // replaced, unlike the transient `browser_unavailable`.
                   code:
                     error instanceof BrowserProtocolMismatchError
                       ? "protocol_mismatch"

@@ -33,44 +33,22 @@
  * eval-runner dependency graph (and its `@/` path aliases) behind one string
  * constant.
  *
- * TEMPORARY for the harness entry. Retire it once every runner version in the
- * wild declares it; the backend can then pin `harness` unconditionally. The
- * browser-secrets entry below is not temporary in the same way — it says which
- * of two deliveries this process actually has.
+ * TEMPORARY for the harness entry: retire it once every runner version
+ * declares it. The browser-secrets entry below is conditional, not temporary.
  */
 import { browserSecretPlaceholdersEnabled } from "../../config.js";
 
 const HARNESS_EXECUTION = "harness-execution";
 
 /**
- * This runner can put a project's materialized secrets INTO A BROWSER.
- *
- * Declared — and therefore promised — only while
- * `MCPJAM_BROWSER_SECRET_PLACEHOLDERS` is on, because that flag is what makes
- * the promise true: with it off, `resolveBrowserSecrets` returns nothing and
- * every `{{secret:NAME}}` an eval writes is refused as unknown. Declaring it
- * unconditionally would be this process claiming a delivery it does not have,
- * which is exactly the failure the header above describes for `harness`.
- *
- * WHAT THE BACKEND DOES WITH IT. Four gates refuse to launch or provision a
- * run whose environment selects a materialized secret, because an eval or
- * journey box receives none and the run would score with the credential
- * silently absent. This declaration lifts them — for the BROWSER's sake only.
- * The box's shell and any harness on it still receive nothing, which is why
- * the string says `browser-` and why the backend's constant carries the same
- * caveat. A runner that declares it is accepting that narrower position.
+ * This runner can put materialized secrets into a browser (only, not the box's
+ * shell or harness). Declared only while `MCPJAM_BROWSER_SECRET_PLACEHOLDERS`
+ * is on, since with it off no secret is actually delivered; the backend uses
+ * it to lift its materialized-secret launch gates.
  */
 const BROWSER_MATERIALIZED_SECRETS = "browser-materialized-secrets";
 
-/**
- * What THIS process can do, as it is configured right now.
- *
- * A function rather than a constant because one of the two entries is
- * conditional, and READ AT CALL TIME like the flag it follows: a module
- * constant would freeze whatever the environment said when this module first
- * loaded, which is wrong for a switch that is flipped per-process in staging
- * and per-test.
- */
+/** A function so the flag is read at call time, not frozen at module load. */
 export function runnerCapabilities(
   env: NodeJS.ProcessEnv = process.env,
 ): readonly string[] {
@@ -82,9 +60,5 @@ export function runnerCapabilities(
   ];
 }
 
-/**
- * @deprecated Use {@link runnerCapabilities}, which reads the flag at call
- * time. Kept so an importer that only cares about harness execution — and
- * there is no such importer left in this repository — still compiles.
- */
+/** @deprecated Use {@link runnerCapabilities}, which reads the flag at call time. */
 export const RUNNER_CAPABILITIES = [HARNESS_EXECUTION] as const;
