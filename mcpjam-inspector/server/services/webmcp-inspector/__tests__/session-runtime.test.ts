@@ -654,25 +654,65 @@ describe("session lifecycle events", () => {
 });
 
 describe("viewport frames", () => {
-  it("publishes a frame event with the session's own seq", () => {
-    const { session, events } = makeRuntime();
+  it("publishes a frame on its own channel, with the session's own seq", () => {
+    const { runtime, session, events } = makeRuntime();
+    const seen: number[] = [];
+    runtime.frames.subscribe((frame) => seen.push(frame.seq));
     session.emitFrame({ data: "paint-1", deviceWidth: 800, deviceHeight: 600 });
 
-    const frames = events.filter(
-      (e): e is Extract<WebMcpEvent, { type: "frame" }> => e.type === "frame",
-    );
-    expect(frames).toHaveLength(1);
-    expect(frames[0].frame).toMatchObject({
+    expect(runtime.frames.latest()).toMatchObject({
       data: "paint-1",
       deviceWidth: 800,
       deviceHeight: 600,
     });
-    // Stamped from the same counter as everything else, so a replayed frame
-    // sorts into place beside the events around it rather than to one end.
-    expect(frames[0].seq).toBeGreaterThan(0);
-    expect(events.every((e, i) => i === 0 || e.seq > events[i - 1].seq)).toBe(
-      true,
+    expect(seen).toHaveLength(1);
+    // Stamped from the same counter as the timeline's events, so the client
+    // can tell a straggling frame from a newer one across a reconnect.
+    expect(runtime.frames.latest()!.seq).toBeGreaterThan(0);
+    // And NOT on the event channel: every consumer there had to filter pixels
+    // out, which is the coupling this split removes.
+    expect(events.some((e) => (e as { type: string }).type === "frame")).toBe(
+      false,
     );
+  });
+
+  it("hands the current paint to a watcher that arrives after it", () => {
+    const { runtime, session } = makeRuntime();
+    session.emitFrame({ data: "settled" });
+    // A settled page sends no other frame, so a socket that opened onto one
+    // would sit on "Waiting for the first frame…" forever.
+    const seen: string[] = [];
+    runtime.frames.subscribe((frame) => seen.push(frame.data));
+    expect(seen).toEqual(["settled"]);
+  });
+
+  it("tells watchers the retained paint is gone, so they can drop queued work", () => {
+    const { runtime, session } = makeRuntime();
+    const seen: Array<string | null> = [];
+    runtime.frames.subscribe((frame) => seen.push(frame ? frame.data : null));
+    session.emitFrame({ data: "before" });
+
+    runtime.frames.clear();
+    // The hub this replaced said nothing here, on the grounds that a connected
+    // client already knows. It does not: a watcher that paces its sends can be
+    // holding a frame it accepted a moment ago and has not put on the wire, and
+    // nothing else would ever stop that one going out after the clear.
+    expect(seen).toEqual(["before", null]);
+
+    // And not again for a clear with nothing to forget.
+    runtime.frames.clear();
+    expect(seen).toEqual(["before", null]);
+  });
+
+  it("drops the retained paint when the browser crashes", () => {
+    const { runtime, session } = makeRuntime();
+    session.emitFrame({ data: "alive" });
+    expect(runtime.frames.latest()).toBeDefined();
+
+    session.callbacks.onCrashed("The browser crashed.");
+    // There is no CURRENT paint for a browser that is gone. Retained, it would
+    // be handed to the next socket to subscribe as though the page were there.
+    expect(runtime.frames.latest()).toBeUndefined();
   });
 
   it("writes no timeline entry for a frame", () => {
@@ -710,12 +750,12 @@ describe("viewport frames", () => {
     expect(onActivity).toHaveBeenCalledTimes(1);
   });
 
-  it("reports a browser that cannot screencast, so the caller can fall back", async () => {
+  it("reports a browser that is not streaming, rather than claiming it is", async () => {
     const { runtime, session } = makeRuntime();
     session.screencastAvailable = false;
-    // A 200 with `streaming: false`, not an error: the request was fine and
-    // this browser simply cannot do it. The client polls screenshots instead of
-    // waiting forever for frames that will never come.
+    // A 200 with `streaming: false`, not an error: the request was fine and no
+    // frames are flowing — the daemon has no tab selected yet. The client keeps
+    // its socket and waits rather than claiming a live picture.
     expect(await runtime.setScreencast(true)).toBe(false);
   });
 
@@ -723,18 +763,18 @@ describe("viewport frames", () => {
     const { runtime, session } = makeRuntime();
     await runtime.setScreencast(true);
     session.emitFrame({ data: "paint" });
-    expect(runtime.hub.buffered().some((e) => e.type === "frame")).toBe(true);
+    expect(runtime.frames.latest()).toBeDefined();
 
     await runtime.setScreencast(false);
-    // Replay promises a reconnecting client the CURRENT paint. A frame from a
+    // The channel promises a late watcher the CURRENT paint. A frame from a
     // stream nobody is running any more is not that.
-    expect(runtime.hub.buffered().some((e) => e.type === "frame")).toBe(false);
+    expect(runtime.frames.latest()).toBeUndefined();
   });
 
   it("forgets the retained frame when the page navigates away", () => {
     const { runtime, session } = makeRuntime();
     session.emitFrame({ data: "old-page" });
-    expect(runtime.hub.buffered().some((e) => e.type === "frame")).toBe(true);
+    expect(runtime.frames.latest()).toBeDefined();
 
     session.callbacks.onNavigated(
       "https://elsewhere.test/",
@@ -742,9 +782,9 @@ describe("viewport frames", () => {
     );
 
     // Same class of lie as serving the previous page's tools: the retained
-    // picture depicts a page that is gone, and replay would hand it to a
-    // reconnecting client as the current one.
-    expect(runtime.hub.buffered().some((e) => e.type === "frame")).toBe(false);
+    // picture depicts a page that is gone, and a late watcher would be handed
+    // it as the current one.
+    expect(runtime.frames.latest()).toBeUndefined();
   });
 
   it("refuses setScreencast before a browser is attached", async () => {

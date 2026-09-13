@@ -19,6 +19,96 @@ import { hasOAuthConfig, getStoredTokens } from "@/lib/oauth/mcp-oauth";
 import { HOSTED_MODE } from "@/lib/config";
 import { XAA_PARTIAL_OVERRIDE_ERROR } from "@/lib/xaa/identity";
 import { useConfidentialCimdCapability } from "@/hooks/use-confidential-cimd-capability";
+import {
+  credentialClearAcknowledgementKey,
+  pendingCredentialClearForStdioTargetEdit,
+  pendingCredentialClearForUrlEdit,
+  rowHoldsStoredCredential,
+  type PendingCredentialClear,
+} from "@/lib/credential-origin";
+
+/**
+ * The command and arguments the stdio branch of `buildFormData` will submit.
+ *
+ * Shared with the credential-clear warning so the two cannot disagree about
+ * what this form is about to send: a warning derived from a different parse
+ * would fire on edits the backend keeps and stay silent on ones it clears.
+ *
+ * Quoting is the exact inverse of `formatCommandInput`. A plain whitespace
+ * split loses the boundaries of a saved argument that contains a space — it
+ * reads `["file name.js"]` back as two arguments — which warns that an
+ * untouched row is about to lose its credentials and then saves arguments the
+ * user never typed.
+ */
+function parseCommandInput(input: string): {
+  command: string;
+  args: string[];
+} {
+  const parts: string[] = [];
+  let current = "";
+  let inPart = false;
+  let quote: '"' | "'" | null = null;
+
+  for (let i = 0; i < input.length; i += 1) {
+    const char = input[i];
+
+    if (quote === "'") {
+      if (char === "'") quote = null;
+      else current += char;
+      continue;
+    }
+
+    if (quote === '"') {
+      if (char === "\\" && (input[i + 1] === '"' || input[i + 1] === "\\")) {
+        current += input[i + 1];
+        i += 1;
+      } else if (char === '"') {
+        quote = null;
+      } else {
+        current += char;
+      }
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
+      quote = char;
+      inPart = true;
+      continue;
+    }
+
+    // Outside quotes, preserve literal backslashes in Windows and UNC paths.
+    if (/\s/.test(char)) {
+      if (inPart) {
+        parts.push(current);
+        current = "";
+        inPart = false;
+      }
+      continue;
+    }
+
+    current += char;
+    inPart = true;
+  }
+
+  if (inPart) parts.push(current);
+
+  return { command: parts[0] || "", args: parts.slice(1) };
+}
+
+/**
+ * The single command line the edit form shows for a stored stdio target, and
+ * the inverse of `parseCommandInput` — the form holds one text input, so the
+ * round trip through it is what keeps the warning honest.
+ */
+function formatCommandInput(command: string, args: readonly string[]): string {
+  if (!command) return "";
+  return [command, ...args].map(quoteCommandToken).join(" ");
+}
+
+function quoteCommandToken(token: string): string {
+  if (token !== "" && !/[\s"'\\]/.test(token)) return token;
+  return `"${token.replace(/(["\\])/g, "\\$1")}"`;
+}
 
 interface InitialFormValues {
   name: string;
@@ -145,6 +235,16 @@ export function useServerForm(
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [hasStoredClientSecret, setHasStoredClientSecret] = useState(false);
+  // Where the row POINTS as saved, kept beside the editable fields so the form
+  // can tell a destination change from an edit that keeps the credentials
+  // (MJ-003) — a cross-origin repoint, or a stdio row pointed at a different
+  // process.
+  const [savedUrl, setSavedUrl] = useState<string | null>(null);
+  const [savedCommand, setSavedCommand] = useState<string | null>(null);
+  const [savedArgs, setSavedArgs] = useState<string[]>([]);
+  // The destination the user has explicitly accepted losing credentials for.
+  const [credentialClearAcknowledgedFor, setCredentialClearAcknowledgedFor] =
+    useState<string | null>(null);
   const [clearClientSecret, setClearClientSecret] = useState(false);
   const [bearerToken, setBearerToken] = useState("");
   // True when the server has a saved bearer token whose value was stripped
@@ -344,11 +444,10 @@ export function useServerForm(
         ? "stdio"
         : "http";
       const serverUrl = isHttpServer && config.url ? config.url.toString() : "";
-      const fullCommand = server.config.command
-        ? [server.config.command, ...(server.config.args || [])]
-            .filter(Boolean)
-            .join(" ")
-        : "";
+      const fullCommand = formatCommandInput(
+        server.config.command ?? "",
+        server.config.args ?? []
+      );
       const authorizationHeader = isHttpServer
         ? getAuthorizationHeaderValue(
             config.requestInit?.headers as Record<string, unknown> | undefined
@@ -407,7 +506,11 @@ export function useServerForm(
       setName(server.name);
       setType(serverType);
       setUrl(serverUrl);
+      setSavedUrl(serverUrl || null);
       setCommandInput(fullCommand);
+      setSavedCommand(server.config.command ?? null);
+      setSavedArgs(server.config.args ? [...server.config.args] : []);
+      setCredentialClearAcknowledgedFor(null);
 
       // Don't set a default scope for existing servers - use what's configured
       // Only set default for new servers
@@ -836,13 +939,7 @@ export function useServerForm(
 
     // Handle stdio-specific data
     if (type === "stdio") {
-      // Parse commandInput to extract command and args
-      const parts = commandInput
-        .trim()
-        .split(/\s+/)
-        .filter((part) => part.length > 0);
-      const command = parts[0] || "";
-      const args = parts.slice(1);
+      const { command, args } = parseCommandInput(commandInput);
 
       // Build environment variables
       const env: Record<string, string> = {};
@@ -1020,6 +1117,10 @@ export function useServerForm(
     setType("http");
     setCommandInput("");
     setUrl("");
+    setSavedUrl(null);
+    setSavedCommand(null);
+    setSavedArgs([]);
+    setCredentialClearAcknowledgedFor(null);
     setOauthScopesInput("");
     setOauthProtocolMode(DEFAULT_OAUTH_PROTOCOL_MODE);
     setOauthRegistrationMode(DEFAULT_OAUTH_REGISTRATION_MODE);
@@ -1117,6 +1218,33 @@ export function useServerForm(
     (type === "http" &&
       authType === "xaa" &&
       confidentialCimdBlockReason !== null);
+  // MJ-003. Moving where a credential-bearing row POINTS makes the backend wipe
+  // its stored credentials, including ones this user never entered and cannot
+  // see. Two vectors, decided by which transport the form is submitting: an
+  // http url that crosses its credentials' origin, and a stdio `command`/`args`
+  // swap. Which rows count is `rowHoldsStoredCredential`'s business.
+  const holdsStoredCredential = rowHoldsStoredCredential(server);
+  const nextStdioTarget = parseCommandInput(commandInput);
+  const pendingCredentialClear: PendingCredentialClear | null =
+    type === "http"
+      ? pendingCredentialClearForUrlEdit({
+          savedUrl,
+          nextUrl: url,
+        })
+      : pendingCredentialClearForStdioTargetEdit({
+          holdsStoredCredential,
+          savedCommand,
+          savedArgs,
+          nextCommand: nextStdioTarget.command,
+          nextArgs: nextStdioTarget.args,
+        });
+  // Blocked until acknowledged, following `authConfigurationBlocksSubmit`. A
+  // destructive side effect on somebody else's credential should not happen on
+  // a single Save click.
+  const credentialClearBlocksSubmit =
+    pendingCredentialClear !== null &&
+    credentialClearAcknowledgedFor !==
+      credentialClearAcknowledgementKey(pendingCredentialClear);
   const oauthAuthorizationHeaderWarning =
     type === "http" &&
     authType === "oauth" &&
@@ -1129,6 +1257,10 @@ export function useServerForm(
     hasChanges,
     preregisteredOauthBlocksSubmit,
     authConfigurationBlocksSubmit,
+    pendingCredentialClear,
+    credentialClearBlocksSubmit,
+    credentialClearAcknowledgedFor,
+    acknowledgeCredentialClear: setCredentialClearAcknowledgedFor,
 
     // Form data
     name,

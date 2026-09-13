@@ -24,7 +24,7 @@ Electron WebMCP uses a main-owned `WebContentsView`, registered under the daemon
 
 Removed: the single-page Playwright provider and capture owner, Electron webview provider, `ElectronWebviewPane`, mount/guest-ID handshake, webview attach error routes, `webviewTag`, and `will-attach-webview` guard. Their real-browser parity suite now runs against the daemon facade. The old renderer-owned transport kind is replaced by `electron-native` with a boot ID.
 
-The WebMCP frame envelope and blob-URL adapter remain a transport boundary. A follow-up can replace them with the daemon frame reader directly; this delivery does not introduce another capture engine or tab registry.
+The WebMCP frame envelope and blob-URL adapter remained a transport boundary after this delivery. That follow-up has since landed: the inspection socket speaks the daemon record format directly and the client reads it with `createFrameWireReader`, so the envelope, the blob-URL presenter and the SSE/poll fallback rungs are gone. See [the unification plan](browser-viewer-unification-plan.md).
 
 ## Validation
 

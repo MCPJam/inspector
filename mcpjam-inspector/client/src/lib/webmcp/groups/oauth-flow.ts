@@ -30,7 +30,13 @@ import {
   commandResponseToActionResult,
   dispatchInspectorCommand,
 } from "../ui-actions";
-import { asOptionalString, errorResult, fromActionResult } from "./shared";
+import {
+  PUBLISH_NATIVE,
+  PUBLISH_NATIVE_UNTRUSTED,
+  asOptionalString,
+  errorResult,
+  fromActionResult,
+} from "./shared";
 
 const REGISTRATION_MODES = ["preregistered", "dcr", "cimd"] as const;
 
@@ -70,6 +76,7 @@ export function buildOAuthFlowUiTools(): UiToolDefinition[] {
         idempotentHint: true,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE,
       execute: async (args) => {
         const serverName = asOptionalString(args.serverName);
         if (args.serverName !== undefined && serverName === undefined) {
@@ -132,6 +139,7 @@ export function buildOAuthFlowUiTools(): UiToolDefinition[] {
         idempotentHint: false,
         openWorldHint: true,
       },
+      nativePublication: PUBLISH_NATIVE_UNTRUSTED,
       execute: async () => {
         const response = await dispatchInspectorCommand({
           type: "advanceOauthFlow",
@@ -158,6 +166,7 @@ export function buildOAuthFlowUiTools(): UiToolDefinition[] {
         idempotentHint: true,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE,
       execute: async () => {
         const response = await dispatchInspectorCommand({
           type: "resetOauthFlow",

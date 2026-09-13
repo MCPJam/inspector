@@ -102,6 +102,12 @@ export const BROWSERD_PROTOCOL_VERSION = 2;
 export const BROWSERD_WEBMCP_FEATURES = [
   "webmcp-eager",
   "webmcp-binding",
+  /**
+   * `POST /v1/commands` accepts `secrets` beside the command. A feature string,
+   * not a protocol bump, so deploys don't kill live browsers. Without it the
+   * server must refuse placeholders: an old daemon would type them literally.
+   */
+  "secret-placeholders",
 ] as const;
 
 /**
@@ -306,6 +312,28 @@ export function wantsFor(observe: ActObserve | undefined): {
   };
 }
 
+/**
+ * The act verbs this daemon dispatches. A superset of the published
+ * `BROWSER_AGENT_ACT_VERBS`; the gap is `DAEMON_ONLY_ACT_VERBS` in
+ * `agent-contract-mapper.ts`, and a parity test checks both.
+ */
+export const BROWSERD_ACT_VERBS = [
+  "click",
+  "type",
+  "press",
+  "scroll",
+  "hover",
+  "drag",
+  "select",
+  "fill_form",
+  "close_tab",
+  "activate_tab",
+  "accept_dialog",
+  "dismiss_dialog",
+] as const;
+
+export type BrowserdActVerb = (typeof BROWSERD_ACT_VERBS)[number];
+
 export type BrowserAction =
   | {
       kind: "navigate";
@@ -340,33 +368,14 @@ export type BrowserAction =
   | { kind: "reload"; observe?: ActObserve }
   | {
       kind: "act";
-      verb:
-        | "click"
-        | "type"
-        | "press"
-        | "scroll"
-        | "hover"
-        | "drag"
-        | "select"
-        | "fill_form"
-        | "close_tab"
-        | "activate_tab"
-        /**
-         * Answer the dialog this page is blocked on.
-         *
-         * SEPARATE FROM THE DEFAULTS the daemon applies. A default exists so a
-         * tab can never wedge, but it is a guess at what the caller meant —
-         * "Delete this account?" is cancelled because that is the safe answer
-         * for an absent user, not because it is the right one for every
-         * client. A client with its own rules (ask the person, always confirm
-         * a known flow) answers here instead, and runs the daemon with
-         * `dialogPolicy: "ask"` so nothing is decided for it.
-         *
-         * `accept_dialog` takes the prompt's reply in `value`, when the dialog
-         * is a `prompt` and the caller has one.
-         */
-        | "accept_dialog"
-        | "dismiss_dialog";
+      /**
+       * @see BROWSERD_ACT_VERBS
+       *
+       * `accept_dialog` / `dismiss_dialog` let a client answer a dialog itself
+       * instead of the daemon's safe defaults (run with `dialogPolicy: "ask"`).
+       * `accept_dialog` takes a prompt's reply in `value`.
+       */
+      verb: BrowserdActVerb;
       target?: BrowserActTarget;
       value?: string;
       /**
@@ -537,6 +546,12 @@ export type BrowserAction =
 export interface BrowserCommand {
   /** Caller reads dimensions from each observation instead of assuming 1024x768. */
   responsiveViewport?: boolean;
+  /**
+   * The sender's protocol version, so a daemon replaced under a live session
+   * refuses rather than answering `ok` for work it can't do (e.g. `fill_form`
+   * at protocol 1). Absent means "do not check"; older daemons ignore it.
+   */
+  protocolVersion?: number;
   commandId: string;
   tabId?: string;
   source: BrowserCommandSource;
@@ -596,6 +611,23 @@ export interface BrowserCommandCorrelation {
   evalRunId?: string;
   iterationId?: string;
   swarmId?: string;
+}
+
+/**
+ * Is this a flat, bounded string map safe to echo onto a ledger row? Checks
+ * shape only, not keys, so a newer caller's unknown key is still echoed.
+ */
+export function isBrowserCommandCorrelation(
+  value: unknown,
+): value is BrowserCommandCorrelation {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const entries = Object.entries(value as Record<string, unknown>);
+  return (
+    entries.length <= 10 &&
+    entries.every(([, v]) => typeof v === "string" && v.length <= 200)
+  );
 }
 
 /** The daemon's result for one executed command. Opaque to the queue. */
@@ -787,6 +819,13 @@ export const BROWSERD_ERROR_CODES = [
   /** An `a11yRef` whose node has left the page — distinct from not found. */
   "stale_ref",
   /**
+   * A `{{secret:NAME}}` reached the browser with no value; nothing was typed.
+   * The `/v1` routes and CLI reach the driver without the server's planner.
+   */
+  "secret_unresolved",
+  /** A substituted secret is shorter than the scrubber's minimum; nothing was typed. */
+  "secret_too_short",
+  /**
    * Something is on top of the target at its click point, so the input would
    * land on that element instead. The detail names the covering element.
    *
@@ -825,6 +864,22 @@ export const BROWSERD_ERROR_CODES = [
   "origin_not_allowed",
   /** The session policy does not admit this command. */
   "tool_not_allowed",
+  // --- secret placeholders, refused by the server before the daemon -------
+  /** No secret by that name is available to this turn. */
+  "secret_unknown",
+  /** The name exists but is BROKERED — its value never enters this process. */
+  "secret_not_typeable",
+  /** A placeholder on a verb that types nothing (`click`, `press`, `scroll`). */
+  "secret_verb_refused",
+  /** The running daemon is too old to accept secrets beside a command. */
+  "secret_unsupported_daemon",
+  /** This engine does not deliver secrets to a browser (phase 1: the local one). */
+  "secret_engine_unsupported",
+  /**
+   * The sender and this daemon speak different protocol versions; nothing ran.
+   * Also used server-side when a relaunch could not fix the mismatch.
+   */
+  "protocol_mismatch",
 ] as const;
 
 export type BrowserdErrorCode = (typeof BROWSERD_ERROR_CODES)[number];

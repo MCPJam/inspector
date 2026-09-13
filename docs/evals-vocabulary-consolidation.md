@@ -14,9 +14,10 @@ file since #4774), `predicates` (Convex storage and the SDK's evaluator library)
 contract already disagree with each other.
 
 One configured execution count is spelled three ways: `repetitions` (suite file, CLI flag, Convex
-verdict-policy v2), `runs` (Convex legacy, still required storage), and `iterations` (SDK run options,
-public API case field). And the word for ONE execution is itself split: eval code says `trial` where
-the product already says "iteration".
+verdict-policy v2), `runs` (Convex legacy, still required storage), and `iterations` (SDK run options).
+Worse, the public API case field `iterations` is not that count at all on a legacy-policy suite: the
+legacy resolver reads it as a floor, `max(iterations, minimumIterations)`. And the word for ONE
+execution is itself split: eval code says `trial` where the product already says "iteration".
 
 Four authoring entry points — `test`, `expectedToolCalls`, `predicates`, `scorers` — converge on one
 `ScoreResult`, but an author has to learn all four to know that.
@@ -28,7 +29,8 @@ Four authoring entry points — `test`, `expectedToolCalls`, `predicates`, `scor
 | suite | cases with shared defaults and an acceptance policy | unchanged |
 | case | an authored scenario with stable identity | unchanged |
 | iteration | one execution instance of a case under one execution variant | the eval sense of `trial` |
-| repetitions | the configured number of iterations of a case | `runs`, and `iterations` wherever it names the configured count (SDK run options, public API case field) |
+| iterations | the configured number of iterations of a case | `repetitions` |
+| legacyIterations | the legacy-policy per-case count, read as a floor | the public API case field `iterations` on a legacy-policy suite, stored as `runs` |
 | trace | captured evidence of that execution | unchanged |
 | evaluator | an assertion or a judge | `Scorer`, `grader`, umbrella uses of `check` |
 | assertion | a deterministic rule | `Predicate`, `check`, matcher-backed rules |
@@ -56,7 +58,10 @@ These are the invariants. A PR that trips one has found a defect in itself, not 
    new payload.
 3. **Backend configuration identity.** `convex/lib/evalConfigRevision.ts` keeps serializing the keys
    `predicates`, `defaultPredicates`, `repetitions` and `runs`, and keeps its legacy escape hatch
-   that fires only when all eight suite fields are absent. Canonical arguments are normalized to the
+   that fires only when all eight suite fields are absent. Those four are string literals in the
+   payload, not references to a field's current name: after `repetitions` becomes `iterations` the
+   payload still says `repetitions`, exactly as it still says `predicates` after that rename, so no
+   suite's revision string moves. Canonical arguments are normalized to the
    legacy variables **before** anything hashes them, so an identical configuration authored either
    way produces an identical revision string. The same holds for case fingerprints
    (`convex/lib/testCaseBatch.ts`), rubric and judge-template hashes, and verdict-policy signatures.
@@ -99,8 +104,10 @@ These words mean something else. A codemod that proposes to mutate one fails the
 - **Benchmark and description-experiment `repetitions`** (`convex/schema.ts` benchmark tables,
   `evalDescriptionExperiments.plan.repetitions`).
 - **Description-experiment `iterationOverride`** (`convex/descriptionExperiments.ts`), the experiment's
-  own override beside `maxTrials`. It is not folded into `iteration`. `--max-trials`, `maxTrials` and
-  `plannedTrials` cap the product of cases and repetitions and are out of scope for this program.
+  own override beside `maxTrials`. It is not folded into `iteration`. The `--max-trials` flag becomes
+  `--max-iterations`; the stored `maxTrials` and `plannedTrials` fields are out of scope.
+- **The configuration-identity hash keys** in `convex/lib/evalConfigRevision.ts`: `repetitions`, `runs`,
+  `predicates` and `defaultPredicates` (invariant 3). A rename that reaches that file fails the run.
 - Generic verbs and helpers: `assertValid*`, vitest `expect`, prose "check that", mathematical
   predicates.
 
@@ -127,7 +134,6 @@ SDK. Protect the unrelated identifiers, and review eval imports there by hand.
 | `Predicate`, `PredicateResult`, `PredicateScope` | `Assertion`, `AssertionResult`, `AssertionScope` | type aliases from a new subpath |
 | `@mcpjam/sdk/predicates` | `@mcpjam/sdk/assertions` | new subpath; the old one keeps working |
 | `EvalTestConfig.predicates` / `.scorers` / `.test` | `.evaluators` / `.execute` | additive |
-| `EvalSuite.run({ iterations })` | `EvalSuite.run({ repetitions })` | additive; `iterations` stays as a deprecated alias |
 
 `RECOMMENDED_DEFAULT_PREDICATES` stays declared in `sdk/src/contract/grader-stage.ts`, byte for byte.
 The backend pins it through a whole-file capture of the three `{type, role, severity}` triples
@@ -192,13 +198,19 @@ Tool matching and the legacy boolean are assertions by this rule, which is the i
 are deterministic authored rules. Adding a required `kind` to the definition would change the hash
 payload, which invariant 2 forbids.
 
+Two kinds means a custom non-deterministic evaluator that is not a model-graded rubric reads as
+`judge` — the timeout and concurrency scorers in `sdk/tests/eval-scores.test.ts` are real examples.
+`kind` is therefore a presentation split, and no judge behaviour may branch on it: rubric display,
+reviewer calibration and gate eligibility key off the judge's own definition, its `model` and
+template version, never off `kind`.
+
 ## Authoring
 
 ```ts
 const suite = new EvalSuite({
   name: "Support workflows",
   defaults: {
-    repetitions: 5,
+    iterations: 5,
     evaluators: [assertion({ type: "noToolErrors", role: "advisory" })],
   },
 });
@@ -231,9 +243,9 @@ const result = await suite.run(executor);
 
 ```ts
 export type EvaluatorOverride = { mode: "inherit" | "extend" | "replace"; list: Evaluator[] };
-export interface EvalSuiteDefaults { repetitions?: number; evaluators?: Evaluator[] }
+export interface EvalSuiteDefaults { iterations?: number; evaluators?: Evaluator[] }
 // EvalTestConfig gains: execute?, evaluators?: EvaluatorOverride; `test` becomes optional.
-// EvalSuite.run options gain: repetitions?; the existing `iterations` stays as its deprecated alias.
+// EvalSuite.run keeps its existing `iterations` option, which is already the canonical spelling.
 ```
 
 ### Resolution
@@ -255,8 +267,9 @@ equivalent.
 
 ### Equivalence
 
-The effective assertion list is `config.predicates` followed by the assertions in the resolved
-evaluator list. Ordinals are positions in that combined list. `assertion()` builds its definition
+The effective assertion list is the resolved suite defaults first, then `config.predicates`, then
+the case's own assertions from its `evaluators` list; under `mode: "replace"` no suite defaults are
+in it. Ordinals are positions in that combined list. `assertion()` builds its definition
 through the same `predicateScoreDefinition` the legacy path uses, with the same `{id, ordinal, role}`
 inputs; `judge()` returns `judgeScorer`'s definition unchanged; `execute` reuses the `legacy:test`
 definition. Therefore:
@@ -297,10 +310,9 @@ fails the iteration closed, exactly as a throwing `test` does today.
 |---|---|
 | both `test` and `execute` | ``EvalTest "<name>" sets both `execute` and its legacy `test` alias — set one. They are two spellings of the case's driver; `execute` may return nothing and lets the evaluators decide.`` |
 | neither | ``Invalid config: must provide 'execute' (or the legacy 'test') function`` |
-| duplicate evaluator id, including against a suite default | ``EvalTest "<name>": duplicate evaluator id "<id>". Evaluator ids must be unique within a case, and suite defaults.evaluators count too — rename one, or use mode "replace" to drop the suite's.`` |
+| an evaluator id reused for a DIFFERENT definition, a suite default's included | ``EvalTest "<name>": duplicate evaluator id "<id>" on two different definitions. One id cannot mean two evaluations — rename one, or use mode "replace" to drop the suite's.`` |
 | a widget assertion in a code-first case | ``Assertion <type> needs widget render observations, which only a hosted run captures. Remove it from this code-first evaluator, or move the case to a hosted eval suite.`` |
-| `EvalSuite.run` with no count | ``EvalSuite "<name>" has no repetitions count: pass { repetitions } to run(), or set defaults.repetitions on the suite.`` |
-| both spellings of the count | ``Set repetitions or its deprecated alias iterations, not both.`` |
+| `EvalSuite.run` with no count | ``EvalSuite "<name>" has no iteration count: pass { iterations } to run(), or set defaults.iterations on the suite.`` |
 | both spellings of a bound | ``Set evaluatorConcurrency or its legacy alias scorerConcurrency, not both.`` |
 
 `predicates` alongside `evaluators`, and `scorers` alongside `evaluators`, are **additive** rather
@@ -317,12 +329,15 @@ That collapse is narrower than it sounds, and the order matters. Three cases, th
 | the same id on two definitions that differ | refused by the snapshot builder — one id cannot mean two evaluations |
 | the same id on two IDENTICAL definitions | collapses to one row |
 | an id already owned by a built-in (`legacy:test`, `tool-match`, a positional `predicate:<type>#<n>`) | refused **before** the builder runs, whether or not the content matches |
+| a suite default's id on an identical case definition | collapses to one row, like any other identical pair |
+| a suite default's id on a different case definition | refused, like any other conflict |
 
 The third is the one a reader would otherwise get wrong. `EvalTest` builds its reserved-id set first
 and refuses a custom evaluator that reuses one, because a built-in row minted against the wrong
 definition would carry a hash that joins to nothing — and the gate engine's fail-closed join reads
 an unjoinable row as tampering. So "identical content collapses" holds only outside the reserved
-set, and a suite default counts toward the case's ids for the same reason.
+set. A suite default's id counts toward the case's ids exactly as any other does: an identical
+inherited definition collapses, and a different definition under that id is refused.
 
 ## The wire
 
@@ -336,7 +351,21 @@ Absent means 1, which is byte-for-byte today's contract: the same request fields
 the same response projection. A response that varies by vocabulary sends
 `Vary: x-mcpjam-eval-vocabulary`. Any value other than `"1"` or `"2"` is a 400.
 
-Under **both** vocabularies every spelling of a field is accepted and any two of them together is a
+The header is the **only** thing that decides which spellings a request may use, and vocabulary 1 is
+not widened to meet vocabulary 2 half way:
+
+| | vocabulary 1 (no header) | vocabulary 2 |
+|---|---|---|
+| accepted on a write | exactly today's fields — `checks`, `iterations`, `repetitions`, `defaultPredicates` | those, plus the canonical `assertions`, `defaultAssertions`, `legacyIterations` and the legacy `predicates` and `runs` |
+| refused | `assertions`, `defaultAssertions`, `predicates`, `runs`, `legacyIterations`, as unknown keys | a canonical spelling sent together with a legacy one |
+| read projection | unchanged | `checks` → `assertions`, the configured count → `iterations` |
+
+A headerless request is therefore byte-for-byte today's request, including its refusals: the case
+schemas are `z.strictObject`, so a canonical spelling is an unknown key and a `VALIDATION_ERROR`, not
+a silently dropped field. That is what keeps the negotiation boundary decidable — two implementations
+reading this document cannot disagree about whether the same headerless body is valid.
+
+Under vocabulary 2, where both spellings of one field are accepted, any two of them together is a
 refusal, reported with the conflicting paths and decided by presence rather than truthiness so an
 explicit `null` clear still reaches storage:
 
@@ -344,18 +373,43 @@ explicit `null` clear still reaches storage:
 Send <canonical> or <legacy>, not both — they are two spellings of one field.
 ```
 
-Under vocabulary 2 the canonical spellings are `assertions` and `repetitions`; the read projection
-renames `checks` to `assertions` and reports the configured count as `repetitions`. Under vocabulary 1
-nothing moves. A canonical client must project a GET result into a valid write request rather than
-echoing both spellings back into a PATCH.
+A canonical client must project a GET result into a valid write request rather than echoing both
+spellings back into a PATCH.
 
 The count family is the one place where meaning, not just spelling, differs, because the legacy API
-carries two counts with different semantics on the same object: `iterations` (a spelling of `runs`)
-and the verdict-policy-v2 `repetitions`. Under vocabulary 1 that object is unchanged, both counts
-included. Under vocabulary 2 `repetitions` is the one configured count and `iterations` and `runs` are
-its legacy spellings; the adapter writes the legacy `runs` and, on a verdict-policy-v2 suite, the v2
-`repetitions` as well, keeping both stored spellings equal. `iterations` never names the configured
-count in vocabulary 2: an iteration is one execution.
+carries two counts with different semantics on the same object: `iterations` (a spelling of `runs`,
+which the legacy resolver reads as a floor) and the verdict-policy-v2 `repetitions` (exact). Under
+vocabulary 1 that object is unchanged, both counts included.
+
+Under vocabulary 2 the exact configured count is `iterations`, with `repetitions` its legacy spelling.
+A write of `iterations` sets the stored v2 `repetitions`, and nothing else. The floor count is
+`legacyIterations`, stored as `runs`. It is not a spelling of `iterations`: the two are different
+fields, so the both-spellings refusal never pairs them, and a read-modify-write that never mentions
+the floor leaves it exactly as it was. An unchanged PATCH that also wrote `runs` would drop a stored
+floor of 10 to an exact count of 3 with no authored edit, and rotate the configuration revision,
+which hashes both keys. `runs` is required storage, so a CREATE that names no floor still needs a
+value: it takes the case's `iterations`, which is what the legacy resolver would have floored to
+anyway.
+
+A CREATE may legitimately name **neither** count — on a verdict-policy-2 suite the exact count
+inherits the suite default, and on a legacy-policy suite naming it is refused outright — and then
+`runs` is **1**. That is not a new default chosen here: it is the value a headerless create of the
+same body stores today, `Math.max(1, Math.floor(runs ?? 1))` in `createTestCase`
+(`convex/testSuites.ts`). It is deliberately **not** the suite's `verdictPolicyDefaults.repetitions`:
+inlining the suite default would write a different `runs` than vocabulary 1 writes for the same body,
+and `runs` is in the configuration-revision payload, so the two vocabularies would mint different
+revisions for one authored configuration. The v2 override stays absent, which is how a case inherits
+the suite default at run time rather than freezing a copy of it.
+
+Sending `iterations` on a legacy-policy suite is the same `VALIDATION_ERROR` naming the upgrade that
+`repetitions` is today.
+
+The order is the guard. The legacy field is renamed to `legacyIterations` in its own step — accepted
+under vocabulary 2, which is the only vocabulary that accepts it at all — **before** any adapter reads
+`iterations` as the configured count. A step
+that makes `iterations` mean the count while the floor field still answers to that name merges two
+counts into one, and the codemod refuses to propose it (`scripts/codemod/evals-vocabulary`,
+"rename target in use").
 
 ### Capability
 
@@ -366,9 +420,15 @@ vocabulary: {
   version: 2,
   evaluatorKinds: ["assertion", "judge"],
   assertionKinds: PREDICATE_KINDS,
-  fields: { assertions: ["checks", "predicates"], defaultAssertions: ["defaultPredicates"], repetitions: ["iterations", "runs"] },
+  fields: { assertions: ["checks", "predicates"], defaultAssertions: ["defaultPredicates"], iterations: ["repetitions"], legacyIterations: ["runs"] },
 }
 ```
+
+Each list is the legacy spellings a **vocabulary-2** body may use for that field. `iterations` is
+absent from `legacyIterations` on purpose, even though vocabulary 1's `iterations` is what vocabulary 2
+calls `legacyIterations`: under vocabulary 2 that key is the exact count. One key means two things
+across the boundary, which is exactly why the negotiated vocabulary — never the presence of a field —
+says which sense a body means.
 
 `scorers.predicateKinds` is retained for existing consumers. Absence of `vocabulary` selects the
 existing contract. A client reads the capability value; it never infers support from the presence of
@@ -376,8 +436,8 @@ a field on an unrelated object.
 
 ## The suite file
 
-Dialect `"2"` uses `assertions`; the count is `repetitions` in both dialects. Dialect `"1"` is
-untouched — its `repetitions` stays required and its published JSON Schema keeps its contract, so an older strict reader can never
+Dialect `"2"` uses `assertions` and `iterations`. A suite file has no floor count, so nothing there
+needs a legacy name first. Dialect `"1"` is untouched — its `repetitions` stays required and its published JSON Schema keeps its contract, so an older strict reader can never
 misread a new file under its existing version.
 
 The loader accepts both. The writer emits the file's own dialect, and a new dialect is written only

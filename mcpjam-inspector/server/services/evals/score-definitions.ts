@@ -206,6 +206,31 @@ export function hostedJudgeScoreDefinition(args: {
   };
 }
 
+/**
+ * Emitted only when the agent-activity guard fired, so a normal run's
+ * `evaluationConfigHash` stays unchanged.
+ */
+export const HOSTED_AGENT_ACTIVITY_SCORER_ID = "platform:agentActivity";
+
+export const HOSTED_AGENT_ACTIVITY_VERSION = "1";
+
+export function hostedAgentActivityScoreDefinition(): ScoreDefinition {
+  return {
+    scorerId: HOSTED_AGENT_ACTIVITY_SCORER_ID,
+    idSource: "platform",
+    scorerVersion: HOSTED_AGENT_ACTIVITY_VERSION,
+    implementationHash: canonicalDigest({
+      evaluatorVersion: HOSTED_AGENT_ACTIVITY_VERSION,
+    }),
+    label: "agent activity",
+    deterministic: true,
+    passThreshold: 1,
+    // Gating, so the row lands in `unresolvedScorerIds` ("not measured")
+    // rather than as a failed criterion.
+    role: "gating",
+  };
+}
+
 export type HostedScoreDefinitionInputs = {
   /** One entry per graded predicate, in the order the runner evaluated them. */
   predicates?: ReadonlyArray<{ predicate: Predicate; scope?: PredicateScope }>;
@@ -225,6 +250,8 @@ export type HostedScoreDefinitionInputs = {
     /** From the run's frozen config, via the stamped verdict. Fails closed. */
     role?: "advisory" | "gating";
   };
+  /** A boolean, not the assessment, so the detail never affects the scorer's hash. */
+  agentActivityFired?: boolean;
 };
 
 /**
@@ -251,6 +278,9 @@ export function buildHostedScoreDefinitions(
   }
   if (inputs.judge) {
     definitions.push(hostedJudgeScoreDefinition(inputs.judge));
+  }
+  if (inputs.agentActivityFired) {
+    definitions.push(hostedAgentActivityScoreDefinition());
   }
   const byId = new Map<string, ResolvedScoreDefinition>();
   for (const definition of definitions) {
