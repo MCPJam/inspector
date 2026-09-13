@@ -125,39 +125,6 @@ If a receipt isn't available yet the cell shows **Processing** (for pending char
 
 To add credits, click **Top up** — either from the empty state when you have no history, or from the credit balance card above.
 
-### Spend budget
-
-An owner or admin can cap what the whole organization spends on MCPJam-billed
-work — chat, evals, judges and computer time — for each billing period, from
-**Organization → Budget**.
-
-- Set the cap in dollars, and choose the percentages to be warned at. The
-  default warns at 80%; reaching the cap always notifies, whether or not you
-  list it.
-- Warnings go to the organization's owners and admins in the notifications
-  bell, and to the owner by email.
-- **When the budget is reached**, new chat turns, eval runs and computer starts
-  are refused for the whole organization. The refusal says the budget is
-  reached and that an owner or admin can raise it — buying credits does not
-  clear it. Work already in flight finishes, and running computers keep going
-  until they hibernate.
-- A scheduled eval that hits the budget pauses its schedule rather than
-  retrying into the same cap every window; it resumes once you raise the cap or
-  the period rolls over.
-- Runs that use **your own API keys** are never counted against the budget and
-  never blocked by it. Neither is the free daily allowance, which is not
-  credits.
-- The window is your organization's own billing period: the subscription cycle
-  for team and enterprise plans, and the calendar month otherwise. Raising or
-  lowering the cap mid-period does not reset what has already been spent.
-
-Any member can see the budget and how much of it is left; only owners and
-admins can change it. Every change is recorded in the organization's audit log
-with who made it and what it was before.
-
-The same budget is readable and writable from the API at
-`/v1/organizations/{organizationId}/spend-budget`.
-
 ### Seat payment failures
 
 When someone you invited to a paid-seat organization signs up and the automatic seat charge fails or is cancelled, the org billing page shows a **Seat payment didn't go through** notice. As the org owner you can:
