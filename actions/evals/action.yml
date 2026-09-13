@@ -1,0 +1,84 @@
+name: MCPJam evals
+description: Run a hosted MCPJam eval suite, optionally gate it, and save reports.
+inputs:
+  api-key:
+    description: MCPJam API key, supplied from GitHub Actions secrets.
+    required: true
+  project:
+    description: Existing project name or ID.
+    required: true
+  suite:
+    description: Existing eval suite name or ID.
+    required: true
+  gate:
+    description: Use the gate result, including existing waivers, to decide success.
+    default: "false"
+  min-pass-rate-percent:
+    description: Optional gate pass threshold between 0 and 100. Requires gate.
+  baseline-run:
+    description: Baseline run ID. Requires gate; cannot accompany baseline-sha.
+  baseline-sha:
+    description: Commit SHA with a saved baseline run. Requires gate; cannot accompany baseline-run.
+  wait-timeout-ms:
+    description: Positive wait limit in milliseconds. Omit to retain CLI defaults.
+  cli-version:
+    description: Exact published CLI version.
+    default: "5.7.1"
+  idempotency-key:
+    description: Optional retry key, at most 256 characters. Otherwise derived from the workflow invocation.
+outputs:
+  run-ids:
+    description: JSON array of all launched run IDs, including runs that did not finish.
+    value: ${{ steps.evaluate.outputs.run-ids }}
+  run-exit-code:
+    description: Original CLI run exit code, or empty if it could not start.
+    value: ${{ steps.evaluate.outputs.run-exit-code }}
+  gate-exit-codes:
+    description: JSON object mapping run IDs to their gate exit codes.
+    value: ${{ steps.evaluate.outputs.gate-exit-codes }}
+  report-path:
+    description: Local directory containing reports and the action result.
+    value: ${{ steps.evaluate.outputs.report-path }}
+  artifact-url:
+    description: GitHub URL for the uploaded reports.
+    value: ${{ steps.upload.outputs.artifact-url }}
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: "24"
+    - name: Run evals and optional gates
+      id: evaluate
+      shell: bash
+      env:
+        MCPJAM_ACTION_PATH: ${{ github.action_path }}
+        MCPJAM_API_KEY: ${{ inputs.api-key }}
+        MCPJAM_ACTION_PROJECT: ${{ inputs.project }}
+        MCPJAM_ACTION_SUITE: ${{ inputs.suite }}
+        MCPJAM_ACTION_GATE: ${{ inputs.gate }}
+        MCPJAM_ACTION_MIN_PASS_RATE: ${{ inputs.min-pass-rate-percent }}
+        MCPJAM_ACTION_BASELINE_RUN: ${{ inputs.baseline-run }}
+        MCPJAM_ACTION_BASELINE_SHA: ${{ inputs.baseline-sha }}
+        MCPJAM_ACTION_WAIT_TIMEOUT: ${{ inputs.wait-timeout-ms }}
+        MCPJAM_ACTION_CLI_VERSION: ${{ inputs.cli-version }}
+        MCPJAM_ACTION_IDEMPOTENCY_KEY: ${{ inputs.idempotency-key }}
+        MCPJAM_ACTION_INVOCATION: ${{ github.action }}
+        MCPJAM_ACTION_MATRIX: ${{ toJSON(matrix) }}
+      run: node "$MCPJAM_ACTION_PATH/run.mjs"
+    - name: Save eval reports
+      id: upload
+      if: ${{ always() && steps.evaluate.outputs.report-path != '' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ steps.evaluate.outputs.artifact-name }}
+        path: ${{ steps.evaluate.outputs.report-path }}
+        if-no-files-found: error
+    - name: Report final result
+      if: ${{ always() }}
+      shell: bash
+      env:
+        MCPJAM_ACTION_PATH: ${{ github.action_path }}
+        MCPJAM_ACTION_RESULT: ${{ steps.evaluate.outputs.result }}
+        MCPJAM_ACTION_UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
+      run: node "$MCPJAM_ACTION_PATH/run.mjs" finalize
