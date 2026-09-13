@@ -27,6 +27,7 @@ import { SignJWT, generateKeyPair } from "jose";
 import { createWebTestApp, expectJson } from "./helpers/test-app.js";
 import {
   createWorkosKeyBinding,
+  lookupWorkosKeyBinding,
   removeWorkosKeyBinding,
   WorkosKeyBindingError,
 } from "../../../services/workos-key-bindings.js";
@@ -36,6 +37,7 @@ vi.mock("../../../services/workos-key-bindings.js", async (importOriginal) => {
   return {
     ...actual, // keeps the real WorkosKeyBindingError class
     createWorkosKeyBinding: vi.fn().mockResolvedValue(undefined),
+    lookupWorkosKeyBinding: vi.fn().mockResolvedValue({ mcpjamOrganizationId: "org_convex_1" }),
     removeWorkosKeyBinding: vi.fn().mockResolvedValue(undefined),
   };
 });
@@ -92,6 +94,7 @@ afterAll(async () => {
 
 beforeEach(() => {
   vi.mocked(createWorkosKeyBinding).mockReset().mockResolvedValue(undefined);
+  vi.mocked(lookupWorkosKeyBinding).mockReset().mockResolvedValue({ mcpjamOrganizationId: "org_convex_1" });
   vi.mocked(removeWorkosKeyBinding).mockReset().mockResolvedValue(undefined);
   mockResolveApiKeyReadiness.mockReset().mockResolvedValue({
     ready: true,
@@ -179,11 +182,13 @@ describe("list and revoke", () => {
       await mint("round-trip"),
     );
 
-    const listed = await expectJson<{ items: Array<{ id: string }> }>(
+    const listed = await expectJson<{ items: Array<{ id: string; organizationId: string | null }> }>(
       await app().request("/api/web/api-keys", { headers: authHeader() }),
     );
     expect(listed.status).toBe(200);
     expect(listed.data.items.map((k) => k.id)).toContain(created.id);
+    expect(listed.data.items.find((k) => k.id === created.id)?.organizationId).toBe("org_convex_1");
+    expect(lookupWorkosKeyBinding).toHaveBeenCalledWith(created.id);
 
     const revoked = await app().request(`/api/web/api-keys/${created.id}`, {
       method: "DELETE",
