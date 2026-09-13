@@ -118,19 +118,27 @@ If you want to change the **authentication type** (for example, switching from B
 - **Custom headers**: Any edit to headers or the authentication type replaces the stored headers secret on save.
 - If you save without revealing or editing a secret section, the existing stored secret is left unchanged.
 
-### Changing a server's URL
+### Changing a server's destination
+
+Two edits cause the backend to clear a server's stored credentials: changing an HTTP server's **origin**, or changing a stdio server's **command**.
+
+**HTTP servers — origin changes**
 
 Editing the path portion of a server's URL (for example, `/mcp` to `/mcp/v2`) keeps all saved credentials intact.
 
-Changing the **origin** — the scheme, host, or port — clears every credential saved against that server: request headers, environment variables, the bearer token, and any OAuth access token, refresh token, and client secret. The edit form warns you before this happens and lists exactly what will be removed. You must check the acknowledgement box before Save becomes available.
+Changing the **origin** — the scheme, host, or port — clears every credential saved against that server: request headers, environment variables, the bearer token, and any OAuth access token, refresh token, and client secret. The edit form warns you before this happens and names both the old and new origin. You must check the acknowledgement box before Save becomes available.
 
-This affects credentials that other project members may have added and that you may not be able to see.
+**Stdio servers — command changes**
 
-After a cross-origin URL change, each member who had credentials saved for that server needs to re-enter them.
+Changing the **command** (or its arguments) on a stdio server that has stored environment variables clears those variables. The edit form warns you before this happens and shows both the old and new invocation. You must check the acknowledgement box before Save becomes available.
 
-### URL history
+**Both cases**
 
-The server detail panel includes a **URL history** section that shows every time the server's URL was changed, who made the change, and whether saved credentials were cleared as a result. This is visible to all project members regardless of plan, so anyone whose credentials were removed can see what happened and who made the edit.
+The warning applies to credentials that other project members may have added and that you may not be able to see. After the save, each member who had credentials saved for that server needs to re-enter them.
+
+### Destination history
+
+The server detail panel includes a **Destination history** section that shows every time the server's destination was changed, who made the change, and whether saved credentials were cleared as a result. This covers HTTP origin changes, stdio command swaps, and switches between transport types. It is visible to all project members regardless of plan, so anyone whose credentials were removed can see what happened and who made the edit.
 
 ### Real-Time Sync
 
