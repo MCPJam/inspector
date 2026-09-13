@@ -1,6 +1,15 @@
-vi.mock("@workos-inc/authkit-react", () => ({ useAuth: () => ({ user: { id: "member" } }) }));
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({ user: { id: "member" } }),
+}));
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
+
+// The rail reads browser-tool availability without mounting an application
+// provider. These fixtures use host-config defaults, not remote settings.
+vi.mock("convex/react", () => ({
+  useConvexAuth: () => ({ isAuthenticated: false, isLoading: false }),
+  useQuery: () => undefined,
+}));
 
 /**
  * The rail's Shell tab is engine-aware: the CLOUD controller

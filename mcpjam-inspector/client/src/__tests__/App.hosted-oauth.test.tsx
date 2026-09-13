@@ -1165,10 +1165,10 @@ describe("App hosted OAuth callback handling", () => {
     });
   });
 
-  it("keeps the sidebar-selected org active when navigating back to servers", async () => {
+  it("keeps the sidebar-selected org active when returning from settings to the app", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
-    window.history.replaceState({}, "", "/organizations/org-a");
+    window.history.replaceState({}, "", "/servers");
 
     const setActiveOrganizationIdSpy = vi.fn();
     mockUseAppState.mockImplementation(() => {
@@ -1229,17 +1229,14 @@ describe("App hosted OAuth callback handling", () => {
 
     await waitFor(() => {
       expect(setActiveOrganizationIdSpy).toHaveBeenCalledWith("org-b");
-      expect(getLastSidebarProps().activeOrganizationId).toBe("org-b");
       expect(window.location.pathname).toBe("/organizations/org-b");
     });
 
-    act(() => {
-      getLastSidebarProps().onNavigate?.("servers");
-    });
+    fireEvent.click(screen.getByRole("button", { name: "Back to app" }));
 
     await waitFor(() => {
       expect(getLastSidebarProps().activeOrganizationId).toBe("org-b");
-      expect(window.location.pathname).toBe("/servers");
+      expect(window.location.pathname).toBe("/home");
     });
   });
 
@@ -1249,7 +1246,7 @@ describe("App hosted OAuth callback handling", () => {
     // just put in the pathname, so it stays a project in the new org.
     clearHostedOAuthPendingState();
     clearScenarioSession();
-    window.history.replaceState({}, "", "/organizations/org-a");
+    window.history.replaceState({}, "", "/servers");
 
     const setActiveOrganizationIdSpy = vi.fn();
     mockUseAppState.mockImplementation(() => {
@@ -1367,10 +1364,10 @@ describe("App hosted OAuth callback handling", () => {
     expect(window.location.hash).toBe("#settings");
   });
 
-  it("lands on the target org's project when switching from org models", async () => {
+  it("lands on the target org's project when switching from the main sidebar", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
-    window.history.replaceState({}, "", "/organizations/org-a/models");
+    window.history.replaceState({}, "", "/servers");
 
     const setActiveOrganizationIdSpy = vi.fn();
     (mockUseAppState as any).mockImplementation(() => {
@@ -1656,16 +1653,16 @@ describe("App hosted OAuth callback handling", () => {
     expect(window.location.pathname).toBe("/servers");
   });
 
-  it("keeps sidebar project creation enabled for uncapped free routed orgs", async () => {
+  it("keeps sidebar project creation enabled for uncapped free selected orgs", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
-    window.history.replaceState({}, "", "/organizations/org-3");
+    window.history.replaceState({}, "", "/servers");
     mockUseFeatureFlagEnabled.mockImplementation(
       (flag: string) => flag === "billing-entitlements-ui",
     );
     mockUseAppState.mockImplementation(() => ({
       ...createAppStateMock(),
-      activeOrganizationId: "org-1",
+      activeOrganizationId: "org-3",
     }));
     mockUseQuery.mockImplementation((name: string, args?: any) => {
       if (name === "organizations:getMyOrganizations") {

@@ -1,10 +1,16 @@
+import { ChevronDown } from "lucide-react";
+import { useSettingsDraft } from "./settings/SettingsDraftProvider";
+import {
+  useCurrentPathname,
+  useCurrentSearchParam,
+} from "@/lib/app-navigation";
+import { SettingsPageShell } from "./settings/SettingsPageShell";
 import { useEffect, useState } from "react";
 import { useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
-import { EditableText } from "./ui/editable-text";
-import { AccountApiKeySection } from "./setting/AccountApiKeySection";
-import { ProjectMembersFacepile } from "./project/ProjectMembersFacepile";
-import { ProjectShareButton } from "./project/ProjectShareButton";
+import { ProjectGeneralDetails } from "./project/ProjectGeneralDetails";
+import { ShareProjectDialog } from "./project/ShareProjectDialog";
+
 import { ProjectIconPicker } from "./project/ProjectEmojiPicker";
 import { ProjectSecretsSection } from "./project/ProjectSecretsSection";
 
@@ -42,9 +48,14 @@ function XaaTestDefaultsSection({
   canManage: boolean;
   onUpdateProject: (
     projectId: string,
-    updates: Partial<Project>
+    updates: Partial<Project>,
   ) => Promise<void>;
 }) {
+  const target = useCurrentSearchParam("setting");
+  const [expanded, setExpanded] = useState(target === "test-identity");
+  useEffect(() => {
+    if (target === "test-identity") setExpanded(true);
+  }, [target]);
   const [subject, setSubject] = useState(storedIdentity?.subject ?? "");
   const [email, setEmail] = useState(storedIdentity?.email ?? "");
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -69,12 +80,21 @@ function XaaTestDefaultsSection({
     trimmedSubject !== (storedIdentity?.subject ?? "") ||
     trimmedEmail !== (storedIdentity?.email ?? "");
 
+  useSettingsDraft(
+    isDirty,
+    () => {
+      setSubject(storedIdentity?.subject ?? "");
+      setEmail(storedIdentity?.email ?? "");
+    },
+    isSaving,
+  );
+
   const handleSave = async () => {
     const bothSet = trimmedSubject !== "" && trimmedEmail !== "";
     const bothEmpty = trimmedSubject === "" && trimmedEmail === "";
     if (!bothSet && !bothEmpty) {
       setValidationError(
-        "Enter both a subject and an email, or clear both fields."
+        "Enter both a subject and an email, or clear both fields.",
       );
       return;
     }
@@ -99,84 +119,103 @@ function XaaTestDefaultsSection({
   };
 
   return (
-    <div className="space-y-2">
-      <h2 className="text-sm font-medium text-muted-foreground">
-        XAA test identity defaults
+    <div id="setting-test-identity" className="space-y-2">
+      <h2>
+        <button
+          type="button"
+          aria-expanded={expanded}
+          aria-controls="test-identity-fields"
+          className="flex w-full items-center justify-between gap-3 rounded-md border border-border px-4 py-3 text-left text-sm font-medium hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+          onClick={() => setExpanded(!expanded)}
+        >
+          <span>XAA test identity defaults</span>
+          <ChevronDown
+            aria-hidden="true"
+            className={`size-4 shrink-0 transition-transform ${
+              expanded ? "rotate-180" : ""
+            }`}
+          />
+        </button>
       </h2>
-      <div className="space-y-3 px-4 py-3 rounded-md border border-border/40">
-        <div className="flex flex-col gap-1">
-          <span className="text-sm font-medium">
-            Identity provider: MCPJam test IdP
-          </span>
-          <span className="text-xs text-muted-foreground">
-            Used when an authenticated project member connects without a server
-            override.
-          </span>
-          {!hasStored && (
-            <span className="text-xs text-muted-foreground">
-              Falls back to MCPJam&apos;s demo identity.
-            </span>
-          )}
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="space-y-1">
-            <label
-              htmlFor="xaa-default-subject"
-              className="block text-xs font-medium text-foreground"
-            >
-              Subject (sub)
-            </label>
-            <Input
-              id="xaa-default-subject"
-              value={subject}
-              onChange={(e) => setSubject(e.target.value)}
-              placeholder="Stable synthetic identifier"
-              disabled={!canManage}
-              spellCheck={false}
-              autoComplete="off"
-              className="h-9"
-            />
+      <p className="px-4 text-xs text-muted-foreground">
+        Default test identity for this project’s XAA connections.
+      </p>
+      {expanded && (
+        <div id="test-identity-fields">
+          <div className="space-y-3 px-4 py-3 rounded-md border border-border/40">
+            <div className="flex flex-col gap-1">
+              <span className="text-sm font-medium">MCPJam Test IdP</span>
+              <span className="text-xs text-muted-foreground">
+                Used when an authenticated project member connects without a
+                server override.
+              </span>
+              {!hasStored && (
+                <span className="text-xs text-muted-foreground">
+                  Falls back to MCPJam&apos;s demo identity.
+                </span>
+              )}
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1">
+                <label
+                  htmlFor="xaa-default-subject"
+                  className="block text-xs font-medium text-foreground"
+                >
+                  Subject (sub)
+                </label>
+                <Input
+                  id="xaa-default-subject"
+                  value={subject}
+                  onChange={(e) => setSubject(e.target.value)}
+                  placeholder="Stable synthetic identifier"
+                  disabled={!canManage}
+                  spellCheck={false}
+                  autoComplete="off"
+                  className="h-9"
+                />
+              </div>
+              <div className="space-y-1">
+                <label
+                  htmlFor="xaa-default-email"
+                  className="block text-xs font-medium text-foreground"
+                >
+                  Email
+                </label>
+                <Input
+                  id="xaa-default-email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="synthetic.user@example.com"
+                  disabled={!canManage}
+                  spellCheck={false}
+                  autoComplete="off"
+                  className="h-9"
+                />
+              </div>
+            </div>
+            {validationError && (
+              <p className="text-xs text-red-500" role="alert">
+                {validationError}
+              </p>
+            )}
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-xs text-muted-foreground">
+                {canManage
+                  ? "This does not configure enterprise SSO or bring-your-own IdP endpoints."
+                  : "Only project admins can change these defaults."}
+              </span>
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => void handleSave()}
+                disabled={!canManage || isSaving || !isDirty}
+              >
+                {isSaving ? "Saving…" : "Save defaults"}
+              </Button>
+            </div>
           </div>
-          <div className="space-y-1">
-            <label
-              htmlFor="xaa-default-email"
-              className="block text-xs font-medium text-foreground"
-            >
-              Email
-            </label>
-            <Input
-              id="xaa-default-email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="synthetic.user@example.com"
-              disabled={!canManage}
-              spellCheck={false}
-              autoComplete="off"
-              className="h-9"
-            />
-          </div>
         </div>
-        {validationError && (
-          <p className="text-xs text-red-500" role="alert">
-            {validationError}
-          </p>
-        )}
-        <div className="flex items-center justify-between gap-3">
-          <span className="text-xs text-muted-foreground">
-            {canManage
-              ? "This does not configure enterprise SSO or bring-your-own IdP endpoints."
-              : "Only project admins can change these defaults."}
-          </span>
-          <Button
-            type="button"
-            size="sm"
-            onClick={() => void handleSave()}
-            disabled={!canManage || isSaving || !isDirty}
-          >
-            {isSaving ? "Saving…" : "Save defaults"}
-          </Button>
-        </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -189,7 +228,7 @@ interface ProjectSettingsTabProps {
   organizationName?: string;
   onUpdateProject: (
     projectId: string,
-    updates: Partial<Project>
+    updates: Partial<Project>,
   ) => Promise<void>;
   onDeleteProject: (projectId: string) => Promise<boolean>;
   onProjectShared: (sharedProjectId: string, sourceProjectId?: string) => void;
@@ -207,6 +246,12 @@ export function ProjectSettingsTab({
   onProjectShared,
   onNavigateAway,
 }: ProjectSettingsTabProps) {
+  const pathname = useCurrentPathname();
+  const section = pathname.endsWith("/members")
+    ? "members"
+    : pathname.endsWith("/secrets")
+      ? "secrets"
+      : "general";
   const { isAuthenticated } = useConvexAuth();
   const { user } = useAuth();
   const { activeMembers, canManageMembers } = useProjectMembers({
@@ -218,7 +263,7 @@ export function ProjectSettingsTab({
   const projectDescription = project?.description ?? "";
   const isDefault = project?.isDefault ?? false;
   const currentMember = activeMembers.find(
-    (member) => member.email.toLowerCase() === user?.email?.toLowerCase()
+    (member) => member.email.toLowerCase() === user?.email?.toLowerCase(),
   );
   const canManageProjectSettings =
     !isAuthenticated || !convexProjectId ? true : canManageMembers;
@@ -231,115 +276,76 @@ export function ProjectSettingsTab({
         currentMember?.projectRole === "admin");
 
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="p-8 max-w-4xl space-y-8">
-        {/* Hero — Asana-style header */}
-        <div className="flex items-start gap-6">
-          <ProjectIconPicker
-            currentIcon={project?.icon}
-            projectName={projectName}
-            onSelect={(iconName) =>
-              onUpdateProject(activeProjectId, { icon: iconName })
-            }
-            onRemove={() => onUpdateProject(activeProjectId, { icon: "" })}
-            size="lg"
-          />
-          <div className="flex flex-1 flex-col items-stretch gap-1 pt-2">
-            <EditableText
-              value={projectName}
-              onSave={(newName) =>
-                onUpdateProject(activeProjectId, { name: newName })
+    <SettingsPageShell>
+      {section === "general" && (
+        <ProjectGeneralDetails
+          key={activeProjectId}
+          name={projectName}
+          description={projectDescription}
+          canEdit={canManageProjectSettings}
+          onSave={(details) => onUpdateProject(activeProjectId, details)}
+          icon={
+            <ProjectIconPicker
+              currentIcon={project?.icon}
+              projectName={projectName}
+              onSelect={(iconName) =>
+                onUpdateProject(activeProjectId, { icon: iconName })
               }
-              disabled={!canManageProjectSettings}
-              className="w-full text-3xl font-semibold -ml-2"
-              placeholder="Project name"
+              onRemove={() => onUpdateProject(activeProjectId, { icon: "" })}
+              size="sm"
             />
-            <EditableText
-              value={projectDescription}
-              onSave={(newDesc) =>
-                onUpdateProject(activeProjectId, {
-                  description: newDesc,
-                })
-              }
-              disabled={!canManageProjectSettings}
-              className="w-full text-muted-foreground -ml-2"
-              placeholder="Add a description..."
-            />
-          </div>
-        </div>
+          }
+        />
+      )}
+      {/* Members & Sharing */}
+      {section === "members" && isAuthenticated && user && (
+        <ShareProjectDialog
+          embedded
+          isOpen
+          onClose={() => {}}
+          projectName={projectName}
+          projectServers={projectServers}
+          sharedProjectId={project?.sharedProjectId}
+          organizationId={project?.organizationId}
+          visibility={project?.visibility}
+          organizationName={organizationName}
+          currentUser={user}
+          onProjectShared={onProjectShared}
+        />
+      )}
 
-        {/* Members & Sharing */}
-        {isAuthenticated && (
-          <div className="space-y-2">
-            <h2 className="text-sm font-medium text-muted-foreground">
-              Members & Sharing
-            </h2>
-            <div className="flex items-center gap-2 px-4 py-3 rounded-md border border-border/40">
-              {user && (
-                <ProjectMembersFacepile
-                  projectName={projectName}
-                  projectServers={projectServers}
-                  currentUser={user}
-                  sharedProjectId={project?.sharedProjectId}
-                  organizationId={project?.organizationId}
-                  visibility={project?.visibility}
-                  organizationName={organizationName}
-                  onProjectShared={onProjectShared}
-                />
-              )}
-              <ProjectShareButton
-                projectName={projectName}
-                projectServers={projectServers}
-                sharedProjectId={project?.sharedProjectId}
-                organizationId={project?.organizationId}
-                visibility={project?.visibility}
-                organizationName={organizationName}
-                onProjectShared={onProjectShared}
-              />
-            </div>
-          </div>
-        )}
-
-        {/* API Key */}
-        <div className="space-y-2">
-          <h2 className="text-sm font-medium text-muted-foreground">API Key</h2>
-          <AccountApiKeySection
-            projectId={convexProjectId}
-            projectName={projectName || null}
-          />
-        </div>
-
-        {/* Project secrets — Convex-backed projects only: the store is a
+      {/* Project secrets — Convex-backed projects only: the store is a
             Convex table, and a local project has nowhere to keep one. Shown to
             every member rather than admins alone, because PERSONAL secrets are
             owner-managed; `canManageShared` is what gates the project-shared
             option inside the form. */}
-        {isAuthenticated && convexProjectId && (
-          <ProjectSecretsSection
-            key={convexProjectId ?? activeProjectId ?? "no-project"}
-            projectId={convexProjectId}
-            canManageShared={canManageMembers}
-          />
-        )}
+      {section === "secrets" && isAuthenticated && convexProjectId && (
+        <ProjectSecretsSection
+          key={convexProjectId ?? activeProjectId ?? "no-project"}
+          projectId={convexProjectId}
+          canManageShared={canManageMembers}
+        />
+      )}
 
-        {/* XAA test identity defaults — Convex-backed projects only (the
+      {/* XAA test identity defaults — Convex-backed projects only (the
             local-project update path is a no-op for this field). */}
-        {isAuthenticated && convexProjectId && (
-          <XaaTestDefaultsSection
-            projectId={convexProjectId}
-            storedIdentity={project?.xaaTestDefaults?.defaultIdentity}
-            canManage={canManageMembers}
-            onUpdateProject={onUpdateProject}
-          />
-        )}
+      {section === "general" && isAuthenticated && convexProjectId && (
+        <XaaTestDefaultsSection
+          projectId={convexProjectId}
+          storedIdentity={project?.xaaTestDefaults?.defaultIdentity}
+          canManage={canManageMembers}
+          onUpdateProject={onUpdateProject}
+        />
+      )}
 
-        {/* Auto-connect is a personal per-device switch on the Servers tab
+      {/* Auto-connect is a personal per-device switch on the Servers tab
             header (next to "Add Server"), not a project setting. */}
 
-        {/* Danger Zone */}
-        <div className="space-y-2">
-          <h2 className="text-sm font-medium text-muted-foreground">
-            Danger Zone
+      {/* Danger Zone */}
+      {section === "general" && (
+        <div className="max-w-2xl space-y-4 border-t border-border pt-7">
+          <h2 className="text-lg font-semibold text-accent-foreground">
+            Danger zone
           </h2>
           <div className="flex items-center justify-between px-4 py-3 rounded-md border border-destructive/30">
             <div className="flex flex-col">
@@ -348,8 +354,8 @@ export function ProjectSettingsTab({
                 {isDefault
                   ? "Switch to another project first"
                   : !canDeleteProject
-                  ? "Only project admins can delete this project"
-                  : "Permanently delete this project and all its data"}
+                    ? "Only project admins can delete this project"
+                    : "Permanently delete this project and all its data"}
               </span>
             </div>
             <AlertDialog>
@@ -388,7 +394,7 @@ export function ProjectSettingsTab({
             </AlertDialog>
           </div>
         </div>
-      </div>
-    </div>
+      )}
+    </SettingsPageShell>
   );
 }

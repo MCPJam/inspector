@@ -24,6 +24,20 @@ beforeEach(() => {
 });
 
 describe("useApiKeys", () => {
+  it("reloads key scope when switching organizations", async () => {
+    const { result, rerender } = renderHook(
+      ({ organizationId }) => useApiKeys({ enabled: true, organizationId }),
+      { initialProps: { organizationId: "org-a" } },
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(mocks.listApiKeys).toHaveBeenLastCalledWith("org-a");
+    rerender({ organizationId: "org-b" });
+    await waitFor(() =>
+      expect(mocks.listApiKeys).toHaveBeenLastCalledWith("org-b"),
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+  });
+
   it("lists keys when enabled", async () => {
     const { result } = renderHook(() => useApiKeys({ enabled: true }));
 

@@ -8975,32 +8975,33 @@ var ChromiumDriver = class {
     await Promise.race([
       Promise.allSettled([...this.pendingTabs.values()]),
       new Promise((resolve2) => {
-        const timer = setTimeout(resolve2, CLOSE_PENDING_TAB_GRACE_MS);
-        timer.unref?.();
+        const timer2 = setTimeout(resolve2, CLOSE_PENDING_TAB_GRACE_MS);
+        timer2.unref?.();
       })
     ]);
-    await Promise.race([
-      this.closeSurfaces(),
-      new Promise((resolve2) => {
-        const timer = setTimeout(resolve2, CLOSE_SURFACE_GRACE_MS);
-        timer.unref?.();
+    const rendererCleanup = Promise.allSettled([
+      ...[...this.viewports.values()].map(
+        (viewport) => viewport.then((v) => v?.dispose())
+      ),
+      ...[...this.tabs.values()].map(async ({ page }) => {
+        if (!page.isClosed()) await page.close();
       })
     ]);
-    this.viewports.clear();
-    this.tabs.clear();
+    let timer;
+    try {
+      await Promise.race([
+        rendererCleanup,
+        new Promise((resolve2) => {
+          timer = setTimeout(resolve2, CLOSE_SURFACE_GRACE_MS);
+        })
+      ]);
+    } finally {
+      clearTimeout(timer);
+      this.viewports.clear();
+      this.tabs.clear();
+    }
     await this.context.close().catch(() => {
     });
-  }
-  /** Close what this driver opened, in order. Bounded by its caller. */
-  async closeSurfaces() {
-    for (const viewport of this.viewports.values()) {
-      await viewport.then((v) => v?.dispose()).catch(() => {
-      });
-    }
-    for (const entry of this.tabs.values()) {
-      if (!entry.page.isClosed()) await entry.page.close().catch(() => {
-      });
-    }
   }
   /**
    * Build an observation result whose L3 state token is computed from the SAME

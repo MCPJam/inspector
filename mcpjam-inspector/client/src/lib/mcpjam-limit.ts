@@ -36,7 +36,7 @@ export function isSpendBudgetReachedCode(code: string | undefined): boolean {
  * refused.
  */
 export const SPEND_BUDGET_REACHED_MESSAGE =
-  "This organization's spend budget is reached. An owner or admin can raise it in Organization \u2192 Budget.";
+  "This organization's spend budget is reached. An owner or admin can raise it in Organization \u2192 Billing.";
 const MCPJAM_RATE_LIMIT_CODE_PATTERN =
   /\b(?:mcpjam_rate_limit|user_rate_limit)\b/;
 
