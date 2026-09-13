@@ -21,6 +21,11 @@ import {
 import type { ScoreRunIntent } from "./score-run-draft";
 import { useScoreRunPersistence } from "./use-score-run-persistence";
 import { useScoreServerPreparation } from "./use-score-server-preparation";
+import {
+  isScoreDesignWalkthrough,
+  playScoreDesignWalkthrough,
+  SCORE_PREVIEW_RESULT_TOKEN,
+} from "./score-design-walkthrough";
 
 const EMPTY_SERVER: ServerWithName = {
   name: "",
@@ -56,7 +61,6 @@ export function useScoreRunnerController({
   const [error, setError] = useState<string | null>(null);
   const [server, setServer] = useState<ServerWithName | null>(null);
   const [resultToken, setResultToken] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
   const [resumeRecord, setResumeRecord] = useState<ScoreRunResumeRecord | null>(
     null,
   );
@@ -132,6 +136,18 @@ export function useScoreRunnerController({
       setResultToken(null);
       setPhase("preparing");
 
+      if (isScoreDesignWalkthrough(serverUrl, projectId)) {
+        await playScoreDesignWalkthrough({
+          preparing: () => setPhase("preparing"),
+          running: () => setPhase("running"),
+          done: () => {
+            setResultToken(SCORE_PREVIEW_RESULT_TOKEN);
+            setPhase("done");
+          },
+        });
+        return;
+      }
+
       // Declared outside the try: the catch needs it to write the resume
       // record when the server turns out to require authorization.
       let name = "";
@@ -158,7 +174,7 @@ export function useScoreRunnerController({
         setPhase("form");
       }
     },
-    [prepareServer],
+    [prepareServer, projectId],
   );
 
   // `runAll` needs the hook to have re-keyed onto the new server first — it
@@ -223,24 +239,6 @@ export function useScoreRunnerController({
 
   const consumeResumeRecord = useCallback(() => setResumeRecord(null), []);
 
-  const copyResultUrl = useCallback(() => {
-    if (!resultUrl) return;
-    // `writeText` rejects without focus or permission. Show "Copied" only
-    // once the write actually resolved — a tick over an empty clipboard
-    // is worse than no tick.
-    const write = navigator.clipboard?.writeText?.(resultUrl);
-    if (!write) {
-      setError("Could not copy the link. Copy it manually.");
-      return;
-    }
-    void write
-      .then(() => {
-        setCopied(true);
-        window.setTimeout(() => setCopied(false), 2000);
-      })
-      .catch(() => setError("Could not copy the link. Copy it manually."));
-  }, [resultUrl]);
-
   const authorizeServer = useCallback(() => {
     if (!server || !serverId) return;
     void oauthGate.authorizeServer({
@@ -260,8 +258,6 @@ export function useScoreRunnerController({
     formDisabled: busy || appReady.status !== "ready",
     appReadyMessage: appReady.status !== "ready" ? appReadyMessage : null,
     resultUrl,
-    copied,
-    copyResultUrl,
     showAuthorize: phase === "authorizing" && Boolean(server && serverId),
     authorizeServer,
     authorizeBusy: oauthGate.hasBusyOAuth,
