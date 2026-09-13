@@ -148,6 +148,15 @@ When an OAuth flow fails, Inspector surfaces the failure directly in the connect
 
 Use the trace to pinpoint whether the failure occurred during discovery, client registration, PKCE generation, the authorization redirect, or the token exchange, then cross-reference with the OAuth Debugger for a guided walkthrough of the same steps.
 
+### OAuth refresh token failure toast
+
+When a stored OAuth refresh token fails in the hosted app, a toast appears with details taken directly from the provider's response. The toast distinguishes two cases:
+
+- **Could not reach `<host>`** — the authorization server was unreachable (for example, HTTP 530 or a network error). The toast shows the URL that was attempted and the HTTP status. Click **Retry** to try the refresh again without re-authorizing.
+- **Refresh token declined for `<server name>`** — the authorization server responded and rejected the token (for example, `InvalidGrantError` or `refresh_token_not_found`). The toast shows the provider's own error body. Click **Reconnect** to start a new OAuth flow and obtain fresh credentials.
+
+The existing inline error banner remains visible alongside the toast. The toast provides the specific cause and the correct next action; the banner provides the general connection status.
+
 ### Toggle shows a re-authentication error for an OAuth server
 
 The enable/connect toggle on a server card or detail modal reuses existing credentials only. If your tokens are expired or missing, the toggle will report a re-authentication error rather than opening the OAuth consent screen.
