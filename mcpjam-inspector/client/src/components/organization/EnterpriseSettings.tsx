@@ -3,7 +3,7 @@ import { LockKeyhole, ShieldCheck } from "lucide-react";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
 import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogClose } from "@mcpjam/design-system/dialog";
-export const enterpriseContactHref = "mailto:founders@mcpjam.com?subject=MCPJam%20Enterprise";
+export const enterpriseContactHref = "https://www.mcpjam.com/contact";
 export function DataManagementSettings({ enterprise }: { enterprise: boolean }) {
  return <section className="space-y-8">
   <header className="space-y-2"><div className="flex items-center gap-3"><h1 className="text-2xl font-semibold">Data management</h1><Badge variant="secondary">ENTERPRISE</Badge></div><SettingsPageDescription>Manage your organization’s data retention requirements across projects.</SettingsPageDescription></header>

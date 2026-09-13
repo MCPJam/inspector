@@ -112,7 +112,7 @@ function getPlanColumnCta(params: {
       variant: "outline",
       onClick: () => {
         window.location.href =
-          "mailto:founders@mcpjam.com?subject=MCPJam%20Enterprise";
+          "https://www.mcpjam.com/contact";
       },
     };
   }

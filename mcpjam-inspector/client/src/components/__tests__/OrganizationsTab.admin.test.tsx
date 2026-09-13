@@ -184,7 +184,7 @@ describe("OrganizationsTab member management", () => {
   it("renders Data management instead of falling back to General", () => {
     render(<OrganizationsTab organizationId="org-1" section="data-management" />);
     expect(screen.getByRole("heading", {name: "Data management"})).toBeInTheDocument();
-    expect(screen.getByRole("link", {name: "Contact us"})).toBeInTheDocument();
+    expect(screen.getByRole("link", {name: "Contact us"})).toHaveAttribute("href", "https://www.mcpjam.com/contact");
     expect(screen.queryByRole("heading", {name: "General"})).not.toBeInTheDocument();
   });
   let currentUserEmail = "owner@example.com";
