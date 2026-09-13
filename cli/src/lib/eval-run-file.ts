@@ -108,6 +108,7 @@ export function fileCaseToCreateBody(
     ...(testCase.intent !== undefined ? { intent: testCase.intent } : {}),
     ...(testCase.kind !== undefined ? { kind: testCase.kind } : {}),
     steps: testCase.steps,
+    ...(testCase.suppressedSuiteStandardCheckIds !== undefined ? { suppressedSuiteStandardCheckIds: testCase.suppressedSuiteStandardCheckIds } : {}),
     iterations: testCase.repetitions,
     repetitions: testCase.repetitions,
     passThreshold: testCase.passThreshold,
@@ -134,7 +135,8 @@ export function fileCaseToCreateBody(
  * `isNegativeTest` or assertions must send an explicit clear.
  */
 export function fileCaseToUpdateBody(
-  testCase: ResolvedEvalSuiteFileCase
+  testCase: ResolvedEvalSuiteFileCase,
+  previousSuppression?: readonly string[]
 ): Record<string, unknown> {
   return {
     title: testCase.title,
@@ -143,6 +145,7 @@ export function fileCaseToUpdateBody(
     intent: testCase.intent ?? null,
     kind: testCase.kind ?? null,
     steps: testCase.steps,
+    ...(testCase.suppressedSuiteStandardCheckIds !== undefined || previousSuppression?.length ? { suppressedSuiteStandardCheckIds: testCase.suppressedSuiteStandardCheckIds ?? [] } : {}),
     iterations: testCase.repetitions,
     repetitions: testCase.repetitions,
     passThreshold: testCase.passThreshold,
@@ -578,7 +581,7 @@ export async function syncFileOwnedCases(
           suiteId: params.suiteId,
           caseId: row.id,
           body: {
-            ...fileCaseToUpdateBody(file),
+            ...fileCaseToUpdateBody(file, row.suppressedSuiteStandardCheckIds),
             declaredSuiteId: params.declaredSuiteId,
           },
         },

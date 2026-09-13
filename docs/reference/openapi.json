@@ -13372,6 +13372,986 @@
           }
         }
       },
+      "SuppressedSuiteStandardCheckIds": {
+        "maxItems": 64,
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "discovery.description",
+            "discovery.annotations",
+            "discovery.collisions",
+            "discovery.deprecated",
+            "call.schema",
+            "response.schema",
+            "selection.hops",
+            "call.parameters",
+            "call.repeated",
+            "response.performance",
+            "response.size",
+            "response.errors",
+            "response.recovery",
+            "response.pagination",
+            "userValue.turns"
+          ]
+        },
+        "description": "Stable standard assertion family IDs suppressed from suite defaults. Applies before inherit/extend/replace resolution; explicit case and step assertions are preserved. Omitted updates preserve; [] clears. At most 64 IDs, normalized to unique sorted values."
+      },
+      "EvalAssertion": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "toolDescriptionsPresent"
+              },
+              "minLength": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "gating",
+                  "advisory"
+                ]
+              },
+              "severity": {
+                "type": "string",
+                "const": "warn"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "toolAnnotationsPresent"
+              },
+              "require": {
+                "maxItems": 2,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "readOnlyHint",
+                    "destructiveHint"
+                  ]
+                }
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "gating",
+                  "advisory"
+                ]
+              },
+              "severity": {
+                "type": "string",
+                "const": "warn"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "toolNamesUnique"
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "gating",
+                  "advisory"
+                ]
+              },
+              "severity": {
+                "type": "string",
+                "const": "warn"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "noDeprecatedToolExposed"
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "gating",
+                  "advisory"
+                ]
+              },
+              "severity": {
+                "type": "string",
+                "const": "warn"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "toolInputSchemasWellFormed"
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "gating",
+                  "advisory"
+                ]
+              },
+              "severity": {
+                "type": "string",
+                "const": "warn"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "toolOutputSchemasPresent"
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "gating",
+                  "advisory"
+                ]
+              },
+              "severity": {
+                "type": "string",
+                "const": "warn"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "toolCalledWith"
+              },
+              "toolName": {
+                "type": "string",
+                "minLength": 1
+              },
+              "args": {
+                "type": "object",
+                "properties": {
+                  "args": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "argumentMatching": {
+                    "type": "string",
+                    "enum": [
+                      "exact",
+                      "partial",
+                      "ignore"
+                    ]
+                  }
+                },
+                "required": [
+                  "args"
+                ]
+              },
+              "minCount": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "gating",
+                  "advisory"
+                ]
+              },
+              "severity": {
+                "type": "string",
+                "const": "warn"
+              }
+            },
+            "required": [
+              "type",
+              "toolName",
+              "args"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "toolCalledAtLeastOnce"
+              },
+              "toolName": {
+                "type": "string",
+                "minLength": 1
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "gating",
+                  "advisory"
+                ]
+              },
+              "severity": {
+                "type": "string",
+                "const": "warn"
+              }
+            },
+            "required": [
+              "type",
+              "toolName"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "toolNeverCalled"
+              },
+              "toolName": {
+                "type": "string",
+                "minLength": 1
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "gating",
+                  "advisory"
+                ]
+              },
+              "severity": {
+                "type": "string",
+                "const": "warn"
+              }
+            },
+            "required": [
+              "type",
+              "toolName"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "onlyToolsCalled"
+              },
+              "toolNames": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "gating",
+                  "advisory"
+                ]
+              },
+              "severity": {
+                "type": "string",
+                "const": "warn"
+              }
+            },
+            "required": [
+              "type",
+              "toolNames"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "firstToolWas"
+              },
+              "toolName": {
+                "type": "string",
+                "minLength": 1
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "gating",
+                  "advisory"
+                ]
+              },
+              "severity": {
+                "type": "string",
+                "const": "warn"
+              }
+            },
+            "required": [
+              "type",
+              "toolName"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "responseContains"
+              },
+              "needle": {
+                "type": "string",
+                "minLength": 1
+              },
+              "caseSensitive": {
+                "type": "boolean"
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "gating",
+                  "advisory"
+                ]
+              },
+              "severity": {
+                "type": "string",
+                "const": "warn"
+              }
+            },
+            "required": [
+              "type",
+              "needle"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "responseMatches"
+              },
+              "pattern": {
+                "type": "string",
+                "minLength": 1
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "gating",
+                  "advisory"
+                ]
+              },
+              "severity": {
+                "type": "string",
+                "const": "warn"
+              }
+            },
+            "required": [
+              "type",
+              "pattern"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "noToolErrors"
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "gating",
+                  "advisory"
+                ]
+              },
+              "severity": {
+                "type": "string",
+                "const": "warn"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "finalAssistantMessageNonEmpty"
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "gating",
+                  "advisory"
+                ]
+              },
+              "severity": {
+                "type": "string",
+                "const": "warn"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "tokenBudgetUnder"
+              },
+              "tokens": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "gating",
+                  "advisory"
+                ]
+              },
+              "severity": {
+                "type": "string",
+                "const": "warn"
+              }
+            },
+            "required": [
+              "type",
+              "tokens"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "widgetRendered"
+              },
+              "toolName": {
+                "type": "string",
+                "minLength": 1
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "gating",
+                  "advisory"
+                ]
+              },
+              "severity": {
+                "type": "string",
+                "const": "warn"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "widgetRenderLatencyUnder"
+              },
+              "ms": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "toolName": {
+                "type": "string",
+                "minLength": 1
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "gating",
+                  "advisory"
+                ]
+              },
+              "severity": {
+                "type": "string",
+                "const": "warn"
+              }
+            },
+            "required": [
+              "type",
+              "ms"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "widgetNoConsoleErrors"
+              },
+              "toolName": {
+                "type": "string",
+                "minLength": 1
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "gating",
+                  "advisory"
+                ]
+              },
+              "severity": {
+                "type": "string",
+                "const": "warn"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "turnCountUnder"
+              },
+              "turns": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "gating",
+                  "advisory"
+                ]
+              },
+              "severity": {
+                "type": "string",
+                "const": "warn"
+              }
+            },
+            "required": [
+              "type",
+              "turns"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "noEndingQuestion"
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "gating",
+                  "advisory"
+                ]
+              },
+              "severity": {
+                "type": "string",
+                "const": "warn"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "toolLatencyUnder"
+              },
+              "ms": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "toolName": {
+                "type": "string",
+                "minLength": 1
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "gating",
+                  "advisory"
+                ]
+              },
+              "severity": {
+                "type": "string",
+                "const": "warn"
+              }
+            },
+            "required": [
+              "type",
+              "ms"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "toolResultContains"
+              },
+              "needle": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              },
+              "caseSensitive": {
+                "type": "boolean"
+              },
+              "toolName": {
+                "type": "string",
+                "minLength": 1
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "gating",
+                  "advisory"
+                ]
+              },
+              "severity": {
+                "type": "string",
+                "const": "warn"
+              }
+            },
+            "required": [
+              "type",
+              "needle"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "toolResultMatchesSchema"
+              },
+              "schema": {},
+              "toolName": {
+                "type": "string",
+                "minLength": 1
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "gating",
+                  "advisory"
+                ]
+              },
+              "severity": {
+                "type": "string",
+                "const": "warn"
+              }
+            },
+            "required": [
+              "type",
+              "schema"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "toolResultSizeUnder"
+              },
+              "maxBytes": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "toolName": {
+                "type": "string",
+                "minLength": 1
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "gating",
+                  "advisory"
+                ]
+              },
+              "severity": {
+                "type": "string",
+                "const": "warn"
+              }
+            },
+            "required": [
+              "type",
+              "maxBytes"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "argumentsMatchToolSchema"
+              },
+              "toolName": {
+                "type": "string",
+                "minLength": 1
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "gating",
+                  "advisory"
+                ]
+              },
+              "severity": {
+                "type": "string",
+                "const": "warn"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "noRepeatedIdenticalCall"
+              },
+              "toolName": {
+                "type": "string",
+                "minLength": 1
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "gating",
+                  "advisory"
+                ]
+              },
+              "severity": {
+                "type": "string",
+                "const": "warn"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "toolCallCountUnder"
+              },
+              "count": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "toolName": {
+                "type": "string",
+                "minLength": 1
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "gating",
+                  "advisory"
+                ]
+              },
+              "severity": {
+                "type": "string",
+                "const": "warn"
+              }
+            },
+            "required": [
+              "type",
+              "count"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "toolCalledBefore"
+              },
+              "toolName": {
+                "type": "string",
+                "minLength": 1
+              },
+              "beforeToolName": {
+                "type": "string",
+                "minLength": 1
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "gating",
+                  "advisory"
+                ]
+              },
+              "severity": {
+                "type": "string",
+                "const": "warn"
+              }
+            },
+            "required": [
+              "type",
+              "toolName",
+              "beforeToolName"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "noDeprecatedToolCalled"
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "gating",
+                  "advisory"
+                ]
+              },
+              "severity": {
+                "type": "string",
+                "const": "warn"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "noDestructiveToolCalled"
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "gating",
+                  "advisory"
+                ]
+              },
+              "severity": {
+                "type": "string",
+                "const": "warn"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "toolErrorNamesInput"
+              },
+              "toolName": {
+                "type": "string",
+                "minLength": 1
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "gating",
+                  "advisory"
+                ]
+              },
+              "severity": {
+                "type": "string",
+                "const": "warn"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "fullPageHasContinuation"
+              },
+              "toolName": {
+                "type": "string",
+                "minLength": 1
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "gating",
+                  "advisory"
+                ]
+              },
+              "severity": {
+                "type": "string",
+                "const": "warn"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          }
+        ],
+        "description": "An SDK assertion reported through UVC. Discovery assertions require complete raw tool declarations; missing evidence is an evaluator error. Observation kinds, including noDeprecatedToolExposed, require role advisory. Structural schema; runtime also validates policy and unique required annotation keys."
+      },
       "EvalCase": {
         "type": "object",
         "required": [
@@ -13437,14 +14417,19 @@
           },
           "kind": {
             "type": "string",
-            "enum": ["capability", "regression"],
+            "enum": [
+              "capability",
+              "regression"
+            ],
             "description": "Authored case kind for the simple editor. Absent means the editor derives it from matchOptions."
           },
           "models": {
             "type": "array",
             "items": {
               "type": "object",
-              "required": ["model"],
+              "required": [
+                "model"
+              ],
               "properties": {
                 "model": {
                   "type": "string"
@@ -13465,12 +14450,16 @@
             "properties": {
               "mode": {
                 "type": "string",
-                "enum": ["inherit", "replace", "extend"]
+                "enum": [
+                  "inherit",
+                  "replace",
+                  "extend"
+                ]
               },
               "list": {
                 "type": "array",
                 "items": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/EvalAssertion"
                 }
               }
             }
@@ -13482,10 +14471,21 @@
             "$ref": "#/components/schemas/EvalCaseSource"
           },
           "createdAt": {
-            "type": ["number", "null"]
+            "type": [
+              "number",
+              "null"
+            ]
           },
           "updatedAt": {
-            "type": ["number", "null"]
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "suppressedSuiteStandardCheckIds": {
+            "$ref": "#/components/schemas/SuppressedSuiteStandardCheckIds",
+            "type": "array",
+            "items": { "type": "string" }
           }
         }
       },
@@ -13656,7 +14656,10 @@
       },
       "EvalCaseCreateRequest": {
         "type": "object",
-        "required": ["title", "steps"],
+        "required": [
+          "title",
+          "steps"
+        ],
         "description": "Create one case. `title` and a non-empty `steps` array are both required — a case persisted without executable steps could never run.",
         "properties": {
           "declaredSuiteId": {
@@ -13716,14 +14719,19 @@
           },
           "kind": {
             "type": "string",
-            "enum": ["capability", "regression"],
+            "enum": [
+              "capability",
+              "regression"
+            ],
             "description": "Authored case kind for the simple editor. Absent means the editor derives it from matchOptions."
           },
           "models": {
             "type": "array",
             "items": {
               "type": "object",
-              "required": ["model"],
+              "required": [
+                "model"
+              ],
               "properties": {
                 "model": {
                   "type": "string"
@@ -13736,21 +14744,31 @@
             }
           },
           "matchOptions": {
-            "type": ["object", "null"],
+            "type": [
+              "object",
+              "null"
+            ],
             "description": "`null` clears the case override and inherits the suite's."
           },
           "checks": {
-            "type": ["object", "null"],
+            "type": [
+              "object",
+              "null"
+            ],
             "description": "`null` clears the case override.",
             "properties": {
               "mode": {
                 "type": "string",
-                "enum": ["inherit", "replace", "extend"]
+                "enum": [
+                  "inherit",
+                  "replace",
+                  "extend"
+                ]
               },
               "list": {
                 "type": "array",
                 "items": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/EvalAssertion"
                 }
               }
             }
@@ -13760,6 +14778,11 @@
           },
           "source": {
             "$ref": "#/components/schemas/EvalCaseSource"
+          },
+          "suppressedSuiteStandardCheckIds": {
+            "$ref": "#/components/schemas/SuppressedSuiteStandardCheckIds",
+            "type": "array",
+            "items": { "type": "string" }
           }
         },
         "additionalProperties": false
@@ -14087,22 +15110,34 @@
             "type": "string"
           },
           "intent": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "minLength": 1,
             "maxLength": 64,
             "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
             "description": "Optional authored analytics grouping label. Must be already trimmed; omitted leaves the stored value unchanged and null clears it."
           },
           "kind": {
-            "type": ["string", "null"],
-            "enum": ["capability", "regression", null],
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "capability",
+              "regression",
+              null
+            ],
             "description": "Authored case kind. Omitted leaves the stored value unchanged; null clears it."
           },
           "models": {
             "type": "array",
             "items": {
               "type": "object",
-              "required": ["model"],
+              "required": [
+                "model"
+              ],
               "properties": {
                 "model": {
                   "type": "string"
@@ -14115,21 +15150,31 @@
             }
           },
           "matchOptions": {
-            "type": ["object", "null"],
+            "type": [
+              "object",
+              "null"
+            ],
             "description": "`null` clears the case override and inherits the suite's."
           },
           "checks": {
-            "type": ["object", "null"],
+            "type": [
+              "object",
+              "null"
+            ],
             "description": "`null` clears the case override.",
             "properties": {
               "mode": {
                 "type": "string",
-                "enum": ["inherit", "replace", "extend"]
+                "enum": [
+                  "inherit",
+                  "replace",
+                  "extend"
+                ]
               },
               "list": {
                 "type": "array",
                 "items": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/EvalAssertion"
                 }
               }
             }
@@ -14144,6 +15189,11 @@
               }
             ],
             "description": "The converter's claim for this case, or `null` to remove one. Omitted leaves the stored claim unchanged; `null` removes it. The two are different requests, and a PATCH that conflated them would erase provenance on every unrelated edit."
+          },
+          "suppressedSuiteStandardCheckIds": {
+            "$ref": "#/components/schemas/SuppressedSuiteStandardCheckIds",
+            "type": "array",
+            "items": { "type": "string" }
           }
         },
         "additionalProperties": false
@@ -14600,11 +15650,41 @@
       "EvalTestCase": {
         "type": "object",
         "description": "Inline eval test case. The case body is an ordered `steps` array (the unified test model). Exactly one of `runs` / `iterations` is required — an inline test on a run has no suite default to inherit. The object is CLOSED: an unknown key is a VALIDATION_ERROR, never a silently dropped field. `repetitions`, `passThreshold` and `kind` are per-case policy fields this surface cannot author — set them through `POST /v1/projects/{projectId}/eval-suites/{suiteId}/cases`.",
-        "required": ["title", "model", "provider", "steps"],
-        "oneOf": [{ "required": ["runs"] }, { "required": ["iterations"] }],
+        "required": [
+          "title",
+          "model",
+          "provider",
+          "steps"
+        ],
+        "oneOf": [
+          {
+            "required": [
+              "runs"
+            ]
+          },
+          {
+            "required": [
+              "iterations"
+            ]
+          }
+        ],
         "allOf": [
-          { "not": { "required": ["isNegative", "isNegativeTest"] } },
-          { "not": { "required": ["checks", "predicates"] } }
+          {
+            "not": {
+              "required": [
+                "isNegative",
+                "isNegativeTest"
+              ]
+            }
+          },
+          {
+            "not": {
+              "required": [
+                "checks",
+                "predicates"
+              ]
+            }
+          }
         ],
         "properties": {
           "title": {
@@ -14665,7 +15745,11 @@
             "properties": {
               "mode": {
                 "type": "string",
-                "enum": ["inherit", "replace", "extend"]
+                "enum": [
+                  "inherit",
+                  "replace",
+                  "extend"
+                ]
               },
               "list": {
                 "type": "array",
@@ -14687,19 +15771,28 @@
           },
           "checks": {
             "type": "object",
-            "description": "Per-case CHECK gate \u2014 the grading rules this case is scored against. `mode` says how they combine with the suite's own: `inherit` uses the suite's, `replace` uses only `list`, `extend` appends `list` to the suite's. Same field, same shape and same name as `checks` on the eval-case routes, so authoring a suite and then editing one of its cases is one word for one concept. Send this or the deprecated `predicates`, never both.",
+            "description": "Per-case CHECK gate — the grading rules this case is scored against. `mode` says how they combine with the suite's own: `inherit` uses the suite's, `replace` uses only `list`, `extend` appends `list` to the suite's. Same field, same shape and same name as `checks` on the eval-case routes, so authoring a suite and then editing one of its cases is one word for one concept. Send this or the deprecated `predicates`, never both.",
             "properties": {
               "mode": {
                 "type": "string",
-                "enum": ["inherit", "replace", "extend"]
+                "enum": [
+                  "inherit",
+                  "replace",
+                  "extend"
+                ]
               },
               "list": {
                 "type": "array",
                 "items": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/EvalAssertion"
                 }
               }
             }
+          },
+          "suppressedSuiteStandardCheckIds": {
+            "$ref": "#/components/schemas/SuppressedSuiteStandardCheckIds",
+            "type": "array",
+            "items": { "type": "string" }
           }
         },
         "additionalProperties": false
@@ -14707,7 +15800,12 @@
       "EvalSuiteCreateRequest": {
         "type": "object",
         "description": "Author-only suite-create body. A suite-level default `model` (and optional `provider`) applies to every test unless the test overrides it.",
-        "required": ["name", "serverIds", "model", "tests"],
+        "required": [
+          "name",
+          "serverIds",
+          "model",
+          "tests"
+        ],
         "properties": {
           "name": {
             "type": "string",
@@ -14782,12 +15880,23 @@
                 "maximum": 100,
                 "deprecated": true,
                 "description": "Deprecated alias for `minimumPassRatePercent`, same unit. A value in (0, 1) is REJECTED here — it reads as a fraction sent by mistake — which is what the `not` below expresses. Use `minimumPassRatePercent` for a genuine sub-1% floor.",
-                "not": { "exclusiveMinimum": 0, "exclusiveMaximum": 1 }
+                "not": {
+                  "exclusiveMinimum": 0,
+                  "exclusiveMaximum": 1
+                }
               }
             },
             "oneOf": [
-              { "required": ["minimumPassRatePercent"] },
-              { "required": ["minimumPassRate"] }
+              {
+                "required": [
+                  "minimumPassRatePercent"
+                ]
+              },
+              {
+                "required": [
+                  "minimumPassRate"
+                ]
+              }
             ],
             "additionalProperties": false
           },
@@ -14805,11 +15914,35 @@
             "description": "Test cases to create in the suite. The object is CLOSED: an unknown key is a VALIDATION_ERROR, never a silently dropped field. `repetitions`, `passThreshold` and `kind` are per-case policy fields this surface cannot author — set them through `POST /v1/projects/{projectId}/eval-suites/{suiteId}/cases`.",
             "items": {
               "type": "object",
-              "required": ["title", "steps"],
+              "required": [
+                "title",
+                "steps"
+              ],
               "allOf": [
-                { "not": { "required": ["runs", "iterations"] } },
-                { "not": { "required": ["isNegative", "isNegativeTest"] } },
-                { "not": { "required": ["checks", "predicates"] } }
+                {
+                  "not": {
+                    "required": [
+                      "runs",
+                      "iterations"
+                    ]
+                  }
+                },
+                {
+                  "not": {
+                    "required": [
+                      "isNegative",
+                      "isNegativeTest"
+                    ]
+                  }
+                },
+                {
+                  "not": {
+                    "required": [
+                      "checks",
+                      "predicates"
+                    ]
+                  }
+                }
               ],
               "properties": {
                 "title": {
@@ -14871,7 +16004,11 @@
                   "properties": {
                     "mode": {
                       "type": "string",
-                      "enum": ["inherit", "replace", "extend"]
+                      "enum": [
+                        "inherit",
+                        "replace",
+                        "extend"
+                      ]
                     },
                     "list": {
                       "type": "array",
@@ -14893,19 +16030,28 @@
                 },
                 "checks": {
                   "type": "object",
-                  "description": "Per-case CHECK gate \u2014 the grading rules this case is scored against. `mode` says how they combine with the suite's own: `inherit` uses the suite's, `replace` uses only `list`, `extend` appends `list` to the suite's. Same field, same shape and same name as `checks` on the eval-case routes, so authoring a suite and then editing one of its cases is one word for one concept. Send this or the deprecated `predicates`, never both.",
+                  "description": "Per-case CHECK gate — the grading rules this case is scored against. `mode` says how they combine with the suite's own: `inherit` uses the suite's, `replace` uses only `list`, `extend` appends `list` to the suite's. Same field, same shape and same name as `checks` on the eval-case routes, so authoring a suite and then editing one of its cases is one word for one concept. Send this or the deprecated `predicates`, never both.",
                   "properties": {
                     "mode": {
                       "type": "string",
-                      "enum": ["inherit", "replace", "extend"]
+                      "enum": [
+                        "inherit",
+                        "replace",
+                        "extend"
+                      ]
                     },
                     "list": {
                       "type": "array",
                       "items": {
-                        "type": "object"
+                        "$ref": "#/components/schemas/EvalAssertion"
                       }
                     }
                   }
+                },
+                "suppressedSuiteStandardCheckIds": {
+                  "$ref": "#/components/schemas/SuppressedSuiteStandardCheckIds",
+            "type": "array",
+            "items": { "type": "string" }
                 }
               },
               "additionalProperties": false

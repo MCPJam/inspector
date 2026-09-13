@@ -210,10 +210,17 @@ describe("v1 inline-test vocabulary", () => {
       const res = await request(
         "POST",
         "/api/v1/projects/p1/eval-suites",
-        suiteBody({ checks }),
+        suiteBody({
+          checks,
+          suppressedSuiteStandardCheckIds: ["response.errors"],
+        }),
       );
 
       expect(res.status).toBe(201);
+      expect(
+        authorEvalSuiteMock.mock.calls[0][0].tests[0]
+          .suppressedSuiteStandardCheckIds,
+      ).toEqual(["response.errors"]);
       expect(authorEvalSuiteMock.mock.calls[0][0].tests[0].predicates).toEqual(
         checks,
       );

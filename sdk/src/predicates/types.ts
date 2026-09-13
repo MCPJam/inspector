@@ -57,6 +57,15 @@ export type ArgMatcher = {
  * without a parallel field.
  */
 export type Predicate = (
+  | { type: "toolDescriptionsPresent"; minLength?: number }
+  | {
+      type: "toolAnnotationsPresent";
+      require?: ("readOnlyHint" | "destructiveHint")[];
+    }
+  | { type: "toolNamesUnique" }
+  | { type: "noDeprecatedToolExposed" }
+  | { type: "toolInputSchemasWellFormed" }
+  | { type: "toolOutputSchemasPresent" }
   /** A call to `toolName` whose args satisfy `args` occurred at least `minCount` (default 1) times. */
   | {
       type: "toolCalledWith";
@@ -322,6 +331,7 @@ export function requiresRenderObservations(kind: string): boolean {
  * (`OBSERVATION_PREDICATE_KINDS`) and proven by the shared parity fixtures.
  */
 export const OBSERVATION_PREDICATE_KINDS = [
+  "noDeprecatedToolExposed",
   "noEndingQuestion",
   "noRepeatedIdenticalCall",
   "noDeprecatedToolCalled",
@@ -409,6 +419,33 @@ const checkPolicyShape = {
  * refinement wrapper — a ZodEffects has no `.options`.
  */
 export const predicateUnion = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("toolDescriptionsPresent"),
+    minLength: z.number().int().positive().optional(),
+    ...checkPolicyShape,
+  }),
+  z.object({
+    type: z.literal("toolAnnotationsPresent"),
+    require: z
+      .array(z.enum(["readOnlyHint", "destructiveHint"]))
+      .max(2)
+      .refine(
+        (keys) => new Set(keys).size === keys.length,
+        "Annotation keys must be unique"
+      )
+      .optional(),
+    ...checkPolicyShape,
+  }),
+  z.object({ type: z.literal("toolNamesUnique"), ...checkPolicyShape }),
+  z.object({ type: z.literal("noDeprecatedToolExposed"), ...checkPolicyShape }),
+  z.object({
+    type: z.literal("toolInputSchemasWellFormed"),
+    ...checkPolicyShape,
+  }),
+  z.object({
+    type: z.literal("toolOutputSchemasPresent"),
+    ...checkPolicyShape,
+  }),
   z.object({
     type: z.literal("toolCalledWith"),
     toolName: z.string().min(1),
@@ -802,12 +839,21 @@ export type TranscriptToolInventoryEntry = {
  * decides whether a check reports a scored absence or an error. "Zero calls
  * were made" is a measurement; "we did not record the calls" is not.
  */
+/** One raw tools/list declaration, before name merging or aliasing. */
+export type TranscriptToolDeclaration = TranscriptToolInventoryEntry & {
+  /** Stable identity of the server in the selected run target. */
+  serverKey: string;
+  outputSchema?: unknown;
+};
+
 export type TranscriptCaptureState = "complete" | "partial" | "absent";
 
 export type TranscriptCapture = {
   toolResults: TranscriptCaptureState;
   toolCallTimings: TranscriptCaptureState;
   toolInventory: TranscriptCaptureState;
+  /** Older producers omit this channel and cannot establish discovery checks. */
+  toolDeclarations?: TranscriptCaptureState;
 };
 
 /**
@@ -844,6 +890,8 @@ export type IterationTranscript = {
   toolCallTimings?: TranscriptToolCallTiming[];
   /** The tools advertised to the model this iteration. See {@link capture}. */
   toolInventory?: TranscriptToolInventoryEntry[];
+  /** Complete raw catalog snapshot for each selected server, including pages. */
+  toolDeclarations?: TranscriptToolDeclaration[];
   /**
    * Whether each evidence channel above was fully captured.
    *

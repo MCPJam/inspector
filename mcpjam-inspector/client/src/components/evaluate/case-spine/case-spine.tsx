@@ -93,6 +93,7 @@ export type CaseSpineProps = {
   predicates?: CasePredicates;
   onPredicatesChange: (next: CasePredicates | undefined) => void;
   suiteDefaultPredicates?: Predicate[];
+  suppressedSuiteStandardCheckIds?: string[];
   snapshotPredicates?: Predicate[];
   availableTools?: AvailableTool[];
   suiteServers?: string[];
@@ -144,6 +145,7 @@ export function CaseSpine({
   onExpectedOutputChange,
   predicates,
   suiteDefaultPredicates,
+  suppressedSuiteStandardCheckIds,
   snapshotPredicates,
   availableTools = [],
   suiteServers = [],
@@ -219,6 +221,7 @@ export function CaseSpine({
         suiteDefaultMatchOptions,
         predicates,
         suiteDefaultPredicates,
+        suppressedSuiteStandardCheckIds,
         snapshotPredicates,
         expectedOutput,
         judgeConfigOverride,
@@ -234,6 +237,7 @@ export function CaseSpine({
       suiteDefaultMatchOptions,
       predicates,
       suiteDefaultPredicates,
+      suppressedSuiteStandardCheckIds,
       snapshotPredicates,
       expectedOutput,
       judgeConfigOverride,

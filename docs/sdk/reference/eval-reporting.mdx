@@ -469,10 +469,16 @@ The three widget predicates — `widgetRendered`, `widgetRenderLatencyUnder`, `w
 
 #### Predicate types
 
-The **Measures** column is the link of the [user-value chain](/sdk/concepts/user-value-chain) each kind's evidence is filed at. It is where the evidence is recorded, not a claim about where a failure originated. No predicate files at Connection or Discovery: the runner decides those two from what it observed setting the run up, before your case runs.
+The **Measures** column is the link of the [user-value chain](/sdk/concepts/user-value-chain) each kind's evidence is filed at. It is where the evidence is recorded, not a claim about where a failure originated. Connection is measured by the runner. Discovery also accepts the six catalog assertions below. They require complete raw tools/list capture; absent or partial capture produces an evaluator error.
 
 | Type | Fields | Measures | Description |
 |------|--------|----------|-------------|
+| `toolDescriptionsPresent` | `minLength?` | Discovery | Trimmed descriptions meet the minimum length (default 20). |
+| `toolAnnotationsPresent` | `require?` | Discovery | Every tool declares annotations; optionally require boolean readOnlyHint and destructiveHint. |
+| `toolNamesUnique` | — | Discovery | Raw tool names are unique within each server. |
+| `noDeprecatedToolExposed` | — | Discovery | No description marks itself deprecated. Heuristic; advisory only. |
+| `toolInputSchemasWellFormed` | — | Discovery | Every input schema has an object root and documented properties. |
+| `toolOutputSchemasPresent` | — | Discovery | Every tool declares an output schema; does not validate result conformance. |
 | `toolCalledWith` | `toolName`, `args` ([`ArgMatcher`](#argmatcher)), `minCount?` | Selection | A call to `toolName` whose args satisfy `args` occurred at least `minCount` (default 1) times. |
 | `toolCalledAtLeastOnce` | `toolName` | Selection | `toolName` was called at least once (args irrelevant). |
 | `toolNeverCalled` | `toolName` | Selection | `toolName` was never called (forbidden-tool check). |
@@ -659,3 +665,7 @@ It is on by default and there is nothing to configure. Details worth knowing:
 - [Running Evals](/sdk/concepts/running-evals) - Conceptual guide
 - [EvalTest Reference](/sdk/reference/eval-test) - EvalTest API
 - [EvalSuite Reference](/sdk/reference/eval-suite) - EvalSuite API
+
+Standard checks use the browser-safe `STANDARD_CHECKS` catalog from `@mcpjam/sdk/contract`. Every assertion preset defaults to advisory Warn. UVC reports these evaluator results without turning advisory failures into failed stages. Scored gating discovery failures can fail Discovery under analyzer 12; setup failure attribution takes precedence. Empty complete catalogs receive an explicit “no tools advertised” rationale.
+
+Cases can suppress suite check families with `suppressedSuiteStandardCheckIds` (for example, `["response.performance"]`). This filters suite defaults before inherit/extend/replace resolution, preserves explicit case and step assertions, and remains effective after a suite threshold changes. Omitted updates preserve suppression; `[]` clears it. Catalog IDs are authoring references; evaluator reporting keeps its existing content-derived scorer IDs.

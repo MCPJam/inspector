@@ -1,3 +1,4 @@
+import { Checkbox } from "@mcpjam/design-system/checkbox";
 /**
  * Authoring UI for the deterministic predicate gate ("Checks" in user-facing
  * copy; `Predicate` / `predicateValidator` / `defaultPredicates` in code, per
@@ -683,6 +684,65 @@ function CheckFields({
 }) {
   const widgetTools = widgetToolNames ?? availableTools;
   switch (predicate.type) {
+    case "toolDescriptionsPresent":
+      return (
+        <label className="text-xs">
+          Minimum description length
+          <Input
+            type="number"
+            min={1}
+            step={1}
+            value={predicate.minLength ?? 20}
+            disabled={readOnly}
+            onChange={(event) => {
+              const minLength = Number(event.target.value);
+              if (Number.isInteger(minLength) && minLength > 0)
+                onChange({ ...predicate, minLength });
+            }}
+          />
+        </label>
+      );
+    case "toolAnnotationsPresent":
+      return (
+        <div className="space-y-2 text-xs">
+          Require boolean annotations (leave both off to check presence only):
+          {(["readOnlyHint", "destructiveHint"] as const).map((key) => (
+            <label key={key} className="flex items-center gap-2">
+              <Checkbox
+                checked={predicate.require?.includes(key) ?? false}
+                disabled={readOnly}
+                onCheckedChange={(checked) =>
+                  onChange({
+                    ...predicate,
+                    require: checked
+                      ? [
+                          ...(predicate.require ?? []).filter(
+                            (item) => item !== key,
+                          ),
+                          key,
+                        ]
+                      : (predicate.require ?? []).filter(
+                          (item) => item !== key,
+                        ),
+                  })
+                }
+              />
+              {key}
+            </label>
+          ))}
+        </div>
+      );
+    case "toolNamesUnique":
+    case "noDeprecatedToolExposed":
+    case "toolInputSchemasWellFormed":
+    case "toolOutputSchemasPresent":
+      return (
+        <p className="text-xs text-muted-foreground">
+          Evaluated over a complete raw catalog. Missing or partial capture is
+          reported as an evaluator error.
+        </p>
+      );
+
     case "toolCalledWith":
       return (
         <ToolCalledWithFields

@@ -1,3 +1,5 @@
+import { SuiteStageChecks } from "./suite-stage-checks";
+import { toggleSuiteStandardCheck } from "./standard-checks-model";
 /**
  * "Scorers and judges", organized by the stage each grader measures.
  *
@@ -79,23 +81,43 @@ export function SuitePassOrFailSection({
   groundednessEvidence?: GroundednessRunEvidence;
 }) {
   return (
-    <SuiteScorerTable
-      matchOptions={matchOptions}
-      onMatchOptionsChange={onMatchOptionsChange}
-      predicates={predicates}
-      onPredicatesChange={onPredicatesChange}
-      judgeConfig={judgeConfig}
-      onJudgeConfigChange={onJudgeConfigChange}
-      availableModels={availableModels}
-      scenarioMigrationNotice={scenarioMigrationNotice}
-      judgeAccessory={judgeAccessory}
-      rubricEditor={rubricEditor}
-      stageFacts={stageFacts}
-      capabilities={capabilities}
-      unavailableReason={unavailableReason}
-      passOrFailHint={PASS_OR_FAIL_HINT}
-      judgeHint={JUDGE_HINT}
-      groundednessEvidence={groundednessEvidence}
-    />
+    <div className="space-y-6">
+      <SuiteStageChecks
+        suitePredicates={predicates}
+        capabilities={capabilities}
+        readOnly={!!unavailableReason}
+        onToggle={(check, enabled) =>
+          onPredicatesChange((previous) =>
+            toggleSuiteStandardCheck(previous, check, enabled),
+          )
+        }
+        judgeSkipped={judgeConfig?.goalCompletion?.enabled === false}
+        onEditRules={() =>
+          document
+            .getElementById("standard-check-rules")
+            ?.scrollIntoView({ block: "start" })
+        }
+      />
+      <div id="standard-check-rules">
+        <SuiteScorerTable
+          matchOptions={matchOptions}
+          onMatchOptionsChange={onMatchOptionsChange}
+          predicates={predicates}
+          onPredicatesChange={onPredicatesChange}
+          judgeConfig={judgeConfig}
+          onJudgeConfigChange={onJudgeConfigChange}
+          availableModels={availableModels}
+          scenarioMigrationNotice={scenarioMigrationNotice}
+          judgeAccessory={judgeAccessory}
+          rubricEditor={rubricEditor}
+          stageFacts={stageFacts}
+          capabilities={capabilities}
+          unavailableReason={unavailableReason}
+          passOrFailHint={PASS_OR_FAIL_HINT}
+          judgeHint={JUDGE_HINT}
+          groundednessEvidence={groundednessEvidence}
+        />
+      </div>
+    </div>
   );
 }

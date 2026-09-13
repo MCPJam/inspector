@@ -216,7 +216,8 @@ describe("parity corpus manifest", () => {
   });
 
   it("declares the analyzer version it was recorded under", () => {
-    expect(manifest.stageAnalyzerVersion).toBe(STAGE_ANALYZER_VERSION);
+    expect(manifest.stageAnalyzerVersion).toBe(11);
+    expect(STAGE_ANALYZER_VERSION).toBe(12);
     expect(manifest.origin).toBe("synthetic");
   });
 });
@@ -236,9 +237,9 @@ describe("historical parity: recorded rows are reproduced exactly", () => {
       expect(derivation.failureCategory).toEqual(
         record.recorded.failureCategory
       );
-      expect(derivation.stageAnalyzerVersion).toBe(
-        record.recorded.stageAnalyzerVersion
-      );
+      // The v11 corpus remains immutable; v12 changes only discovery assertions, absent here.
+      expect(record.recorded.stageAnalyzerVersion).toBe(11);
+      expect(derivation.stageAnalyzerVersion).toBe(12);
     });
   }
 });

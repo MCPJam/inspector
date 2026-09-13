@@ -366,3 +366,16 @@ describe("SuiteScorerTable — role colour", () => {
     expect(warn.className).toMatch(/amber|warn/i);
   });
 });
+
+it("keeps each standard numeric criterion in its own editable field", () => {
+  renderTable({ predicates: [
+    { type: "toolDescriptionsPresent", minLength: 31 },
+    { type: "toolLatencyUnder", ms: 1234 },
+    { type: "toolResultSizeUnder", maxBytes: 64000 },
+    { type: "toolCallCountUnder", count: 4 },
+  ] });
+  expect(screen.getByRole("spinbutton", { name: "Minimum tool description length" })).toHaveValue(31);
+  expect(screen.getByRole("spinbutton", { name: "Tool latency budget in ms" })).toHaveValue(1234);
+  expect(screen.getByRole("spinbutton", { name: "Tool result size budget in bytes" })).toHaveValue(64000);
+  expect(screen.getByRole("spinbutton", { name: "Tool call budget" })).toHaveValue(4);
+});

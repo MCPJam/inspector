@@ -1,3 +1,4 @@
+import { ToolDeclarationCapture } from "./tool-declaration-capture.js";
 /**
  * MCPClientManager - Manages multiple MCP server connections
  */
@@ -320,6 +321,7 @@ export class MCPClientManager {
   private readonly registeredServers = new Map<string, RegisteredServerState>();
   private readonly liveClientStates = new Map<string, LiveClientState>();
   private readonly toolsMetadataCache = new Map<string, Map<string, any>>();
+  private readonly toolDeclarationCapture = new ToolDeclarationCapture();
   private readonly toolsAnnotationsCache = new Map<
     string,
     Map<string, Record<string, unknown> | undefined>
@@ -808,6 +810,7 @@ export class MCPClientManager {
     this.registeredServers.delete(serverId);
     this.toolsMetadataCache.delete(serverId);
     this.toolsAnnotationsCache.delete(serverId);
+    this.toolDeclarationCapture.clear(serverId);
     this.aggregatedToolsListWarmed.delete(serverId);
     this.notificationManager.clearServer(serverId);
     this.elicitationManager.clearServer(serverId);
@@ -861,6 +864,7 @@ export class MCPClientManager {
         }
         return result;
       } catch (error) {
+        this.toolDeclarationCapture.clear(serverId);
         if (isMethodUnavailableError(error, "tools/list")) {
           this.toolsMetadataCache.set(serverId, new Map());
           this.toolsAnnotationsCache.set(serverId, new Map());
@@ -959,6 +963,11 @@ export class MCPClientManager {
    * An empty map is still a valid populated response for a server with no
    * tools; callers must distinguish that from a cold or invalidated cache.
    */
+  /** Raw declarations before SDK aggregation, name merging, or schema filtering. */
+  getCapturedToolDeclarations(serverId: string) {
+    return this.toolDeclarationCapture.read(serverId);
+  }
+
   hasCachedToolAnnotations(serverId: string): boolean {
     return this.toolsAnnotationsCache.has(serverId);
   }
@@ -3185,6 +3194,7 @@ export class MCPClientManager {
     if (!state) {
       this.toolsMetadataCache.delete(serverId);
       this.toolsAnnotationsCache.delete(serverId);
+      this.toolDeclarationCapture.clear(serverId);
       this.aggregatedToolsListWarmed.delete(serverId);
       return;
     }
@@ -3208,6 +3218,7 @@ export class MCPClientManager {
     }
     this.toolsMetadataCache.delete(serverId);
     this.toolsAnnotationsCache.delete(serverId);
+    this.toolDeclarationCapture.clear(serverId);
     this.aggregatedToolsListWarmed.delete(serverId);
   }
 
@@ -3240,6 +3251,7 @@ export class MCPClientManager {
     }
     this.toolsMetadataCache.delete(serverId);
     this.toolsAnnotationsCache.delete(serverId);
+    this.toolDeclarationCapture.clear(serverId);
     this.aggregatedToolsListWarmed.delete(serverId);
   }
 
@@ -3724,12 +3736,22 @@ export class MCPClientManager {
       : undefined;
   }
 
-  private resolveRpcLogger(config: MCPServerConfig): RpcLogger | undefined {
-    if (config.rpcLogger) return config.rpcLogger;
-    if (config.logJsonRpc || this.defaultLogJsonRpc)
-      return createDefaultRpcLogger();
-    if (this.defaultRpcLogger) return this.defaultRpcLogger;
-    return undefined;
+  private resolveRpcLogger(config: MCPServerConfig): RpcLogger {
+    const logger =
+      config.rpcLogger ??
+      (config.logJsonRpc || this.defaultLogJsonRpc
+        ? createDefaultRpcLogger()
+        : this.defaultRpcLogger);
+    return (event) => {
+      // Observation is local only. It neither enables body logging nor sends
+      // another discovery request. Failure must not interfere with transport.
+      try {
+        this.toolDeclarationCapture.observe(event);
+      } catch {
+        this.toolDeclarationCapture.clear(event.serverId);
+      }
+      logger?.(event);
+    };
   }
 
   /**

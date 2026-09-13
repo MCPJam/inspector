@@ -97,7 +97,8 @@ import { PREDICATE_STAGE, type PredicateKind } from "./grader-stage.js";
  * Re-uses `predicateFailed`, `toolError` and `argumentMismatch`, so
  * `STAGE_REASONS` does not move and the backend mirror needs no re-pin.
  */
-export const STAGE_ANALYZER_VERSION = 11;
+// v12: scored gating discovery assertions precede successful tools/list.
+export const STAGE_ANALYZER_VERSION = 12;
 
 /**
  * The 7 above, named — the first analyzer that can report an errored tool call
@@ -377,6 +378,16 @@ const SELECTION_PREDICATE_REASONS: Record<string, StageReason> =
  * Response while the analyzer files its failures at User value, and no test
  * catches it because neither list is wrong on its own.
  */
+const DISCOVERY_PREDICATE_KINDS = new Set(
+  Object.entries(PREDICATE_STAGE)
+    .filter(([, stage]) => stage === "discovery")
+    .map(([kind]) => kind)
+);
+
+export function isDiscoveryPredicateKind(kind: string | undefined): boolean {
+  return kind !== undefined && DISCOVERY_PREDICATE_KINDS.has(kind);
+}
+
 const RESPONSE_PREDICATE_KINDS = new Set(
   Object.entries(PREDICATE_STAGE)
     .filter(([, stage]) => stage === "response")
@@ -859,32 +870,35 @@ function connectionPositivelyReached(e: StageEvidence): boolean {
 
 function deriveDiscovery(e: StageEvidence): StageResultRow {
   const signal = e.setupSignals?.discovery;
-  if (signal?.outcome === "ok") {
-    return row("discovery", "passed", "observed", signalEvidence(signal));
-  }
-  if ((e.toolSignals?.toolsTotalBefore ?? 0) > 0) {
-    return row("discovery", "passed", "observed");
-  }
-  const tools = (e.spans ?? []).filter(isToolSpan);
-  if (tools.length > 0) {
-    return row("discovery", "passed", "impliedByLaterEvidence", {
-      spanIds: spanIds(tools).slice(0, 5),
-    });
-  }
   if (signal?.outcome === "failed") {
     const refs = signalEvidence(signal);
-    // Failed + initialize completed + theirs ⇒ measured discovery miss.
-    // A completed initialize is the egress evidence; no canary needed.
-    // Unknown (unobserved tools/list) stays notMeasured — incomplete
-    // observation is not a server failure.
     if (connectionPositivelyReached(e) && signal.attribution === "theirs") {
       return row("discovery", "failed", "toolsListFailed", refs);
     }
-    if (signal.attribution === "ours") {
+    if (signal.attribution === "ours")
       return row("discovery", "notMeasured", "setupAborted", refs);
-    }
     return row("discovery", "notMeasured", "egressUnverified", refs);
   }
+  const assertions = gatingPredicateResults(e.predicateResults).filter((r) =>
+    isDiscoveryPredicateKind(r.predicate?.type)
+  );
+  const failed = assertions.filter((r) => r.passed === false);
+  if (failed.length > 0)
+    return row(
+      "discovery",
+      "failed",
+      "predicateFailed",
+      boundedPredicateReasons(failed)
+    );
+  if (signal?.outcome === "ok")
+    return row("discovery", "passed", "observed", signalEvidence(signal));
+  if ((e.toolSignals?.toolsTotalBefore ?? 0) > 0 || assertions.length > 0)
+    return row("discovery", "passed", "observed");
+  const tools = (e.spans ?? []).filter(isToolSpan);
+  if (tools.length > 0)
+    return row("discovery", "passed", "impliedByLaterEvidence", {
+      spanIds: spanIds(tools).slice(0, 5),
+    });
   if (e.traceAbsent) return row("discovery", "notMeasured", "traceAbsent");
   return row("discovery", "notMeasured", "noEvidenceCaptured");
 }
@@ -1222,6 +1236,7 @@ function deriveUserValue(e: StageEvidence): StageResultRow {
   // skipped (v10), and so are rows that could not be scored (v11).
   const results = gatingPredicateResults(e.predicateResults).filter(
     (r) =>
+      !isDiscoveryPredicateKind(r.predicate?.type) &&
       !isSelectionPredicateKind(r.predicate?.type) &&
       !isResponsePredicateKind(r.predicate?.type) &&
       !isCallPredicateKind(r.predicate?.type)
