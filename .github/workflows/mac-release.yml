@@ -81,6 +81,11 @@ jobs:
           echo "MAC_CODESIGN_IDENTITY=Developer ID Application: Marcelo Jimenez (TLBS4N7QZ3)" >> $GITHUB_ENV
           echo "APPLE_API_KEY_FILE=/tmp/AuthKey.p8" >> $GITHUB_ENV
 
+      # Must run before the client build that inlines the constant — see the
+      # script for why every user-facing bundle has to write it.
+      - name: Stamp desktop build time
+        run: node .github/scripts/stamp-mcpjam-build-time.mjs
+
       - name: Build application
         run: npm run build -w @mcpjam/inspector
         env:
