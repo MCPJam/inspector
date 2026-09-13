@@ -48,7 +48,7 @@ Most "failed to connect" / `fetch failed` / `ECONNREFUSED` / `MCP error -32000: 
 
    `MCP error -32001: Request timed out` during `initialize` means the server didn't respond to the handshake in time — usually because it's still loading models, opening a database, or waiting on an upstream. Raise the **Request timeout** in **Clients → your client → Request timeout** (default 30,000ms), or reduce the server's startup work.
 
-If all five check out and you still see a failure, copy the full error from the JSON-RPC log into a [GitHub issue](https://github.com/MCPJam/inspector/issues) or [Discord](https://discord.gg/JEnDtz8X6z) thread.
+If all five check out and you still see a failure, click **Copy** on the error card to copy the full error — title, likely causes, next steps, and raw details — then paste it into a [GitHub issue](https://github.com/MCPJam/inspector/issues) or [Discord](https://discord.gg/JEnDtz8X6z) thread.
 
 ### `(intermediate value).subtle is undefined`
 
