@@ -1,3 +1,4 @@
+import { resolveEvalCiMetadata } from "./eval-ci.js";
 import type {
   EvalResultInput,
   EvalWidgetSnapshotInput,
@@ -1043,6 +1044,9 @@ async function resolveWireHostConfigForRun(
 async function reportEvalResultsInternal(
   input: ReportEvalResultsInput
 ): Promise<ReportEvalResultsOutput> {
+  // Snapshot once, before any async work, for both upload paths and retries.
+  const ci = resolveEvalCiMetadata(input.ci);
+  input = { ...input, ci: ci ? { ...ci } : undefined };
   if (!input.suiteName || input.suiteName.trim().length === 0) {
     throw new Error("suiteName is required");
   }

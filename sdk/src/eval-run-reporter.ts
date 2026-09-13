@@ -1,5 +1,5 @@
+import { resolveEvalCiMetadata } from "./eval-ci.js";
 import type {
-  EvalCiMetadata,
   EvalResultInput,
   ReportEvalResultsInput,
   ReportEvalResultsOutput,
@@ -33,9 +33,8 @@ import {
 
 export type CreateEvalRunReporterInput = Omit<
   ReportEvalResultsInput,
-  "results" | "framework" | "ci"
+  "results" | "framework"
 > & {
-  ci?: Omit<EvalCiMetadata, "provider">;
   results?: EvalResultInput[];
 };
 
@@ -137,7 +136,8 @@ class EvalRunReporterImpl implements EvalRunReporter {
   private passedCount = 0;
 
   constructor(input: CreateEvalRunReporterInput) {
-    this.input = input;
+    // Empty CI keeps the one-shot fallback from detecting again at finalize.
+    this.input = { ...input, ci: { ...resolveEvalCiMetadata(input.ci) } };
     this.runtimeConfig = createRuntimeConfig({
       ...input,
       suiteName: input.suiteName,
@@ -312,7 +312,7 @@ class EvalRunReporterImpl implements EvalRunReporter {
           notes: this.input.notes,
           passCriteria: this.input.passCriteria,
           externalRunId: this.externalRunId,
-          ci: this.withoutCiProvider(this.input.ci),
+          ci: this.input.ci,
           expectedIterations: this.expectedIterations,
           // The v2 marker rides the START call: the backend freezes the policy
           // once, and every later chunk is evidence graded against that
@@ -399,7 +399,7 @@ class EvalRunReporterImpl implements EvalRunReporter {
         notes: this.input.notes,
         passCriteria: this.input.passCriteria,
         externalRunId: this.externalRunId,
-        ci: this.withoutCiProvider(this.input.ci),
+        ci: this.input.ci,
         apiKey: this.input.apiKey,
         baseUrl: this.input.baseUrl,
         project: this.input.project,
@@ -491,18 +491,6 @@ class EvalRunReporterImpl implements EvalRunReporter {
         externalIterationId: `${this.externalRunId}-${this.generatedIterationCount}`,
       };
     });
-  }
-
-  private withoutCiProvider(
-    ci: CreateEvalRunReporterInput["ci"] | EvalCiMetadata | undefined
-  ): Omit<EvalCiMetadata, "provider"> | undefined {
-    if (!ci) {
-      return undefined;
-    }
-    const { provider: _provider, ...rest } = ci as EvalCiMetadata & {
-      [key: string]: unknown;
-    };
-    return rest;
   }
 
   private buildLocalFallbackResult(): ReportEvalResultsOutput {

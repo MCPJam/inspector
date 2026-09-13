@@ -98,20 +98,50 @@ await test.run(agent, {
 Suites can be configured at construction or run time:
 
 ```typescript
-const suite = new EvalSuite({
-  name: "Math Operations",
-  mcpjam: {
-    suiteName: "Math Eval",
-    ci: {
-      branch: process.env.GITHUB_REF_NAME,
-      commitSha: process.env.GITHUB_SHA,
-      runUrl: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
-    },
-  },
-});
+const suite = new EvalSuite({ name: "Math Operations" });
 ```
 
 When a suite runs, individual `EvalTest` auto-saves are suppressed to avoid duplicate uploads. The suite consolidates all test results into a single run.
+
+## Automatic CI metadata
+
+When `ci` is omitted, the SDK reads available CI details from the environment. This works for `EvalSuite`, `EvalTest`, `reportEvalResults`, `reportEvalResultsSafely`, and `createEvalRunReporter`. API-key setup is still required.
+
+| Service | Detected provider | Commit / branch variables |
+| --- | --- | --- |
+| GitHub Actions | `github_actions` | `GITHUB_SHA` / `GITHUB_REF_NAME` (PRs use the source branch from `GITHUB_HEAD_REF` or supplied event metadata) |
+| GitLab CI | `gitlab_ci` | `CI_COMMIT_SHA` / `CI_COMMIT_BRANCH`, then `CI_MERGE_REQUEST_SOURCE_BRANCH_NAME`, then `CI_COMMIT_REF_NAME` |
+| CircleCI | `circleci` | `CIRCLE_SHA1` / `CIRCLE_BRANCH` |
+| Buildkite | `buildkite` | `BUILDKITE_COMMIT` / `BUILDKITE_BRANCH` |
+| Jenkins | `jenkins` | `GIT_COMMIT` / `BRANCH_NAME`, then `GIT_LOCAL_BRANCH`, then `GIT_BRANCH` |
+| Vercel | `vercel` | `VERCEL_GIT_COMMIT_SHA` / `VERCEL_GIT_COMMIT_REF` |
+| Netlify | `netlify` | `COMMIT_REF` / `BRANCH` |
+
+The SDK also attaches available pipeline IDs, job IDs, and CI run URLs. Vercel attaches its deployment ID and Netlify its build ID; neither supplies a job ID or run URL through this detector. A deployed site's URL is not used as a CI run link.
+
+Detection requires the provider's environment flag to be `true` or `1`; Jenkins uses a nonempty `JENKINS_URL` or `JENKINS_HOME`. If several providers match, the table's order wins and their fields are never mixed. Local runs and unknown CI services add no automatic metadata.
+
+Variables must be exposed to the test process. On Vercel, enable access to [system environment variables](https://vercel.com/docs/environment-variables/system-environment-variables). Missing or invalid values are omitted: automatic fields are limited to 512 characters, run URLs must be HTTP(S), and commit values must be full Git hashes. For example, Buildkite's unresolved `HEAD` is omitted. GitHub uses the existing detector: `GITHUB_SHA` remains the evaluated commit (which may be a merge commit), and PRs use the source branch rather than a synthetic merge ref. Detection does not inspect the checkout or make network requests.
+
+An explicit `ci` object replaces detection completely; missing fields are not filled automatically. To supply your own values:
+
+```typescript
+const suite = new EvalSuite({
+  name: "Math Operations",
+  mcpjam: { ci: { commitSha: myCommitSha, branch: myBranch } },
+});
+```
+
+To disable detection:
+
+```typescript
+const suite = new EvalSuite({
+  name: "Math Operations",
+  mcpjam: { ci: {} },
+});
+```
+
+Direct reporting APIs accept `ci` at the top level. Incremental reporters snapshot CI details when created; direct uploads snapshot them when reporting starts. Retries and chunks keep the same metadata.
 
 ## Manual Save APIs
 
