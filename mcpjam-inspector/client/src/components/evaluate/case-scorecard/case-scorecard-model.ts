@@ -79,7 +79,10 @@ import {
   roleOfPredicate,
   type ScorerUiRole,
 } from "@/components/evals/suite-scorer-table-model";
-import { judgeMode, type JudgeMode } from "@/components/evals/suite-grading-model";
+import {
+  judgeMode,
+  type JudgeMode,
+} from "@/components/evals/suite-grading-model";
 import type {
   EvalJudgeConfig,
   EvalJudgeConfigOverride,
@@ -368,6 +371,7 @@ const PREDICATE_PURPOSE: Record<PredicateKind, string> = {
   onlyToolsCalled: "Require that nothing else is called",
   firstToolWas: "Require this tool to be reached first",
   responseContains: "Check what the answer says",
+  responseCloseTo: "Compare the answer to reference text",
   responseMatches: "Check the answer's shape",
   noToolErrors: "Catch tool failures",
   finalAssistantMessageNonEmpty: "Catch an empty answer",
@@ -733,11 +737,7 @@ export function buildCaseScorecard(input: CaseScorecardInput): CaseScorecard {
     roleLock: "route",
     editable: route.kind !== "locked",
     route,
-    tooltip: rowTooltip(
-      "Tool-call matching",
-      "gate",
-      false,
-    ),
+    tooltip: rowTooltip("Tool-call matching", "gate", false),
     ...(route.kind === "tools" || route.kind === "noTool"
       ? {
           join: {
@@ -785,7 +785,7 @@ export function buildCaseScorecard(input: CaseScorecardInput): CaseScorecard {
           roleLock: "inherited",
         }),
       )
-    : (envelopeMode === "inherit" ? [] : (input.predicates?.list ?? [])).map(
+    : (envelopeMode === "inherit" ? [] : input.predicates?.list ?? []).map(
         (predicate, index) =>
           predicateRow({
             predicate,

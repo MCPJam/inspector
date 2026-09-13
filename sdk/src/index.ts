@@ -908,6 +908,7 @@ export {
   reportEvalResultsSafely,
 } from "./report-eval-results.js";
 export { createEvalRunReporter } from "./eval-run-reporter.js";
+export { reportEvalResultsWithReceipt } from "./eval-reporting-receipt.js";
 export type {
   CreateEvalRunReporterInput,
   EvalRunReporter,
@@ -920,6 +921,7 @@ export type {
 export type {
   EvalExpectedToolCall,
   EvalCiMetadata,
+  EvalReportingReceipt,
   EvalTraceInput,
   EvalTraceSpanCategory,
   EvalTraceSpanInput,
@@ -1663,3 +1665,43 @@ export {
   collapseImmediateRepeats,
   toolNamesFromPathKey,
 } from "./contract/tool-path.js";
+
+export { evalTestVariants } from "./eval-variants.js";
+export type { EvalVariantEntry } from "./eval-variants.js";
+export type { EvalSelectionManifest } from "./eval-selection.js";
+export { formatRunSummaryTable } from "./eval-summary.js";
+export { buildRunUrl } from "./report-eval-results.js";
+export type { EvaluatorOverride } from "./EvalTest.js";
+export type {
+  EvalExecutionContext,
+  ReportedMeasurement,
+  ReportedEvidence,
+} from "./eval-reported.js";
+export {
+  buildRunEvaluatorContext,
+  runEvaluatorContextFromIterations,
+  selectionStability,
+  argumentConsistency,
+  evaluateCaseRun,
+} from "./run-evaluators.js";
+export type {
+  CaseRunEvaluation,
+  RunEvaluator,
+  RunEvaluatorContextV1,
+  RunIterationEvidence,
+  RunEvaluatorObservation,
+} from "./run-evaluators.js";
+
+export { detectEvalGitMetadata } from "./eval-git.js";
+
+export {
+  runVariants,
+  compareVariantPreferences,
+} from "./eval-execution-variants.js";
+export type {
+  EvalExecutionVariantInput,
+  EvalExecutionVariantResult,
+  EvalExecutionVariantsResult,
+  PairwiseJudge,
+  PairwisePreferenceResult,
+} from "./eval-execution-variants.js";

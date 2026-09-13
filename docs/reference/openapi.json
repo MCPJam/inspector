@@ -6273,6 +6273,185 @@
         }
       }
     },
+    "/projects/{projectId}/eval-ingest/capabilities": {
+      "post": {
+        "operationId": "getEvalIngestCapabilities",
+        "tags": ["Eval runs"],
+        "summary": "Discover authenticated eval ingestion capabilities",
+        "description": "Discover authenticated eval ingestion capabilities. Uses the SDK reporting transport and the same tenant/project authorization as eval ingestion. Unsupported capabilities remain absent.",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Project id, or the literal `default` for the key org's Default project."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The backend's response, passed through.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["ok", "capabilities"],
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "capabilities": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "integer"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/eval-ingest/runs/evaluations": {
+      "post": {
+        "operationId": "reportCaseRunEvaluations",
+        "tags": ["Eval runs"],
+        "summary": "Persist advisory case-run evaluations",
+        "description": "Persist advisory case-run evaluations. Uses the SDK reporting transport and the same tenant/project authorization as eval ingestion. Unsupported capabilities remain absent.",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Project id, or the literal `default` for the key org's Default project."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["runId", "externalRunId", "evaluations"],
+                "properties": {
+                  "runId": {
+                    "type": "string"
+                  },
+                  "externalRunId": {
+                    "type": "string"
+                  },
+                  "evaluations": {
+                    "type": "array",
+                    "maxItems": 1000,
+                    "items": {
+                      "type": "object",
+                      "description": "Versioned case_run envelope. Maximum 64 KiB per case and 256 KiB per request; validated definition hashes and advisory role only."
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The backend's response, passed through.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["ok", "runId", "persistedCases"],
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "runId": {
+                      "type": "string"
+                    },
+                    "persistedCases": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
     "/projects/{projectId}/eval-ingest/report": {
       "post": {
         "operationId": "reportEvalRun",
@@ -12808,6 +12987,65 @@
           }
         }
       }
+    },
+    "/projects/{projectId}/eval-runs/{runId}/backtest": {
+      "post": {
+        "operationId": "backtestEvalRun",
+        "tags": ["Eval runs"],
+        "summary": "Preview deterministic draft evaluators against stored evidence",
+        "description": "Requires suite configuration permission and a terminal run. Reserves a shared 60-second backtest cooldown. Reads at most 100 iterations within a 30-second operation deadline; partial evidence is explicitly ungradable. Runs no model calls and never overwrites original verdicts. Draft assertions explicitly replace, extend, or inherit the frozen rules.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/runId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvalBacktestDraft"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Draft evidence comparison.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalBacktestReport"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "409": {
+            "description": "Run is not terminal or source evidence changed."
+          },
+          "504": {
+            "description": "Backtest deadline or cancellation."
+          }
+        }
+      }
     }
   },
   "components": {
@@ -16356,6 +16594,33 @@
           },
           "importEligibility": {
             "$ref": "#/components/schemas/ImportEligibility"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "tags": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "type": "string",
+              "maxLength": 64
+            }
+          },
+          "runMetadata": {
+            "type": "object",
+            "description": "Bounded caller metadata; preserved as descriptive data, never authorization."
+          },
+          "ciMetadata": {
+            "type": "object",
+            "description": "Bounded CI attribution and source revision metadata."
+          },
+          "runEvaluationsByCase": {
+            "type": "array",
+            "description": "Case-scoped run evaluator observations with source and definition identity.",
+            "items": {
+              "type": "object"
+            }
           }
         }
       },
@@ -27503,6 +27768,102 @@
           "projectId",
           "browser"
         ]
+      },
+      "EvalBacktestDraft": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["assertions"],
+        "properties": {
+          "assertions": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["mode", "list"],
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": ["replace", "extend", "inherit"]
+              },
+              "list": {
+                "type": "array",
+                "maxItems": 25,
+                "items": {
+                  "type": "object",
+                  "description": "A supported deterministic assertion rule."
+                }
+              }
+            }
+          },
+          "matchOptions": {
+            "type": ["object", "null"],
+            "description": "Optional deterministic tool matching options; null omits matching."
+          }
+        }
+      },
+      "EvalBacktestReport": {
+        "type": "object",
+        "required": [
+          "schemaVersion",
+          "sourceRunId",
+          "sourceHash",
+          "draftHash",
+          "complete",
+          "continuationAvailable",
+          "counts",
+          "differences",
+          "modelUse"
+        ],
+        "properties": {
+          "schemaVersion": {
+            "const": 1
+          },
+          "sourceRunId": {
+            "type": "string"
+          },
+          "sourceHash": {
+            "type": "string"
+          },
+          "draftHash": {
+            "type": "string"
+          },
+          "configRevision": {},
+          "complete": {
+            "type": "boolean"
+          },
+          "continuationAvailable": {
+            "type": "boolean"
+          },
+          "counts": {
+            "type": "object",
+            "properties": {
+              "iterations": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "comparable": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "ungradable": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "flipped": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
+          "differences": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "Per-iteration definition-aligned stored and draft evaluator observations, with explicit comparability and missing-evidence reasons."
+            }
+          },
+          "modelUse": {
+            "const": "none"
+          }
+        }
       }
     },
     "responses": {

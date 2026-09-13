@@ -1,3 +1,5 @@
+import { AssertionBacktestPanel } from "./assertion-backtest-panel";
+import { JudgeBacktestPanel } from "./judge-backtest-panel";
 import { ImportDatasetDialog } from "../evaluate/import-dataset-dialog";
 import { SuiteClientsSettings } from "./suite-clients-settings";
 import {
@@ -819,7 +821,8 @@ export function SuiteIterationsView({
   );
   const suiteScenarioMigrationCount = useMemo(
     () =>
-      splitPredicatesForMigration(draftDefaultPredicates).scenarioAsserts.length,
+      splitPredicatesForMigration(draftDefaultPredicates).scenarioAsserts
+        .length,
     [draftDefaultPredicates],
   );
   const defaultMinimumPassRate =
@@ -1265,7 +1268,6 @@ export function SuiteIterationsView({
     hostNamesById,
   ]);
 
-
   const omitRunDetailIdentity = useMemo(() => {
     if (viewMode !== "run-detail" || !selectedRunDetails) {
       return false;
@@ -1416,18 +1418,18 @@ export function SuiteIterationsView({
   const ciOwnedReason = configLocked
     ? CI_OWNED_REASON_COPY
     : capabilitiesReady && capabilities.ownership?.ciOwned
-      ? CI_OWNED_REASON_COPY
-      : undefined;
+    ? CI_OWNED_REASON_COPY
+    : undefined;
   // `computerEnvironmentRowVisible` is declared beside the images it gates —
   // see the comment there for why the two share one condition.
   const computerEnvironmentDisabledReason =
     ciOwnedReason ??
     (!capabilitiesReady
       ? undefined
-      : (featureDisabledReason(capabilities.features?.computers) ??
+      : featureDisabledReason(capabilities.features?.computers) ??
         (capabilities.permissions?.["suite.configure"] === false
           ? PERMISSION_REASON_COPY
-          : undefined)));
+          : undefined));
   const scheduleDisabledReason =
     ciOwnedReason ??
     (!capabilitiesReady
@@ -1463,12 +1465,12 @@ export function SuiteIterationsView({
         ? CAPABILITY_REASON_COPY.flag_unavailable
         : "Checking whether this deployment allows verdict policy v2…"
       : // Absent reads as "cannot upgrade", which is what an older deployment
-        // means by not answering — never as permission.
-        capabilities.verdictPolicyV2?.canUpgrade
-        ? undefined
-        : (capabilities.verdictPolicyV2?.deploymentMode ?? "off") === "off"
-          ? DEPLOYMENT_REASON_COPY
-          : "This suite is already on verdict policy v2";
+      // means by not answering — never as permission.
+      capabilities.verdictPolicyV2?.canUpgrade
+      ? undefined
+      : (capabilities.verdictPolicyV2?.deploymentMode ?? "off") === "off"
+      ? DEPLOYMENT_REASON_COPY
+      : "This suite is already on verdict policy v2";
   const visibleSettingsTabs = VISIBLE_SUITE_SETTINGS_GROUPS;
   useEffect(() => {
     if (!visibleSettingsTabs.some((group) => group.id === activeGroupId)) {
@@ -1847,7 +1849,15 @@ export function SuiteIterationsView({
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-      {projectId && !editingDisabled && <ImportDatasetDialog key={suite._id} open={importOpen} onOpenChange={setImportOpen} projectId={projectId} suiteId={suite._id} />}
+      {projectId && !editingDisabled && (
+        <ImportDatasetDialog
+          key={suite._id}
+          open={importOpen}
+          onOpenChange={setImportOpen}
+          projectId={projectId}
+          suiteId={suite._id}
+        />
+      )}
       {/* Header */}
       {showSuiteHeader ? (
         <div className="shrink-0">
@@ -1957,9 +1967,17 @@ export function SuiteIterationsView({
                       replace: true,
                     })
                   }
-                  checksPage={route.type === "test-edit" && Boolean(route.checks)}
-                  onOpenCaseChecks={() => navigation.toTestEdit(suite._id, selectedTestId, { checks: true })}
-                  onCloseCaseChecks={() => navigation.toTestEdit(suite._id, selectedTestId)}
+                  checksPage={
+                    route.type === "test-edit" && Boolean(route.checks)
+                  }
+                  onOpenCaseChecks={() =>
+                    navigation.toTestEdit(suite._id, selectedTestId, {
+                      checks: true,
+                    })
+                  }
+                  onCloseCaseChecks={() =>
+                    navigation.toTestEdit(suite._id, selectedTestId)
+                  }
                   onOpenSuiteSettings={() => navigation.toSuiteEdit(suite._id)}
                 />
               </motion.div>
@@ -2009,7 +2027,10 @@ export function SuiteIterationsView({
                   </motion.div>
                 );
               })()
-            ) : showEvaluateRunPage && selectedRunDetails && route.type === "run-detail" && route.comparison ? (
+            ) : showEvaluateRunPage &&
+              selectedRunDetails &&
+              route.type === "run-detail" &&
+              route.comparison ? (
               <RunComparisonPage
                 key={selectedRunDetails._id}
                 currentRun={selectedRunDetails}
@@ -2017,7 +2038,9 @@ export function SuiteIterationsView({
                 iterations={allIterations}
                 suiteName={suite.name}
                 hostNamesById={hostNamesById}
-                onBack={() => navigation.toRunDetail(suite._id, selectedRunDetails._id)}
+                onBack={() =>
+                  navigation.toRunDetail(suite._id, selectedRunDetails._id)
+                }
                 onOpenRun={(runId) => navigation.toRunDetail(suite._id, runId)}
               />
             ) : showEvaluateRunPage && selectedRunDetails ? (
@@ -2032,7 +2055,14 @@ export function SuiteIterationsView({
                 className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
               >
                 <EvaluateRunPage
-                  onOpenComparison={() => navigation.toRunDetail(suite._id, selectedRunDetails._id, undefined, { comparison: true })}
+                  onOpenComparison={() =>
+                    navigation.toRunDetail(
+                      suite._id,
+                      selectedRunDetails._id,
+                      undefined,
+                      { comparison: true },
+                    )
+                  }
                   relatedRuns={runs}
                   launchReview={{
                     projectId,
@@ -2126,7 +2156,11 @@ export function SuiteIterationsView({
                   onEditSuite={() => navigation.toSuiteEdit(suite._id)}
                   onEditCases={onCreateTestCase}
                   onDescribeCases={onDescribeTestCase}
-                  onImportCases={projectId && !editingDisabled ? () => setImportOpen(true) : undefined}
+                  onImportCases={
+                    projectId && !editingDisabled
+                      ? () => setImportOpen(true)
+                      : undefined
+                  }
                   onGenerateTestCases={onGenerateTestCases}
                   canGenerateTestCases={canGenerateTestCases}
                   generateTestCasesDisabledReason={
@@ -2654,6 +2688,27 @@ export function SuiteIterationsView({
                           ) : null
                         }
                       />
+                      <AssertionBacktestPanel
+                        projectId={projectId ?? undefined}
+                        runId={
+                          sortRunsNewestFirst(runs).find((run) =>
+                            TERMINAL_RUN_STATUSES.has(run.status ?? ""),
+                          )?._id
+                        }
+                        assertions={draftDefaultPredicates}
+                      />
+                      {pickBacktestableRun(runs) &&
+                      draft.current.judgeRubric ? (
+                        <JudgeBacktestPanel
+                          key={`${suite._id}:${JSON.stringify(
+                            draft.current.judgeRubric,
+                          )}`}
+                          suiteId={suite._id}
+                          runId={pickBacktestableRun(runs)!._id}
+                          runNumber={pickBacktestableRun(runs)!.runNumber}
+                          draftRubric={draft.current.judgeRubric}
+                        />
+                      ) : null}
                     </div>
                   </section>
                 ) : null}

@@ -104,6 +104,9 @@ export const PROJECT_RUNS_PAGE_SIZE = 50;
  * reach for one.
  */
 export interface ProjectRunRow {
+  name?: string;
+  tags?: string[];
+  runMetadata?: Record<string, string | number | boolean>;
   _id: string;
   suiteId: string;
   suiteName: string | null;
@@ -694,8 +697,8 @@ export function ProjectRunsTable({
                 <span className="min-w-0 flex-1 truncate text-left">
                   {suiteFilter === ALL_SUITES
                     ? "Suite"
-                    : (suiteOptions.find(([id]) => id === suiteFilter)?.[1] ??
-                      "Suite")}
+                    : suiteOptions.find(([id]) => id === suiteFilter)?.[1] ??
+                      "Suite"}
                 </span>
               </SelectTrigger>
               <SelectContent className="max-w-[min(24rem,calc(100vw-2rem))]">
@@ -1135,15 +1138,15 @@ function ProjectRunTableRow({
         <div className={grouped ? (nested ? "pl-12" : "pl-5") : undefined}>
           <span className="block truncate font-medium">
             {grouped
-              ? `#${row.runNumber}`
-              : (row.suiteName ?? (
+              ? row.name || `#${row.runNumber}`
+              : row.suiteName ?? (
                   <span
                     className="text-muted-foreground"
                     title="This run's suite no longer exists, so its detail view can't be opened."
                   >
                     Deleted suite
                   </span>
-                ))}
+                )}
           </span>
           <span className="text-[10px] text-muted-foreground" title={row._id}>
             {grouped

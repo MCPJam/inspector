@@ -718,6 +718,14 @@ function CheckFields({
           readOnly={readOnly}
         />
       );
+    case "responseCloseTo":
+      return (
+        <ResponseCloseToFields
+          predicate={predicate}
+          onChange={onChange}
+          readOnly={readOnly}
+        />
+      );
     case "responseContains":
       return (
         <ResponseContainsFields
@@ -1455,7 +1463,8 @@ function StructuredArgsRow({
   const argKeys = argProperties ? Object.keys(argProperties) : [];
   const useKeyDropdown = argKeys.length > 0;
   const argSchema = argProperties?.[persistedKey] as
-    { type?: string; description?: string } | undefined;
+    | { type?: string; description?: string }
+    | undefined;
   // A freshly-added row uses a synthetic `arg`/`argN` key that isn't a real
   // schema property — show the placeholder so the user is prompted to pick.
   const isPlaceholderKey =
@@ -1466,7 +1475,8 @@ function StructuredArgsRow({
     .filter((k) => k === persistedKey || !isKeyTaken(k))
     .map((k) => {
       const schema = argProperties![k] as
-        { type?: string; description?: string } | undefined;
+        | { type?: string; description?: string }
+        | undefined;
       let description = schema?.description || "";
       if (schema?.type) {
         description += description
@@ -2669,4 +2679,71 @@ function RadioRow({
  */
 export function areAllChecksValid(list: Predicate[]): boolean {
   return list.every((p) => predicateSchema.safeParse(p).success);
+}
+
+function ResponseCloseToFields({
+  predicate,
+  onChange,
+  readOnly,
+}: {
+  predicate: Extract<Predicate, { type: "responseCloseTo" }>;
+  onChange: (next: Predicate) => void;
+  readOnly: boolean;
+}) {
+  const referenceId = useId();
+  const distanceId = useId();
+  const caseId = useId();
+  const whitespaceId = useId();
+  return (
+    <div className="space-y-2">
+      <Label htmlFor={referenceId}>Reference response</Label>
+      <Input
+        id={referenceId}
+        value={predicate.reference}
+        disabled={readOnly}
+        onChange={(event) =>
+          onChange({ ...predicate, reference: event.target.value })
+        }
+      />
+      <Label htmlFor={distanceId}>Maximum text distance (0–1)</Label>
+      <Input
+        id={distanceId}
+        type="number"
+        min={0}
+        max={1}
+        step={0.01}
+        value={predicate.maxDistance}
+        disabled={readOnly}
+        onChange={(event) =>
+          onChange({ ...predicate, maxDistance: event.target.valueAsNumber })
+        }
+      />
+      <div className="flex items-center gap-2">
+        <Switch
+          id={caseId}
+          checked={predicate.caseSensitive ?? false}
+          disabled={readOnly}
+          onCheckedChange={(checked) =>
+            onChange({ ...predicate, caseSensitive: checked })
+          }
+        />
+        <Label htmlFor={caseId}>Case sensitive</Label>
+      </div>
+      <div className="flex items-center gap-2">
+        <Switch
+          id={whitespaceId}
+          checked={predicate.normalizeWhitespace ?? false}
+          disabled={readOnly}
+          onCheckedChange={(checked) =>
+            onChange({ ...predicate, normalizeWhitespace: checked })
+          }
+        />
+        <Label htmlFor={whitespaceId}>Normalize whitespace</Label>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Compares characters, not meaning. Zero requires an exact match after
+        normalization.
+      </p>
+    </div>
+  );
 }

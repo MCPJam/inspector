@@ -50,6 +50,7 @@ const PICKER_ITEM_ICONS: Record<string, LucideIcon> = {
   toolCall: Wrench,
   "check:toolCalledWith": Wrench,
   "check:responseContains": MessageSquareText,
+  "check:responseCloseTo": MessageSquareText,
   "check:widgetRendered": LayoutPanelTop,
   "check:toolCalledAtLeastOnce": Wrench,
   "check:toolNeverCalled": Wrench,

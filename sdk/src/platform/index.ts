@@ -351,6 +351,7 @@ export {
   createHostOperation,
   createTunnelOperation,
   cancelEvalRunOperation,
+  backtestEvalRunOperation,
   requestEvalRunJudgeOperation,
   listEvalGithubReposOperation,
   connectEvalGithubRepoOperation,
@@ -828,10 +829,35 @@ export {
   type StepScreenshot,
 } from "./step-evidence.js";
 
-export type { PlatformBrowserToolPolicy, PlatformSessionBrowserInput, PlatformBrowserScreenshot, PlatformSessionBrowser, PlatformSessionBrowserOpened, PlatformSessionBrowserCommand, PlatformSessionBrowserResult, PlatformSessionBrowserTrace, PlatformSessionBrowserOperation, PlatformSessionBrowserOperationResult } from "./types.js";
+export type {
+  PlatformBrowserToolPolicy,
+  PlatformSessionBrowserInput,
+  PlatformBrowserScreenshot,
+  PlatformSessionBrowser,
+  PlatformSessionBrowserOpened,
+  PlatformSessionBrowserCommand,
+  PlatformSessionBrowserResult,
+  PlatformSessionBrowserTrace,
+  PlatformSessionBrowserOperation,
+  PlatformSessionBrowserOperationResult,
+} from "./types.js";
 
-export { driveChatSessionBrowserOperation, observeChatSessionBrowserOperation, type DriveChatSessionBrowserInput, type ObserveChatSessionBrowserInput } from "./operations.js";
+export {
+  driveChatSessionBrowserOperation,
+  observeChatSessionBrowserOperation,
+  type DriveChatSessionBrowserInput,
+  type ObserveChatSessionBrowserInput,
+} from "./operations.js";
 export { collectSessionScreenshots } from "./browser-evidence.js";
 
 export { platformBrowserToolPolicySchema } from "./browser-policy.js";
-export type { PlatformSessionBrowserBodies, PlatformSessionBrowserResults } from "./types.js";
+export type {
+  PlatformSessionBrowserBodies,
+  PlatformSessionBrowserResults,
+} from "./types.js";
+
+export type {
+  EvalBacktestDraft,
+  EvalBacktestReport,
+  EvalBacktestDifference,
+} from "../contract/eval-backtest.js";

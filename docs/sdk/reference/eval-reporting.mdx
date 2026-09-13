@@ -480,6 +480,7 @@ The **Measures** column is the link of the [user-value chain](/sdk/concepts/user
 | `firstToolWas` | `toolName` | Selection | The first tool call observed in the transcript was `toolName`. |
 | `responseContains` | `needle`, `caseSensitive?` | User value | The final assistant message contains `needle`. Case-insensitive by default. |
 | `responseMatches` | `pattern` | User value | The final assistant message matches the regular expression `pattern` (regex source string, no flags). |
+| `responseCloseTo` | `reference`, `maxDistance`, optional `caseSensitive`, `normalizeWhitespace` | User value | Normalized Unicode code-point edit distance; budget overflow is unscored, not a mismatch. |
 | `noToolErrors` | — | Response | No tool produced an error (neither MCP `isError: true` nor a JSON-RPC/transport failure). |
 | `finalAssistantMessageNonEmpty` | — | User value | The final assistant message is a non-empty, non-whitespace string. |
 | `tokenBudgetUnder` | `tokens` | User value | Total token usage for the iteration is strictly under `tokens`. Fails when usage was not measured. |
@@ -659,3 +660,6 @@ It is on by default and there is nothing to configure. Details worth knowing:
 - [Running Evals](/sdk/concepts/running-evals) - Conceptual guide
 - [EvalTest Reference](/sdk/reference/eval-test) - EvalTest API
 - [EvalSuite Reference](/sdk/reference/eval-suite) - EvalSuite API
+
+
+See [Reliable evals in CI](/sdk/concepts/enterprise-evals) for canonical evaluators, reporting receipts, explicit limits, metadata compatibility, and migration guidance.

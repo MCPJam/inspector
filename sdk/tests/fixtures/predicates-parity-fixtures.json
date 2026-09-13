@@ -711,6 +711,24 @@
         "role": "advisory",
         "severity": "warn"
       }
+    },
+    {
+      "label": "responseCloseTo — exact normalized distance",
+      "value": {
+        "type": "responseCloseTo",
+        "reference": "hello",
+        "maxDistance": 0
+      }
+    },
+    {
+      "label": "responseCloseTo — Unicode and normalization",
+      "value": {
+        "type": "responseCloseTo",
+        "reference": "Hello 😀",
+        "maxDistance": 0.25,
+        "caseSensitive": false,
+        "normalizeWhitespace": true
+      }
     }
   ],
   "reject": [
@@ -1235,6 +1253,23 @@
         "toolNames": "search"
       },
       "why": "a bare string would silently allow only its characters"
+    },
+    {
+      "label": "responseCloseTo — normalized reference must not be empty",
+      "value": {
+        "type": "responseCloseTo",
+        "reference": "  ",
+        "maxDistance": 0.2,
+        "normalizeWhitespace": true
+      }
+    },
+    {
+      "label": "responseCloseTo — distance outside unit interval",
+      "value": {
+        "type": "responseCloseTo",
+        "reference": "hello",
+        "maxDistance": 1.1
+      }
     }
   ]
 }

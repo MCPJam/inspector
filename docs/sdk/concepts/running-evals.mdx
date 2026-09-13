@@ -189,6 +189,7 @@ The built-in predicate types. **Measures** is the link of the [user-value chain]
 | `firstToolWas` | Selection | The first tool call in the transcript was a specific tool |
 | `responseContains` | User value | The final assistant message contains a substring |
 | `responseMatches` | User value | The final assistant message matches a regex |
+| `responseCloseTo` | User value | Normalized text edit distance from a reference (bounded; not semantic similarity). |
 | `noToolErrors` | Response | No tool produced an error (MCP `isError` or transport failure) |
 | `finalAssistantMessageNonEmpty` | User value | The final assistant message is non-empty |
 | `tokenBudgetUnder` | User value | Total token usage is strictly under a budget |

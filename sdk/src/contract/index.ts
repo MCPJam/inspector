@@ -1007,3 +1007,10 @@ export {
 } from "./scorer-rollup.js";
 
 export { caseSourceSchema, type CaseSource } from "./case-source.js";
+
+export { evalBacktestDraftSchema } from "./eval-backtest.js";
+export type {
+  EvalBacktestDraft,
+  EvalBacktestDifference,
+  EvalBacktestReport,
+} from "./eval-backtest.js";

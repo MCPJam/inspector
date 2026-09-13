@@ -21,7 +21,7 @@ const input = {
   results: [{ caseTitle: "passes", passed: true }],
 };
 
-function response(url: string): Response {
+function response(url: string, count = 1): Response {
   return Response.json({
     ok: true,
     suiteId: "suite_ci",
@@ -29,9 +29,9 @@ function response(url: string): Response {
     status: url.endsWith("runs/start") ? "running" : "completed",
     result: "passed",
     summary: { total: 1, passed: 1, failed: 0, passRate: 1 },
-    inserted: 1,
+    inserted: count,
     skipped: 0,
-    total: 1,
+    total: count,
   });
 }
 
@@ -60,7 +60,12 @@ describe("CI metadata on SDK upload payloads", () => {
     vi.stubEnv("MCPJAM_BASE_URL", input.baseUrl);
     fetchMock
       .mockReset()
-      .mockImplementation(async (url) => response(String(url)));
+      .mockImplementation(async (url, init) =>
+        response(
+          String(url),
+          JSON.parse(String(init?.body ?? "{}")).results?.length ?? 0
+        )
+      );
     vi.stubGlobal("fetch", fetchMock);
   });
   afterEach(() => {
@@ -121,19 +126,23 @@ describe("CI metadata on SDK upload payloads", () => {
       setCi(ciFixtures[0].env);
       const options = Object.freeze({ ...input, ci: Object.freeze(ci) });
       await reportEvalResultsSafely(options);
-      expect(body().ci).toEqual(ci);
+      expect(body().ci).toEqual(
+        Object.keys(ci).length ? { ...ciFixtures[0].expected, ...ci } : {}
+      );
       const reporter = createEvalRunReporter(options);
       await reporter.flush();
-      expect(body(1).ci).toEqual(ci);
+      expect(body(1).ci).toEqual(
+        Object.keys(ci).length ? { ...ciFixtures[0].expected, ...ci } : {}
+      );
       await reporter.finalize();
       expect(options.ci).toEqual(ci);
     }
   );
 
-  it("leaves local direct uploads unlabeled", async () => {
+  it("labels generic CI without guessing a specific provider", async () => {
     vi.stubEnv("CI", "true");
     await reportEvalResults(input);
-    expect(body()).not.toHaveProperty("ci");
+    expect(body().ci).toEqual({ provider: "ci" });
   });
 
   it("attaches CI to chunked run creation", async () => {
@@ -171,7 +180,7 @@ describe("CI metadata on SDK upload payloads", () => {
     const reporter = createEvalRunReporter(input);
     setCi(ciFixtures[0].env);
     await reporter.finalize();
-    expect(body().ci).toEqual({});
+    expect(body().ci).toBeUndefined();
   });
 
   it("keeps the initial metadata when a direct upload retries", async () => {

@@ -1,4 +1,8 @@
 import type {
+  EvalBacktestDraft,
+  EvalBacktestReport,
+} from "../contract/eval-backtest.js";
+import type {
   PlatformSessionBrowserBodies,
   PlatformSessionBrowserResults,
 } from "./types.js";
@@ -2582,6 +2586,18 @@ export class PlatformApiClient {
    * the run was created, so turning the judge on for the suite does not reach
    * an already-recorded run.
    */
+  backtestEvalRun(
+    params: { projectId: string; runId: string; draft: EvalBacktestDraft },
+    options?: RequestOptions
+  ): Promise<EvalBacktestReport> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(params.projectId)}/eval-runs/${encodeURIComponent(params.runId)}/backtest`,
+      { body: params.draft },
+      options
+    );
+  }
+
   requestEvalRunJudge(
     params: {
       projectId: string;
