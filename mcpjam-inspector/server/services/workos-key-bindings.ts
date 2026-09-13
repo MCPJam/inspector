@@ -44,23 +44,28 @@ export class WorkosKeyBindingError extends Error {
  * routing-level 404 (route not deployed / wrong `CONVEX_HTTP_URL`), so the
  * caller can 500 instead of mis-reporting a config error as an orphaned key.
  */
+const BINDING_LOOKUP_TIMEOUT_MS = 5_000;
+
 export async function lookupWorkosKeyBinding(
-  workosApiKeyId: string
+  workosApiKeyId: string,
 ): Promise<WorkosKeyBinding | null> {
   const { convexUrl, serviceToken } = getInternalBackendConfig();
   const url = `${convexUrl}${BINDINGS_PATH}?workosApiKeyId=${encodeURIComponent(
-    workosApiKeyId
+    workosApiKeyId,
   )}`;
   const response = await fetch(url, {
     method: "GET",
     headers: { "x-inspector-service-token": serviceToken },
+    // Bounded concurrency caps how many lookups run, not how long one may
+    // hang; a stalled internal response must not pin the caller's request.
+    signal: AbortSignal.timeout(BINDING_LOOKUP_TIMEOUT_MS),
   });
   if (response.status === 404) {
     if (await isEntityNotFound(response, "Binding not found")) {
       return null;
     }
     throw new Error(
-      `Binding lookup route not found at ${convexUrl}${BINDINGS_PATH} — is the backend bindings route deployed?`
+      `Binding lookup route not found at ${convexUrl}${BINDINGS_PATH} — is the backend bindings route deployed?`,
     );
   }
   if (!response.ok) {
@@ -118,7 +123,7 @@ export async function createWorkosKeyBinding(args: {
  */
 export async function removeWorkosKeyBinding(
   workosApiKeyId: string,
-  actorUserId?: string
+  actorUserId?: string,
 ): Promise<void> {
   const { convexUrl, serviceToken } = getInternalBackendConfig();
   const params = new URLSearchParams({ workosApiKeyId });
@@ -134,7 +139,7 @@ export async function removeWorkosKeyBinding(
     // an unreachable backend and the caller logs it as one.
     throw new WorkosKeyBindingError(
       response.status,
-      `Binding remove failed (${response.status})`
+      `Binding remove failed (${response.status})`,
     );
   }
 }
