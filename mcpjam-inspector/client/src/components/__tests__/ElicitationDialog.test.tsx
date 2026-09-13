@@ -362,6 +362,75 @@ describe("ElicitationDialog", () => {
     });
   });
 
+  describe("dismissal", () => {
+    // Every one of these routes through `onOpenChange`, which used to be an
+    // empty handler: the dialog could only be left through a footer button, so
+    // an elicitation that stopped being answerable stranded it open.
+    it("cancels when the close button is used", async () => {
+      render(
+        <ElicitationDialog
+          elicitationRequest={request()}
+          onResponse={onResponse}
+        />
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: /close/i }));
+
+      await waitFor(() => expect(onResponse).toHaveBeenCalledWith("cancel"));
+    });
+
+    it("cancels on Escape", async () => {
+      render(
+        <ElicitationDialog
+          elicitationRequest={request()}
+          onResponse={onResponse}
+        />
+      );
+
+      fireEvent.keyDown(document, { key: "Escape" });
+
+      await waitFor(() => expect(onResponse).toHaveBeenCalledWith("cancel"));
+    });
+
+    it("sends cancel without parameters even when a required field is empty", async () => {
+      render(
+        <ElicitationDialog
+          elicitationRequest={request({
+            schema: {
+              required: ["name"],
+              properties: { name: { type: "string" } },
+            },
+          })}
+          onResponse={onResponse}
+        />
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: /close/i }));
+
+      await waitFor(() => expect(onResponse).toHaveBeenCalledWith("cancel"));
+      expect(screen.queryByText("name is required")).toBeNull();
+    });
+
+    it("still cancels while a response is in flight", async () => {
+      // The footer buttons are disabled by `loading`, so this is the only way
+      // out at that point. It has to keep working: the respond call carries no
+      // timeout, so one that hangs leaves `loading` true for good, and a
+      // dismissal gated on it would strand the dialog exactly as this issue
+      // describes. A duplicate cancel is the cheaper failure.
+      render(
+        <ElicitationDialog
+          elicitationRequest={request()}
+          onResponse={onResponse}
+          loading
+        />
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: /close/i }));
+
+      await waitFor(() => expect(onResponse).toHaveBeenCalledWith("cancel"));
+    });
+  });
+
   describe("requesting-server identity (spec MUST)", () => {
     it("shows the server name with the immutable serverId alongside it", () => {
       // NOTE: the dialog content is portalled, so it lives on `baseElement`,
