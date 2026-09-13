@@ -416,6 +416,17 @@ export function XAAFlowLogger({
   const [copyStepError, setCopyStepError] = useState<XAAFlowStep | null>(null);
   const copyResetTimerRef = useRef<number | null>(null);
   const copyStepTimerRef = useRef<number | null>(null);
+  const [rangeSelectMode, setRangeSelectMode] = useState(false);
+  const [selectedSteps, setSelectedSteps] = useState<Set<XAAFlowStep>>(
+    new Set()
+  );
+  const [lastToggledStepIndex, setLastToggledStepIndex] = useState<
+    number | null
+  >(null);
+  const [copyRangeState, setCopyRangeState] = useState<
+    "idle" | "success" | "error"
+  >("idle");
+  const copyRangeTimerRef = useRef<number | null>(null);
 
   const stepRefs = useRef(new Map<XAAFlowStep, HTMLDivElement | null>());
 
@@ -576,8 +587,82 @@ export function XAAFlowLogger({
       if (copyStepTimerRef.current !== null) {
         window.clearTimeout(copyStepTimerRef.current);
       }
+      if (copyRangeTimerRef.current !== null) {
+        window.clearTimeout(copyRangeTimerRef.current);
+      }
     };
   }, []);
+
+  const handleExitRangeSelect = () => {
+    setRangeSelectMode(false);
+    setSelectedSteps(new Set());
+    setLastToggledStepIndex(null);
+    if (copyRangeTimerRef.current !== null) {
+      window.clearTimeout(copyRangeTimerRef.current);
+      copyRangeTimerRef.current = null;
+    }
+    setCopyRangeState("idle");
+  };
+
+  const handleEnterRangeSelect = () => {
+    if (copyRangeTimerRef.current !== null) {
+      window.clearTimeout(copyRangeTimerRef.current);
+      copyRangeTimerRef.current = null;
+    }
+    setCopyRangeState("idle");
+    setRangeSelectMode(true);
+  };
+
+  useEffect(() => {
+    if (groups.length === 0 && rangeSelectMode) {
+      handleExitRangeSelect();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groups.length]);
+
+  const handleToggleStepSelection = (
+    step: XAAFlowStep,
+    index: number,
+    shiftKey: boolean
+  ) => {
+    setSelectedSteps((prev) => {
+      const next = new Set(prev);
+      if (shiftKey && lastToggledStepIndex !== null) {
+        const [start, end] =
+          lastToggledStepIndex <= index
+            ? [lastToggledStepIndex, index]
+            : [index, lastToggledStepIndex];
+        for (let i = start; i <= end; i++) {
+          next.add(groups[i].step);
+        }
+      } else if (next.has(step)) {
+        next.delete(step);
+      } else {
+        next.add(step);
+      }
+      return next;
+    });
+    setLastToggledStepIndex(index);
+  };
+
+  const handleCopySelectedSteps = async () => {
+    if (copyRangeTimerRef.current !== null) {
+      window.clearTimeout(copyRangeTimerRef.current);
+      copyRangeTimerRef.current = null;
+    }
+
+    const orderedSteps = groups
+      .map((group) => group.step)
+      .filter((step) => selectedSteps.has(step));
+    const success = await copyToClipboard(
+      generateXAAFlowText(flowState, summary, { steps: orderedSteps })
+    );
+    setCopyRangeState(success ? "success" : "error");
+    copyRangeTimerRef.current = window.setTimeout(() => {
+      setCopyRangeState("idle");
+      copyRangeTimerRef.current = null;
+    }, 2000);
+  };
 
   const toggleStep = (step: XAAFlowStep) => {
     setExpandedSteps((previous) => {
@@ -759,15 +844,60 @@ export function XAAFlowLogger({
                   </div>
                 )}
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => void handleCopyFlow()}
-                className="h-8 shrink-0"
-                title={copyError ?? undefined}
-              >
-                {copyError ?? (copySuccess ? "Copied!" : "Copy")}
-              </Button>
+              <div className="flex shrink-0 items-center gap-2">
+                {rangeSelectMode ? (
+                  <>
+                    <span className="text-xs text-muted-foreground">
+                      {selectedSteps.size} selected
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleExitRangeSelect}
+                      className="h-8"
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void handleCopySelectedSteps()}
+                      disabled={selectedSteps.size === 0}
+                      className="h-8"
+                    >
+                      {copyRangeState === "error"
+                        ? "Copy failed"
+                        : copyRangeState === "success"
+                        ? "Copied!"
+                        : `Copy ${selectedSteps.size} step${
+                            selectedSteps.size === 1 ? "" : "s"
+                          }`}
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    {groups.length > 0 && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={handleEnterRangeSelect}
+                        className="h-8"
+                      >
+                        Select step
+                      </Button>
+                    )}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void handleCopyFlow()}
+                      className="h-8"
+                      title={copyError ?? undefined}
+                    >
+                      {copyError ?? (copySuccess ? "Copied!" : "Copy all")}
+                    </Button>
+                  </>
+                )}
+              </div>
             </div>
           </>
         )}
@@ -907,15 +1037,50 @@ export function XAAFlowLogger({
                       role="button"
                       tabIndex={0}
                       aria-expanded={expandedSteps.has(group.step)}
-                      onClick={() => toggleStep(group.step)}
+                      onClick={(event) => {
+                        if (rangeSelectMode) {
+                          handleToggleStepSelection(
+                            group.step,
+                            groups.indexOf(group),
+                            event.shiftKey
+                          );
+                        } else {
+                          toggleStep(group.step);
+                        }
+                      }}
                       onKeyDown={(event) => {
                         if (event.key === "Enter" || event.key === " ") {
                           event.preventDefault();
-                          toggleStep(group.step);
+                          if (rangeSelectMode) {
+                            handleToggleStepSelection(
+                              group.step,
+                              groups.indexOf(group),
+                              event.shiftKey
+                            );
+                          } else {
+                            toggleStep(group.step);
+                          }
                         }
                       }}
                       className="w-full px-4 py-3 flex items-start gap-3 text-left hover:bg-muted/40 rounded-t-lg"
                     >
+                      {rangeSelectMode && (
+                        <input
+                          type="checkbox"
+                          checked={selectedSteps.has(group.step)}
+                          onChange={() => {}}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            handleToggleStepSelection(
+                              group.step,
+                              groups.indexOf(group),
+                              event.shiftKey
+                            );
+                          }}
+                          aria-label={`Select step: ${stepLabel}`}
+                          className="h-4 w-4 mt-1 shrink-0 cursor-pointer accent-blue-500"
+                        />
+                      )}
                       <div className="flex-shrink-0 mt-0.5">
                         {expandedSteps.has(group.step) ? (
                           <ChevronDown className="h-4 w-4 text-muted-foreground" />
