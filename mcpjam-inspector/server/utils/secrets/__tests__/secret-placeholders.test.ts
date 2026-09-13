@@ -209,4 +209,27 @@ describe("planSecretPlaceholders", () => {
     expect(plan.refusal?.message).toContain("FIRST_BAD");
     expect(plan.refusal?.message).not.toContain("SECOND_BAD");
   });
+  it("refuses a secret too SHORT to scrub, by name, never its value or length", () => {
+    // An echo of a PIN in page text could not be scrubbed, so it is never typed.
+    const plan = planSecretPlaceholders({
+      verb: "type",
+      value: "{{secret:PIN}}",
+      available: [...available, { name: "PIN", value: "4921" }],
+    });
+    expect(plan.deliver).toEqual([]);
+    expect(plan.refusal?.code).toBe("secret_too_short");
+    expect(plan.refusal?.message).toContain('"PIN"');
+    expect(plan.refusal?.message).toContain("8 characters");
+    expect(plan.refusal?.message).not.toContain("4921");
+    expect(plan.refusal?.message).not.toMatch(/\b4\b/);
+  });
+
+  it("reports an unknown name before a short one", () => {
+    const plan = planSecretPlaceholders({
+      verb: "type",
+      value: "{{secret:PIN}}{{secret:NOPE}}",
+      available: [{ name: "PIN", value: "4921" }],
+    });
+    expect(plan.refusal?.code).toBe("secret_unknown");
+  });
 });

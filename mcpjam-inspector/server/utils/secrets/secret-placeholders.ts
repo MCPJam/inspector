@@ -11,6 +11,8 @@
  * there is intentionally no escape for a literal `{{secret:...}}`.
  */
 
+import { MIN_SCRUBBABLE_LENGTH } from "../../../shared/secret-scrubber";
+
 /** The backend's own charset for a secret name. @see convex-secrets-client */
 const NAME = "[A-Z_][A-Z0-9_]*";
 
@@ -61,7 +63,9 @@ export type SecretPlaceholderRefusal =
   /** Brokered: the value is injected at egress and never enters this process. */
   | "secret_not_typeable"
   /** A placeholder on a verb that does not type anything. */
-  | "secret_verb_refused";
+  | "secret_verb_refused"
+  /** Shorter than the scrubber's minimum, so an echo could not be hidden. */
+  | "secret_too_short";
 
 export interface SecretPlan {
   /** The `{name, value}` pairs to send beside the command. */
@@ -79,7 +83,7 @@ const TYPING_VERBS: ReadonlySet<string> = new Set(["type", "fill_form"]);
 
 /**
  * Read an act and say which secrets must travel with it. Refuses unknown
- * names, brokered names and non-typing verbs rather than passing a placeholder
+ * names, brokered names, values too short to scrub and non-typing verbs rather than passing a placeholder
  * through, which would type a literal `{{secret:NAME}}` into a real site.
  */
 export function planSecretPlaceholders(args: {
@@ -145,6 +149,21 @@ export function planSecretPlaceholders(args: {
         message:
           `secret_unknown: no secret named "${name}" is available to this ` +
           "turn. Check the name, and that it is set for this environment.",
+      },
+    };
+  }
+
+  for (const name of referenced) {
+    if (byName.get(name)!.length >= MIN_SCRUBBABLE_LENGTH) continue;
+    // Names the minimum, never the value or its length.
+    return {
+      deliver: [],
+      refusal: {
+        code: "secret_too_short",
+        message:
+          `secret_too_short: "${name}" is shorter than ${MIN_SCRUBBABLE_LENGTH} ` +
+          "characters, too short to hide reliably in what the page shows " +
+          "back; nothing was typed. Ask the user to type it themselves.",
       },
     };
   }

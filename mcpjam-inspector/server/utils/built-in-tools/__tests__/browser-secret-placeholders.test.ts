@@ -155,6 +155,22 @@ describe("what the model is told", () => {
     expect(wording).not.toContain(PASSWORD);
   });
 
+  it("leaves a secret too short to type out of the advertised names", () => {
+    const offered = build({
+      secrets: { available: [...SECRETS, { name: "PIN", value: "4921" }] },
+    }).tools;
+    const wording = schemaOf(offered, "browser_act");
+    expect(wording).toContain("GITHUB_PASSWORD");
+    expect(wording).not.toContain("PIN");
+    // Only short secrets: byte-identical to a turn with none.
+    const shortOnly = build({
+      secrets: { available: [{ name: "PIN", value: "4921" }] },
+    }).tools;
+    expect(schemaOf(shortOnly, "browser_act")).toBe(
+      schemaOf(build().tools, "browser_act"),
+    );
+  });
+
   it("says nothing on the LOCAL engine, which cannot substitute", () => {
     const local = build({
       engine: "local",
@@ -179,6 +195,17 @@ describe("refusing a placeholder that cannot work", () => {
     const out = await act(tools, { verb: "type", value: "{{secret:NOPE}}" });
     expect(out.error).toContain("secret_unknown");
     expect(out.error).toContain("NOPE");
+    expect(sent).toHaveLength(0);
+  });
+
+  it("refuses a secret too SHORT to scrub without touching the page", async () => {
+    const { tools, sent } = build({
+      secrets: { available: [...SECRETS, { name: "PIN", value: "4921" }] },
+    });
+    const out = await act(tools, { verb: "type", value: "{{secret:PIN}}" });
+    expect(out.error).toContain("secret_too_short");
+    expect(out.error).toContain("PIN");
+    expect(out.error).not.toContain("4921");
     expect(sent).toHaveLength(0);
   });
 

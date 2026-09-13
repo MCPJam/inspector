@@ -17,21 +17,19 @@ export interface BrowserSecretRegistry {
   /** A scrubber over everything registered, or `null` (no work) when empty. */
   scrubber(): SecretScrubber | null;
   /**
-   * Values too short for the text scrubber. The a11y renderer masks an exact
-   * match on a control's whole `value`, which cannot be a coincidence.
+   * Record that a value was typed into the document `documentKey` names
+   * (`tabId|performance.timeOrigin`). Keyed by document, not URL, so pushState
+   * and fragment changes keep it exposed; a missing key means exposure
+   * everywhere for the rest of the boot.
    */
-  maskedValues(): ReadonlyMap<string, string>;
+  markTyped(documentKey: string | undefined): void;
   /**
-   * Record that a value was typed into the page at `url`. Screenshot
-   * suppression is per page so it lifts on navigation; a missing `url` counts
-   * as exposure everywhere for the rest of the boot.
+   * Could a registered value still be on the document `documentKey` names?
+   * An unknown key answers yes once anything has been typed.
    */
-  markTyped(url: string | undefined): void;
-  /**
-   * Could a registered value still be on the page at `url`? An unknown URL
-   * answers yes if anything has been typed.
-   */
-  exposedAt(url: string | undefined): boolean;
+  exposedAt(documentKey: string | undefined): boolean;
+  /** Has anything been typed at all? Lets callers skip reading documents. */
+  hasExposure(): boolean;
   /** How many values are registered — for tests and diagnostics. */
   readonly size: number;
 }
@@ -44,15 +42,16 @@ export function createBrowserSecretRegistry(): BrowserSecretRegistry {
   const byValue = new Map<string, string>();
   let scrubber: SecretScrubber | null = null;
   let stale = false;
-  /** URLs a value has been typed into. @see markTyped */
+  /** Documents a value has been typed into. @see markTyped */
   const typedInto = new Set<string>();
-  /** A typing that could not be placed on a page. @see markTyped */
+  /** A typing that could not be placed in a document. @see markTyped */
   let typedSomewhere = false;
 
   return {
     register(secrets) {
       for (const secret of secrets) {
-        if (!secret.value) continue;
+        // Too short to scrub; the planner and substitution refuse these first.
+        if (secret.value.length < MIN_SCRUBBABLE_LENGTH) continue;
         if (byValue.get(secret.value) === secret.name) continue;
         byValue.set(secret.value, secret.name);
         stale = true;
@@ -69,23 +68,17 @@ export function createBrowserSecretRegistry(): BrowserSecretRegistry {
       }
       return scrubber;
     },
-    markTyped(url) {
-      if (url) typedInto.add(url);
+    markTyped(documentKey) {
+      if (documentKey) typedInto.add(documentKey);
       else typedSomewhere = true;
     },
-    exposedAt(url) {
+    exposedAt(documentKey) {
       if (typedSomewhere) return true;
       if (typedInto.size === 0) return false;
-      return url === undefined || url === "" || typedInto.has(url);
+      return !documentKey || typedInto.has(documentKey);
     },
-    maskedValues() {
-      const short = new Map<string, string>();
-      for (const [value, name] of byValue) {
-        if (value.length < MIN_SCRUBBABLE_LENGTH) {
-          short.set(value, placeholderFor(name));
-        }
-      }
-      return short;
+    hasExposure() {
+      return typedSomewhere || typedInto.size > 0;
     },
     get size() {
       return byValue.size;

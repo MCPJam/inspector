@@ -68,6 +68,8 @@ export type ActLog = string[];
 
 export interface FakePage extends DriverPage {
   setUrl(u: string): void;
+  /** Replace the document, as a page-initiated navigation (a submit) does. */
+  loadDocument(u: string): void;
   /** Record a request, as a page fetching something would. */
   pushNetwork(row: NetworkEntry): void;
   /** Raise a dialog, as a page calling `confirm()` would. */
@@ -202,8 +204,23 @@ export function fakePage(init: {
     front: 0,
 
   };
+  // `performance.timeOrigin`: new per document load, unchanged by `setUrl`,
+  // which models pushState and fragment changes.
+  let timeOrigin = 1_000;
+  const newDocument = () => {
+    timeOrigin += 1;
+  };
+  const userEvaluate = init.cdpReplies?.["Runtime.evaluate"];
   const defaultCdp = fakeCdpSession({
     ...(init.cdpReplies ?? {}),
+    "Runtime.evaluate": (params?: Record<string, unknown>) => {
+      if (params?.expression === "performance.timeOrigin") {
+        return { result: { type: "number", value: timeOrigin } };
+      }
+      return typeof userEvaluate === "function"
+        ? (userEvaluate as (p?: Record<string, unknown>) => unknown)(params)
+        : (userEvaluate ?? {});
+    },
     // Wrapped so `onA11y` fires at the moment the tree is READ — the window a
     // person taking the browser mid-observation has to be caught in.
     ...(init.cdpReplies?.["Accessibility.getFullAXTree"] !== undefined ||
@@ -237,10 +254,10 @@ export function fakePage(init: {
     if (init.actError) throw init.actError;
   };
   const page: FakePage = {
-    async goto(u) { calls.goto.push(u); url = u; },
-    async reload() { calls.reload++; },
-    async goBack() { calls.goBack++; },
-    async goForward() { calls.goForward++; },
+    async goto(u) { calls.goto.push(u); url = u; newDocument(); },
+    async reload() { calls.reload++; newDocument(); },
+    async goBack() { calls.goBack++; newDocument(); },
+    async goForward() { calls.goForward++; newDocument(); },
     async setViewportSize(size: { width: number; height: number }) {
       calls.viewportSizes.push(size);
     },
@@ -326,6 +343,10 @@ export function fakePage(init: {
       : {}),
 
     setUrl,
+    loadDocument: (u: string) => {
+      url = u;
+      newDocument();
+    },
     setDom,
     setText,
     pushConsole: (e: { type: string; text: string; at: number }) =>

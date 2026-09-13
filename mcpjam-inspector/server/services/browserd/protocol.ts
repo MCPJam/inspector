@@ -823,6 +823,8 @@ export const BROWSERD_ERROR_CODES = [
    * The `/v1` routes and CLI reach the driver without the server's planner.
    */
   "secret_unresolved",
+  /** A substituted secret is shorter than the scrubber's minimum; nothing was typed. */
+  "secret_too_short",
   /**
    * Something is on top of the target at its click point, so the input would
    * land on that element instead. The detail names the covering element.

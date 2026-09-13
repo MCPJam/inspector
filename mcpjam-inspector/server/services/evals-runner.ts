@@ -183,6 +183,7 @@ import type { BenchmarkWriteGuard } from "./evals/artifact-ledger.js";
 import { buildStageAuthoredCase } from "./evals/stage-inputs.js";
 import { resolveEvalCaseModelDefinition } from "./evals/harness-admission.js";
 import { resolveBrowserSecrets } from "../utils/secrets/browser-secrets.js";
+import { markRuntimeSecretsDelivered } from "../utils/harness/runtime-secrets.js";
 import {
   createRunSetupObserver,
   type RunSetupObserver,
@@ -4986,7 +4987,20 @@ const runHostedIterationWithBrowser = async (
             authHeader: convexAuthToken,
             projectId: builtInTarget.projectId,
             ...(browserApprovalDelivery ? { browserApprovalDelivery } : {}),
-            ...(browserSecrets.length > 0 ? { browserSecrets } : {}),
+            ...(browserSecrets.length > 0
+              ? {
+                  browserSecrets,
+                  onBrowserSecretDelivered: () => {
+                    void markRuntimeSecretsDelivered(convexAuthToken, {
+                      projectId: builtInTarget.projectId,
+                      ...(projectEnvironmentId
+                        ? { environmentId: projectEnvironmentId }
+                        : {}),
+                      secretCount: browserSecrets.length,
+                    });
+                  },
+                }
+              : {}),
             // Names THIS iteration, so an unattended browser gets a profile no
             // other iteration of this suite can reach. The suite's project is
             // not enough: iterations run concurrently against it.

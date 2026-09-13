@@ -107,7 +107,10 @@ import {
   wakePlaygroundSandbox,
 } from "../computers/control-plane-client.js";
 import { planSecretPlaceholders } from "../secrets/secret-placeholders.js";
-import { createSecretScrubber } from "../../../shared/secret-scrubber";
+import {
+  createSecretScrubber,
+  MIN_SCRUBBABLE_LENGTH,
+} from "../../../shared/secret-scrubber";
 
 // Re-exported so the server's existing importers keep their one import site;
 // the value itself now lives in `shared/client-fulfilled-tools.ts` beside the
@@ -1030,7 +1033,10 @@ export function buildBrowserTools(
    */
   const secretNames =
     engine === "hosted"
-      ? (opts.secrets?.available ?? []).map((secret) => secret.name)
+      ? (opts.secrets?.available ?? [])
+          // A value too short to scrub is refused on use, so it is not offered.
+          .filter((secret) => secret.value.length >= MIN_SCRUBBABLE_LENGTH)
+          .map((secret) => secret.name)
       : [];
   const secretNote =
     secretNames.length > 0

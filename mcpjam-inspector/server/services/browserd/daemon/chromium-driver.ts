@@ -1010,10 +1010,9 @@ export class ChromiumDriver implements BrowserDriver {
         }
         if (resolved !== action && context?.secrets?.length) {
           this.secrets.register(context.secrets);
-          // Record the receiving URL before the verb runs; a submit may move
-          // the tab. @see BrowserSecretRegistry.markTyped
-          const typedPage = this.tabs.get(tabId)?.page;
-          this.secrets.markTyped(typedPage ? safeUrl(typedPage) : undefined);
+          // Record the receiving document before the verb runs; a submit may
+          // replace it. @see BrowserSecretRegistry.markTyped
+          this.secrets.markTyped(await this.documentKey(tabId));
         }
         return this.act(tabId, resolved, permit, command.source);
       }
@@ -2454,6 +2453,32 @@ export class ChromiumDriver implements BrowserDriver {
     };
   }
 
+  /**
+   * `tabId|performance.timeOrigin`, the identity of a tab's current document.
+   * Read over CDP so both engines answer; undefined on any failure, which
+   * secret exposure treats as exposed.
+   */
+  async documentKey(tabId?: string): Promise<string | undefined> {
+    const id = tabId ?? this.activeTabId ?? DEFAULT_TAB;
+    const entry = this.tabs.get(id);
+    if (!entry || entry.page.isClosed()) return undefined;
+    try {
+      const cdp = await entry.page.cdp();
+      if (!cdp) return undefined;
+      const raw = (await cdp.send("Runtime.evaluate", {
+        expression: "performance.timeOrigin",
+        returnByValue: true,
+        timeout: 1_000,
+      })) as { result?: { value?: unknown } } | undefined;
+      const origin = raw?.result?.value;
+      return typeof origin === "number" && Number.isFinite(origin)
+        ? `${id}|${origin}`
+        : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   async currentStateToken(tabId: string | undefined) {
     const entry = this.tabs.get(tabId ?? this.activeTabId ?? DEFAULT_TAB);
     if (!entry) return undefined;
@@ -3187,11 +3212,8 @@ export class ChromiumDriver implements BrowserDriver {
       this.a11yBudget,
     );
     const refs = assignRefs(tree);
-    // Secrets too short for the text scrubber to replace safely; masked here.
-    const masked = this.secrets.maskedValues();
     const rendered = renderA11yTree(tree, {
       interactiveOnly: raw.filter === "interactive",
-      ...(masked.size > 0 ? { maskedValues: masked } : {}),
     });
     return {
       ok: true,

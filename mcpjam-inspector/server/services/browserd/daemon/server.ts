@@ -272,8 +272,9 @@ export function buildBrowserdStack(
   // cannot drift; no registry yields `null` and the wrapper does nothing.
   const secrets = {
     scrubber: () => driver.secretRegistry?.().scrubber() ?? null,
-    exposedAt: (url: string | undefined) =>
-      driver.secretRegistry?.().exposedAt(url) ?? false,
+    exposedAt: (documentKey: string | undefined) =>
+      driver.secretRegistry?.().exposedAt(documentKey) ?? false,
+    hasExposure: () => driver.secretRegistry?.().hasExposure() ?? false,
   };
   const queue = new CommandQueue(
     guardErrorShapes(
@@ -282,6 +283,7 @@ export function buildBrowserdStack(
         config.authority === "shared"
           ? guardStaleness(driver)
           : guardLease(lease, guardStaleness(driver, lease)),
+        (tabId) => driver.documentKey?.(tabId) ?? Promise.resolve(undefined),
       ),
     ),
     bootId,

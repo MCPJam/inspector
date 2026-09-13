@@ -84,6 +84,31 @@ describe("resolveActSecrets", () => {
     ).toThrow(/secret_unresolved/);
   });
 
+  it("THROWS secret_too_short and types nothing for a value under the minimum", () => {
+    // The planner refuses first; this is the daemon's own line for `/v1` callers.
+    const action = act({ value: "{{secret:PIN}}" });
+    let message = "";
+    let out: unknown;
+    try {
+      out = resolveActSecrets(action, [{ name: "PIN", value: "4921" }]);
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(out).toBeUndefined();
+    expect(message).toMatch(/secret_too_short/);
+    expect(message).toContain('"PIN"');
+    expect(message).not.toContain("4921");
+    expect(() =>
+      resolveActSecrets(
+        act({
+          verb: "fill_form",
+          fields: [{ selector: "#pin", value: "{{secret:PIN}}" }],
+        }),
+        [{ name: "PIN", value: "4921" }],
+      ),
+    ).toThrow(/secret_too_short/);
+  });
+
   it("never puts a VALUE in the refusal", () => {
     let message = "";
     try {
@@ -127,13 +152,12 @@ describe("createBrowserSecretRegistry", () => {
     expect(registry.scrubber()?.scrubString(PASSWORD)).toBe("{{secret:P}}");
   });
 
-  it("offers a SHORT value for masking rather than scrubbing", () => {
-    // A four-character value replaced everywhere would corrupt unrelated page
-    // text; in a field's `value` an exact match is not a coincidence.
+  it("ignores a value too SHORT to scrub", () => {
+    // Last line of defence behind the planner and substitution refusals.
     const registry = createBrowserSecretRegistry();
     registry.register([{ name: "PIN", value: "1234" }]);
+    expect(registry.size).toBe(0);
     expect(registry.scrubber()).toBeNull();
-    expect([...registry.maskedValues()]).toEqual([["1234", "{{secret:PIN}}"]]);
   });
 
   it("ignores an empty value", () => {
@@ -142,16 +166,18 @@ describe("createBrowserSecretRegistry", () => {
     expect(registry.size).toBe(0);
   });
 
-  it("answers exposure per PAGE, not per session", () => {
+  it("answers exposure per DOCUMENT, not per session", () => {
     // The picture has to come back when the page moves on. A login flow whose
     // every screenshot after the password field is blank is a worse agent, not
     // a safer one — and the submit is the navigation a model most needs to see
     // the result of.
     const registry = createBrowserSecretRegistry();
     registry.register([{ name: "P", value: PASSWORD }]);
-    registry.markTyped("https://app.test/login");
-    expect(registry.exposedAt("https://app.test/login")).toBe(true);
-    expect(registry.exposedAt("https://app.test/home")).toBe(false);
+    expect(registry.hasExposure()).toBe(false);
+    registry.markTyped("tab|1001");
+    expect(registry.hasExposure()).toBe(true);
+    expect(registry.exposedAt("tab|1001")).toBe(true);
+    expect(registry.exposedAt("tab|1002")).toBe(false);
   });
 
   it("says nothing is exposed until something is typed", () => {
@@ -160,7 +186,7 @@ describe("createBrowserSecretRegistry", () => {
     // bought with nothing.
     const registry = createBrowserSecretRegistry();
     registry.register([{ name: "P", value: PASSWORD }]);
-    expect(registry.exposedAt("https://app.test/login")).toBe(false);
+    expect(registry.exposedAt("tab|1001")).toBe(false);
     expect(registry.exposedAt(undefined)).toBe(false);
   });
 
@@ -170,14 +196,14 @@ describe("createBrowserSecretRegistry", () => {
     const registry = createBrowserSecretRegistry();
     registry.register([{ name: "P", value: PASSWORD }]);
     registry.markTyped(undefined);
-    expect(registry.exposedAt("https://app.test/anywhere")).toBe(true);
+    expect(registry.exposedAt("tab|1001")).toBe(true);
     expect(registry.exposedAt(undefined)).toBe(true);
   });
 
-  it("cannot clear a result that names no page", () => {
+  it("cannot clear a result that names no document", () => {
     const registry = createBrowserSecretRegistry();
     registry.register([{ name: "P", value: PASSWORD }]);
-    registry.markTyped("https://app.test/login");
+    registry.markTyped("tab|1001");
     expect(registry.exposedAt(undefined)).toBe(true);
     expect(registry.exposedAt("")).toBe(true);
   });
@@ -242,22 +268,26 @@ describe("withSecretScrub", () => {
     expect(output.a11y).toBe("{{secret:P}}");
   });
 
-  it("DROPS a later screenshot of the page the value was typed into", async () => {
+  it("DROPS a later screenshot of the document the value was typed into", async () => {
     // THE LEAK THE SCRUB CANNOT REACH. A site that does not mask its field
     // renders the credential, and a picture is not a string — so a screenshot
     // one command later would carry it into the model's context, the ledger
     // row and the eval trace past every replacement in this file.
     const registry = createBrowserSecretRegistry();
     registry.register([{ name: "P", value: PASSWORD }]);
-    registry.markTyped("https://app.test/login");
-    const wrapped = withSecretScrub(registry, async () => ({
-      ok: true,
-      output: {
-        url: "https://app.test/login",
-        screenshot: "AAAA".repeat(1000),
-        a11y: `textbox "Password" value=${PASSWORD}`,
-      },
-    }));
+    registry.markTyped("tab|1001");
+    const wrapped = withSecretScrub(
+      registry,
+      async () => ({
+        ok: true,
+        output: {
+          url: "https://app.test/login",
+          screenshot: "AAAA".repeat(1000),
+          a11y: `textbox "Password" value=${PASSWORD}`,
+        },
+      }),
+      async () => "tab|1001",
+    );
     const output = (await wrapped(command)).output as Record<string, unknown>;
     expect(output.screenshot).toBeUndefined();
     expect(output.screenshotSuppressed).toBe(true);
@@ -273,28 +303,36 @@ describe("withSecretScrub", () => {
     // the result of.
     const registry = createBrowserSecretRegistry();
     registry.register([{ name: "P", value: PASSWORD }]);
-    registry.markTyped("https://app.test/login");
+    registry.markTyped("tab|1001");
     const screenshot = "AAAA".repeat(1000);
-    const wrapped = withSecretScrub(registry, async () => ({
-      ok: true,
-      output: { url: "https://app.test/dashboard", screenshot },
-    }));
+    // The document changed: the command replaced it, so before and after both
+    // read the new one here.
+    const wrapped = withSecretScrub(
+      registry,
+      async () => ({
+        ok: true,
+        output: { url: "https://app.test/dashboard", screenshot },
+      }),
+      async () => "tab|1002",
+    );
     const output = (await wrapped(command)).output as Record<string, unknown>;
     expect(output.screenshot).toBe(screenshot);
     expect(output.screenshotSuppressed).toBeUndefined();
   });
 
-  it("drops a screenshot nobody can place", async () => {
-    // A result with no `url` is a capture nobody can clear: the observation
-    // funnel attaches one to everything it can read, so no URL means the page
-    // could not be read — which is not evidence that it moved.
+  it("drops a screenshot whose document cannot be read", async () => {
+    // An unreadable document is not evidence that it moved.
     const registry = createBrowserSecretRegistry();
     registry.register([{ name: "P", value: PASSWORD }]);
-    registry.markTyped("https://app.test/login");
-    const wrapped = withSecretScrub(registry, async () => ({
-      ok: true,
-      output: { screenshot: "AAAA".repeat(1000), observationFailed: true },
-    }));
+    registry.markTyped("tab|1001");
+    const wrapped = withSecretScrub(
+      registry,
+      async () => ({
+        ok: true,
+        output: { url: "https://app.test/home", screenshot: "AAAA".repeat(1000) },
+      }),
+      async () => undefined,
+    );
     const output = (await wrapped(command)).output as Record<string, unknown>;
     expect(output.screenshot).toBeUndefined();
     expect(output.screenshotSuppressed).toBe(true);
@@ -308,8 +346,50 @@ describe("withSecretScrub", () => {
       ok: true,
       output: { url: "https://app.test/login", screenshot: "AAAA" },
     };
-    const wrapped = withSecretScrub(registry, async () => result);
+    const documentKeyFor = vi.fn(async () => "tab|1001");
+    const wrapped = withSecretScrub(registry, async () => result, documentKeyFor);
     expect(await wrapped(command)).toBe(result);
+    // Sessions that never type a secret read no document at all.
+    expect(documentKeyFor).not.toHaveBeenCalled();
+  });
+
+  it("suppresses when the document BEFORE the command was exposed", async () => {
+    // A command that navigates away still captured nothing unsafe only if
+    // neither side was the typed document; either one suppresses.
+    const registry = createBrowserSecretRegistry();
+    registry.register([{ name: "P", value: PASSWORD }]);
+    registry.markTyped("tab|1001");
+    const keys = ["tab|1001", "tab|1002"];
+    const wrapped = withSecretScrub(
+      registry,
+      async () => ({ ok: true, output: { screenshot: "AAAA" } }),
+      async () => keys.shift(),
+    );
+    const output = (await wrapped(command)).output as Record<string, unknown>;
+    expect(output.screenshotSuppressed).toBe(true);
+  });
+
+  it("reads the command's tab, else the result's", async () => {
+    const registry = createBrowserSecretRegistry();
+    registry.register([{ name: "P", value: PASSWORD }]);
+    registry.markTyped("other|1");
+    const documentKeyFor = vi.fn(async (tabId?: string) => `${tabId}|1`);
+    const wrapped = withSecretScrub(
+      registry,
+      async () => ({
+        ok: true,
+        output: { screenshot: "AAAA" },
+        stateToken: { tabId: "t2" } as never,
+      }),
+      documentKeyFor,
+    );
+    await wrapped(command);
+    expect(documentKeyFor.mock.calls.map((c) => c[0])).toEqual([undefined, "t2"]);
+    await wrapped({ ...command, tabId: "t3" } as BrowserCommand);
+    expect(documentKeyFor.mock.calls.slice(2).map((c) => c[0])).toEqual([
+      "t3",
+      "t3",
+    ]);
   });
 
   it("scrubs a string output", async () => {
@@ -355,8 +435,11 @@ describe("secret exposure, through the driver", () => {
     const { context } = fakeContext({ pages: [page] });
     const driver = new ChromiumDriver(context);
     const registry = driver.secretRegistry();
-    const wrapped = withSecretScrub(registry, (command, ctx) =>
-      ctx ? driver.execute(command, ctx) : driver.execute(command),
+    const wrapped = withSecretScrub(
+      registry,
+      (command, ctx) =>
+        ctx ? driver.execute(command, ctx) : driver.execute(command),
+      (tabId) => driver.documentKey(tabId),
     );
     return { page, driver, registry, wrapped };
   }
@@ -393,6 +476,44 @@ describe("secret exposure, through the driver", () => {
     expect(after.screenshotSuppressed).toBeUndefined();
   });
 
+  it("keeps suppressing across pushState and fragment changes on the same document", async () => {
+    // The URL moves, the filled input is still rendered.
+    const { page, wrapped } = stack();
+    await wrapped(step({ kind: "navigate", url: "https://app.test/login" }));
+    await wrapped(step(typeSecret), { secrets: [{ name: "P", value: PASSWORD }] });
+    for (const url of ["https://app.test/login/step-2", "https://app.test/login#pw"]) {
+      page.setUrl(url);
+      const shot = (await wrapped(step({ kind: "observe", mode: "screenshot" })))
+        .output as Record<string, unknown>;
+      expect(shot.screenshot, url).toBeUndefined();
+      expect(shot.screenshotSuppressed, url).toBe(true);
+    }
+  });
+
+  it("restores the picture after a page-initiated load of a new document", async () => {
+    const { page, wrapped } = stack();
+    await wrapped(step({ kind: "navigate", url: "https://app.test/login" }));
+    await wrapped(step(typeSecret), { secrets: [{ name: "P", value: PASSWORD }] });
+    // Same URL, new document: a form that posts back to itself.
+    page.loadDocument("https://app.test/login");
+    const shot = (await wrapped(step({ kind: "observe", mode: "screenshot" })))
+      .output as Record<string, unknown>;
+    expect(shot.screenshot).toBeTruthy();
+  });
+
+  it("refuses a short secret in the driver and types nothing", async () => {
+    const { page, registry, wrapped } = stack();
+    await wrapped(step({ kind: "navigate", url: "https://app.test/login" }));
+    const out = await wrapped(step(typeSecret), {
+      secrets: [{ name: "P", value: "4921" }],
+    });
+    expect(out.ok).toBe(false);
+    expect(out.error).toMatch(/secret_too_short/);
+    expect(page.calls.acts).toEqual([]);
+    expect(registry.size).toBe(0);
+    expect(registry.hasExposure()).toBe(false);
+  });
+
   it("records nothing when the act carried no placeholder", async () => {
     // A `type` of a plain string with a secret sitting in the turn's bag: the
     // registry is written at SUBSTITUTION, so nothing resolved means nothing
@@ -410,7 +531,7 @@ describe("secret exposure, through the driver", () => {
       { secrets: [{ name: "P", value: PASSWORD }] },
     );
     expect(registry.size).toBe(0);
-    expect(registry.exposedAt("https://app.test/login")).toBe(false);
+    expect(registry.hasExposure()).toBe(false);
     const shot = (await wrapped(step({ kind: "observe", mode: "screenshot" })))
       .output as Record<string, unknown>;
     expect(shot.screenshot).toBeTruthy();

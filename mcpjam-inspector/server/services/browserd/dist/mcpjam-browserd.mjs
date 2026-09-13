@@ -77,6 +77,8 @@ var BROWSERD_ERROR_CODES = [
    * The `/v1` routes and CLI reach the driver without the server's planner.
    */
   "secret_unresolved",
+  /** A substituted secret is shorter than the scrubber's minimum; nothing was typed. */
+  "secret_too_short",
   /**
    * Something is on top of the target at its click point, so the input would
    * land on that element instead. The detail names the covering element.
@@ -355,9 +357,214 @@ var CommandQueue = class {
   }
 };
 
+// shared/secret-scrubber.ts
+var MIN_SCRUBBABLE_LENGTH = 8;
+var defaultReplacement = (name) => `[secret:${name}]`;
+var ESCAPE_DEPTH_CEILING = 32;
+function escapeDepthOf(input) {
+  let longestRun = 0;
+  let run = 0;
+  for (let i = 0; i < input.length; i++) {
+    if (input.charCodeAt(i) === 92) {
+      run += 1;
+      if (run > longestRun) longestRun = run;
+    } else {
+      run = 0;
+    }
+  }
+  if (longestRun === 0) return 1;
+  return Math.min(ESCAPE_DEPTH_CEILING, Math.floor(Math.log2(longestRun)) + 2);
+}
+function literalAnchorOf(value) {
+  let longest = "";
+  let current = "";
+  for (const char of value) {
+    if (JSON.stringify(char).slice(1, -1) === char) {
+      current += char;
+      if (current.length > longest.length) longest = current;
+    } else {
+      current = "";
+    }
+  }
+  return longest;
+}
+function escapedFormTailsOf(value) {
+  const tails = /* @__PURE__ */ new Set();
+  for (const char of value) {
+    const escaped = JSON.stringify(char).slice(1, -1);
+    tails.add(escaped[escaped.length - 1]);
+  }
+  return tails;
+}
+function createSecretScrubber(secrets, options = {}) {
+  const replacementFor = options.replacement ?? defaultReplacement;
+  const entries = secrets.filter((entry) => entry.value.length >= MIN_SCRUBBABLE_LENGTH).slice().sort((a, b) => b.value.length - a.value.length).map((entry) => ({
+    ...entry,
+    anchor: literalAnchorOf(entry.value),
+    tails: escapedFormTailsOf(entry.value)
+  }));
+  if (entries.length === 0) return null;
+  function escapedForms(value, maxDepth, maxFormLength) {
+    const forms = [];
+    let current = value;
+    for (let depth = 0; depth < maxDepth; depth++) {
+      const next = JSON.stringify(current).slice(1, -1);
+      if (next === current) break;
+      if (next.length > maxFormLength) break;
+      forms.push(next);
+      current = next;
+    }
+    return forms;
+  }
+  const byLongestSearch = (a, b) => b.search.length - a.search.length;
+  const formCache = /* @__PURE__ */ new Map();
+  function formsFor(index, entry, maxDepth, maxFormLength, lengthExponent) {
+    const key = `${index}:${maxDepth}:${lengthExponent}`;
+    const cached = formCache.get(key);
+    if (cached) return cached;
+    const built = escapedForms(entry.value, maxDepth, maxFormLength);
+    formCache.set(key, built);
+    return built;
+  }
+  function buildNeedleLists(input, maxDepth, maxFormLength, lengthExponent) {
+    const all = [];
+    const json = [];
+    for (const [index, entry] of entries.entries()) {
+      const replace = replacementFor(entry.name);
+      const anchored = entry.anchor === "" || input.includes(entry.anchor);
+      if (!anchored) continue;
+      all.push({ search: entry.value, replace });
+      if (JSON.stringify(entry.value).slice(1, -1) === entry.value) {
+        json.push({ search: entry.value, replace });
+        continue;
+      }
+      let tailsPresent = true;
+      for (const tail of entry.tails) {
+        if (!input.includes(tail)) {
+          tailsPresent = false;
+          break;
+        }
+      }
+      if (!tailsPresent) continue;
+      for (const form of formsFor(
+        index,
+        entry,
+        maxDepth,
+        maxFormLength,
+        lengthExponent
+      )) {
+        json.push({ search: form, replace });
+        all.push({ search: form, replace });
+      }
+    }
+    all.sort(byLongestSearch);
+    json.sort(byLongestSearch);
+    return { all, json };
+  }
+  function needleListsFor(input) {
+    const maxDepth = escapeDepthOf(input);
+    const lengthExponent = input.length <= 1 ? 0 : Math.ceil(Math.log2(input.length));
+    return buildNeedleLists(
+      input,
+      maxDepth,
+      2 ** lengthExponent,
+      lengthExponent
+    );
+  }
+  function applyNeedles(input, list) {
+    let out = input;
+    for (const needle of list) {
+      if (out.includes(needle.search)) {
+        out = out.split(needle.search).join(needle.replace);
+      }
+    }
+    return out;
+  }
+  function scrubString(input) {
+    return applyNeedles(input, needleListsFor(input).all);
+  }
+  function scrubSerializedJson(input) {
+    let parsed;
+    try {
+      parsed = JSON.parse(input);
+    } catch {
+      return applyNeedles(input, needleListsFor(input).json);
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return applyNeedles(input, needleListsFor(input).json);
+    }
+    const out = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      Object.defineProperty(out, key, {
+        value: scrubDeep(value),
+        enumerable: true,
+        writable: true,
+        configurable: true
+      });
+    }
+    return JSON.stringify(out);
+  }
+  const MAX_SCRUB_DEPTH = 8;
+  const DEPTH_MARKER = "[truncated: max depth]";
+  const CYCLE_MARKER = "[truncated: circular reference]";
+  function scrubDeepInner(value, depth, seen) {
+    if (typeof value === "string") {
+      return scrubString(value);
+    }
+    if (value === null || typeof value !== "object") return value;
+    if (depth >= MAX_SCRUB_DEPTH) return DEPTH_MARKER;
+    if (Array.isArray(value)) {
+      if (seen.has(value)) return CYCLE_MARKER;
+      seen.add(value);
+      const out = value.map(
+        (item) => scrubDeepInner(item, depth + 1, seen)
+      );
+      seen.delete(value);
+      return out;
+    }
+    if (value && typeof value === "object") {
+      if (seen.has(value)) return CYCLE_MARKER;
+      const proto = Object.getPrototypeOf(value);
+      if (proto !== Object.prototype && proto !== null) return value;
+      seen.add(value);
+      const out = {};
+      for (const [key, item] of Object.entries(
+        value
+      )) {
+        Object.defineProperty(out, scrubString(key), {
+          value: scrubDeepInner(item, depth + 1, seen),
+          enumerable: true,
+          writable: true,
+          configurable: true
+        });
+      }
+      seen.delete(value);
+      return out;
+    }
+    return value;
+  }
+  function scrubDeep(value) {
+    return scrubDeepInner(value, 0, /* @__PURE__ */ new Set());
+  }
+  return {
+    scrubString,
+    scrubSerializedJson,
+    scrubDeep,
+    size: entries.length,
+    needleCountFor: (input) => needleListsFor(input).all.length
+  };
+}
+
 // server/utils/secrets/secret-placeholders.ts
 var NAME = "[A-Z_][A-Z0-9_]*";
 var placeholderPattern = () => new RegExp(`\\{\\{secret:(${NAME})\\}\\}`, "g");
+function secretNamesIn(text) {
+  const names = [];
+  for (const match of text.matchAll(placeholderPattern())) {
+    if (!names.includes(match[1])) names.push(match[1]);
+  }
+  return names;
+}
 function hasSecretPlaceholder(text) {
   return placeholderPattern().test(text);
 }
@@ -3298,15 +3505,27 @@ function guardErrorShapes(executor) {
     return scrubbed === result.error ? result : { ...result, error: scrubbed };
   };
 }
-function withSecretScrub(registry, executor) {
+function withSecretScrub(registry, executor, documentKeyFor) {
+  const readKey = async (tabId) => {
+    try {
+      return await documentKeyFor?.(tabId);
+    } catch {
+      return void 0;
+    }
+  };
   return async (command, context) => {
+    const typedBefore = registry.hasExposure();
+    const keyBefore = typedBefore ? await readKey(command.tabId) : void 0;
     const result = await executor(command, context);
     const scrubber = registry.scrubber();
     const output = result.output;
     const record = typeof output === "object" && output !== null ? output : void 0;
-    const suppress = record?.screenshot !== void 0 && registry.exposedAt(
-      typeof record.url === "string" ? record.url : void 0
-    );
+    let suppress = false;
+    if (record?.screenshot !== void 0 && registry.hasExposure()) {
+      const tabId = command.tabId ?? result.stateToken?.tabId;
+      const keyAfter = await readKey(tabId);
+      suppress = !keyAfter || registry.exposedAt(keyAfter) || typedBefore && (!keyBefore || registry.exposedAt(keyBefore));
+    }
     if (!scrubber && !suppress) return result;
     let scrubbedOutput = output;
     if (record !== void 0) {
@@ -3502,13 +3721,15 @@ function buildBrowserdStack(driver, config) {
   const lease = config.lease ?? new HandoffLease();
   const secrets = {
     scrubber: () => driver.secretRegistry?.().scrubber() ?? null,
-    exposedAt: (url) => driver.secretRegistry?.().exposedAt(url) ?? false
+    exposedAt: (documentKey) => driver.secretRegistry?.().exposedAt(documentKey) ?? false,
+    hasExposure: () => driver.secretRegistry?.().hasExposure() ?? false
   };
   const queue = new CommandQueue(
     guardErrorShapes(
       withSecretScrub(
         secrets,
-        config.authority === "shared" ? guardStaleness(driver) : guardLease(lease, guardStaleness(driver, lease))
+        config.authority === "shared" ? guardStaleness(driver) : guardLease(lease, guardStaleness(driver, lease)),
+        (tabId) => driver.documentKey?.(tabId) ?? Promise.resolve(void 0)
       )
     ),
     bootId
@@ -5194,204 +5415,6 @@ async function readTabMetadata(cdp, fallbackUrl, options = {}) {
   };
 }
 
-// shared/secret-scrubber.ts
-var MIN_SCRUBBABLE_LENGTH = 8;
-var defaultReplacement = (name) => `[secret:${name}]`;
-var ESCAPE_DEPTH_CEILING = 32;
-function escapeDepthOf(input) {
-  let longestRun = 0;
-  let run = 0;
-  for (let i = 0; i < input.length; i++) {
-    if (input.charCodeAt(i) === 92) {
-      run += 1;
-      if (run > longestRun) longestRun = run;
-    } else {
-      run = 0;
-    }
-  }
-  if (longestRun === 0) return 1;
-  return Math.min(ESCAPE_DEPTH_CEILING, Math.floor(Math.log2(longestRun)) + 2);
-}
-function literalAnchorOf(value) {
-  let longest = "";
-  let current = "";
-  for (const char of value) {
-    if (JSON.stringify(char).slice(1, -1) === char) {
-      current += char;
-      if (current.length > longest.length) longest = current;
-    } else {
-      current = "";
-    }
-  }
-  return longest;
-}
-function escapedFormTailsOf(value) {
-  const tails = /* @__PURE__ */ new Set();
-  for (const char of value) {
-    const escaped = JSON.stringify(char).slice(1, -1);
-    tails.add(escaped[escaped.length - 1]);
-  }
-  return tails;
-}
-function createSecretScrubber(secrets, options = {}) {
-  const replacementFor = options.replacement ?? defaultReplacement;
-  const entries = secrets.filter((entry) => entry.value.length >= MIN_SCRUBBABLE_LENGTH).slice().sort((a, b) => b.value.length - a.value.length).map((entry) => ({
-    ...entry,
-    anchor: literalAnchorOf(entry.value),
-    tails: escapedFormTailsOf(entry.value)
-  }));
-  if (entries.length === 0) return null;
-  function escapedForms(value, maxDepth, maxFormLength) {
-    const forms = [];
-    let current = value;
-    for (let depth = 0; depth < maxDepth; depth++) {
-      const next = JSON.stringify(current).slice(1, -1);
-      if (next === current) break;
-      if (next.length > maxFormLength) break;
-      forms.push(next);
-      current = next;
-    }
-    return forms;
-  }
-  const byLongestSearch = (a, b) => b.search.length - a.search.length;
-  const formCache = /* @__PURE__ */ new Map();
-  function formsFor(index, entry, maxDepth, maxFormLength, lengthExponent) {
-    const key = `${index}:${maxDepth}:${lengthExponent}`;
-    const cached = formCache.get(key);
-    if (cached) return cached;
-    const built = escapedForms(entry.value, maxDepth, maxFormLength);
-    formCache.set(key, built);
-    return built;
-  }
-  function buildNeedleLists(input, maxDepth, maxFormLength, lengthExponent) {
-    const all = [];
-    const json = [];
-    for (const [index, entry] of entries.entries()) {
-      const replace = replacementFor(entry.name);
-      const anchored = entry.anchor === "" || input.includes(entry.anchor);
-      if (!anchored) continue;
-      all.push({ search: entry.value, replace });
-      if (JSON.stringify(entry.value).slice(1, -1) === entry.value) {
-        json.push({ search: entry.value, replace });
-        continue;
-      }
-      let tailsPresent = true;
-      for (const tail of entry.tails) {
-        if (!input.includes(tail)) {
-          tailsPresent = false;
-          break;
-        }
-      }
-      if (!tailsPresent) continue;
-      for (const form of formsFor(
-        index,
-        entry,
-        maxDepth,
-        maxFormLength,
-        lengthExponent
-      )) {
-        json.push({ search: form, replace });
-        all.push({ search: form, replace });
-      }
-    }
-    all.sort(byLongestSearch);
-    json.sort(byLongestSearch);
-    return { all, json };
-  }
-  function needleListsFor(input) {
-    const maxDepth = escapeDepthOf(input);
-    const lengthExponent = input.length <= 1 ? 0 : Math.ceil(Math.log2(input.length));
-    return buildNeedleLists(
-      input,
-      maxDepth,
-      2 ** lengthExponent,
-      lengthExponent
-    );
-  }
-  function applyNeedles(input, list) {
-    let out = input;
-    for (const needle of list) {
-      if (out.includes(needle.search)) {
-        out = out.split(needle.search).join(needle.replace);
-      }
-    }
-    return out;
-  }
-  function scrubString(input) {
-    return applyNeedles(input, needleListsFor(input).all);
-  }
-  function scrubSerializedJson(input) {
-    let parsed;
-    try {
-      parsed = JSON.parse(input);
-    } catch {
-      return applyNeedles(input, needleListsFor(input).json);
-    }
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return applyNeedles(input, needleListsFor(input).json);
-    }
-    const out = {};
-    for (const [key, value] of Object.entries(parsed)) {
-      Object.defineProperty(out, key, {
-        value: scrubDeep(value),
-        enumerable: true,
-        writable: true,
-        configurable: true
-      });
-    }
-    return JSON.stringify(out);
-  }
-  const MAX_SCRUB_DEPTH = 8;
-  const DEPTH_MARKER = "[truncated: max depth]";
-  const CYCLE_MARKER = "[truncated: circular reference]";
-  function scrubDeepInner(value, depth, seen) {
-    if (typeof value === "string") {
-      return scrubString(value);
-    }
-    if (value === null || typeof value !== "object") return value;
-    if (depth >= MAX_SCRUB_DEPTH) return DEPTH_MARKER;
-    if (Array.isArray(value)) {
-      if (seen.has(value)) return CYCLE_MARKER;
-      seen.add(value);
-      const out = value.map(
-        (item) => scrubDeepInner(item, depth + 1, seen)
-      );
-      seen.delete(value);
-      return out;
-    }
-    if (value && typeof value === "object") {
-      if (seen.has(value)) return CYCLE_MARKER;
-      const proto = Object.getPrototypeOf(value);
-      if (proto !== Object.prototype && proto !== null) return value;
-      seen.add(value);
-      const out = {};
-      for (const [key, item] of Object.entries(
-        value
-      )) {
-        Object.defineProperty(out, scrubString(key), {
-          value: scrubDeepInner(item, depth + 1, seen),
-          enumerable: true,
-          writable: true,
-          configurable: true
-        });
-      }
-      seen.delete(value);
-      return out;
-    }
-    return value;
-  }
-  function scrubDeep(value) {
-    return scrubDeepInner(value, 0, /* @__PURE__ */ new Set());
-  }
-  return {
-    scrubString,
-    scrubSerializedJson,
-    scrubDeep,
-    size: entries.length,
-    needleCountFor: (input) => needleListsFor(input).all.length
-  };
-}
-
 // server/services/browserd/daemon/secret-registry.ts
 var placeholderFor = (name) => `{{secret:${name}}}`;
 function createBrowserSecretRegistry() {
@@ -5403,7 +5426,7 @@ function createBrowserSecretRegistry() {
   return {
     register(secrets) {
       for (const secret of secrets) {
-        if (!secret.value) continue;
+        if (secret.value.length < MIN_SCRUBBABLE_LENGTH) continue;
         if (byValue.get(secret.value) === secret.name) continue;
         byValue.set(secret.value, secret.name);
         stale = true;
@@ -5420,23 +5443,17 @@ function createBrowserSecretRegistry() {
       }
       return scrubber;
     },
-    markTyped(url) {
-      if (url) typedInto.add(url);
+    markTyped(documentKey) {
+      if (documentKey) typedInto.add(documentKey);
       else typedSomewhere = true;
     },
-    exposedAt(url) {
+    exposedAt(documentKey) {
       if (typedSomewhere) return true;
       if (typedInto.size === 0) return false;
-      return url === void 0 || url === "" || typedInto.has(url);
+      return !documentKey || typedInto.has(documentKey);
     },
-    maskedValues() {
-      const short = /* @__PURE__ */ new Map();
-      for (const [value, name] of byValue) {
-        if (value.length < MIN_SCRUBBABLE_LENGTH) {
-          short.set(value, placeholderFor(name));
-        }
-      }
-      return short;
+    hasExposure() {
+      return typedSomewhere || typedInto.size > 0;
     },
     get size() {
       return byValue.size;
@@ -5447,6 +5464,23 @@ function createBrowserSecretRegistry() {
 // server/services/browserd/daemon/secret-substitution.ts
 function resolveActSecrets(action, secrets) {
   const values = new Map((secrets ?? []).map((s) => [s.name, s.value]));
+  const texts = [
+    ...action.value === void 0 ? [] : [action.value],
+    ...(action.fields ?? []).flatMap(
+      (field) => typeof field.value === "string" ? [field.value] : []
+    )
+  ];
+  for (const name of new Set(texts.flatMap(secretNamesIn))) {
+    const secret = values.get(name);
+    if (secret !== void 0 && secret.length < MIN_SCRUBBABLE_LENGTH) {
+      throw new Error(
+        formatBrowserdError(
+          "secret_too_short",
+          `"${name}" is shorter than ${MIN_SCRUBBABLE_LENGTH} characters, too short to hide reliably in what the page shows back; nothing was typed. Ask the user to type it themselves.`
+        )
+      );
+    }
+  }
   const value = action.value === void 0 ? void 0 : substituteSecrets(action.value, values);
   const fields = action.fields?.map(
     (field) => typeof field.value === "string" ? { ...field, value: substituteSecrets(field.value, values) } : field
@@ -5780,7 +5814,7 @@ function attributes(node) {
   }
   return parts.length > 0 ? ` [${parts.join(" ")}]` : "";
 }
-function line(node, indent, maskedValues) {
+function line(node, indent) {
   const role = typeof node.role === "string" ? node.role : "node";
   let text = `${"  ".repeat(indent)}- ${role}`;
   if (typeof node.name === "string" && node.name.length > 0) {
@@ -5792,8 +5826,7 @@ function line(node, indent, maskedValues) {
   }
   const value = node.valueText ?? node.value;
   if ((typeof value === "string" || typeof value === "number") && String(value).length > 0 && String(value) !== node.name) {
-    const masked = maskedValues?.get(String(value));
-    text += `: ${JSON.stringify(masked ?? String(value))}`;
+    text += `: ${JSON.stringify(String(value))}`;
   }
   return text;
 }
@@ -5809,7 +5842,7 @@ function renderA11yTree(root, options = {}) {
       return;
     }
     const transparent = isTransparent(node);
-    if (!transparent) lines.push(line(node, indent, options.maskedValues));
+    if (!transparent) lines.push(line(node, indent));
     const ref = typeof node.ref === "string" ? node.ref : parentRef;
     for (const child of node.children ?? []) {
       visit(child, transparent ? indent : indent + 1, ref);
@@ -7771,8 +7804,7 @@ var ChromiumDriver = class {
         }
         if (resolved !== action && context?.secrets?.length) {
           this.secrets.register(context.secrets);
-          const typedPage = this.tabs.get(tabId)?.page;
-          this.secrets.markTyped(typedPage ? safeUrl(typedPage) : void 0);
+          this.secrets.markTyped(await this.documentKey(tabId));
         }
         return this.act(tabId, resolved, permit, command.source);
       }
@@ -8743,6 +8775,29 @@ var ChromiumDriver = class {
       settled: false
     };
   }
+  /**
+   * `tabId|performance.timeOrigin`, the identity of a tab's current document.
+   * Read over CDP so both engines answer; undefined on any failure, which
+   * secret exposure treats as exposed.
+   */
+  async documentKey(tabId) {
+    const id = tabId ?? this.activeTabId ?? DEFAULT_TAB;
+    const entry = this.tabs.get(id);
+    if (!entry || entry.page.isClosed()) return void 0;
+    try {
+      const cdp = await entry.page.cdp();
+      if (!cdp) return void 0;
+      const raw = await cdp.send("Runtime.evaluate", {
+        expression: "performance.timeOrigin",
+        returnByValue: true,
+        timeout: 1e3
+      });
+      const origin = raw?.result?.value;
+      return typeof origin === "number" && Number.isFinite(origin) ? `${id}|${origin}` : void 0;
+    } catch {
+      return void 0;
+    }
+  }
   async currentStateToken(tabId) {
     const entry = this.tabs.get(tabId ?? this.activeTabId ?? DEFAULT_TAB);
     if (!entry) return void 0;
@@ -9241,10 +9296,8 @@ var ChromiumDriver = class {
       this.a11yBudget
     );
     const refs = assignRefs(tree);
-    const masked = this.secrets.maskedValues();
     const rendered = renderA11yTree(tree, {
-      interactiveOnly: raw.filter === "interactive",
-      ...masked.size > 0 ? { maskedValues: masked } : {}
+      interactiveOnly: raw.filter === "interactive"
     });
     return {
       ok: true,

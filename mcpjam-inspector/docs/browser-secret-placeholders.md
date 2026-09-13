@@ -77,6 +77,7 @@ as a wrong password.
 | `secret_unknown` | No secret by that name is available to this turn | Check the name, and that it is set for this environment |
 | `secret_not_typeable` | The name exists but is **brokered**, so its value never enters this process | Ask the user to switch it to materialized delivery |
 | `secret_verb_refused` | A placeholder on a verb that types nothing (`click`, `press`, `scroll`, …) | Use `type` or `fill_form` |
+| `secret_too_short` | The secret is shorter than 8 characters, too short to hide reliably in what the page shows back | Ask the user to type it themselves |
 | `secret_unsupported_daemon` | The browser is running a build that predates the substitution | Restart the browser session |
 | `secret_engine_unsupported` | The browser is the user's own machine | Ask the user to type it themselves |
 | `secret_unresolved` | The daemon was sent a placeholder with no value (the planner was bypassed) | Same as `secret_unknown` |
@@ -95,13 +96,14 @@ as a wrong password.
   `browser_observe {mode:"screenshot"}` one command later would carry that image
   into the model's context, the ledger row and the eval trace.
 
-  The suppression is per PAGE, not per session: the daemon records the URL the
-  value was typed into (`BrowserSecretRegistry.markTyped`) and `withSecretScrub`
-  drops the picture only while a result names that URL. A login's submit
-  navigates, so the screenshot the model most needs — did it work? — arrives
-  normally. A result carrying no URL at all is treated as still-exposed: the
-  observation funnel attaches one to everything it can read, so its absence
-  means the page could not be read, which is not evidence that it moved.
+  The suppression follows the DOCUMENT, not the URL or the session. The daemon
+  records which document the value was typed into (the tab plus the page's
+  `performance.timeOrigin`), and drops pictures while that document is still
+  showing, before or after the command ran. A same-page URL change such as
+  `history.pushState` or a new fragment keeps the document, so pictures stay
+  suppressed. A login's submit loads a new document, so the screenshot the model
+  most needs, whether it worked, arrives normally. A result whose document
+  cannot be read is treated as still-exposed.
 
   The live pane is unaffected. It draws from the frame stream, and its own
   commands ask for `observe: "none"`; the person holding the browser is looking

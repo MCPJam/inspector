@@ -8,7 +8,11 @@
  */
 import type { BrowserAction } from "../protocol";
 import { formatBrowserdError } from "../protocol";
-import { substituteSecrets } from "../../../utils/secrets/secret-placeholders";
+import {
+  secretNamesIn,
+  substituteSecrets,
+} from "../../../utils/secrets/secret-placeholders";
+import { MIN_SCRUBBABLE_LENGTH } from "../../../../shared/secret-scrubber";
 
 type ActAction = Extract<BrowserAction, { kind: "act" }>;
 
@@ -21,6 +25,27 @@ export function resolveActSecrets(
   secrets: ReadonlyArray<{ name: string; value: string }> | undefined,
 ): ActAction {
   const values = new Map((secrets ?? []).map((s) => [s.name, s.value]));
+  // Behind the planner's own refusal: a value this short cannot be scrubbed
+  // from what the page echoes back, so it is never typed.
+  const texts = [
+    ...(action.value === undefined ? [] : [action.value]),
+    ...(action.fields ?? []).flatMap((field) =>
+      typeof field.value === "string" ? [field.value] : [],
+    ),
+  ];
+  for (const name of new Set(texts.flatMap(secretNamesIn))) {
+    const secret = values.get(name);
+    if (secret !== undefined && secret.length < MIN_SCRUBBABLE_LENGTH) {
+      throw new Error(
+        formatBrowserdError(
+          "secret_too_short",
+          `"${name}" is shorter than ${MIN_SCRUBBABLE_LENGTH} characters, too ` +
+            "short to hide reliably in what the page shows back; nothing was " +
+            "typed. Ask the user to type it themselves.",
+        ),
+      );
+    }
+  }
   const value =
     action.value === undefined
       ? undefined
