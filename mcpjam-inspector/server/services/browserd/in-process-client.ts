@@ -67,6 +67,13 @@ export interface InProcessBrowserdClient {
   sendCommand(
     command: BrowserCommand,
     expectedBootId?: string,
+    options?: {
+      /** Accepted and ignored for HTTP-client type parity; nothing to abort. */
+      timeoutMs?: number;
+      signal?: AbortSignal;
+      /** @see BrowserdClient.sendCommand — a sibling, never a command field. */
+      secrets?: ReadonlyArray<{ name: string; value: string }>;
+    },
   ): Promise<BrowserdCommandResponse>;
   /** Read the command ledger forward from a cursor. */
   readTrace(args?: {
@@ -145,9 +152,13 @@ export function createInProcessBrowserdClient(
     async leaseAction(args) {
       return decodeLeaseAction(await call("POST", "/v1/lease", args));
     },
-    async sendCommand(command, expectedBootId) {
+    async sendCommand(command, expectedBootId, options) {
       return decodeCommandResponse(
-        await call("POST", "/v1/commands", { command, expectedBootId }),
+        await call("POST", "/v1/commands", {
+          command,
+          expectedBootId,
+          ...(options?.secrets?.length ? { secrets: options.secrets } : {}),
+        }),
       );
     },
     async paneState(args) {

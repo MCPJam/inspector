@@ -55,6 +55,7 @@ import type { PlatformApiClient } from "@mcpjam/sdk/platform";
 import { logger } from "../logger.js";
 import {
   LOCAL_BROWSER_ENABLED,
+  browserSecretPlaceholdersEnabled,
   hostedBrowserEnabled,
 } from "../../config.js";
 import {
@@ -269,6 +270,18 @@ export interface BuiltInToolContext {
   browserProfileId?: string;
   /** Surface ids (chat session, eval iteration, swarm) echoed onto browser ledger rows. */
   browserCorrelation?: Parameters<typeof buildBrowserTools>[0]["correlation"];
+  /**
+   * Materialized secrets the browser may type without the model reading them.
+   * Separate from {@link secretEnv} because the two destinations have
+   * different gates. Absent means every placeholder is refused.
+   */
+  browserSecrets?: NonNullable<
+    Parameters<typeof buildBrowserTools>[0]["secrets"]
+  >["available"];
+  /** Names that exist for this environment but are BROKERED, never typeable. */
+  browserBrokeredSecretNames?: readonly string[];
+  /** Fired with the NAMES that actually reached a browser. Never values. */
+  onBrowserSecretDelivered?: (names: readonly string[]) => void;
   browserHandoffMaxWaitMs?: number;
   onBrowserHandoffWaiting?: Parameters<
     typeof buildBrowserTools
@@ -796,6 +809,22 @@ export function resolveHostTools(
           : {}),
         ...(ctx.browserCorrelation
           ? { correlation: ctx.browserCorrelation }
+          : {}),
+        // Gated once here for all surfaces. Brokered names alone also admit it,
+        // so they get `secret_not_typeable` rather than `secret_unknown`.
+        ...(browserSecretPlaceholdersEnabled() &&
+        (ctx.browserSecrets?.length || ctx.browserBrokeredSecretNames?.length)
+          ? {
+              secrets: {
+                available: ctx.browserSecrets ?? [],
+                ...(ctx.browserBrokeredSecretNames?.length
+                  ? { brokered: ctx.browserBrokeredSecretNames }
+                  : {}),
+                ...(ctx.onBrowserSecretDelivered
+                  ? { onDelivered: ctx.onBrowserSecretDelivered }
+                  : {}),
+              },
+            }
           : {}),
         ...(ctx.onBrowserNotice
           ? { onBrowserNotice: ctx.onBrowserNotice }

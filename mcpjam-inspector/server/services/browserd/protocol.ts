@@ -102,6 +102,12 @@ export const BROWSERD_PROTOCOL_VERSION = 2;
 export const BROWSERD_WEBMCP_FEATURES = [
   "webmcp-eager",
   "webmcp-binding",
+  /**
+   * `POST /v1/commands` accepts `secrets` beside the command. A feature string,
+   * not a protocol bump, so deploys don't kill live browsers. Without it the
+   * server must refuse placeholders: an old daemon would type them literally.
+   */
+  "secret-placeholders",
 ] as const;
 
 /**
@@ -813,6 +819,13 @@ export const BROWSERD_ERROR_CODES = [
   /** An `a11yRef` whose node has left the page — distinct from not found. */
   "stale_ref",
   /**
+   * A `{{secret:NAME}}` reached the browser with no value; nothing was typed.
+   * The `/v1` routes and CLI reach the driver without the server's planner.
+   */
+  "secret_unresolved",
+  /** A substituted secret is shorter than the scrubber's minimum; nothing was typed. */
+  "secret_too_short",
+  /**
    * Something is on top of the target at its click point, so the input would
    * land on that element instead. The detail names the covering element.
    *
@@ -851,6 +864,17 @@ export const BROWSERD_ERROR_CODES = [
   "origin_not_allowed",
   /** The session policy does not admit this command. */
   "tool_not_allowed",
+  // --- secret placeholders, refused by the server before the daemon -------
+  /** No secret by that name is available to this turn. */
+  "secret_unknown",
+  /** The name exists but is BROKERED — its value never enters this process. */
+  "secret_not_typeable",
+  /** A placeholder on a verb that types nothing (`click`, `press`, `scroll`). */
+  "secret_verb_refused",
+  /** The running daemon is too old to accept secrets beside a command. */
+  "secret_unsupported_daemon",
+  /** This engine does not deliver secrets to a browser (phase 1: the local one). */
+  "secret_engine_unsupported",
   /**
    * The sender and this daemon speak different protocol versions; nothing ran.
    * Also used server-side when a relaunch could not fix the mismatch.

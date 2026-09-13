@@ -67,6 +67,12 @@ import {
   type ViewportSize,
 } from "../../../../shared/browser-viewport";
 import type { BrowserdFeatures } from "./config";
+import type { CommandContext } from "./command-queue";
+import {
+  createBrowserSecretRegistry,
+  type BrowserSecretRegistry,
+} from "./secret-registry";
+import { resolveActSecrets } from "./secret-substitution";
 import type { A11yNode } from "./observation-budget";
 import {
   capA11yTree,
@@ -323,6 +329,11 @@ export interface ChromiumDriverOptions {
   /** Opt-in behaviour; absent means the previous release's. @see BrowserdFeatures */
   features?: BrowserdFeatures;
   /**
+   * Where typed secrets are remembered, so observations can be scrubbed.
+   * Constructed when absent; injectable for tests.
+   */
+  secrets?: BrowserSecretRegistry;
+  /**
    * How big this session's page is, and whether it may change.
    *
    * Absent means the old behaviour exactly: a `fixed` session at 1024x768 that
@@ -486,6 +497,8 @@ export class ChromiumDriver implements BrowserDriver {
   private readonly pageTextMaxBytes: number;
   /** Behaviour this build has but does not do by default. @see BrowserdFeatures */
   private readonly features: BrowserdFeatures;
+  /** Values this boot has typed into a page, and what to show instead. */
+  private readonly secrets: BrowserSecretRegistry;
   private readonly lease:
     | Pick<
         HandoffLease,
@@ -648,6 +661,7 @@ export class ChromiumDriver implements BrowserDriver {
     this.pageTextMaxBytes =
       options.pageTextBytes ?? DEFAULT_PAGE_TEXT_MAX_BYTES;
     this.features = options.features ?? {};
+    this.secrets = options.secrets ?? createBrowserSecretRegistry();
     this.lease = options.lease;
     this.viewportPolicy = options.viewport?.policy ?? "fixed";
     this.allowPaneResize = options.viewport?.allowPaneResize === true;
@@ -680,6 +694,11 @@ export class ChromiumDriver implements BrowserDriver {
    */
   sessionViewportPolicy(): SessionViewportPolicy {
     return this.viewportPolicy;
+  }
+
+  /** Shared by accessor so the scrub wrapper and driver hold one instance. */
+  secretRegistry(): BrowserSecretRegistry {
+    return this.secrets;
   }
 
   async requestViewport(
@@ -842,12 +861,16 @@ export class ChromiumDriver implements BrowserDriver {
    * verb passes through is what makes "never resize midway through an action"
    * true for all of them at once — including the ones added later.
    */
-  async execute(command: BrowserCommand): Promise<BrowserCommandResult> {
-    return this.barrier.run(() => this.executeInBarrier(command));
+  async execute(
+    command: BrowserCommand,
+    context?: CommandContext,
+  ): Promise<BrowserCommandResult> {
+    return this.barrier.run(() => this.executeInBarrier(command, context));
   }
 
   private async executeInBarrier(
     command: BrowserCommand,
+    context?: CommandContext,
   ): Promise<BrowserCommandResult> {
     // Recheck after waiting for a resize, not only at queue admission.
     if (
@@ -972,8 +995,27 @@ export class ChromiumDriver implements BrowserDriver {
       }
       case "observe":
         return this.observe(tabId, action, permit);
-      case "act":
-        return this.act(tabId, action, permit, command.source);
+      case "act": {
+        // Substituted at the last moment, so the ledger and trace keep the
+        // placeholders. Throws on a missing value, so a literal
+        // `{{secret:NAME}}` is never typed, even via the `/v1` routes.
+        let resolved = action;
+        try {
+          resolved = resolveActSecrets(action, context?.secrets);
+        } catch (error) {
+          return {
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+        if (resolved !== action && context?.secrets?.length) {
+          this.secrets.register(context.secrets);
+          // Record the receiving document before the verb runs; a submit may
+          // replace it. @see BrowserSecretRegistry.markTyped
+          this.secrets.markTyped(await this.documentKey(tabId));
+        }
+        return this.act(tabId, resolved, permit, command.source);
+      }
       case "webmcp_invoke":
         return this.webmcpInvoke(tabId, action, permit, command.commandId);
       case "webmcp_cancel":
@@ -2409,6 +2451,32 @@ export class ChromiumDriver implements BrowserDriver {
       ...this.observation(tabId, entry, { screenshot }, after, permit),
       settled: false,
     };
+  }
+
+  /**
+   * `tabId|performance.timeOrigin`, the identity of a tab's current document.
+   * Read over CDP so both engines answer; undefined on any failure, which
+   * secret exposure treats as exposed.
+   */
+  async documentKey(tabId?: string): Promise<string | undefined> {
+    const id = tabId ?? this.activeTabId ?? DEFAULT_TAB;
+    const entry = this.tabs.get(id);
+    if (!entry || entry.page.isClosed()) return undefined;
+    try {
+      const cdp = await entry.page.cdp();
+      if (!cdp) return undefined;
+      const raw = (await cdp.send("Runtime.evaluate", {
+        expression: "performance.timeOrigin",
+        returnByValue: true,
+        timeout: 1_000,
+      })) as { result?: { value?: unknown } } | undefined;
+      const origin = raw?.result?.value;
+      return typeof origin === "number" && Number.isFinite(origin)
+        ? `${id}|${origin}`
+        : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   async currentStateToken(tabId: string | undefined) {

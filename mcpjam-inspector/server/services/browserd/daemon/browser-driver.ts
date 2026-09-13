@@ -1,5 +1,6 @@
 import { negotiateViewport } from "../../../../shared/browser-viewport";
 import { redactForModel } from "./shape-redaction";
+import type { BrowserSecretRegistry } from "./secret-registry";
 /**
  * The seam between the daemon's control plane (queue + HTTP) and the real
  * browser. The control plane owns ordering, de-duplication, auth, and boot
@@ -17,7 +18,7 @@ import {
   formatBrowserdError,
   wantsFor,
 } from "../protocol";
-import type { CommandExecutor } from "./command-queue";
+import type { CommandContext, CommandExecutor } from "./command-queue";
 import type { TabViewport } from "./viewport";
 import { leaseRefusalFor, type HandoffLease, type LeaseRefusal } from "./lease";
 import type {
@@ -41,7 +42,22 @@ export interface BrowserDriver {
    * exactly the `CommandExecutor` the queue drives; the queue owns idempotency,
    * so the driver may assume it is asked to run a given commandId at most once.
    */
-  execute(command: BrowserCommand): Promise<BrowserCommandResult>;
+  execute(
+    command: BrowserCommand,
+    context?: CommandContext,
+  ): Promise<BrowserCommandResult>;
+  /**
+   * The registry of typed values. {@link withSecretScrub} reads it from here
+   * so the wrapper and driver always share one instance; two would let typed
+   * values go unscrubbed. Optional for drivers that never substitute.
+   */
+  secretRegistry?(): BrowserSecretRegistry;
+  /**
+   * `tabId|performance.timeOrigin` for a tab's current document (the active
+   * tab when omitted), or undefined when it cannot be read. Stable across
+   * pushState and fragment changes, new on every document load.
+   */
+  documentKey?(tabId?: string): Promise<string | undefined>;
   /**
    * The current rendered-state token for a tab (L3), or undefined if the tab is
    * unknown. Read WITHOUT mutating the page, so the staleness guard can compare
@@ -212,19 +228,113 @@ export function stateTokensMatch(
  * content.
  */
 export function guardErrorShapes(executor: CommandExecutor): CommandExecutor {
-  return async (command: BrowserCommand): Promise<BrowserCommandResult> => {
-    const result = await executor(command);
+  return async (
+    command: BrowserCommand,
+    context?: CommandContext,
+  ): Promise<BrowserCommandResult> => {
+    const result = await executor(command, context);
     if (typeof result.error !== "string") return result;
     const scrubbed = redactForModel(result.error);
     return scrubbed === result.error ? result : { ...result, error: scrubbed };
   };
 }
 
+/**
+ * Replace values this boot typed into a page in every result, inside the
+ * queue so the retained result and the ledger row are already scrubbed.
+ *
+ * Pixels cannot be string-scrubbed, so while a result's document is one a
+ * value was typed into, its screenshot is dropped and `screenshotSuppressed`
+ * is set. Keyed by document rather than URL, so pushState and fragment
+ * changes keep it suppressed and a real navigation lifts it.
+ */
+export function withSecretScrub(
+  registry: Pick<BrowserSecretRegistry, "scrubber" | "exposedAt" | "hasExposure">,
+  executor: CommandExecutor,
+  documentKeyFor?: (tabId: string | undefined) => Promise<string | undefined>,
+): CommandExecutor {
+  const readKey = async (tabId: string | undefined) => {
+    try {
+      return await documentKeyFor?.(tabId);
+    } catch {
+      return undefined;
+    }
+  };
+  return async (
+    command: BrowserCommand,
+    context?: CommandContext,
+  ): Promise<BrowserCommandResult> => {
+    // Read before running only once something was typed, so sessions that
+    // never type a secret touch no page. The command may replace the document.
+    const typedBefore = registry.hasExposure();
+    const keyBefore = typedBefore ? await readKey(command.tabId) : undefined;
+    const result = await executor(command, context);
+    const scrubber = registry.scrubber();
+    const output = result.output;
+    const record =
+      typeof output === "object" && output !== null
+        ? (output as Record<string, unknown>)
+        : undefined;
+    let suppress = false;
+    if (record?.screenshot !== undefined && registry.hasExposure()) {
+      const tabId = command.tabId ?? result.stateToken?.tabId;
+      const keyAfter = await readKey(tabId);
+      // A missing key counts as exposed; either side exposed suppresses.
+      suppress =
+        !keyAfter ||
+        registry.exposedAt(keyAfter) ||
+        (typedBefore && (!keyBefore || registry.exposedAt(keyBefore)));
+    }
+    // With nothing registered `suppress` is false too, so the driver's result
+    // is returned untouched.
+    if (!scrubber && !suppress) return result;
+    let scrubbedOutput = output;
+    if (record !== undefined) {
+      const { screenshot, ...rest } = record;
+      if (suppress) {
+        scrubbedOutput = {
+          ...(scrubber ? scrubber.scrubDeep(rest) : rest),
+          screenshotSuppressed: true,
+        };
+      } else {
+        scrubbedOutput = {
+          ...(scrubber ? scrubber.scrubDeep(rest) : rest),
+          ...(screenshot === undefined ? {} : { screenshot }),
+        };
+      }
+    } else if (typeof output === "string" && scrubber) {
+      scrubbedOutput = scrubber.scrubString(output);
+    }
+    return {
+      ...result,
+      ...(output === undefined ? {} : { output: scrubbedOutput }),
+      ...(scrubber && typeof result.error === "string"
+        ? { error: scrubber.scrubString(result.error) }
+        : {}),
+    };
+  };
+}
+
+/**
+ * Omit `context` when absent so commands without secrets call the driver
+ * exactly as before.
+ */
+function runDriver(
+  driver: BrowserDriver,
+  command: BrowserCommand,
+  context: CommandContext | undefined,
+): Promise<BrowserCommandResult> {
+  return context ? driver.execute(command, context) : driver.execute(command);
+}
+
 export function guardStaleness(
   driver: BrowserDriver,
   lease?: Pick<HandoffLease, "state">,
 ): CommandExecutor {
-  return async (command: BrowserCommand): Promise<BrowserCommandResult> => {
+  return async (
+    command: BrowserCommand,
+    context?: CommandContext,
+  ): Promise<BrowserCommandResult> => {
     const { action } = command;
     if (
       command.source !== "manual" &&
@@ -239,7 +349,7 @@ export function guardStaleness(
       };
     }
     if (action.kind !== "act" || action.expectedState === undefined) {
-      return driver.execute(command);
+      return runDriver(driver, command, context);
     }
     const current = await driver.currentStateToken(command.tabId);
     // Re-asked AFTER the await. Reading the token touches the page (its URL
@@ -301,7 +411,7 @@ export function guardStaleness(
           : {}),
       };
     }
-    return driver.execute(command);
+    return runDriver(driver, command, context);
   };
 }
 
@@ -341,9 +451,12 @@ export function guardLease(
   lease: Pick<HandoffLease, "state">,
   executor: CommandExecutor,
 ): CommandExecutor {
-  return async (command: BrowserCommand): Promise<BrowserCommandResult> => {
+  return async (
+    command: BrowserCommand,
+    context?: CommandContext,
+  ): Promise<BrowserCommandResult> => {
     const refusal = leaseRefusalFor(lease.state(), command);
     if (refusal) return leaseBlockedResult(refusal);
-    return executor(command);
+    return executor(command, context);
   };
 }

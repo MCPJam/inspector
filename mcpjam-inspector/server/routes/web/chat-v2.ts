@@ -164,6 +164,7 @@ import {
   markRuntimeSecretsDelivered,
   toSecretEnv,
 } from "../../utils/harness/runtime-secrets.js";
+import { resolveBrowserSecrets } from "../../utils/secrets/browser-secrets.js";
 import { logger } from "../../utils/logger.js";
 import { resolveMrtrAuthPrincipal } from "../../utils/mrtr-hosted-collector.js";
 
@@ -1493,6 +1494,12 @@ chatV2.post("/", async (c) => {
           }
         : undefined;
 
+    // Reuses this turn's list; a failed read means no secrets, so every
+    // placeholder is refused.
+    const browserSecrets = await resolveBrowserSecrets({
+      resolved: runtimeSecrets ?? [],
+    });
+
     const computerSandboxMode =
       isScenarioSession && scenarioId && !resolvedExecution.harness
         ? readComputerSandboxMode(hostRuntimeConfig)
@@ -1751,6 +1758,12 @@ chatV2.post("/", async (c) => {
         ...(body.chatSessionId ? { chatSessionId: body.chatSessionId } : {}),
         ...(body.chatSessionId
           ? { browserCorrelation: { chatSessionId: body.chatSessionId } }
+          : {}),
+        // Separate from `secretEnv`: these reach browser commands on the
+        // hosted engine only, never a box's environment.
+        ...(browserSecrets.length > 0 ? { browserSecrets } : {}),
+        ...(markSecretsDelivered
+          ? { onBrowserSecretDelivered: markSecretsDelivered }
           : {}),
         isGuest: Boolean(c.get("guestId")),
         isScenarioSession,

@@ -10,7 +10,13 @@ var DEFAULT_QUEUE_KEY = "@session";
 var BROWSERD_PROTOCOL_VERSION = 2;
 var BROWSERD_WEBMCP_FEATURES = [
   "webmcp-eager",
-  "webmcp-binding"
+  "webmcp-binding",
+  /**
+   * `POST /v1/commands` accepts `secrets` beside the command. A feature string,
+   * not a protocol bump, so deploys don't kill live browsers. Without it the
+   * server must refuse placeholders: an old daemon would type them literally.
+   */
+  "secret-placeholders"
 ];
 var BROWSERD_OBSERVATION_VIEWPORT = {
   width: 1024,
@@ -67,6 +73,13 @@ var BROWSERD_ERROR_CODES = [
   /** An `a11yRef` whose node has left the page — distinct from not found. */
   "stale_ref",
   /**
+   * A `{{secret:NAME}}` reached the browser with no value; nothing was typed.
+   * The `/v1` routes and CLI reach the driver without the server's planner.
+   */
+  "secret_unresolved",
+  /** A substituted secret is shorter than the scrubber's minimum; nothing was typed. */
+  "secret_too_short",
+  /**
    * Something is on top of the target at its click point, so the input would
    * land on that element instead. The detail names the covering element.
    *
@@ -104,6 +117,17 @@ var BROWSERD_ERROR_CODES = [
   "origin_not_allowed",
   /** The session policy does not admit this command. */
   "tool_not_allowed",
+  // --- secret placeholders, refused by the server before the daemon -------
+  /** No secret by that name is available to this turn. */
+  "secret_unknown",
+  /** The name exists but is BROKERED — its value never enters this process. */
+  "secret_not_typeable",
+  /** A placeholder on a verb that types nothing (`click`, `press`, `scroll`). */
+  "secret_verb_refused",
+  /** The running daemon is too old to accept secrets beside a command. */
+  "secret_unsupported_daemon",
+  /** This engine does not deliver secrets to a browser (phase 1: the local one). */
+  "secret_engine_unsupported",
   /**
    * The sender and this daemon speak different protocol versions; nothing ran.
    * Also used server-side when a relaunch could not fix the mismatch.
@@ -192,9 +216,9 @@ var CommandQueue = class {
     }
     return true;
   }
-  async submit(command) {
-    if (isOutOfBand(command)) return this.runOutOfBand(command);
-    if (isReplayable(command)) return this.runUntracked(command);
+  async submit(command, context) {
+    if (isOutOfBand(command)) return this.runOutOfBand(command, context);
+    if (isReplayable(command)) return this.runUntracked(command, context);
     const existing = this.lookup(command.commandId);
     if (existing) {
       const result2 = existing.state === "running" ? await existing.promise : existing.result;
@@ -212,7 +236,7 @@ var CommandQueue = class {
     }
     this.depth.set(key, (this.depth.get(key) ?? 0) + 1);
     const prior = this.tails.get(key) ?? Promise.resolve();
-    const raw = prior.catch(() => void 0).then(() => this.executor(command));
+    const raw = prior.catch(() => void 0).then(() => this.executor(command, context));
     this.tails.set(key, raw);
     const normalized = raw.then((r) => r, normalizeError);
     this.commands.set(command.commandId, {
@@ -234,14 +258,14 @@ var CommandQueue = class {
    * charge against the per-boot ceiling. Still queued and still depth-capped,
    * so it cannot stampede the browser.
    */
-  async runUntracked(command) {
+  async runUntracked(command, context) {
     const key = queueKeyFor(command);
     if ((this.depth.get(key) ?? 0) >= this.perQueueDepthCap) {
       return { status: "busy", bootId: this.bootId };
     }
     this.depth.set(key, (this.depth.get(key) ?? 0) + 1);
     const prior = this.tails.get(key) ?? Promise.resolve();
-    const raw = prior.catch(() => void 0).then(() => this.executor(command));
+    const raw = prior.catch(() => void 0).then(() => this.executor(command, context));
     this.tails.set(key, raw);
     try {
       const result = await raw.then((r) => r, normalizeError);
@@ -261,8 +285,8 @@ var CommandQueue = class {
    * idempotent, so a retry replaying it costs nothing and a tombstone would buy
    * nothing.
    */
-  async runOutOfBand(command) {
-    const result = await this.executor(command).then(
+  async runOutOfBand(command, context) {
+    const result = await this.executor(command, context).then(
       (value) => value,
       normalizeError
     );
@@ -333,6 +357,230 @@ var CommandQueue = class {
   }
 };
 
+// shared/secret-scrubber.ts
+var MIN_SCRUBBABLE_LENGTH = 8;
+var defaultReplacement = (name) => `[secret:${name}]`;
+var ESCAPE_DEPTH_CEILING = 32;
+function escapeDepthOf(input) {
+  let longestRun = 0;
+  let run = 0;
+  for (let i = 0; i < input.length; i++) {
+    if (input.charCodeAt(i) === 92) {
+      run += 1;
+      if (run > longestRun) longestRun = run;
+    } else {
+      run = 0;
+    }
+  }
+  if (longestRun === 0) return 1;
+  return Math.min(ESCAPE_DEPTH_CEILING, Math.floor(Math.log2(longestRun)) + 2);
+}
+function literalAnchorOf(value) {
+  let longest = "";
+  let current = "";
+  for (const char of value) {
+    if (JSON.stringify(char).slice(1, -1) === char) {
+      current += char;
+      if (current.length > longest.length) longest = current;
+    } else {
+      current = "";
+    }
+  }
+  return longest;
+}
+function escapedFormTailsOf(value) {
+  const tails = /* @__PURE__ */ new Set();
+  for (const char of value) {
+    const escaped = JSON.stringify(char).slice(1, -1);
+    tails.add(escaped[escaped.length - 1]);
+  }
+  return tails;
+}
+function createSecretScrubber(secrets, options = {}) {
+  const replacementFor = options.replacement ?? defaultReplacement;
+  const entries = secrets.filter((entry) => entry.value.length >= MIN_SCRUBBABLE_LENGTH).slice().sort((a, b) => b.value.length - a.value.length).map((entry) => ({
+    ...entry,
+    anchor: literalAnchorOf(entry.value),
+    tails: escapedFormTailsOf(entry.value)
+  }));
+  if (entries.length === 0) return null;
+  function escapedForms(value, maxDepth, maxFormLength) {
+    const forms = [];
+    let current = value;
+    for (let depth = 0; depth < maxDepth; depth++) {
+      const next = JSON.stringify(current).slice(1, -1);
+      if (next === current) break;
+      if (next.length > maxFormLength) break;
+      forms.push(next);
+      current = next;
+    }
+    return forms;
+  }
+  const byLongestSearch = (a, b) => b.search.length - a.search.length;
+  const formCache = /* @__PURE__ */ new Map();
+  function formsFor(index, entry, maxDepth, maxFormLength, lengthExponent) {
+    const key = `${index}:${maxDepth}:${lengthExponent}`;
+    const cached = formCache.get(key);
+    if (cached) return cached;
+    const built = escapedForms(entry.value, maxDepth, maxFormLength);
+    formCache.set(key, built);
+    return built;
+  }
+  function buildNeedleLists(input, maxDepth, maxFormLength, lengthExponent) {
+    const all = [];
+    const json = [];
+    for (const [index, entry] of entries.entries()) {
+      const replace = replacementFor(entry.name);
+      const anchored = entry.anchor === "" || input.includes(entry.anchor);
+      if (!anchored) continue;
+      all.push({ search: entry.value, replace });
+      if (JSON.stringify(entry.value).slice(1, -1) === entry.value) {
+        json.push({ search: entry.value, replace });
+        continue;
+      }
+      let tailsPresent = true;
+      for (const tail of entry.tails) {
+        if (!input.includes(tail)) {
+          tailsPresent = false;
+          break;
+        }
+      }
+      if (!tailsPresent) continue;
+      for (const form of formsFor(
+        index,
+        entry,
+        maxDepth,
+        maxFormLength,
+        lengthExponent
+      )) {
+        json.push({ search: form, replace });
+        all.push({ search: form, replace });
+      }
+    }
+    all.sort(byLongestSearch);
+    json.sort(byLongestSearch);
+    return { all, json };
+  }
+  function needleListsFor(input) {
+    const maxDepth = escapeDepthOf(input);
+    const lengthExponent = input.length <= 1 ? 0 : Math.ceil(Math.log2(input.length));
+    return buildNeedleLists(
+      input,
+      maxDepth,
+      2 ** lengthExponent,
+      lengthExponent
+    );
+  }
+  function applyNeedles(input, list) {
+    let out = input;
+    for (const needle of list) {
+      if (out.includes(needle.search)) {
+        out = out.split(needle.search).join(needle.replace);
+      }
+    }
+    return out;
+  }
+  function scrubString(input) {
+    return applyNeedles(input, needleListsFor(input).all);
+  }
+  function scrubSerializedJson(input) {
+    let parsed;
+    try {
+      parsed = JSON.parse(input);
+    } catch {
+      return applyNeedles(input, needleListsFor(input).json);
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return applyNeedles(input, needleListsFor(input).json);
+    }
+    const out = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      Object.defineProperty(out, key, {
+        value: scrubDeep(value),
+        enumerable: true,
+        writable: true,
+        configurable: true
+      });
+    }
+    return JSON.stringify(out);
+  }
+  const MAX_SCRUB_DEPTH = 8;
+  const DEPTH_MARKER = "[truncated: max depth]";
+  const CYCLE_MARKER = "[truncated: circular reference]";
+  function scrubDeepInner(value, depth, seen) {
+    if (typeof value === "string") {
+      return scrubString(value);
+    }
+    if (value === null || typeof value !== "object") return value;
+    if (depth >= MAX_SCRUB_DEPTH) return DEPTH_MARKER;
+    if (Array.isArray(value)) {
+      if (seen.has(value)) return CYCLE_MARKER;
+      seen.add(value);
+      const out = value.map(
+        (item) => scrubDeepInner(item, depth + 1, seen)
+      );
+      seen.delete(value);
+      return out;
+    }
+    if (value && typeof value === "object") {
+      if (seen.has(value)) return CYCLE_MARKER;
+      const proto = Object.getPrototypeOf(value);
+      if (proto !== Object.prototype && proto !== null) return value;
+      seen.add(value);
+      const out = {};
+      for (const [key, item] of Object.entries(
+        value
+      )) {
+        Object.defineProperty(out, scrubString(key), {
+          value: scrubDeepInner(item, depth + 1, seen),
+          enumerable: true,
+          writable: true,
+          configurable: true
+        });
+      }
+      seen.delete(value);
+      return out;
+    }
+    return value;
+  }
+  function scrubDeep(value) {
+    return scrubDeepInner(value, 0, /* @__PURE__ */ new Set());
+  }
+  return {
+    scrubString,
+    scrubSerializedJson,
+    scrubDeep,
+    size: entries.length,
+    needleCountFor: (input) => needleListsFor(input).all.length
+  };
+}
+
+// server/utils/secrets/secret-placeholders.ts
+var NAME = "[A-Z_][A-Z0-9_]*";
+var placeholderPattern = () => new RegExp(`\\{\\{secret:(${NAME})\\}\\}`, "g");
+function secretNamesIn(text) {
+  const names = [];
+  for (const match of text.matchAll(placeholderPattern())) {
+    if (!names.includes(match[1])) names.push(match[1]);
+  }
+  return names;
+}
+function hasSecretPlaceholder(text) {
+  return placeholderPattern().test(text);
+}
+function substituteSecrets(text, values) {
+  let missing = false;
+  const out = text.replace(placeholderPattern(), (whole, name) => {
+    const value = values.get(name);
+    if (value === void 0) {
+      missing = true;
+      return whole;
+    }
+    return value;
+  });
+  return missing ? null : out;
+}
+
 // server/services/browserd/daemon/command-ledger.ts
 var DEFAULT_LEDGER_OPTIONS = {
   maxRows: 512,
@@ -359,6 +607,14 @@ function sanitizeLedgerUrl(value) {
   parsed.hash = "";
   return parsed.toString();
 }
+function redactTypedValue(value, verb, options) {
+  if (typeof value !== "string") return {};
+  if (hasSecretPlaceholder(value)) return { placeholderValue: value };
+  if (verb === "type" && !options.captureTypedText) {
+    return { redactedValue: { redacted: true, chars: value.length } };
+  }
+  return { value };
+}
 function redactAction(action, options = {}) {
   switch (action.kind) {
     case "navigate":
@@ -380,12 +636,15 @@ function redactAction(action, options = {}) {
         } : {}
       };
       if (typeof action.value === "string") {
-        if (action.verb === "type" && !options.captureTypedText) {
-          record.redactedValue = { redacted: true, chars: action.value.length };
-        } else {
-          record.value = action.value;
-        }
+        Object.assign(record, redactTypedValue(action.value, action.verb, options));
       }
+      if (action.fields?.length) {
+        record.fields = action.fields.map((field) => ({
+          ...field.selector ? { selector: field.selector } : {},
+          ...redactTypedValue(field.value, "type", options)
+        }));
+      }
+      if (action.submit !== void 0) record.submit = action.submit;
       return record;
     }
     case "observe":
@@ -1318,6 +1577,20 @@ var MOTION_ACTIONS = /* @__PURE__ */ new Set([
   "reload",
   "act"
 ]);
+var MAX_COMMAND_SECRETS = 32;
+var SECRET_NAME = /^[A-Z_][A-Z0-9_]*$/;
+function readCommandSecrets(raw) {
+  if (!Array.isArray(raw)) return void 0;
+  const secrets = [];
+  for (const entry of raw.slice(0, MAX_COMMAND_SECRETS)) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const { name, value } = entry;
+    if (typeof name !== "string" || !SECRET_NAME.test(name)) continue;
+    if (typeof value !== "string" || value.length === 0) continue;
+    secrets.push({ name, value });
+  }
+  return secrets.length > 0 ? secrets : void 0;
+}
 var UNATTRIBUTED_ACTOR = {
   kind: "inspector",
   id: "unattributed"
@@ -2140,7 +2413,11 @@ var BrowserdRequestHandler = class {
         }
       });
     }
-    const outcome = await this.queue.submit(parsed.command);
+    const secrets = readCommandSecrets(parsed.secrets);
+    const outcome = await this.queue.submit(
+      parsed.command,
+      secrets ? { secrets } : void 0
+    );
     const response = this.mapOutcome(outcome);
     this.recordOutcome(parsed.command, outcome, startedAt);
     await this.boostAfterMotion(parsed.command, outcome);
@@ -3194,6 +3471,18 @@ var secretParamLike = () => /\b((?:api[_-]?key|apikey|access[_-]?token|refresh[_
 var urlBasicAuthLike = () => /(\/\/[^\s/:@]+:)[^\s@/]+@/g;
 function redactSecretShapes(text, replacement = "[redacted]") {
   if (!text) return text;
+  const parts = text.split(SECRET_PLACEHOLDER);
+  if (parts.length === 1) return redactSegment(text, replacement);
+  return parts.map(
+    (part, index) => (
+      // Odd segments are the captured names.
+      index % 2 === 1 ? `{{secret:${part}}}` : redactSegment(part, replacement)
+    )
+  ).join("");
+}
+var SECRET_PLACEHOLDER = /\{\{secret:([A-Z_][A-Z0-9_]*)\}\}/g;
+function redactSegment(text, replacement) {
+  if (!text) return text;
   return text.replace(authHeaderLike(), `$1${replacement}`).replace(tokenLike(), `Bearer ${replacement}`).replace(jwtLike(), replacement).replace(urlBasicAuthLike(), `$1${replacement}@`).replace(skKeyLike(), replacement).replace(secretParamLike(), `$1${replacement}`);
 }
 
@@ -3209,15 +3498,64 @@ function stateTokensMatch(a, b) {
   return a.tabId === b.tabId && a.navCounter === b.navCounter && a.urlHash === b.urlHash && a.domHash === b.domHash && viewportAgrees;
 }
 function guardErrorShapes(executor) {
-  return async (command) => {
-    const result = await executor(command);
+  return async (command, context) => {
+    const result = await executor(command, context);
     if (typeof result.error !== "string") return result;
     const scrubbed = redactForModel(result.error);
     return scrubbed === result.error ? result : { ...result, error: scrubbed };
   };
 }
+function withSecretScrub(registry, executor, documentKeyFor) {
+  const readKey = async (tabId) => {
+    try {
+      return await documentKeyFor?.(tabId);
+    } catch {
+      return void 0;
+    }
+  };
+  return async (command, context) => {
+    const typedBefore = registry.hasExposure();
+    const keyBefore = typedBefore ? await readKey(command.tabId) : void 0;
+    const result = await executor(command, context);
+    const scrubber = registry.scrubber();
+    const output = result.output;
+    const record = typeof output === "object" && output !== null ? output : void 0;
+    let suppress = false;
+    if (record?.screenshot !== void 0 && registry.hasExposure()) {
+      const tabId = command.tabId ?? result.stateToken?.tabId;
+      const keyAfter = await readKey(tabId);
+      suppress = !keyAfter || registry.exposedAt(keyAfter) || typedBefore && (!keyBefore || registry.exposedAt(keyBefore));
+    }
+    if (!scrubber && !suppress) return result;
+    let scrubbedOutput = output;
+    if (record !== void 0) {
+      const { screenshot, ...rest } = record;
+      if (suppress) {
+        scrubbedOutput = {
+          ...scrubber ? scrubber.scrubDeep(rest) : rest,
+          screenshotSuppressed: true
+        };
+      } else {
+        scrubbedOutput = {
+          ...scrubber ? scrubber.scrubDeep(rest) : rest,
+          ...screenshot === void 0 ? {} : { screenshot }
+        };
+      }
+    } else if (typeof output === "string" && scrubber) {
+      scrubbedOutput = scrubber.scrubString(output);
+    }
+    return {
+      ...result,
+      ...output === void 0 ? {} : { output: scrubbedOutput },
+      ...scrubber && typeof result.error === "string" ? { error: scrubber.scrubString(result.error) } : {}
+    };
+  };
+}
+function runDriver(driver, command, context) {
+  return context ? driver.execute(command, context) : driver.execute(command);
+}
 function guardStaleness(driver, lease) {
-  return async (command) => {
+  return async (command, context) => {
     const { action } = command;
     if (command.source !== "manual" && action.kind !== "webmcp_cancel" && !negotiateViewport(driver.sessionViewportPolicy?.() ?? "fixed", command).ok) {
       return {
@@ -3226,7 +3564,7 @@ function guardStaleness(driver, lease) {
       };
     }
     if (action.kind !== "act" || action.expectedState === void 0) {
-      return driver.execute(command);
+      return runDriver(driver, command, context);
     }
     const current = await driver.currentStateToken(command.tabId);
     const refusal = lease && leaseRefusalFor(lease.state(), command);
@@ -3245,7 +3583,7 @@ function guardStaleness(driver, lease) {
         ...bound && fresh.output !== void 0 ? { output: fresh.output } : {}
       };
     }
-    return driver.execute(command);
+    return runDriver(driver, command, context);
   };
 }
 function leaseBlockedResult(refusal) {
@@ -3259,10 +3597,10 @@ function leaseBlockedResult(refusal) {
   };
 }
 function guardLease(lease, executor) {
-  return async (command) => {
+  return async (command, context) => {
     const refusal = leaseRefusalFor(lease.state(), command);
     if (refusal) return leaseBlockedResult(refusal);
-    return executor(command);
+    return executor(command, context);
   };
 }
 
@@ -3381,9 +3719,18 @@ function buildBrowserdStack(driver, config) {
   const bootId = config.bootId ?? randomUUID3();
   const ledger = new CommandLedger({ bootId });
   const lease = config.lease ?? new HandoffLease();
+  const secrets = {
+    scrubber: () => driver.secretRegistry?.().scrubber() ?? null,
+    exposedAt: (documentKey) => driver.secretRegistry?.().exposedAt(documentKey) ?? false,
+    hasExposure: () => driver.secretRegistry?.().hasExposure() ?? false
+  };
   const queue = new CommandQueue(
     guardErrorShapes(
-      config.authority === "shared" ? guardStaleness(driver) : guardLease(lease, guardStaleness(driver, lease))
+      withSecretScrub(
+        secrets,
+        config.authority === "shared" ? guardStaleness(driver) : guardLease(lease, guardStaleness(driver, lease)),
+        (tabId) => driver.documentKey?.(tabId) ?? Promise.resolve(void 0)
+      )
     ),
     bootId
   );
@@ -5065,6 +5412,94 @@ async function readTabMetadata(cdp, fallbackUrl, options = {}) {
     // `entries.length > 1` — is the question "is there something behind me".
     canGoBack: !!history && history.currentIndex > 0,
     canGoForward: !!history && history.currentIndex < history.entries.length - 1
+  };
+}
+
+// server/services/browserd/daemon/secret-registry.ts
+var placeholderFor = (name) => `{{secret:${name}}}`;
+function createBrowserSecretRegistry() {
+  const byValue = /* @__PURE__ */ new Map();
+  let scrubber = null;
+  let stale = false;
+  const typedInto = /* @__PURE__ */ new Set();
+  let typedSomewhere = false;
+  return {
+    register(secrets) {
+      for (const secret of secrets) {
+        if (secret.value.length < MIN_SCRUBBABLE_LENGTH) continue;
+        if (byValue.get(secret.value) === secret.name) continue;
+        byValue.set(secret.value, secret.name);
+        stale = true;
+      }
+    },
+    scrubber() {
+      if (stale) {
+        scrubber = createSecretScrubber(
+          [...byValue].map(([value, name]) => ({ name, value })),
+          // Give back the placeholder the model wrote, never the value.
+          { replacement: placeholderFor }
+        );
+        stale = false;
+      }
+      return scrubber;
+    },
+    markTyped(documentKey) {
+      if (documentKey) typedInto.add(documentKey);
+      else typedSomewhere = true;
+    },
+    exposedAt(documentKey) {
+      if (typedSomewhere) return true;
+      if (typedInto.size === 0) return false;
+      return !documentKey || typedInto.has(documentKey);
+    },
+    hasExposure() {
+      return typedSomewhere || typedInto.size > 0;
+    },
+    get size() {
+      return byValue.size;
+    }
+  };
+}
+
+// server/services/browserd/daemon/secret-substitution.ts
+function resolveActSecrets(action, secrets) {
+  const values = new Map((secrets ?? []).map((s) => [s.name, s.value]));
+  const texts = [
+    ...action.value === void 0 ? [] : [action.value],
+    ...(action.fields ?? []).flatMap(
+      (field) => typeof field.value === "string" ? [field.value] : []
+    )
+  ];
+  for (const name of new Set(texts.flatMap(secretNamesIn))) {
+    const secret = values.get(name);
+    if (secret !== void 0 && secret.length < MIN_SCRUBBABLE_LENGTH) {
+      throw new Error(
+        formatBrowserdError(
+          "secret_too_short",
+          `"${name}" is shorter than ${MIN_SCRUBBABLE_LENGTH} characters, too short to hide reliably in what the page shows back; nothing was typed. Ask the user to type it themselves.`
+        )
+      );
+    }
+  }
+  const value = action.value === void 0 ? void 0 : substituteSecrets(action.value, values);
+  const fields = action.fields?.map(
+    (field) => typeof field.value === "string" ? { ...field, value: substituteSecrets(field.value, values) } : field
+  );
+  if (value === null || fields?.some((field) => field.value === null)) {
+    throw new Error(
+      formatBrowserdError(
+        "secret_unresolved",
+        "this act referenced a {{secret:NAME}} the browser was not given a value for; nothing was typed. Check the name, and that the secret is set for this environment."
+      )
+    );
+  }
+  const valueChanged = value !== void 0 && value !== action.value;
+  const fieldsChanged = fields !== void 0 && fields.some((field, index) => field.value !== action.fields?.[index]?.value);
+  if (!valueChanged && !fieldsChanged) return action;
+  return {
+    ...action,
+    ...value === void 0 ? {} : { value },
+    ...fields === void 0 ? {} : { fields }
   };
 }
 
@@ -6982,6 +7417,8 @@ var ChromiumDriver = class {
   pageTextMaxBytes;
   /** Behaviour this build has but does not do by default. @see BrowserdFeatures */
   features;
+  /** Values this boot has typed into a page, and what to show instead. */
+  secrets;
   lease;
   tabs = /* @__PURE__ */ new Map();
   /**
@@ -7120,6 +7557,7 @@ var ChromiumDriver = class {
     this.webmcpOutputBudgetBytes = options.webmcpOutputBytes ?? DEFAULT_WEBMCP_OUTPUT_BYTES;
     this.pageTextMaxBytes = options.pageTextBytes ?? DEFAULT_PAGE_TEXT_MAX_BYTES;
     this.features = options.features ?? {};
+    this.secrets = options.secrets ?? createBrowserSecretRegistry();
     this.lease = options.lease;
     this.viewportPolicy = options.viewport?.policy ?? "fixed";
     this.allowPaneResize = options.viewport?.allowPaneResize === true;
@@ -7146,6 +7584,10 @@ var ChromiumDriver = class {
    */
   sessionViewportPolicy() {
     return this.viewportPolicy;
+  }
+  /** Shared by accessor so the scrub wrapper and driver hold one instance. */
+  secretRegistry() {
+    return this.secrets;
   }
   async requestViewport(size) {
     if (size.policy === "followPane" && this.allowPaneResize)
@@ -7266,10 +7708,10 @@ var ChromiumDriver = class {
    * verb passes through is what makes "never resize midway through an action"
    * true for all of them at once — including the ones added later.
    */
-  async execute(command) {
-    return this.barrier.run(() => this.executeInBarrier(command));
+  async execute(command, context) {
+    return this.barrier.run(() => this.executeInBarrier(command, context));
   }
-  async executeInBarrier(command) {
+  async executeInBarrier(command, context) {
     if (command.source !== "manual" && command.action.kind !== "webmcp_cancel" && !negotiateViewport(this.viewportPolicy, command).ok) {
       return {
         ok: false,
@@ -7350,8 +7792,22 @@ var ChromiumDriver = class {
       }
       case "observe":
         return this.observe(tabId, action, permit);
-      case "act":
-        return this.act(tabId, action, permit, command.source);
+      case "act": {
+        let resolved = action;
+        try {
+          resolved = resolveActSecrets(action, context?.secrets);
+        } catch (error) {
+          return {
+            ok: false,
+            error: error instanceof Error ? error.message : String(error)
+          };
+        }
+        if (resolved !== action && context?.secrets?.length) {
+          this.secrets.register(context.secrets);
+          this.secrets.markTyped(await this.documentKey(tabId));
+        }
+        return this.act(tabId, resolved, permit, command.source);
+      }
       case "webmcp_invoke":
         return this.webmcpInvoke(tabId, action, permit, command.commandId);
       case "webmcp_cancel":
@@ -8318,6 +8774,29 @@ var ChromiumDriver = class {
       ...this.observation(tabId, entry, { screenshot }, after, permit),
       settled: false
     };
+  }
+  /**
+   * `tabId|performance.timeOrigin`, the identity of a tab's current document.
+   * Read over CDP so both engines answer; undefined on any failure, which
+   * secret exposure treats as exposed.
+   */
+  async documentKey(tabId) {
+    const id = tabId ?? this.activeTabId ?? DEFAULT_TAB;
+    const entry = this.tabs.get(id);
+    if (!entry || entry.page.isClosed()) return void 0;
+    try {
+      const cdp = await entry.page.cdp();
+      if (!cdp) return void 0;
+      const raw = await cdp.send("Runtime.evaluate", {
+        expression: "performance.timeOrigin",
+        returnByValue: true,
+        timeout: 1e3
+      });
+      const origin = raw?.result?.value;
+      return typeof origin === "number" && Number.isFinite(origin) ? `${id}|${origin}` : void 0;
+    } catch {
+      return void 0;
+    }
   }
   async currentStateToken(tabId) {
     const entry = this.tabs.get(tabId ?? this.activeTabId ?? DEFAULT_TAB);
