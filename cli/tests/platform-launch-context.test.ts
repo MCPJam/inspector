@@ -13,6 +13,9 @@
  * and an eval run from one job must not disagree about where they came from.
  */
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { RUN_LAUNCH_HEADERS } from "@mcpjam/sdk/platform";
 import { CliError } from "../src/lib/output.js";
@@ -82,6 +85,43 @@ test("declares `github_action` and the job inside GitHub Actions", async () => {
   // run row's `pipelineId`/`jobId` at its own boundary, in one place.
   assert.equal(ci.runId, "42.1");
   assert.equal(ci.job, "evals");
+});
+
+test("uses the PR event's fork repository for its branch link", async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "mcpjam-github-event-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const eventPath = join(directory, "event.json");
+  writeFileSync(
+    eventPath,
+    JSON.stringify({
+      number: 4764,
+      pull_request: {
+        number: 4764,
+        html_url: "https://github.com/acme/widgets/pull/4764",
+        head: {
+          ref: "feat/from-fork",
+          repo: {
+            full_name: "contributor/widgets",
+            html_url: "https://github.com/contributor/widgets",
+          },
+        },
+      },
+    }),
+  );
+
+  const headers = await launchWith({
+    ...GITHUB_ENV,
+    GITHUB_EVENT_PATH: eventPath,
+    GITHUB_REF: "refs/pull/4764/merge",
+    GITHUB_REF_NAME: "4764/merge",
+  });
+  const ci = JSON.parse(headers[RUN_LAUNCH_HEADERS.ci]!);
+  assert.equal(ci.branch, "feat/from-fork");
+  assert.equal(
+    ci.branchUrl,
+    "https://github.com/contributor/widgets/tree/feat%2Ffrom-fork",
+  );
+  assert.equal(ci.prUrl, "https://github.com/acme/widgets/pull/4764");
 });
 
 test("declares nothing on a call that starts no run", async () => {

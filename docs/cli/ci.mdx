@@ -413,13 +413,13 @@ There are two ways to wire MCPJam evals into a pipeline: trigger a **hosted eval
 ```
 
 <Note>
-**Runs launched from Actions badge as GitHub, and fill the CI column.** The CLI
+**Runs launched from Actions badge as GitHub, and show GitHub provenance columns.** The CLI
 declares what it is on every launch, so a run started from a workflow shows
 **GitHub** in the Runs table rather than the generic **API** that every hosted
-launch used to show, and its commit, branch and job appear alongside it. Nothing
-to configure: the declaration is derived from the standard `GITHUB_*`
-environment, exactly as conformance uploads already do it. Outside CI the same
-command declares **CLI**.
+launch used to show. Filtering the Runs table by the **GitHub** source reveals
+separate **Commit**, **PR**, and **Branch** columns populated from the standard
+`GITHUB_*` environment — nothing to configure. Outside CI the same command
+declares **CLI**.
 
 That commit is also what `eval compare --baseline-sha` resolves against, so a
 run launched by the CLI in CI can now be compared to a previous commit's run the
@@ -588,5 +588,7 @@ If you instead run evals inside your own CI job with [`@mcpjam/sdk`](/sdk/concep
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: npx vitest run evals/
 ```
+
+The SDK automatically attaches available CI metadata on GitHub Actions, GitLab CI, CircleCI, Buildkite, Jenkins, Vercel, and Netlify. You do not need to pass `mcpjam.ci`; an explicit object still replaces detection, and `mcpjam: { ci: {} }` disables it. This SDK behavior is separate from the hosted CLI launch detector, which supports GitHub Actions only.
 
 See [Save Results to MCPJam](/sdk/concepts/saving-results) for auto-save, the manual reporting APIs, CI metadata (branch, commit SHA, run URL), and artifact upload (JUnit XML, Jest/Vitest JSON).

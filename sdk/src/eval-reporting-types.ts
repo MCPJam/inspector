@@ -18,17 +18,15 @@ export type EvalCiMetadata = {
   pipelineId?: string;
   jobId?: string;
   runUrl?: string;
+  repositoryUrl?: string;
+  prUrl?: string;
+  branchUrl?: string;
   branch?: string;
   commitSha?: string;
 };
 
 export type EvalTraceSpanCategory =
-  | "step"
-  | "llm"
-  | "tool"
-  | "error"
-  | "connection"
-  | "discovery";
+  "step" | "llm" | "tool" | "error" | "connection" | "discovery";
 export type EvalTraceSpanStatus = "ok" | "error";
 
 export type EvalTraceSpanInput = {
@@ -212,6 +210,7 @@ export type MCPJamReportingConfig = {
   failOnToolError?: boolean;
   externalRunId?: string;
   framework?: string;
+  /** Auto-detected when omitted. An explicit object is preserved; `{}` opts out. */
   ci?: EvalCiMetadata;
   expectedIterations?: number;
   tags?: string[];
@@ -301,8 +300,7 @@ export type ReportEvalResultsInput = MCPJamReportingConfig & {
    */
   executor?: {
     getHostSnapshot?: () =>
-      | import("./host-config/public-types.js").HostJson
-      | undefined;
+      import("./host-config/public-types.js").HostJson | undefined;
   };
   mcpClientManager?: MCPClientManager;
 };

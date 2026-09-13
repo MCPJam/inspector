@@ -216,3 +216,44 @@ export {
   type TrialVerdictTone,
   type TrialVerdictWord,
 } from "./case-workspace/selected-trial";
+
+/**
+ * Reasons that exist only because an LLM judge spoke.
+ *
+ * `deriveUserValue` in the contract is two-tier: deterministic assertions
+ * decide the stage first, and the judge is consulted only where they were
+ * silent. So a User value row carries the judge's verdict if and only if its
+ * reason is one of these — a row decided by an assertion (`observed`,
+ * `predicateFailed`) says nothing about what the judge thought, even when a
+ * judge also ran.
+ *
+ * Blind review reads this to decide what to mask. Hiding the whole chain
+ * because a judge exists was the previous rule, and it threw away five stages
+ * of runner observation to protect one card.
+ */
+const JUDGE_DECIDED_REASONS: ReadonlySet<string> = new Set([
+  "judgeObserved",
+  "judgePartial",
+  "judgeFailed",
+  "judgePending",
+]);
+
+export function isJudgeDecidedStageRow(row: StageResultRow): boolean {
+  return row.reason !== undefined && JUDGE_DECIDED_REASONS.has(row.reason);
+}
+
+/**
+ * Which stage a blind reviewer must not see, or `null` when the chain can be
+ * shown whole.
+ *
+ * Only User value can be judge-decided (`EVALUATOR_STAGE` files both judges
+ * there), and only when its reason says the judge decided it. A verified
+ * chain whose User value came from an assertion has no verdict to leak.
+ */
+export function judgeDecidedStage(
+  chain: EvalRunDecisionChain | null | undefined,
+): UserValueStage | null {
+  if (!chain || chain.status !== "verified") return null;
+  const userValue = chain.stages.find((row) => row.stage === "userValue");
+  return userValue && isJudgeDecidedStageRow(userValue) ? "userValue" : null;
+}
