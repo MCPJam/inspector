@@ -1,7 +1,7 @@
 /**
- * Where this server has been repointed, and whether that cleared credentials.
+ * Where this server has been pointed, and whether that cleared credentials.
  *
- * MJ-003 acceptance criterion 3. The backend records a url change and reads it
+ * MJ-003 acceptance criterion 3. The backend records the change and reads it
  * back through `auditEvents:listServerUrlChanges`, which is deliberately NOT
  * gated on the `auditLog` entitlement — the organization audit log is, and the
  * member whose saved credential was destroyed by somebody else's edit is
@@ -22,18 +22,27 @@ import { isConvexQueryUnavailable } from "@/lib/convex-error";
  */
 export const SERVER_URL_CHANGES_QUERY = "auditEvents:listServerUrlChanges";
 
+const URL_CHANGED_ACTION = "server.url.changed";
+const CREDENTIALS_CLEARED_ACTION = "server.credentials.cleared_on_origin_change";
+
 interface ServerUrlChangeEvent {
-  // Convex system field. The sibling audit reader (`useOrganizationAudit`)
-  // keys off `_id` for these same rows.
-  _id: string;
+  // `id`, not Convex's `_id`: the query projects the row rather than returning
+  // it, so that the metadata it exposes is a decided list rather than whatever
+  // the audit table happens to hold.
+  id: string;
   action: string;
   actorEmail: string | null;
   timestamp: number;
   metadata?: {
+    // Which vector moved the destination. Both events carry it.
+    cause?: string | null;
     previousOrigin?: string | null;
     nextOrigin?: string | null;
-    originChanged?: boolean;
     clearedOnOriginChange?: boolean;
+    // An http row switched to stdio keeps its `url` and stops reading it. The
+    // url event still fires, so without this the panel would tell somebody
+    // their URL changed when the row still holds the one they can see.
+    viaTransportFlip?: boolean;
     clearedKinds?: string[];
   } | null;
 }
@@ -74,7 +83,9 @@ function formatWhen(timestamp: number): string {
  * escaped to the route boundary and took the whole Servers page down the
  * moment anyone opened a hosted server's details (PostHog issue
  * 01a08999-8c34-77a2-922e-557c0e515919). The boundary below is what keeps a
- * read-only, renders-nothing-by-default panel from ever doing that again.
+ * read-only, renders-nothing-by-default panel from ever doing that again —
+ * still worth having now that the query is deployed, for a browser left open
+ * across a rollback.
  *
  * `isConvexQueryUnavailable` alone is not enough here: it names the DEV
  * shapes ("Could not find public function"), and production redacts every
@@ -112,12 +123,69 @@ export function ServerUrlChangeHistory({
   );
 }
 
+/**
+ * One line saying what moved, for one event.
+ *
+ * A url repoint writes both actions and a stdio command swap writes only the
+ * clear, so the clear row is a row of its own exactly when it is the only
+ * record of the edit. Otherwise it is dropped: two rows for one edit reads as
+ * two edits, and the url event already carries `clearedKinds`.
+ */
+function isRenderableEvent(event: ServerUrlChangeEvent): boolean {
+  return (
+    event.action === URL_CHANGED_ACTION ||
+    (event.action === CREDENTIALS_CLEARED_ACTION &&
+      event.metadata?.cause === "stdio_target_change")
+  );
+}
+
+function DestinationChange({ event }: { event: ServerUrlChangeEvent }) {
+  const previous = event.metadata?.previousOrigin ?? null;
+  const next = event.metadata?.nextOrigin ?? null;
+
+  if (event.action === CREDENTIALS_CLEARED_ACTION) {
+    // A stdio row. The backend records origins as null for it — a command is
+    // not an origin — and never records the command itself, because it is
+    // the caller's own string.
+    return (
+      <span className="text-muted-foreground">
+        Pointed at a different command
+      </span>
+    );
+  }
+
+  if (event.metadata?.viaTransportFlip === true) {
+    return (
+      <span className="text-muted-foreground">
+        Switched to a local command. The saved URL is no longer used.
+      </span>
+    );
+  }
+
+  if (previous && next && previous !== next) {
+    return (
+      <>
+        <span className="font-mono">{previous}</span>
+        <span className="text-muted-foreground">→</span>
+        <span className="font-mono">{next}</span>
+      </>
+    );
+  }
+
+  return (
+    <span className="text-muted-foreground">
+      URL changed{next ? " within " : ""}
+      {next ? <span className="font-mono">{next}</span> : null}
+    </span>
+  );
+}
+
 function ServerUrlChangeHistoryPanel({
   serverId,
 }: ServerUrlChangeHistoryProps) {
   const events = useQuery(
     SERVER_URL_CHANGES_QUERY as never,
-    serverId ? ({ serverId } as never) : "skip",
+    serverId ? ({ serverId } as never) : "skip"
   ) as ServerUrlChangeEvent[] | undefined;
 
   // `Array.isArray`, not a truthiness-and-length check. `undefined` is still
@@ -129,24 +197,19 @@ function ServerUrlChangeHistoryPanel({
   // A read from outside gets checked, not assumed.
   if (!Array.isArray(events) || events.length === 0) return null;
 
-  // One row per edit. The backend also records the credential clear as its own
-  // action, because the destruction is a fact in its own right — but rendering
-  // both would read as two edits, and the url-change event already carries
-  // `clearedOnOriginChange` AND `clearedKinds`, so nothing is lost by showing
-  // only this one. That is deliberate on the backend side: putting the kinds on
-  // the event that describes the change means nothing here has to correlate two
-  // audit rows by timestamp to say what went.
-  const urlChanges = events.filter((e) => e.action === "server.url.changed");
-  if (urlChanges.length === 0) return null;
+  const changes = events.filter(isRenderableEvent);
+  if (changes.length === 0) return null;
 
   return (
     <div className="space-y-2 pt-2">
-      <p className="text-xs font-medium">URL history</p>
+      <p className="text-xs font-medium">Destination history</p>
       <ul className="space-y-1.5">
-        {urlChanges.map((event) => {
-          const previous = event.metadata?.previousOrigin ?? null;
-          const next = event.metadata?.nextOrigin ?? null;
-          const cleared = event.metadata?.clearedOnOriginChange === true;
+        {changes.map((event) => {
+          // The clear event exists only because something was cleared; the url
+          // event fires for same-origin edits too and says so itself.
+          const cleared =
+            event.action === CREDENTIALS_CLEARED_ACTION ||
+            event.metadata?.clearedOnOriginChange === true;
           const clearedKindLabels = Array.isArray(event.metadata?.clearedKinds)
             ? event.metadata.clearedKinds
                 .map((kind) => CLEARED_KIND_LABELS[kind] ?? kind)
@@ -154,29 +217,18 @@ function ServerUrlChangeHistoryPanel({
             : [];
           return (
             <li
-              key={event._id}
+              key={event.id}
               className="rounded-md border border-border px-2.5 py-2 text-xs"
             >
               <div className="flex flex-wrap items-baseline gap-x-1.5">
-                {previous && next && previous !== next ? (
-                  <>
-                    <span className="font-mono">{previous}</span>
-                    <span className="text-muted-foreground">→</span>
-                    <span className="font-mono">{next}</span>
-                  </>
-                ) : (
-                  <span className="text-muted-foreground">
-                    URL changed{next ? " within " : ""}
-                    {next ? <span className="font-mono">{next}</span> : null}
-                  </span>
-                )}
+                <DestinationChange event={event} />
               </div>
               <div className="mt-0.5 text-muted-foreground">
                 {event.actorEmail ?? "Unknown user"} ·{" "}
                 {formatWhen(event.timestamp)}
               </div>
               {cleared && (
-                <div className="mt-1 text-amber-600 dark:text-amber-500">
+                <div className="mt-1 text-warning">
                   Saved credentials were cleared and need re-entering
                   {clearedKindLabels.length > 0
                     ? `: ${clearedKindLabels.join(", ")}`

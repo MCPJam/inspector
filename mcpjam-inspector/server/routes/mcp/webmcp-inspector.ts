@@ -65,7 +65,10 @@ import type {
 } from "../../services/webmcp-inspector/session-runtime";
 import { touchBrowserSession } from "../../services/browserd/browser-sessions-client.js";
 import { touchComputerActivity } from "../../utils/computers/control-plane-client.js";
-import { shouldTouchActivity } from "../../utils/computers/activity-touch.js";
+import {
+  shouldTouchActivity,
+  shouldTouchSessionPanel,
+} from "../../utils/computers/activity-touch.js";
 import { isHostedDesktopUnavailable } from "../../utils/computers/runtime-config.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
@@ -419,6 +422,10 @@ function hostedIdentity(
 function hostedPresence(runtime: WebMcpSessionRuntime): void {
   const target = runtime.hostedTarget();
   if (!target) return;
+  // The stream ticks every 15s; the control plane needs to hear once a minute.
+  // Without this, one open pane is four control-plane writes a minute, and the
+  // extra three change nothing.
+  if (!shouldTouchSessionPanel(target.sessionId)) return;
   void touchBrowserSession({ sessionId: target.sessionId, kind: "panel" })
     .then(({ counted }) => {
       if (counted && shouldTouchActivity(target.computerId)) {
@@ -559,7 +566,12 @@ webmcpInspector.post("/sessions", async (c) => {
   }
 
   let localScope: LocalInspectionScope | undefined;
-  if (transport === "local") {
+  // NOT `transport === "local"`: the field is optional, and an omitted one
+  // means local (a real window on this machine). Keying consent off the
+  // explicit value let the wire default launch Chromium unauthorized, and
+  // `resolveRuntime` — which checks EVERY non-hosted session — then refused
+  // every command on the session that start had just handed back.
+  if (transport !== "hosted") {
     try {
       localScope = await authorizeLocalInspection(c, projectId);
     } catch (error) {
@@ -817,27 +829,13 @@ webmcpInspector.get("/sessions/:id/events", async (c) => {
     ? Math.max(0, Math.min(500, replayParam))
     : 200;
   /**
-   * `frames=off`: send everything BUT the viewport frames.
-   *
-   * For a client carrying frames on the binary WebSocket instead (see
-   * `routes/web/webmcp-frames.ts`). Filtered HERE rather than in the hub,
-   * which stays a clean fan-out: subscribers with different appetites are a
-   * property of the transport, not of the session.
-   *
-   * Absent or any other value means frames flow, so a client that has never
-   * heard of this parameter — every client older than the WebSocket — gets
-   * exactly the stream it gets today.
-   */
-  const framesSuppressed = c.req.query("frames") === "off";
-
-  /**
    * The session this stream belongs to, resolved once.
    *
-   * Held so a frame this consumer could not take can be reported back to the
-   * provider, which is the only thing that can act on it. Looked up here
-   * rather than per frame: `get` throws for a reaped session, and doing that
-   * inside a send would turn a dead session into an exception in the middle of
-   * the stream.
+   * Held for the authorization gate below: a local Browser grant can be
+   * revoked mid-stream, and this stream has to stop the moment it is. Looked
+   * up here rather than per event — `get` throws for a reaped session, and
+   * doing that inside a send would turn a dead session into an exception in
+   * the middle of the stream.
    */
   let runtime: ReturnType<typeof webMcpSessions.get> | undefined;
   try {
@@ -849,8 +847,6 @@ webmcpInspector.get("/sessions/:id/events", async (c) => {
   let unsubscribeConsent: (() => void) | undefined;
   let unsubscribe: (() => void) | undefined;
   let keepalive: ReturnType<typeof setInterval> | undefined;
-  /** Set by `start`, called by `pull`. See `pendingFrame`. */
-  let flushPending: (() => void) | undefined;
   const encoder = new TextEncoder();
 
   // Shared by the abort listener and `cancel()`. A consumer that cancels the
@@ -864,28 +860,7 @@ webmcpInspector.get("/sessions/:id/events", async (c) => {
     keepalive = undefined;
     unsubscribe?.();
     unsubscribe = undefined;
-    // A held frame for a consumer that is gone is just retained bytes.
-    pendingFrame = undefined;
-    flushPending = undefined;
   };
-
-  /**
-   * The one frame this subscriber is behind on, if any.
-   *
-   * The hub's coalesced slot bounds what is REPLAYED; it does nothing for a
-   * consumer that has stopped reading. Frames are the only event large enough
-   * and frequent enough to matter there — 10fps at a 256 KiB cap is 2.5 MiB/s
-   * into a `ReadableStream` queue that grows without limit while a client or
-   * its network stalls. So a frame offered to a full queue is HELD here instead
-   * of enqueued, exactly one of them, replaced by each newer one; `pull` sends
-   * whatever survived once the consumer drains. Bounded memory, and no
-   * permanently stale pane the way a plain drop would leave.
-   *
-   * Everything else is enqueued unconditionally: the timeline is small, bounded
-   * by its own ring, and losing an entry to backpressure would silently corrupt
-   * the record the session exists to produce.
-   */
-  let pendingFrame: Uint8Array | undefined;
 
   const stream = new ReadableStream({
     start(controller) {
@@ -904,44 +879,19 @@ webmcpInspector.get("/sessions/:id/events", async (c) => {
           /* client went away mid-write */
         }
       };
+      // NO BACKPRESSURE BRANCH, because there are no pixels here any more.
+      // This stream used to carry frames too, and a 10fps stream at a 256 KiB
+      // cap is 2.5 MiB/s into a `ReadableStream` queue that grows without
+      // limit while a client stalls — so frames were held in a one-slot buffer
+      // and everything else enqueued unconditionally. Frames now have their
+      // own socket (`routes/web/webmcp-frames.ts`), whose pacer does that job
+      // properly, and what is left here is the timeline: small, bounded by its
+      // own ring, and never worth dropping.
       const send = (payload: unknown) => {
+        // A revoked local grant stops this stream at that instant, not at the
+        // next handshake.
         if (runtime && !runtime.isAuthorized()) return;
-        const isFrame =
-          typeof payload === "object" &&
-          payload !== null &&
-          (payload as { type?: unknown }).type === "frame";
-        // Dropped before it is even serialized, and dropped for REPLAYED
-        // frames as well as live ones: `subscribe` delivers the retained frame
-        // through this same closure, and a client on the binary socket would
-        // otherwise still pay the base64-in-JSON tax once per connect.
-        if (isFrame && framesSuppressed) return;
-        const chunk = encoder.encode(`data: ${JSON.stringify(payload)}\n\n`);
-        if (isFrame) {
-          const room = controller.desiredSize;
-          if (room !== null && room <= 0) {
-            // Replacing a held frame means a second one arrived before this
-            // consumer read the first: the same "could not take it" signal the
-            // socket's pacer reports, through the same funnel. The first hold
-            // is not a drop — that is the mechanism working.
-            if (pendingFrame !== undefined) {
-              try {
-                runtime?.noteFramePressure();
-              } catch {
-                /* a diagnostic must never break the stream */
-              }
-            }
-            pendingFrame = chunk;
-            return;
-          }
-          pendingFrame = undefined;
-        }
-        write(chunk);
-      };
-      flushPending = () => {
-        if (!pendingFrame) return;
-        const chunk = pendingFrame;
-        pendingFrame = undefined;
-        write(chunk);
+        write(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
       };
 
       try {
@@ -966,7 +916,16 @@ webmcpInspector.get("/sessions/:id/events", async (c) => {
         // commands, so a session someone has open and is reading — the normal
         // way to watch an agent drive a page — is reaped mid-view.
         webMcpSessions.touchWatchedSessions();
-        if (resolved) hostedPresence(resolved);
+        // A HOSTED session's presence costs money, so it needs the stronger
+        // claim: not "a stream is attached" — which stays true from a
+        // background tab, a minimised window, and a pane behind another tab —
+        // but "somebody has this on screen", which only the pane's own ping
+        // establishes. Reporting on attachment alone held a metered desktop
+        // box awake for the full 2-hour ceiling for a picture nobody was
+        // looking at.
+        if (resolved && webMcpSessions.isWatched(resolved.sessionId)) {
+          hostedPresence(resolved);
+        }
       }, 15_000);
 
       c.req.raw.signal.addEventListener("abort", () => {
@@ -977,14 +936,6 @@ webmcpInspector.get("/sessions/:id/events", async (c) => {
           /* already closed */
         }
       });
-    },
-    /**
-     * Called when the consumer has room again. Sending the held frame here is
-     * what keeps a slow client's pane converging on the current paint instead
-     * of freezing at whatever it last managed to read.
-     */
-    pull() {
-      flushPending?.();
     },
     cancel() {
       teardown();

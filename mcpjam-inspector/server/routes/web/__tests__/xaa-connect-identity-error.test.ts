@@ -134,7 +134,9 @@ describe("createAuthorizedManager — backend-resolved XAA identity error", () =
               serverConfig: {
                 transportType: "http",
                 url: "https://xaa.example.com/mcp",
-          secretsBoundOrigin: "https://xaa.example.com",
+                // MJ-003: bound to its own origin, as a post-backfill row is.
+                // An unbound preregistered row is refused before the mint.
+                secretsBoundOrigin: "https://xaa.example.com",
                 useOAuth: false,
                 useXaa: true,
                 authServerMode: "mcpjam",
@@ -196,7 +198,9 @@ describe("createAuthorizedManager — backend-resolved XAA identity error", () =
               serverConfig: {
                 transportType: "http",
                 url: "https://xaa.example.com/mcp",
-          secretsBoundOrigin: "https://xaa.example.com",
+                // MJ-003: bound to its own origin, as a post-backfill row is.
+                // An unbound preregistered row is refused before the mint.
+                secretsBoundOrigin: "https://xaa.example.com",
                 useOAuth: false,
                 useXaa: true,
                 authServerMode: "mcpjam",
@@ -287,6 +291,9 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
         serverConfig: {
           transportType: "http",
           url: "https://configured.example.com/mcp",
+          // MJ-003: bound to its own origin, as a post-backfill row is. A
+          // preregistered/DCR XAA mint reveals the row's client secret, so an
+          // unbound row is refused before the mint.
           secretsBoundOrigin: "https://configured.example.com",
           authMethod: "auto",
           authServerMode: "mcpjam",
@@ -335,6 +342,9 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
         serverConfig: {
           transportType: "http",
           url: "https://configured.example.com/mcp",
+          // MJ-003: bound to its own origin, as a post-backfill row is. A
+          // preregistered/DCR XAA mint reveals the row's client secret, so an
+          // unbound row is refused before the mint.
           secretsBoundOrigin: "https://configured.example.com",
           authMethod: "auto",
           authServerMode: "mcpjam",
@@ -346,6 +356,9 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
         serverConfig: {
           transportType: "http",
           url: "https://broken.example.com/mcp",
+          // MJ-003: bound to its own origin, as a post-backfill row is. A
+          // preregistered/DCR XAA mint reveals the row's client secret, so an
+          // unbound row is refused before the mint.
           secretsBoundOrigin: "https://broken.example.com",
           useXaa: true,
           authServerMode: "mcpjam",
@@ -377,6 +390,9 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
         serverConfig: {
           transportType: "http",
           url: "https://configured.example.com/mcp",
+          // MJ-003: bound to its own origin, as a post-backfill row is. A
+          // preregistered/DCR XAA mint reveals the row's client secret, so an
+          // unbound row is refused before the mint.
           secretsBoundOrigin: "https://configured.example.com",
           authMethod: "auto",
           authServerMode: "mcpjam",
@@ -422,7 +438,6 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
         serverConfig: {
           transportType: "http",
           url: "https://configured.example.com/mcp",
-          secretsBoundOrigin: "https://configured.example.com",
           authMethod: "xaa",
           registrationMode: "cimd",
           xaaClientAuth: "none",
@@ -433,6 +448,9 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
         serverConfig: {
           transportType: "http",
           url: "https://dcr.example.com/mcp",
+          // MJ-003: bound to its own origin, as a post-backfill row is. A
+          // preregistered/DCR XAA mint reveals the row's client secret, so an
+          // unbound row is refused before the mint.
           secretsBoundOrigin: "https://dcr.example.com",
           authMethod: "xaa",
           registrationMode: "dcr",
@@ -468,7 +486,6 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
           serverConfig: {
             transportType: "http",
             url: "https://configured.example.com/mcp",
-          secretsBoundOrigin: "https://configured.example.com",
             authMethod: "xaa",
             registrationMode: "cimd",
             xaaClientAuth: "private_key_jwt",
@@ -503,7 +520,6 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
           serverConfig: {
             transportType: "http",
             url: "https://configured.example.com/mcp",
-          secretsBoundOrigin: "https://configured.example.com",
             authMethod: "xaa",
             registrationMode: "cimd",
             xaaClientAuth: "private_key_jwt",
@@ -538,7 +554,6 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
           serverConfig: {
             transportType: "http",
             url: "https://configured.example.com/mcp",
-          secretsBoundOrigin: "https://configured.example.com",
             authMethod: "xaa",
             registrationMode: "cimd",
             xaaClientAuth: "private_key_jwt",
@@ -603,7 +618,6 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
           serverConfig: {
             transportType: "http",
             url: "https://configured.example.com/mcp",
-          secretsBoundOrigin: "https://configured.example.com",
             authMethod: "xaa",
             registrationMode: "cimd",
             xaaClientAuth: "private_key_jwt",
@@ -651,7 +665,6 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
           serverConfig: {
             transportType: "http",
             url: "https://configured.example.com/mcp",
-          secretsBoundOrigin: "https://configured.example.com",
             authMethod: "xaa",
             registrationMode: "cimd",
             xaaClientAuth: "private_key_jwt",
@@ -697,6 +710,9 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
         serverConfig: {
           transportType: "http",
           url: "https://configured.example.com/mcp",
+          // MJ-003: bound to its own origin, as a post-backfill row is. A
+          // preregistered/DCR XAA mint reveals the row's client secret, so an
+          // unbound row is refused before the mint.
           secretsBoundOrigin: "https://configured.example.com",
           authMethod: "auto",
           authServerMode: "mcpjam",
@@ -735,6 +751,9 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
         serverConfig: {
           transportType: "http",
           url: "https://configured.example.com/mcp",
+          // MJ-003: bound to its own origin, as a post-backfill row is. A
+          // preregistered/DCR XAA mint reveals the row's client secret, so an
+          // unbound row is refused before the mint.
           secretsBoundOrigin: "https://configured.example.com",
           authMethod: "auto",
           authServerMode: "mcpjam",

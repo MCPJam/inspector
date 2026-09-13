@@ -1,4 +1,4 @@
-import { PlaygroundBrowserOverrideContext } from "../playground-browser-override";
+vi.mock("@workos-inc/authkit-react", () => ({ useAuth: () => ({ user: { id: "member" } }) }));
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 
@@ -102,6 +102,14 @@ vi.mock("@/stores/harness-workdir-store", () => ({
 }));
 
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
+
+// `useBrowserToolIds` reads Convex auth and the project's local-browser
+// setting; unauthenticated + no setting keeps the rail on the host DTO, which
+// is what every case here pins.
+vi.mock("convex/react", () => ({
+  useConvexAuth: () => ({ isAuthenticated: false }),
+  useQuery: () => undefined,
+}));
 
 // Both panes are exercised in their own suites; here they only have to say
 // which one the rail mounted and whether it considers it the visible tab.
@@ -379,16 +387,6 @@ describe("PlaygroundRightRail — the gated-off fallback", () => {
 
   afterEach(() => {
     workspaceFlag.enabled = true;
-  });
-
-  it("offers Browser from a temporary override without a host or Computer", () => {
-    workspaceFlag.enabled = false;
-    engineState.selectedEngine = "cloud";
-    render(<PlaygroundBrowserOverrideContext.Provider value={true}>
-      <PlaygroundRightRail onClose={() => {}} hostConfig={null} hostId={null} projectId="proj-1" isAuthenticated />
-    </PlaygroundBrowserOverrideContext.Provider>);
-    expect(screen.getByRole("button", { name: /browser/i })).toBeInTheDocument();
-    expect(terminalSpies.useComputerTerminal).not.toHaveBeenCalled();
   });
 
   it.each(["local", "cloud"] as const)(

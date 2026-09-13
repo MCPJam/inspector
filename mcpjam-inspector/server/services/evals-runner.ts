@@ -18,6 +18,11 @@ import {
   type UsageTotals,
 } from "./evals/types";
 import { buildEvalIterationVerdict } from "./evals/iteration-verdict";
+import {
+  assessAgentActivity,
+  countModelInvocations,
+} from "./evals/agent-activity.js";
+import { parseBrowserToolPolicy } from "./evals/browser-tool-policy.js";
 import { collectToolAnnotations } from "./evals/transcript-evidence";
 import { browserApprovalDeliveryFor } from "./evals/browser-tool-policy.js";
 import { evalBoxFilesystemIsReachable } from "./evals/eval-box-access";
@@ -40,7 +45,10 @@ import {
   type ModelVisibleMcpToolResults,
   type ToolExposureSignals,
 } from "@mcpjam/sdk/host-config/internal";
-import { harnessOfHostConfig } from "./evals/harness-admission.js";
+import {
+  harnessOfHostConfig,
+  isModelFreeCase,
+} from "./evals/harness-admission.js";
 import {
   readTasksPolicy,
   type MCPClientManager,
@@ -174,6 +182,8 @@ import {
 import type { BenchmarkWriteGuard } from "./evals/artifact-ledger.js";
 import { buildStageAuthoredCase } from "./evals/stage-inputs.js";
 import { resolveEvalCaseModelDefinition } from "./evals/harness-admission.js";
+import { resolveBrowserSecrets } from "../utils/secrets/browser-secrets.js";
+import { markRuntimeSecretsDelivered } from "../utils/harness/runtime-secrets.js";
 import {
   createRunSetupObserver,
   type RunSetupObserver,
@@ -4227,6 +4237,27 @@ const runLocalIteration = async ({
         ...browser.scriptedCheckFailures,
         ...stepScriptedFailures,
       ],
+      // Guards against vacuous passes. @see assessAgentActivity
+      agentActivity: assessAgentActivity({
+        modelFree: isModelFreeCase(test),
+        isNegativeTest: test.isNegativeTest === true,
+        // Resolved: steps-authored cases leave the top-level list undefined.
+        expectedToolCalls: resolveEvalTestCase(test).expectedToolCalls.length,
+        toolSurface: {
+          mcpTools: Object.keys(prepared?.allTools ?? {}).length,
+          browserTools:
+            parseBrowserToolPolicy(resolvedExecution.browserToolPolicy, {
+              source: "agent-activity",
+              // The delivery parse above already reported a malformed policy.
+              quiet: true,
+            }) !== undefined,
+        },
+        toolCalls: toolsCalledByPromptWithWidgets.flat().length,
+        modelInvocations: countModelInvocations({
+          spans: traceForGate?.spans,
+          messages: traceForGate?.messages,
+        }),
+      }),
     });
     const promptTraceSummaries = buildPromptTraceSummaries(
       evaluation,
@@ -4938,6 +4969,17 @@ const runHostedIterationWithBrowser = async (
           })
         : undefined,
     );
+    // Secrets the browser may type. They are substituted inside the daemon and
+    // never become env vars; the box itself still receives none.
+    const browserSecrets = browserApprovalDelivery
+      ? await resolveBrowserSecrets({
+          bearer: convexAuthToken,
+          ...(builtInTarget && "projectId" in builtInTarget
+            ? { projectId: builtInTarget.projectId }
+            : {}),
+          ...(projectEnvironmentId ? { environmentId: projectEnvironmentId } : {}),
+        })
+      : [];
     return resolveHostTools(
       { builtInToolIds: resolvedExecution.builtInToolIds },
       builtInTarget && "projectId" in builtInTarget
@@ -4945,6 +4987,20 @@ const runHostedIterationWithBrowser = async (
             authHeader: convexAuthToken,
             projectId: builtInTarget.projectId,
             ...(browserApprovalDelivery ? { browserApprovalDelivery } : {}),
+            ...(browserSecrets.length > 0
+              ? {
+                  browserSecrets,
+                  onBrowserSecretDelivered: () => {
+                    void markRuntimeSecretsDelivered(convexAuthToken, {
+                      projectId: builtInTarget.projectId,
+                      ...(projectEnvironmentId
+                        ? { environmentId: projectEnvironmentId }
+                        : {}),
+                      secretCount: browserSecrets.length,
+                    });
+                  },
+                }
+              : {}),
             // Names THIS iteration, so an unattended browser gets a profile no
             // other iteration of this suite can reach. The suite's project is
             // not enough: iterations run concurrently against it.
@@ -4959,6 +5015,10 @@ const runHostedIterationWithBrowser = async (
                     sessionId: String(iterationId),
                   },
                 }
+              : {}),
+            // Tag browser ledger rows with the iteration they belong to.
+            ...(iterationId
+              ? { browserCorrelation: { iterationId: String(iterationId) } }
               : {}),
             // The trusted binding to THIS iteration's box. It reaches the
             // resolver on `ctx`, never on the host config, so nothing in a
@@ -5694,6 +5754,26 @@ const runHostedIterationWithBrowser = async (
       ...browser.scriptedCheckFailures,
       ...hostedStepScriptedFailures,
     ],
+    // Guards against vacuous passes. @see assessAgentActivity
+    agentActivity: assessAgentActivity({
+      modelFree: isModelFreeCase(test),
+      isNegativeTest: test.isNegativeTest === true,
+      // Resolved: steps-authored cases leave the top-level list undefined.
+      expectedToolCalls: resolveEvalTestCase(test).expectedToolCalls.length,
+      toolSurface: {
+        mcpTools: Object.keys(prepared?.allTools ?? {}).length,
+        browserTools:
+        parseBrowserToolPolicy(resolvedExecution.browserToolPolicy, {
+          source: "agent-activity",
+          quiet: true,
+        }) !== undefined,
+      },
+      toolCalls: toolsCalledByPromptWithWidgets.flat().length,
+      modelInvocations: countModelInvocations({
+        spans: traceForGate?.spans,
+        messages: traceForGate?.messages,
+      }),
+    }),
   });
   const promptTraceSummaries = buildPromptTraceSummaries(
     evaluation,

@@ -1,5 +1,4 @@
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
-import { PlaygroundBrowserOverrideContext } from "@/components/playground/playground-browser-override";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   render,
@@ -818,23 +817,6 @@ describe("PlaygroundMain", () => {
   });
 
   describe("rendering", () => {
-    it("temporarily enables and disables Browser without changing the default host", () => {
-      mockDefaultHostConfig.result = { builtInToolIds: [] };
-      const { rerender } = render(
-        <PlaygroundBrowserOverrideContext.Provider value={true}>
-          <PlaygroundMain {...defaultProps} />
-        </PlaygroundBrowserOverrideContext.Provider>,
-      );
-      expect(capturedChatSessionOptions.builtInToolIds).toEqual(["browser"]);
-      expect(mockDefaultHostConfig.result.builtInToolIds).toEqual([]);
-      rerender(
-        <PlaygroundBrowserOverrideContext.Provider value={false}>
-          <PlaygroundMain {...defaultProps} />
-        </PlaygroundBrowserOverrideContext.Provider>,
-      );
-      expect(capturedChatSessionOptions.builtInToolIds).toEqual([]);
-    });
-
     it("sends the project default's browser capability when no host is selected", () => {
       mockConvexAuthState.isAuthenticated = true;
       mockDefaultHostConfig.result = { builtInToolIds: ["browser"] };
@@ -2064,6 +2046,38 @@ describe("PlaygroundMain", () => {
   });
 
   describe("multi-model chat", () => {
+    it("connects model browsers to the parent workspace in comparison order", () => {
+      mockUseChatSession.availableModels = [
+        { id: "gpt-4", name: "GPT-4", provider: "openai" },
+        { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", provider: "anthropic" },
+      ];
+      mockUseChatSession.selectedModelIds = ["gpt-4", "claude-sonnet-4-5"];
+      mockUseChatSession.multiModelEnabled = true;
+
+      render(
+        <PlaygroundMain
+          {...defaultProps}
+          activeProjectId="project-1"
+          enableMultiModelChat={true}
+        />
+      );
+
+      for (const [order, model] of mockUseChatSession.availableModels.entries()) {
+        const props = mockMultiModelPlaygroundCard.mock.calls
+          .map(([props]) => props)
+          .find((props) => props.compareId === model.id);
+        expect(props).toMatchObject({
+          compareKind: "model",
+          compareLabel: model.name,
+          browserWorkspace: {
+            id: "chat-session-1",
+            order,
+            clientCount: 2,
+          },
+        });
+      }
+    });
+
     it("shows centered starter layout, hidden compare grid, and composer like Chat tab when multi-model Chat is empty", () => {
       mockUseChatSession.availableModels = [
         {

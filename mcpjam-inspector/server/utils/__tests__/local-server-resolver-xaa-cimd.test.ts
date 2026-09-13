@@ -216,4 +216,59 @@ describe("resolveLocalServerForConnect XAA CIMD", () => {
       expect.objectContaining({ registrationMode: "dcr" })
     );
   });
+
+  it("refuses a repointed DCR row before it reaches the mint (MJ-003)", async () => {
+    // The desktop and /api/mcp half of the XAA gate. `dcr` posts the row's
+    // stored registration to a token endpoint discovered from the row's CURRENT
+    // url, so a repointed row redirects it — and this surface reaches the same
+    // `buildXaaMintArgs({ resolveServerSecret })` the hosted one does.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        authorizeResponse({
+          registrationMode: "dcr",
+          secretsBoundOrigin: "https://owner.example.com",
+        })
+      )
+    );
+
+    await expect(
+      resolveLocalServerForConnect(
+        context,
+        "local-bearer",
+        "project-1",
+        "server-1"
+      )
+    ).rejects.toMatchObject({
+      status: 403,
+      details: expect.objectContaining({ secretOriginMismatch: true }),
+    });
+    expect(mintXaaAccessTokenMock).not.toHaveBeenCalled();
+  });
+
+  it("does not let a stale binding block a CIMD row", async () => {
+    // CIMD sends no secret of the row's — public client, or an org-level key
+    // whose assertion is audience-bound to the endpoint it goes to — so a
+    // binding left over from the server's OAuth days must not refuse it.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        authorizeResponse({
+          registrationMode: "cimd",
+          secretsBoundOrigin: "https://owner.example.com",
+        })
+      )
+    );
+
+    await resolveLocalServerForConnect(
+      context,
+      "local-bearer",
+      "project-1",
+      "server-1"
+    );
+
+    expect(mintXaaAccessTokenMock).toHaveBeenCalledWith(
+      expect.objectContaining({ registrationMode: "cimd" })
+    );
+  });
 });

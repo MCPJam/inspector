@@ -271,10 +271,11 @@ const scenario = {
 
 const detail = (
   over: Partial<ScenarioSettings> = {},
-  opts: { editMode?: boolean } = {},
+  opts: { editMode?: boolean; sessionCount?: number } = {},
 ) => (
   <UserTestingScenarioDetail
     scenario={{ ...scenario, ...over } as ScenarioSettings}
+    sessionCount={opts.sessionCount}
     editMode={opts.editMode}
     onBack={vi.fn()}
     onDeleted={vi.fn()}
@@ -283,11 +284,13 @@ const detail = (
 
 const renderDetail = (
   over: Partial<ScenarioSettings> = {},
-  opts: { editMode?: boolean } = {},
+  opts: { editMode?: boolean; sessionCount?: number } = {},
 ) => render(detail(over, opts));
 
-const renderEdit = (over: Partial<ScenarioSettings> = {}) =>
-  renderDetail(over, { editMode: true });
+const renderEdit = (
+  over: Partial<ScenarioSettings> = {},
+  opts: { sessionCount?: number } = {},
+) => renderDetail(over, { ...opts, editMode: true });
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -1154,20 +1157,45 @@ describe("UserTestingScenarioDetail — settings layout", () => {
     expect(previewPaneMock).not.toHaveBeenCalled();
   });
 
-  it("lays Settings out as a single fixed-measure column", () => {
+  it("lays Settings out in two columns that fill the pane", () => {
     const { container } = renderEdit();
 
     expect(screen.getByTestId("user-testing-edit-tab")).toBeInTheDocument();
-    // The 560px measure the frame specifies, not a percentage of a split pane
-    // that keeps shrinking as the window narrows.
-    expect(container.querySelector('[class*="w-[560px]"]')).not.toBeNull();
-    // A resizable split is what the fixed measure replaced. Asserted against
-    // the MOCK's own test id, not `[data-panel-group]`: the group is stubbed
-    // in this file, so the real attribute never appears in jsdom and that
-    // assertion could not fail even if the split came back.
+    // Reported as "too much white space": the 560px column this replaces sat
+    // pinned to the left of a pane twice its width. Two columns from `xl`,
+    // capped so an ultra-wide monitor does not stretch the measure.
+    expect(container.querySelector('[class*="w-[560px]"]')).toBeNull();
+    expect(container.querySelector('[class*="xl:grid-cols-2"]')).not.toBeNull();
+    expect(container.querySelector('[class*="max-w-[1400px]"]')).not.toBeNull();
+    // A resizable split is what the single column replaced, and it is not
+    // coming back. Asserted against the MOCK's own test id, not
+    // `[data-panel-group]`: the group is stubbed in this file, so the real
+    // attribute never appears in jsdom and that assertion could not fail even
+    // if the split came back.
     expect(
       screen.queryByTestId("stub-resizable-group"),
     ).not.toBeInTheDocument();
+  });
+
+  it("keeps every settings section on the page after the split", () => {
+    // The redesign moved sections between columns; losing one to a bad JSX
+    // nesting is the failure mode a layout change actually has.
+    renderEdit();
+
+    expect(
+      screen.getByTestId("user-testing-description-section"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Sharing permissions" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Ratings" }),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("scenario-grading-section")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("user-testing-tasks-section"),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("user-testing-delete")).toBeInTheDocument();
   });
 
   it("tags Open preview as preview traffic, not as a tester session", () => {
@@ -1234,5 +1262,67 @@ describe("UserTestingScenarioDetail — settings layout", () => {
     expect(
       screen.getByTestId("user-testing-settings-tasks"),
     ).toBeInTheDocument();
+  });
+});
+
+/**
+ * Raised in review: "we're letting them mess up their test configurations —
+ * one might be pointing to Excalidraw and the other to GitHub." Repointing a
+ * study that has already been run leaves one set of results answering a setup
+ * that no longer exists, under the same name, with nothing saying so.
+ */
+describe("UserTestingScenarioDetail — the setup of a study with results", () => {
+  const composerProps = () =>
+    composerMock.mock.calls[composerMock.mock.calls.length - 1][0] as {
+      lockedSlots?: Record<string, string>;
+    };
+
+  const withEnvironment = () => {
+    environmentState.row = {
+      environmentId: "env-1",
+      projectId: "p1",
+      origin: "named",
+      name: "Checkout flow",
+      hostId: "host-1",
+      revision: 1,
+      createdAt: 0,
+      updatedAt: 0,
+    };
+  };
+
+  it("locks the client and the servers once a tester has been through it", () => {
+    withEnvironment();
+    renderEdit(
+      { environmentId: "env-1", environmentName: "Checkout flow" },
+      { sessionCount: 3 },
+    );
+
+    const locks = composerProps().lockedSlots;
+    // One sentence, and the same one on all three: the fact is the reason.
+    expect(locks?.clients).toBe("This study already has sessions.");
+    expect(locks?.servers).toBe("This study already has sessions.");
+    // The environment picker included — it re-seeds the other two, so leaving
+    // it open would have left the whole lock bypassable (caught in review).
+    expect(locks?.environments).toBe("This study already has sessions.");
+  });
+
+  it("leaves a study nobody has run fully editable", () => {
+    withEnvironment();
+    renderEdit(
+      { environmentId: "env-1", environmentName: "Checkout flow" },
+      { sessionCount: 0 },
+    );
+
+    expect(composerProps().lockedSlots).toBeUndefined();
+  });
+
+  it("stays editable when the backend does not report the count", () => {
+    // `undefined` is "unknown", not "none". Refusing every edit on an
+    // unanswered question would take a working screen away from everyone to
+    // protect a case we cannot see.
+    withEnvironment();
+    renderEdit({ environmentId: "env-1", environmentName: "Checkout flow" });
+
+    expect(composerProps().lockedSlots).toBeUndefined();
   });
 });

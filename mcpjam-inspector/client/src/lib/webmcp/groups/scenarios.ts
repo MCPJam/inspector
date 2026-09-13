@@ -34,7 +34,13 @@ import {
   commandResponseToActionResult,
   dispatchInspectorCommand,
 } from "../ui-actions";
-import { asOptionalString, errorResult, fromActionResult } from "./shared";
+import {
+  PUBLISH_NATIVE,
+  asOptionalString,
+  errorResult,
+  fromActionResult,
+  publishNativeConsequential,
+} from "./shared";
 
 const ACCESS_VALUES = ["invited_only", "link_guests", "project"] as const;
 type AccessValue = (typeof ACCESS_VALUES)[number];
@@ -78,6 +84,17 @@ export function buildScenariosUiTools(): UiToolDefinition[] {
         idempotentHint: true,
         openWorldHint: false,
       },
+      // Consequential for a BROWSER agent even though it is not destructive
+      // for MCP, and the two are different questions. `access: "link_guests"`
+      // opens the scenario to anyone with the link — signed-out visitors
+      // included — with their sessions funded by this organization. Nothing is
+      // destroyed and re-publishing converges, so `destructiveHint` stays
+      // false and Ask MCPJam's approval behaviour is unchanged; an external
+      // agent's browser is told to confirm first, which is the one place that
+      // spend would otherwise happen with nobody looking.
+      nativePublication: publishNativeConsequential({
+        untrustedContent: false,
+      }),
       execute: async (args) => {
         // Validate strictly here, loosely in the schema (Chrome): the errors
         // are what let the model correct itself on the next turn.
@@ -132,6 +149,7 @@ export function buildScenariosUiTools(): UiToolDefinition[] {
         idempotentHint: true,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE,
       execute: async (args) => {
         const scenario = asOptionalString(args.scenario);
         if (!scenario) {

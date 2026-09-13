@@ -1,9 +1,6 @@
 import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
-import {
-  applyBrowserOverride,
-  usePlaygroundBrowserOverride,
-} from "@/components/playground/playground-browser-override";
 import { useBrowserEngine } from "@/hooks/useBrowserEngine";
+import { useBrowserToolIds } from "@/hooks/useBrowserToolIds";
 /**
  * PlaygroundMain
  *
@@ -174,6 +171,7 @@ import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 import { useAgentToolPromptBridge } from "@/stores/agent-tool-prompt-bridge";
 import { usePersistedHost } from "@/hooks/use-persisted-host";
 import { usePlaygroundHostSlots } from "@/hooks/use-playground-host-slots";
+import { usePlaygroundBrowserToolSlots } from "@/hooks/use-playground-browser-tool-slots";
 import { clientDisplayName } from "@/lib/client-display-name";
 import {
   loadSelectedHostIds,
@@ -186,7 +184,7 @@ import {
 } from "@/lib/previewed-client-storage";
 import { useProjectServers } from "@/hooks/useViews";
 import { useServerActionsOptional } from "@/state/server-actions-context";
-import { useProjectMembers } from "@/hooks/useProjects";
+import { shouldQueryProjectId, useProjectMembers } from "@/hooks/useProjects";
 import { buildProjectOwnerProfileByUserId } from "@/components/chat-v2/history/project-thread-owner-avatar";
 import { buildSenderAvatarResolver } from "@/components/chat-v2/shared/sender-avatar";
 import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
@@ -916,11 +914,9 @@ export function PlaygroundMain({
   const isEnvironmentMode = playgroundEnvironment.isEnvironmentMode;
   const environmentsEnabled = useProjectEnvironmentsEnabled();
   // Whether this turn may use the tools of the page open in the WebMCP tab.
-  // Held in the inspector store so the Tools-panel toggle and this transport
-  // read one value without threading a boolean between them.
-  // Derived rather than the raw `chatEnabled`: a session that has closed leaves
-  // the opt-in and the last tool snapshot in place, and advertising a dead
-  // browser's tools to a model is worse than showing none.
+  // Derived from session liveness: a closed status leaves the last tool
+  // snapshot in place, and advertising a dead browser's tools to a model is
+  // worse than showing none.
   const webmcpPageToolsEnabled = useWebmcpInspectorStore((state) =>
     state.pageToolsLive(),
   );
@@ -928,21 +924,23 @@ export function PlaygroundMain({
     isAuthenticated: isConvexAuthenticated,
     hostId: previewedHostId,
   });
+  // `shouldQueryProjectId`, not a bare truthiness check — the same guard the
+  // rest of the Convex-reading hooks use. `convexProjectId` is a shared project
+  // id today, but a local/placeholder id reaching `v.id("projects")` throws
+  // before the handler and cannot be caught downstream.
   const projectDefaultHostConfig = useQuery(
     "hostConfigsV2:getProjectDefault" as never,
-    isConvexAuthenticated && convexProjectId
+    isConvexAuthenticated && shouldQueryProjectId(convexProjectId)
       ? ({ projectId: convexProjectId } as never)
       : "skip",
   ) as HostConfigDtoV2 | null | undefined;
   // Match the Tools and Browser rails: no explicit selection means the
   // project default. An explicit host still loading must not inherit another
   // host's capabilities, and an explicit empty list must stay empty.
-  const browserOverride = usePlaygroundBrowserOverride();
-  const effectiveBuiltInToolIds = applyBrowserOverride(
-    previewedHostId
-      ? previewedHost?.config?.builtInToolIds
-      : projectDefaultHostConfig?.builtInToolIds,
-    isEnvironmentMode ? null : browserOverride,
+  const effectiveBuiltInToolIds = useBrowserToolIds(
+    previewedHostId ? previewedHost?.config : projectDefaultHostConfig,
+    playgroundBrowserEngine.engine,
+    { projectId: convexProjectId, hostId: previewedHostId },
   );
   // A newly selected host is unknown for one render while its config loads.
   // Fail closed in that gap: it may resolve to Codex or Claude Code, whose
@@ -2064,6 +2062,20 @@ export function PlaygroundMain({
     temperature,
     requireToolApproval,
   ]);
+
+  // What each column's host actually attaches, resolved by the SAME hook the
+  // single pane uses (`effectiveBuiltInToolIds` above). The grid used to
+  // inline its own copy of that logic, which read neither the member's saved
+  // Browser setting nor its loading state — see
+  // `usePlaygroundBrowserToolSlots`.
+  const columnBuiltInToolIds = usePlaygroundBrowserToolSlots(
+    multiHostColumns.map((column) => ({
+      hostId: column.compareId,
+      config: column.hostConfig,
+    })),
+    playgroundBrowserEngine.engine,
+    convexProjectId,
+  );
 
   // ── The same question, asked once per COLUMN ─────────────────────────────
   //
@@ -5639,8 +5651,13 @@ export function PlaygroundMain({
                           "grid-cols-1 xl:grid-cols-3",
                       )}
                     >
-                      {multiHostColumns.map((column) => (
+                      {multiHostColumns.map((column, columnIndex) => (
                         <MultiModelPlaygroundCard
+                          browserWorkspace={{
+                            id: chatSessionId,
+                            order: columnIndex,
+                            clientCount: multiHostColumns.length,
+                          }}
                           usePageTools={webmcpPageToolsEnabled}
                           // Include `compareKind` in the key so a mode
                           // swap between multi-model and multi-host can't
@@ -5661,10 +5678,12 @@ export function PlaygroundMain({
                           stopRequestId={stopBroadcastRequestId}
                           executionConfig={{
                             ...column.executionConfig,
-                            builtInToolIds: applyBrowserOverride(
-                              column.hostConfig.builtInToolIds,
-                              browserOverride,
-                            ),
+                            // Undefined is a real answer — "this turn states
+                            // nothing", which lets the server fall back to the
+                            // host's own config. Exactly what the single pane
+                            // sends, rather than substituting the raw host
+                            // list and pre-empting the loading guard.
+                            builtInToolIds: columnBuiltInToolIds[columnIndex],
                           }}
                           hostedContext={{
                             projectId: convexProjectId,
@@ -5735,10 +5754,15 @@ export function PlaygroundMain({
                           "grid-cols-1 xl:grid-cols-3",
                       )}
                     >
-                      {resolvedSelectedModels.map((model) => {
+                      {resolvedSelectedModels.map((model, modelIndex) => {
                         const compareId = String(model.id);
                         return (
                           <MultiModelPlaygroundCard
+                            browserWorkspace={{
+                              id: chatSessionId,
+                              order: modelIndex,
+                              clientCount: resolvedSelectedModels.length,
+                            }}
                             usePageTools={webmcpPageToolsEnabled}
                             // Phase 3: include `compareKind` in the key so
                             // model-mode and host-mode keys never collide

@@ -18,6 +18,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useConvexAuth, useQuery } from "convex/react";
 import { useBrowserEngine } from "@/hooks/useBrowserEngine";
+import { useBrowserToolIds } from "./useBrowserToolIds";
+import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { useHost } from "@/hooks/useClients";
 import { resolveEffectiveHost } from "@/lib/effective-client";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
@@ -61,9 +63,21 @@ const LEASE_HELD_RETRIES = 3;
  */
 const DEFINITIONS_CACHE = new Map<string, SerializedModelRequestTool[]>();
 
+/**
+ * Explains missing local access in the tool list and links to client settings.
+ * Initial permission discovery belongs to the Playground onboarding dialog.
+ */
+export interface BrowserLocalConsentPrompt {
+  onAllow: () => Promise<boolean>;
+  disabledForClient?: boolean;
+  /** The saved client whose Browser tab turns it back off; null → clients list. */
+  settingsHostId: string | null;
+}
+
 export interface BrowserToolsState {
   /** True when the previewed host actually attaches the browser capability. */
   attached: boolean;
+  catalogError?: boolean;
   /** Which browser a call would drive. */
   engine: "hosted" | "local";
   /** The `browser_*` tools, as the model is shown them. */
@@ -90,6 +104,8 @@ export interface BrowserToolsState {
     frameId?: string;
     input: Record<string, unknown>;
   }) => Promise<BrowserPageToolInvokeResponse>;
+  /** Local permission or client enablement is missing; show a settings link. */
+  localConsent?: BrowserLocalConsentPrompt | null;
 }
 
 export function useBrowserTools(args: {
@@ -114,9 +130,16 @@ export function useBrowserTools(args: {
   // that stopped at the explicit pick reported "no browser" for a project
   // whose DEFAULT host has one, which is the common case: the pane offered a
   // live browser while the Tools panel beside it said no server was connected.
+  // `shouldQueryProjectId`, not a bare truthiness check. This hook's
+  // `projectId` is the PLAYGROUND'S project scope, which falls back to the
+  // local `activeProjectId` when there is no cloud project (PlaygroundTab
+  // passes `sharedProjectId ?? activeProjectId`). That fallback is the string
+  // sentinel `"none"` for a guest, which is truthy and reached
+  // `v.id("projects")` — a validator that throws BEFORE the handler runs, so
+  // nothing downstream could catch it. Sentry CONVEX-HQ: 636 users.
   const projectDefaultHostConfig = useQuery(
     "hostConfigsV2:getProjectDefault" as never,
-    isAuthenticated && args.projectId
+    isAuthenticated && shouldQueryProjectId(args.projectId)
       ? ({ projectId: args.projectId } as never)
       : "skip",
   ) as HostConfigDtoV2 | null | undefined;
@@ -137,9 +160,12 @@ export function useBrowserTools(args: {
   // this list say someone else has the browser, while the model can still
   // call the tools after the next hand-back.
   const paneHolder = usePaneHolderId();
-  const attached = (hostConfig?.builtInToolIds ?? []).includes(
-    BROWSER_BUILT_IN_TOOL_ID,
+  const toolIds = useBrowserToolIds(
+    hostConfig,
+    engineState.selectedEngine,
+    args,
   );
+  const attached = (toolIds ?? []).includes(BROWSER_BUILT_IN_TOOL_ID);
   // The BODY-side engine choice, exactly as the Browser pane resolves it, so
   // the pane and the tool list cannot describe two different browsers.
   const engine: "hosted" | "local" =
@@ -196,10 +222,10 @@ export function useBrowserTools(args: {
   /** Whether a hosted read is possible at all — a boolean, so it can be a dep. */
   const hostedReadable = tokens !== null;
 
-  // Definitions. Cached per engine for the session; a failure leaves the list
-  // empty rather than surfacing an error, because a pane that cannot describe
-  // the browser is still a working pane.
+  const [catalogError, setCatalogError] = useState(false);
+  // Successful definitions stay cached; Refresh retries failed catalog reads.
   useEffect(() => {
+    setCatalogError(false);
     if (!attached) {
       setTools([]);
       return;
@@ -213,17 +239,22 @@ export function useBrowserTools(args: {
     let cancelled = false;
     fetchBrowserToolDefinitions(engine, controller.signal)
       .then((items) => {
+        if (cancelled) return;
+        if (items.length === 0) throw new Error("Empty Browser catalog");
         DEFINITIONS_CACHE.set(engine, items);
-        if (!cancelled) setTools(items);
+        setTools(items);
       })
       .catch(() => {
-        if (!cancelled) setTools([]);
+        if (!cancelled) {
+          setTools([]);
+          setCatalogError(true);
+        }
       });
     return () => {
       cancelled = true;
       controller.abort();
     };
-  }, [attached, engine]);
+  }, [attached, engine, pageNonce]);
 
   /**
    * The page read, which is a live look at a running browser.
@@ -385,9 +416,21 @@ export function useBrowserTools(args: {
   const available =
     engine !== "local" ||
     (engineState.localAvailable && engineState.consent.granted);
+  const localConsent: BrowserLocalConsentPrompt | null =
+    engine === "local" &&
+    engineState.localAvailable &&
+    (!engineState.consent.granted || !attached)
+      ? {
+          disabledForClient: engineState.consent.granted && !attached,
+          onAllow: engineState.consent.grant,
+          settingsHostId: host?.hostId ?? null,
+        }
+      : null;
   return {
     attached,
     engine,
+    localConsent,
+    catalogError: attached && available && catalogError,
     tools: available ? tools : [],
     page: available
       ? page

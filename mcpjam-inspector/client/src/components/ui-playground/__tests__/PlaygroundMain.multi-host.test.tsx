@@ -1,4 +1,3 @@
-import { PlaygroundBrowserOverrideContext } from "@/components/playground/playground-browser-override";
 /**
  * PlaygroundMain — Phase 4 multi-host render path.
  *
@@ -163,10 +162,37 @@ vi.mock("@/lib/PosthogUtils", () => ({
   standardEventProps: () => ({}),
 }));
 
+// `setting` is the MEMBER's stored answer, the one `useBrowserToolIds` reads
+// from `hosts:getLocalBrowserSettings` (see the convex mock below). A guest
+// never reaches that query, so guest rows drive the host config's
+// `localBrowserEnabled` instead.
+const browserFixture = vi.hoisted(() => ({
+  guest: false,
+  granted: false,
+  setting: null as boolean | null,
+}));
+const browserConsent = vi.hoisted(() => () => ({
+  status: browserFixture.granted ? "granted" : "absent",
+  granted: browserFixture.granted,
+  token: browserFixture.granted ? "device-consent" : null,
+  grant: async () => true,
+  revoke: async () => {},
+}));
+vi.mock("@/hooks/useBrowserEngine", () => ({
+  useBrowserEngine: () => ({
+    engine: "local", selectedEngine: "local", localAvailable: true,
+    consent: browserConsent(),
+  }),
+}));
+// The same store the engine hook reads — `useBrowserToolIds` subscribes to it
+// directly, and the two must not be able to disagree about one device grant.
+vi.mock("@/hooks/useLocalBrowserConsent", () => ({
+  useLocalBrowserConsent: () => browserConsent(),
+}));
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({
     signUp: vi.fn(),
-    user: { id: "u1" },
+    user: browserFixture.guest ? null : { id: "u1" },
     isLoading: false,
   }),
 }));
@@ -176,8 +202,15 @@ vi.mock("convex/react", () => ({
   // straight to the rendezvous table (the blocked replica isn't addressable).
   useConvex: () => ({ mutation: vi.fn().mockResolvedValue({ ok: true }) }),
   useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
-  useQuery: (_name: string, args: unknown) =>
-    args === "skip" ? undefined : null,
+  useQuery: (name: string, args: unknown) => {
+    if (args === "skip") return undefined;
+    // Shaped like the real query: an object whose `enabled` is null when the
+    // member has stored nothing. Returning a bare null would read as "still
+    // loading" and mask what these tests are asserting.
+    if (name === "hosts:getLocalBrowserSettings")
+      return { enabled: browserFixture.setting };
+    return null;
+  },
   useMutation: () => () => Promise.resolve(),
   // COMP-14: useComputerAttachmentUpload pulls in useMintTerminalToken (a
   // Convex action). The flag mock keeps the flow inert; this keeps it mountable.
@@ -669,6 +702,9 @@ describe("PlaygroundMain — multi-host render path", () => {
   };
 
   beforeEach(() => {
+    browserFixture.guest = false;
+    browserFixture.granted = false;
+    browserFixture.setting = null;
     vi.clearAllMocks();
     usePlaygroundChatHistoryBridgeStore.getState().setBridge(null);
     useHostContextStore.setState({
@@ -1241,6 +1277,36 @@ describe("PlaygroundMain — multi-host render path", () => {
     ]);
   });
 
+  // EVERY COLUMN ANSWERS LIKE THE SINGLE PANE. The grid resolves each column
+  // through `useBrowserToolIds` — the same hook the pane uses — so the rule
+  // itself is pinned at that hook's altitude (a member's stored setting needs
+  // a queryable project scope, which this harness deliberately does not have).
+  // What matters here is that the grid asks the question at all, per column,
+  // and does not re-answer it with a copy that drifts.
+  it.each([
+    { guest: true, granted: true, enabled: undefined, expected: ["browser"] },
+    { guest: true, granted: false, enabled: undefined, expected: [] },
+    { guest: true, granted: true, enabled: false, expected: [] },
+    { guest: false, granted: true, enabled: undefined, expected: ["browser"] },
+    { guest: false, granted: true, enabled: false, expected: [] },
+  ])("resolves comparison Browser tools: guest=$guest consent=$granted host=$enabled", ({ guest, granted, enabled, expected }) => {
+    browserFixture.guest = guest;
+    browserFixture.granted = granted;
+    multiHostFixture.hostList = [{ hostId: "h-A", name: "A" }, { hostId: "h-B", name: "B" }];
+    multiHostFixture.hosts = {
+      "h-A": makeHost("h-A", "A", { builtInToolIds: [], localBrowserEnabled: enabled }),
+      "h-B": makeHost("h-B", "B", { builtInToolIds: ["web_search"], localBrowserEnabled: enabled }),
+    };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+    render(<PlaygroundMain {...defaultProps} />);
+    expect(screen.getAllByTestId("multi-host-card")).toHaveLength(2);
+    for (const [props] of mockMultiModelPlaygroundCard.mock.calls) {
+      expect(props.executionConfig.builtInToolIds).toEqual(
+        props.compareId === "h-B" ? ["web_search", ...expected] : expected,
+      );
+    }
+  });
+
   it("renders one card per resolved host in a multi-host grid", () => {
     const hostA = makeHost("h-A", "Host A", {
       hostStyle: "chatgpt",
@@ -1622,28 +1688,6 @@ describe("PlaygroundMain — multi-host render path", () => {
     render(<PlaygroundMain {...defaultProps} />);
 
     expect(screen.queryByTestId("playground-multi-host-grid")).toBeNull();
-  });
-
-  it("applies an explicit Browser override to every comparison column", () => {
-    multiHostFixture.hostList = [
-      { hostId: "h-A", name: "Host A" },
-      { hostId: "h-B", name: "Host B" },
-    ];
-    multiHostFixture.hosts = {
-      "h-A": makeHost("h-A", "Host A", { builtInToolIds: ["bash"] }),
-      "h-B": makeHost("h-B", "Host B", { builtInToolIds: ["bash"] }),
-    };
-    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
-    multiHostFixture.multiHostEnabled = true;
-    render(
-      <PlaygroundBrowserOverrideContext.Provider value={true}>
-        <PlaygroundMain {...defaultProps} />
-      </PlaygroundBrowserOverrideContext.Provider>,
-    );
-    expect(screen.getAllByTestId("multi-host-card")).toHaveLength(2);
-    for (const [props] of mockMultiModelPlaygroundCard.mock.calls) {
-      expect(props.executionConfig.builtInToolIds).toEqual(["bash", "browser"]);
-    }
   });
 
   it("slot 1 unresolved with slot 0 + slot 2 resolved → 2 columns, lead preserved (Blocker 3)", () => {
@@ -2163,19 +2207,6 @@ describe("PlaygroundMain — environment mode", () => {
 
     expect(capturedChatSessionOptions?.hostedContext?.executionTarget).toBe(
       undefined,
-    );
-  });
-
-  it("ignores a stale Playground Browser override in environment mode", () => {
-    selectEnvironment();
-    multiHostFixture.hostList = [{ hostId: "h-A", name: "Host A" }];
-    render(
-      <PlaygroundBrowserOverrideContext.Provider value={true}>
-        <PlaygroundMain {...defaultProps} />
-      </PlaygroundBrowserOverrideContext.Provider>,
-    );
-    expect(capturedChatSessionOptions?.builtInToolIds ?? []).not.toContain(
-      "browser",
     );
   });
 

@@ -1,8 +1,13 @@
+vi.mock("@workos-inc/authkit-react", () => ({ useAuth: () => ({ user: { id: "member" } }) }));
+const consentState = vi.hoisted(() => ({
+  granted: true,
+  grant: vi.fn(async () => true),
+}));
 vi.mock("@/hooks/useLocalBrowserConsent", () => ({
   useLocalBrowserConsent: () => ({
-    granted: true,
-    token: "test-consent",
-    grant: vi.fn(async () => true),
+    granted: consentState.granted,
+    token: consentState.granted ? "test-consent" : null,
+    grant: consentState.grant,
   }),
 }));
 /**
@@ -82,6 +87,9 @@ const ACTIVITY: WebMcpActivityEntry[] = [
 describe("WebmcpInspectorTab — three-panel workspace", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    window.localStorage.removeItem("webmcp:last-url");
+    consentState.granted = true;
+    consentState.grant.mockReset().mockResolvedValue(true);
     useWebmcpInspectorStore.setState({
       session: SESSION,
       tools: [TOOL],
@@ -90,7 +98,6 @@ describe("WebmcpInspectorTab — three-panel workspace", () => {
       starting: false,
       error: undefined,
       lastScreenshot: undefined,
-      liveFrame: undefined,
       chatEnabled: false,
     });
   });
@@ -171,5 +178,129 @@ describe("WebmcpInspectorTab — three-panel workspace", () => {
     expect(screen.getByText("https://checkout.test")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Description" }));
     expect(screen.getByText("Add a topping from checkout")).toBeInTheDocument();
+  });
+
+  it("closes the session from the tools menu, not a second chrome bar", async () => {
+    const user = userEvent.setup();
+    const closeSession = vi.fn(async () => {});
+    useWebmcpInspectorStore.setState({ closeSession });
+    render(<WebmcpInspectorTab />);
+
+    expect(screen.queryByRole("button", { name: "Close browser" })).toBeNull();
+    expect(
+      screen.queryByText(/This page is running in the pane below/),
+    ).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "More actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Close browser" }));
+    expect(closeSession).toHaveBeenCalled();
+  });
+
+  it("fills the field from the live session, not a stale localhost default", () => {
+    window.localStorage.setItem("webmcp:last-url", "http://localhost:3000");
+    render(<WebmcpInspectorTab />);
+    expect(screen.getByLabelText("Page URL to inspect")).toHaveValue(
+      "https://pizza.test/",
+    );
+    expect(window.localStorage.getItem("webmcp:last-url")).toBe(
+      "https://pizza.test/",
+    );
+  });
+
+  it("restores the last page URL from localStorage when no session is open", () => {
+    useWebmcpInspectorStore.setState({
+      session: undefined,
+      tools: [],
+      activity: [],
+    });
+    window.localStorage.setItem(
+      "webmcp:last-url",
+      "https://googlechromelabs.github.io/webmcp-tools/demos/pizza-maker/",
+    );
+    render(<WebmcpInspectorTab />);
+    expect(screen.getByLabelText("Page URL to inspect")).toHaveValue(
+      "https://googlechromelabs.github.io/webmcp-tools/demos/pizza-maker/",
+    );
+  });
+
+  it("remembers a typed URL so coming back restores it", async () => {
+    useWebmcpInspectorStore.setState({
+      session: undefined,
+      tools: [],
+      activity: [],
+    });
+    const user = userEvent.setup();
+    const view = render(<WebmcpInspectorTab />);
+    const field = screen.getByLabelText("Page URL to inspect");
+    await user.clear(field);
+    await user.type(field, "https://pizza.test/");
+    expect(window.localStorage.getItem("webmcp:last-url")).toBe(
+      "https://pizza.test/",
+    );
+
+    view.unmount();
+    render(<WebmcpInspectorTab />);
+    expect(screen.getByLabelText("Page URL to inspect")).toHaveValue(
+      "https://pizza.test/",
+    );
+  });
+
+  it("centers the local-browser consent gate in the chrome panel", () => {
+    consentState.granted = false;
+    render(<WebmcpInspectorTab />);
+    const gate = screen.getByTestId("local-browser-consent-gate");
+    expect(gate.parentElement).toHaveClass(
+      "flex",
+      "h-full",
+      "flex-1",
+      "items-center",
+      "justify-center",
+    );
+  });
+
+  it("opens the remembered page immediately after Allow without waiting for a render", async () => {
+    consentState.granted = false;
+    useWebmcpInspectorStore.setState({ session: undefined });
+    window.localStorage.setItem("webmcp:last-url", "https://pizza.test/");
+    const start = vi
+      .spyOn(useWebmcpInspectorStore.getState(), "startSession")
+      .mockResolvedValue("new-session");
+    render(<WebmcpInspectorTab />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Allow" }));
+
+    expect(consentState.grant).toHaveBeenCalledOnce();
+    expect(start).toHaveBeenCalledWith("https://pizza.test/", {
+      projectId: undefined,
+      display: "in-app",
+    });
+  });
+
+  it("does not start a browser when permission could not be saved", async () => {
+    consentState.granted = false;
+    consentState.grant.mockResolvedValue(false);
+    useWebmcpInspectorStore.setState({ session: undefined });
+    const start = vi.spyOn(useWebmcpInspectorStore.getState(), "startSession");
+    render(<WebmcpInspectorTab />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Allow" }));
+
+    expect(start).not.toHaveBeenCalled();
+    expect(screen.getByTestId("consent-error")).toBeInTheDocument();
+  });
+
+  it("reattaches to an existing session after Allow instead of replacing its page", async () => {
+    consentState.granted = false;
+    const start = vi.spyOn(useWebmcpInspectorStore.getState(), "startSession");
+    const reconnect = vi
+      .spyOn(useWebmcpInspectorStore.getState(), "reconnect")
+      .mockImplementation(() => {});
+    render(<WebmcpInspectorTab />);
+    reconnect.mockClear();
+
+    await userEvent.click(screen.getByRole("button", { name: "Allow" }));
+
+    expect(reconnect).toHaveBeenCalledOnce();
+    expect(start).not.toHaveBeenCalled();
   });
 });

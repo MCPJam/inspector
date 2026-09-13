@@ -82,7 +82,7 @@ export interface LocalBrowserSecurityPolicy {
   resolveDestination(
     hostname: string,
     port: number,
-  ): Promise<{ address: string; family: number }>;
+  ): Promise<Array<{ address: string; family: number }>>;
   assertActive(): Promise<void>;
   isActive(): boolean;
   dispose?(): void;
@@ -248,7 +248,7 @@ export function createLocalBrowserSecurityPolicy(
       )
         throw destinationError();
       await assertActive();
-      return addresses[0];
+      return addresses;
     },
   };
   return policy;

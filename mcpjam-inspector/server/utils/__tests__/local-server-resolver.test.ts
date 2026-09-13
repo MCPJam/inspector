@@ -57,8 +57,6 @@ const httpHostedOAuthAuth = {
   serverConfig: {
     transportType: "http" as const,
     url: "https://hosted-oauth.example.com/mcp",
-    // MJ-003: bound to its own origin, as a post-backfill row is.
-    secretsBoundOrigin: "https://hosted-oauth.example.com",
     headers: { "X-Convex-Stored": "yes" },
     useOAuth: true,
   },
@@ -73,8 +71,6 @@ const httpHeaderOnlyAuth = {
   serverConfig: {
     transportType: "http" as const,
     url: "https://header-only.example.com/mcp",
-    // MJ-003: bound to its own origin, as a post-backfill row is.
-    secretsBoundOrigin: "https://header-only.example.com",
     headers: { Authorization: "Bearer static-token" },
     useOAuth: false,
   },
@@ -359,8 +355,6 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
           serverConfig: {
             transportType: "http",
             url: "https://hosted.example.com/mcp",
-            // MJ-003: bound to its own origin, as a post-backfill row is.
-            secretsBoundOrigin: "https://hosted.example.com",
             useOAuth: true,
           },
           oauthAccessToken: null,
@@ -406,8 +400,6 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
           serverConfig: {
             transportType: "http",
             url: "http://localhost:8001/mcp",
-            // MJ-003: bound to its own origin, as a post-backfill row is.
-            secretsBoundOrigin: "http://localhost:8001",
             useOAuth: true,
           },
           oauthAccessToken: null,
@@ -486,8 +478,6 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
           serverConfig: {
             transportType: "http",
             url: "https://hosted.example.com/mcp",
-            // MJ-003: bound to its own origin, as a post-backfill row is.
-            secretsBoundOrigin: "https://hosted.example.com",
             useOAuth: true,
           },
           oauthAccessToken: "fresh-token",
@@ -520,8 +510,6 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
           serverConfig: {
             transportType: "http",
             url: "https://open.example.com/mcp",
-            // MJ-003: bound to its own origin, as a post-backfill row is.
-            secretsBoundOrigin: "https://open.example.com",
             authMethod: "auto",
           },
           oauthAccessToken: null,
@@ -564,8 +552,6 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
           serverConfig: {
             transportType: "http",
             url: "https://open.example.com/mcp",
-            // MJ-003: bound to its own origin, as a post-backfill row is.
-            secretsBoundOrigin: "https://open.example.com",
             authMethod: "auto",
           },
           oauthAccessToken: null,
@@ -599,8 +585,6 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
           serverConfig: {
             transportType: "http",
             url: "https://hosted.example.com/mcp",
-            // MJ-003: bound to its own origin, as a post-backfill row is.
-            secretsBoundOrigin: "https://hosted.example.com",
             authMethod: "auto",
           },
           oauthAccessToken: "stored-token",
@@ -635,9 +619,9 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
           serverConfig: {
             transportType: "http",
             url: "https://header.example.com/mcp",
-            // MJ-003: a row whose stored credential is bound to its own
-            // origin. Absent, the connect gate refuses — which is why the
-            // backend backfill gates the deploy that turns this on.
+            // MJ-003: a row whose stored headers are bound to its own origin.
+            // Absent, the connect gate refuses — which is why the backend
+            // backfill gates the deploy that turns this on.
             secretsBoundOrigin: "https://header.example.com",
             useOAuth: false,
             headers: { Authorization: "Bearer static-token" },
@@ -673,9 +657,9 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
           serverConfig: {
             transportType: "http",
             url: "https://hidden-header.example.com/mcp",
-            // MJ-003: a row whose stored credential is bound to its own
-            // origin. Absent, the connect gate refuses — which is why the
-            // backend backfill gates the deploy that turns this on.
+            // MJ-003: bound to its own origin, as a post-backfill row is. The
+            // gate runs before the reveal below, so an unbound row would 403
+            // instead of decrypting.
             secretsBoundOrigin: "https://hidden-header.example.com",
             useOAuth: false,
             headers: {},
@@ -699,6 +683,7 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
             success: true,
             env: null,
             headers: { Authorization: "Bearer revealed-token" },
+            secretsBoundOrigin: "https://hidden-header.example.com",
           }),
           { status: 200, headers: { "Content-Type": "application/json" } }
         );
@@ -790,8 +775,6 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
           serverConfig: {
             transportType: "http",
             url: "https://hosted.example.com/mcp",
-            // MJ-003: bound to its own origin, as a post-backfill row is.
-            secretsBoundOrigin: "https://hosted.example.com",
             useOAuth: true,
           },
           oauthAccessToken: null,
@@ -839,8 +822,6 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
           serverConfig: {
             transportType: "http",
             url: "https://hosted.example.com/mcp",
-            // MJ-003: bound to its own origin, as a post-backfill row is.
-            secretsBoundOrigin: "https://hosted.example.com",
             useOAuth: true,
           },
           oauthAccessToken: null,
@@ -1051,15 +1032,15 @@ describe("resolveLocalServerForConnect — backend-resolved XAA identity error",
                 serverConfig: {
                   transportType: "http",
                   url: "https://xaa.example.com/mcp",
+                  // MJ-003: bound to its own origin. Without it the gate
+                  // refuses this preregistered row before the identity check,
+                  // which is not the contract under test here.
+                  secretsBoundOrigin: "https://xaa.example.com",
                   headers: {},
                   useOAuth: false,
                   useXaa: true,
                   authServerMode: "mcpjam",
                   clientId: "xaa-client",
-                  // MJ-003: bound to its own origin. Without it the gate
-                  // refuses this preregistered row before the identity check,
-                  // which is not the contract under test here.
-                  secretsBoundOrigin: "https://xaa.example.com",
                   // Backend omitted BOTH identity members and sent the
                   // actionable error instead (legacy partial override).
                   xaaIdentityError: identityError,
@@ -1210,8 +1191,6 @@ describe("enterprise-managed authorization policy (xaaPolicy)", () => {
           return authorizeResponse({
             transportType: "http",
             url: "https://plain.example.com/mcp",
-            // MJ-003: bound to its own origin, as a post-backfill row is.
-            secretsBoundOrigin: "https://plain.example.com",
             authMethod: "auto",
           });
         }
@@ -1250,8 +1229,6 @@ describe("enterprise-managed authorization policy (xaaPolicy)", () => {
           return authorizeResponse({
             transportType: "http",
             url: "https://oauth.example.com/mcp",
-            // MJ-003: bound to its own origin, as a post-backfill row is.
-            secretsBoundOrigin: "https://oauth.example.com",
             authMethod: "oauth",
             useOAuth: true,
           });

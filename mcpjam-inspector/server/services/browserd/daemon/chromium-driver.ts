@@ -46,6 +46,7 @@ import {
   coveringElementAt,
   focusBackendNodeId,
   pointForBackendNodeId,
+  pointForRefAcrossFrames,
   replaceTextInNode,
   resolveRefNode,
   selectOptionOnNode,
@@ -65,6 +66,13 @@ import {
   type SessionViewportPolicy,
   type ViewportSize,
 } from "../../../../shared/browser-viewport";
+import type { BrowserdFeatures } from "./config";
+import type { CommandContext } from "./command-queue";
+import {
+  createBrowserSecretRegistry,
+  type BrowserSecretRegistry,
+} from "./secret-registry";
+import { resolveActSecrets } from "./secret-substitution";
 import type { A11yNode } from "./observation-budget";
 import {
   capA11yTree,
@@ -80,7 +88,13 @@ import {
   DEFAULT_PAGE_TEXT_MAX_BYTES,
   PAGE_TEXT_RETRIEVAL_HINT,
 } from "./page-text";
-import { readAxTree, resolveBackendNodeId } from "./cdp-a11y";
+import {
+  readAxForest,
+  type FrameTopology,
+  readAxTree,
+  readScrollableNodes,
+  resolveBackendNodeId,
+} from "./cdp-a11y";
 import {
   assignRefs,
   filterInteractive,
@@ -312,6 +326,13 @@ export interface ChromiumDriverOptions {
   webmcpOutputBytes?: number;
   /** Byte budget for one `observe {mode:"text"}` (L9). */
   pageTextBytes?: number;
+  /** Opt-in behaviour; absent means the previous release's. @see BrowserdFeatures */
+  features?: BrowserdFeatures;
+  /**
+   * Where typed secrets are remembered, so observations can be scrubbed.
+   * Constructed when absent; injectable for tests.
+   */
+  secrets?: BrowserSecretRegistry;
   /**
    * How big this session's page is, and whether it may change.
    *
@@ -379,6 +400,9 @@ const DEFAULT_SCROLL_STEP = 600;
  */
 const CLOSE_PENDING_TAB_GRACE_MS = 2_000;
 
+/** How long teardown spends closing pages and viewports. @see ChromiumDriver.close */
+const CLOSE_SURFACE_GRACE_MS = 5_000;
+
 /**
  * A scroll's `value`: `"down"`/`"up"`, a pixel count, or `"dx,dy"`. Anything
  * unrecognized scrolls down by the default step rather than erroring — a
@@ -438,6 +462,30 @@ function dropIndex(
   return list[last]?.id === activeTabId && list.length > 1 ? last - 1 : last;
 }
 
+/** How long an observation will wait for the tab's WebMCP bridge. @see settleBridge */
+const BRIDGE_SETTLE_MS = 2_000;
+
+/**
+ * Give the bridge a moment to finish attaching, so the first observation after
+ * opening a tab does not see an empty `frameSessions()` and miss iframe content.
+ * Bounded: the attach can never settle on a dying browser, and missing frames
+ * beat a hung command.
+ */
+async function settleBridge(page: DriverPage): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      page.webmcp().catch(() => null),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), BRIDGE_SETTLE_MS);
+      }),
+    ]);
+  } finally {
+    // Cleared, or the timer keeps an idle process alive.
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 export class ChromiumDriver implements BrowserDriver {
   private readonly context: DriverContext;
   private readonly settleOptions: SettleOptions;
@@ -447,6 +495,10 @@ export class ChromiumDriver implements BrowserDriver {
   private readonly dialogPolicy: DialogPolicy;
   private readonly webmcpOutputBudgetBytes: number;
   private readonly pageTextMaxBytes: number;
+  /** Behaviour this build has but does not do by default. @see BrowserdFeatures */
+  private readonly features: BrowserdFeatures;
+  /** Values this boot has typed into a page, and what to show instead. */
+  private readonly secrets: BrowserSecretRegistry;
   private readonly lease:
     | Pick<
         HandoffLease,
@@ -608,6 +660,8 @@ export class ChromiumDriver implements BrowserDriver {
       options.webmcpOutputBytes ?? DEFAULT_WEBMCP_OUTPUT_BYTES;
     this.pageTextMaxBytes =
       options.pageTextBytes ?? DEFAULT_PAGE_TEXT_MAX_BYTES;
+    this.features = options.features ?? {};
+    this.secrets = options.secrets ?? createBrowserSecretRegistry();
     this.lease = options.lease;
     this.viewportPolicy = options.viewport?.policy ?? "fixed";
     this.allowPaneResize = options.viewport?.allowPaneResize === true;
@@ -640,6 +694,11 @@ export class ChromiumDriver implements BrowserDriver {
    */
   sessionViewportPolicy(): SessionViewportPolicy {
     return this.viewportPolicy;
+  }
+
+  /** Shared by accessor so the scrub wrapper and driver hold one instance. */
+  secretRegistry(): BrowserSecretRegistry {
+    return this.secrets;
   }
 
   async requestViewport(
@@ -802,12 +861,16 @@ export class ChromiumDriver implements BrowserDriver {
    * verb passes through is what makes "never resize midway through an action"
    * true for all of them at once — including the ones added later.
    */
-  async execute(command: BrowserCommand): Promise<BrowserCommandResult> {
-    return this.barrier.run(() => this.executeInBarrier(command));
+  async execute(
+    command: BrowserCommand,
+    context?: CommandContext,
+  ): Promise<BrowserCommandResult> {
+    return this.barrier.run(() => this.executeInBarrier(command, context));
   }
 
   private async executeInBarrier(
     command: BrowserCommand,
+    context?: CommandContext,
   ): Promise<BrowserCommandResult> {
     // Recheck after waiting for a resize, not only at queue admission.
     if (
@@ -932,8 +995,27 @@ export class ChromiumDriver implements BrowserDriver {
       }
       case "observe":
         return this.observe(tabId, action, permit);
-      case "act":
-        return this.act(tabId, action, permit, command.source);
+      case "act": {
+        // Substituted at the last moment, so the ledger and trace keep the
+        // placeholders. Throws on a missing value, so a literal
+        // `{{secret:NAME}}` is never typed, even via the `/v1` routes.
+        let resolved = action;
+        try {
+          resolved = resolveActSecrets(action, context?.secrets);
+        } catch (error) {
+          return {
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+        if (resolved !== action && context?.secrets?.length) {
+          this.secrets.register(context.secrets);
+          // Record the receiving document before the verb runs; a submit may
+          // replace it. @see BrowserSecretRegistry.markTyped
+          this.secrets.markTyped(await this.documentKey(tabId));
+        }
+        return this.act(tabId, resolved, permit, command.source);
+      }
       case "webmcp_invoke":
         return this.webmcpInvoke(tabId, action, permit, command.commandId);
       case "webmcp_cancel":
@@ -1060,7 +1142,13 @@ export class ChromiumDriver implements BrowserDriver {
             "resolved; nothing was run and nothing was observed",
         );
       }
-      await this.dispatchVerb(page, action, permit, refNode);
+      await this.dispatchVerb(
+        page,
+        action,
+        permit,
+        refNode,
+        this.refs.get(tabId),
+      );
     } catch (error) {
       // A target that cannot be resolved is a NORMAL answer the model must be
       // able to act on ("the button isn't there"), not a daemon fault — and
@@ -1237,11 +1325,35 @@ export class ChromiumDriver implements BrowserDriver {
         "this browser cannot resolve refs; use a selector or coordinates",
       );
     }
+    // A backend node id is meaningful only to the session that issued it, so
+    // an element in an out-of-process iframe must use that frame's session.
+    // Absent `sessionFrameId` means the page's own session.
+    const owner = known.sessionFrameId
+      ? entry.page
+          .frameSessions?.()
+          .find((session) => session.frameId === known.sessionFrameId)?.cdp
+      : cdp;
+    if (!owner) {
+      // The frame navigated or went away since the tree was read.
+      throw new ActError(
+        "stale_ref",
+        `the frame that held ${raw} has gone away; observe again and use a ` +
+          "ref from the new tree",
+      );
+    }
     try {
       // The recovery path RE-READS THE PAGE's accessibility tree, which is an
       // observation — and the lease forbids observing as firmly as it forbids
       // acting. Asked here because the lookup above is an await.
-      return await resolveRefNode(cdp, parsed!, known, permit);
+      // On the owner session, or recovery searches the wrong document.
+      const resolved = await resolveRefNode(owner, parsed!, known, permit);
+      return {
+        ...resolved,
+        ...(owner === cdp ? {} : { cdp: owner }),
+        ...(known.sessionFrameId
+          ? { sessionFrameId: known.sessionFrameId }
+          : {}),
+      };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       throw new ActError("stale_ref", message.replace(/^stale_ref:\s*/, ""));
@@ -1263,19 +1375,44 @@ export class ChromiumDriver implements BrowserDriver {
     refNode: ResolvedRefNode,
     label: string,
     check: "occlusion" | "none",
+    /** This tab's ref map, for translating a point out of a frame. */
+    refs?: RefMap,
   ): Promise<ActPoint> {
-    const cdp = await page.cdp();
-    if (!cdp) {
+    const pageCdp = await page.cdp();
+    if (!pageCdp) {
       throw new ActError(
         "unsupported_target",
         "this browser cannot resolve refs; use a selector or coordinates",
       );
     }
-    const point = await pointForBackendNodeId(
-      cdp,
-      refNode.backendNodeId,
-      label,
-    );
+    // The element's own session. @see resolveActRef
+    const cdp = refNode.cdp ?? pageCdp;
+    // An OOPIF session's box model is in the iframe's own coordinates, so its
+    // points must be translated through the frame topology. Without topology,
+    // refuse rather than click a wrong page coordinate.
+    if (refNode.cdp && refNode.sessionFrameId && !refs?.frames) {
+      throw new ActError(
+        "stale_ref",
+        `${label} is inside a frame this observation no longer describes; ` +
+          "observe again and use a ref from the new tree",
+      );
+    }
+    const point =
+      refNode.cdp && refNode.sessionFrameId && refs?.frames
+        ? await pointForRefAcrossFrames({
+            cdp,
+            backendNodeId: refNode.backendNodeId,
+            label,
+            sessionFrameId: refNode.sessionFrameId,
+            frames: refs.frames,
+            sessionFor: (frameId: string | undefined) =>
+              frameId === undefined
+                ? pageCdp
+                : page
+                    .frameSessions?.()
+                    .find((session) => session.frameId === frameId)?.cdp,
+          })
+        : await pointForBackendNodeId(cdp, refNode.backendNodeId, label);
     if (!this.inViewport(point.x, point.y)) {
       // Scrolled and still outside: a fixed-position element parked off-screen,
       // or a box the layout put beyond the viewport. Clicking those pixels
@@ -1307,6 +1444,8 @@ export class ChromiumDriver implements BrowserDriver {
     action: Extract<BrowserAction, { kind: "act" }>,
     permit: () => boolean = () => true,
     refNode?: ResolvedRefNode,
+    /** This tab's ref map, for translating a point out of a frame. */
+    refs?: RefMap,
   ): Promise<void> {
     /** Refuse the NEXT page write when the browser changed hands. */
     const stillOurs = () => {
@@ -1336,6 +1475,10 @@ export class ChromiumDriver implements BrowserDriver {
     // the tab identity a ref is scoped to. Here it is just a live node id.
     const refLabel =
       target && "a11yRef" in target ? target.a11yRef : "the target";
+    /**
+     * The page's session, where input goes: an OOPIF session does not own the
+     * browser's focus, so keys sent there type into nothing.
+     */
     const needCdp = async () => {
       const cdp = await page.cdp();
       if (!cdp) {
@@ -1346,6 +1489,8 @@ export class ChromiumDriver implements BrowserDriver {
       }
       return cdp;
     };
+    /** The session that owns the ref'd node, where node-id DOM calls go. */
+    const needOwnerCdp = async () => refNode?.cdp ?? (await needCdp());
 
     switch (action.verb) {
       case "click":
@@ -1355,6 +1500,7 @@ export class ChromiumDriver implements BrowserDriver {
             refNode,
             refLabel,
             "occlusion",
+            refs,
           );
           // IMMEDIATELY BEFORE THE WRITE. Measuring the target is three round
           // trips, and a person can take the browser inside them.
@@ -1373,6 +1519,7 @@ export class ChromiumDriver implements BrowserDriver {
             refNode,
             refLabel,
             "occlusion",
+            refs,
           );
           stillOurs();
           return page.hoverAt(at);
@@ -1387,7 +1534,18 @@ export class ChromiumDriver implements BrowserDriver {
         // With a ref or a selector, REPLACE the field's value; without either,
         // type into whatever has focus (the model's previous click).
         if (refNode) {
-          await replaceTextInNode(await needCdp(), refNode.backendNodeId, text);
+          await replaceTextInNode(
+            await needOwnerCdp(),
+            refNode.backendNodeId,
+            text,
+            stillOurs,
+            // Ref path only; `fillSelector` keeps Playwright's fill.
+            {
+              keystrokes: this.features.keystrokeTyping === true,
+              // Text goes to the page session; set only when it differs.
+              ...(refNode.cdp ? { inputCdp: await needCdp() } : {}),
+            },
+          );
         } else if (selector) await page.fillSelector(selector, text);
         else await page.typeText(text);
         // ONE settle and ONE observation for what was two commands. The submit
@@ -1436,7 +1594,8 @@ export class ChromiumDriver implements BrowserDriver {
         // happened to be — the difference between Enter submitting the form
         // the model meant and Enter submitting whatever it clicked last.
         if (refNode) {
-          const cdp = await needCdp();
+          // Focus via the owner; `page.press` then hits the focused element.
+          const cdp = await needOwnerCdp();
           stillOurs();
           await focusBackendNodeId(cdp, refNode.backendNodeId);
           stillOurs();
@@ -1446,11 +1605,24 @@ export class ChromiumDriver implements BrowserDriver {
         // Default to one viewport-ish step down, the overwhelmingly common
         // intent, so a bare `scroll` does something useful.
         const [dx, dy] = parseScrollDelta(action.value);
+        // Targeted scroll: wheel at the ref or point so the container under it
+        // moves, not the document.
+        if (refNode || point) {
+          const at =
+            refNode && page.scrollAt
+              ? // NO OCCLUSION CHECK. A scroll container is very often under a
+                // sticky header, and a wheel event reaches the scroller anyway.
+                await this.pointForRef(page, refNode, refLabel, "none", refs)
+              : point;
+          if (refNode) stillOurs();
+          if (at && page.scrollAt) return page.scrollAt(at, { dx, dy });
+        }
+        // Otherwise scroll the document.
         return page.scrollBy({ dx, dy });
       }
       case "drag": {
         const from = refNode
-          ? await this.pointForRef(page, refNode, refLabel, "occlusion")
+          ? await this.pointForRef(page, refNode, refLabel, "occlusion", refs)
           : point;
         if (refNode) stillOurs();
         if (!from) throw new Error("drag needs a ref or start coordinates");
@@ -1475,7 +1647,7 @@ export class ChromiumDriver implements BrowserDriver {
           throw new Error("select needs the option value in `value`");
         }
         if (refNode) {
-          const cdp = await needCdp();
+          const cdp = await needOwnerCdp();
           stillOurs();
           return selectOptionOnNode(
             cdp,
@@ -1488,9 +1660,12 @@ export class ChromiumDriver implements BrowserDriver {
         return page.selectOption(selector, action.value);
       case "close_tab":
       case "activate_tab":
-        // Handled by the caller before dispatch.
+      case "accept_dialog":
+      case "dismiss_dialog":
+        // Handled by the caller before dispatch; listed so `never` below is a
+        // real exhaustiveness check.
         return;
-      default:
+      default: {
         // UNREACHABLE for this build's own union, and the reason it is here
         // anyway: a verb arrives off the WIRE. A newer inspector talking to
         // this daemon (the lazy-upgrade path reuses a running one) would send
@@ -1499,12 +1674,15 @@ export class ChromiumDriver implements BrowserDriver {
         // filled with every field still empty. `BROWSERD_PROTOCOL_VERSION`
         // exists to stop that pairing; this is what it costs if one slips
         // through.
+        // The `never` makes a verb with no case above a compile error.
+        const exhaustive: never = action.verb;
         throw new ActError(
           "act_failed",
           `this browser daemon does not support the "${
-            (action as { verb: string }).verb
+            exhaustive as string
           }" verb; it is running an older build`,
         );
+      }
     }
   }
 
@@ -2037,7 +2215,7 @@ export class ChromiumDriver implements BrowserDriver {
           frame,
           permit,
         );
-        this.commitRefs(tabId, result, rendered.refMap);
+        this.commitRefs(tabId, result, rendered.refMap, rendered.frames);
         return result;
       }
       case "dialog": {
@@ -2273,6 +2451,32 @@ export class ChromiumDriver implements BrowserDriver {
       ...this.observation(tabId, entry, { screenshot }, after, permit),
       settled: false,
     };
+  }
+
+  /**
+   * `tabId|performance.timeOrigin`, the identity of a tab's current document.
+   * Read over CDP so both engines answer; undefined on any failure, which
+   * secret exposure treats as exposed.
+   */
+  async documentKey(tabId?: string): Promise<string | undefined> {
+    const id = tabId ?? this.activeTabId ?? DEFAULT_TAB;
+    const entry = this.tabs.get(id);
+    if (!entry || entry.page.isClosed()) return undefined;
+    try {
+      const cdp = await entry.page.cdp();
+      if (!cdp) return undefined;
+      const raw = (await cdp.send("Runtime.evaluate", {
+        expression: "performance.timeOrigin",
+        returnByValue: true,
+        timeout: 1_000,
+      })) as { result?: { value?: unknown } } | undefined;
+      const origin = raw?.result?.value;
+      return typeof origin === "number" && Number.isFinite(origin)
+        ? `${id}|${origin}`
+        : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   async currentStateToken(tabId: string | undefined) {
@@ -2568,15 +2772,28 @@ export class ChromiumDriver implements BrowserDriver {
         (timer as { unref?: () => void }).unref?.();
       }),
     ]);
+    // Bounded: a page close can hang forever, and the context close below is
+    // what actually reaps the browser.
+    await Promise.race([
+      this.closeSurfaces(),
+      new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, CLOSE_SURFACE_GRACE_MS);
+        (timer as { unref?: () => void }).unref?.();
+      }),
+    ]);
+    this.viewports.clear();
+    this.tabs.clear();
+    await this.context.close().catch(() => {});
+  }
+
+  /** Close what this driver opened, in order. Bounded by its caller. */
+  private async closeSurfaces(): Promise<void> {
     for (const viewport of this.viewports.values()) {
       await viewport.then((v) => v?.dispose()).catch(() => {});
     }
-    this.viewports.clear();
     for (const entry of this.tabs.values()) {
       if (!entry.page.isClosed()) await entry.page.close().catch(() => {});
     }
-    this.tabs.clear();
-    await this.context.close().catch(() => {});
   }
 
   /**
@@ -2979,6 +3196,8 @@ export class ChromiumDriver implements BrowserDriver {
         ok: true;
         fields: Record<string, unknown>;
         refMap: Map<string, RefEntry>;
+        /** Where each out-of-process frame sits. @see FrameTopology */
+        frames?: Map<string, FrameTopology>;
       }
     | { ok: false; error: BrowserCommandResult }
   > {
@@ -3007,8 +3226,12 @@ export class ChromiumDriver implements BrowserDriver {
           ]),
         ),
         ...(omittedSubtrees > 0 ? { omittedSubtrees, totalNodes } : {}),
+        // Outside the untrusted fence, and a number a page cannot forge into
+        // prose; tells the model the tree is incomplete.
+        ...(raw.framesOmitted ? { framesOmitted: raw.framesOmitted } : {}),
       },
       refMap: refs,
+      ...(raw.frames ? { frames: raw.frames } : {}),
     };
   }
 
@@ -3031,12 +3254,19 @@ export class ChromiumDriver implements BrowserDriver {
     tabId: string,
     result: BrowserCommandResult,
     refMap: Map<string, RefEntry> | undefined,
+    /** The frame topology the SAME read produced. @see FrameTopology */
+    frames?: Map<string, FrameTopology>,
   ): void {
     if (!result.ok || !refMap) {
       this.refs.delete(tabId);
       return;
     }
-    this.refs.set(tabId, { stateToken: result.stateToken, entries: refMap });
+    this.refs.set(tabId, {
+      stateToken: result.stateToken,
+      entries: refMap,
+      // Bound to the same token: a topology is a fact about one document.
+      ...(frames && frames.size > 0 ? { frames } : {}),
+    });
   }
 
   /**
@@ -3091,6 +3321,7 @@ export class ChromiumDriver implements BrowserDriver {
       : undefined;
     let a11yFields: Record<string, unknown> = {};
     let refMap: Map<string, RefEntry> | undefined;
+    let refFrames: Map<string, FrameTopology> | undefined;
     if (wants.a11y) {
       // `.catch` as well as the `ok:false` arm: `renderA11y` READS the page
       // (a CDP attach, an AX tree walk), and a navigation or a closing tab
@@ -3102,6 +3333,7 @@ export class ChromiumDriver implements BrowserDriver {
       if (rendered.ok) {
         a11yFields = rendered.fields;
         refMap = rendered.refMap;
+        refFrames = rendered.frames;
       } else {
         // NON-FATAL, deliberately. A page that cannot answer a tree — a PDF, a
         // page whose CDP session went away, a `chrome://` surface — must not
@@ -3230,7 +3462,7 @@ export class ChromiumDriver implements BrowserDriver {
     // is the right answer there. An act that never asked about the tree keeps
     // whatever the tab held: refs are meant to survive a DOM mutation, and
     // this capture proved stable.
-    if (wants.a11y) this.commitRefs(tabId, result, refMap);
+    if (wants.a11y) this.commitRefs(tabId, result, refMap, refFrames);
     return result;
   }
 
@@ -3274,10 +3506,20 @@ export class ChromiumDriver implements BrowserDriver {
       filter?: "interactive" | "all";
     },
   ): Promise<
-    | { ok: true; tree: A11yNode | null; filter: "interactive" | "all" }
+    | {
+        ok: true;
+        tree: A11yNode | null;
+        filter: "interactive" | "all";
+        /** Child frames this read could not describe. @see readAxForest */
+        framesOmitted?: number;
+        /** Where each out-of-process frame sits. @see FrameTopology */
+        frames?: Map<string, FrameTopology>;
+      }
     | { ok: false; error: BrowserCommandResult }
   > {
     const filter = action.filter ?? "interactive";
+    // Only `readAxForest` needs frame sessions, so wait only under its flag.
+    if (this.features.a11yFrames) await settleBridge(entry.page);
     const cdp = await entry.page.cdp();
     if (!cdp) {
       return {
@@ -3340,7 +3582,24 @@ export class ChromiumDriver implements BrowserDriver {
       }
       rootBackendNodeId = resolved;
     }
-    const read = await readAxTree(cdp, rootBackendNodeId);
+    // Flagged: `DOM.getDocument` with `pierce` reads the whole node tree.
+    const scrollable = this.features.scrollableMarkers
+      ? await readScrollableNodes(cdp)
+      : undefined;
+    // Descend into iframes only for page-scoped reads; a rooted read asks
+    // about one subtree.
+    const read =
+      this.features.a11yFrames && rootBackendNodeId === undefined
+        ? await readAxForest(
+            cdp,
+            entry.page.frameSessions?.() ?? [],
+            scrollable ? { scrollable } : {},
+          )
+        : await readAxTree(
+            cdp,
+            rootBackendNodeId,
+            scrollable ? { scrollable } : {},
+          );
     if (!read.ok) {
       return {
         ok: false,
@@ -3366,7 +3625,18 @@ export class ChromiumDriver implements BrowserDriver {
         },
       };
     }
-    return { ok: true, tree: read.tree, filter };
+    return {
+      ok: true,
+      tree: read.tree,
+      filter,
+      // Omitted when empty, so ordinary results gain no new keys.
+      ...("framesOmitted" in read && read.framesOmitted > 0
+        ? { framesOmitted: read.framesOmitted }
+        : {}),
+      ...("frames" in read && read.frames.size > 0
+        ? { frames: read.frames }
+        : {}),
+    };
   }
 
   /**
@@ -3497,6 +3767,8 @@ export class ChromiumDriver implements BrowserDriver {
     // handed to a recreated tab of the same name and resolve — by role and
     // name — against a document that never issued them.
     this.refs.delete(tabId);
+    // And the render they were minted from, so `changed` never diffs against
+    // a previous incarnation's tree.
     await this.dropViewport(tabId);
   }
 

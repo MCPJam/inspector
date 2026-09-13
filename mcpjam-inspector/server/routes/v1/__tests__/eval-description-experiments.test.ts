@@ -90,9 +90,9 @@ const VALID_REPORT = descriptionExperimentReportSchema.parse(
 );
 
 const PROJECT_ID = "p1";
-const RUN_ID = "run_src";
-const EXPERIMENT_ID = "exp_1";
-const SUITE_ID = "suite_1";
+const RUN_ID = "runsrcxxxxxxxxxxxxxxxxxxxxxxxxxx";
+const EXPERIMENT_ID = "exp1xxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+const SUITE_ID = "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx";
 
 const EXPERIMENT_DOC = {
   _id: EXPERIMENT_ID,
@@ -102,7 +102,7 @@ const EXPERIMENT_DOC = {
   sourceRunId: RUN_ID,
   toolName: "search",
   status: "proposed",
-  affectedCaseIds: ["case_1"],
+  affectedCaseIds: ["case1xxxxxxxxxxxxxxxxxxxxxxxxxxx"],
   plan: { caseScope: "all", repetitions: 1, plannedTrials: 2 },
   proposal: {
     description: "Find documents by query.",
@@ -175,7 +175,7 @@ function mockConvex(
       return {
         serverIds: ["s_alpha"],
         serverNames: ["alpha"],
-        source: "host_config",
+        source: "hostconfigxxxxxxxxxxxxxxxxxxxxxx",
       };
     }
     if (fn === "hosts:getHost") {
@@ -223,7 +223,7 @@ function mockHappyLaunch() {
     call += 1;
     return {
       suiteId: SUITE_ID,
-      runId: call === 1 ? "run_original" : "run_rewrite",
+      runId: call === 1 ? "runoriginalxxxxxxxxxxxxxxxxxxxxx" : "runrewritexxxxxxxxxxxxxxxxxxxxxx",
       caseUpsert: { committed: [], failed: [] },
       recorder: { finalize: vi.fn() },
       execute: vi.fn().mockResolvedValue(undefined),
@@ -424,7 +424,7 @@ describe("eval description experiments", () => {
       const releaseGates: Array<() => void> = [];
       prepareEvalRunMock.mockImplementation(async () => ({
         suiteId: SUITE_ID,
-        runId: "run_hold",
+        runId: "runholdxxxxxxxxxxxxxxxxxxxxxxxxx",
         caseUpsert: { committed: [], failed: [] },
         recorder: { finalize: vi.fn() },
         execute: vi.fn(
@@ -580,8 +580,8 @@ describe("eval description experiments", () => {
         "descriptionExperiments:recordArms",
         expect.objectContaining({
           experimentId: EXPERIMENT_ID,
-          originalRunId: "run_original",
-          rewriteRunId: "run_rewrite",
+          originalRunId: "runoriginalxxxxxxxxxxxxxxxxxxxxx",
+          rewriteRunId: "runrewritexxxxxxxxxxxxxxxxxxxxxx",
         }),
       );
     });
@@ -591,7 +591,7 @@ describe("eval description experiments", () => {
       prepareEvalRunMock
         .mockImplementationOnce(async () => ({
           suiteId: SUITE_ID,
-          runId: "run_original",
+          runId: "runoriginalxxxxxxxxxxxxxxxxxxxxx",
           caseUpsert: { committed: [], failed: [] },
           recorder: { finalize: vi.fn() },
           execute: vi.fn().mockResolvedValue(undefined),
@@ -606,7 +606,7 @@ describe("eval description experiments", () => {
       expect(res.status).toBeGreaterThanOrEqual(500);
       expect(convexMutationMock).toHaveBeenCalledWith(
         "testSuites:cancelTestSuiteRun",
-        { runId: "run_original" },
+        { runId: "runoriginalxxxxxxxxxxxxxxxxxxxxx" },
       );
       expect(convexMutationMock).toHaveBeenCalledWith(
         "descriptionExperiments:markFailed",
@@ -631,7 +631,7 @@ describe("eval description experiments", () => {
             ? {
                 ...EXPERIMENT_DOC,
                 status: "running",
-                arms: { original: "run_original", rewrite: "run_rewrite" },
+                arms: { original: "runoriginalxxxxxxxxxxxxxxxxxxxxx", rewrite: "runrewritexxxxxxxxxxxxxxxxxxxxxx" },
                 runGroupId: EXPERIMENT_ID,
               }
             : EXPERIMENT_DOC,
@@ -672,7 +672,7 @@ describe("eval description experiments", () => {
           return {
             ...EXPERIMENT_DOC,
             status: "running",
-            arms: { original: "run_original", rewrite: "run_rewrite" },
+            arms: { original: "runoriginalxxxxxxxxxxxxxxxxxxxxx", rewrite: "runrewritexxxxxxxxxxxxxxxxxxxxxx" },
             runGroupId: EXPERIMENT_ID,
           };
         },
@@ -723,8 +723,8 @@ describe("eval description experiments", () => {
         details: {
           reason: "ARMS_RECORD_UNCONFIRMED",
           experimentId: EXPERIMENT_ID,
-          originalRunId: "run_original",
-          rewriteRunId: "run_rewrite",
+          originalRunId: "runoriginalxxxxxxxxxxxxxxxxxxxxx",
+          rewriteRunId: "runrewritexxxxxxxxxxxxxxxxxxxxxx",
         },
       });
       // The only stop this surface offers for unrecorded arms is the run
@@ -758,7 +758,7 @@ describe("eval description experiments", () => {
       );
       expect(res.status).toBeGreaterThanOrEqual(400);
       expect(prepareEvalRunMock).toHaveBeenCalledTimes(2);
-      for (const runId of ["run_original", "run_rewrite"]) {
+      for (const runId of ["runoriginalxxxxxxxxxxxxxxxxxxxxx", "runrewritexxxxxxxxxxxxxxxxxxxxxx"]) {
         expect(convexMutationMock).toHaveBeenCalledWith(
           "testSuites:cancelTestSuiteRun",
           { runId },

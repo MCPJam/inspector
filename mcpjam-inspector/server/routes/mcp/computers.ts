@@ -34,7 +34,7 @@ import {
   resolveBrowserRollout,
 } from "../../utils/computers/browser-rollout.js";
 import { Hono } from "hono";
-import { LOCAL_BROWSER_ENABLED, LOCAL_COMPUTER_ENABLED } from "../../config.js";
+import { HOSTED_MODE, LOCAL_BROWSER_ENABLED, LOCAL_COMPUTER_ENABLED } from "../../config.js";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
 import { requireVerifiedAuth } from "../../middleware/require-verified-auth.js";
 import {
@@ -59,6 +59,7 @@ import {
   parsePaneCommand,
 } from "../../services/browserd/daemon/pane-command.js";
 import { supportsPane } from "../../services/browserd/pane-client.js";
+import { isBrowserCommandCorrelation } from "../../services/browserd/protocol.js";
 import {
   ensureLocalBrowserSession,
   findLocalBrowserSession,
@@ -113,6 +114,7 @@ import {
 import type { BrowserAgentCommand } from "../../../shared/browser-agent-contract.js";
 import { logger } from "../../utils/logger.js";
 import { browserProfileArchiveResponse } from "../../../shared/browser-session-header.js";
+import { enableLocalBrowserClients } from "../../utils/computers/local-browser-settings.js";
 
 const computers = new Hono();
 
@@ -337,6 +339,25 @@ computers.post("/local-browser/consent/verify", async (c) => {
       typeof body?.token === "string" ? body.token : null,
     ),
   });
+});
+computers.post("/local-browser/enable-clients", async (c) => {
+  if (HOSTED_MODE) return c.json({ error: "Local Browser setup is unavailable here." }, 404);
+  if (!(await verifyLocalBrowserConsent(c.req.header(BROWSER_CONSENT_HEADER)))) {
+    return c.json({ error: "Allow Browser first.", code: "browser_consent_required" }, 403);
+  }
+  // Guests can authorize their own machine, but cannot change shared projects.
+  if (c.get("guestId")) {
+    return c.json({ enabledProjects: 0, skippedProjects: 0, scope: "device" });
+  }
+  try {
+    const bearer = await getConvexBearerForRequest(c);
+    return c.json(await enableLocalBrowserClients(bearer));
+  } catch {
+    return c.json({
+      error: "Browser permission was saved, but clients could not be enabled. Retry setup.",
+      code: "browser_client_setup_failed",
+    }, 503);
+  }
 });
 computers.post("/local-browser/consent/revoke", async (c) => {
   const body = await c.req.json().catch(() => null);
@@ -1228,24 +1249,6 @@ computers.post("/local-browser/page-tools/invoke", async (c) => {
  * and the actor is composed from the authenticated context here.
  * ---------------------------------------------------------------------- */
 
-/**
- * A correlation object, or nothing.
- *
- * Echoed onto the ledger row and never interpreted, so the only question is
- * whether it is a flat string map — a nested object here would be an
- * unbounded blob riding into every row.
- */
-function isCorrelation(value: unknown): value is Record<string, string> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-  const entries = Object.entries(value as Record<string, unknown>);
-  return (
-    entries.length <= 10 &&
-    entries.every(([, v]) => typeof v === "string" && v.length <= 200)
-  );
-}
-
 /** The authenticated identity behind an agent command, or `anonymous`. */
 function agentUserId(c: { get(key: string): unknown }): string | undefined {
   const candidates = ["mcpjamUserId", "workosUserId", "guestId"];
@@ -1669,7 +1672,7 @@ computers.post("/local-browser/command", async (c) => {
       ? { commandId: body.commandId }
       : {}),
     ...(typeof body?.tabId === "string" ? { tabId: body.tabId } : {}),
-    ...(isCorrelation(body?.correlation)
+    ...(isBrowserCommandCorrelation(body?.correlation)
       ? { correlation: body.correlation }
       : {}),
   });

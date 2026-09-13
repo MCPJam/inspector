@@ -14,11 +14,30 @@
  *      today. A fourth added later without the gate reopens the finding; this
  *      refuses to attach the credential anyway.
  *
- * FAIL CLOSED, INCLUDING ON ABSENCE. A credential-bearing row with no recorded
- * binding is refused, not allowed. "Absent means allow" is the hole the field
- * exists to close, and it is why the backend's `secretsBoundOrigin` backfill
- * gates this deploy: enforcement must not ship until every credential-bearing
- * row is bound, or existing servers stop connecting.
+ * ON-ROW CREDENTIALS ONLY. `secretsBoundOrigin` is the binding for what the row
+ * itself stores — the secret headers, the stdio env, the XAA client secret and
+ * the DCR registration — and the backend writes it for exactly that set
+ * (`serverRowHoldsStoredCredential` in `convex/lib/serverSecretOrigin.ts`, which
+ * the backfill reuses to pick its rows). A stored hosted OAuth token is NOT in
+ * that set: it lives per subject in `hostedOAuthCredentials` with its own
+ * `serverUrl`, so an OAuth-only row has no `secretsBoundOrigin` at all and
+ * gating one on this field would refuse every such connection. Those tokens are
+ * refused backend-side instead, at the single resolve chokepoint every connect
+ * path goes through (`internalResolveHostedOAuthAccessToken`), which answers
+ * `oauthUnavailableReason: 'credential_origin_mismatch'` in place of the token.
+ *
+ * STDIO HAS NO ORIGIN, so it has no binding and is not gated here. Its `env`
+ * reaches a locally spawned child rather than a remote host, and the repoint
+ * that redirects it — a `command`/`args` swap — is a write-side trigger the
+ * backend owns (`stdioTargetChangeRedirectsCredentials`). Treating "no origin"
+ * as "no binding, refuse" would break every local stdio server.
+ *
+ * FAIL CLOSED, INCLUDING ON ABSENCE. An http row about to spend an on-row
+ * credential with no recorded binding is refused, not allowed. "Absent means
+ * allow" is the hole the field exists to close, and it is why the backend's
+ * `secretsBoundOrigin` backfill gates this deploy: enforcement must not ship
+ * until every credential-bearing row is bound, or existing servers stop
+ * connecting.
  *
  * The origin rules are a hand-mirror of `convex/lib/canonicalUrl.ts`
  * (`originForCredentialBinding`). They have to agree: a stricter rule here

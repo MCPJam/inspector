@@ -7,6 +7,12 @@
  * gate cannot: the window between the authorize read and the reveal read (two
  * separate round trips), and any future writer added without the gate.
  *
+ * SCOPE. What this gate covers is the row's ON-ROW credentials — the revealed
+ * headers, and the client secret a preregistered/DCR XAA mint spends. A stored
+ * hosted OAuth token is bound elsewhere (per subject, against its own
+ * `serverUrl`) and refused backend-side, so it is deliberately NOT gated here;
+ * the tests below pin both halves of that division.
+ *
  * The assertions are about what reaches the wire. `MCPClientManager` is mocked,
  * so the exact `requestInit.headers` handed to the transport is inspectable —
  * which is the only thing that actually matters here.
@@ -58,6 +64,7 @@ function mockBackend(opts: {
   hasHeaders?: boolean;
   oauthAccessToken?: string | null;
   revealHeaders?: Record<string, string>;
+  revealBoundOrigin?: string;
   /** Extra `serverConfig` fields — the XAA rows need `authMethod`/`registrationMode`. */
   serverConfigExtra?: Record<string, unknown>;
 }) {
@@ -73,7 +80,8 @@ function mockBackend(opts: {
           headers: opts.revealHeaders ?? {
             Authorization: SECRET_HEADER_VALUE,
           },
-          secretsBoundOrigin: opts.secretsBoundOrigin ?? null,
+          secretsBoundOrigin:
+            opts.revealBoundOrigin ?? opts.secretsBoundOrigin ?? null,
         }),
         { status: 200, headers: { "Content-Type": "application/json" } }
       );
@@ -139,6 +147,17 @@ describe("MJ-003 secret origin binding at connect time", () => {
     } else {
       process.env.CONVEX_HTTP_URL = originalConvexHttpUrl;
     }
+  });
+
+  it("refuses a credential saved for a different origin after authorize", async () => {
+    mockBackend({
+      url: "https://collector.attacker.example/mcp",
+      secretsBoundOrigin: "https://collector.attacker.example",
+      revealBoundOrigin: "https://owner.example.com",
+      revealHeaders: { Authorization: SECRET_HEADER_VALUE },
+    });
+    await expect(connect()).rejects.toMatchObject({ status: 403 });
+    expect(mcpClientManagerMock).not.toHaveBeenCalled();
   });
 
   it("attaches revealed secret headers when the binding matches", async () => {
@@ -248,37 +267,6 @@ describe("MJ-003 secret origin binding at connect time", () => {
     await expect(connect()).rejects.toMatchObject({ status: 403 });
   });
 
-  it("does not attach a stored OAuth bearer to a repointed row", async () => {
-    mockBackend({
-      url: "https://collector.attacker.example/mcp",
-      secretsBoundOrigin: "https://owner.example.com",
-      hasHeaders: false,
-      oauthAccessToken: STORED_OAUTH_TOKEN,
-    });
-
-    // The half a headers-only fix would miss. A stored OAuth token was minted
-    // against the original origin and rides `oauthAccessToken` on the authorize
-    // response, so no reveal happens for it — the binding has to be checked on
-    // this route too.
-    await expect(connect()).rejects.toMatchObject({ status: 403 });
-    expect(mcpClientManagerMock).not.toHaveBeenCalled();
-  });
-
-  it("attaches a stored OAuth bearer when the binding matches", async () => {
-    mockBackend({
-      url: "https://owner.example.com/mcp",
-      secretsBoundOrigin: "https://owner.example.com",
-      hasHeaders: false,
-      oauthAccessToken: STORED_OAUTH_TOKEN,
-    });
-
-    await connect();
-
-    expect(outboundHeadersForServer1()).toEqual({
-      Authorization: `Bearer ${STORED_OAUTH_TOKEN}`,
-    });
-  });
-
   it("leaves a row with no stored credential alone", async () => {
     mockBackend({
       url: "https://anything.example.com/mcp",
@@ -311,6 +299,30 @@ describe("MJ-003 gate scope — what it must NOT refuse", () => {
     } else {
       process.env.CONVEX_HTTP_URL = originalConvexHttpUrl;
     }
+  });
+
+  it("connects an OAuth-only row, which carries no binding at all", async () => {
+    // THE #4932 REGRESSION, pinned. The backend writes `secretsBoundOrigin`
+    // only for rows holding an ON-ROW credential, and a hosted OAuth token is
+    // not one: it lives per subject in `hostedOAuthCredentials` with its own
+    // `serverUrl`. So an OAuth-only row has no binding even after a complete
+    // backfill, and gating its token here would refuse every one of them — the
+    // outage this change was reverted for. The token's own origin is enforced
+    // backend-side, at `internalResolveHostedOAuthAccessToken`, which every
+    // connect path resolves through and which answers
+    // `oauthUnavailableReason: 'credential_origin_mismatch'` instead of a token.
+    mockBackend({
+      url: "https://owner.example.com/mcp",
+      hasHeaders: false,
+      oauthAccessToken: STORED_OAUTH_TOKEN,
+      secretsBoundOrigin: undefined,
+    });
+
+    await connect();
+
+    expect(outboundHeadersForServer1()).toEqual({
+      Authorization: `Bearer ${STORED_OAUTH_TOKEN}`,
+    });
   });
 
   it("allows a caller-supplied token against a repointed row", async () => {

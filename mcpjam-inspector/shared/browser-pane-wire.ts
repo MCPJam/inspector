@@ -107,7 +107,21 @@ export function decodeStateSnapshot(raw: unknown): BrowserStateSnapshot | null {
     .filter((tab): tab is BrowserTabState => tab !== null);
   const activeTabId =
     typeof body.activeTabId === "string" ? body.activeTabId : null;
+  const webmcp = body.webmcp as BrowserStateSnapshot["webmcp"];
   return {
+    ...(webmcp &&
+    typeof webmcp.revision === "number" &&
+    typeof webmcp.hash === "string" &&
+    typeof webmcp.count === "number"
+      ? {
+          webmcp: {
+            revision: webmcp.revision,
+            hash: webmcp.hash,
+            count: webmcp.count,
+            ...(typeof webmcp.url === "string" ? { url: webmcp.url } : {}),
+          },
+        }
+      : {}),
     seq: typeof body.seq === "number" ? body.seq : 0,
     tabs,
     // An active id naming a tab that is not in the list reads as "no tab is on

@@ -15,6 +15,7 @@ import { buildPageToolSnapshot } from "./page-tool-aliases";
 import type { PageToolSnapshotEntry } from "@/shared/chat-v2";
 import { sameWebMcpRegistration } from "@/shared/webmcp-inspector-protocol";
 import { isPageToolAlias } from "@/shared/client-fulfilled-tools";
+import { logWebMcpTraffic } from "@/lib/webmcp-traffic";
 
 /** The turn's snapshot, so an alias can be resolved when its call arrives. */
 let advertised: PageToolSnapshotEntry[] = [];
@@ -138,6 +139,7 @@ export function resolvePageToolAlias(
 export interface McpToolResult {
   content: { type: "text"; text: string }[];
   isError?: boolean;
+  pageTool?: { rawName: string; origin: string };
 }
 
 function textResult(text: string, isError = false): McpToolResult {
@@ -275,6 +277,18 @@ export async function fulfillApprovedPageToolCall(options: {
   markPageToolCallSettled(options.toolCallId);
   deferredPageToolCalls.delete(options.toolCallId);
 
+  const entry = deferred ? deferred.entry : resolvePageToolAlias(alias);
+  const logContext = {
+    toolCallId: options.toolCallId,
+    toolName: entry?.rawName ?? alias,
+    serverId: entry?.sessionId,
+    serverName: entry?.origin || "WebMCP",
+  };
+  logWebMcpTraffic({
+    ...logContext,
+    direction: "SEND",
+    payload: { toolCallId: options.toolCallId, input },
+  });
   let output: McpToolResult;
   try {
     output = await invokePageToolForChat(
@@ -292,6 +306,17 @@ export async function fulfillApprovedPageToolCall(options: {
       true,
     );
   }
+  if (entry) {
+    output = {
+      ...output,
+      pageTool: { rawName: entry.rawName, origin: entry.origin },
+    };
+  }
+  logWebMcpTraffic({
+    ...logContext,
+    direction: "RECEIVE",
+    payload: { toolCallId: options.toolCallId, output },
+  });
   options.addToolOutput({
     tool: alias,
     toolCallId: options.toolCallId,

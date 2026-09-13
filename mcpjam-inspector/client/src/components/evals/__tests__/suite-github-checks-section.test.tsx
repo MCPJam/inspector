@@ -9,7 +9,6 @@ const {
   mockConnectRepo,
   mockSetRepoForkCredentials,
   mockSetRepoPrServerOAuth,
-  mockPrServerOAuthSources,
   mockConnectVerifiedRepo,
   mockListInstallationRepos,
   mockNavigate,
@@ -17,7 +16,8 @@ const {
 } = vi.hoisted(() => ({
   mockAvailability: {
     value: undefined as
-      { state: "enabled" | "disabled"; canManage?: boolean } | undefined,
+      | { state: "enabled" | "disabled"; canManage?: boolean }
+      | undefined,
   },
   mockRepos: { value: undefined as any[] | undefined },
   // The org's installations, on a live query. What the listing below is a
@@ -32,7 +32,6 @@ const {
   mockSetRepoPrServerOAuth: vi.fn(async (_args?: unknown) => ({
     changed: true,
   })),
-  mockPrServerOAuthSources: { value: [] as any[] },
   mockConnectRepo: vi.fn(async () => ({ configId: "cfg-legacy" })),
   // Loosely typed for the same reason as the settings-route suite: these stand
   // in for Convex actions whose arguments are hand-mirrored, and a narrow
@@ -43,20 +42,22 @@ const {
   // `repositoryId` is REQUIRED by the contract and is what the picker is keyed
   // on: two connected accounts can each have a `widgets`, so a name is not a
   // selector. `installationRef` says which installation the entry came from.
-  mockListInstallationRepos: vi.fn(async (): Promise<unknown[]> => [
-    {
-      repositoryId: 101,
-      fullName: "mcpjam/inspector",
-      installationRef: "bind-1",
-      accountLogin: "mcpjam",
-    },
-    {
-      repositoryId: 102,
-      fullName: "mcpjam/backend",
-      installationRef: "bind-1",
-      accountLogin: "mcpjam",
-    },
-  ]),
+  mockListInstallationRepos: vi.fn(
+    async (): Promise<unknown[]> => [
+      {
+        repositoryId: 101,
+        fullName: "mcpjam/inspector",
+        installationRef: "bind-1",
+        accountLogin: "mcpjam",
+      },
+      {
+        repositoryId: 102,
+        fullName: "mcpjam/backend",
+        installationRef: "bind-1",
+        accountLogin: "mcpjam",
+      },
+    ],
+  ),
   mockNavigate: vi.fn(),
   mockToast: { error: vi.fn(), success: vi.fn() },
 }));
@@ -66,7 +67,6 @@ vi.mock("@/hooks/useGithubChecksSettings", () => ({
     availability: mockAvailability.value,
     repos: mockRepos.value,
     bindings: mockBindings.value,
-    prServerOAuthSources: mockPrServerOAuthSources.value,
     connectRepo: mockConnectRepo,
     setRepoForkCredentials: mockSetRepoForkCredentials,
     setRepoPrServerOAuth: mockSetRepoPrServerOAuth,
@@ -89,6 +89,10 @@ const CONNECTED_HERE = {
   enabled: true,
   suiteId: "suite-1",
   projectId: "proj-1",
+  prServerOAuth: {
+    status: "not_configured" as const,
+    sources: [],
+  },
 };
 const CONNECTED_ELSEWHERE = {
   _id: "cfg-2",
@@ -100,7 +104,8 @@ const CONNECTED_ELSEWHERE = {
 function renderSection(
   opts: {
     availability?:
-      { state: "enabled" | "disabled"; canManage?: boolean } | undefined;
+      | { state: "enabled" | "disabled"; canManage?: boolean }
+      | undefined;
     repos?: any[] | undefined;
   } = {},
 ) {
@@ -371,7 +376,7 @@ describe("SuiteGithubChecksSection repository identity", () => {
     renderSection({ repos: [] });
     await waitFor(() => expect(mockListInstallationRepos).toHaveBeenCalled());
     expect(
-      await screen.findByText(/No repositories available to connect\./)
+      await screen.findByText(/No repositories available to connect\./),
     ).toBeInTheDocument();
     await waitFor(() =>
       expect(screen.getByRole("button", { name: /Connect/ })).toBeDisabled(),
@@ -502,23 +507,35 @@ it("the suite section edits the same repository credential policy", async () => 
   });
 });
 
-it("the suite section selects an authorized OAuth source", async () => {
-  mockPrServerOAuthSources.value = [
-    {
-      serverId: "server-oauth",
-      projectId: "proj-1",
-      name: "Test OAuth server",
-      authorized: true,
-    },
-  ];
+it("the suite section asks only when several OAuth sources need a choice", async () => {
   renderSection({
     availability: { state: "enabled", canManage: true },
-    repos: [{ ...CONNECTED_HERE, connectionStatus: "verified" }],
+    repos: [
+      {
+        ...CONNECTED_HERE,
+        connectionStatus: "verified",
+        prServerOAuth: {
+          status: "selection_required",
+          sources: [
+            {
+              serverId: "server-oauth",
+              name: "Test OAuth server",
+              authorized: true,
+            },
+            {
+              serverId: "server-other",
+              name: "Other OAuth server",
+              authorized: true,
+            },
+          ],
+        },
+      },
+    ],
   });
 
   await chooseOption(
     userEvent.setup(),
-    `Server authentication for ${CONNECTED_HERE.repoFullName}`,
+    `Server authorization for ${CONNECTED_HERE.repoFullName}`,
     "Test OAuth server",
   );
 
@@ -544,14 +561,16 @@ it("keeps each repository OAuth selector busy independently", async () => {
           resolveSecond = resolve;
         }),
     );
-  mockPrServerOAuthSources.value = [
-    {
-      serverId: "server-oauth",
-      projectId: "proj-1",
-      name: "Test OAuth server",
-      authorized: true,
-    },
-  ];
+  const oauthResolution = {
+    status: "selection_required" as const,
+    sources: [
+      {
+        serverId: "server-oauth",
+        name: "Test OAuth server",
+        authorized: true,
+      },
+    ],
+  };
   const second = {
     ...CONNECTED_HERE,
     _id: "cfg-2",
@@ -560,10 +579,13 @@ it("keeps each repository OAuth selector busy independently", async () => {
   const user = userEvent.setup();
   renderSection({
     availability: { state: "enabled", canManage: true },
-    repos: [CONNECTED_HERE, second],
+    repos: [
+      { ...CONNECTED_HERE, prServerOAuth: oauthResolution },
+      { ...second, prServerOAuth: oauthResolution },
+    ],
   });
-  const firstLabel = `Server authentication for ${CONNECTED_HERE.repoFullName}`;
-  const secondLabel = `Server authentication for ${second.repoFullName}`;
+  const firstLabel = `Server authorization for ${CONNECTED_HERE.repoFullName}`;
+  const secondLabel = `Server authorization for ${second.repoFullName}`;
 
   await chooseOption(user, firstLabel, "Test OAuth server");
   await chooseOption(user, secondLabel, "Test OAuth server");
@@ -584,21 +606,27 @@ it("does not toast when an OAuth write fails after the suite section is gone", a
         rejectWrite = reject;
       }),
   );
-  mockPrServerOAuthSources.value = [
-    {
-      serverId: "server-oauth",
-      projectId: "proj-1",
-      name: "Test OAuth server",
-      authorized: true,
-    },
-  ];
   const { unmount } = renderSection({
     availability: { state: "enabled", canManage: true },
-    repos: [CONNECTED_HERE],
+    repos: [
+      {
+        ...CONNECTED_HERE,
+        prServerOAuth: {
+          status: "selection_required",
+          sources: [
+            {
+              serverId: "server-oauth",
+              name: "Test OAuth server",
+              authorized: true,
+            },
+          ],
+        },
+      },
+    ],
   });
   await chooseOption(
     userEvent.setup(),
-    `Server authentication for ${CONNECTED_HERE.repoFullName}`,
+    `Server authorization for ${CONNECTED_HERE.repoFullName}`,
     "Test OAuth server",
   );
   unmount();

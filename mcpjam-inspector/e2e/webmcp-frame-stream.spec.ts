@@ -20,12 +20,15 @@ import sharp from "sharp";
 import os from "node:os";
 import { writeFile } from "node:fs/promises";
 import {
-  decodeWebMcpBinaryFrame,
   WEBMCP_FRAME_BOOST_INTERVAL_MS,
   WEBMCP_FRAME_MAX_BYTES,
   WEBMCP_FRAME_MIN_INTERVAL_MS,
-  type WebMcpBinaryFrame,
 } from "../shared/webmcp-inspector-protocol";
+import {
+  createFrameStreamDecoder,
+  FRAME_STREAM_KIND,
+  type FrameStreamFrame,
+} from "../shared/browserd-frame-stream";
 import { readJpegDimensions } from "../shared/jpeg-dimensions";
 import { startWebMcpFixturePage } from "./fixtures/webmcp-frame-page";
 
@@ -57,12 +60,66 @@ async function sessionToken(): Promise<string> {
   return body.token!;
 }
 
+/**
+ * The two credentials `authorizeLocalInspection` wants on top of the session
+ * token, taken once per run by `authorizeLocalBrowser` below.
+ *
+ * The session token says "this page is the inspector"; these say WHO is asking
+ * and that this DEVICE has agreed to be inspected, which is a different
+ * question and the reason the header is separate.
+ */
+let guestBearer: string | undefined;
+let browserConsent: string | undefined;
+
 function authed(token: string, extra: Record<string, string> = {}) {
   return {
     "X-MCP-Session-Auth": `Bearer ${token}`,
     Origin: ORIGIN,
+    ...(guestBearer ? { Authorization: `Bearer ${guestBearer}` } : {}),
+    ...(browserConsent ? { "x-mcpjam-browser-consent": browserConsent } : {}),
     ...extra,
   };
+}
+
+/**
+ * Become a caller `/api/mcp/webmcp/*` will actually serve: a guest identity,
+ * and the device consent that route has required since #4921.
+ *
+ * Both are taken through the product's own routes, in the order the product
+ * takes them — the consent grant is itself behind the bearer. Without them a
+ * session start answers 401, then 403 `browser_consent_required`, and the
+ * rollout skip below hides both: the flag refuses first, so this file never
+ * reaches the gates it would also fail. Taking them here is what makes these
+ * runnable at all wherever the flag does admit a localhost caller.
+ *
+ * BEST EFFORT, and deliberately so: the consent route sits behind the SAME
+ * rollout flag, so where the flag is off — CI, every headless run — it answers
+ * 404 too. Asserting here would turn the skip below into seven failures for
+ * the one condition it exists to tolerate. Leaving the credentials unset
+ * instead puts each test back on the server's own answer to a session start,
+ * which either skips on the flag or fails loudly quoting the gate it hit.
+ *
+ * The consent grant ROTATES an existing one — the capability is one per
+ * machine and only `grant` yields the plaintext, since the file keeps a hash —
+ * so a developer with the inspector open re-authorizes it after a local run.
+ */
+async function authorizeLocalBrowser(token: string): Promise<void> {
+  const guest = await fetch(`${BASE}/api/web/guest-session`, {
+    method: "POST",
+    headers: { Origin: ORIGIN, "content-type": "application/json" },
+    body: "{}",
+  });
+  guestBearer = guest.ok
+    ? ((await guest.json()) as { token?: string }).token
+    : undefined;
+
+  const granted = await fetch(
+    `${BASE}/api/mcp/computers/local-browser/consent/grant`,
+    { method: "POST", headers: authed(token) },
+  );
+  browserConsent = granted.ok
+    ? ((await granted.json()) as { token?: string }).token
+    : undefined;
 }
 
 async function command(
@@ -93,26 +150,31 @@ function openFrameSocket(token: string, sessionId: string) {
     "ws",
   )}/api/web/webmcp/sessions/${sessionId}/frames`;
   const ws = new WebSocket(url, [token], { origin: ORIGIN });
-  const frames: Array<WebMcpBinaryFrame & { receivedAt: number }> = [];
+  const frames: Array<FrameStreamFrame & { receivedAt: number }> = [];
   const undecodable: number[] = [];
   const controls: Array<Record<string, unknown>> = [];
+  // The same decoder the browser runs. The socket speaks the daemon's record
+  // format directly, so this reads it exactly as `createFrameWireReader` does
+  // — including across message boundaries, which is the property a per-message
+  // adapter could never have checked.
+  const decoder = createFrameStreamDecoder();
   ws.on("message", (data, isBinary) => {
     if (!isBinary) {
       controls.push(JSON.parse(data.toString()));
       return;
     }
     const bytes = data as Buffer;
-    const frame = decodeWebMcpBinaryFrame(
-      bytes.buffer.slice(
-        bytes.byteOffset,
-        bytes.byteOffset + bytes.byteLength,
-      ) as ArrayBuffer,
+    const result = decoder.push(
+      new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength),
     );
-    if (!frame) {
+    if (!result.ok) {
       undecodable.push(bytes.byteLength);
       return;
     }
-    frames.push({ ...frame, receivedAt: Date.now() });
+    for (const record of result.records) {
+      if (record.kind !== FRAME_STREAM_KIND.frame) continue;
+      frames.push({ ...record, receivedAt: Date.now() });
+    }
   });
   return {
     ws,
@@ -203,7 +265,7 @@ async function invokePageTool(
   name: string,
 ): Promise<unknown> {
   const tools = parseSseEvents(
-    await readSse(token, sessionId, "replay=200&frames=off", 1_500),
+    await readSse(token, sessionId, "replay=200", 1_500),
   ).filter((event) => event.type === "tools");
   const descriptors = (tools.at(-1)?.tools ?? []) as Array<{
     toolKey: string;
@@ -231,7 +293,7 @@ async function invokePageTool(
     .poll(
       async () => {
         const settled = parseSseEvents(
-          await readSse(token, sessionId, "replay=200&frames=off", 1_000),
+          await readSse(token, sessionId, "replay=200", 1_000),
         )
           .filter((event) => event.type === "activity")
           .map((event) => event.entry as { kind?: string; output?: unknown })
@@ -256,6 +318,33 @@ function toolJson(output: unknown): Record<string, number> {
   return JSON.parse(text!) as Record<string, number>;
 }
 
+/**
+ * `/api/mcp/webmcp/*` goes through `authorizeLocalInspection`, which needs a
+ * rollout verdict for `local-browser-enabled` on top of a browser-consent
+ * grant (#4921). A headless run has no PostHog key, so the flag resolves false
+ * and start answers 404 — the same gate this file's header describes dodging
+ * by driving the API rather than the `/webmcp` screen, which moving it onto
+ * the API closed.
+ *
+ * Read off the server's own answer rather than a hardcoded condition, so these
+ * run again by themselves the moment the gate admits a localhost caller.
+ *
+ * It lives here, next to the shared opener, because EVERY session start meets
+ * the same gate. #4923 put this check at the one call site that opens its
+ * session inline, which left the six tests that go through `openSession`
+ * failing on the same 404 — and the describe is serial, so the first of them
+ * to fail took the rest of the file with it.
+ */
+function skipWhenLocalBrowserIsGated(
+  status: number,
+  body: { code?: string },
+): void {
+  test.skip(
+    status === 404 && body.code === "local-browser-disabled",
+    "The server gates local WebMCP behind `local-browser-enabled`; a headless run cannot resolve that flag.",
+  );
+}
+
 /** Open a session, failing loudly with the server's own words if it refuses. */
 async function openSession(
   token: string,
@@ -273,7 +362,9 @@ async function openSession(
     sessionId?: string;
     viewportTransport?: { kind?: string; width?: number; height?: number };
     error?: string;
+    code?: string;
   };
+  skipWhenLocalBrowserIsGated(created.status, session);
   expect(
     created.status,
     `session start failed: ${JSON.stringify(session)}`,
@@ -309,6 +400,12 @@ test.describe("WebMCP viewport frame stream", () => {
     !LOCAL_TARGET,
     "The WebMCP Inspector is not mounted on a hosted deployment.",
   );
+  // Consent is per machine and the guest lasts a day, so one pass covers the
+  // file. It has to land before the first session start, not inside each test.
+  test.beforeAll(async () => {
+    await authorizeLocalBrowser(await sessionToken());
+  });
+
   // Serial, because each test opens a real browser and the registry caps
   // concurrent sessions at two — parallel workers would race each other into a
   // capacity refusal that has nothing to do with what is under test.
@@ -333,6 +430,7 @@ test.describe("WebMCP viewport frame stream", () => {
         viewportTransport?: { kind?: string; width?: number; height?: number };
         error?: string;
       };
+      skipWhenLocalBrowserIsGated(created.status, session as { code?: string });
       expect(
         created.status,
         `session start failed: ${JSON.stringify(session)}`,
@@ -373,20 +471,13 @@ test.describe("WebMCP viewport frame stream", () => {
       expect(seqs).toEqual([...seqs].sort((a, b) => a - b));
       expect(new Set(seqs).size).toBe(seqs.length);
 
-      // ---- SSE carries everything BUT the frames --------------------------
-      const suppressed = await readSse(
-        token,
-        sessionId,
-        "replay=200&frames=off",
-        1_500,
-      );
-      expect(suppressed).toContain("session_started");
-      expect(suppressed).not.toContain('"type":"frame"');
-
-      // …and still does carry them for a client that never asked to opt out,
-      // which is every client older than this socket.
-      const withFrames = await readSse(token, sessionId, "replay=200", 1_500);
-      expect(withFrames).toContain('"type":"frame"');
+      // ---- the event stream carries NO pixels, ever ------------------------
+      // Not a preference a query string sets any more: frames have their own
+      // channel on the server and their own socket on the wire, and the event
+      // stream is the timeline.
+      const events = await readSse(token, sessionId, "replay=200", 1_500);
+      expect(events).toContain("session_started");
+      expect(events).not.toContain('"type":"frame"');
 
       // ---- capture → arrival ----------------------------------------------
       const latencies = socket.frames.map(
@@ -579,7 +670,11 @@ test.describe("WebMCP viewport frame stream", () => {
         headers: authed(token, { "content-type": "application/json" }),
         body: JSON.stringify({ url: page.url, display: "in-app" }),
       });
-      const session = (await created.json()) as { sessionId?: string };
+      const session = (await created.json()) as {
+        sessionId?: string;
+        code?: string;
+      };
+      skipWhenLocalBrowserIsGated(created.status, session);
       expect(created.status).toBe(201);
       sessionId = session.sessionId!;
 
@@ -885,7 +980,11 @@ test.describe("WebMCP viewport frame stream", () => {
         headers: authed(token, { "content-type": "application/json" }),
         body: JSON.stringify({ url: page.url, display: "in-app" }),
       });
-      const session = (await created.json()) as { sessionId?: string };
+      const session = (await created.json()) as {
+        sessionId?: string;
+        code?: string;
+      };
+      skipWhenLocalBrowserIsGated(created.status, session);
       expect(created.status).toBe(201);
       sessionId = session.sessionId!;
 

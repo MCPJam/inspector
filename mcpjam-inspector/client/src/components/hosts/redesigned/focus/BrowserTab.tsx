@@ -1,8 +1,10 @@
 import type { HostConfigInputV2 } from "@/lib/client-config-v2";
+import { HOSTED_MODE } from "@/lib/config";
 import { Button } from "@mcpjam/design-system/button";
 import { routePaths, useAppNavigate } from "@/lib/app-navigation";
 import { Switch } from "@mcpjam/design-system/switch";
 import { useBrowserEnabled } from "@/hooks/useComputersEnabled";
+import { useBrowserEngine } from "@/hooks/useBrowserEngine";
 import { BrowserRuntimeControls } from "@/components/browser/BrowserRuntimeControls";
 import { BrowserProfilesSettings } from "@/components/browser/BrowserProfilesSettings";
 import { BrowserProfilePicker } from "./BrowserProfilePicker";
@@ -23,12 +25,23 @@ export function BrowserTab({
 }) {
   const navigate = useAppNavigate();
   const available = useBrowserEnabled();
-  const enabled = draft.builtInToolIds.includes("browser");
+  const locationOffered = useBrowserEngine(
+    projectId ?? null,
+    "preference",
+  ).toggleVisible;
+  const enabled =
+    !HOSTED_MODE && draft.localBrowserEnabled !== undefined
+      ? draft.localBrowserEnabled
+      : draft.builtInToolIds.includes("browser");
   return (
     <div className="flex flex-col gap-4">
       <FocusBlock
         title="This client"
-        subtitle="Saved browser configuration for chats and environments using this client."
+        subtitle={
+          HOSTED_MODE
+            ? "Saved browser configuration for chats and environments using this client."
+            : "Saved local Browser setting for this client. Hosted Browser settings are independent."
+        }
       >
         <FieldRow
           label="Browser"
@@ -39,12 +52,21 @@ export function BrowserTab({
               checked={enabled}
               disabled={readOnly || (!available && !enabled)}
               onCheckedChange={(checked) =>
-                onDraftChange((prev) => ({
-                  ...prev,
-                  builtInToolIds: checked
-                    ? [...new Set([...prev.builtInToolIds, "browser"])]
-                    : prev.builtInToolIds.filter((id) => id !== "browser"),
-                }))
+                onDraftChange((prev) =>
+                  !HOSTED_MODE
+                    ? {
+                        ...prev,
+                        localBrowserEnabled: checked,
+                      }
+                    : {
+                        ...prev,
+                        builtInToolIds: checked
+                          ? [...new Set([...prev.builtInToolIds, "browser"])]
+                          : prev.builtInToolIds.filter(
+                              (id) => id !== "browser",
+                            ),
+                      },
+                )
               }
             />
           }
@@ -69,7 +91,11 @@ export function BrowserTab({
       {!readOnly && projectId && (
         <FocusBlock
           title="Your browser"
-          subtitle="Your browser location, device permission and saved profiles. These do not change the client configuration."
+          subtitle={
+            locationOffered
+              ? "Your browser location, device permission and saved profiles."
+              : "Your device permission and saved profiles."
+          }
         >
           <BrowserRuntimeControls projectId={projectId} settings />
           <BrowserProfilesSettings projectId={projectId} />

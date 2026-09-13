@@ -416,11 +416,12 @@ export type ConvexAuthorizeResponse = {
     headers?: Record<string, string>;
     hasHeaders?: boolean;
     /**
-     * The origin this row's stored credentials were bound to, from the backend
-     * (`convex/webAuthorize.ts`). MJ-003: the connect path must not send a
-     * credential to a URL it was not saved against. Absent on a row with no
-     * stored credential — and, on an older backend, on one that has them, which
-     * `assertSecretsOriginMatches` treats as a refusal.
+     * The origin this row's ON-ROW stored credentials were bound to, from the
+     * backend (`convex/webAuthorize.ts`). MJ-003: the connect path must not send
+     * a credential to a URL it was not saved against. Absent on a row with no
+     * on-row credential — including an OAuth-only row, whose token is bound and
+     * refused backend-side instead — and, on an older backend, on one that has
+     * them, which `assertSecretsOriginMatches` treats as a refusal.
      */
     secretsBoundOrigin?: string;
     useOAuth?: boolean;
@@ -1741,51 +1742,25 @@ export async function createAuthorizedManager(
       // would inject the wrong credential.
       let connectToken = oauthToken;
       let connectOnUnauthorized = onUnauthorized;
-      // MJ-003. A token derived from the ROW was obtained against the origin
-      // the row held at the time; if it has since been repointed, sending it
-      // hands the victim's bearer to whoever now owns that URL.
-      //
-      // ROW-DERIVED ONLY, and that distinction is load-bearing. `oauthToken`
-      // above is a precedence chain over three sources, and only two of them
-      // belong to the row: `auth.oauthAccessToken` (stored) and
-      // `recoveredOAuthTokens` (minted in PASS 1b from the row's stored refresh
-      // material). The third, `oauthTokens?.[serverId]`, is a token the CALLER
-      // supplied for this request — their own credential, never stored against
-      // this row — and gating it would refuse a connection nobody's saved
-      // secret is at risk in.
-      //
-      // Checked before the XAA branch below and deliberately not applied to it:
-      // an XAA token is minted per connect with `resource` set to the CURRENT
-      // url, so it is bound by construction and a stale binding must not block
-      // it.
-      const oauthTokenIsRowDerived =
-        recoveredOAuthTokens[serverId] != null ||
-        auth.oauthAccessToken != null;
-      // XAA EXCLUDED, and the exclusion has to be here rather than implied by
-      // the branch order below. A server converted from OAuth to XAA keeps its
-      // stored OAuth token (the comment on `connectToken` says so), so
-      // `oauthTokenIsRowDerived` is true for it — and the XAA branch then
-      // overrides that token with a freshly minted one whose `resource` is the
-      // row's CURRENT url. Refusing here would block a connection that was
-      // never going to send the stale credential.
-      const willMintXaa =
+      const useXaa =
         auth.serverConfig.transportType === "http" && effectiveAuth === "xaa";
-      // That exemption covers the STALE BEARER only. The mint itself is not
-      // credential-free: `preregistered` and `dcr` reveal the row's stored
-      // client secret and post it to a token endpoint discovered from the row's
-      // CURRENT url (`xaa-mint.ts` `resolveServerTarget` ->
-      // `resolveAuthorizedServerTarget`, which falls back to the resource URL
-      // when no issuer is stored) — the exact repoint this gate exists to
-      // refuse. `cimd` sends no row secret: public client, or an org-level key
-      // whose assertion is audience-bound to the endpoint it goes to.
-      const xaaMintSendsRowSecret =
-        willMintXaa &&
+      // MJ-003. The XAA mint is not credential-free: `preregistered` and `dcr`
+      // reveal the row's stored client secret and post it to a token endpoint
+      // discovered from the row's CURRENT url (`xaa-mint.ts`
+      // `resolveServerTarget` -> `resolveAuthorizedServerTarget`, which falls
+      // back to the resource URL when no issuer is stored) — the exact repoint
+      // this gate exists to refuse. `cimd` sends no row secret: public client,
+      // or an org-level key whose assertion is audience-bound to the endpoint it
+      // goes to.
+      //
+      // The resulting ACCESS token needs no gate either way: it is minted per
+      // connect with `resource` set to the row's current url, so it is bound by
+      // construction. The gate is about the secret spent to obtain it.
+      if (
+        useXaa &&
         resolveXaaConnectRegistrationMode(
           auth.serverConfig.registrationMode,
-        ) !== "cimd";
-      if (
-        xaaMintSendsRowSecret ||
-        (!willMintXaa && oauthToken && oauthTokenIsRowDerived)
+        ) !== "cimd"
       ) {
         assertSecretsOriginMatches({
           boundOrigin: auth.serverConfig.secretsBoundOrigin,
@@ -1793,7 +1768,6 @@ export async function createAuthorizedManager(
           serverName: displayServerName,
         });
       }
-      const useXaa = willMintXaa;
       if (useXaa) {
         // (`xaaIdentityError` is validated batch-wide in PASS 1 — before any
         // sibling server can mint.)
@@ -1918,10 +1892,9 @@ export async function createAuthorizedManager(
         };
       }
 
-      // MJ-003. Checked before the reveal, not after: a mismatch means these
-      // credentials are not going on this connection either way, and asking
-      // Convex to decrypt them first would put the plaintext in this process
-      // for no reason and log a reveal that never needed to happen.
+      // Reject an already-stale authorize snapshot before decrypting. The reveal
+      // helper also checks the binding returned with the values: the row may
+      // change between authorize and reveal.
       if (auth.serverConfig.hasHeaders === true) {
         assertSecretsOriginMatches({
           boundOrigin: auth.serverConfig.secretsBoundOrigin,
@@ -1941,6 +1914,7 @@ export async function createAuthorizedManager(
                   ...(auth.serverConfig.headers ?? {}),
                   ...((
                     await fetchRuntimeServerSecrets({
+                      expectedTargetUrl: auth.serverConfig.url,
                       bearerToken,
                       projectId,
                       serverId,

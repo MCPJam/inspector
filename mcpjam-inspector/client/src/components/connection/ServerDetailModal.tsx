@@ -126,7 +126,12 @@ export function ServerDetailModal({
   projectXaaDefaultIdentity = null,
 }: ServerDetailModalProps) {
   const [activeTab, setActiveTab] = useState<ServerDetailTab>(defaultTab);
-  const [isReconnecting, setIsReconnecting] = useState(false);
+  // Reconnects overlap: two quick wire-mode changes start a second one while
+  // the first is still running. A boolean would be cleared by whichever
+  // finished first and let a configuration save through mid-reconnect, so the
+  // guard counts them and lifts only when the last one settles.
+  const [reconnectsInFlight, setReconnectsInFlight] = useState(0);
+  const isReconnecting = reconnectsInFlight > 0;
   const [isSaving, setIsSaving] = useState(false);
   const [isLoadingTools, setIsLoadingTools] = useState(false);
   const [toolsLoadError, setToolsLoadError] = useState<string | null>(null);
@@ -235,7 +240,7 @@ export function ServerDetailModal({
    * toggle owns that.
    */
   const reconnectForWireModeOverride = useCallback(async () => {
-    setIsReconnecting(true);
+    setReconnectsInFlight((count) => count + 1);
     try {
       await onReconnect(server.name, { allowInteractiveOAuthFlow: false });
     } catch (err) {
@@ -244,7 +249,7 @@ export function ServerDetailModal({
         level: "warning",
       });
     } finally {
-      setIsReconnecting(false);
+      setReconnectsInFlight((count) => count - 1);
     }
   }, [onReconnect, server.name]);
 
@@ -481,7 +486,7 @@ export function ServerDetailModal({
     forceOAuthFlow?: boolean;
     allowInteractiveOAuthFlow?: boolean;
   }) => {
-    setIsReconnecting(true);
+    setReconnectsInFlight((count) => count + 1);
     track("server_detail_modal_connect_clicked", {
       location: "server_detail_modal",
       server_id: server.name,
@@ -493,7 +498,7 @@ export function ServerDetailModal({
         error instanceof Error ? error.message : "Unknown error";
       toastServerConnectionFailure(server.name, errorMessage);
     } finally {
-      setIsReconnecting(false);
+      setReconnectsInFlight((count) => count - 1);
     }
   };
 
@@ -536,7 +541,7 @@ export function ServerDetailModal({
    * Extracted because the Save button's `disabled` and the form's submit
    * handler were two different lists, and Enter in any configuration input
    * submits the form — so every condition the button enforced was bypassable
-   * from the keyboard. That mattered most for MJ-003's credential-clear
+   * from the keyboard. That matters most for MJ-003's credential-clear
    * acknowledgement, which is there precisely so a destructive save cannot
    * happen without one, but it was equally true of the duplicate-name check,
    * the auth-configuration block, and the in-flight reconnect guard.
