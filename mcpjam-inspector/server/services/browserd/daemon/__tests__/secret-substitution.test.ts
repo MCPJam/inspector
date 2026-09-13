@@ -255,15 +255,11 @@ describe("withSecretScrub", () => {
       output: {
         url: "https://app.test/login",
         screenshot: "AAAA".repeat(1000),
-        screenshotCompressed: true,
         a11y: `textbox "Password" value=${PASSWORD}`,
       },
     }));
     const output = (await wrapped(command)).output as Record<string, unknown>;
     expect(output.screenshot).toBeUndefined();
-    // The quality note goes with the picture: a compression note about
-    // nothing reads like a bug.
-    expect(output.screenshotCompressed).toBeUndefined();
     expect(output.screenshotSuppressed).toBe(true);
     // Everything else still arrives, scrubbed — the model loses the picture,
     // not the page.

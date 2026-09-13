@@ -72,10 +72,6 @@ import {
   type SelectionCatalogToolLike,
 } from "./selection-tool-catalog.js";
 import type { AgentActivityAssessment } from "./agent-activity.js";
-import {
-  deriveEvidenceInsufficiency,
-  type EvidenceInsufficiency,
-} from "./evidence-insufficiency.js";
 
 /**
  * The canonical lifecycle vocabulary, imported rather than re-spelled: this
@@ -383,20 +379,6 @@ function narrowEvaluation(
  * `unresolvedScorerIds`: populated means a designed strictness catch;
  * `disagreeingScorerIds` alone means a real projection bug.
  */
-/**
- * `{ evidenceInsufficiency }`, or nothing at all.
- *
- * A run that was fully measured says so by carrying no such key. Writing
- * `{insufficient: false, reasons: []}` on every iteration would be a field
- * nobody reads and a diff on every golden payload ever recorded.
- */
-function evidenceInsufficiencyKey(
-  input: Parameters<typeof deriveEvidenceInsufficiency>[0],
-): { evidenceInsufficiency?: EvidenceInsufficiency } {
-  const derived = deriveEvidenceInsufficiency(input);
-  return derived.insufficient ? { evidenceInsufficiency: derived } : {};
-}
-
 function buildScoreMetadata(args: {
   mode: GradingEngineMode;
   agentActivity?: AgentActivityAssessment;
@@ -991,32 +973,6 @@ export function buildIterationFinishParams(args: {
       ...(args.agentActivity?.status === "no_agent_activity"
         ? { agentActivity: args.agentActivity }
         : {}),
-      // HOW MUCH THIS RESULT RESTS ON, in one vocabulary. The pipeline knows
-      // four separate facts that all mean "we could not measure this" and says
-      // each of them differently; nobody could answer the question without
-      // knowing all four. NEVER feeds `passed` — that is decided above and by
-      // the score rows; this describes the verdict rather than producing it.
-      //
-      // WRITTEN ONLY WHEN INSUFFICIENT, for the same reason: a run that was
-      // fully measured says so by carrying no such key, and an
-      // `{insufficient:false, reasons:[]}` on every row is a field nobody
-      // reads and a diff on every golden payload ever recorded.
-      ...evidenceInsufficiencyKey({
-        // The SAME two facts `buildStageEvidence` derives, from the same
-        // inputs. Re-derived rather than plumbed because the stage evidence is
-        // consumed by the analyzer and never returned; the alternative is
-        // threading a value out of a function whose whole job is to build an
-        // argument for something else.
-        traceAbsent:
-          (args.spans?.length ?? 0) === 0 &&
-          (args.prompts?.length ?? 0) === 0 &&
-          (args.messages?.length ?? 0) === 0,
-        traceLacksSpanChannel:
-          (args.spans?.length ?? 0) === 0 &&
-          ((args.prompts?.length ?? 0) > 0 ||
-            (args.messages?.length ?? 0) > 0),
-        ...(args.agentActivity ? { agentActivity: args.agentActivity } : {}),
-      }),
       ...scoreMetadata,
       ...selectionToolCatalogMetadata,
       ...(setupAudit ?? {}),

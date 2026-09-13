@@ -3295,13 +3295,6 @@ const PAGE_DERIVED_KEYS = [
   // Kept on the result for the card that renders it, but a page picks its own
   // tool name, and a name is a place to write a sentence.
   "pageTool",
-  // The lines an act added and removed. Every one of them is a LINE OF THE
-  // TREE — a role and a page-authored accessible name — so the diff is page
-  // content as surely as the tree it was taken from is, and putting it outside
-  // the fence would carry a page's sentence out past the boundary on every
-  // act. (`screenshotCompressed`, which rides beside it, is a boolean and
-  // stays ours: a page cannot write prose into `true`.)
-  "changed",
 ] as const;
 
 /**

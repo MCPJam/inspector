@@ -29,7 +29,6 @@ import {
   type BrowserCommandResult,
   type BrowserdErrorCode,
   type ActObserve,
-  type ObservationStateToken,
 } from "../protocol";
 import {
   capNetwork,
@@ -74,7 +73,6 @@ import {
   type BrowserSecretRegistry,
 } from "./secret-registry";
 import { resolveActSecrets } from "./secret-substitution";
-import { diffA11yLines } from "./a11y-diff";
 import type { A11yNode } from "./observation-budget";
 import {
   capA11yTree,
@@ -388,75 +386,6 @@ export interface ChromiumDriverOptions {
   };
 }
 
-/**
- * The JPEG qualities a capture steps down through to fit a byte budget.
- *
- * 70 is what every capture has always used and stays FIRST, so a daemon with
- * no budget set takes exactly the picture it took before — one call, no
- * measurement, no step-down. Below it the steps are coarse on purpose: each
- * retry is a full re-capture, and a ladder of ten would spend more time
- * measuring than the saving is worth.
- */
-const SCREENSHOT_QUALITY_LADDER = [70, 40, 25, 10] as const;
-
-/**
- * Take a screenshot that fits `maxBytes`, or the smallest one there is.
- *
- * NEVER DROPS THE PICTURE. An act paid for a capture, and a model that asked
- * to see the page and got nothing is worse off than one that got a soft
- * picture: it cannot tell "too big to send" from "the page is blank", and its
- * next move is to ask again. So the last tier is kept even when it still does
- * not fit, and the result says it was compressed.
- *
- * With no budget this is today's single call, byte for byte.
- */
-async function captureScreenshotWithinBudget(
-  page: DriverPage,
-  maxBytes?: number,
-): Promise<{ screenshot: string; compressed: boolean } | undefined> {
-  if (maxBytes === undefined) {
-    const shot = await page.screenshotBase64().catch(() => undefined);
-    return shot === undefined ? undefined : { screenshot: shot, compressed: false };
-  }
-  let last: string | undefined;
-  for (const [index, quality] of SCREENSHOT_QUALITY_LADDER.entries()) {
-    const shot = await page
-      .screenshotBase64({ quality })
-      .catch(() => undefined);
-    // A capture that FAILED is not a capture that was too big: stop rather
-    // than spending three more attempts on a page that cannot answer.
-    if (shot === undefined) break;
-    last = shot;
-    // Measured on the BASE64, which is what actually travels and what the
-    // model's image budget is spent on — not on the decoded bytes.
-    if (Buffer.byteLength(shot) <= maxBytes) {
-      return { screenshot: shot, compressed: index > 0 };
-    }
-  }
-  return last === undefined
-    ? undefined
-    : { screenshot: last, compressed: true };
-}
-
-/**
- * `{screenshot}`, plus `screenshotCompressed` only when a lower tier was used.
- *
- * OUTSIDE THE UNTRUSTED FENCE, which is why it is a boolean and not prose: a
- * page cannot write a sentence into `true`. It is there so a model that finds
- * a detail illegible knows the picture was squeezed rather than assuming the
- * page is blurry — without it, the step-down is invisible and misreads as the
- * site rendering badly.
- */
-function screenshotFields(
-  captured: { screenshot: string; compressed: boolean } | undefined,
-): Record<string, unknown> {
-  if (!captured) return {};
-  return {
-    screenshot: captured.screenshot,
-    ...(captured.compressed ? { screenshotCompressed: true } : {}),
-  };
-}
-
 /** Big enough for a real tool result, small enough not to blow a context. */
 const DEFAULT_WEBMCP_OUTPUT_BYTES = 16_000;
 
@@ -649,25 +578,6 @@ export class ChromiumDriver implements BrowserDriver {
    * that minted them can tell the difference.
    */
   private readonly refs = new Map<string, RefMap>();
-  /**
-   * The last PAGE-SCOPED a11y render per tab, so an act can say what changed.
-   *
-   * Page-scoped only: a `rootRef`/`rootSelector` render describes a subtree,
-   * and diffing a whole page against one would report the rest of the page as
-   * removed. `filter` is recorded for the same reason — an `interactive` tree
-   * and an `all` tree of the same page differ on almost every line.
-   *
-   * Written at BOTH commit sites (an `observe {mode:"a11y"}` and an act's own
-   * post-capture), because the two alternate: observe, act, act, observe.
-   */
-  private readonly lastRender = new Map<
-    string,
-    {
-      lines: string;
-      stateToken: ObservationStateToken | undefined;
-      filter: "interactive" | "all";
-    }
-  >();
   /**
    * What was decided about a dialog, waiting to ride the next observation.
    *
@@ -1244,9 +1154,6 @@ export class ChromiumDriver implements BrowserDriver {
         entry,
         permit,
         wantsFor(action.observe),
-        undefined,
-        undefined,
-        action,
       );
       return observed.ok ? { settled: settledAfter, ...observed } : observed;
     }
@@ -1336,15 +1243,7 @@ export class ChromiumDriver implements BrowserDriver {
       // A FAILED ACT CARRIES THE FRESH TREE TOO: "your selector matched
       // nothing" plus the list of what the page DOES offer is one turn; the
       // bare refusal is two.
-      const fresh = await this.afterAct(
-        tabId,
-        entry,
-        permit,
-        wants,
-        before,
-        undefined,
-        action,
-      );
+      const fresh = await this.afterAct(tabId, entry, permit, wants, before);
       // A HANDOFF DURING THAT READ WINS, exactly as it does on the success
       // path above. Keeping the act's own error instead would drop the
       // `leaseBlocked` flag, and that flag is not decoration: the handler maps
@@ -1421,7 +1320,6 @@ export class ChromiumDriver implements BrowserDriver {
       wants,
       before,
       "the action ran, but a person took control of this browser before its result could be observed; re-observe after they hand it back",
-      action,
     );
     // `settled` describes the page the act ran on. A refusal describes no page
     // at all, and stapling a load flag to it would suggest one was looked at.
@@ -2427,7 +2325,7 @@ export class ChromiumDriver implements BrowserDriver {
         );
       }
       case "screenshot":
-        return this.observeScreenshot(tabId, entry, permit, action);
+        return this.observeScreenshot(tabId, entry, permit);
       case "text": {
         return this.observeText(tabId, entry, permit);
       }
@@ -2446,7 +2344,6 @@ export class ChromiumDriver implements BrowserDriver {
           permit,
         );
         this.commitRefs(tabId, result, rendered.refMap, rendered.frames);
-        this.rememberRender(tabId, action, rendered.fields, result);
         return result;
       }
       case "dialog": {
@@ -2646,8 +2543,6 @@ export class ChromiumDriver implements BrowserDriver {
     tabId: string,
     entry: TabEntry,
     permit: () => boolean,
-    /** The command's own byte cap, when it carried one. */
-    action?: { maxScreenshotBytes?: number },
   ): Promise<BrowserCommandResult> {
     const STABLE_ATTEMPTS = 2;
     for (let attempt = 0; attempt < STABLE_ATTEMPTS; attempt++) {
@@ -2659,22 +2554,13 @@ export class ChromiumDriver implements BrowserDriver {
         );
       }
       const before = await this.snapshot(entry.page);
-      const captured = await captureScreenshotWithinBudget(
-        entry.page,
-        this.screenshotMaxBytes(action),
-      );
+      const screenshot = await entry.page.screenshotBase64();
       const after = await this.snapshot(entry.page);
       // Both the URL and the DOM must be unchanged: a same-skeleton client-side
       // route change moves the URL while `domSignal` holds, and would otherwise
       // bind a new-route token to an old-route image (P1).
       if (before.url === after.url && before.domSignal === after.domSignal) {
-        return this.observation(
-          tabId,
-          entry,
-          screenshotFields(captured),
-          after,
-          permit,
-        );
+        return this.observation(tabId, entry, { screenshot }, after, permit);
       }
     }
     // Would not stabilise within budget: hand back the frame but flag it unsettled
@@ -2687,19 +2573,10 @@ export class ChromiumDriver implements BrowserDriver {
         "a person has taken control of this browser; nothing was observed",
       );
     }
-    const captured = await captureScreenshotWithinBudget(
-      entry.page,
-      this.screenshotMaxBytes(action),
-    );
+    const screenshot = await entry.page.screenshotBase64();
     const after = await this.snapshot(entry.page);
     return {
-      ...this.observation(
-        tabId,
-        entry,
-        screenshotFields(captured),
-        after,
-        permit,
-      ),
+      ...this.observation(tabId, entry, { screenshot }, after, permit),
       settled: false,
     };
   }
@@ -3490,95 +3367,7 @@ export class ChromiumDriver implements BrowserDriver {
    * carries, so a ref used after the page moved is refused rather than
    * resolved by name against whatever is there now.
    */
-/**
-   * Record this render so the NEXT act can say what changed, or forget it.
-   *
-   * Forgetting is the important half and it happens on every path that is not
-   * a clean page-scoped render: a scoped read, a failed observation, a
-   * different filter. A stale `lastRender` is worse than none — it produces a
-   * confident `changed` describing a transition that did not happen.
-   */
-  private rememberRender(
-    tabId: string,
-    action: { rootSelector?: string; rootRef?: string; filter?: "interactive" | "all" },
-    fields: Record<string, unknown>,
-    result: BrowserCommandResult,
-  ): void {
-    const lines = fields.a11y;
-    // SCOPED READS ARE NOT REMEMBERED. A `rootRef` tree describes a subtree,
-    // and diffing a whole page against one reports the rest of the page as
-    // removed.
-    if (
-      !result.ok ||
-      typeof lines !== "string" ||
-      action.rootRef !== undefined ||
-      action.rootSelector !== undefined
-    ) {
-      this.lastRender.delete(tabId);
-      return;
-    }
-    this.lastRender.set(tabId, {
-      lines,
-      stateToken: result.stateToken,
-      filter: action.filter === "all" ? "all" : "interactive",
-    });
-  }
-
-  /**
-   * The lines this act added and removed, when that can be said honestly.
-   *
-   * Returns nothing — and the act's result carries no `changed` — unless ALL
-   * of these hold. Each is a way the section would otherwise lie:
-   *
-   *  - a previous PAGE-SCOPED render exists, at the same filter;
-   *  - it describes the SAME DOCUMENT (`refsStillDescribe`: same tab, same
-   *    navigation, same URL). After a navigation every line differs and
-   *    "everything changed" is noise;
-   *  - the diff is non-empty and within `MAX_CHANGED_LINES` on both sides.
-   */
-  private changedSince(
-    tabId: string,
-    entry: TabEntry,
-    fields: Record<string, unknown>,
-    filter: "interactive" | "all",
-  ): { added: string[]; removed: string[] } | undefined {
-    const previous = this.lastRender.get(tabId);
-    const lines = fields.a11y;
-    if (!previous || typeof lines !== "string") return undefined;
-    if (previous.filter !== filter) return undefined;
-    // The SAME test refs use to decide whether they still name anything: page
-    // identity, not shape. A navigation invalidates both for the same reason.
-    if (
-      !previous.stateToken ||
-      !this.refsStillDescribe(tabId, entry, {
-        stateToken: previous.stateToken,
-        entries: new Map(),
-      })
-    ) {
-      return undefined;
-    }
-    return diffA11yLines(previous.lines, lines) ?? undefined;
-  }
-
-  /**
-   * The byte cap for this capture: the command's, else the daemon's, else none.
-   *
-   * PER-COMMAND WINS, because a caller that knows its own context budget knows
-   * it better than the box does — an eval iteration streaming to a small model
-   * and a Playground turn on the same daemon want different answers. Neither
-   * set means today's behaviour exactly: one capture, no measurement.
-   */
-  private screenshotMaxBytes(action?: {
-    maxScreenshotBytes?: number;
-  }): number | undefined {
-    const requested = action?.maxScreenshotBytes;
-    if (typeof requested === "number" && Number.isFinite(requested) && requested > 0) {
-      return Math.floor(requested);
-    }
-    return this.features.screenshotMaxBytes;
-  }
-
-    private commitRefs(
+  private commitRefs(
     tabId: string,
     result: BrowserCommandResult,
     refMap: Map<string, RefEntry> | undefined,
@@ -3621,8 +3410,6 @@ export class ChromiumDriver implements BrowserDriver {
     wants: { a11y: boolean; screenshot: boolean },
     before?: FrameSnapshot,
     blockedDetail?: string,
-    /** The act's own screenshot byte cap, when it carried one. */
-    action?: { maxScreenshotBytes?: number },
   ): Promise<BrowserCommandResult> {
     // Before ANY read, the same rule `observe` opens with: a person holding
     // the browser is not shown to the model, and the cheap refusal comes
@@ -3674,13 +3461,9 @@ export class ChromiumDriver implements BrowserDriver {
         a11yFields = { a11yUnavailable: true };
       }
     }
-    const captured = wants.screenshot
-      ? await captureScreenshotWithinBudget(
-          page,
-          this.screenshotMaxBytes(action),
-        )
+    const screenshot = wants.screenshot
+      ? await page.screenshotBase64().catch(() => undefined)
       : undefined;
-    const screenshot = captured?.screenshot;
     // AFTER both reads: the token must describe the state the output was
     // captured against, and a snapshot taken first would describe the page as
     // it was before a tree walk that can take a moment.
@@ -3742,7 +3525,7 @@ export class ChromiumDriver implements BrowserDriver {
         ? { previousUrl: before.url }
         : {}),
       ...a11yFields,
-      ...screenshotFields(captured),
+      ...(screenshot ? { screenshot } : {}),
     };
     // Both must hold, as in `observeScreenshot`: a same-skeleton client-side
     // route change moves the URL while `domSignal` does not.
@@ -3786,34 +3569,10 @@ export class ChromiumDriver implements BrowserDriver {
         settled: false,
       };
     }
-    // WHAT THIS ACT CHANGED, computed before the result is built so it can
-    // ride inside it — and computed against the render `lastRender` still
-    // holds, before `rememberRender` below replaces it with this one.
-    //
-    // Every act already returns the whole tree, which on a real page is
-    // hundreds of lines of which one or two moved. A model that cannot cheaply
-    // tell what its click did tends to click again.
-    const changed =
-      this.features.changedA11y && wants.a11y && held
-        ? this.changedSince(tabId, entry, a11yFields, "interactive")
-        : undefined;
     const result =
       blockedDetail === undefined
-        ? this.observation(
-            tabId,
-            entry,
-            changed ? { ...output, changed } : output,
-            frame,
-            permit,
-          )
-        : this.observation(
-            tabId,
-            entry,
-            changed ? { ...output, changed } : output,
-            frame,
-            permit,
-            blockedDetail,
-          );
+        ? this.observation(tabId, entry, output, frame, permit)
+        : this.observation(tabId, entry, output, frame, permit, blockedDetail);
     // `wants.a11y`, not `refMap`. An act that ASKED for a tree and could not
     // get one (`a11yUnavailable`) leaves `refMap` undefined, and the
     // conditional then skipped the commit entirely — so the previous
@@ -3823,12 +3582,6 @@ export class ChromiumDriver implements BrowserDriver {
     // whatever the tab held: refs are meant to survive a DOM mutation, and
     // this capture proved stable.
     if (wants.a11y) this.commitRefs(tabId, result, refMap, refFrames);
-    // AFTER the diff above, which needed the previous one. An act's post-act
-    // tree is always page-scoped (`afterAct` never takes a root), so it is
-    // recorded the same way an `observe {mode:"a11y"}` is.
-    if (wants.a11y) {
-      this.rememberRender(tabId, { filter: "interactive" }, a11yFields, result);
-    }
     return result;
   }
 
@@ -4154,7 +3907,6 @@ export class ChromiumDriver implements BrowserDriver {
     // And the render they were minted from, for the same reason: a `changed`
     // section diffed against a previous incarnation's tree would report the
     // whole new page as changes from a page this tab never showed.
-    this.lastRender.delete(tabId);
     await this.dropViewport(tabId);
   }
 

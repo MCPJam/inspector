@@ -321,11 +321,8 @@ export function withSecretScrub(
     if (record !== undefined) {
       const { screenshot, ...rest } = record;
       if (suppress) {
-        // `screenshotCompressed` goes with it: it describes a picture that is
-        // no longer here, and a quality note about nothing reads like a bug.
-        const { screenshotCompressed: _wentWithIt, ...noPicture } = rest;
         scrubbedOutput = {
-          ...(scrubber ? scrubber.scrubDeep(noPicture) : noPicture),
+          ...(scrubber ? scrubber.scrubDeep(rest) : rest),
           screenshotSuppressed: true,
         };
       } else {

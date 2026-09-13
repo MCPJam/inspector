@@ -421,12 +421,6 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
-        "evidenceInsufficiency": {
-          "insufficient": true,
-          "reasons": [
-            "traceLacksSpanChannel",
-          ],
-        },
         "failedTurnCount": 0,
         "failureCategory": "setup",
         "frictionSignals": {
@@ -1808,12 +1802,6 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch ca
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
-        "evidenceInsufficiency": {
-          "insufficient": true,
-          "reasons": [
-            "traceLacksSpanChannel",
-          ],
-        },
         "failedTurnCount": 0,
         "frictionSignals": {
           "callCount": 0,
@@ -2112,12 +2100,6 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch in
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
-        "evidenceInsufficiency": {
-          "insufficient": true,
-          "reasons": [
-            "traceLacksSpanChannel",
-          ],
-        },
         "failedTurnCount": 0,
         "failureCategory": "userValue",
         "firstFailedStage": "userValue",
@@ -2349,12 +2331,6 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mo
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
-        "evidenceInsufficiency": {
-          "insufficient": true,
-          "reasons": [
-            "traceLacksSpanChannel",
-          ],
-        },
         "failedTurnCount": 0,
         "failureCategory": "setup",
         "frictionSignals": {
@@ -2607,12 +2583,6 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mu
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
-        "evidenceInsufficiency": {
-          "insufficient": true,
-          "reasons": [
-            "traceLacksSpanChannel",
-          ],
-        },
         "failedTurnCount": 0,
         "frictionSignals": {
           "callCount": 0,
@@ -2819,12 +2789,6 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch ne
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
-        "evidenceInsufficiency": {
-          "insufficient": true,
-          "reasons": [
-            "traceLacksSpanChannel",
-          ],
-        },
         "failedTurnCount": 0,
         "frictionSignals": {
           "callCount": 0,
@@ -3029,12 +2993,6 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch pr
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
-        "evidenceInsufficiency": {
-          "insufficient": true,
-          "reasons": [
-            "traceLacksSpanChannel",
-          ],
-        },
         "failedTurnCount": 0,
         "frictionSignals": {
           "callCount": 0,
@@ -3274,12 +3232,6 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
-        "evidenceInsufficiency": {
-          "insufficient": true,
-          "reasons": [
-            "traceLacksSpanChannel",
-          ],
-        },
         "failedTurnCount": 0,
         "frictionSignals": {
           "callCount": 1,
@@ -3519,12 +3471,6 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
-        "evidenceInsufficiency": {
-          "insufficient": true,
-          "reasons": [
-            "traceLacksSpanChannel",
-          ],
-        },
         "failedTurnCount": 0,
         "frictionSignals": {
           "callCount": 0,
@@ -3739,12 +3685,6 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
-        "evidenceInsufficiency": {
-          "insufficient": true,
-          "reasons": [
-            "traceLacksSpanChannel",
-          ],
-        },
         "failedTurnCount": 0,
         "frictionSignals": {
           "callCount": 0,
@@ -3944,12 +3884,6 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch un
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
-        "evidenceInsufficiency": {
-          "insufficient": true,
-          "reasons": [
-            "traceLacksSpanChannel",
-          ],
-        },
         "failedTurnCount": 0,
         "frictionSignals": {
           "callCount": 0,
@@ -4159,12 +4093,6 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch wi
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
-        "evidenceInsufficiency": {
-          "insufficient": true,
-          "reasons": [
-            "traceLacksSpanChannel",
-          ],
-        },
         "failedTurnCount": 0,
         "frictionSignals": {
           "callCount": 0,
@@ -4416,12 +4344,6 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream h
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
-        "evidenceInsufficiency": {
-          "insufficient": true,
-          "reasons": [
-            "traceLacksSpanChannel",
-          ],
-        },
         "failedTurnCount": 0,
         "frictionSignals": {
           "callCount": 1,
@@ -4694,12 +4616,6 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream m
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
-        "evidenceInsufficiency": {
-          "insufficient": true,
-          "reasons": [
-            "traceLacksSpanChannel",
-          ],
-        },
         "failedTurnCount": 0,
         "frictionSignals": {
           "callCount": 0,
@@ -5099,12 +5015,6 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream p
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
-        "evidenceInsufficiency": {
-          "insufficient": true,
-          "reasons": [
-            "traceLacksSpanChannel",
-          ],
-        },
         "failedTurnCount": 0,
         "frictionSignals": {
           "callCount": 0,
