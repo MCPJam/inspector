@@ -1314,13 +1314,17 @@ export {
   errorEvaluatorResult,
   evaluatorDefinitionHash,
   evaluatorKindOf,
+  evaluatorKindSchema,
+  evaluatorResultArraySchema,
   evaluatorResultSchema,
+  evaluatorStatusSchema,
   finalizeEvaluatorResult,
   fromEvaluatorResult,
   notApplicableEvaluatorResult,
   resolveEvaluatorDefinition,
   skippedEvaluatorResult,
   toEvaluatorResult,
+  toScoreRawOutcome,
 } from "./contract/index.js";
 export type {
   Assertion,

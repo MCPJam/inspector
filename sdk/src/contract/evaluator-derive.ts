@@ -26,7 +26,11 @@ import {
   type EvaluatorResult,
   type ResolvedEvaluatorDefinition,
 } from "./evaluator-types.js";
-import type { EvaluationConfigSnapshot, ScoreRawOutcome, ScoreResult } from "./types.js";
+import type {
+  EvaluationConfigSnapshot,
+  ScoreRawOutcome,
+  ScoreResult,
+} from "./types.js";
 
 /**
  * Project a stored result into the canonical shape.

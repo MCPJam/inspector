@@ -45,11 +45,12 @@ const corpus = fixtures as unknown as { accept: Row[]; reject: Row[] };
 /** Strip the fixture's own annotations; every object in the contract is closed. */
 function payload(row: Row): Record<string, unknown> {
   return Object.fromEntries(
-    Object.entries(row).filter(([key]) => !key.startsWith("__")),
+    Object.entries(row).filter(([key]) => !key.startsWith("__"))
   );
 }
 
-const resultRows = (rows: Row[]) => rows.filter((row) => row.__kind === "result");
+const resultRows = (rows: Row[]) =>
+  rows.filter((row) => row.__kind === "result");
 
 describe("the evaluator result projects the score contract exactly", () => {
   const accepted = resultRows(corpus.accept);
@@ -103,7 +104,9 @@ describe("the evaluator result projects the score contract exactly", () => {
 describe("the evaluator schema decides what the score schema decides", () => {
   for (const row of resultRows(corpus.accept)) {
     it(`accepts: ${row.__label}`, () => {
-      const projected = toEvaluatorResult(payload(row) as unknown as ScoreResult);
+      const projected = toEvaluatorResult(
+        payload(row) as unknown as ScoreResult
+      );
       expect(evaluatorResultSchema.safeParse(projected).success).toBe(true);
     });
   }

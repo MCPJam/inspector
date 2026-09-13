@@ -77,8 +77,8 @@ const evaluatorResultStructuralSchema = z
   })
   .strict();
 
-export const evaluatorResultSchema = evaluatorResultStructuralSchema.superRefine(
-  (row, ctx) => {
+export const evaluatorResultSchema =
+  evaluatorResultStructuralSchema.superRefine((row, ctx) => {
     // `kind` is derived, so a row asserting one that contradicts its own
     // `deterministic` is not a row anybody produced — it is a hand-edited or
     // re-serialized payload, and letting it through would put a judge's score
@@ -100,7 +100,9 @@ export const evaluatorResultSchema = evaluatorResultStructuralSchema.superRefine
       ctx.addIssue({
         code: "custom",
         path: issue.path.map((segment) =>
-          typeof segment === "string" ? (PATH_RENAMES[segment] ?? segment) : segment
+          typeof segment === "string"
+            ? (PATH_RENAMES[segment] ?? segment)
+            : segment
         ),
         // Word boundaries, not backticked whole names: the derivation failure
         // embeds the field inside an expression (``passed` must equal `value >=
@@ -113,7 +115,6 @@ export const evaluatorResultSchema = evaluatorResultStructuralSchema.superRefine
         ),
       });
     }
-  }
-);
+  });
 
 export const evaluatorResultArraySchema = z.array(evaluatorResultSchema);
