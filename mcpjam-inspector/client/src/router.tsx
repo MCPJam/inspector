@@ -253,7 +253,13 @@ const ROUTE_ELEMENTS: Record<
   "client-config": { element: <ServersRedirectRoute /> },
   "organizations/:orgId/members": { element: <OrganizationsRoute /> },
   "organizations/:orgId/sharing": { element: <OrganizationsRoute /> },
-  "organizations/:orgId/billing/usage": { element: <OrganizationsRoute><CreditUsagePage /></OrganizationsRoute> },
+  "organizations/:orgId/billing/usage": {
+    element: (
+      <OrganizationsRoute>
+        <CreditUsagePage />
+      </OrganizationsRoute>
+    ),
+  },
   "organizations/:orgId/models/usage": { element: <OrganizationsRoute /> },
   "organizations/:orgId/api-keys": { element: <OrganizationsRoute /> },
   "organizations/:orgId/plans": { element: <OrganizationsRoute /> },
@@ -268,8 +274,7 @@ const ROUTE_ELEMENTS: Record<
   "organizations/:orgId/discord": { element: <OrganizationsRoute /> },
   "organizations/:orgId/observability": { element: <OrganizationsRoute /> },
   "organizations/:orgId/budget": {
-    loader: ({ params }) =>
-      redirect(`/organizations/${params.orgId}/billing`),
+    loader: ({ params }) => redirect(`/organizations/${params.orgId}/billing`),
   },
   "evals/shared/:token": { element: <EvalRunSharedRoute /> },
   evals: { element: <EvalsRoute /> },

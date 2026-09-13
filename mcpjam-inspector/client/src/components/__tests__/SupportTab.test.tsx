@@ -5,7 +5,9 @@ import { SupportTab } from "../SupportTab";
 describe("Support settings", () => {
   it("provides help destinations within the settings content frame", () => {
     render(<SupportTab />);
-    expect(screen.getByRole("heading", { name: "Support", level: 1 })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Support", level: 1 }),
+    ).toBeInTheDocument();
     expect(document.getElementById("settings-content")).toBeInTheDocument();
     for (const [name, href] of [
       ["Join Discord", "https://discord.gg/JEnDtz8X6z"],
@@ -19,6 +21,8 @@ describe("Support settings", () => {
       expect(link).toHaveAttribute("href", href);
       expect(link).toHaveAttribute("rel", "noopener noreferrer");
     }
-    expect(screen.getByRole("link", { name: "founders@mcpjam.com" })).toHaveAttribute("href", "mailto:founders@mcpjam.com");
+    expect(
+      screen.getByRole("link", { name: "founders@mcpjam.com" }),
+    ).toHaveAttribute("href", "mailto:founders@mcpjam.com");
   });
 });

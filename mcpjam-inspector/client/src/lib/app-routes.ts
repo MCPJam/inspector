@@ -91,7 +91,12 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     surfaceId: "organizations",
     scope: "global",
   },
-  { path: "organizations/:orgId/billing/usage", kind: "screen", surfaceId: "organizations", scope: "global" },
+  {
+    path: "organizations/:orgId/billing/usage",
+    kind: "screen",
+    surfaceId: "organizations",
+    scope: "global",
+  },
   {
     path: "organizations/:orgId/models/usage",
     kind: "screen",
@@ -110,7 +115,12 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     surfaceId: "organizations",
     scope: "global",
   },
-  { path: "organizations/:orgId/data-management", kind: "screen", surfaceId: "organizations", scope: "global" },
+  {
+    path: "organizations/:orgId/data-management",
+    kind: "screen",
+    surfaceId: "organizations",
+    scope: "global",
+  },
   {
     path: "organizations/:orgId/audit-log",
     kind: "screen",
@@ -347,8 +357,18 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     surfaceId: "playground",
     scope: "project",
   },
-  { path: "settings/support", kind: "screen", surfaceId: "support", scope: "global" },
-  { path: "support", kind: "redirect", note: "Support moved to Settings", scope: "global" },
+  {
+    path: "settings/support",
+    kind: "screen",
+    surfaceId: "support",
+    scope: "global",
+  },
+  {
+    path: "support",
+    kind: "redirect",
+    note: "Support moved to Settings",
+    scope: "global",
+  },
   { path: "settings", kind: "screen", surfaceId: "settings", scope: "global" },
   {
     path: "settings/api-keys",

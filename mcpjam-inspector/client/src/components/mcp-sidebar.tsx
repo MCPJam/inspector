@@ -559,7 +559,8 @@ export function MCPSidebar({
   const appNavigate = useAppNavigate();
   const { state, isMobile } = useSidebar();
   const activeProject = projects[activeProjectId];
-  const canOpenInviteDialog = isAuthenticated && !!user && !!activeOrganizationId;
+  const canOpenInviteDialog =
+    isAuthenticated && !!user && !!activeOrganizationId;
   // Guests get the CTA too (hosted only — a local/self-hosted install has no
   // WorkOS to sign up through). The click opens a sign-up nudge instead of the
   // share dialog, and the nudge's marker reopens it after the round trip.

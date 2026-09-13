@@ -547,7 +547,7 @@ function CreateSecretForm({
       // button the user cannot see the reason for.
       setAdvancedOpen(true);
       setError(
-        "Add the hosts and header this secret is sent with, or choose \"Set as an environment variable\" under Advanced settings.",
+        'Add the hosts and header this secret is sent with, or choose "Set as an environment variable" under Advanced settings.',
       );
       setTimeout(() => document.getElementById("secret-hosts")?.focus(), 0);
       return;

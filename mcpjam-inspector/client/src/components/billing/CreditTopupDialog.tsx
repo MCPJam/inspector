@@ -38,7 +38,7 @@ export function CreditTopupDialog({
   const { presets, presetsLoading, startCheckout, isStartingCheckout } =
     useCreditTopup();
   const [selectedPackageId, setSelectedPackageId] = useState<string | null>(
-    null
+    null,
   );
   const impressionTrackedRef = useRef(false);
   const dismissalTrackedRef = useRef(false);
@@ -83,7 +83,7 @@ export function CreditTopupDialog({
   ]);
 
   const selectedPreset: CreditTopupPreset | undefined = presets?.find(
-    (preset) => preset.packageId === selectedPackageId
+    (preset) => preset.packageId === selectedPackageId,
   );
 
   const handleDismiss = (dismissalMethod: "cancel" | "dialog") => {
@@ -103,7 +103,7 @@ export function CreditTopupDialog({
 
   const handlePackageSelection = (
     preset: CreditTopupPreset,
-    packageIndex: number
+    packageIndex: number,
   ) => {
     setSelectedPackageId(preset.packageId);
     track("credit_topup_package_selected", {
@@ -151,8 +151,8 @@ export function CreditTopupDialog({
         <DialogHeader>
           <DialogTitle>Buy credits to keep testing</DialogTitle>
           <DialogDescription>
-            Credits cover usage across our product: evaluate, swarm, user testing,
-            and CI/CD.
+            Credits cover usage across our product: evaluate, swarm, user
+            testing, and CI/CD.
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-4">
@@ -170,7 +170,7 @@ export function CreditTopupDialog({
                 const isSelected = preset.packageId === selectedPackageId;
                 const creditsAmount = preset.displayCredits.replace(
                   /\s*credits\s*$/i,
-                  ""
+                  "",
                 );
                 return (
                   <CreditAmountOption
@@ -178,7 +178,9 @@ export function CreditTopupDialog({
                     credits={creditsAmount}
                     price={preset.displayPrice}
                     selected={isSelected}
-                    onSelect={() => handlePackageSelection(preset, packageIndex)}
+                    onSelect={() =>
+                      handlePackageSelection(preset, packageIndex)
+                    }
                   />
                 );
               })}
@@ -202,8 +204,8 @@ export function CreditTopupDialog({
             {isStartingCheckout
               ? "Redirecting…"
               : selectedPreset
-              ? `Continue with ${selectedPreset.displayPrice}`
-              : "Continue"}
+                ? `Continue with ${selectedPreset.displayPrice}`
+                : "Continue"}
           </Button>
         </DialogFooter>
       </DialogContent>

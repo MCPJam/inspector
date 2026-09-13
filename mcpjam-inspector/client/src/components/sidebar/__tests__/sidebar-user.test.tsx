@@ -104,12 +104,17 @@ describe("SidebarUser", () => {
         <SidebarUser />
         <Routes>
           <Route path="/home" element={null} />
-          <Route path="/settings/support" element={<h1>Support settings page</h1>} />
+          <Route
+            path="/settings/support"
+            element={<h1>Support settings page</h1>}
+          />
         </Routes>
       </MemoryRouter>,
     );
     fireEvent.click(screen.getByText("Support"));
-    expect(await screen.findByRole("heading", { name: "Support settings page" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Support settings page" }),
+    ).toBeInTheDocument();
   });
   beforeEach(() => {
     authState.user = null;
@@ -209,7 +214,7 @@ describe("SidebarUser", () => {
       });
     });
     expect(onBeforeSignOut.mock.invocationCallOrder[0]).toBeLessThan(
-      authState.signOutMock.mock.invocationCallOrder[0]
+      authState.signOutMock.mock.invocationCallOrder[0],
     );
   });
 

@@ -13,7 +13,11 @@ vi.mock("@/lib/app-navigation", () => ({
 describe("Settings breadcrumbs", () => {
   it("links BYOK usage back to provider settings", () => {
     expect(settingsBreadcrumbs("/organizations/org-a/models/usage")).toEqual([
-      { label: "AI providers", icon: "org-byok", href: "/organizations/org-a/models" },
+      {
+        label: "AI providers",
+        icon: "org-byok",
+        href: "/organizations/org-a/models",
+      },
       { label: "Usage" },
     ]);
   });
@@ -76,10 +80,7 @@ describe("Settings breadcrumbs", () => {
       "/organizations/org/integrations",
     );
     expect(
-      settingsBreadcrumbs(
-        "/organizations/org/billing",
-        "?setting=auto-reload",
-      ),
+      settingsBreadcrumbs("/organizations/org/billing", "?setting=auto-reload"),
     ).toEqual([{ label: "Usage & billing", icon: "org-billing" }]);
     expect(settingsBreadcrumbs("/settings")[0].label).toBe("Profile");
     expect(settingsBreadcrumbs("/not-settings")).toEqual([]);

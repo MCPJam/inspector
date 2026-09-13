@@ -92,7 +92,13 @@ export const SETTINGS_DESTINATIONS: readonly SettingsDestination[] = [
     "MCPJAM_API_KEY",
   ]),
   {
-    ...personal("support", "Support", "/support", ["help", "contact", "Discord", "documentation", "report a bug"]),
+    ...personal("support", "Support", "/support", [
+      "help",
+      "contact",
+      "Discord",
+      "documentation",
+      "report a bug",
+    ]),
     group: "App",
   },
   {
@@ -175,10 +181,14 @@ export const SETTINGS_DESTINATIONS: readonly SettingsDestination[] = [
       "auto-top-up",
     ]),
     matches: (p) =>
-      /^\/organizations\/[^/]+\/billing(?:\/usage)?$/.test(p) || p === "/billing",
+      /^\/organizations\/[^/]+\/billing(?:\/usage)?$/.test(p) ||
+      p === "/billing",
   },
   org("audit-log", "Audit log", "/audit-log", ["activity", "CSV export"]),
-  org("data-management", "Data management", "/data-management", ["retention", "enterprise"]),
+  org("data-management", "Data management", "/data-management", [
+    "retention",
+    "enterprise",
+  ]),
   {
     ...project("general", "General", "", [
       "project name",

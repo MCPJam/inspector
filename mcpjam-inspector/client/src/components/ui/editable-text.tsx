@@ -23,7 +23,14 @@ export function EditableText({
   const [editedValue, setEditedValue] = useState(value);
   const [isSaving, setIsSaving] = useState(false);
 
-  useSettingsDraft(isEditing && editedValue !== value, () => { setEditedValue(value); setIsEditing(false); }, isSaving);
+  useSettingsDraft(
+    isEditing && editedValue !== value,
+    () => {
+      setEditedValue(value);
+      setIsEditing(false);
+    },
+    isSaving,
+  );
 
   // Sync with external value changes
   useEffect(() => {

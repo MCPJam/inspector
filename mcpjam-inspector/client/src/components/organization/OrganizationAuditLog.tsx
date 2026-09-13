@@ -145,8 +145,8 @@ export function OrganizationAuditLog({
     errorType === "missing"
       ? "Audit export is unavailable because the backend audit function is not deployed yet."
       : errorType === "permission"
-      ? "You don't have permission to access organization audit events."
-      : error?.message ?? null;
+        ? "You don't have permission to access organization audit events."
+        : (error?.message ?? null);
 
   const hasEvents = events.length > 0;
   const showHint = !hasEvents && !isLoading && !errorMessage;

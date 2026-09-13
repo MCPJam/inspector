@@ -265,7 +265,7 @@ export function GithubInstallCallbackRoute() {
 
   const handleClaim = async (
     linkSessionId: string,
-    installation: ClaimableInstallation
+    installation: ClaimableInstallation,
   ) => {
     setClaiming(installation.installationId);
     try {
@@ -359,83 +359,85 @@ export function GithubInstallCallbackRoute() {
                 // — the one thing a blocked row exists to communicate.
                 const conflictNoteId = `github-claim-conflict-${installation.installationId}`;
                 return (
-                <div
-                  key={installation.installationId}
-                  data-testid={`claimable-${installation.accountLogin}`}
-                >
-                  <div className="flex items-center justify-between gap-4 px-4 py-3">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <Github
-                        className="size-4 text-muted-foreground shrink-0"
-                        aria-hidden
-                      />
-                      <div className="flex flex-col min-w-0">
-                        <span
-                          className={`text-sm font-medium truncate ${
-                            installation.conflict ? "text-muted-foreground" : ""
-                          }`}
-                        >
-                          {installation.accountLogin}
-                        </span>
-                        <span className="text-xs text-muted-foreground">
-                          {installation.accountType === "Organization"
-                            ? "Organization"
-                            : "Personal account"}
-                        </span>
+                  <div
+                    key={installation.installationId}
+                    data-testid={`claimable-${installation.accountLogin}`}
+                  >
+                    <div className="flex items-center justify-between gap-4 px-4 py-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <Github
+                          className="size-4 text-muted-foreground shrink-0"
+                          aria-hidden
+                        />
+                        <div className="flex flex-col min-w-0">
+                          <span
+                            className={`text-sm font-medium truncate ${
+                              installation.conflict
+                                ? "text-muted-foreground"
+                                : ""
+                            }`}
+                          >
+                            {installation.accountLogin}
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            {installation.accountType === "Organization"
+                              ? "Organization"
+                              : "Personal account"}
+                          </span>
+                        </div>
                       </div>
+                      <Button
+                        size="sm"
+                        // A conflicting row is disabled rather than hidden: the
+                        // account IS one they administer, and hiding it would
+                        // read as "GitHub lost it" rather than "it is taken".
+                        disabled={
+                          claiming !== null || Boolean(installation.conflict)
+                        }
+                        aria-describedby={
+                          installation.conflict ? conflictNoteId : undefined
+                        }
+                        onClick={() =>
+                          void handleClaim(phase.linkSessionId, installation)
+                        }
+                      >
+                        Connect
+                      </Button>
                     </div>
-                    <Button
-                      size="sm"
-                      // A conflicting row is disabled rather than hidden: the
-                      // account IS one they administer, and hiding it would
-                      // read as "GitHub lost it" rather than "it is taken".
-                      disabled={
-                        claiming !== null || Boolean(installation.conflict)
-                      }
-                      aria-describedby={
-                        installation.conflict ? conflictNoteId : undefined
-                      }
-                      onClick={() =>
-                        void handleClaim(phase.linkSessionId, installation)
-                      }
-                    >
-                      Connect
-                    </Button>
-                  </div>
-                  {installation.conflict ? (
-                    <p
-                      id={conflictNoteId}
-                      className="flex items-start gap-2 px-4 pb-3 text-xs leading-relaxed text-muted-foreground"
-                    >
-                      <Lock
-                        className="size-3.5 shrink-0 mt-0.5 text-destructive"
-                        aria-hidden
-                      />
-                      {/* Two sentences, not one, because the second is the
+                    {installation.conflict ? (
+                      <p
+                        id={conflictNoteId}
+                        className="flex items-start gap-2 px-4 pb-3 text-xs leading-relaxed text-muted-foreground"
+                      >
+                        <Lock
+                          className="size-3.5 shrink-0 mt-0.5 text-destructive"
+                          aria-hidden
+                        />
+                        {/* Two sentences, not one, because the second is the
                           only actionable half and must survive being skimmed.
                           The name is used when the backend gave one — its
                           absence means the caller may not see that org, so the
                           non-member copy names the party they CAN reach. */}
-                      <span>
-                        {installation.conflict.organizationName ? (
-                          <>
-                            Already connected to{" "}
-                            <span className="font-medium text-foreground">
-                              {installation.conflict.organizationName}
-                            </span>
-                            . Disconnect it there to use it here.
-                          </>
-                        ) : (
-                          <>
-                            Already connected to another MCPJam organization. An
-                            owner of the {installation.accountLogin} GitHub
-                            account can disconnect it there.
-                          </>
-                        )}
-                      </span>
-                    </p>
-                  ) : null}
-                </div>
+                        <span>
+                          {installation.conflict.organizationName ? (
+                            <>
+                              Already connected to{" "}
+                              <span className="font-medium text-foreground">
+                                {installation.conflict.organizationName}
+                              </span>
+                              . Disconnect it there to use it here.
+                            </>
+                          ) : (
+                            <>
+                              Already connected to another MCPJam organization.
+                              An owner of the {installation.accountLogin} GitHub
+                              account can disconnect it there.
+                            </>
+                          )}
+                        </span>
+                      </p>
+                    ) : null}
+                  </div>
                 );
               })}
               {/* The only route to an account that is NOT in the list — which

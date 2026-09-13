@@ -218,7 +218,10 @@ export function SettingsRail({
           className="mt-2 min-h-0 flex-1 overflow-y-auto space-y-1"
         >
           {!results.length && (
-            <p role="status" className="px-3 py-3 text-sm text-muted-foreground">
+            <p
+              role="status"
+              className="px-3 py-3 text-sm text-muted-foreground"
+            >
               No settings found.
             </p>
           )}
@@ -371,7 +374,10 @@ export function SettingsRail({
         aria-label="App information"
         className="mx-2 mt-2 shrink-0 border-t border-border/50 pt-2"
       >
-        {[{ id: "personal-support", label: "Support" }, { id: "personal-about", label: "About MCPJam" }].map((item) => (
+        {[
+          { id: "personal-support", label: "Support" },
+          { id: "personal-about", label: "About MCPJam" },
+        ].map((item) => (
           <button
             key={item.id}
             aria-current={destination?.id === item.id ? "page" : undefined}

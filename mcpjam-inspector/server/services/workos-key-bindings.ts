@@ -47,11 +47,11 @@ export class WorkosKeyBindingError extends Error {
 const BINDING_LOOKUP_TIMEOUT_MS = 5_000;
 
 export async function lookupWorkosKeyBinding(
-  workosApiKeyId: string
+  workosApiKeyId: string,
 ): Promise<WorkosKeyBinding | null> {
   const { convexUrl, serviceToken } = getInternalBackendConfig();
   const url = `${convexUrl}${BINDINGS_PATH}?workosApiKeyId=${encodeURIComponent(
-    workosApiKeyId
+    workosApiKeyId,
   )}`;
   const response = await fetch(url, {
     method: "GET",
@@ -65,7 +65,7 @@ export async function lookupWorkosKeyBinding(
       return null;
     }
     throw new Error(
-      `Binding lookup route not found at ${convexUrl}${BINDINGS_PATH} — is the backend bindings route deployed?`
+      `Binding lookup route not found at ${convexUrl}${BINDINGS_PATH} — is the backend bindings route deployed?`,
     );
   }
   if (!response.ok) {
@@ -123,7 +123,7 @@ export async function createWorkosKeyBinding(args: {
  */
 export async function removeWorkosKeyBinding(
   workosApiKeyId: string,
-  actorUserId?: string
+  actorUserId?: string,
 ): Promise<void> {
   const { convexUrl, serviceToken } = getInternalBackendConfig();
   const params = new URLSearchParams({ workosApiKeyId });
@@ -139,7 +139,7 @@ export async function removeWorkosKeyBinding(
     // an unreachable backend and the caller logs it as one.
     throw new WorkosKeyBindingError(
       response.status,
-      `Binding remove failed (${response.status})`
+      `Binding remove failed (${response.status})`,
     );
   }
 }

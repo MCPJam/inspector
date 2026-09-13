@@ -43,7 +43,8 @@ export function AgentSidePanelMount({
   const host = useEvalChatHost((s) => s.host);
   const inEvaluate = activeTab === "evaluate";
   const describeScope = useDescribeSurface((s) => s.scope);
-  const describeReady = !!describeScope && !!host && host.projectId === describeScope.projectId;
+  const describeReady =
+    !!describeScope && !!host && host.projectId === describeScope.projectId;
   const resolvedProjectId = inEvaluate && host ? host.projectId : projectId;
 
   useEffect(() => {
@@ -59,8 +60,7 @@ export function AgentSidePanelMount({
       if (event.shiftKey || event.altKey) return;
       if (isEditableTarget(event.target)) return;
       const willOpen = !useAgentPanelStore.getState().isOpen;
-      const context =
-        willOpen && inEvaluate ? describeScope : undefined;
+      const context = willOpen && inEvaluate ? describeScope : undefined;
 
       event.preventDefault();
       if (willOpen) {
@@ -79,7 +79,15 @@ export function AgentSidePanelMount({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [hidden, activeTab, inEvaluate, describeReady, describeScope, scoped, toggle]);
+  }, [
+    hidden,
+    activeTab,
+    inEvaluate,
+    describeReady,
+    describeScope,
+    scoped,
+    toggle,
+  ]);
 
   // Drop the persisted session pointer whenever the panel state and the
   // current active project disagree about which project the session belongs

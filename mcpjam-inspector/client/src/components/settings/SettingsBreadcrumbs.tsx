@@ -17,7 +17,11 @@ export function settingsBreadcrumbs(pathname: string, search = ""): Crumb[] {
       { label: "Usage" },
     ];
   }
-  if (destination.id === "org-billing" && pathname.endsWith("/billing/usage")) return [{ ...root, href: pathname.replace(/\/usage$/, "") }, { label: "Credits usage" }];
+  if (destination.id === "org-billing" && pathname.endsWith("/billing/usage"))
+    return [
+      { ...root, href: pathname.replace(/\/usage$/, "") },
+      { label: "Credits usage" },
+    ];
   if (destination.id !== "org-integrations") return [root];
 
   const query = new URLSearchParams(search);

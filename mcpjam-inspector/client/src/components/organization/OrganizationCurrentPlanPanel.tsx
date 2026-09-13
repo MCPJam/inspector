@@ -228,10 +228,10 @@ export function OrganizationCurrentPlanPanel({
   const isTrial = billingStatus.source === "trial";
   const isSimulation = billingStatus.source === "simulation";
   const displayPlan = isTrial
-    ? billingStatus.trialPlan ?? billingStatus.effectivePlan
+    ? (billingStatus.trialPlan ?? billingStatus.effectivePlan)
     : isSimulation
-    ? billingStatus.effectivePlan
-    : currentPlan;
+      ? billingStatus.effectivePlan
+      : currentPlan;
   const billingConfigured = billingStatus.billingConfigured ?? false;
   const canManageBilling = billingStatus.canManageBilling ?? false;
   const formattedPeriodEnd = formatBillingDate(
@@ -376,8 +376,8 @@ export function OrganizationCurrentPlanPanel({
               {isTrial
                 ? `${formatPlanName(displayPlan)} Trial`
                 : formatPlanName(displayPlan) === "current"
-                ? "Paid plan"
-                : formatPlanName(displayPlan)}
+                  ? "Paid plan"
+                  : formatPlanName(displayPlan)}
             </p>
             {displayPlan === "free" && !isTrial ? (
               <p className="text-sm text-muted-foreground">
@@ -432,9 +432,7 @@ export function OrganizationCurrentPlanPanel({
                 Loading...
               </>
             ) : (
-              <>
-                Manage plan
-              </>
+              <>Manage plan</>
             )}
           </Button>
         ) : null}

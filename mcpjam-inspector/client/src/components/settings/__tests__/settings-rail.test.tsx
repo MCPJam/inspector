@@ -83,8 +83,14 @@ describe("full-screen settings navigation", () => {
     setup();
     const footer = screen.getByRole("navigation", { name: "App information" });
     fireEvent.click(within(footer).getByRole("button", { name: "Support" }));
-    await waitFor(() => expect(screen.getByLabelText("Location")).toHaveTextContent("/settings/support"));
-    expect(within(footer).getByRole("button", { name: "Support" })).toHaveAttribute("aria-current", "page");
+    await waitFor(() =>
+      expect(screen.getByLabelText("Location")).toHaveTextContent(
+        "/settings/support",
+      ),
+    );
+    expect(
+      within(footer).getByRole("button", { name: "Support" }),
+    ).toHaveAttribute("aria-current", "page");
   });
   it("keeps About in the app footer and available through search", async () => {
     setup("/settings/about");
@@ -111,7 +117,9 @@ describe("full-screen settings navigation", () => {
     expect(
       screen.getByRole("heading", { name: "Personal" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "AI providers" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "AI providers" }),
+    ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Usage & billing" }),
     ).toBeInTheDocument();
