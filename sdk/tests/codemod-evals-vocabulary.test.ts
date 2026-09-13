@@ -1022,6 +1022,209 @@ describe("the evaluator-vocabulary scanner", () => {
     );
   });
 
+  it("counts a flag named twice on one line as two occurrences", () => {
+    const root = tree({
+      "cli/src/commands/eval.ts": `const help = "use --repetitions, not --repetitions=0";\n`,
+    });
+    const { status, json } = scan(root, {
+      renames: [
+        {
+          from: "--repetitions",
+          to: "--iterations",
+          scope: "flag",
+          paths: ["cli/"],
+        },
+      ],
+    });
+
+    // The report says every occurrence is listed. A line is not an occurrence.
+    expect(status).toBe(0);
+    expect(
+      json.findings.filter((f: { scope: string }) => f.scope === "flag")
+    ).toHaveLength(2);
+  });
+
+  it("counts a subpath named twice on one text line as two occurrences", () => {
+    const root = tree({
+      "docs/sdk.mdx":
+        "Import `@mcpjam/sdk/predicates`, not a copy of `@mcpjam/sdk/predicates`.\n",
+    });
+    const { status, json } = scan(root);
+
+    expect(status).toBe(0);
+    expect(
+      json.findings.filter(
+        (f: { matched: string }) => f.matched === "@mcpjam/sdk/predicates"
+      )
+    ).toHaveLength(2);
+  });
+
+  it("finds a subpath in a code comment, and only in real comments", () => {
+    const root = tree({
+      "sdk/src/predicates/index.ts":
+        `/**\n * \`@mcpjam/sdk/predicates\` - the predicate library.\n */\n` +
+        `import "@mcpjam/sdk/predicates"; // re-exported as @mcpjam/sdk/predicates\n` +
+        // `//` inside a string is not a comment, and the whole string is not
+        // the subpath either.
+        `export const url = "https://x.test//@mcpjam/sdk/predicates";\n`,
+    });
+    const { status, json } = scan(root);
+
+    expect(status).toBe(0);
+    expect(
+      json.findings
+        .filter(
+          (f: { matched: string }) => f.matched === "@mcpjam/sdk/predicates"
+        )
+        .map((f: { line: number; shape: string }) => `${f.line} ${f.shape}`)
+        .sort()
+    ).toEqual([
+      "2 comment reference",
+      "4 comment reference",
+      "4 import specifier",
+    ]);
+  });
+
+  it("lists the producer side of the subpath rename", () => {
+    const root = tree({
+      "sdk/package.json":
+        `{\n  "exports": {\n    "./predicates": {\n` +
+        `      "types": "./dist/predicates/index.d.ts",\n` +
+        `      "import": "./dist/predicates/index.js"\n    }\n  }\n}\n`,
+      "sdk/tsup.config.ts": `export default { entry: ["src/index.ts", "src/predicates/index.ts"] };\n`,
+      "mcpjam-inspector/client/vitest.config.ts": `export const alias = ["../sdk/src/predicates/index.ts"];\n`,
+    });
+    const { status, json } = scan(root);
+
+    // An import of the new subpath resolves only once the package exports it,
+    // so the export, its targets and its build entry are part of the rename.
+    expect(status).toBe(0);
+    expect(
+      json.findings
+        .filter((f: { scope: string }) => f.scope === "subpath")
+        .map(
+          (f: { file: string; line: number; from: string }) =>
+            `${f.file}:${f.line} ${f.from}`
+        )
+        .sort()
+    ).toEqual([
+      "mcpjam-inspector/client/vitest.config.ts:1 ../sdk/src/predicates/index.ts",
+      "sdk/package.json:3 ./predicates",
+      "sdk/package.json:4 ./dist/predicates/index",
+      "sdk/package.json:5 ./dist/predicates/index",
+      "sdk/tsup.config.ts:1 src/predicates/index.ts",
+    ]);
+  });
+
+  it("writes --json whole through a pipe, past the pipe buffer", () => {
+    const body = Array.from(
+      { length: 1500 },
+      (_, i) => `type T${i} = Scorer;`
+    ).join("\n");
+    const root = tree({ "sdk/src/big.ts": `${body}\n` });
+    // `scan` parses stdout, so a truncated document fails here.
+    const { status, stdout, json } = scan(root);
+
+    expect(status).toBe(0);
+    expect(stdout.length).toBeGreaterThan(65_536);
+    expect(json.findings).toHaveLength(1500);
+  });
+
+  it("skips its own test, whose mappings are fixtures", () => {
+    const root = tree({
+      "sdk/tests/codemod-evals-vocabulary.test.ts": `const fixture = { from: "@mcpjam/sdk/predicates" };\n`,
+      "sdk/src/a.ts": `import "@mcpjam/sdk/predicates";\n`,
+    });
+    const { status, json } = scan(root);
+
+    expect(status).toBe(0);
+    expect(json.findings.map((f: { file: string }) => f.file)).toEqual([
+      "sdk/src/a.ts",
+    ]);
+    expect(json.skipped.map((s: { file: string }) => s.file)).toContain(
+      "sdk/tests/codemod-evals-vocabulary.test.ts"
+    );
+  });
+
+  it("does not read an object-rest binding as a field", () => {
+    const root = tree({
+      "sdk/src/platform/types.ts":
+        "export const f = (row: any) => { const { ...checks } = row; const { checks: real } = row; return [checks, real]; };\n",
+    });
+    const { status, json } = scan(root);
+
+    // `...checks` gathers the remaining properties. Only `checks: real` reads
+    // the field.
+    expect(status).toBe(0);
+    expect(
+      json.findings.filter((f: { matched: string }) => f.matched === "checks")
+    ).toHaveLength(1);
+  });
+
+  it("sets aside a line its rule marks as another meaning, and lists it", () => {
+    const root = tree({
+      "sdk/src/platform/operations.ts":
+        "export type Eval = { checks: PublicCheck[] };\n" +
+        "export type Repos = { checks: PlatformEvalCheckRepos };\n",
+      // Not an eval adapter at all: outside the rename's paths.
+      "sdk/src/platform/show-servers.ts":
+        "export const f = (report: any) => report.checks.tools;\n",
+      "mcpjam-inspector/server/routes/v1/evals.ts":
+        "export const page = { iterations: (rows ?? []).map(toIterationDto) };\n",
+    });
+    const { status, json } = scan(root);
+    const key = (f: { file: string; line: number; from: string }) =>
+      `${f.file}:${f.line} ${f.from}`;
+
+    expect(status).toBe(0);
+    expect(json.findings.map(key).sort()).toEqual([
+      "sdk/src/platform/operations.ts:1 checks",
+    ]);
+    expect(json.excludedByRule.map(key).sort()).toEqual([
+      "mcpjam-inspector/server/routes/v1/evals.ts:1 iterations",
+      "sdk/src/platform/operations.ts:2 checks",
+    ]);
+  });
+
+  it("never lets a rule hide a protected occurrence", () => {
+    const root = tree({ "sdk/src/xaa/mint.ts": "export type S = Scorer;\n" });
+    const { status, json } = scan(root, {
+      renames: [
+        {
+          from: "Scorer",
+          to: "Evaluator",
+          scope: "identifier",
+          notOnLinesContaining: ["Scorer"],
+        },
+      ],
+    });
+
+    expect(status).toBe(2);
+    expect(json.violations[0].reason).toBe("protected path");
+    expect(json.excludedByRule).toHaveLength(0);
+  });
+
+  it("proposes the default-assertions rename only at its re-export", () => {
+    const root = tree({
+      "sdk/src/contract/grader-stage.ts":
+        "export const RECOMMENDED_DEFAULT_PREDICATES = [];\n",
+      "sdk/src/contract/index.ts":
+        'export { RECOMMENDED_DEFAULT_PREDICATES } from "./grader-stage.js";\n',
+    });
+    const { status, json } = scan(root);
+
+    // The declaration stays: the backend pins that file. Only the export site
+    // gains the new name.
+    expect(status).toBe(0);
+    expect(
+      json.findings
+        .filter(
+          (f: { from: string }) => f.from === "RECOMMENDED_DEFAULT_PREDICATES"
+        )
+        .map((f: { file: string }) => f.file)
+    ).toEqual(["sdk/src/contract/index.ts"]);
+  });
+
   it("has no --write, and says why rather than ignoring the flag", () => {
     const root = tree({ "sdk/src/a.ts": "export const a = 1;\n" });
     const result = spawnSync(

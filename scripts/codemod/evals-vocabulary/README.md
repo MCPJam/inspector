@@ -28,6 +28,9 @@ node scripts/codemod/evals-vocabulary/index.mjs --root ../mcpjam-backend
 earlier shell chain turned every failure into exit 1, so a refusal looked the
 same as a run that scanned nothing.
 
+`--json` waits for stdout to drain before it exits, so a piped consumer receives
+the whole document.
+
 ## Why there is no `--write`
 
 The words this program renames are ordinary English in this repository and
@@ -40,7 +43,7 @@ for a different thing.
 So the value here is the inventory, not the edit. A reviewer reads the report to
 size the surface and to find the places where the same token means two things;
 the renames themselves land in PRs a human reviews against the pinned contract.
-A script that rewrote 803 occurrences across 106 files and asked for a rubber
+A script that rewrote 800 occurrences across 105 files and asked for a rubber
 stamp would be asking for the one thing nobody can give it.
 
 ## The two severities
@@ -103,6 +106,29 @@ paths are not listed. A protected field, such as the configuration-revision
 
 A string in a type position, like `unit: "iterations" | "sessions"`, is reported
 with the shape `string in a type`. It usually names an enum value, not a field.
+
+## Rules that set a line aside
+
+A rename may list `notOnLinesContaining`. An occurrence on a line containing one
+of those strings is not proposed. It is listed under "Set aside by a mapping
+rule" instead, so a wrong rule shows up in review rather than hiding a real
+rename. Protection still runs first: a rule cannot hide a protected occurrence.
+The `checks` rename sets aside GitHub check repositories and conformance results
+that share its files. The legacy floor rename sets aside lists of iteration
+records and unit enum values.
+
+## Every occurrence, including comments
+
+Each match counts, so a line that names a flag or a subpath twice produces two
+rows. Package subpaths are also found inside code comments, because a doc
+comment that advertises an entry point is as stale after the rename as an
+import. The subpath rename lists its producer side too: the `./predicates`
+export and its targets in `sdk/package.json`, the build entry in
+`sdk/tsup.config.ts`, and the alias targets in the inspector's configs. Those
+are additions beside the old subpath, not moves.
+
+The scanner's own test is skipped. Its mappings are fixtures that propose
+renames on purpose.
 
 ## Why it parses
 

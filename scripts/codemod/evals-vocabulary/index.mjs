@@ -229,6 +229,13 @@ function listCandidates(failures, skipped) {
  */
 const TOOL_DIR = "scripts/codemod/evals-vocabulary/";
 
+/**
+ * The scanner's own test. Every mapping in it is a fixture that proposes a
+ * rename on purpose, so listing it would report the tests as work, and
+ * following that row would break the regression the fixture exists to hold.
+ */
+const SCANNER_TEST = "sdk/tests/codemod-evals-vocabulary.test.ts";
+
 const underPaths = (rel, paths = [], suffixes = []) =>
   paths.some((p) => rel === p || rel.startsWith(p)) ||
   suffixes.some((s) => rel.endsWith(s));
@@ -409,8 +416,26 @@ function interestingNodes(text, file) {
   }
 
   const found = [];
+  // Comments are trivia, so the walk below never visits them. They are
+  // collected where the parser places them, leading and trailing each node,
+  // which cannot mistake `//` inside a string or a regular expression for a
+  // comment the way a raw text search would.
+  const seenComments = new Set();
+  const collectComments = (ranges) => {
+    for (const range of ranges ?? []) {
+      if (seenComments.has(range.pos)) continue;
+      seenComments.add(range.pos);
+      found.push({
+        value: text.slice(range.pos, range.end),
+        start: range.pos,
+        isComment: true,
+      });
+    }
+  };
 
   const visit = (node) => {
+    collectComments(ts.getLeadingCommentRanges(text, node.pos));
+    collectComments(ts.getTrailingCommentRanges(text, node.end));
     if (ts.isIdentifier(node)) {
       const parent = node.parent;
       const inObjectBinding =
@@ -440,8 +465,13 @@ function interestingNodes(text, file) {
       // `judgeScorer` and `runScorers` came to be absent from the report
       // while their other uses in the same test file were listed — and the
       // import site is the one line that has to change.
+      // A rest element, `const { ...checks } = row`, gathers the REMAINING
+      // properties into a local. It reads no property named `checks`.
       const isShorthand =
-        (inObjectBinding && !parent.propertyName && parent.name === node) ||
+        (inObjectBinding &&
+          !parent.propertyName &&
+          !parent.dotDotDotToken &&
+          parent.name === node) ||
         ts.isShorthandPropertyAssignment(parent);
 
       found.push({
@@ -503,6 +533,8 @@ function interestingNodes(text, file) {
   };
 
   ts.forEachChild(source, visit);
+  // A comment after the last statement belongs to no statement.
+  collectComments(ts.getLeadingCommentRanges(text, source.endOfFileToken.pos));
   return found;
 }
 
@@ -540,6 +572,15 @@ const reviewByHand = [];
  */
 const outsideMapping = [];
 /**
+ * Occurrences a rename's `notOnLinesContaining` rule set aside.
+ *
+ * Listed, never dropped. A rule is a reviewed claim that the word means
+ * something else on that line, such as `checks: PlatformEvalCheckRepos` or a
+ * list of iteration records, and the report shows what each claim removed so
+ * a wrong rule is visible instead of silent.
+ */
+const excludedByRule = [];
+/**
  * Files the walk or a read could not inspect.
  *
  * Collected rather than swallowed, and fatal at the end. A scanner that skips
@@ -570,6 +611,15 @@ function record(rel, line, lineText, rename, matched, shape) {
   }
   if (protectedFieldAt(rel, matched)) {
     violations.push({ ...entry, reason: `protected field` });
+    return;
+  }
+  // After protection, never before: a rule may set aside another meaning of
+  // the word, but it may not hide a protected occurrence.
+  const rule = (rename.notOnLinesContaining ?? []).find((needle) =>
+    lineText.includes(needle)
+  );
+  if (rule !== undefined) {
+    excludedByRule.push({ ...entry, rule });
     return;
   }
   const nearby = protectedTermsOnLine(lineText).filter((t) => t !== matched);
@@ -643,6 +693,14 @@ for (const rel of candidates) {
   const isCode = CODE_EXT.has(ext);
   const isText = TEXT_EXT.has(ext);
   if (!isCode && !isText) continue;
+  if (rel === SCANNER_TEST) {
+    skipped.push({
+      file: rel,
+      reason:
+        "the scanner's own test: its mappings are fixtures, not rename sites",
+    });
+    continue;
+  }
 
   // The walk already lstat'ed; git's listing did not. A path git tracks may be
   // a symlink, or deleted from the working tree — neither holds source to
@@ -691,6 +749,32 @@ for (const rel of candidates) {
     }
 
     for (const node of nodes) {
+      // A package subpath named in a comment, such as a module's doc header,
+      // advertises an entry point just as an import does. Subpaths only: a
+      // wire field in prose is English. The tool's own files quote every
+      // subpath as instructions, so they are not rename sites.
+      if (node.isComment) {
+        if (rel.startsWith(TOOL_DIR)) continue;
+        for (const [from, rename] of subpathRenames) {
+          if (!inAllowedPaths(rel, rename.paths)) continue;
+          const token = new RegExp(
+            `${from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w/-])`,
+            "g"
+          );
+          for (const match of node.value.matchAll(token)) {
+            const commentLine = lineOf(node.start + match.index);
+            record(
+              rel,
+              commentLine,
+              lines[commentLine - 1] ?? "",
+              rename,
+              from,
+              "comment reference"
+            );
+          }
+        }
+        continue;
+      }
       const line = lineOf(node.start);
       const lineText = lines[line - 1] ?? "";
 
@@ -791,10 +875,14 @@ for (const rel of candidates) {
       // `@mcpjam/sdk/predicates/deep` are different modules, and proposing to
       // rename them would be proposing to break them.
       const token = new RegExp(
-        `${from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w/-])`
+        `${from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w/-])`,
+        "g"
       );
+      // One row per occurrence, not per line: a manifest line can name the
+      // same subpath twice, and the report says every occurrence is listed.
       lines.forEach((lineText, index) => {
-        if (token.test(lineText)) {
+        const count = [...lineText.matchAll(token)].length;
+        for (let i = 0; i < count; i += 1) {
           record(rel, index + 1, lineText, rename, from, "text reference");
         }
       });
@@ -807,10 +895,13 @@ for (const rel of candidates) {
     // flag, and proposing to rename it would be proposing to break it. The
     // trailing class accepts `--repetitions` alone and `--repetitions=3`.
     const flag = new RegExp(
-      `${rename.from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w-])`
+      `${rename.from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w-])`,
+      "g"
     );
+    // One row per occurrence: help text often names the flag twice on a line.
     lines.forEach((lineText, index) => {
-      if (flag.test(lineText)) {
+      const count = [...lineText.matchAll(flag)].length;
+      for (let i = 0; i < count; i += 1) {
         record(rel, index + 1, lineText, rename, rename.from, "flag token");
       }
     });
@@ -841,23 +932,26 @@ if (scanned === 0) {
 }
 
 if (AS_JSON) {
-  console.log(
-    JSON.stringify(
-      {
-        status: violations.length > 0 ? "protected" : "ok",
-        root: ROOT,
-        enumeration,
-        scanned,
-        skipped,
-        findings,
-        reviewByHand,
-        outsideMapping,
-        violations,
-      },
-      null,
-      2
-    )
+  const payload = JSON.stringify(
+    {
+      status: violations.length > 0 ? "protected" : "ok",
+      root: ROOT,
+      enumeration,
+      scanned,
+      skipped,
+      findings,
+      reviewByHand,
+      outsideMapping,
+      excludedByRule,
+      violations,
+    },
+    null,
+    2
   );
+  // Wait for the write to drain. `process.exit` straight after an asynchronous
+  // stdout write truncates piped output at the pipe buffer, 65,536 bytes on
+  // macOS, and leaves a consumer of `--json` holding invalid JSON.
+  await new Promise((done) => process.stdout.write(`${payload}\n`, done));
   process.exit(violations.length > 0 ? 2 : 0);
 }
 
@@ -969,6 +1063,14 @@ if (outsideMapping.length > 0) {
   out.push("");
 }
 
+if (excludedByRule.length > 0) {
+  out.push(
+    `Set aside by a mapping rule: ${excludedByRule.length} occurrence(s) on lines the ` +
+      `mapping marks as another meaning of the word. They are listed at the end.`
+  );
+  out.push("");
+}
+
 if (skipped.length > 0) {
   out.push("## Skipped");
   out.push("");
@@ -1064,6 +1166,27 @@ for (const [key, entries] of outsideByRename) {
       `| \`${entry.file}:${entry.line}\` | ${entry.shape} | ${
         entry.frozen ? "yes" : ""
       } | ${codeCell(entry.text)} |`
+    );
+  }
+  out.push("");
+}
+
+if (excludedByRule.length > 0) {
+  out.push("## Set aside by a mapping rule");
+  out.push("");
+  out.push(
+    "> Not proposed. Each row matched its rename's `notOnLinesContaining` rule, a " +
+      "reviewed claim that the word means something else on that line. A wrong rule " +
+      "hides a real rename, so check these the same way as the proposals."
+  );
+  out.push("");
+  out.push("| file:line | rename | rule | line |");
+  out.push("|---|---|---|---|");
+  for (const entry of excludedByRule) {
+    out.push(
+      `| \`${entry.file}:${entry.line}\` | \`${entry.from} → ${
+        entry.to
+      }\` | ${codeCell(entry.rule)} | ${codeCell(entry.text)} |`
     );
   }
   out.push("");
