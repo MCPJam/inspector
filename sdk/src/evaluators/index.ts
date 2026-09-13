@@ -17,7 +17,11 @@ export {
   type EvaluatorRunOptions,
   type JudgeEvaluator,
 } from "./types.js";
-export { runEvaluators, runEvaluatorsProjected, evaluatorsPassed } from "./run.js";
+export {
+  runEvaluators,
+  runEvaluatorsProjected,
+  evaluatorsPassed,
+} from "./run.js";
 export { assertion } from "./assertion.js";
 export { judge, type JudgeOptions } from "./judge.js";
 export { toEvaluatorRawOutcome } from "./outcome.js";

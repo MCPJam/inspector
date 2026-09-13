@@ -20,10 +20,13 @@ than a low score: a second bounded runner would be a second place for "what
 happens when a judge hangs" to be answered, and the two answers would drift in
 the direction nobody tests.
 
-`@mcpjam/sdk/assertions` is a barrel over the existing library, not a move.
-`@mcpjam/sdk/predicates` keeps resolving to the same objects — the two subpaths
-are one library with two spellings, and a consumer importing either gets
-identical values.
+`@mcpjam/sdk/assertions` is a barrel over the existing library, not a move, and
+`@mcpjam/sdk/predicates` keeps working: the two subpaths are one library with
+two spellings. Imported from source they are the same module objects. In the
+published package they are not — `tsup` builds with `splitting: false`, so each
+subpath inlines its own copy and a consumer gets equal behaviour through
+separate function and schema instances. Import one subpath per consumer, and do
+not compare values across the two with `===` or `instanceof`.
 
 `assertion()` splits an `id` off before building the definition, so naming a
 rule does not change the digest of what that rule does. An unnamed assertion

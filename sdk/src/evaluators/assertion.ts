@@ -21,12 +21,12 @@ import {
   stripCheckPolicy,
   type CheckPolicy,
 } from "../predicates/policy.js";
-import { requiresRenderObservations } from "../predicates/types.js";
+import {
+  predicateSchema,
+  requiresRenderObservations,
+} from "../predicates/types.js";
 import { predicateScorer } from "../scorers/predicate-scorer.js";
-import type {
-  Assertion,
-  EvaluatorRole,
-} from "../contract/evaluator-types.js";
+import type { Assertion, EvaluatorRole } from "../contract/evaluator-types.js";
 import type { ScoreRawOutcome } from "../contract/types.js";
 import { toEvaluatorRawOutcome } from "./outcome.js";
 import type { AssertionEvaluator } from "./types.js";
@@ -105,6 +105,20 @@ export function assertion(
 ): AssertionEvaluator {
   const { id, ...authored } = input as Assertion & { id?: string };
   assertLocallyEvaluable(authored as Assertion);
+
+  // The policy invariants live in the authoring schema, and `predicateScorer`
+  // does not check them: it defaults an unroled definition to `role: "gating"`.
+  // Without this, `assertion({ type: "noEndingQuestion" })` type-checks, builds
+  // and lets a heuristic fail a release gate — the one thing the observation
+  // rule exists to prevent. Severity's rule rides along for the same reason.
+  const validated = predicateSchema.safeParse(authored);
+  if (!validated.success) {
+    throw new Error(
+      `assertion(): ${validated.error.issues
+        .map((issue) => issue.message)
+        .join("; ")}`
+    );
+  }
 
   const policy = authored as CheckPolicy;
   const rule = {

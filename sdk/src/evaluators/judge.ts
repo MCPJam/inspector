@@ -8,7 +8,10 @@
  * configuration on every run that follows.
  */
 
-import { judgeScorer, type JudgeScorerOptions } from "../scorers/judge-scorer.js";
+import {
+  judgeScorer,
+  type JudgeScorerOptions,
+} from "../scorers/judge-scorer.js";
 import { toEvaluatorRawOutcome } from "./outcome.js";
 import type { JudgeEvaluator } from "./types.js";
 

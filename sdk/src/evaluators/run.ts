@@ -46,11 +46,19 @@ function asScorer(evaluator: AnyEvaluator): Scorer {
       : {}),
     score: (context, signal) => {
       const outcome = evaluator.evaluate(context, signal);
-      return outcome instanceof Promise
-        ? outcome.then(toScoreRawOutcome)
+      // Thenable, not `instanceof Promise`. A promise built in another realm —
+      // a Node `vm` context, an iframe — satisfies the declared return type and
+      // fails a realm-specific check, and the raw promise would then be
+      // projected as though it were the outcome itself.
+      return isPromiseLike(outcome)
+        ? Promise.resolve(outcome).then(toScoreRawOutcome)
         : toScoreRawOutcome(outcome);
     },
   };
+}
+
+function isPromiseLike<T>(value: T | PromiseLike<T>): value is PromiseLike<T> {
+  return typeof (value as { then?: unknown } | null)?.then === "function";
 }
 
 /**

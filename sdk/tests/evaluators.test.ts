@@ -21,22 +21,27 @@ vi.mock("ai", async (importOriginal) => {
   };
 });
 vi.mock("../src/model-factory.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../src/model-factory.js")>();
+  const actual =
+    await importOriginal<typeof import("../src/model-factory.js")>();
   return {
     ...actual,
     createModelFromString: () => ({ modelId: "test-model" }) as never,
   };
 });
 
-const { assertion, judge, runEvaluators, runEvaluatorsProjected, evaluatorsPassed } =
-  await import("../src/evaluators/index.js");
-const { predicateScorer, judgeScorer } = await import("../src/scorers/index.js");
-const { resolveScoreDefinition, definitionHash } = await import(
-  "../src/contract/derive.js"
-);
-const { buildEvaluationConfigSnapshot } = await import(
-  "../src/contract/derive.js"
-);
+const {
+  assertion,
+  judge,
+  runEvaluators,
+  runEvaluatorsProjected,
+  evaluatorsPassed,
+} = await import("../src/evaluators/index.js");
+const { predicateScorer, judgeScorer } =
+  await import("../src/scorers/index.js");
+const { resolveScoreDefinition, definitionHash } =
+  await import("../src/contract/derive.js");
+const { buildEvaluationConfigSnapshot } =
+  await import("../src/contract/derive.js");
 const { canonicalDigest } = await import("../src/contract/canonical.js");
 
 type Assertion = import("../src/predicates/types.js").Predicate;
@@ -67,13 +72,15 @@ const JUDGE_OPTIONS = {
 
 describe("assertion() is predicateScorer() under its canonical name", () => {
   it("builds a byte-identical definition", () => {
-    expect(assertion(RULE).definition).toEqual(predicateScorer(RULE).definition);
+    expect(assertion(RULE).definition).toEqual(
+      predicateScorer(RULE).definition
+    );
   });
 
   it("mints the same opaque id, content-derived and not gateable", () => {
     const built = assertion(RULE).definition;
     expect(built.scorerId).toBe(
-      `predicate:${RULE.type}#${canonicalDigest(RULE)}`,
+      `predicate:${RULE.type}#${canonicalDigest(RULE)}`
     );
     // A content-derived id is still `generated`: content-stable is not
     // author-stable, and a gate must not select one.
@@ -89,13 +96,15 @@ describe("assertion() is predicateScorer() under its canonical name", () => {
     // Naming a rule must not change the digest of what that rule DOES, or
     // every comparison would read the naming as an edit to the rule.
     expect(named.definition.implementationHash).toBe(
-      anonymous.definition.implementationHash,
+      anonymous.definition.implementationHash
     );
   });
 
   it("hashes identically to the legacy definition once resolved", () => {
-    expect(definitionHash(resolveScoreDefinition(assertion(RULE).definition))).toBe(
-      definitionHash(resolveScoreDefinition(predicateScorer(RULE).definition)),
+    expect(
+      definitionHash(resolveScoreDefinition(assertion(RULE).definition))
+    ).toBe(
+      definitionHash(resolveScoreDefinition(predicateScorer(RULE).definition))
     );
   });
 
@@ -103,7 +112,7 @@ describe("assertion() is predicateScorer() under its canonical name", () => {
     // Accepting it would fail every iteration with "no render observations",
     // and the author could not tell that from a real regression.
     expect(() => assertion({ type: "widgetRendered" })).toThrow(
-      /hosted run captures/,
+      /hosted run captures/
     );
   });
 
@@ -209,19 +218,19 @@ describe("assertion({ ...rule, role, id }) mints predicateScorer(rule, { role, i
 describe("judge() is judgeScorer() under its canonical name", () => {
   it("builds a byte-identical definition", () => {
     expect(judge(JUDGE_OPTIONS).definition).toEqual(
-      judgeScorer(JUDGE_OPTIONS).definition,
+      judgeScorer(JUDGE_OPTIONS).definition
     );
   });
 
   it("keeps the same implementation hash, prompt template included", () => {
     expect(judge(JUDGE_OPTIONS).definition.implementationHash).toBe(
-      judgeScorer(JUDGE_OPTIONS).definition.implementationHash,
+      judgeScorer(JUDGE_OPTIONS).definition.implementationHash
     );
   });
 
   it("inherits the constructor's validation rather than restating it", () => {
     expect(() =>
-      judge({ ...JUDGE_OPTIONS, prompt: "grade it" } as never),
+      judge({ ...JUDGE_OPTIONS, prompt: "grade it" } as never)
     ).toThrow(/exactly one of/);
     expect(() => judge({ ...JUDGE_OPTIONS, threshold: 4 })).toThrow(/\[0,1\]/);
   });
@@ -235,8 +244,11 @@ describe("judge() is judgeScorer() under its canonical name", () => {
 describe("runEvaluators takes either vocabulary", () => {
   it("runs a canonical evaluator and a legacy scorer in one list", async () => {
     const scores = await runEvaluators(
-      [assertion(RULE), predicateScorer({ type: "finalAssistantMessageNonEmpty" })],
-      context("your refund is on its way"),
+      [
+        assertion(RULE),
+        predicateScorer({ type: "finalAssistantMessageNonEmpty" }),
+      ],
+      context("your refund is on its way")
     );
 
     expect(scores).toHaveLength(2);
@@ -249,8 +261,48 @@ describe("runEvaluators takes either vocabulary", () => {
 
   it("produces the same rows whichever spelling authored them", async () => {
     const canonical = await runEvaluators([assertion(RULE)], context("refund"));
-    const legacy = await runEvaluators([predicateScorer(RULE)], context("refund"));
+    const legacy = await runEvaluators(
+      [predicateScorer(RULE)],
+      context("refund")
+    );
     expect(canonical).toEqual(legacy);
+  });
+
+  it("refuses an observation assertion that would gate", () => {
+    // `noEndingQuestion` is a heuristic, and `predicateScorer` defaults an
+    // unroled definition to gating, so this is the path by which a heuristic
+    // could fail a release gate.
+    expect(() => assertion({ type: "noEndingQuestion" } as never)).toThrow(
+      /cannot gate/
+    );
+    expect(() =>
+      assertion({ type: "noEndingQuestion", role: "advisory" } as never)
+    ).not.toThrow();
+  });
+
+  it("refuses severity without an advisory role", () => {
+    expect(() => assertion({ ...RULE, severity: "warn" } as never)).toThrow(
+      /severity/
+    );
+  });
+
+  it("awaits a cross-realm promise from a custom evaluator", async () => {
+    // A thenable that is not `instanceof Promise`, which is what a `vm`
+    // context or an iframe returns. It satisfies the declared return type, so
+    // the runner has to assimilate it rather than project it as the outcome.
+    const crossRealm = {
+      ...assertion(RULE),
+      evaluate() {
+        return {
+          then: (resolve: (outcome: unknown) => void) =>
+            resolve({ kind: "scored", score: 1 }),
+        } as never;
+      },
+    };
+
+    const [row] = await runEvaluators([crossRealm], context("refund"));
+    expect(row!.status).toBe("scored");
+    expect(row!.value).toBe(1);
   });
 
   it("lands a thrown evaluator as an error row, never as a low score", async () => {
@@ -272,7 +324,7 @@ describe("runEvaluators takes either vocabulary", () => {
     const scores = await runEvaluators([assertion(RULE)], context("refund"));
     const projected = await runEvaluatorsProjected(
       [assertion(RULE)],
-      context("refund"),
+      context("refund")
     );
 
     expect(projected[0]!.evaluatorId).toBe(scores[0]!.scorerId);
