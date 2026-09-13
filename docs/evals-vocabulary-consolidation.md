@@ -29,8 +29,8 @@ Four authoring entry points — `test`, `expectedToolCalls`, `predicates`, `scor
 | suite | cases with shared defaults and an acceptance policy | unchanged |
 | case | an authored scenario with stable identity | unchanged |
 | iteration | one execution instance of a case under one execution variant | the eval sense of `trial` |
-| iterations | the configured number of iterations of a case | `repetitions`, `runs` |
-| legacyIterations | the legacy-policy per-case count, read as a floor | the public API case field `iterations` on a legacy-policy suite |
+| iterations | the configured number of iterations of a case | `repetitions` |
+| legacyIterations | the legacy-policy per-case count, read as a floor | the public API case field `iterations` on a legacy-policy suite, stored as `runs` |
 | trace | captured evidence of that execution | unchanged |
 | evaluator | an assertion or a judge | `Scorer`, `grader`, umbrella uses of `check` |
 | assertion | a deterministic rule | `Predicate`, `check`, matcher-backed rules |
@@ -198,6 +198,12 @@ Tool matching and the legacy boolean are assertions by this rule, which is the i
 are deterministic authored rules. Adding a required `kind` to the definition would change the hash
 payload, which invariant 2 forbids.
 
+Two kinds means a custom non-deterministic evaluator that is not a model-graded rubric reads as
+`judge` — the timeout and concurrency scorers in `sdk/tests/eval-scores.test.ts` are real examples.
+`kind` is therefore a presentation split, and no judge behaviour may branch on it: rubric display,
+reviewer calibration and gate eligibility key off the judge's own definition, its `model` and
+template version, never off `kind`.
+
 ## Authoring
 
 ```ts
@@ -261,8 +267,9 @@ equivalent.
 
 ### Equivalence
 
-The effective assertion list is `config.predicates` followed by the assertions in the resolved
-evaluator list. Ordinals are positions in that combined list. `assertion()` builds its definition
+The effective assertion list is the resolved suite defaults first, then `config.predicates`, then
+the case's own assertions from its `evaluators` list; under `mode: "replace"` no suite defaults are
+in it. Ordinals are positions in that combined list. `assertion()` builds its definition
 through the same `predicateScoreDefinition` the legacy path uses, with the same `{id, ordinal, role}`
 inputs; `judge()` returns `judgeScorer`'s definition unchanged; `execute` reuses the `legacy:test`
 definition. Therefore:
@@ -303,7 +310,7 @@ fails the iteration closed, exactly as a throwing `test` does today.
 |---|---|
 | both `test` and `execute` | ``EvalTest "<name>" sets both `execute` and its legacy `test` alias — set one. They are two spellings of the case's driver; `execute` may return nothing and lets the evaluators decide.`` |
 | neither | ``Invalid config: must provide 'execute' (or the legacy 'test') function`` |
-| duplicate evaluator id, including against a suite default | ``EvalTest "<name>": duplicate evaluator id "<id>". Evaluator ids must be unique within a case, and suite defaults.evaluators count too — rename one, or use mode "replace" to drop the suite's.`` |
+| an evaluator id reused for a DIFFERENT definition, a suite default's included | ``EvalTest "<name>": duplicate evaluator id "<id>" on two different definitions. One id cannot mean two evaluations — rename one, or use mode "replace" to drop the suite's.`` |
 | a widget assertion in a code-first case | ``Assertion <type> needs widget render observations, which only a hosted run captures. Remove it from this code-first evaluator, or move the case to a hosted eval suite.`` |
 | `EvalSuite.run` with no count | ``EvalSuite "<name>" has no iteration count: pass { iterations } to run(), or set defaults.iterations on the suite.`` |
 | both spellings of a bound | ``Set evaluatorConcurrency or its legacy alias scorerConcurrency, not both.`` |
@@ -322,12 +329,15 @@ That collapse is narrower than it sounds, and the order matters. Three cases, th
 | the same id on two definitions that differ | refused by the snapshot builder — one id cannot mean two evaluations |
 | the same id on two IDENTICAL definitions | collapses to one row |
 | an id already owned by a built-in (`legacy:test`, `tool-match`, a positional `predicate:<type>#<n>`) | refused **before** the builder runs, whether or not the content matches |
+| a suite default's id on an identical case definition | collapses to one row, like any other identical pair |
+| a suite default's id on a different case definition | refused, like any other conflict |
 
 The third is the one a reader would otherwise get wrong. `EvalTest` builds its reserved-id set first
 and refuses a custom evaluator that reuses one, because a built-in row minted against the wrong
 definition would carry a hash that joins to nothing — and the gate engine's fail-closed join reads
 an unjoinable row as tampering. So "identical content collapses" holds only outside the reserved
-set, and a suite default counts toward the case's ids for the same reason.
+set. A suite default's id counts toward the case's ids exactly as any other does: an identical
+inherited definition collapses, and a different definition under that id is refused.
 
 ## The wire
 
@@ -360,9 +370,14 @@ which the legacy resolver reads as a floor) and the verdict-policy-v2 `repetitio
 vocabulary 1 that object is unchanged, both counts included.
 
 Under vocabulary 2 the exact configured count is `iterations`, with `repetitions` its legacy spelling.
-The adapter writes the legacy `runs` and, on a verdict-policy-v2 suite, the v2 `repetitions` as well,
-keeping both stored spellings equal. The floor count is `legacyIterations`, and it is not a spelling of
-`iterations`: the two are different fields, so the both-spellings refusal never pairs them. Sending
+A write of `iterations` sets the stored v2 `repetitions`, and nothing else. The floor count is
+`legacyIterations`, stored as `runs`. It is not a spelling of `iterations`: the two are different
+fields, so the both-spellings refusal never pairs them, and a read-modify-write that never mentions
+the floor leaves it exactly as it was. An unchanged PATCH that also wrote `runs` would drop a stored
+floor of 10 to an exact count of 3 with no authored edit, and rotate the configuration revision,
+which hashes both keys. `runs` is required storage, so a CREATE that names no floor still needs a
+value: it takes the case's `iterations`, which is what the legacy resolver would have floored to
+anyway. Sending
 `iterations` on a legacy-policy suite is the same `VALIDATION_ERROR` naming the upgrade that
 `repetitions` is today.
 

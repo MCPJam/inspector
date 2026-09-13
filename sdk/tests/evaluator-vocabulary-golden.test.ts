@@ -26,11 +26,16 @@ import { describe, expect, it } from "vitest";
 import golden from "./fixtures/evaluator-vocabulary-golden.json" with { type: "json" };
 import { EvalTest } from "../src/EvalTest.js";
 import { judgeScorer, predicateScorer } from "../src/scorers/index.js";
+import { definitionHash } from "../src/contract/derive.js";
 import type { EvaluationConfigSnapshot } from "../src/contract/types.js";
 import type { Predicate } from "../src/predicates/types.js";
 import type { Scorer } from "../src/scorers/types.js";
 
-type GoldenCase = { label: string; snapshot: EvaluationConfigSnapshot };
+type GoldenCase = {
+  label: string;
+  snapshot: EvaluationConfigSnapshot;
+  definitionHashes: Record<string, string>;
+};
 const goldenCases = (golden as unknown as { cases: GoldenCase[] }).cases;
 
 const passing = async () => true;
@@ -81,6 +86,22 @@ const JUDGE_OPTIONS = {
   rubric: ["The answer is supported by the retrieved policy."],
 } as const;
 
+/**
+ * The same rule, carrying policy.
+ *
+ * Its id digests the WHOLE rule, `role` and `severity` included, while its
+ * `implementationHash` digests the rule with those stripped. The two therefore
+ * differ, and the gate has to pin both or a later constructor could reuse the
+ * implementation hash as the id and renumber every policy-bearing anonymous
+ * evaluator without failing here.
+ */
+const policyBearing: Predicate = {
+  type: "responseContains",
+  needle: "refund",
+  role: "advisory",
+  severity: "warn",
+};
+
 const twoSameType: Predicate[] = [
   { type: "responseContains", needle: "refund" },
   { type: "responseContains", needle: "policy" },
@@ -93,6 +114,9 @@ const twoSameType: Predicate[] = [
  * against the same row — which is what makes "the new facade is the same
  * evaluation" a claim the suite checks rather than a claim the PR body makes.
  */
+const POLICY_LABEL =
+  "anonymous assertion carrying policy — the id keeps it, the implementation hash does not";
+
 const legacyBuilders: Record<string, () => EvalTest> = {
   "bare test — no expectations, no assertions": () =>
     new EvalTest({ id: "c_bare", name: "bare", test: passing }),
@@ -131,7 +155,7 @@ const legacyBuilders: Record<string, () => EvalTest> = {
       scorers: [
         predicateScorer(
           { type: "finalAssistantMessageNonEmpty" },
-          { id: "nonempty-answer" },
+          { id: "nonempty-answer" }
         ),
       ],
     }),
@@ -151,7 +175,17 @@ const legacyBuilders: Record<string, () => EvalTest> = {
       id: "c_anonymous",
       name: "anonymous",
       test: passing,
-      scorers: [predicateScorer({ type: "responseContains", needle: "refund" })],
+      scorers: [
+        predicateScorer({ type: "responseContains", needle: "refund" }),
+      ],
+    }),
+
+  [POLICY_LABEL]: () =>
+    new EvalTest({
+      id: "c_anonymous_policy",
+      name: "anonymous policy",
+      test: passing,
+      scorers: [predicateScorer(policyBearing)],
     }),
 
   "a real judge — the rubric-and-template implementation hash": () =>
@@ -166,25 +200,39 @@ const legacyBuilders: Record<string, () => EvalTest> = {
 describe("evaluation config identity is frozen", () => {
   it("covers every golden row with a builder, and every builder with a row", () => {
     expect(Object.keys(legacyBuilders).sort()).toEqual(
-      goldenCases.map((entry) => entry.label).sort(),
+      goldenCases.map((entry) => entry.label).sort()
     );
   });
 
   for (const entry of goldenCases) {
     describe(entry.label, () => {
       it("produces the pinned snapshot", () => {
-        const built = legacyBuilders[entry.label]!().getEvaluationConfigSnapshot();
+        const built =
+          legacyBuilders[entry.label]!().getEvaluationConfigSnapshot();
         expect(built).toEqual(entry.snapshot);
       });
 
-      it("keeps every evaluator id and id source, in order", () => {
-        const built = legacyBuilders[entry.label]!().getEvaluationConfigSnapshot();
+      it("pins each evaluator's definition hash", () => {
+        // The snapshot carries no `definitionHash`, and the aggregate hash is
+        // computed separately, so without this a change to `definitionHash()`
+        // alone would keep every other assertion green while breaking the
+        // `ScoreResult.definitionHash` joins this contract freezes.
+        const built =
+          legacyBuilders[entry.label]!().getEvaluationConfigSnapshot();
         expect(
-          built.definitions.map((d) => `${d.scorerId} (${d.idSource})`),
+          Object.fromEntries(
+            built.definitions.map((d) => [d.scorerId, definitionHash(d)])
+          )
+        ).toEqual(entry.definitionHashes);
+      });
+
+      it("keeps every evaluator id and id source, in order", () => {
+        const built =
+          legacyBuilders[entry.label]!().getEvaluationConfigSnapshot();
+        expect(
+          built.definitions.map((d) => `${d.scorerId} (${d.idSource})`)
         ).toEqual(
-          entry.snapshot.definitions.map(
-            (d) => `${d.scorerId} (${d.idSource})`,
-          ),
+          entry.snapshot.definitions.map((d) => `${d.scorerId} (${d.idSource})`)
         );
       });
     });
@@ -196,34 +244,32 @@ describe("evaluation config identity is frozen", () => {
     // otherwise get wrong: a built-in row minted against the wrong definition
     // carries a hash that joins to nothing, and the gate's fail-closed join
     // reads an unjoinable row as tampering.
-    expect(
-      () =>
-        new EvalTest({
-          id: "c_reserved",
-          name: "reserved",
-          test: passing,
-          scorers: [
-            predicateScorer({ type: "noToolErrors" }, { id: "tool-match" }),
-          ],
-        }).getEvaluationConfigSnapshot(),
+    expect(() =>
+      new EvalTest({
+        id: "c_reserved",
+        name: "reserved",
+        test: passing,
+        scorers: [
+          predicateScorer({ type: "noToolErrors" }, { id: "tool-match" }),
+        ],
+      }).getEvaluationConfigSnapshot()
     ).toThrow(/already used by this test's built-in scorers/);
   });
 
   it("refuses one id standing for two different evaluations", () => {
-    expect(
-      () =>
-        new EvalTest({
-          id: "c_conflict",
-          name: "conflict",
-          test: passing,
-          scorers: [
-            predicateScorer({ type: "noToolErrors" }, { id: "same" }),
-            predicateScorer(
-              { type: "finalAssistantMessageNonEmpty" },
-              { id: "same" },
-            ),
-          ],
-        }).getEvaluationConfigSnapshot(),
+    expect(() =>
+      new EvalTest({
+        id: "c_conflict",
+        name: "conflict",
+        test: passing,
+        scorers: [
+          predicateScorer({ type: "noToolErrors" }, { id: "same" }),
+          predicateScorer(
+            { type: "finalAssistantMessageNonEmpty" },
+            { id: "same" }
+          ),
+        ],
+      }).getEvaluationConfigSnapshot()
     ).toThrow();
   });
 
@@ -239,16 +285,18 @@ describe("evaluation config identity is frozen", () => {
     }).getEvaluationConfigSnapshot();
 
     expect(
-      snapshot.definitions.filter((d) => d.scorerId === "same"),
+      snapshot.definitions.filter((d) => d.scorerId === "same")
     ).toHaveLength(1);
   });
 
   it("pins the content-derived id of an anonymous assertion", () => {
-    const row = goldenCases.find((entry) =>
-      entry.label.startsWith("anonymous assertion"),
+    const row = goldenCases.find(
+      (entry) =>
+        entry.label ===
+        "anonymous assertion through scorers — the content-derived id"
     )!;
     const generated = row.snapshot.definitions.find(
-      (definition) => definition.idSource === "generated",
+      (definition) => definition.idSource === "generated"
     )!;
 
     // A standalone evaluator has no position, so its id comes from its rule's
@@ -257,19 +305,41 @@ describe("evaluation config identity is frozen", () => {
     // covers that path: the `predicates` rows are positional and the other
     // scorer row is explicitly named.
     expect(generated.scorerId).toMatch(
-      /^predicate:responseContains#[0-9a-f]{64}$/,
+      /^predicate:responseContains#[0-9a-f]{64}$/
+    );
+    // Equal HERE only because this rule carries no policy fields. The row
+    // below is the general case, where they diverge.
+    expect(generated.implementationHash).toBe(generated.scorerId.split("#")[1]);
+  });
+
+  it("pins an anonymous assertion whose rule carries policy", () => {
+    const row = goldenCases.find((entry) => entry.label === POLICY_LABEL)!;
+    const generated = row.snapshot.definitions.find(
+      (definition) => definition.idSource === "generated"
+    )!;
+
+    // The id digests the whole rule; the implementation hash digests it with
+    // `role` and `severity` stripped. Note the implementation hash is the
+    // POLICY-FREE rule's id suffix, which is why asserting the two are equal
+    // in general would have frozen the wrong rule.
+    expect(generated.scorerId).toBe(
+      "predicate:responseContains#f54cf792125b3846651c875cae4d417bb1adf5d6dab0992cca5f661142c6d779"
     );
     expect(generated.implementationHash).toBe(
-      generated.scorerId.split("#")[1],
+      "1ed825dd8c4484fa231d4b04177afae713ed9ab60de848091d076ea2af8d00e1"
     );
+    expect(generated.implementationHash).not.toBe(
+      generated.scorerId.split("#")[1]
+    );
+    expect(generated.role).toBe("advisory");
   });
 
   it("pins a real judge's rubric-and-template hash", () => {
     const row = goldenCases.find((entry) =>
-      entry.label.startsWith("a real judge"),
+      entry.label.startsWith("a real judge")
     )!;
     const judge = row.snapshot.definitions.find(
-      (definition) => definition.deterministic === false,
+      (definition) => definition.deterministic === false
     )!;
 
     // Derived by `judgeScorer` from the rubric, the prompt TEMPLATE VERSION and
@@ -299,6 +369,7 @@ describe("evaluation config identity is frozen", () => {
       "predicate:noToolErrors#0",
       "predicate:responseContains#0",
       "predicate:responseContains#1ed825dd8c4484fa231d4b04177afae713ed9ab60de848091d076ea2af8d00e1",
+      "predicate:responseContains#f54cf792125b3846651c875cae4d417bb1adf5d6dab0992cca5f661142c6d779",
     ]);
   });
 });
