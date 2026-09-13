@@ -273,6 +273,44 @@ describe('announcementFor', () => {
     assert.strictEqual(text, ':white_check_mark: Approved by <@U1>.');
   });
 
+  it('still says Cancelled when a cancellation carries a resource', () => {
+    // The link shortcut speaks for approvals. A cancel that returns a resource
+    // would otherwise be announced as "Approved — follow it here", which tells
+    // the channel the opposite of what happened.
+    const text = announcementFor(
+      { operation: 'cancel_eval_run', kind: 'cancel', resource: { url: 'https://app/x' } },
+      'U1',
+    );
+    assert.match(text, /Cancelled by <@U1>/);
+    assert.ok(!/Approved/.test(text));
+    assert.ok(!/follow it here/.test(text));
+  });
+
+  it('still says Cancelled when a cancellation carries a runUrl', () => {
+    const text = announcementFor({ operation: 'cancel_eval_run', kind: 'cancel', runUrl: 'https://app/run/1' }, 'U1');
+    assert.match(text, /Cancelled by <@U1>/);
+    assert.ok(!/follow it here/.test(text));
+  });
+
+  it('still says Cancelled for a pre-`kind` server that carries a resource', () => {
+    // The copy below recognises a cancellation two ways, by `kind` and by
+    // operation name. The link shortcut has to recognise both, or the wrong
+    // announcement stays reachable through the older one.
+    const text = announcementFor({ operation: 'cancel_eval_run', resource: { url: 'https://app/x' } }, 'U1');
+    assert.match(text, /Cancelled by <@U1>/);
+    assert.ok(!/follow it here/.test(text));
+  });
+
+  it('keeps the link for a NEWER server whose unknown kind carries a resource', () => {
+    // Only cancellations lose the shortcut. An unrecognised kind is still an
+    // approval, and the server-built link is the most useful thing to say.
+    const text = announcementFor(
+      { operation: 'some_new_op', kind: 'teleport', resource: { url: 'https://app/x' } },
+      'U1',
+    );
+    assert.match(text, /<https:\/\/app\/x\|follow it here>/);
+  });
+
   it('does not let an UNKNOWN kind fall through to the operation-name table', () => {
     // A kind we do not recognise means a NEWER server, and the name table is
     // older than the kind vocabulary — consulting it would announce a
@@ -428,6 +466,66 @@ describe('handleProposalButton', () => {
     assert.match(posted[0].text, /watch it here/);
     assert.match(posted[0].text, /<@U_CLICKER>/);
     assert.ok(posted[0].text.includes('https://app/swarms/jr_1'));
+  });
+
+  it('announces a CANCELLATION rather than routing it into the run watcher', async () => {
+    // The watcher branch posts its own "running…" copy and returns, so a
+    // cancellation that carries a typed run resource would be announced as a
+    // started run even with the wording fixed. Latent while nothing builds a
+    // resource for cancel, which is why it is pinned here rather than later.
+    stub({
+      executeBody: {
+        status: 'succeeded',
+        operation: 'cancel_eval_run',
+        kind: 'cancel',
+        resource: { type: 'eval_run', id: 'run_1', url: 'https://app/evals/x/runs/run_1' },
+        result: {},
+      },
+    });
+    const { args, posted } = clickArgs();
+    await handleProposalButton(/** @type {any} */ (args));
+
+    assert.strictEqual(posted.length, 1);
+    assert.match(posted[0].text, /Cancelled by <@U_CLICKER>/);
+    assert.ok(!/running…/.test(posted[0].text));
+    assert.ok(!/watch it here/.test(posted[0].text));
+  });
+
+  it('announces a CANCELLATION rather than routing it into the journey watcher', async () => {
+    stub({
+      executeBody: {
+        status: 'succeeded',
+        operation: 'cancel_journey_run',
+        kind: 'cancel',
+        resource: { type: 'journey_run', id: 'jr_1', url: 'https://app/swarms/jr_1?project=p1' },
+        result: {},
+      },
+    });
+    const { args, posted } = clickArgs();
+    await handleProposalButton(/** @type {any} */ (args));
+
+    assert.strictEqual(posted.length, 1);
+    assert.match(posted[0].text, /Cancelled by <@U_CLICKER>/);
+    assert.ok(!/swarm running…/.test(posted[0].text));
+  });
+
+  it('announces a CANCELLATION from a server that predates `kind`', async () => {
+    // The routing has to recognise the same two spellings the copy does, or
+    // the wrong announcement stays reachable through the older one.
+    stub({
+      executeBody: {
+        status: 'succeeded',
+        operation: 'cancel_eval_run',
+        resource: { type: 'eval_run', id: 'run_1', url: 'https://app/evals/x/runs/run_1' },
+        result: {},
+      },
+    });
+    const { args, posted } = clickArgs();
+    await handleProposalButton(/** @type {any} */ (args));
+
+    assert.strictEqual(posted.length, 1);
+    assert.match(posted[0].text, /Cancelled by <@U_CLICKER>/);
+    assert.ok(!/running…/.test(posted[0].text));
   });
 
   it('posts a plain announcement when the approval produced no run', async () => {
