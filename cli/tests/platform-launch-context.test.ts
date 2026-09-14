@@ -8,9 +8,11 @@
  * beside the stamp, never an authorization input, and never something a flag
  * can forge.
  *
- * `detectLauncherKind` reads the same `GITHUB_ACTIONS` variable that
- * `report-conformance-run`'s `detectSource` does, deliberately: a composite run
- * and an eval run from one job must not disagree about where they came from.
+ * The launcher always says `cli`, CI or not. It used to say `github_action`
+ * inside a workflow, which borrowed a badge that means something else: in the
+ * runs table `GitHub` is the GitHub App, a check run we built and ran
+ * ourselves. Someone's own workflow calling `mcpjam cloud eval run` is not
+ * that. Where it ran is carried by the `ci` header instead.
  */
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -71,12 +73,11 @@ test("declares `cli` outside CI", async () => {
   assert.equal(headers[RUN_LAUNCH_HEADERS.ci], undefined);
 });
 
-test("declares `github_action` and the job inside GitHub Actions", async () => {
+test("stays `cli` inside GitHub Actions, and says so in the CI header", async () => {
   const headers = await launchWith({ ...GITHUB_ENV });
-  assert.equal(
-    JSON.parse(headers[RUN_LAUNCH_HEADERS.launcher]!).kind,
-    "github_action",
-  );
+  // Still the CLI. `GitHub` in the runs table means the GitHub App, which this
+  // is not; the `ci` envelope below is where the workflow is recorded.
+  assert.equal(JSON.parse(headers[RUN_LAUNCH_HEADERS.launcher]!).kind, "cli");
   const ci = JSON.parse(headers[RUN_LAUNCH_HEADERS.ci]!);
   assert.equal(ci.provider, "github_actions");
   assert.equal(ci.commitSha, "a1b2c3d4");

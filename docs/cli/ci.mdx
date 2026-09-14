@@ -360,7 +360,72 @@ See [OAuth Conformance](/cli/oauth-conformance) for details on the config file f
 
 There are two ways to wire MCPJam evals into a pipeline: trigger a **hosted eval run** with the CLI, or run evals **locally with the SDK** and upload the results. Both authenticate with an MCPJam API key (`sk_…`) from **Settings → API keys**.
 
-### Trigger a hosted eval suite
+### GitHub Action for hosted evals
+
+The MCPJam evals action runs an existing hosted suite, waits for its result, and
+uploads reports to GitHub. It sets up Node automatically. It tests the suite's
+saved server; it does not build or deploy your PR's source code.
+
+<Note>
+The action's `evals-v1` tag must be published after its live smoke test passes
+before the example below can be used. The direct CLI integration in the next
+section remains available independently.
+</Note>
+
+Save this as `.github/workflows/mcpjam.yml`, then replace the project and suite:
+
+```yaml
+name: MCPJam evals
+
+on:
+  workflow_dispatch:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  evals:
+    # Fork PRs do not receive this repo's secrets.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: MCPJam/inspector/actions/evals@evals-v1
+        with:
+          # Add your API key as MCPJAM_API_KEY in GitHub Actions secrets.
+          api-key: ${{ secrets.MCPJAM_API_KEY }}
+          project: 'My project'
+          suite: 'My eval suite'
+
+          # Optional: let the gate decide pass or fail.
+          # gate: true
+          # min-pass-rate-percent: 95
+          # baseline-sha: '<commit with an existing eval run>'
+```
+
+Create the `MCPJAM_API_KEY` repository secret under GitHub **Settings → Secrets and
+variables → Actions**. The YAML contains only a reference to it, never the key.
+
+Without `gate: true`, the run itself must pass. With gates enabled, each gate
+must pass or be waived; a lower threshold or existing waiver can clear an eval
+failure. Failed launches, incomplete runs, missing reports, and upload failures
+remain blocking. A run waiver does not clear a separate suite-policy failure.
+
+Use `baseline-run` instead of `baseline-sha` to name a baseline by run ID; never
+provide both. Optional `wait-timeout-ms` replaces the CLI wait default. The CLI
+version is pinned to `5.7.1`, with an exact-version override via `cli-version`.
+There are no automatic retries, and the generated idempotency key reuses launched
+runs when the same workflow job is retried.
+
+The action exposes `run-ids`, `run-exit-code`, `gate-exit-codes`, `report-path`,
+and `artifact-url`. It saves the eval JSON report and optional gate JUnit reports
+before reporting failure. See the
+[action README](https://github.com/MCPJam/inspector/blob/main/actions/evals/README.md)
+for all inputs, outputs, retry details, and release status. GitHub.com with Ubuntu
+runners is supported in this first version.
+
+### Trigger a hosted eval suite with the CLI
 
 `mcpjam cloud eval run` starts an asynchronous run of a suite that lives in your MCPJam project. Without `--wait`, it prints a launch receipt and returns immediately. In CI, add `--wait` and `--out` to write a structured JSON report after every launched run reaches a terminal state.
 
