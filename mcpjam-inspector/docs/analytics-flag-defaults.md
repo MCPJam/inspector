@@ -49,14 +49,26 @@ Every gate resolves `undefined` → **hidden/off**. Two shapes:
 
 Gone from the client entirely (REEV-6). It gated the Swarms and User Testing
 nav items and both route guards, which meant the fail-closed default hid the
-tabs — including from the signed-out visitors the feature is meant to convert,
-and including for a frame on every cold load while PostHog answered.
+tabs from the signed-out visitors the feature exists to convert, and hid them
+for a frame on every cold load while PostHog answered.
 
-Both surfaces are now unconditional in the nav, and access is decided on
-arrival from WorkOS identity and billing entitlement — neither of which is a
-PostHog flag, so neither has a blocked state. The server-side gate of the same
-name still exists in `mcpjam-backend/convex/lib/sandboxesGate.ts` and is
-unaffected by this row.
+Both surfaces are unconditional in the nav now, and access is decided on
+arrival from WorkOS identity and billing entitlement. Neither is a PostHog
+flag, so the ad-block and relay failure modes in this document do not apply to
+them.
+
+**They are not stateless, though, and the replacement has its own unresolved
+window.** `useIsHostedGuest()` returns a tri-state and answers `undefined`
+while WorkOS is still hydrating, deliberately: `user` is null during hydrate
+for signed-in people too, so resolving early would flash a sign-up wall at
+paying customers on every cold load. The routes hold on `undefined` rather
+than guessing, which trades a brief spinner for never showing the wrong
+screen. That is the same shape of decision as the tri-state flag hooks above,
+reached for the same reason, and it fails SAFE rather than fails closed: an
+unresolved identity shows nothing, not a gate.
+
+The server-side gate of the same name still exists in
+`mcpjam-backend/convex/lib/sandboxesGate.ts` and is unaffected by this row.
 
 For every beta/nav/opt-in feature, fail-closed is **correct**: a not-yet-GA
 surface briefly not showing is strictly better than flickering it on for a
