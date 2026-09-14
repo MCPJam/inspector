@@ -42,26 +42,32 @@ describe("Default checks navigation and page", () => {
         />
       );
     }
-    render(<Page />);
+    const { container } = render(<Page />);
+    // The same numbered table the suite settings page renders.
     expect(
-      screen.getByRole("heading", { name: "Checks by stage" }),
+      screen.getByRole("heading", { name: "User Value Chain Assertions" }),
     ).toBeInTheDocument();
     expect(
       screen.queryByText("Show default assertions"),
     ).not.toBeInTheDocument();
-    // Runner-measured stages are rows, not toggles: nothing to author there.
-    expect(
-      screen.getByText(/Connection — measured by the runner/),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/Tool discovery — measured by the runner/),
-    ).toBeInTheDocument();
+    expect(container.querySelectorAll("[data-stage-group]").length).toBe(6);
+    // Runner-measured stages are rows without an On box: nothing to author.
+    for (const stage of ["connection", "discovery"]) {
+      const observed = container.querySelector(
+        `[data-stage-group="${stage}"] tr[data-scorer-row="observed"]`,
+      );
+      expect(observed?.textContent, stage).toContain("Observed by the runner");
+      expect(observed?.querySelector('[role="checkbox"]'), stage).toBeNull();
+    }
     expect(
       screen.queryByRole("checkbox", { name: "OAuth connection" }),
     ).not.toBeInTheDocument();
+    // The suite's editors stay on the suite page.
+    expect(screen.queryByText("Edit tool-call matching")).toBeNull();
+    expect(screen.queryByText("Template v3")).toBeNull();
     // The judge row is the case's judge-skipped flag, both directions.
     const outcome = () =>
-      screen.getByRole("checkbox", { name: "Outcome achieved" });
+      screen.getByRole("checkbox", { name: "Goal completion judge" });
     expect(outcome()).toBeChecked();
     await user.click(outcome());
     expect(outcome()).not.toBeChecked();
