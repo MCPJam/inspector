@@ -50,12 +50,7 @@ export type PlatformSessionBrowserTrace = {
   screenshots: PlatformBrowserScreenshot[];
 };
 export type PlatformSessionBrowserOperation =
-  | "open"
-  | "command"
-  | "note"
-  | "trace"
-  | "artifact"
-  | "close";
+  "open" | "command" | "note" | "trace" | "artifact" | "close";
 export interface PlatformSessionBrowserBodies {
   open: PlatformSessionBrowserInput;
   command: { command: BrowserAgentCommand; commandId?: string; tabId?: string };
@@ -540,7 +535,17 @@ export interface PlatformTurnUsage {
  */
 export interface PlatformChatTurn {
   chatSessionId?: string;
-  browser?: Partial<PlatformSessionBrowser> & { attached: boolean; effectivePolicy?: { tools: readonly string[] | null; origins: readonly string[] | null }; reason?: string; screenshots?: PlatformBrowserScreenshot[]; notices?: string[]; handoff?: { waited: boolean; resumed: boolean } };
+  browser?: Partial<PlatformSessionBrowser> & {
+    attached: boolean;
+    effectivePolicy?: {
+      tools: readonly string[] | null;
+      origins: readonly string[] | null;
+    };
+    reason?: string;
+    screenshots?: PlatformBrowserScreenshot[];
+    notices?: string[];
+    handoff?: { waited: boolean; resumed: boolean };
+  };
   sessionId: string | null;
   turnId: string;
   /**
@@ -619,7 +624,11 @@ export interface PlatformChatSessionDetail {
 
 /** One turn's entry in a trace read. */
 export interface PlatformChatSessionTraceTurn {
-  browser?: { browserSessionId: string; bootId?: string; box?: { sandboxRowId: string } | { computerId: string } };
+  browser?: {
+    browserSessionId: string;
+    bootId?: string;
+    box?: { sandboxRowId: string } | { computerId: string };
+  };
   screenshots?: PlatformBrowserScreenshot[];
   turnId: string;
   promptIndex: number;
@@ -893,6 +902,11 @@ export interface PlatformEvalRunAttribution {
  * the condensed latest-run projection embedded in `PlatformEvalSuite`.
  */
 export interface PlatformEvalRun {
+  name?: string;
+  tags?: string[];
+  runMetadata?: Record<string, string | number | boolean>;
+  ciMetadata?: import("../eval-reporting-types.js").EvalCiMetadata;
+  runEvaluationsByCase?: import("../run-evaluators.js").CaseRunEvaluation[];
   id: string;
   suiteId: string;
   runNumber: number | null;

@@ -122,6 +122,14 @@ export const PICKER_CATALOG: readonly PickerCatalogEntry[] = [
     choice: { kind: "check", predicateKind: "toolCalledWith" },
   },
   {
+    key: "check:responseCloseTo",
+    group: "transcriptEssentials",
+    tier: "secondary",
+    label: PREDICATE_KIND_LABELS.responseCloseTo,
+    keywords: ["distance", "reference", "levenshtein"],
+    choice: { kind: "check", predicateKind: "responseCloseTo" },
+  },
+  {
     key: "check:responseContains",
     group: "transcriptEssentials",
     tier: "primary",

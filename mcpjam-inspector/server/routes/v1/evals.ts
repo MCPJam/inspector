@@ -1677,6 +1677,13 @@ function toRunDto(run: RunDoc) {
     id: String(run._id),
     suiteId: String(run.suiteId),
     runNumber: run.runNumber ?? null,
+    ...(run.name !== undefined ? { name: run.name } : {}),
+    ...(run.tags !== undefined ? { tags: run.tags } : {}),
+    ...(run.runMetadata !== undefined ? { runMetadata: run.runMetadata } : {}),
+    ...(run.ciMetadata !== undefined ? { ciMetadata: run.ciMetadata } : {}),
+    ...(run.runEvaluationsByCase !== undefined
+      ? { runEvaluationsByCase: run.runEvaluationsByCase }
+      : {}),
     status: run.status,
     result: run.result,
     summary: run.summary ?? null,

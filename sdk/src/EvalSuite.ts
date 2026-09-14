@@ -1,18 +1,27 @@
+import { formatRunSummaryTable } from "./eval-summary.js";
+import type { EvalSelectionManifest } from "./eval-selection.js";
+import { canonicalJson, sha256Hex } from "./contract/canonical.js";
 import type { HostExecutor } from "./HostExecutor.js";
+import type { AnyEvaluator } from "./evaluators/types.js";
+import { prepareReportingConfig } from "./eval-reporting-config.js";
 import type { LatencyBreakdown } from "./types.js";
 import { calculateLatencyStats, type LatencyStats } from "./percentiles.js";
 import type {
+  EvalReportingReceipt,
   EvalExpectedToolCall,
   EvalResultInput,
   MCPJamReportingConfig,
 } from "./eval-reporting-types.js";
+import { EvalTest } from "./EvalTest.js";
 import type {
-  EvalTest,
   EvalTestRunOptions,
   EvalRunResult,
   IterationResult,
 } from "./EvalTest.js";
-import { reportEvalResultsSafely } from "./report-eval-results.js";
+import {
+  captureEvalReporting,
+  notRequestedReceipt,
+} from "./eval-reporting-receipt.js";
 import { suiteTestResultsToEvalResultInputs } from "./eval-result-mapping.js";
 import { aggregateEvaluationConfigHash } from "./contract/derive.js";
 import { resolveServerReplayConfigs } from "./server-replay-configs.js";
@@ -25,6 +34,7 @@ import { assertValidMatchOptions, type EvalMatchOptions } from "./matchers.js";
  */
 export interface EvalSuiteConfig {
   name?: string;
+  defaults?: { iterations?: number; evaluators?: readonly AnyEvaluator[] };
   mcpjam?: MCPJamReportingConfig;
   /** Default matcher policy for expectation-bearing tests in this suite. */
   matchOptions?: EvalMatchOptions;
@@ -42,6 +52,11 @@ export interface TestResult {
  * Result of running an EvalSuite
  */
 export interface EvalSuiteResult {
+  selection?: EvalSelectionManifest;
+  runEvaluationsByCase?: Record<
+    string,
+    import("./run-evaluators.js").CaseRunEvaluation
+  >;
   tests: Map<string, EvalRunResult>;
   aggregate: {
     iterations: number;
@@ -89,16 +104,46 @@ export interface EvalSuiteResult {
  * ```
  */
 export class EvalSuite {
+  private running = false;
   private name: string;
+  private sourceCases?: EvalTest[];
+  private lastSelection?: EvalSelectionManifest;
   private mcpjamConfig?: MCPJamReportingConfig;
   private matchOptions?: EvalMatchOptions;
+  private defaults: NonNullable<EvalSuiteConfig["defaults"]>;
   private tests: Map<string, EvalTest> = new Map();
+  private lastReportingReceipt: EvalReportingReceipt =
+    notRequestedReceipt("disabled");
+
+  getLastReport() {
+    return this.lastReportingReceipt.report
+      ? structuredClone(this.lastReportingReceipt.report)
+      : null;
+  }
+
+  getReportingReceipt(): EvalReportingReceipt {
+    return structuredClone(this.lastReportingReceipt);
+  }
+
   private lastRunResult: EvalSuiteResult | null = null;
 
   constructor(config?: EvalSuiteConfig) {
+    this.defaults = {
+      ...config?.defaults,
+      evaluators: [...(config?.defaults?.evaluators ?? [])],
+    };
+    if (
+      this.defaults.iterations !== undefined &&
+      (!Number.isSafeInteger(this.defaults.iterations) ||
+        this.defaults.iterations < 1)
+    )
+      throw new TypeError("defaults.iterations must be a positive integer");
     this.name = config?.name ?? "EvalSuite";
     this.mcpjamConfig = config?.mcpjam;
-    this.matchOptions = config?.matchOptions;
+    this.matchOptions =
+      config?.matchOptions === undefined
+        ? undefined
+        : structuredClone(config.matchOptions);
     assertValidMatchOptions(this.matchOptions ?? {});
   }
 
@@ -112,6 +157,8 @@ export class EvalSuite {
    * into one case's history.
    */
   add(test: EvalTest): void {
+    if (this.running)
+      throw new Error("Cannot add cases while the suite is running");
     const name = test.getName();
     if (this.tests.has(name)) {
       throw new Error(`Test with name "${name}" already exists in suite`);
@@ -127,7 +174,78 @@ export class EvalSuite {
       }
     }
     test.setDefaultMatchOptions(this.matchOptions);
+    test.setDefaultEvaluators(this.defaults.evaluators ?? []);
     this.tests.set(name, test);
+  }
+
+  /** Select declared case IDs. The source suite and its cases remain unchanged. */
+  subset(caseIds: readonly string[]): EvalSuite {
+    const wanted = new Set(caseIds);
+    if (wanted.size !== caseIds.length)
+      throw new TypeError("Duplicate selected case ID");
+    const available = new Map(
+      this.getAll().map((test) => [test.getId(), test])
+    );
+    for (const id of wanted)
+      if (!available.has(id))
+        throw new TypeError(`Unknown selected case ID: ${id}`);
+    const selected = new EvalSuite({
+      name: this.name,
+      defaults: this.defaults,
+      mcpjam: this.mcpjamConfig,
+      matchOptions: this.matchOptions,
+    });
+    selected.sourceCases = (this.sourceCases ?? this.getAll()).map(
+      (test) =>
+        new EvalTest(test.getConfig(), { evaluators: this.defaults.evaluators })
+    );
+    for (const test of this.getAll())
+      if (wanted.has(test.getId()))
+        selected.add(new EvalTest(test.getConfig()));
+    return selected;
+  }
+
+  getSelectionManifest(): EvalSelectionManifest | undefined {
+    return this.lastSelection ? structuredClone(this.lastSelection) : undefined;
+  }
+
+  private freezeSelection(iterations: number): EvalSelectionManifest {
+    const source = this.sourceCases ?? this.getAll();
+    const selected = new Set(this.getAll().map((test) => test.getId()));
+    const fingerprint = (tests: EvalTest[]) =>
+      sha256Hex(
+        canonicalJson(
+          tests
+            .map((test) => ({
+              id: test.getId(),
+              name: test.getName(),
+              evaluationConfig: test.getEvaluationConfigSnapshot().hash,
+              expectedToolCalls: test.getConfig().expectedToolCalls ?? null,
+              expectedOutput: test.getConfig().expectedOutput ?? null,
+              intent: test.getConfig().intent ?? null,
+              negative: test.getConfig().isNegativeTest ?? false,
+              matchOptions: test.getConfig().matchOptions ?? null,
+              iterations,
+            }))
+            .sort((a, b) => a.id.localeCompare(b.id))
+        )
+      );
+    return {
+      schemaVersion: 1,
+      sourceSuite: this.name,
+      sourceCaseIds: source.map((test) => test.getId()),
+      selectedCaseIds: [...selected],
+      cases: source.map((test) => ({
+        caseId: test.getId(),
+        plannedIterations: selected.has(test.getId()) ? iterations : 0,
+        ...(!selected.has(test.getId())
+          ? { excludedReason: "not_selected" as const }
+          : {}),
+      })),
+      sourceConfigHash: fingerprint(source),
+      selectedConfigHash: fingerprint(this.getAll()),
+      scope: selected.size === source.length ? "full" : "selected",
+    };
   }
 
   /**
@@ -149,19 +267,128 @@ export class EvalSuite {
    */
   async run(
     executor: HostExecutor,
-    options: EvalTestRunOptions
+    options: Omit<EvalTestRunOptions, "iterations"> & {
+      iterations?: number;
+    } = {}
   ): Promise<EvalSuiteResult> {
+    if (this.running)
+      throw new Error(
+        "This EvalSuite is already running; create a separate suite for concurrent runs"
+      );
+    if (
+      options.runTimeoutMs !== undefined &&
+      (!Number.isSafeInteger(options.runTimeoutMs) ||
+        options.runTimeoutMs < 1 ||
+        options.runTimeoutMs > 2_147_483_647)
+    )
+      throw new TypeError(
+        "runTimeoutMs must be a positive timer-sized integer"
+      );
+    this.running = true;
+    const controller = new AbortController();
+    const timer =
+      options.runTimeoutMs === undefined
+        ? undefined
+        : setTimeout(
+            () => controller.abort(new Error("Suite deadline exceeded")),
+            options.runTimeoutMs
+          );
+    const reporting = options.mcpjam ?? this.mcpjamConfig;
+    const signals = [
+      controller.signal,
+      options.signal,
+      reporting?.transport?.signal,
+    ].filter((signal): signal is AbortSignal => !!signal);
+    const signal = AbortSignal.any(signals);
+    try {
+      return await this.runInternal(executor, {
+        ...options,
+        signal,
+        // Execution cancellation must still allow its evidence to be persisted.
+        // Only an explicitly authored transport signal cancels reporting.
+        mcpjam: reporting,
+      });
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+      this.running = false;
+    }
+  }
+
+  private async runInternal(
+    executor: HostExecutor,
+    options: Omit<EvalTestRunOptions, "iterations"> & {
+      iterations?: number;
+    } = {}
+  ): Promise<EvalSuiteResult> {
+    this.lastReportingReceipt = notRequestedReceipt("disabled");
+    const iterations = options.iterations ?? this.defaults.iterations;
+    if (!Number.isSafeInteger(iterations) || iterations! < 1)
+      throw new TypeError(
+        "iterations must be a positive integer (or configure suite defaults.iterations)"
+      );
+    for (const [key, value] of Object.entries({
+      concurrency: options.concurrency,
+      timeoutMs: options.timeoutMs,
+      runTimeoutMs: options.runTimeoutMs,
+      scorerConcurrency: options.scorerConcurrency,
+      scorerTimeoutMs: options.scorerTimeoutMs,
+      evaluatorConcurrency: options.evaluatorConcurrency,
+      evaluatorTimeoutMs: options.evaluatorTimeoutMs,
+    })) {
+      if (value !== undefined && (!Number.isSafeInteger(value) || value < 1))
+        throw new TypeError(`${key} must be a positive integer`);
+    }
+    if (
+      options.retries !== undefined &&
+      (!Number.isSafeInteger(options.retries) || options.retries < 0)
+    )
+      throw new TypeError("retries must be a non-negative integer");
+    if (
+      options.evaluatorConcurrency !== undefined &&
+      options.scorerConcurrency !== undefined
+    )
+      throw new TypeError(
+        "Choose evaluatorConcurrency or scorerConcurrency, not both"
+      );
+    if (
+      options.evaluatorTimeoutMs !== undefined &&
+      options.scorerTimeoutMs !== undefined
+    )
+      throw new TypeError(
+        "Choose evaluatorTimeoutMs or scorerTimeoutMs, not both"
+      );
+    this.lastSelection = this.freezeSelection(iterations!);
+    const plannedIterations = this.tests.size * iterations!;
+    const suiteReportingConfig = await prepareReportingConfig(
+      options.mcpjam ?? this.mcpjamConfig ?? {}
+    );
+    if (
+      suiteReportingConfig.expectedIterations !== undefined &&
+      suiteReportingConfig.expectedIterations !== plannedIterations
+    )
+      throw new TypeError(
+        "expectedIterations must match the suite execution plan"
+      );
+    suiteReportingConfig.expectedIterations = plannedIterations;
+    if (
+      this.lastSelection.scope === "selected" &&
+      suiteReportingConfig.enabled !== false &&
+      (suiteReportingConfig.apiKey ?? process.env.MCPJAM_API_KEY)
+    )
+      throw new Error(
+        "Hosted subset reporting requires persisted selection support; use mcpjam.enabled=false for a local selected-scope run"
+      );
     const testResults = new Map<string, EvalRunResult>();
-    const suiteReportingConfig = options.mcpjam ?? this.mcpjamConfig;
 
     // Track total progress across all tests
-    const totalIterations = this.tests.size * options.iterations;
+    const totalIterations = plannedIterations;
     let completedIterations = 0;
 
     // Run each test sequentially to avoid overwhelming the system
     for (const [name, test] of this.tests) {
       const testOptions: EvalTestRunOptions = {
         ...options,
+        iterations: iterations!,
         mcpjam: suiteReportingConfig
           ? {
               ...suiteReportingConfig,
@@ -173,23 +400,46 @@ export class EvalSuite {
           ? (completed, _total) => {
               // Calculate overall progress
               const overallCompleted = completedIterations + completed;
-              options.onProgress!(overallCompleted, totalIterations);
+              return options.onProgress!(overallCompleted, totalIterations);
             }
           : undefined,
       };
 
       const result = await test.run(executor, testOptions);
       testResults.set(name, result);
-      completedIterations += options.iterations;
+      completedIterations += iterations!;
     }
 
     // Aggregate results
-    this.lastRunResult = this.aggregateResults(testResults);
-    await this.autoSaveSuiteRunIfConfigured(
-      testResults,
-      suiteReportingConfig,
-      executor
+    this.lastRunResult = {
+      ...this.aggregateResults(testResults),
+      selection: structuredClone(this.lastSelection),
+    };
+    const runEvaluationsByCase = Object.fromEntries(
+      [...this.tests].flatMap(([name, test]) => {
+        const envelope = testResults.get(name)?.runEvaluation;
+        return envelope ? [[test.getId(), envelope]] : [];
+      })
     );
+    if (Object.keys(runEvaluationsByCase).length)
+      this.lastRunResult.runEvaluationsByCase = runEvaluationsByCase;
+    try {
+      await this.autoSaveSuiteRunIfConfigured(
+        testResults,
+        suiteReportingConfig,
+        executor
+      );
+    } finally {
+      if (options.summary === "table") {
+        try {
+          console.log(
+            formatRunSummaryTable(this.lastRunResult, this.lastReportingReceipt)
+          );
+        } catch {
+          /* Formatting is observational. */
+        }
+      }
+    }
     return this.lastRunResult;
   }
 
@@ -202,7 +452,20 @@ export class EvalSuite {
       return;
     }
     const apiKey = config?.apiKey ?? process.env.MCPJAM_API_KEY;
-    if (!apiKey) {
+    if (!apiKey?.trim()) {
+      this.lastReportingReceipt = notRequestedReceipt("missing_api_key");
+      if (config?.strict) {
+        const error = new Error("Strict eval reporting requires an API key");
+        this.lastReportingReceipt = {
+          schemaVersion: 1,
+          state: "failed",
+          acceptedIterations: 0,
+          acknowledgedIterations: 0,
+          pendingIterations: 0,
+          error: { code: "MISSING_API_KEY", message: error.message },
+        };
+        throw error;
+      }
       return;
     }
 
@@ -217,7 +480,25 @@ export class EvalSuite {
       return;
     }
 
-    await reportEvalResultsSafely({
+    this.lastReportingReceipt = {
+      schemaVersion: 1,
+      state: "pending",
+      acceptedIterations: results.length,
+      acknowledgedIterations: 0,
+      pendingIterations: results.length,
+    };
+    const reporting = await captureEvalReporting({
+      ...config,
+      executor,
+      runEvaluations: this.lastRunResult?.runEvaluationsByCase
+        ? Object.values(this.lastRunResult.runEvaluationsByCase)
+        : undefined,
+      expectedIterations:
+        config?.expectedIterations ??
+        Array.from(testResults.values()).reduce(
+          (count, result) => count + result.iterations,
+          0
+        ),
       suiteName: config?.suiteName ?? this.name,
       suiteDescription: config?.suiteDescription,
       serverNames: config?.serverNames,
@@ -246,6 +527,9 @@ export class EvalSuite {
       })(),
       results,
     });
+    this.lastReportingReceipt = reporting.receipt;
+    if (reporting.receipt.state === "failed" && config?.strict)
+      throw reporting.error;
   }
 
   private buildEvalResultInputs(

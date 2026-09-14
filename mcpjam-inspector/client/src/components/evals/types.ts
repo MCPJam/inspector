@@ -642,7 +642,13 @@ export type EditorMode = "config" | "run";
 
 /** Compare run column trace mode — same values as TraceViewer view modes. */
 export type RunColumnTab =
-  "scorecard" | "timeline" | "chat" | "raw" | "tools" | "browser" | "steps";
+  | "scorecard"
+  | "timeline"
+  | "chat"
+  | "raw"
+  | "tools"
+  | "browser"
+  | "steps";
 
 export type CompareRunRecord = {
   modelValue: string;
@@ -775,6 +781,10 @@ export type EvalSuiteRunSummary = {
 };
 
 export type EvalSuiteRun = {
+  name?: string;
+  tags?: string[];
+  runMetadata?: Record<string, string | number | boolean>;
+  runEvaluationsByCase?: import("@mcpjam/sdk").CaseRunEvaluation[];
   /**
    * Whether this run's imported cases carry evidence a gate may rely on.
    *
@@ -952,7 +962,10 @@ export type EvalSuiteRun = {
   verdictPolicyIntegrityError?: string;
   stoppedAt?: number;
   stopReason?:
-    "user_cancelled" | "run_timeout" | "iteration_timeout" | "stale_worker";
+    | "user_cancelled"
+    | "run_timeout"
+    | "iteration_timeout"
+    | "stale_worker";
   /**
    * Run origin, STAMPED by the backend. Every launch that arrives over `/v1` —
    * the CLI, a GitHub Actions job, an MCP agent — is `"api"`, because from the
@@ -999,6 +1012,8 @@ export type EvalSuiteRun = {
     branchUrl?: string;
     branch?: string;
     commitSha?: string;
+    dirty?: boolean;
+    pullRequestNumber?: number;
   };
   notes?: string;
   createdAt: number;
@@ -1050,7 +1065,11 @@ export type EvalSuiteRun = {
       testCaseId?: string;
       title: string;
       status:
-        "new_failure" | "still_failing" | "fixed" | "new_case" | "removed_case";
+        | "new_failure"
+        | "still_failing"
+        | "fixed"
+        | "new_case"
+        | "removed_case";
       summary: string;
     }>;
   };
@@ -1077,7 +1096,10 @@ export type EvalSuiteRun = {
       evidence?: string[];
       confidence?: "low" | "medium" | "high";
       attribution?:
-        "server_design" | "agent_behavior" | "test_design" | "unknown";
+        | "server_design"
+        | "agent_behavior"
+        | "test_design"
+        | "unknown";
     }>;
     workflowInsights: Array<{
       caseKey: string;
@@ -1093,7 +1115,10 @@ export type EvalSuiteRun = {
       evidence?: string[];
       confidence?: "low" | "medium" | "high";
       attribution?:
-        "server_design" | "agent_behavior" | "test_design" | "unknown";
+        | "server_design"
+        | "agent_behavior"
+        | "test_design"
+        | "unknown";
     }>;
   };
   // Goal-completion judge (advisory LLM-as-judge): grades each case's final
@@ -1210,7 +1235,10 @@ export type EvalRunDiffSide = {
 
 /** Delivery channel a pinned skill reached the run through. */
 export type EvalRunSkillChannel =
-  "host" | "environment" | "plugin" | "mcp-server";
+  | "host"
+  | "environment"
+  | "plugin"
+  | "mcp-server";
 
 /** One skill's identity + content fingerprint on one side of a comparison. */
 export type EvalRunSkillSide = {

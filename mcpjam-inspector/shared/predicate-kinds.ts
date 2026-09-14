@@ -45,6 +45,7 @@ export const PREDICATE_KIND_LABELS: Record<PredicateKind, string> = {
   onlyToolsCalled: "Only these tools may be called",
   firstToolWas: "First tool called was…",
   responseContains: "Response contains…",
+  responseCloseTo: "Response close to…",
   responseMatches: "Response matches regex…",
   noToolErrors: "No tool errors",
   finalAssistantMessageNonEmpty: "Final message non-empty",
@@ -119,6 +120,7 @@ export const PREDICATE_KIND_ORDER: PredicateKind[] = [
   "onlyToolsCalled",
   "firstToolWas",
   "responseContains",
+  "responseCloseTo",
   "responseMatches",
   "noToolErrors",
   "finalAssistantMessageNonEmpty",
@@ -260,6 +262,8 @@ export function blankPredicate(kind: PredicateKind): Predicate {
       return { type: "onlyToolsCalled", toolNames: [] };
     case "firstToolWas":
       return { type: "firstToolWas", toolName: "" };
+    case "responseCloseTo":
+      return { type: "responseCloseTo", reference: "", maxDistance: 0.1 };
     case "responseContains":
       return { type: "responseContains", needle: "" };
     case "responseMatches":
@@ -379,6 +383,8 @@ export function formatCriterion(
         ? "No tool should be called"
         : `Only these tools may be called: ${names.join(", ")}`;
     }
+    case "responseCloseTo":
+      return `Response distance ≤ ${num(predicate.maxDistance)} from reference`;
     case "responseContains":
       return `Response contains "${predicate.needle}"`;
     case "responseMatches":

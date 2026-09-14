@@ -22,21 +22,38 @@ function sanitize(metadata: EvalCiMetadata): EvalCiMetadata {
     "pipelineId",
     "jobId",
     "runUrl",
+    "repositoryUrl",
+    "prUrl",
+    "branchUrl",
   ] as const) {
     const value = field(metadata[key]);
     if (!value) continue;
     if (key === "commitSha" && !/^(?:[a-f\d]{40}|[a-f\d]{64})$/i.test(value)) {
       continue;
     }
-    if (key === "runUrl") {
+    if (["runUrl", "repositoryUrl", "prUrl", "branchUrl"].includes(key)) {
       try {
         const url = new URL(value);
         if (url.protocol !== "http:" && url.protocol !== "https:") continue;
+        if (url.username || url.password) continue;
       } catch {
         continue;
       }
     }
     result[key] = value;
+  }
+  if (metadata.dirty !== undefined) {
+    if (typeof metadata.dirty !== "boolean")
+      throw new TypeError("ci.dirty must be boolean");
+    result.dirty = metadata.dirty;
+  }
+  if (metadata.pullRequestNumber !== undefined) {
+    if (
+      !Number.isSafeInteger(metadata.pullRequestNumber) ||
+      metadata.pullRequestNumber < 1
+    )
+      throw new TypeError("ci.pullRequestNumber must be a positive integer");
+    result.pullRequestNumber = metadata.pullRequestNumber;
   }
   return result;
 }
@@ -45,6 +62,7 @@ function sanitize(metadata: EvalCiMetadata): EvalCiMetadata {
 export function detectEvalCiMetadata(
   env: NodeJS.ProcessEnv = process.env
 ): EvalCiMetadata | undefined {
+  if (["0", "false"].includes(env.MCPJAM_CI_AUTODETECT ?? "")) return undefined;
   let metadata: EvalCiMetadata;
   const github = detectCiMetadata(env);
   if (github) {
@@ -55,6 +73,8 @@ export function detectEvalCiMetadata(
       pipelineId: github.runId,
       jobId: github.job,
       runUrl: github.runUrl,
+      repositoryUrl: github.repositoryUrl,
+      prUrl: github.prUrl,
     };
   } else if (enabled(env.GITLAB_CI)) {
     metadata = {
@@ -110,6 +130,12 @@ export function detectEvalCiMetadata(
       branch: env.BRANCH,
       pipelineId: env.BUILD_ID,
     };
+  } else if (enabled(env.CI)) {
+    metadata = {
+      provider: "ci",
+      branch: env.CI_COMMIT_BRANCH,
+      commitSha: env.CI_COMMIT_SHA,
+    };
   } else {
     return undefined;
   }
@@ -121,5 +147,33 @@ export function resolveEvalCiMetadata(
   ci: EvalCiMetadata | undefined,
   env: NodeJS.ProcessEnv = process.env
 ): EvalCiMetadata | undefined {
-  return ci ?? detectEvalCiMetadata(env);
+  if (ci && Object.keys(ci).length === 0) return {};
+  if (ci) {
+    for (const [key, value] of Object.entries(ci)) {
+      if (value === undefined || key === "dirty" || key === "pullRequestNumber")
+        continue;
+      if (typeof value !== "string" || value.trim().length > MAX_FIELD_CHARS)
+        throw new TypeError(`Invalid CI metadata field: ${key}`);
+      if (["runUrl", "repositoryUrl", "prUrl", "branchUrl"].includes(key)) {
+        let url: URL;
+        try {
+          url = new URL(value);
+        } catch {
+          throw new TypeError(`Invalid CI URL: ${key}`);
+        }
+        if (
+          !["http:", "https:"].includes(url.protocol) ||
+          url.username ||
+          url.password
+        )
+          throw new TypeError(`Invalid CI URL: ${key}`);
+      }
+    }
+  }
+  return ci === undefined
+    ? detectEvalCiMetadata(env)
+    : {
+        ...detectEvalCiMetadata(env),
+        ...sanitize(ci),
+      };
 }

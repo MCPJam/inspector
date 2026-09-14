@@ -824,6 +824,37 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   properties: {
                                     type: {
                                       type: "string",
+                                      const: "responseCloseTo",
+                                    },
+                                    reference: {
+                                      type: "string",
+                                      minLength: 1,
+                                      maxLength: 100000,
+                                    },
+                                    maxDistance: {
+                                      type: "number",
+                                      minimum: 0,
+                                      maximum: 1,
+                                    },
+                                    caseSensitive: { type: "boolean" },
+                                    normalizeWhitespace: { type: "boolean" },
+                                    role: {
+                                      type: "string",
+                                      enum: ["gating", "advisory"],
+                                    },
+                                    severity: { type: "string", const: "warn" },
+                                  },
+                                  required: [
+                                    "type",
+                                    "reference",
+                                    "maxDistance",
+                                  ],
+                                },
+                                {
+                                  type: "object",
+                                  properties: {
+                                    type: {
+                                      type: "string",
                                       const: "responseContains",
                                     },
                                     needle: { type: "string", minLength: 1 },
@@ -1378,6 +1409,23 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                 {
                   type: "object",
                   properties: {
+                    type: { type: "string", const: "responseCloseTo" },
+                    reference: {
+                      type: "string",
+                      minLength: 1,
+                      maxLength: 100000,
+                    },
+                    maxDistance: { type: "number", minimum: 0, maximum: 1 },
+                    caseSensitive: { type: "boolean" },
+                    normalizeWhitespace: { type: "boolean" },
+                    role: { type: "string", enum: ["gating", "advisory"] },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type", "reference", "maxDistance"],
+                },
+                {
+                  type: "object",
+                  properties: {
                     type: { type: "string", const: "responseContains" },
                     needle: { type: "string", minLength: 1 },
                     caseSensitive: { type: "boolean" },
@@ -1800,6 +1848,23 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                     severity: { type: "string", const: "warn" },
                   },
                   required: ["type", "toolName"],
+                },
+                {
+                  type: "object",
+                  properties: {
+                    type: { type: "string", const: "responseCloseTo" },
+                    reference: {
+                      type: "string",
+                      minLength: 1,
+                      maxLength: 100000,
+                    },
+                    maxDistance: { type: "number", minimum: 0, maximum: 1 },
+                    caseSensitive: { type: "boolean" },
+                    normalizeWhitespace: { type: "boolean" },
+                    role: { type: "string", enum: ["gating", "advisory"] },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type", "reference", "maxDistance"],
                 },
                 {
                   type: "object",

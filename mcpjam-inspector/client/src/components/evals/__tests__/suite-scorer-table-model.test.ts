@@ -7,10 +7,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import {
-  PREDICATE_KINDS,
-  USER_VALUE_STAGES,
-} from "@mcpjam/sdk/contract";
+import { PREDICATE_KINDS, USER_VALUE_STAGES } from "@mcpjam/sdk/contract";
 import type { Predicate } from "@mcpjam/sdk/predicates";
 import { groupGradersByStage } from "../suite-grading-model";
 import {
@@ -61,9 +58,10 @@ describe("library categories", () => {
     // does ask for it.
     for (const category of scorerLibraryCategories(PREDICATE_KINDS)) {
       for (const kind of category.kinds) {
-        expect(seen.has(kind), `${kind} listed in ${seen.get(kind)} and ${category.id}`).toBe(
-          false,
-        );
+        expect(
+          seen.has(kind),
+          `${kind} listed in ${seen.get(kind)} and ${category.id}`,
+        ).toBe(false);
         seen.set(kind, category.id);
         expect(libraryCategoryOfKind(kind)).toBe(category.id);
       }
@@ -71,9 +69,10 @@ describe("library categories", () => {
     const missing = (PREDICATE_KINDS as readonly string[]).filter(
       (kind) => !seen.has(kind),
     );
-    expect(missing, `kinds with no library category: ${missing.join(", ")}`).toEqual(
-      [],
-    );
+    expect(
+      missing,
+      `kinds with no library category: ${missing.join(", ")}`,
+    ).toEqual([]);
   });
 
   it("shows Response now that kinds file there", () => {
@@ -312,7 +311,9 @@ describe("roleOfJudgeSlot", () => {
   it("reads gating only as the literal gating role", () => {
     expect(roleOfJudgeSlot("goalCompletion", undefined)).toBe("report");
     expect(
-      roleOfJudgeSlot("goalCompletion", { goalCompletion: { role: "advisory" } }),
+      roleOfJudgeSlot("goalCompletion", {
+        goalCompletion: { role: "advisory" },
+      }),
     ).toBe("report");
     expect(
       roleOfJudgeSlot("goalCompletion", { goalCompletion: { role: "gating" } }),
@@ -372,4 +373,12 @@ describe("cards", () => {
     expect(selection?.detail?.label).not.toMatch(/%/);
     expect(selection?.chip.label.toLowerCase()).not.toContain("not measured");
   });
+});
+
+it("requires advertised runner support before offering responseCloseTo", () => {
+  expect(authorablePredicateKinds(undefined)).not.toContain("responseCloseTo");
+  expect(authorablePredicateKinds([])).not.toContain("responseCloseTo");
+  expect(authorablePredicateKinds(["responseCloseTo"])).toEqual([
+    "responseCloseTo",
+  ]);
 });
