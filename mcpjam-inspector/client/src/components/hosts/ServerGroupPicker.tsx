@@ -483,8 +483,9 @@ export function ServerGroupPicker({
                 className="text-[11px] leading-snug text-muted-foreground"
                 data-testid="server-group-production-warning"
               >
-                Agents take real actions on these servers, including writing
-                and deleting data. Use development servers, not production.
+                Swarm agents take real actions on these servers, including
+                writing and deleting data. Use development servers, not
+                production.
               </p>
             </div>
             {serverAttachments.length === 0 && !isLoading ? (
