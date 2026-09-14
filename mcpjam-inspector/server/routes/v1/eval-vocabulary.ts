@@ -332,8 +332,13 @@ export const CASE_FIELD_ALIASES_V2 = {
   legacyIterations: ["runs"],
 } as const;
 
+/**
+ * `checks` is listed beside `defaultPredicates` because it is the REST wire's
+ * own vocabulary-1 spelling of the suite's default rules (`settings.checks` →
+ * Convex `defaultPredicates`), and a vocabulary-2 body may still send it.
+ */
 export const SUITE_SETTINGS_ALIASES_V2 = {
-  defaultAssertions: ["defaultPredicates"],
+  defaultAssertions: ["defaultPredicates", "checks"],
   iterations: ["repetitions"],
 } as const;
 

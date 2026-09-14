@@ -82,7 +82,11 @@ const CASE_DOC = {
 const CASE_PATH = `/api/v1/projects/p1/eval-suites/${SUITE._id}/cases/${CASE_DOC._id}`;
 
 /** The keys a case DTO renames between vocabulary 1 and 2. */
-const RENAMED: Record<string, string> = { iterations: "legacyIterations" };
+const RENAMED: Record<string, string> = {
+  iterations: "legacyIterations",
+  repetitions: "iterations",
+  checks: "assertions",
+};
 
 describe("x-mcpjam-eval-vocabulary on the eval routes", () => {
   beforeEach(() => {

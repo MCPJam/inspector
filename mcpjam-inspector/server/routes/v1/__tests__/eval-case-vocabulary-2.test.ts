@@ -199,21 +199,19 @@ describe("vocabulary 2 — the floor is `legacyIterations`", () => {
     expect(convexMutationMock).not.toHaveBeenCalled();
   });
 
-  it("refuses `iterations` as an unknown key — the name is vacated", async () => {
-    // The whole point of this step: under vocabulary 2 nothing answers to
-    // `iterations` yet, so the next step can give it the exact count without
-    // any reader having meant the floor by it.
+  it("never reads `iterations` as the floor — that name is the exact count now", async () => {
+    // A1 vacated the name; A2 gave it the exact count. A caller who meant
+    // the floor and typed `iterations` under vocabulary 2 gets the exact
+    // count (and, on create, the same floor), never a silent floor-only write.
     const res = await request(
       "POST",
       `${SUITE_PATH}/cases`,
       { ...CASE_BODY, iterations: 3 },
       "2",
     );
-    expect(res.status).toBe(400);
-    expect(await message(res)).toContain("iterations");
-    expect(convexMutationMock).not.toHaveBeenCalled();
+    expect(res.status).toBe(201);
+    expect(authoredCase()).toMatchObject({ repetitions: 3, runs: 3 });
   });
-
   it("folds the floor on a batch item, and refuses both spellings per item", async () => {
     const ok = await request(
       "POST",
@@ -257,32 +255,34 @@ describe("vocabulary 2 — the floor is `legacyIterations`", () => {
       await request("GET", CASE_PATH, undefined, "2")
     ).json()) as Record<string, unknown>;
     expect(got.legacyIterations).toBe(4);
-    expect(got).not.toHaveProperty("iterations");
-    // Untouched by this step: the exact count still reads `repetitions`.
-    expect(got.repetitions).toBe(2);
+    // `iterations` is present, but as the EXACT count (CASE_DOC.repetitions).
+    expect(got.iterations).toBe(2);
+    // The exact count reads under its canonical name.
+    expect(got.iterations).toBe(2);
+    expect(got).not.toHaveProperty("repetitions");
 
     const listed = (await (
       await request("GET", `${SUITE_PATH}/cases`, undefined, "2")
     ).json()) as { items: Array<Record<string, unknown>> };
     expect(listed.items[0]?.legacyIterations).toBe(4);
-    expect(listed.items[0]).not.toHaveProperty("iterations");
+    expect(listed.items[0]?.iterations).toBe(2);
 
     const created = (await (
       await request("POST", `${SUITE_PATH}/cases`, CASE_BODY, "2")
     ).json()) as Record<string, unknown>;
     expect(created).toHaveProperty("legacyIterations");
-    expect(created).not.toHaveProperty("iterations");
+    expect(created).not.toHaveProperty("repetitions");
 
     const patched = (await (
       await request("PATCH", CASE_PATH, { title: "T" }, "2")
     ).json()) as Record<string, unknown>;
     expect(patched).toHaveProperty("legacyIterations");
-    expect(patched).not.toHaveProperty("iterations");
+    expect(patched).not.toHaveProperty("repetitions");
   });
 
   it("keeps the renamed key in the same position as `iterations`", async () => {
     // A reader diffing a vocabulary-2 response against a vocabulary-1 one
-    // should see exactly one key renamed, not a reordered object.
+    // should see exactly the renamed keys, not a reordered object.
     const one = Object.keys(
       (await (await request("GET", CASE_PATH)).json()) as object,
     );
@@ -291,9 +291,12 @@ describe("vocabulary 2 — the floor is `legacyIterations`", () => {
         await request("GET", CASE_PATH, undefined, "2")
       ).json()) as object,
     );
-    expect(two).toEqual(
-      one.map((k) => (k === "iterations" ? "legacyIterations" : k)),
-    );
+    const RENAMED: Record<string, string> = {
+      iterations: "legacyIterations",
+      repetitions: "iterations",
+      checks: "assertions",
+    };
+    expect(two).toEqual(one.map((k) => RENAMED[k] ?? k));
   });
 
   it("names the floor by its vocabulary-2 spelling in the legacy-policy refusal", async () => {
@@ -328,10 +331,144 @@ describe("vocabulary 2 — the floor is `legacyIterations`", () => {
   });
 });
 
+describe("vocabulary 2 — `iterations` is the exact count, `assertions` the rules", () => {
+  const RULE = { type: "toolCalledAtLeastOnce", toolName: "search" };
+  const RULES = { mode: "replace", list: [RULE] };
+
+  it("stores `iterations` as the exact count AND, on create, as the floor", async () => {
+    // The contract: a CREATE that names an exact count but no floor stores
+    // `runs = iterations` — what the legacy resolver would have floored to.
+    const res = await request(
+      "POST",
+      `${SUITE_PATH}/cases`,
+      { ...CASE_BODY, iterations: 4 },
+      "2",
+    );
+    expect(res.status).toBe(201);
+    expect(authoredCase()).toMatchObject({ repetitions: 4, runs: 4 });
+  });
+
+  it("keeps a declared floor beside the exact count — they are two fields", async () => {
+    const res = await request(
+      "POST",
+      `${SUITE_PATH}/cases`,
+      { ...CASE_BODY, iterations: 4, legacyIterations: 2 },
+      "2",
+    );
+    expect(res.status).toBe(201);
+    expect(authoredCase()).toMatchObject({ repetitions: 4, runs: 2 });
+  });
+
+  it("forwards nothing for a create that names neither count", async () => {
+    // The platform then applies the same `runs = 1` a headerless create
+    // stores today, and no v2 override is materialized.
+    const res = await request("POST", `${SUITE_PATH}/cases`, CASE_BODY, "2");
+    expect(res.status).toBe(201);
+    expect(authoredCase()).not.toHaveProperty("runs");
+    expect(authoredCase()).not.toHaveProperty("repetitions");
+  });
+
+  it("never derives a floor on PATCH", async () => {
+    const res = await request("PATCH", CASE_PATH, { iterations: 4 }, "2");
+    expect(res.status).toBe(200);
+    expect(patchedCase().repetitions).toBe(4);
+    expect(patchedCase()).not.toHaveProperty("runs");
+  });
+
+  it.each([
+    [
+      "iterations + repetitions",
+      { iterations: 4, repetitions: 4 },
+      "iterations",
+    ],
+    ["assertions + checks", { assertions: RULES, checks: RULES }, "assertions"],
+    [
+      "assertions + predicates",
+      { assertions: RULES, predicates: RULES },
+      "assertions",
+    ],
+    ["checks + predicates", { checks: RULES, predicates: RULES }, "checks"],
+  ])("refuses %s", async (_label, fields, path) => {
+    const res = await request(
+      "POST",
+      `${SUITE_PATH}/cases`,
+      { ...CASE_BODY, ...fields },
+      "2",
+    );
+    expect(res.status).toBe(400);
+    expect(await message(res)).toContain(`${path}: Send`);
+    expect(convexMutationMock).not.toHaveBeenCalled();
+  });
+
+  it("folds `assertions` onto the stored predicate override, `null` included", async () => {
+    const set = await request("PATCH", CASE_PATH, { assertions: RULES }, "2");
+    expect(set.status).toBe(200);
+    expect(patchedCase().predicates).toEqual(RULES);
+
+    const cleared = await request(
+      "PATCH",
+      CASE_PATH,
+      { assertions: null },
+      "2",
+    );
+    expect(cleared.status).toBe(200);
+    expect(patchedCase().predicates).toBeNull();
+  });
+
+  it("projects `iterations` and `assertions` on read, and no legacy spelling", async () => {
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getTestSuite") return Promise.resolve(V2_SUITE);
+      if (name === "testSuites:getTestCase")
+        return Promise.resolve({ ...CASE_DOC, predicates: RULES });
+      return Promise.resolve(null);
+    });
+    const got = (await (
+      await request("GET", CASE_PATH, undefined, "2")
+    ).json()) as Record<string, unknown>;
+    expect(got.legacyIterations).toBe(4);
+    expect(got.iterations).toBe(2);
+    expect(got.assertions).toEqual(RULES);
+    for (const legacy of ["repetitions", "checks", "predicates", "runs"]) {
+      expect(got).not.toHaveProperty(legacy);
+    }
+  });
+
+  it("names the exact count and the settings path by their vocabulary-2 spelling in the legacy-policy refusal", async () => {
+    useSuite(LEGACY_SUITE);
+    const res = await request(
+      "POST",
+      `${SUITE_PATH}/cases`,
+      { ...CASE_BODY, iterations: 5 },
+      "2",
+    );
+    expect(res.status).toBe(400);
+    const text = await message(res);
+    expect(text).toContain("iterations sets the exact number");
+    expect(text).toContain("settings.iterations and settings.passThreshold");
+    expect(text).not.toContain("repetitions");
+  });
+
+  it("refuses the CLI's vocabulary-1 body under vocabulary 2 — and accepts it under 1", async () => {
+    // `cli/src/lib/eval-run-file.ts` sends the file's one configured count
+    // under BOTH vocabulary-1 keys. Under vocabulary 2 those are two
+    // spellings of the exact count, so the CLI must not send the header
+    // before it is rewritten; this is the pin for that hazard.
+    const body = { ...CASE_BODY, iterations: 3, repetitions: 3 };
+    const two = await request("POST", `${SUITE_PATH}/cases`, body, "2");
+    expect(two.status).toBe(400);
+    vi.clearAllMocks();
+    useSuite(V2_SUITE);
+    const one = await request("POST", `${SUITE_PATH}/cases`, body);
+    expect(one.status).toBe(201);
+  });
+});
+
 describe("vocabulary 1 — not widened", () => {
   it.each([
     ["legacyIterations", { ...CASE_BODY, legacyIterations: 3 }],
     ["runs", { ...CASE_BODY, runs: 3 }],
+    ["assertions", { ...CASE_BODY, assertions: { mode: "replace", list: [] } }],
+    ["predicates", { ...CASE_BODY, predicates: { mode: "replace", list: [] } }],
   ])("refuses `%s` on create as an unknown key", async (field, body) => {
     const res = await request("POST", `${SUITE_PATH}/cases`, body);
     expect(res.status).toBe(400);
