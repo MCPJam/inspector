@@ -13,6 +13,11 @@ import {
   type RunPassRateChange,
 } from "./run-pass-rate-changes";
 import { useProjectRunHistory } from "./use-project-run-history";
+import {
+  displayRunServerNames,
+  isEphemeralCheckServerName,
+} from "./github-check-server-name";
+import { getEffectiveSuiteServers } from "./helpers";
 import { MetricStrip } from "./metric-strip";
 import {
   buildSuiteMetricStripData,
@@ -51,7 +56,7 @@ import {
   DropdownMenuCheckboxItem,
 } from "@mcpjam/design-system/dropdown-menu";
 import { useMemo, useState, type ReactNode } from "react";
-import { usePaginatedQuery } from "convex/react";
+import { usePaginatedQuery, useQuery } from "convex/react";
 import { ChevronDown, GitBranch, Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -77,7 +82,7 @@ import {
   resolveRunOrigin,
   visibleRunOriginFilters,
 } from "@/lib/evals/run-origin";
-import type { EvalSuiteRun } from "./types";
+import type { EvalSuiteOverviewEntry, EvalSuiteRun } from "./types";
 import {
   RunDecisionVerdictBadge,
   RunDecisionVerdictUnavailable,
@@ -309,6 +314,47 @@ export function ProjectRunsTable({
     isAuthenticated: historyMetricsEnabled,
     projectId,
   });
+
+  // Each run freezes the server names it ran with, and the Server filter is
+  // built from them — but a GitHub App check runs the pull request's own build
+  // in a sandbox, so what it freezes is a throwaway `gh-check-<triggerId>` id
+  // (see `github-check-server-name.ts`). Resolve those to the suite's real
+  // servers, and only pay for the suite lookup when a loaded run has one.
+  const rawRunServers = useMemo(
+    () =>
+      new Map<string, string[]>(
+        [...history.details].map(([id, detail]) => [
+          id,
+          detail.run.configSnapshot?.environment?.servers ?? [],
+        ]),
+      ),
+    [history.details],
+  );
+  const hasEphemeralCheckServer = useMemo(
+    () =>
+      [...rawRunServers.values()].some((servers) =>
+        servers.some(isEphemeralCheckServerName),
+      ),
+    [rawRunServers],
+  );
+  const suiteOverview = useQuery(
+    "testSuites:getTestSuitesOverview" as any,
+    hasEphemeralCheckServer ? ({ projectId } as any) : "skip",
+  ) as EvalSuiteOverviewEntry[] | undefined;
+  const suiteServersById = useMemo(
+    () =>
+      new Map<string, string[]>(
+        // The suite's EFFECTIVE servers, not the legacy flat list: a suite
+        // that picks its servers through a host or a standalone attachment
+        // leaves `environment.servers` empty, which fell back to the shared
+        // label and left the filter no better off.
+        (suiteOverview ?? []).map((entry) => [
+          entry.suite._id,
+          getEffectiveSuiteServers(entry.suite),
+        ]),
+      ),
+    [suiteOverview],
+  );
   // Derived once per data/filter change, not per render. The chain below
   // groups every loaded run and builds a metric point per launch; re-running
   // it on each keystroke in the commit filter, and on the 15-second refresh
@@ -360,10 +406,14 @@ export function ProjectRunsTable({
         ];
       }),
     );
+    const suiteIdByRunId = new Map(rows.map((row) => [row._id, row.suiteId]));
     const runServers = new Map(
-      [...history.details].map(([id, detail]) => [
+      [...rawRunServers].map(([id, servers]) => [
         id,
-        detail.run.configSnapshot?.environment?.servers ?? [],
+        displayRunServerNames(
+          servers,
+          suiteServersById.get(suiteIdByRunId.get(id) ?? "") ?? [],
+        ),
       ]),
     );
     const clientOptions = [
@@ -522,6 +572,8 @@ export function ProjectRunsTable({
     rows,
     sourceAndSuiteRows,
     history.details,
+    rawRunServers,
+    suiteServersById,
     hosts,
     projectEnvironmentsEnabled,
     historyMetricsEnabled,
