@@ -1331,8 +1331,9 @@ project update that suite rather than creating a second one. A UI-authored
 suite has no declared id, so no file can claim it. Resolve is never by name.
 
 File `passThreshold` is a fraction; the hosted suite grades on a percent. The
-conversion refuses rather than approximates. File `repetitions` above **10**
-are refused by name (`REPETITIONS_CAP`) and are not clamped.
+conversion refuses rather than approximates. The configured iteration count
+(`repetitions` in dialect 1, `iterations` in dialect 2) above **10** is
+refused by name (`REPETITIONS_CAP`) and is not clamped.
 
 Cases are synced in batches of at most 100 (`create_eval_cases`). Every
 declared case is created or updated, including `disabled: true` rows. A case
