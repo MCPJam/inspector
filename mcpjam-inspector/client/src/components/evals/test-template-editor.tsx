@@ -4010,6 +4010,7 @@ export function TestTemplateEditor({
             editForm.suppressedSuiteStandardCheckIds
           }
           suitePredicates={(suite?.defaultPredicates ?? []) as Predicate[]}
+          suiteJudgeConfig={suite?.judgeConfig}
           capabilities={caseCapabilities.capabilities}
           onChecksChange={(next) =>
             setEditForm((current) =>

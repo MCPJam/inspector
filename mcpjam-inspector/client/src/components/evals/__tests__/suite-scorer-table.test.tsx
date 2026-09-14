@@ -48,8 +48,11 @@ function renderTable(
     <SuiteScorerTable
       matchOptions={undefined}
       onMatchOptionsChange={onMatchOptionsChange}
-      predicates={overrides.predicates ?? []}
-      onPredicatesChange={onPredicatesChange}
+      scope={{
+        kind: "suite",
+        predicates: overrides.predicates ?? [],
+        onPredicatesChange,
+      }}
       judgeConfig={overrides.judgeConfig}
       onJudgeConfigChange={onJudgeConfigChange}
       availableModels={[]}
@@ -310,7 +313,7 @@ describe("SuiteScorerTable", () => {
     const heads = Array.from(container.querySelectorAll("thead th")).map(
       (head) => head.textContent?.trim(),
     );
-    expect(heads).toEqual(["Scorer", "Kind", "Threshold", "Role"]);
+    expect(heads).toEqual(["On", "Scorer", "Kind", "Threshold", "Role"]);
     expect(container.textContent).not.toMatch(/Last run/i);
     expect(container.textContent).not.toMatch(/Trend/i);
   });
