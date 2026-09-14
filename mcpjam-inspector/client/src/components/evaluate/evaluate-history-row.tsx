@@ -127,6 +127,11 @@ export function EvaluateHistoryRow({
             resolveRunOrigin(row),
             git?.repository,
             git?.commitSha,
+            git?.commitUrl,
+            git?.branch,
+            git?.branchUrl,
+            git?.pullRequestNumber,
+            git?.pullRequestUrl,
           ]),
           { row, git },
         ] as const;

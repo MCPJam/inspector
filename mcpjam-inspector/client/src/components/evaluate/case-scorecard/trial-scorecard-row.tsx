@@ -178,12 +178,11 @@ export function TrialScorecardRow({
                       : row.result.state === "failed" && row.role === "gate"
                         ? "bg-destructive/10"
                         : "bg-muted",
-                    // The colour is `state × role`, so it comes from the same
-                    // glyph the row layout wears rather than a second ternary
-                    // that flattens an advisory miss and an evaluator error
-                    // into the neutral grey of "skipped". `resultGlyph` styles
-                    // an icon; this badge is text, so the spinner is dropped.
-                    glyph.cls.replace("animate-spin", "").trim(),
+                    // Success stays in the tint; small text needs the reading
+                    // foreground rather than the low-contrast icon colour.
+                    row.result.state === "passed"
+                      ? "text-foreground"
+                      : glyph.cls.replace("animate-spin", "").trim(),
                   ),
             )}
           >

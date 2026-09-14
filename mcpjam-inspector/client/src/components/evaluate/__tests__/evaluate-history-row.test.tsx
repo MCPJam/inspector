@@ -30,6 +30,46 @@ const row = (overrides: Partial<ProjectRunRow> = {}): ProjectRunRow => ({
 });
 
 describe("Evaluate history rows", () => {
+  it("keeps distinct branch and PR chips for runs sharing a commit", () => {
+    const git = {
+      repositoryUrl: "https://github.com/example/repo",
+      commitSha: "abc1234",
+      branch: "first",
+      prUrl: "https://github.com/example/repo/pull/1",
+    };
+    render(
+      <table>
+        <tbody>
+          <EvaluateHistoryRow
+            rows={[
+              row({ _id: "one", ciMetadata: git }),
+              row({ _id: "two", ciMetadata: { ...git, branch: "second" } }),
+              row({
+                _id: "three",
+                ciMetadata: {
+                  ...git,
+                  prUrl: "https://github.com/example/repo/pull/2",
+                },
+              }),
+              row({ _id: "duplicate", ciMetadata: git }),
+            ]}
+            details={new Map()}
+            historyRows={new Map()}
+          />
+        </tbody>
+      </table>,
+    );
+    expect(screen.getAllByRole("link", { name: "abc1234" })).toHaveLength(3);
+    expect(screen.getByRole("link", { name: "second" })).toHaveAttribute(
+      "href",
+      "https://github.com/example/repo/tree/second",
+    );
+    expect(screen.getByRole("link", { name: "#2" })).toHaveAttribute(
+      "href",
+      "https://github.com/example/repo/pull/2",
+    );
+  });
+
   it("does not infer a result from the pass percentage", () => {
     expect(historyResult([row({ result: "pending" })])).toBe("No result");
     expect(historyResult([row({ result: "failed" })])).toBe("Failed");
