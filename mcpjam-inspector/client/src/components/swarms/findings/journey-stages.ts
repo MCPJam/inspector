@@ -66,17 +66,38 @@ export const JOURNEY_STAGES: readonly JourneyStage[] = [
  * Five are identical; the sixth is not — the chain calls the last stage
  * `userValue` and this panel has always called it `value`. Both directions are
  * needed (mapping a funnel IN, building a session filter OUT), and the reverse
- * is INVERTED from the forward map rather than written twice, so a seventh
- * stage cannot be added to one direction only.
+ * is INVERTED from the forward map rather than written twice, so neither
+ * direction can gain a stage the other has not.
  */
-export const CHAIN_STAGE_BY_JOURNEY: Record<JourneyStageId, UserValueStage> = {
+export const CHAIN_STAGE_BY_JOURNEY = {
   connection: "connection",
   discovery: "discovery",
   selection: "selection",
   call: "call",
   response: "response",
   value: "userValue",
-};
+} as const satisfies Record<JourneyStageId, UserValueStage>;
+
+/**
+ * Compile-time proof the forward map reaches EVERY chain stage.
+ *
+ * `Record<JourneyStageId, UserValueStage>` only makes the map total over the
+ * PANEL's ids. A seventh stage added to `UserValueStage` in the SDK satisfies
+ * that annotation untouched, and would leave the reverse map below missing a
+ * key its own type promises: `breakStage` walks `USER_VALUE_STAGES` and does
+ * an unguarded reverse lookup, so it would hand back `undefined` typed as a
+ * `JourneyStageId`, and the stage-title lookup that follows throws — losing
+ * the whole chain to the error boundary as "unmeasured". This makes it a build
+ * error instead, naming the stage nobody mapped.
+ */
+type UnmappedChainStage = Exclude<
+  UserValueStage,
+  (typeof CHAIN_STAGE_BY_JOURNEY)[JourneyStageId]
+>;
+const CHAIN_STAGES_ARE_EXHAUSTIVE: UnmappedChainStage extends never
+  ? true
+  : UnmappedChainStage = true;
+void CHAIN_STAGES_ARE_EXHAUSTIVE;
 
 export const JOURNEY_STAGE_BY_CHAIN = Object.fromEntries(
   Object.entries(CHAIN_STAGE_BY_JOURNEY).map(([journey, chain]) => [
