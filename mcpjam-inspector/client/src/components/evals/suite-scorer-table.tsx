@@ -330,7 +330,7 @@ export function SuiteScorerTable({
             <div className="space-y-1">
               <div className="flex items-center gap-1.5">
                 <h3 className="text-lg font-semibold tracking-tight text-foreground">
-                  Evaluators by stage
+                  Assertions
                 </h3>
                 <GlobalGatesSectionInfoHint />
               </div>
@@ -361,7 +361,7 @@ export function SuiteScorerTable({
         <div>
           <div className="grid grid-cols-1 gap-x-6 border-b border-border pb-2 text-sm text-muted-foreground sm:grid-cols-[minmax(10rem,1fr)_2fr]">
             <span>Stage of user value chain</span>
-            <span className="hidden sm:block">Evaluators</span>
+            <span className="hidden sm:block">Assertions</span>
           </div>
           {table.groups.map((group) => (
             <section
@@ -383,7 +383,7 @@ export function SuiteScorerTable({
                     className={cn("text-sm", STAGE_CHIP_TONE_CLASS.unmeasured)}
                     data-stage-empty={group.stage}
                   >
-                    No grader
+                    No evaluator
                   </p>
                 ) : (
                   <ul className="space-y-3">
@@ -730,6 +730,7 @@ function ScorerRow({
           predicate &&
           row.predicateIndex !== undefined ? (
             <CheckRow
+              noun="assertion"
               embedded
               predicate={predicate}
               onChange={(next) => onPredicateChange(row.predicateIndex!, next)}
@@ -868,7 +869,7 @@ function RoleCell({
         // and never as a Gate — the same rule the Zod schema enforces at the
         // save, surfaced as an absent segment rather than a refused save.
         roles={rolesForPredicateKind(predicate.type)}
-        ariaLabel="Check role"
+        ariaLabel="Assertion role"
         onChange={(role) =>
           onPredicateChange(
             row.predicateIndex!,

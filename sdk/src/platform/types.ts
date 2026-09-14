@@ -50,12 +50,7 @@ export type PlatformSessionBrowserTrace = {
   screenshots: PlatformBrowserScreenshot[];
 };
 export type PlatformSessionBrowserOperation =
-  | "open"
-  | "command"
-  | "note"
-  | "trace"
-  | "artifact"
-  | "close";
+  "open" | "command" | "note" | "trace" | "artifact" | "close";
 export interface PlatformSessionBrowserBodies {
   open: PlatformSessionBrowserInput;
   command: { command: BrowserAgentCommand; commandId?: string; tabId?: string };
@@ -540,7 +535,17 @@ export interface PlatformTurnUsage {
  */
 export interface PlatformChatTurn {
   chatSessionId?: string;
-  browser?: Partial<PlatformSessionBrowser> & { attached: boolean; effectivePolicy?: { tools: readonly string[] | null; origins: readonly string[] | null }; reason?: string; screenshots?: PlatformBrowserScreenshot[]; notices?: string[]; handoff?: { waited: boolean; resumed: boolean } };
+  browser?: Partial<PlatformSessionBrowser> & {
+    attached: boolean;
+    effectivePolicy?: {
+      tools: readonly string[] | null;
+      origins: readonly string[] | null;
+    };
+    reason?: string;
+    screenshots?: PlatformBrowserScreenshot[];
+    notices?: string[];
+    handoff?: { waited: boolean; resumed: boolean };
+  };
   sessionId: string | null;
   turnId: string;
   /**
@@ -619,7 +624,11 @@ export interface PlatformChatSessionDetail {
 
 /** One turn's entry in a trace read. */
 export interface PlatformChatSessionTraceTurn {
-  browser?: { browserSessionId: string; bootId?: string; box?: { sandboxRowId: string } | { computerId: string } };
+  browser?: {
+    browserSessionId: string;
+    bootId?: string;
+    box?: { sandboxRowId: string } | { computerId: string };
+  };
   screenshots?: PlatformBrowserScreenshot[];
   turnId: string;
   promptIndex: number;
@@ -893,6 +902,11 @@ export interface PlatformEvalRunAttribution {
  * the condensed latest-run projection embedded in `PlatformEvalSuite`.
  */
 export interface PlatformEvalRun {
+  name?: string;
+  tags?: string[];
+  runMetadata?: Record<string, string | number | boolean>;
+  ciMetadata?: import("../eval-reporting-types.js").EvalCiMetadata;
+  runEvaluationsByCase?: import("../run-evaluators.js").CaseRunEvaluation[];
   id: string;
   suiteId: string;
   runNumber: number | null;
@@ -961,12 +975,20 @@ export interface PlatformEvalRun {
    * absent on API deployments that predate run environment attribution.
    */
   environment?: PlatformEvalRunEnvironment | null;
+  /** Durable execution client; absent on older runs. Distinct from launcher. */
+  client?: {
+    id: string | null;
+    name: string;
+    hostStyle?: string;
+    modelId?: string;
+    source: "environment" | "attached_host" | "suite_default" | "sdk";
+  };
   /** Shared by every per-target run from the same fan-out launch. */
   runGroupId?: string;
   /** Model the run actually executed with. Absent on pre-attribution rows. */
   effectiveModelId?: string;
-  /** `"client_default"` inherited the host model; `"override"` used env.modelId. */
-  modelSource?: "client_default" | "override";
+  /** `case` uses the sole snapshot model; the other values describe environment attribution. */
+  modelSource?: "client_default" | "override" | "case";
   /**
    * Which engine executed the run: `"emulated"` (the platform's own turn loop)
    * or `"harness:<id>"` (a real agent runtime such as Claude Code).
@@ -2206,8 +2228,9 @@ export interface PlatformRunCompareSide {
     passRate: number;
   } | null;
   environment?: { id: string; name: string | null };
+  client?: { name: string };
   effectiveModelId?: string;
-  modelSource?: "client_default" | "override";
+  modelSource?: "client_default" | "override" | "case";
 }
 
 /**

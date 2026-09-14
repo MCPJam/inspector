@@ -17,6 +17,7 @@ import {
 import { SuiteRunReview, type SuiteRunReviewProps } from "./suite-run-review";
 import type { RunVerdictHeroView } from "./run-verdict-hero-model";
 import { launchRuns } from "./run-results-matrix-model";
+import { runClientIdentity } from "../evals/helpers";
 import {
   ArrowUpRight,
   Copy,
@@ -146,7 +147,7 @@ export function EvaluateRunPage({
             <div className="flex min-w-0 items-center gap-3">
               <h2 className="text-2xl font-bold leading-8 tracking-tight text-foreground">
                 {targets[0].runNumber
-                  ? `#${targets[0].runNumber}`
+                  ? `Run #${targets[0].runNumber}`
                   : `Run ${formatRunId(targets[0]._id)}`}{" "}
                 Results
               </h2>
@@ -264,11 +265,7 @@ function pairingClientName(
   target: EvalSuiteRun,
   hostNamesById: Map<string, string | null>,
 ): string {
-  if (!target.namedHostId) return "Suite client";
-  return (
-    hostNamesById.get(target.namedHostId) ??
-    `Client …${target.namedHostId.slice(-6)}`
-  );
+  return runClientIdentity(target, hostNamesById).name;
 }
 
 const IN_FLIGHT_STATUSES = new Set(["pending", "running", "grading"]);

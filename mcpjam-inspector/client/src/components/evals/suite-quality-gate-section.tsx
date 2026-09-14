@@ -3,7 +3,7 @@
  *
  * Config only: these rows say what a future run must meet, never what a
  * past run scored. Comparative conditions need a complete baseline;
- * "Any gating scorer errored" does not. Clearing the baseline selector
+ * "Any gating evaluator errored" does not. Clearing the baseline selector
  * also clears the comparative fields so the review diff can name them.
  */
 
@@ -22,10 +22,10 @@ export const QUALITY_GATE_BASELINE_HINT =
   "Comparison conditions use this baseline. The run's own verdict is unchanged.";
 
 export const QUALITY_GATE_ALLOWED_DROP_HINT =
-  "Maximum decrease in a gating scorer's pass rate, in percentage points.";
+  "Maximum decrease in a gating evaluator's pass rate, in percentage points.";
 
 export const QUALITY_GATE_ROLE_LEGEND =
-  "Gate, Warn, and Report describe how a scorer is configured, not a run result.";
+  "Gate, Warn, and Report describe how an evaluator is configured, not a run result.";
 
 export const QUALITY_GATE_CLI_ENFORCEMENT =
   "Applied by mcpjam cloud eval gate.";
@@ -344,7 +344,7 @@ export function SuiteQualityGateSection({
     policy?.noGatingScoreErrors === true
       ? {
           key: "qualityGateNoGatingScoreErrors",
-          label: "Any gating scorer errored",
+          label: "Any gating evaluator errored",
           value: "Fail",
         }
       : null,
@@ -478,7 +478,7 @@ export function SuiteQualityGateSection({
           aligned={simplified}
           value={policy?.maximumPassRateDrop}
           disabled={disabled || !comparativeEnabled}
-          ariaLabel="Maximum gating scorer pass-rate drop"
+          ariaLabel="Maximum gating evaluator pass-rate drop"
           onCommit={(fraction) =>
             commitPolicy({
               ...policy,
@@ -524,7 +524,7 @@ export function SuiteQualityGateSection({
           <GateRow
             settingKey="qualityGateNoDeterministicRegressions"
             label="Deterministic regressions"
-            hint="Fail when a deterministic gating scorer flips against the baseline."
+            hint="Fail when a deterministic gating evaluator flips against the baseline."
           >
             <Switch
               checked={policy?.noDeterministicRegressions === true}
@@ -560,13 +560,13 @@ export function SuiteQualityGateSection({
 
           <GateRow
             settingKey="qualityGateNoGatingScoreErrors"
-            label="Any gating scorer errored"
-            hint="Fails when a gating scorer errors. Does not need a baseline."
+            label="Any gating evaluator errored"
+            hint="Fails when a gating evaluator errors. Does not need a baseline."
           >
             <Switch
               checked={policy?.noGatingScoreErrors === true}
               disabled={disabled}
-              aria-label="Any gating scorer errored"
+              aria-label="Any gating evaluator errored"
               onCheckedChange={(checked) =>
                 commitPolicy({
                   ...policy,

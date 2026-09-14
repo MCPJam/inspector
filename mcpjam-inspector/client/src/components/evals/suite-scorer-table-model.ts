@@ -62,7 +62,7 @@ export const NEW_SCORER_KINDS: readonly PredicateKind[] = ["noEndingQuestion"];
  * existed.
  *
  * The fallback when a backend does not advertise its accepted set: offering a
- * kind an older validator rejects turns "Add scorer" into a save that fails,
+ * kind an older validator rejects turns "Add assertion" into a save that fails,
  * and offering one an older RUNNER cannot evaluate is worse — it fails closed
  * as "unknown predicate type" on every trial of the run.
  *
@@ -109,12 +109,12 @@ export const ROLE_LEGEND: Record<
 > = {
   gate: {
     label: "Gate",
-    meaning: "If this check fails, the iteration fails.",
+    meaning: "If this assertion fails, the iteration fails.",
   },
   warn: {
     label: "Warn",
     meaning:
-      "If this check fails, a warning is shown without failing the iteration.",
+      "If this assertion fails, a warning is shown without failing the iteration.",
   },
   report: {
     label: "Report",
@@ -189,13 +189,18 @@ export const SCORER_LIBRARY_CATEGORY_LABELS: Record<
   response: "Response",
 };
 
-const LIBRARY_CATEGORY_ORDER: readonly ScorerLibraryCategoryId[] = [
+/**
+ * Chain order, then the budget group: the same six-stage order the run page
+ * reports in, so a reader picks an assertion from the heading its evidence
+ * will appear under.
+ */
+export const LIBRARY_CATEGORY_ORDER: readonly ScorerLibraryCategoryId[] = [
   "discovery",
   "selection",
   "call",
+  "response",
   "userValue",
   "budget",
-  "response",
 ];
 
 /**
@@ -335,7 +340,7 @@ export type ScorerTableView = {
 const STAGE_CONFIG_CHIP_LABEL: Record<StageConfigState["state"], string> = {
   runner: "Observed by the runner",
   gated: "Gated",
-  gap: "No grader",
+  gap: "No evaluator",
   judgeOnRequest: "Judge on request",
   judgeAutomatic: "Judge automatic",
   judgeOff: "Judge off",

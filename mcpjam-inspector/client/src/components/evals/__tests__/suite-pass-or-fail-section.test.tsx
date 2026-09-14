@@ -1,11 +1,11 @@
 /**
- * The "Scorers and judges" section, and the policy controls beside it.
+ * The "Evaluators" section, and the policy controls beside it.
  *
  * Two properties are worth a test rather than a reading:
  *
  *   - an EMPTY stage says the right kind of nothing. `connection`, `discovery`
  *     and `call` have no authorable grader on this page — the runner measures
- *     them on every trial — so "No grader" there would read as a gap somebody
+ *     them on every iteration — so "No evaluator" there would read as a gap somebody
  *     should close. And neither answer may borrow `notMeasured`, which is a
  *     RUN-state word for a stage nobody observed.
  *   - the threshold field is a PERCENT over a stored FRACTION. Typing 80 must
@@ -81,9 +81,9 @@ describe("SuitePassOrFailSection", () => {
     }
   });
 
-  it("says 'No grader' for an unconfigured response stage", () => {
+  it("says 'No evaluator' for an unconfigured response stage", () => {
     const { container } = renderSection();
-    // The stage lists its standard checks as off rows, none of them a grader.
+    // The stage lists its standard checks as off rows, none of them an evaluator.
     const rows = Array.from(
       container.querySelectorAll(
         '[data-stage-group="response"] [data-scorer-row]',
@@ -104,7 +104,7 @@ describe("SuitePassOrFailSection", () => {
     for (const stage of ["connection", "discovery"]) {
       const copy = emptyCopy(container, stage) ?? "";
       expect(copy, stage).toContain("Measured by the runner");
-      expect(copy.toLowerCase(), stage).not.toContain("no grader");
+      expect(copy.toLowerCase(), stage).not.toContain("no evaluator");
       // The run-state word. Settings has observed nothing, so claiming a
       // measurement did not happen states something nobody looked at.
       expect(copy.toLowerCase(), stage).not.toContain("not measured");
@@ -261,7 +261,7 @@ describe("VerdictPolicyUpgradeButton", () => {
         onUpgrade={onUpgrade}
       />,
     );
-    expect(screen.getByText(/3 repetitions, 80% threshold/)).toBeTruthy();
+    expect(screen.getByText(/3 iterations, 80% threshold/)).toBeTruthy();
     await user.click(
       screen.getByRole("button", { name: /switch to verdict policy v2/i }),
     );

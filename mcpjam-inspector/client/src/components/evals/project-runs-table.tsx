@@ -13,6 +13,11 @@ import {
   type RunPassRateChange,
 } from "./run-pass-rate-changes";
 import { useProjectRunHistory } from "./use-project-run-history";
+import {
+  displayRunServerNames,
+  isEphemeralCheckServerName,
+} from "./github-check-server-name";
+import { getEffectiveSuiteServers, runClientIdentity } from "./helpers";
 import { MetricStrip } from "./metric-strip";
 import {
   buildSuiteMetricStripData,
@@ -51,7 +56,7 @@ import {
   DropdownMenuCheckboxItem,
 } from "@mcpjam/design-system/dropdown-menu";
 import { useMemo, useState, type ReactNode } from "react";
-import { usePaginatedQuery } from "convex/react";
+import { usePaginatedQuery, useQuery } from "convex/react";
 import { ChevronDown, GitBranch, Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -77,7 +82,7 @@ import {
   resolveRunOrigin,
   visibleRunOriginFilters,
 } from "@/lib/evals/run-origin";
-import type { EvalSuiteRun } from "./types";
+import type { EvalSuiteOverviewEntry, EvalSuiteRun } from "./types";
 import {
   RunDecisionVerdictBadge,
   RunDecisionVerdictUnavailable,
@@ -105,6 +110,11 @@ export const PROJECT_RUNS_PAGE_SIZE = 50;
  * reach for one.
  */
 export interface ProjectRunRow {
+  client?: EvalSuiteRun["client"] | null;
+  namedHostId?: string | null;
+  name?: string;
+  tags?: string[];
+  runMetadata?: Record<string, string | number | boolean>;
   _id: string;
   suiteId: string;
   suiteName: string | null;
@@ -306,6 +316,47 @@ export function ProjectRunsTable({
     isAuthenticated: historyMetricsEnabled,
     projectId,
   });
+
+  // Each run freezes the server names it ran with, and the Server filter is
+  // built from them — but a GitHub App check runs the pull request's own build
+  // in a sandbox, so what it freezes is a throwaway `gh-check-<triggerId>` id
+  // (see `github-check-server-name.ts`). Resolve those to the suite's real
+  // servers, and only pay for the suite lookup when a loaded run has one.
+  const rawRunServers = useMemo(
+    () =>
+      new Map<string, string[]>(
+        [...history.details].map(([id, detail]) => [
+          id,
+          detail.run.configSnapshot?.environment?.servers ?? [],
+        ]),
+      ),
+    [history.details],
+  );
+  const hasEphemeralCheckServer = useMemo(
+    () =>
+      [...rawRunServers.values()].some((servers) =>
+        servers.some(isEphemeralCheckServerName),
+      ),
+    [rawRunServers],
+  );
+  const suiteOverview = useQuery(
+    "testSuites:getTestSuitesOverview" as any,
+    hasEphemeralCheckServer ? ({ projectId } as any) : "skip",
+  ) as EvalSuiteOverviewEntry[] | undefined;
+  const suiteServersById = useMemo(
+    () =>
+      new Map<string, string[]>(
+        // The suite's EFFECTIVE servers, not the legacy flat list: a suite
+        // that picks its servers through a host or a standalone attachment
+        // leaves `environment.servers` empty, which fell back to the shared
+        // label and left the filter no better off.
+        (suiteOverview ?? []).map((entry) => [
+          entry.suite._id,
+          getEffectiveSuiteServers(entry.suite),
+        ]),
+      ),
+    [suiteOverview],
+  );
   // Derived once per data/filter change, not per render. The chain below
   // groups every loaded run and builds a metric point per launch; re-running
   // it on each keystroke in the commit filter, and on the 15-second refresh
@@ -357,17 +408,20 @@ export function ProjectRunsTable({
         ];
       }),
     );
+    const suiteIdByRunId = new Map(rows.map((row) => [row._id, row.suiteId]));
     const runServers = new Map(
-      [...history.details].map(([id, detail]) => [
+      [...rawRunServers].map(([id, servers]) => [
         id,
-        detail.run.configSnapshot?.environment?.servers ?? [],
+        displayRunServerNames(
+          servers,
+          suiteServersById.get(suiteIdByRunId.get(id) ?? "") ?? [],
+        ),
       ]),
     );
     const clientOptions = [
       ...new Set(
-        [...historyRows.values()].flatMap((row) =>
-          row.client ? [row.client] : [],
-        ),
+        rows.map((row) => historyRows.get(row._id)?.client ??
+          runClientIdentity({ client: row.client, namedHostId: row.namedHostId ?? undefined }, hostNamesById).name),
       ),
     ].sort();
     const serverOptions = [...new Set([...runServers.values()].flat())].sort();
@@ -399,7 +453,11 @@ export function ProjectRunsTable({
     const matching = sourceAndSuiteRows.filter(
       (row) =>
         (clientFilter === ALL_EVAL_FILTER_VALUES ||
-          historyRows.get(row._id)?.client === clientFilter) &&
+          (historyRows.get(row._id)?.client ??
+            runClientIdentity(
+              { client: row.client, namedHostId: row.namedHostId ?? undefined },
+              hostNamesById,
+            ).name) === clientFilter) &&
         (serverFilter === ALL_EVAL_FILTER_VALUES ||
           runServers.get(row._id)?.includes(serverFilter)) &&
         (repositoryFilter === ALL_EVAL_FILTER_VALUES ||
@@ -519,6 +577,8 @@ export function ProjectRunsTable({
     rows,
     sourceAndSuiteRows,
     history.details,
+    rawRunServers,
+    suiteServersById,
     hosts,
     projectEnvironmentsEnabled,
     historyMetricsEnabled,
@@ -700,8 +760,8 @@ export function ProjectRunsTable({
                 <span className="min-w-0 flex-1 truncate text-left">
                   {suiteFilter === ALL_SUITES
                     ? "Suite"
-                    : (suiteOptions.find(([id]) => id === suiteFilter)?.[1] ??
-                      "Suite")}
+                    : suiteOptions.find(([id]) => id === suiteFilter)?.[1] ??
+                      "Suite"}
                 </span>
               </SelectTrigger>
               <SelectContent className="max-w-[min(24rem,calc(100vw-2rem))]">
@@ -1141,15 +1201,15 @@ function ProjectRunTableRow({
         <div className={grouped ? (nested ? "pl-12" : "pl-5") : undefined}>
           <span className="block truncate font-medium">
             {grouped
-              ? `#${row.runNumber}`
-              : (row.suiteName ?? (
+              ? row.name || `#${row.runNumber}`
+              : row.suiteName ?? (
                   <span
                     className="text-muted-foreground"
                     title="This run's suite no longer exists, so its detail view can't be opened."
                   >
                     Deleted suite
                   </span>
-                ))}
+                )}
           </span>
           <span className="text-[10px] text-muted-foreground" title={row._id}>
             {grouped
@@ -1160,7 +1220,16 @@ function ProjectRunTableRow({
       </TableCell>
       {historyMetricsEnabled ? (
         <TableCell className="text-xs">
-          <RunClientsCell rows={historyRow ? [historyRow] : []} />
+          <RunClientsCell rows={historyRow ? [historyRow] : [
+                    {
+                      client: runClientIdentity({
+                        client: row.client,
+                        namedHostId: row.namedHostId ?? undefined,
+                      }).name,
+                      hostStyle: row.client?.hostStyle,
+                      models: row.client?.modelId ? [row.client.modelId] : [],
+                    },
+                  ]} />
         </TableCell>
       ) : (
         <TableCell>

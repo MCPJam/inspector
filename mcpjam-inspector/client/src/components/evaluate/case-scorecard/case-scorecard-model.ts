@@ -80,7 +80,10 @@ import {
   roleOfPredicate,
   type ScorerUiRole,
 } from "@/components/evals/suite-scorer-table-model";
-import { judgeMode, type JudgeMode } from "@/components/evals/suite-grading-model";
+import {
+  judgeMode,
+  type JudgeMode,
+} from "@/components/evals/suite-grading-model";
 import type {
   EvalJudgeConfig,
   EvalJudgeConfigOverride,
@@ -123,7 +126,7 @@ export const ROUTE_OWNED_KINDS: ReadonlySet<PredicateKind> =
   new Set<PredicateKind>(["toolCalledWith"]);
 
 /**
- * What the case page's "+ Add scorer" library may offer.
+ * What the case page's "+ Add assertion" library may offer.
  *
  * Excludes the route's own kind (offering it twice would let a reader author a
  * route the route row then contradicts) and the opt-in kinds, which are
@@ -382,6 +385,7 @@ const PREDICATE_PURPOSE: Record<PredicateKind, string> = {
   onlyToolsCalled: "Require that nothing else is called",
   firstToolWas: "Require this tool to be reached first",
   responseContains: "Check what the answer says",
+  responseCloseTo: "Compare the answer to reference text",
   responseMatches: "Check the answer's shape",
   noToolErrors: "Catch tool failures",
   finalAssistantMessageNonEmpty: "Catch an empty answer",
@@ -483,7 +487,9 @@ export function stepScope(
 function rowTooltip(kindLabel: string, role: ScorerUiRole, inline: boolean) {
   const parts = [kindLabel, ROLE_LEGEND[role].meaning];
   if (inline) {
-    parts.push("Graded where it sits in the run, not over the whole trial.");
+    parts.push(
+      "Graded where it sits in the run, not over the whole iteration.",
+    );
   }
   return parts.join(" ");
 }
@@ -500,7 +506,7 @@ export function routeLabel(state: RouteState): string {
     case "noTool":
       return "No tool should be called";
     case "checks":
-      return "Any route — graded by the scorers below";
+      return "Any route — graded by the evaluators below";
     case "unset":
       return "Which tool should handle it?";
     case "locked":
@@ -747,11 +753,7 @@ export function buildCaseScorecard(input: CaseScorecardInput): CaseScorecard {
     roleLock: "route",
     editable: route.kind !== "locked",
     route,
-    tooltip: rowTooltip(
-      "Tool-call matching",
-      "gate",
-      false,
-    ),
+    tooltip: rowTooltip("Tool-call matching", "gate", false),
     ...(route.kind === "tools" || route.kind === "noTool"
       ? {
           join: {
@@ -774,7 +776,7 @@ export function buildCaseScorecard(input: CaseScorecardInput): CaseScorecard {
     editable: true,
     judge: facts,
     tooltip: rowTooltip(
-      "A judge scores trial evidence from 0 to 1.",
+      "A judge scores iteration evidence from 0 to 1.",
       judgeRole,
       false,
     ),
@@ -802,7 +804,7 @@ export function buildCaseScorecard(input: CaseScorecardInput): CaseScorecard {
           roleLock: "inherited",
         }),
       )
-    : (envelopeMode === "inherit" ? [] : (input.predicates?.list ?? [])).map(
+    : (envelopeMode === "inherit" ? [] : input.predicates?.list ?? []).map(
         (predicate, index) =>
           predicateRow({
             predicate,

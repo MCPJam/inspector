@@ -89,7 +89,7 @@ export function CaseChecksPage({
         />
         {onConfigureSuite ? (
           <Button variant="outline" size="sm" onClick={onConfigureSuite}>
-            Configure suite checks
+            Configure suite assertions
           </Button>
         ) : null}
       </div>

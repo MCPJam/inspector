@@ -301,10 +301,12 @@ describe("SuiteScorerTable", () => {
     renderTable();
     await user.click(screen.getByRole("button", { name: "Add assertion" }));
     for (const name of [
-      "Assertions · Tool selection",
-      "Assertions · Answer and outcome",
-      "Limits · Time and usage",
-      "Assertions · Tool inputs and results",
+      "Assertions · Discovery",
+      "Assertions · Selection",
+      "Assertions · Tool call",
+      "Assertions · Response",
+      "Assertions · User value",
+      "Assertions · Budgets",
     ]) {
       expect(screen.getByRole("region", { name })).toBeInTheDocument();
     }
@@ -323,7 +325,7 @@ describe("SuiteScorerTable", () => {
     const { container } = renderTable({
       predicates: [{ type: "noToolErrors" }],
     });
-    expect(screen.queryByRole("group", { name: "Check role" })).toBeNull();
+    expect(screen.queryByRole("group", { name: "Assertion role" })).toBeNull();
     const row = container.querySelector(
       '[data-scorer-id="predicate:0"]',
     ) as HTMLElement;
@@ -340,7 +342,7 @@ describe("SuiteScorerTable", () => {
         { type: "noToolErrors", role: "advisory", severity: "warn" } as never,
       ],
     });
-    expect(screen.queryByRole("group", { name: "Check role" })).toBeNull();
+    expect(screen.queryByRole("group", { name: "Assertion role" })).toBeNull();
     const row = container.querySelector(
       '[data-scorer-id="predicate:0"]',
     ) as HTMLElement;

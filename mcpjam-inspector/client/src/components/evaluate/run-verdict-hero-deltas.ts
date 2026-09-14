@@ -4,7 +4,7 @@
  * Colour is progress vs regression, not "up = green". The arrow follows the
  * number; the tone follows whether that movement helped.
  */
-import { compareRunsBySequence } from "../evals/helpers";
+import { compareRunsBySequence, runClientIdentity } from "../evals/helpers";
 import { formatRunCaseLatencyMs } from "../evals/run-case-groups";
 import type { EvalIteration, EvalSuiteRun } from "../evals/types";
 import type { HeroStats } from "./run-verdict-hero-model";
@@ -148,7 +148,7 @@ export function previousCompletedRunOf(
         (run) =>
           run._id !== current._id &&
           run.status === "completed" &&
-          run.namedHostId === current.namedHostId &&
+          runClientIdentity(run).key === runClientIdentity(current).key &&
           run.effectiveModelId === current.effectiveModelId &&
           (!current.runGroupId || run.runGroupId !== current.runGroupId) &&
           compareRunsBySequence(run, current) < 0,
@@ -158,7 +158,9 @@ export function previousCompletedRunOf(
 }
 
 export function pairingKey(run: EvalSuiteRun, modelId?: string): string {
-  return `${run.namedHostId ?? ""}::${modelId ?? run.effectiveModelId ?? ""}`;
+  return `${runClientIdentity(run).key}::${
+    modelId ?? run.effectiveModelId ?? run.client?.modelId ?? ""
+  }`;
 }
 
 /** Passed polarity: more is progress, fewer is regression. No fake zeros. */

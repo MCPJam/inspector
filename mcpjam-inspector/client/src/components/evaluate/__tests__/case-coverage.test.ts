@@ -128,8 +128,8 @@ describe("coverageDetail", () => {
   it("goes amber ONLY when a gap has something that would fill it", () => {
     const withSuggestion = coverageDetail(empty, 2);
     const without = coverageDetail(empty, 0);
-    expect(withSuggestion.label).toBe("Nothing checks this · 2 suggested");
-    expect(without.label).toBe("No grader");
+    expect(withSuggestion.label).toBe("No assertion here · 2 suggested");
+    expect(without.label).toBe("No evaluator");
     expect(withSuggestion.toneClass).not.toBe(without.toneClass);
   });
 
@@ -145,7 +145,7 @@ describe("coverageDetailByStage", () => {
     // Nothing routes to Response under PREDICATE_STAGE in this release, so
     // every case would be permanently amber there if a bare gap were amber.
     const detail = coverageDetailByStage(card(), []);
-    expect(detail.response?.label).toBe("No grader");
+    expect(detail.response?.label).toBe("No evaluator");
   });
 
   it("counts suggestions against the stage they would land on", () => {
@@ -153,7 +153,7 @@ describe("coverageDetailByStage", () => {
       suggestionAt("selection"),
       suggestionAt("selection"),
     ]);
-    expect(detail.selection?.label).toBe("Nothing checks this · 2 suggested");
+    expect(detail.selection?.label).toBe("No assertion here · 2 suggested");
   });
 
   it("covers every stage of the chain", () => {

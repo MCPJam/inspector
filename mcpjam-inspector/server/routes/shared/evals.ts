@@ -595,6 +595,11 @@ export type RunEvalsRequest = z.infer<typeof RunEvalsRequestSchema>;
  * {@link EvalRunProvenance} beside the mutation call that has to honour it.
  */
 type RunEvalsWithManagerRequest = RunEvalsRequest & {
+  /** Already resolved by the public inline-suite boundary. */
+  hostAttachments?: Array<{
+    namedHostId: string;
+    selectedServerIds?: string[];
+  }>;
   orgModelConfig?: ResolvedOrgModelConfig;
   /**
    * Extra headers stamped on every per-step Convex request this run makes.
@@ -1605,6 +1610,10 @@ function flushCaseOutcomes(
  * stays the single run engine that calls this then starts the recorder.
  */
 export async function authorEvalSuite(args: {
+  hostAttachments?: Array<{
+    namedHostId: string;
+    selectedServerIds?: string[];
+  }>;
   convexClient: ReturnType<typeof createConvexClients>["convexClient"];
   tests: RunEvalsRequest["tests"];
   resolvedServerIds: string[];
@@ -1963,6 +1972,9 @@ export async function authorEvalSuite(args: {
         description: suiteDescription,
         environment: persistedEnvironment,
         defaultPassCriteria: passCriteria,
+        ...(args.hostAttachments
+          ? { hostAttachments: args.hostAttachments }
+          : {}),
         ...(idempotencyKey ? { idempotencyKey } : {}),
       },
     );
@@ -2381,6 +2393,7 @@ export async function prepareEvalRun(
   // their names so the run record + return below still reference them.
   const { suiteId: resolvedSuiteId, caseUpsert: authoredCaseUpsert } =
     await authorEvalSuite({
+      hostAttachments: request.hostAttachments,
       convexClient,
       tests,
       resolvedServerIds,
