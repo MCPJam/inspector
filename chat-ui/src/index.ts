@@ -58,6 +58,7 @@ export {
   type ReasoningDisplayMode,
   type ToolRenderContext,
   type WidgetRenderInput,
+  type JsonRenderer,
 } from "./types";
 
 // --- Pure helpers (single-sourced for hosts that build messages/overrides) ---

@@ -4,6 +4,7 @@ import { Markdown } from "./internal/markdown";
 import { getToolStateMeta, type ToolState } from "./internal/thread-helpers";
 import { JsonView, renderJsonText } from "./parts/json-view";
 import { FoldedBlock } from "./parts/folded-block";
+import type { JsonRenderer } from "./types";
 
 export interface ToolCallPartProps {
   toolName: string;
@@ -27,6 +28,16 @@ export interface ToolCallPartProps {
    * `useAppToolAttribution`; the read-only package accepts it as a plain prop.
    */
   attributionLabel?: string;
+  /**
+   * How to display the JSON payloads. Defaults to {@link JsonView}, this
+   * package's plain `<pre>`; the inspector passes the collapsible tree the
+   * Playground uses. See {@link JsonRenderer}.
+   *
+   * It governs the two RAW payloads — input and unreadable output — and never
+   * the readable result, which is prose or an already-fenced block and goes
+   * through Markdown whatever this is set to.
+   */
+  renderJson?: JsonRenderer;
   className?: string;
 }
 
@@ -56,6 +67,7 @@ export function ToolCallPart({
   errorText,
   resultText,
   attributionLabel,
+  renderJson,
   className,
 }: ToolCallPartProps) {
   const stateMeta = getToolStateMeta(toolState);
@@ -78,6 +90,12 @@ export function ToolCallPart({
   // same way.
   const inputText = hasInput ? renderJsonText(input) : "";
   const outputText = hasRawOutput ? renderJsonText(output) : "";
+
+  // One place decides, so input and output cannot end up rendered by two
+  // different things — which is what happened while only one call site had
+  // been switched over.
+  const showJson = (value: unknown, text: string) =>
+    renderJson ? renderJson(value, text) : <JsonView value={value} text={text} />;
 
   return (
     <div
@@ -110,7 +128,7 @@ export function ToolCallPart({
 
       {hasInput ? (
         <FoldedBlock label="Input" text={inputText}>
-          <JsonView value={input} text={inputText} />
+          {showJson(input, inputText)}
         </FoldedBlock>
       ) : null}
 
@@ -138,7 +156,7 @@ export function ToolCallPart({
 
       {hasRawOutput ? (
         <FoldedBlock label="Output" text={outputText}>
-          <JsonView value={output} text={outputText} />
+          {showJson(output, outputText)}
         </FoldedBlock>
       ) : null}
     </div>

@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import { copyToClipboard } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
+import { renderSessionJson } from "./session-json-view";
 import type { ModelDefinition, ModelProvider } from "@/shared/types";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import {
@@ -767,6 +768,7 @@ export function ShareUsageThreadDetail({
                   )}
                   reasoningDisplayMode={reasoningDisplayMode}
                   widgetPolicy="placeholder"
+                  renderJson={renderSessionJson}
                   className="mx-auto max-w-4xl px-4 py-4"
                 />
               }
@@ -780,6 +782,10 @@ export function ShareUsageThreadDetail({
                 )}
                 reasoningDisplayMode={reasoningDisplayMode}
                 widgetPolicy="placeholder"
+                // The Playground's own JSON tree, via the package's seam —
+                // see `session-json-view`. Passed to the fallback above too,
+                // so losing the ratings query does not also lose the viewer.
+                renderJson={renderSessionJson}
                 className="mx-auto max-w-4xl px-4 py-4"
               />
             </ErrorBoundary>

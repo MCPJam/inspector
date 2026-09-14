@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ShareUsageThreadDetail } from "../ShareUsageThreadDetail";
+import { renderSessionJson } from "../session-json-view";
 
 const {
   mockMessageView,
@@ -260,6 +261,20 @@ describe("ShareUsageThreadDetail", () => {
           reasoningDisplayMode: "collapsible",
           widgetPolicy: "placeholder",
         }),
+      );
+    });
+  });
+
+  it("shows tool payloads in the Playground's JSON tree, not a <pre>", async () => {
+    // The wiring half of the change: the transcript has to be HANDED the
+    // renderer, or the package falls back to its own plain block and the
+    // Playground component is reused in name only. What that renderer draws is
+    // asserted in `session-json-view.test.tsx`.
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+
+    await waitFor(() => {
+      expect(mockReadOnlyTranscript).toHaveBeenCalledWith(
+        expect.objectContaining({ renderJson: renderSessionJson }),
       );
     });
   });
