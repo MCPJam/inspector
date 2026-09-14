@@ -35,10 +35,8 @@ import type {
 } from "@/components/swarms/new-swarm-confirm-step";
 import type { SwarmLaunchedRun } from "@/components/swarms/new-swarm-running-step";
 import {
-  DEFAULT_SWARM_INTENSITY,
   MAX_SWARM_ITERATIONS,
   MIN_SWARM_ITERATIONS,
-  SWARM_INTENSITY_PRESETS,
   type SwarmPushIntensity,
 } from "@/components/swarms/swarm-intensity";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
@@ -127,8 +125,8 @@ export type NewSwarmFlowDraft = {
   resolvedEnvironments: ProjectEnvironmentView[] | null;
   createdEnvOverlay: ProjectEnvironmentView[];
   pushIntensity: SwarmPushIntensity;
-  /** Iterations per goal, as set on Confirm. */
-  iterations: number;
+  /** Iterations per goal, keyed by proposed persona key. */
+  iterationsByPersona: Record<string, number>;
   reusedIds: string[];
   proposed: ProposedPersona[];
   launchedRuns: SwarmLaunchedRun[];
@@ -154,14 +152,24 @@ type StoredDraft = {
 const FLOW_STEPS: NewSwarmFlowStep[] = ["describe", "confirm", "running"];
 const INTENSITIES: SwarmPushIntensity[] = ["quick", "standard", "launch"];
 
-function clampIterations(value: unknown): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return SWARM_INTENSITY_PRESETS[DEFAULT_SWARM_INTENSITY].sessionsPerTarget;
+/**
+ * Per-persona iterations, dropping anything the counter could not produce.
+ *
+ * Clamped rather than rejected: a stored number outside the backend's range
+ * would fail the launch, and throwing the whole draft away over it would
+ * lose a slate the user paid a model call for.
+ */
+function parseIterations(value: unknown): Record<string, number> {
+  if (!isRecord(value)) return {};
+  const parsed: Record<string, number> = {};
+  for (const [key, count] of Object.entries(value)) {
+    if (typeof count !== "number" || !Number.isFinite(count)) continue;
+    parsed[key] = Math.min(
+      MAX_SWARM_ITERATIONS,
+      Math.max(MIN_SWARM_ITERATIONS, Math.round(count)),
+    );
   }
-  return Math.min(
-    MAX_SWARM_ITERATIONS,
-    Math.max(MIN_SWARM_ITERATIONS, Math.round(value)),
-  );
+  return parsed;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -321,9 +329,9 @@ function parseDraft(value: unknown): NewSwarmFlowDraft | null {
   // Tolerated like `name`: a draft written before this field existed is still
   // resumable, and its other fields are what made it resumable anyway.
   const nameEdited = value.nameEdited === true;
-  // Tolerated like `name`, and clamped: a draft written before the
-  // iterations control existed still resumes, at the seeded count.
-  const iterations = clampIterations(value.iterations);
+  // Tolerated like `name`: a draft written before the iterations control
+  // existed still resumes, with every persona at the default count.
+  const iterationsByPersona = parseIterations(value.iterationsByPersona);
   if (!isComposerState(value.targetState)) return null;
   if (
     value.resolvedEnvironmentIds !== null &&
@@ -360,7 +368,7 @@ function parseDraft(value: unknown): NewSwarmFlowDraft | null {
     resolvedEnvironments: value.resolvedEnvironments,
     createdEnvOverlay: value.createdEnvOverlay,
     pushIntensity: intensity as SwarmPushIntensity,
-    iterations,
+    iterationsByPersona,
     reusedIds: value.reusedIds,
     proposed: value.proposed,
     launchedRuns: value.launchedRuns,

@@ -7,6 +7,7 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_SWARM_ITERATIONS,
   MAX_SWARM_ITERATIONS,
   MIN_SWARM_ITERATIONS,
   SWARM_INTENSITY_PRESETS,
@@ -53,75 +54,102 @@ describe("swarm intensity presets", () => {
 });
 
 /**
- * The control sizes the journeys this swarm CREATES. Launch deliberately does
+ * The counter sizes the journeys this swarm CREATES, per persona. Launch does
  * not rewrite a shared journey's config, so the quote has to be built the same
- * way — otherwise moving the counter silently re-prices work it does not size.
+ * way — otherwise moving one persona's counter silently re-prices work it does
+ * not size.
  */
 describe("estimateLaunchSessions", () => {
-  it("multiplies goals, iterations and environments", () => {
+  it("multiplies each persona's own goals by its own iterations", () => {
+    // The reason the counter moved onto the cards: the generator hands every
+    // persona the same goals, but the user edits that slate, so there is no
+    // single "goals per persona" left to multiply by.
     expect(
       estimateLaunchSessions({
-        iterations: 2,
-        newJourneyCount: 20,
+        personas: [
+          { goalCount: 5, iterations: 2 },
+          { goalCount: 3, iterations: 1 },
+        ],
+        reusedSessionsPerTarget: [],
+        environmentCount: 1,
+      })
+    ).toBe(13);
+  });
+
+  it("leaves the other personas alone when one counter moves", () => {
+    const quoteFirstAt = (iterations: number) =>
+      estimateLaunchSessions({
+        personas: [
+          { goalCount: 5, iterations },
+          { goalCount: 3, iterations: 1 },
+        ],
+        reusedSessionsPerTarget: [],
+        environmentCount: 1,
+      });
+    expect(quoteFirstAt(2) - quoteFirstAt(1)).toBe(5);
+  });
+
+  it("applies environments once, to the whole slate", () => {
+    expect(
+      estimateLaunchSessions({
+        personas: [
+          { goalCount: 5, iterations: 2 },
+          { goalCount: 3, iterations: 1 },
+        ],
         reusedSessionsPerTarget: [],
         environmentCount: 3,
-      }),
-    ).toBe(120);
+      })
+    ).toBe(39);
   });
 
   it("treats no environment as one — the quote is never zero", () => {
     expect(
       estimateLaunchSessions({
-        iterations: 1,
-        newJourneyCount: 2,
+        personas: [{ goalCount: 2, iterations: 1 }],
         reusedSessionsPerTarget: [],
         environmentCount: 0,
-      }),
+      })
     ).toBe(2);
   });
 
-  it("prices reused journeys at their own sessions, not the counter's", () => {
+  it("prices reused goals at their own sessions, not a counter's", () => {
     expect(
       estimateLaunchSessions({
-        iterations: 2,
-        newJourneyCount: 0,
+        personas: [],
         reusedSessionsPerTarget: [4, 1],
         environmentCount: 1,
-      }),
+      })
     ).toBe(5);
   });
 
-  it("holds a reused journey's sessions steady across a counter change", () => {
+  it("holds reused sessions steady while an authored counter moves", () => {
     const quoteAt = (iterations: number) =>
       estimateLaunchSessions({
-        iterations,
-        newJourneyCount: 0,
+        personas: [{ goalCount: 1, iterations }],
         reusedSessionsPerTarget: [4],
         environmentCount: 2,
       });
-    expect(quoteAt(1)).toBe(8);
-    expect(quoteAt(5)).toBe(8);
+    expect(quoteAt(1)).toBe(10);
+    expect(quoteAt(3)).toBe(14);
   });
 
-  it("still seeds rows that carry no config of their own", () => {
+  it("reads a row carrying no config at the default", () => {
     expect(
       estimateLaunchSessions({
-        iterations: 2,
-        newJourneyCount: 0,
+        personas: [],
         reusedSessionsPerTarget: [null],
         environmentCount: 1,
-      }),
-    ).toBe(2);
+      })
+    ).toBe(DEFAULT_SWARM_ITERATIONS);
   });
 
-  it("sizes newly authored journeys by the counter, and fans both out", () => {
+  it("adds authored and reused, then fans both out", () => {
     expect(
       estimateLaunchSessions({
-        iterations: 2,
-        newJourneyCount: 3,
+        personas: [{ goalCount: 3, iterations: 2 }],
         reusedSessionsPerTarget: [5],
         environmentCount: 2,
-      }),
+      })
     ).toBe(22);
   });
 });

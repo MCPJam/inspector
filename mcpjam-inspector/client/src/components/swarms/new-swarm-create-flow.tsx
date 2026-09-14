@@ -65,6 +65,7 @@ import {
 } from "@/components/swarms/new-swarm-flow-draft";
 import {
   DEFAULT_SWARM_INTENSITY,
+  DEFAULT_SWARM_ITERATIONS,
   MAX_SWARM_ITERATIONS,
   MIN_SWARM_ITERATIONS,
   SWARM_INTENSITY_PRESETS,
@@ -518,23 +519,29 @@ export function NewSwarmCreateFlow({
   // asks for. Confirm no longer picks it: iterations is the control there.
   const pushIntensity =
     restoredDraft?.pushIntensity ?? DEFAULT_SWARM_INTENSITY;
-  // Seeded from the preset that generated the slate, then owned by the user:
-  // Confirm sets it directly, so the preset never overwrites it afterwards.
-  const [iterations, setIterations] = useState<number>(
-    restoredDraft?.iterations ??
-      SWARM_INTENSITY_PRESETS[DEFAULT_SWARM_INTENSITY].sessionsPerTarget,
-  );
-  const handleIterationsChange = useCallback((value: number) => {
-    // A cleared number input reports NaN; hold the last good count rather
-    // than quoting a swarm of zero conversations.
-    if (!Number.isFinite(value)) return;
-    setIterations(
-      Math.min(
+  // One entry per persona, keyed by its proposal key. Absent means the
+  // default: a persona the user has not touched costs nothing to store,
+  // and a regenerated slate mints new keys rather than inheriting numbers
+  // from personas that no longer exist.
+  const [iterationsByPersona, setIterationsByPersona] = useState<
+    Record<string, number>
+  >(restoredDraft?.iterationsByPersona ?? {});
+  const handleIterationsChange = useCallback(
+    (personaKey: string, value: number) => {
+      // A cleared number input reports NaN; hold the last good count rather
+      // than quoting a persona at zero conversations.
+      if (!Number.isFinite(value)) return;
+      const next = Math.min(
         MAX_SWARM_ITERATIONS,
         Math.max(MIN_SWARM_ITERATIONS, Math.round(value)),
-      ),
-    );
-  }, []);
+      );
+      setIterationsByPersona((current) => ({
+        ...current,
+        [personaKey]: next,
+      }));
+    },
+    [],
+  );
   const [reusedIds, setReusedIds] = useState<string[]>(
     restoredDraft?.reusedIds ?? [],
   );
@@ -1213,7 +1220,7 @@ export function NewSwarmCreateFlow({
                 ? { environmentIds: envPayload.environmentIds }
                 : {}),
               config: {
-                sessionsPerTarget: iterations,
+                sessionsPerTarget: DEFAULT_SWARM_ITERATIONS,
                 maxTurns: preset.maxTurns,
               },
               ...(payload.judgeConfig
@@ -1352,7 +1359,9 @@ export function NewSwarmCreateFlow({
                   hostIds: envPayload!.hostIds,
                   environmentIds: envPayload!.environmentIds,
                   config: {
-                    sessionsPerTarget: iterations,
+                    sessionsPerTarget:
+                      iterationsByPersona[persona.key] ??
+                      DEFAULT_SWARM_ITERATIONS,
                     maxTurns: preset.maxTurns,
                   },
                   ...(payload.judgeConfig
@@ -1530,7 +1539,7 @@ export function NewSwarmCreateFlow({
       onCreateJourney,
       onCreatePersona,
       onUpdateJourney,
-      iterations,
+      iterationsByPersona,
       personaList.length,
       preset,
       proposed,
@@ -1596,7 +1605,7 @@ export function NewSwarmCreateFlow({
       resolvedEnvironments,
       createdEnvOverlay,
       pushIntensity,
-      iterations,
+      iterationsByPersona,
       reusedIds,
       proposed,
       launchedRuns,
@@ -1615,7 +1624,7 @@ export function NewSwarmCreateFlow({
     draft,
     generatingSince,
     hasResumableWork,
-    iterations,
+    iterationsByPersona,
     nameEdited,
     launchedRuns,
     projectId,
@@ -1857,7 +1866,7 @@ export function NewSwarmCreateFlow({
             onRemoveReused={(personaId) =>
               setReusedIds((ids) => ids.filter((id) => id !== personaId))
             }
-            iterations={iterations}
+            iterationsByPersona={iterationsByPersona}
             onIterationsChange={handleIterationsChange}
             environmentCount={environmentIds.length}
             environmentLabels={environmentLabels}

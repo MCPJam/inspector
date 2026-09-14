@@ -35,7 +35,7 @@ function draft(overrides: Partial<NewSwarmFlowDraft> = {}): NewSwarmFlowDraft {
     resolvedEnvironments: null,
     createdEnvOverlay: [],
     pushIntensity: "quick",
-    iterations: 2,
+    iterationsByPersona: { "persona-0-Refund Chaser": 2 },
     reusedIds: [],
     proposed: [
       {

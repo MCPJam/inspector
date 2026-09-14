@@ -18,13 +18,13 @@ import { useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { PersonaPickerPopover } from "@/components/swarms/persona-picker-popover";
-import { RequiredMark } from "@/components/shared/required-mark";
 import { SectionLabel } from "@/components/shared/section-label";
 import {
   PersonaPixelAvatar,
   mintPersonaAvatarLook,
 } from "@/components/swarms/persona-pixel-avatar";
 import {
+  DEFAULT_SWARM_ITERATIONS,
   estimateLaunchSessions,
   MAX_SWARM_ITERATIONS,
   MIN_SWARM_ITERATIONS,
@@ -194,6 +194,7 @@ function CompactPersonaCard({
   editLabel,
   avatarShape,
   avatarPalette,
+  footer,
 }: {
   seed: string;
   name: string;
@@ -208,6 +209,8 @@ function CompactPersonaCard({
   editLabel: string;
   avatarShape?: number;
   avatarPalette?: number;
+  /** Strip under the row: this persona's iterations and what they cost. */
+  footer?: ReactNode;
 }) {
   return (
     <li>
@@ -219,13 +222,16 @@ function CompactPersonaCard({
           keyboard users reach the same thing through Edit, which is a real
           focusable control and names its persona. */}
       <div
-        data-testid="new-swarm-persona-compact"
-        onClick={onSelect}
         className={cn(
-          "flex w-full cursor-pointer items-start gap-4 rounded-xl border border-border/50 bg-muted/15 p-4 text-left transition-colors hover:bg-muted/25",
-          muted && "opacity-70"
+          "overflow-hidden rounded-xl border border-border/50 bg-muted/15",
+          muted && "opacity-70",
         )}
       >
+        <div
+          data-testid="new-swarm-persona-compact"
+          onClick={onSelect}
+          className="flex w-full cursor-pointer items-start gap-4 p-4 text-left transition-colors hover:bg-muted/25"
+        >
         <PersonaPixelAvatar
           seed={seed}
           shapeIndex={avatarShape}
@@ -274,8 +280,100 @@ function CompactPersonaCard({
             Remove
           </Button>
         </div>
+        </div>
+        {footer ? (
+          <div className="border-t border-border/50 px-4 py-2.5">{footer}</div>
+        ) : null}
       </div>
     </li>
+  );
+}
+
+/**
+ * Iterations for one persona, and what they cost.
+ *
+ * Sits on the collapsed card next to the persona it sizes, the way Remove
+ * does. One swarm-wide number could not describe this slate: the generator
+ * hands every persona the same goals, but the user edits it before launching,
+ * so one persona ends up carrying three goals and its neighbour five.
+ *
+ * The subtotal is PER ENVIRONMENT. Environments multiply the swarm once, in
+ * the total below the list, rather than on every card.
+ */
+function PersonaIterationsRow({
+  goalCount,
+  iterations,
+  personaName,
+  onChange,
+  disabled,
+}: {
+  goalCount: number;
+  iterations: number;
+  personaName: string;
+  onChange: (value: number) => void;
+  disabled: boolean;
+}) {
+  const id = useId();
+  const conversations = goalCount * iterations;
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+      <div className="flex items-center gap-2">
+        <label htmlFor={id} className="text-sm text-muted-foreground">
+          Iterations
+        </label>
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          className="size-7"
+          aria-label={`Fewer iterations for ${personaName}`}
+          disabled={disabled || iterations <= MIN_SWARM_ITERATIONS}
+          onClick={() => onChange(iterations - 1)}
+        >
+          <Minus className="size-3.5" />
+        </Button>
+        <Input
+          id={id}
+          type="number"
+          min={MIN_SWARM_ITERATIONS}
+          max={MAX_SWARM_ITERATIONS}
+          step={1}
+          value={iterations}
+          disabled={disabled}
+          data-testid="new-swarm-persona-iterations"
+          onChange={(event) => onChange(Number(event.target.value))}
+          className="h-7 w-14 text-center font-mono [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+        />
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          className="size-7"
+          aria-label={`More iterations for ${personaName}`}
+          disabled={disabled || iterations >= MAX_SWARM_ITERATIONS}
+          onClick={() => onChange(iterations + 1)}
+        >
+          <Plus className="size-3.5" />
+        </Button>
+      </div>
+      <p
+        className="text-sm text-muted-foreground"
+        data-testid="new-swarm-persona-subtotal"
+      >
+        <strong className="font-semibold tabular-nums text-foreground">
+          {goalCount}
+        </strong>{" "}
+        {goalCount === 1 ? "goal" : "goals"} ×{" "}
+        <strong className="font-semibold tabular-nums text-foreground">
+          {iterations}
+        </strong>{" "}
+        {iterations === 1 ? "iteration" : "iterations"} ={" "}
+        <strong className="font-semibold tabular-nums text-foreground">
+          {conversations}
+        </strong>{" "}
+        {conversations === 1 ? "conversation" : "conversations"}
+      </p>
+    </div>
   );
 }
 
@@ -613,6 +711,13 @@ function ReusedPersonaCard({
   resolved: ReusedResolved | undefined;
 }) {
   const goalCount = resolved?.goals.length;
+  // Launch never rewrites a shared journey's config, so these are read-only:
+  // each goal is priced at the sessions its owner already saved.
+  const targets = resolved?.targets ?? null;
+  const reusedConversations = targets?.reduce(
+    (sum, target) => sum + (target.sessionsPerTarget ?? DEFAULT_SWARM_ITERATIONS),
+    0,
+  );
   const meta =
     resolved == null || resolved.targets === null
       ? "Loading goals…"
@@ -638,6 +743,24 @@ function ReusedPersonaCard({
       removeLabel={`Remove ${persona.name} from this swarm`}
       avatarShape={persona.avatarShape}
       avatarPalette={persona.avatarPalette}
+      footer={
+        targets != null && reusedConversations != null ? (
+          <p
+            className="text-sm text-muted-foreground"
+            data-testid="new-swarm-persona-subtotal"
+          >
+            <strong className="font-semibold tabular-nums text-foreground">
+              {targets.length}
+            </strong>{" "}
+            {targets.length === 1 ? "goal" : "goals"} at the iterations
+            already saved ={" "}
+            <strong className="font-semibold tabular-nums text-foreground">
+              {reusedConversations}
+            </strong>{" "}
+            {reusedConversations === 1 ? "conversation" : "conversations"}
+          </p>
+        ) : null
+      }
     />
   );
 }
@@ -647,7 +770,7 @@ export function NewSwarmConfirmStep({
   onProposedChange,
   reusedPersonas,
   onRemoveReused,
-  iterations,
+  iterationsByPersona,
   onIterationsChange,
   environmentCount,
   environmentLabels,
@@ -665,9 +788,9 @@ export function NewSwarmConfirmStep({
   onProposedChange: (next: ProposedPersona[]) => void;
   reusedPersonas: ReusedPersona[];
   onRemoveReused: (personaId: string) => void;
-  /** Iterations per goal. Stamped onto every journey this swarm creates. */
-  iterations: number;
-  onIterationsChange: (value: number) => void;
+  /** Iterations per goal, keyed by proposed persona key. */
+  iterationsByPersona: Record<string, number>;
+  onIterationsChange: (personaKey: string, value: number) => void;
   environmentCount: number;
   /** Display names of the environments this launch will fan out across. */
   environmentLabels: string[];
@@ -692,7 +815,6 @@ export function NewSwarmConfirmStep({
   /** Persist an edit to an existing journey's goal text. */
   onSaveReusedGoal: (journeyRefId: string, goal: string) => Promise<void>;
 }) {
-  const iterationsId = useId();
   const [selected, setSelected] = useState<SelectedPersona | null>(null);
   const [reusedResolved, setReusedResolved] = useState<
     Record<string, ReusedResolved>
@@ -819,17 +941,23 @@ export function NewSwarmConfirmStep({
   // a reuse-heavy swarm was under-reporting its own session count. Reused
   // journeys are counted at THEIR OWN sessions, which is what launch runs
   // them at; the counter only sizes the journeys this swarm creates.
+  const iterationsFor = (personaKey: string) =>
+    iterationsByPersona[personaKey] ?? DEFAULT_SWARM_ITERATIONS;
+  // Blank goals stay visible for authoring but never launch, so they must
+  // not appear in a subtotal either.
+  const authoredPersonas = proposed.map((persona) => ({
+    goalCount: persona.journeys.filter((journey) => journey.goal.trim()).length,
+    iterations: iterationsFor(persona.key),
+  }));
   const launchSessionEstimate = estimateLaunchSessions({
-    iterations,
-    newJourneyCount,
+    personas: authoredPersonas,
     reusedSessionsPerTarget: activeReusedTargets.map(
-      (target) => target.sessionsPerTarget ?? null
+      (target) => target.sessionsPerTarget ?? null,
     ),
     environmentCount,
   });
-  // The equation multiplies the goals this control sizes; reused goals keep
-  // their own saved iterations, so they are called out beside it instead.
   const reusedCount = activeReusedTargets.length;
+  const personaTotal = proposed.length + reusedPersonas.length;
   const fanoutEnvironmentCount = Math.max(1, environmentCount);
   const canLaunch = journeyCount > 0 && !launching && !reusedPending;
 
@@ -1076,6 +1204,9 @@ export function NewSwarmConfirmStep({
                 );
               }
               const goalCount = persona.journeys.length;
+              const launchableGoals = persona.journeys.filter((journey) =>
+                journey.goal.trim(),
+              ).length;
               return (
                 <CompactPersonaCard
                   key={persona.key}
@@ -1095,6 +1226,17 @@ export function NewSwarmConfirmStep({
                   removeLabel={`Remove persona ${persona.name}`}
                   avatarShape={persona.avatarShape}
                   avatarPalette={persona.avatarPalette}
+                  footer={
+                    <PersonaIterationsRow
+                      goalCount={launchableGoals}
+                      iterations={iterationsFor(persona.key)}
+                      personaName={persona.name}
+                      disabled={launching}
+                      onChange={(value) =>
+                        onIterationsChange(persona.key, value)
+                      }
+                    />
+                  }
                 />
               );
             })}
@@ -1206,90 +1348,44 @@ export function NewSwarmConfirmStep({
           ) : null}
         </div>
 
-        <div className="space-y-2">
-          <div className="space-y-1">
-            <label
-              htmlFor={iterationsId}
-              className="block text-sm font-medium text-foreground"
+        <div
+          className="flex items-baseline justify-between gap-4 rounded-xl border border-border bg-muted/20 px-4 py-3"
+          data-testid="new-swarm-conversation-total"
+        >
+          <div>
+            <p
+              className="text-sm text-muted-foreground"
+              data-testid="new-swarm-conversation-equation"
             >
-              Iterations per goal
-              <RequiredMark />
-            </label>
-            <p className="text-sm leading-relaxed text-muted-foreground">
-              How many times each goal runs, in every environment you selected.
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="icon"
-              aria-label="Fewer iterations"
-              disabled={launching || iterations <= MIN_SWARM_ITERATIONS}
-              onClick={() => onIterationsChange(iterations - 1)}
-            >
-              <Minus className="size-4" />
-            </Button>
-            <Input
-              id={iterationsId}
-              type="number"
-              min={MIN_SWARM_ITERATIONS}
-              max={MAX_SWARM_ITERATIONS}
-              step={1}
-              value={iterations}
-              disabled={launching}
-              data-testid="new-swarm-iterations"
-              onChange={(event) =>
-                onIterationsChange(Number(event.target.value))
-              }
-              className="w-20 text-center font-mono [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-            />
-            <Button
-              type="button"
-              variant="outline"
-              size="icon"
-              aria-label="More iterations"
-              disabled={launching || iterations >= MAX_SWARM_ITERATIONS}
-              onClick={() => onIterationsChange(iterations + 1)}
-            >
-              <Plus className="size-4" />
-            </Button>
-          </div>
-          <div className="flex items-baseline justify-between gap-4 rounded-xl border border-border bg-muted/20 px-4 py-3">
-            <div>
-              <p
-                className="text-sm text-muted-foreground"
-                data-testid="new-swarm-conversation-equation"
-              >
-                <strong className="font-semibold tabular-nums text-foreground">
-                  {newJourneyCount}
-                </strong>{" "}
-                {newJourneyCount === 1 ? "goal" : "goals"} ×{" "}
-                <strong className="font-semibold tabular-nums text-foreground">
-                  {iterations}
-                </strong>{" "}
-                {iterations === 1 ? "iteration" : "iterations"} ×{" "}
-                <strong className="font-semibold tabular-nums text-foreground">
-                  {fanoutEnvironmentCount}
-                </strong>{" "}
-                {fanoutEnvironmentCount === 1 ? "environment" : "environments"}
-              </p>
-              {reusedCount > 0 ? (
-                <p className="mt-1 text-[11px] text-muted-foreground">
-                  Plus {reusedCount} reused{" "}
-                  {reusedCount === 1 ? "goal" : "goals"}, counted at the
-                  iterations already saved on {reusedCount === 1 ? "it" : "them"}
-                  .
-                </p>
+              Across{" "}
+              <strong className="font-semibold tabular-nums text-foreground">
+                {personaTotal}
+              </strong>{" "}
+              {personaTotal === 1 ? "persona" : "personas"}
+              {fanoutEnvironmentCount > 1 ? (
+                <>
+                  {" "}
+                  and{" "}
+                  <strong className="font-semibold tabular-nums text-foreground">
+                    {fanoutEnvironmentCount}
+                  </strong>{" "}
+                  environments
+                </>
               ) : null}
-            </div>
-            <p className="shrink-0 font-mono text-xl font-semibold tabular-nums">
-              {launchSessionEstimate.toLocaleString()}
-              <span className="ml-1 font-sans text-xs font-normal text-muted-foreground">
-                conversations
-              </span>
             </p>
+            {reusedCount > 0 ? (
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Reused goals are counted at the iterations already saved on
+                them.
+              </p>
+            ) : null}
           </div>
+          <p className="shrink-0 font-mono text-xl font-semibold tabular-nums">
+            {launchSessionEstimate.toLocaleString()}
+            <span className="ml-1 font-sans text-xs font-normal text-muted-foreground">
+              conversations
+            </span>
+          </p>
         </div>
 
         {errorMessage ? (

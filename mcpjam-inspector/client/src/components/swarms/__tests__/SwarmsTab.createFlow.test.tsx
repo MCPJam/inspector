@@ -1521,11 +1521,11 @@ describe("SwarmsTab — New swarm create flow", () => {
     ).toHaveTextContent(/1 conversation/i);
   });
 
-  it("keeps a reused journey's own sessions when iterations change", async () => {
-    // SUTB-26: the counter sizes the goals this swarm creates, never one the
-    // user already saved. This journey was saved at 3 sessions and launch does
-    // not rewrite a shared journey's config, so raising iterations must not
-    // re-price it.
+  it("prices a reused persona at its saved sessions, with no counter", async () => {
+    // SUTB-26: a counter sizes the goals this swarm creates, never one the
+    // user already saved. Launch does not rewrite a shared journey's config,
+    // so the card quotes what that journey will really run and offers no
+    // control that would imply otherwise.
     existingPersonas = [
       { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
     ];
@@ -1544,11 +1544,12 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(
       screen.getByTestId("new-swarm-launch-session-estimate"),
     ).toHaveTextContent(/3 conversations/i);
-
-    fireEvent.click(screen.getByRole("button", { name: /more iterations/i }));
+    expect(screen.getByTestId("new-swarm-persona-subtotal")).toHaveTextContent(
+      /1 goal at the iterations already saved = 3 conversations/i,
+    );
     expect(
-      screen.getByTestId("new-swarm-launch-session-estimate"),
-    ).toHaveTextContent(/3 conversations/i);
+      screen.queryByTestId("new-swarm-persona-iterations"),
+    ).not.toBeInTheDocument();
 
     fireEvent.click(
       screen.getByRole("button", { name: /^back to describe$/i }),
@@ -2128,21 +2129,51 @@ describe("SwarmsTab — Describe step (Production Redesign)", () => {
     openDescribe();
     expect(screen.queryByTestId("new-swarm-name")).not.toBeInTheDocument();
     expect(
-      screen.queryByTestId("new-swarm-iterations"),
+      screen.queryByTestId("new-swarm-persona-iterations"),
     ).not.toBeInTheDocument();
   });
 
-  it("asks for iterations on Confirm after generation", async () => {
+  it("gives every persona its own iterations counter on Confirm", async () => {
     openDescribe();
     fillDescribe();
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await screen.findByTestId("new-swarm-proposed-personas");
 
-    expect(screen.getByTestId("new-swarm-iterations")).toHaveValue(1);
-    expect(screen.getByLabelText(/iterations per goal/i)).toBeVisible();
+    const counters = screen.getAllByTestId("new-swarm-persona-iterations");
+    expect(counters).toHaveLength(2);
+    for (const counter of counters) expect(counter).toHaveValue(1);
     expect(
       screen.getByTestId("new-swarm-conversation-equation"),
-    ).toHaveTextContent(/1 iteration/i);
+    ).toHaveTextContent(/across 2 personas/i);
+  });
+
+  it("moves only the persona whose counter was touched", async () => {
+    // The whole reason the control left the footer: two personas can carry
+    // different goal counts, so one number cannot size both.
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+    expect(
+      screen.getByTestId("new-swarm-launch-session-estimate"),
+    ).toHaveTextContent(/2 conversations/i);
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /more iterations for refund chaser/i,
+      }),
+    );
+
+    const subtotals = screen.getAllByTestId("new-swarm-persona-subtotal");
+    expect(subtotals[0]).toHaveTextContent(
+      /1 goal . 2 iterations = 2 conversations/i,
+    );
+    expect(subtotals[1]).toHaveTextContent(
+      /1 goal . 1 iteration = 1 conversation/i,
+    );
+    expect(
+      screen.getByTestId("new-swarm-launch-session-estimate"),
+    ).toHaveTextContent(/3 conversations/i);
   });
 
   it("lists attached personas as removable rows, not as a checklist", () => {
@@ -2214,7 +2245,7 @@ describe("SwarmsTab — Confirm personas (Production Redesign)", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("shows the redesigned title and the iterations control on Confirm", async () => {
+  it("shows the redesigned title and the swarm total on Confirm", async () => {
     await reachConfirm();
 
     expect(
@@ -2227,7 +2258,7 @@ describe("SwarmsTab — Confirm personas (Production Redesign)", () => {
         /select a user persona for details, or remove anything that doesn.{0,3}t fit/i,
       ),
     ).toBeVisible();
-    expect(screen.getByTestId("new-swarm-iterations")).toBeInTheDocument();
+    expect(screen.getByTestId("new-swarm-conversation-total")).toBeInTheDocument();
     expect(
       screen.queryByText(/run \d+ sessions? total in this swarm/i),
     ).not.toBeInTheDocument();

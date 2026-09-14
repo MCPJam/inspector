@@ -67,6 +67,10 @@ export const DEFAULT_SWARM_INTENSITY: SwarmPushIntensity = "quick";
 export const MIN_SWARM_ITERATIONS = 1;
 export const MAX_SWARM_ITERATIONS = 5;
 
+/** What a persona starts at, and what a goal carrying no config is read as. */
+export const DEFAULT_SWARM_ITERATIONS =
+  SWARM_INTENSITY_PRESETS[DEFAULT_SWARM_INTENSITY].sessionsPerTarget;
+
 /** Journeys one launch of this preset creates (personas × journeys each). */
 export function estimateSwarmJourneys(preset: SwarmIntensityPreset): number {
   return preset.personaCount * preset.journeyCount;
@@ -75,39 +79,39 @@ export function estimateSwarmJourneys(preset: SwarmIntensityPreset): number {
 /**
  * Conversations the launch on Confirm actually produces.
  *
- * Three multiplicands, and only the middle one is the control:
- *   - goals, the flat unit a swarm fans out (personas hold them, but a persona
- *     can carry a different number of goals than its neighbour, so there is no
- *     single "goals per persona" to multiply by);
- *   - iterations, run per goal per environment;
- *   - environments, because an env-based journey creates one target each.
+ * Iterations are per PERSONA, not per swarm: the generator hands every
+ * persona the same number of goals, but the user edits that slate before
+ * launching, so one persona can end up carrying three goals and its
+ * neighbour five. A single swarm-wide multiplicand cannot describe that.
  *
- * A REUSED journey is priced at its own stored sessions. Launch deliberately
- * does not rewrite a shared journey's config, so quoting the iterations
- * control for it would both misreport the spend and move the quote every time
- * the control is touched, for work the control does not size. `null` is the
- * one case where the control does answer: a row carrying no config at all
- * gives nothing better to quote.
+ * Environments multiply the whole thing — an env-based journey creates one
+ * target per environment — which is why they are applied once here rather
+ * than shown on each persona: the per-persona subtotals are per environment.
+ *
+ * A REUSED goal is priced at its own stored sessions. Launch deliberately
+ * does not rewrite a shared journey's config, so quoting a counter for it
+ * would both misreport the spend and move the quote every time a control is
+ * touched, for work that control does not size. `null` is the one case where
+ * the default answers: a row carrying no config gives nothing better.
  */
 export function estimateLaunchSessions({
-  iterations,
-  newJourneyCount,
+  personas,
   reusedSessionsPerTarget,
   environmentCount,
 }: {
-  /** Iterations per goal, as set on Confirm. Stamped onto new journeys. */
-  iterations: number;
-  /** Newly authored journeys — the ones the iterations count is stamped onto. */
-  newJourneyCount: number;
-  /** One entry per reused journey: its own stored sessions, or `null`. */
+  /** One entry per newly authored persona: its goals and its own iterations. */
+  personas: readonly { goalCount: number; iterations: number }[];
+  /** One entry per reused goal: its own stored sessions, or `null`. */
   reusedSessionsPerTarget: readonly (number | null)[];
   environmentCount: number;
 }): number {
-  const reused = reusedSessionsPerTarget.reduce<number>(
-    (sum, sessions) => sum + (sessions ?? iterations),
+  const authored = personas.reduce(
+    (sum, persona) => sum + persona.goalCount * persona.iterations,
     0,
   );
-  return (
-    (newJourneyCount * iterations + reused) * Math.max(1, environmentCount)
+  const reused = reusedSessionsPerTarget.reduce<number>(
+    (sum, sessions) => sum + (sessions ?? DEFAULT_SWARM_ITERATIONS),
+    0,
   );
+  return (authored + reused) * Math.max(1, environmentCount);
 }
