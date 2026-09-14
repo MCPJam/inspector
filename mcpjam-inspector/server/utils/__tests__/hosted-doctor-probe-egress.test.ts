@@ -47,7 +47,11 @@ describe("hosted doctor probe egress", () => {
       }),
     });
 
-    expect(result.oauth.discoveryError).toBeDefined();
+    // The string the hosted redactor has to cope with: the guard's own verdict,
+    // which names the hostname the target chose and never the address it
+    // resolved to, so it survives redaction as a useful answer.
+    expect(result.oauth.discoveryError).toMatch(/private or internal address/);
+    expect(result.oauth.discoveryError).not.toMatch(/10\.0\.0\.5/);
     expect(result.oauth.resourceMetadata).toBeUndefined();
     // The request was never dialed, so nothing about the internal host is
     // recorded — not a response, not a body.
@@ -106,7 +110,8 @@ describe("hosted doctor probe egress", () => {
       }),
     });
 
-    expect(result.oauth.discoveryError).toBeDefined();
+    expect(result.oauth.discoveryError).toMatch(/private or internal address/);
+    expect(result.oauth.discoveryError).not.toMatch(/169\.254\.169\.254/);
     // The assertion that actually discriminates. The guard forces `redirect:
     // "manual"` underneath, inspects the Location, and refuses before dialing
     // it — so the internal document is never fetched, let alone read. Without

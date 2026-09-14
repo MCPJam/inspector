@@ -277,7 +277,7 @@ export function MonitoringTab({
               {lastFailure.summary
                 ? `${lastFailure.summary.failed} of ${lastFailure.summary.total} iterations failed.`
                 : "Run did not complete."}{" "}
-              Open the run to see check verdicts and the rendered widget.
+              Open the run to see assertion verdicts and the rendered widget.
             </p>
           </button>
         </section>

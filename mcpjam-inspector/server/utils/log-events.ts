@@ -75,6 +75,19 @@ export interface RequestLogContext extends CommonLogContext {
   requestId: string;
   route: string;
   method: string;
+  /**
+   * The caller's `user-agent`, sanitized and capped.
+   *
+   * A LOG FIELD, never an identity. It is caller-supplied text: this server
+   * already removed UA-derived attribution once because a client can write
+   * whatever it likes there, and re-introducing it here is only safe while
+   * nothing branches on it.
+   *
+   * Omitted rather than defaulted when the header is absent — a row with no
+   * user-agent is a caller that sent none, which is not the same claim as
+   * "unknown client" and should not be counted as one.
+   */
+  userAgent?: string;
 }
 
 export interface SystemLogContext extends CommonLogContext {

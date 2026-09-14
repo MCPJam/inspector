@@ -92,7 +92,7 @@ export function CaseScorecard({
     <section className="space-y-4" data-testid="case-scorecard">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="space-y-0.5">
-          <h3 className="text-[11px] font-medium text-foreground">Scorers</h3>
+          <h3 className="text-[11px] font-medium text-foreground">Evaluators</h3>
           <p className="max-w-prose text-[11px] leading-snug text-muted-foreground">
             {PASS_OR_FAIL_HINT}
           </p>
@@ -111,7 +111,7 @@ export function CaseScorecard({
           className="text-[11px] text-muted-foreground"
           data-testid="case-scorecard-replaced"
         >
-          Suite scorers replaced for this case —{" "}
+          Suite evaluators replaced for this case —{" "}
           {card.hiddenSuiteCount === 1
             ? "1 is not applied"
             : `${card.hiddenSuiteCount} are not applied`}

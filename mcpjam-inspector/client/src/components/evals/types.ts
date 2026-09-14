@@ -187,11 +187,24 @@ export type ImportEligibility = {
   issues: ImportEligibilityIssue[];
 };
 
+/** Mirrors backend convex/lib/runClientDescriptor.ts. */
+export type RunClientDescriptor = {
+  namedHostId?: string;
+  hostConfigId?: string;
+  name: string;
+  hostStyle?: string;
+  modelId?: string;
+  source: "environment" | "attached_host" | "suite_default" | "sdk";
+  backfilled?: true;
+};
+
 export type EvalSuiteConfigTest = {
   title: string;
   query: string;
-  provider: string;
-  model: string;
+  /** Persisted cases use models; singular fields support older snapshots. */
+  models?: Array<{ model: string; provider: string }>;
+  provider?: string;
+  model?: string;
   runs: number;
   expectedToolCalls: Array<{
     toolName: string;
@@ -453,6 +466,7 @@ export type EvalCase = {
    * `{ mode: "inherit", list: [] }`.
    */
   predicates?: CasePredicates;
+  suppressedSuiteStandardCheckIds?: string[];
   /**
    * Per-case judge override. V1 carries opt-out only — no alt model or
    * threshold (see backend `convex/lib/judgeConfig.ts` for rationale).
@@ -780,6 +794,10 @@ export type EvalSuiteRunSummary = {
 };
 
 export type EvalSuiteRun = {
+  name?: string;
+  tags?: string[];
+  runMetadata?: Record<string, string | number | boolean>;
+  runEvaluationsByCase?: import("@mcpjam/sdk").CaseRunEvaluation[];
   /**
    * Whether this run's imported cases carry evidence a gate may rely on.
    *
@@ -957,7 +975,10 @@ export type EvalSuiteRun = {
   verdictPolicyIntegrityError?: string;
   stoppedAt?: number;
   stopReason?:
-    "user_cancelled" | "run_timeout" | "iteration_timeout" | "stale_worker";
+    | "user_cancelled"
+    | "run_timeout"
+    | "iteration_timeout"
+    | "stale_worker";
   /**
    * Run origin, STAMPED by the backend. Every launch that arrives over `/v1` —
    * the CLI, a GitHub Actions job, an MCP agent — is `"api"`, because from the
@@ -998,10 +1019,14 @@ export type EvalSuiteRun = {
     pipelineId?: string;
     jobId?: string;
     runUrl?: string;
+    repositoryUrl?: string;
     /** Recorded pull request URL, when supplied by the CI integration. */
     prUrl?: string;
+    branchUrl?: string;
     branch?: string;
     commitSha?: string;
+    dirty?: boolean;
+    pullRequestNumber?: number;
   };
   notes?: string;
   createdAt: number;
@@ -1038,7 +1063,8 @@ export type EvalSuiteRun = {
    */
   effectiveModelId?: string;
   /** `"client_default"` inherited the host model; `"override"` used env.modelId. */
-  modelSource?: "client_default" | "override";
+  client?: RunClientDescriptor;
+  modelSource?: "client_default" | "override" | "case";
   _creationTime?: number;
   runInsightsJobId?: number;
   runInsightsStatus?: "pending" | "completed" | "failed";
@@ -1053,7 +1079,11 @@ export type EvalSuiteRun = {
       testCaseId?: string;
       title: string;
       status:
-        "new_failure" | "still_failing" | "fixed" | "new_case" | "removed_case";
+        | "new_failure"
+        | "still_failing"
+        | "fixed"
+        | "new_case"
+        | "removed_case";
       summary: string;
     }>;
   };
@@ -1080,7 +1110,10 @@ export type EvalSuiteRun = {
       evidence?: string[];
       confidence?: "low" | "medium" | "high";
       attribution?:
-        "server_design" | "agent_behavior" | "test_design" | "unknown";
+        | "server_design"
+        | "agent_behavior"
+        | "test_design"
+        | "unknown";
     }>;
     workflowInsights: Array<{
       caseKey: string;
@@ -1096,7 +1129,10 @@ export type EvalSuiteRun = {
       evidence?: string[];
       confidence?: "low" | "medium" | "high";
       attribution?:
-        "server_design" | "agent_behavior" | "test_design" | "unknown";
+        | "server_design"
+        | "agent_behavior"
+        | "test_design"
+        | "unknown";
     }>;
   };
   // Goal-completion judge (advisory LLM-as-judge): grades each case's final
@@ -1213,7 +1249,10 @@ export type EvalRunDiffSide = {
 
 /** Delivery channel a pinned skill reached the run through. */
 export type EvalRunSkillChannel =
-  "host" | "environment" | "plugin" | "mcp-server";
+  | "host"
+  | "environment"
+  | "plugin"
+  | "mcp-server";
 
 /** One skill's identity + content fingerprint on one side of a comparison. */
 export type EvalRunSkillSide = {

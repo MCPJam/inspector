@@ -17,27 +17,87 @@
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  normalizeServerDoctorError,
+  type ProbeHttpAttempt,
+  type ServerDoctorError,
+} from "@mcpjam/sdk";
 
 type DoctorEnvelope = {
   probe: {
     status?: string;
     /** The probe's own top-level error — see the note in the redactor. */
     error?: string;
-    transport: {
-      attempts: Array<{
-        request: { url: string };
-        response?: { status: number; headers: Record<string, string>; body?: unknown };
-        error?: string;
-      }>;
-    };
+    transport: { attempts: ProbeHttpAttempt[] };
+    /** Set by the probe when RFC 9728 discovery failed — see the redactor. */
+    oauth?: { discoveryError?: string };
   } | null;
   connection: { status: string; detail: string };
   checks: Record<string, { status: string; detail: string }>;
-  error: { code: string; message: string } | null;
+  error: ServerDoctorError | null;
 };
 
-/** A doctor result whose only outcome was a socket error — no HTTP response. */
-function socketFailureEnvelope(socketError: string): DoctorEnvelope {
+/**
+ * The attempt shape the probe really records, not a convenient subset.
+ *
+ * An earlier version of this file hand-wrote three keys per attempt and a
+ * hardcoded `error.code`. That is what made the indistinguishability assertion
+ * pass: the fields that still carried the differential — `durationMs`, and a
+ * `code` the probe derives from the message by substring — were simply absent
+ * from the fixture. Everything a real `ProbeHttpAttempt` carries is spelled out
+ * here so the assertion is a test of the redaction rather than of the fixture.
+ */
+function failedAttempt(
+  url: string,
+  error: string,
+  durationMs: number
+): ProbeHttpAttempt {
+  return {
+    name: "streamable_initialize",
+    request: {
+      method: "POST",
+      url,
+      headers: {
+        accept: "application/json, text/event-stream",
+        "content-type": "application/json",
+      },
+      body: { jsonrpc: "2.0", id: 1, method: "initialize" },
+    },
+    error,
+    durationMs,
+  };
+}
+
+function answeredAttempt(
+  url: string,
+  response: NonNullable<ProbeHttpAttempt["response"]>,
+  durationMs: number
+): ProbeHttpAttempt {
+  return {
+    name: "streamable_initialize",
+    request: {
+      method: "POST",
+      url,
+      headers: { accept: "application/json, text/event-stream" },
+    },
+    response,
+    durationMs,
+  };
+}
+
+/**
+ * A doctor result whose only outcome was a socket error — no HTTP response.
+ *
+ * `durationMs` is the caller's, because it is half the oracle: a refused port
+ * comes back in about a millisecond and a filtered one burns the whole timeout.
+ * The error is derived the way the doctor derives it rather than written by
+ * hand, so the code under test sees the real `SERVER_UNREACHABLE` /
+ * `INTERNAL_ERROR` / `TIMEOUT` split.
+ */
+function socketFailureEnvelope(
+  socketError: string,
+  durationMs = 1
+): DoctorEnvelope {
   return {
     probe: {
       status: "error",
@@ -49,10 +109,7 @@ function socketFailureEnvelope(socketError: string): DoctorEnvelope {
       error: socketError,
       transport: {
         attempts: [
-          {
-            request: { url: "https://mcp.example.test/mcp" },
-            error: socketError,
-          },
+          failedAttempt("https://mcp.example.test/mcp", socketError, durationMs),
         ],
       },
     },
@@ -62,7 +119,52 @@ function socketFailureEnvelope(socketError: string): DoctorEnvelope {
       connection: { status: "error", detail: socketError },
       tools: { status: "skipped", detail: "Tools were not collected." },
     },
-    error: { code: "SERVER_UNREACHABLE", message: socketError },
+    error: normalizeServerDoctorError(new Error(socketError)),
+  };
+}
+
+/**
+ * Scenario B routed through OAuth discovery. The server URL answers a
+ * challenge; the metadata host it names is a second origin, picked by whoever
+ * controls the target, and `oauth.discoveryError` is the only field that
+ * reports what happened when the inspector dialled it.
+ */
+function oauthDiscoveryEnvelope(
+  metadataError: string,
+  durationMs = 1
+): DoctorEnvelope {
+  const challenge = answeredAttempt(
+    "https://mcp.example.test/mcp",
+    {
+      status: 401,
+      statusText: "Unauthorized",
+      headers: {
+        "www-authenticate":
+          'Bearer resource_metadata="https://metadata.example.test/prm"',
+      },
+      contentType: "application/json",
+    },
+    7
+  );
+  const discovery = failedAttempt(
+    "https://metadata.example.test/prm",
+    metadataError,
+    durationMs
+  );
+  discovery.name = "resource_metadata";
+  discovery.request.method = "GET";
+
+  return {
+    probe: {
+      status: "oauth_required",
+      transport: { attempts: [challenge, discovery] },
+      oauth: { discoveryError: metadataError },
+    },
+    connection: { status: "error", detail: metadataError },
+    checks: {
+      resourceMetadata: { status: "error", detail: metadataError },
+    },
+    error: normalizeServerDoctorError(new Error(metadataError)),
   };
 }
 
@@ -99,8 +201,13 @@ describe("hosted doctor transport-detail redaction", () => {
     const loaded = await loadRedactor(true);
     restore = loaded.restore;
 
-    const closed = loaded.redact(socketFailureEnvelope(CLOSED_PORT));
-    const open = loaded.redact(socketFailureEnvelope(OPEN_CLEARTEXT_PORT));
+    // The durations are the ones the two outcomes really produce: a refused
+    // port answers immediately, an open cleartext one is still negotiating when
+    // the timeout fires.
+    const closed = loaded.redact(socketFailureEnvelope(CLOSED_PORT, 1));
+    const open = loaded.redact(
+      socketFailureEnvelope(OPEN_CLEARTEXT_PORT, 9_984)
+    );
 
     expect(JSON.stringify(closed)).toBe(JSON.stringify(open));
   });
@@ -137,23 +244,101 @@ describe("hosted doctor transport-detail redaction", () => {
     expect(redacted.probe?.error).toBe(refusal);
   });
 
-  it("passes through detail once the target answered as a public host", async () => {
+  it("passes through detail once the target answered and nothing dialled after it", async () => {
     // A target that produced an HTTP response is a public responder, so its
     // diagnostic is the product rather than an oracle — and an MCP-level
-    // failure against it is exactly what the debugger exists to show.
+    // failure against it is exactly what the debugger exists to show. This is
+    // the shape where that still holds: no socket was dialled after the probe,
+    // so `connection` is not reporting one.
     const loaded = await loadRedactor(true);
     restore = loaded.restore;
 
     const envelope = socketFailureEnvelope("initialize failed: -32600");
-    envelope.probe!.transport.attempts[0].response = {
-      status: 200,
-      headers: { "content-type": "application/json" },
-      body: { jsonrpc: "2.0", error: { code: -32600 } },
+    envelope.probe!.transport.attempts[0] = answeredAttempt(
+      "https://mcp.example.test/mcp",
+      {
+        status: 200,
+        statusText: "OK",
+        headers: { "content-type": "application/json" },
+        body: { jsonrpc: "2.0", error: { code: -32600 } },
+      },
+      12
+    );
+    envelope.connection = {
+      status: "skipped",
+      detail: "Server requires OAuth before a connection can be established.",
     };
+    envelope.checks.connection = envelope.connection;
 
     const redacted = loaded.redact(envelope);
-    expect(redacted.connection.detail).toBe("initialize failed: -32600");
+    expect(redacted.probe!.error).toBe("initialize failed: -32600");
+    expect(redacted.error?.message).toBe("initialize failed: -32600");
     expect(redacted.probe!.transport.attempts[0].response?.status).toBe(200);
+    expect(redacted.probe!.transport.attempts[0].durationMs).toBe(12);
+  });
+
+  it("redacts the connect leg's failure even when every probe attempt answered", async () => {
+    // The connect leg runs after the probe and records no attempt of its own,
+    // so an attempts-only exemption let a target that answers the probe and
+    // then redirects the connect elsewhere reflect that socket outcome verbatim
+    // on `connection.detail`, `checks.connection.detail` and `error`.
+    const loaded = await loadRedactor(true);
+    restore = loaded.restore;
+
+    const connectFailure = (socketError: string) => {
+      const envelope = socketFailureEnvelope(socketError);
+      envelope.probe!.status = "ok";
+      delete envelope.probe!.error;
+      envelope.probe!.transport.attempts[0] = answeredAttempt(
+        "https://mcp.example.test/mcp",
+        {
+          status: 200,
+          statusText: "OK",
+          headers: { "content-type": "application/json" },
+        },
+        12
+      );
+      envelope.checks.probe = {
+        status: "ok",
+        detail: "Server answered the HTTP probe.",
+      };
+      return envelope;
+    };
+
+    const closed = loaded.redact(connectFailure(CLOSED_PORT));
+    const open = loaded.redact(connectFailure(OPEN_CLEARTEXT_PORT));
+
+    expect(JSON.stringify(closed)).toBe(JSON.stringify(open));
+    expect(JSON.stringify(closed)).not.toMatch(
+      /ECONNREFUSED|tls_get_more_records|6379|127\.0\.0\.1/
+    );
+    // The answered probe attempt is still the product.
+    expect(closed.probe!.transport.attempts[0].response?.status).toBe(200);
+  });
+
+  it("collapses the error code with the message it was derived from", async () => {
+    // `normalizeServerDoctorError` reads the code off the raw message, so a
+    // refused connect, an unparseable TLS record and a timeout arrive as three
+    // different codes for three outcomes the message alone no longer separates.
+    const loaded = await loadRedactor(true);
+    restore = loaded.restore;
+
+    const codes = [
+      CLOSED_PORT,
+      OPEN_CLEARTEXT_PORT,
+      "Request timed out after 10000ms",
+    ].map((socketError) => {
+      const raw = socketFailureEnvelope(socketError);
+      const before = raw.error?.code;
+      return { before, after: loaded.redact(raw).error?.code };
+    });
+
+    expect(codes.map((entry) => entry.before)).toEqual([
+      "SERVER_UNREACHABLE",
+      "INTERNAL_ERROR",
+      "TIMEOUT",
+    ]);
+    expect(new Set(codes.map((entry) => entry.after)).size).toBe(1);
   });
 
   it("does nothing in local mode, where the socket error is the answer", async () => {
@@ -163,5 +348,81 @@ describe("hosted doctor transport-detail redaction", () => {
     const redacted = loaded.redact(socketFailureEnvelope(CLOSED_PORT));
     expect(redacted.connection.detail).toBe(CLOSED_PORT);
     expect(redacted.error?.message).toBe(CLOSED_PORT);
+  });
+
+  it("makes the metadata host's open and closed ports indistinguishable", async () => {
+    const loaded = await loadRedactor(true);
+    restore = loaded.restore;
+
+    const closed = loaded.redact(oauthDiscoveryEnvelope(CLOSED_PORT, 1));
+    const open = loaded.redact(
+      oauthDiscoveryEnvelope(OPEN_CLEARTEXT_PORT, 9_984)
+    );
+
+    expect(JSON.stringify(closed)).toBe(JSON.stringify(open));
+    expect(JSON.stringify(closed)).not.toMatch(
+      /ECONNREFUSED|6379|127\.0\.0\.1/
+    );
+    expect(closed.probe?.oauth?.discoveryError).toBe(closed.connection.detail);
+  });
+
+  it("keeps an egress refusal's own wording on the discovery error", async () => {
+    const loaded = await loadRedactor(true);
+    restore = loaded.restore;
+
+    const refusal =
+      'Metadata pointer hostname "metadata.example.test" resolves to a private or internal address that the hosted inspector will not dial.';
+    const redacted = loaded.redact(oauthDiscoveryEnvelope(refusal));
+
+    expect(redacted.probe?.oauth?.discoveryError).toBe(refusal);
+  });
+
+  it("leaves the discovery error alone outside hosted mode", async () => {
+    const loaded = await loadRedactor(false);
+    restore = loaded.restore;
+
+    const redacted = loaded.redact(oauthDiscoveryEnvelope(CLOSED_PORT));
+    expect(redacted.probe?.oauth?.discoveryError).toBe(CLOSED_PORT);
+  });
+
+  it("redacts a refused attempt even when a sibling attempt answered", async () => {
+    const loaded = await loadRedactor(true);
+    restore = loaded.restore;
+
+    const envelope = socketFailureEnvelope("initialize failed: -32600");
+    envelope.probe!.transport.attempts[0] = answeredAttempt(
+      "https://mcp.example.test/mcp",
+      {
+        status: 200,
+        statusText: "OK",
+        headers: { "content-type": "application/json" },
+      },
+      12
+    );
+    // An answered attempt can still carry an MCP-level error: the host
+    // responded, the payload was a JSON-RPC failure.
+    envelope.probe!.transport.attempts[0].error = "initialize failed: -32600";
+    envelope.probe!.transport.attempts.push(
+      failedAttempt("https://mcp.example.test/sse", CLOSED_PORT, 1)
+    );
+
+    const redacted = loaded.redact(envelope);
+
+    // The answered attempt reached a public responder, so its diagnostic is
+    // still the product. The refused one is a socket outcome against whatever
+    // the second transport dialled, and used to ride out on the first's
+    // response.
+    expect(redacted.probe!.transport.attempts[0].error).toBe(
+      "initialize failed: -32600"
+    );
+    expect(redacted.probe!.transport.attempts[1].error).toBe(
+      redacted.connection.detail
+    );
+    // The refused hop's stopwatch went with its message.
+    expect(redacted.probe!.transport.attempts[0].durationMs).toBe(12);
+    expect(redacted.probe!.transport.attempts[1].durationMs).toBe(0);
+    expect(JSON.stringify(redacted)).not.toMatch(
+      /ECONNREFUSED|6379|127\.0\.0\.1/
+    );
   });
 });

@@ -49,6 +49,9 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("convex/react", () => ({
   usePaginatedQuery: () => mocks.paginated.current,
+  // The table asks for the project's suites only to name a GitHub check's
+  // servers; nothing here runs a check, so it always skips.
+  useQuery: () => undefined,
   useConvex: () => mocks.convex,
 }));
 vi.mock("@/hooks/useClients", () => ({

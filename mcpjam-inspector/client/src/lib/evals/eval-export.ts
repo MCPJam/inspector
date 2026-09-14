@@ -5,6 +5,7 @@ import type {
   EvalSuiteRun,
 } from "@/components/evals/types";
 import type { ServerWithName } from "@/state/app-types";
+import { snapshotTestModels } from "@/components/evals/helpers";
 import { isOpaqueId, mintCaseId } from "@mcpjam/sdk/contract";
 import {
   resolvePromptTurns,
@@ -140,10 +141,13 @@ export function normalizeSuiteConfigTestForExport(
     promptTurns: resolveExportPromptTurns(test),
     advancedConfig:
       stripPromptTurnsFromAdvancedConfig(test.advancedConfig) ?? undefined,
-    modelHints:
-      test.provider && test.model
-        ? [`${test.provider}/${test.model}`]
-        : undefined,
+    modelHints: snapshotTestModels(test).length
+      ? snapshotTestModels(test).map(({ provider, model }) =>
+          provider && !model.startsWith(`${provider}/`)
+            ? `${provider}/${model}`
+            : model,
+        )
+      : undefined,
   };
 }
 

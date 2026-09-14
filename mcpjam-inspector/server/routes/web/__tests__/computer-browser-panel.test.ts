@@ -56,6 +56,11 @@ function build(over: Partial<BrowserPanelDeps> = {}) {
   );
   const touchSession = vi.fn(async () => ({ counted: true }));
   const touchActivity = vi.fn(async () => {});
+  const wakeComputer = vi.fn(async () => ({
+    ok: true as const,
+    status: 200,
+    value: { ok: "waking", status: "waking" as const },
+  }));
   const lookupSession = vi.fn(async () => ({
     reachable: true,
     session: SESSION,
@@ -70,8 +75,10 @@ function build(over: Partial<BrowserPanelDeps> = {}) {
         ownerUserId: CLAIMS.userId,
         projectId: CLAIMS.projectId,
         providerComputerId: "sbx_1",
+        status: "ready",
       },
     })) as unknown as BrowserPanelDeps["sandboxInfo"],
+    wakeComputer: wakeComputer as unknown as BrowserPanelDeps["wakeComputer"],
     lookupSession:
       lookupSession as unknown as BrowserPanelDeps["lookupSession"],
     touchSession: touchSession as unknown as BrowserPanelDeps["touchSession"],
@@ -85,7 +92,7 @@ function build(over: Partial<BrowserPanelDeps> = {}) {
         leaseAction,
         sendInput,
         status: async () => ({ kind: "ok", bootId: SESSION.bootId }),
-      } as never),
+      }) as never,
     ...over,
   });
 
@@ -108,6 +115,7 @@ function build(over: Partial<BrowserPanelDeps> = {}) {
     attachSession,
     touchSession,
     touchActivity,
+    wakeComputer,
     lookupSession,
   };
 }
@@ -214,7 +222,7 @@ describe("browser panel — GET /session", () => {
             bootId: "boot-1",
           }),
           leaseAction: async () => ({ took: false, lease: { state: "held" } }),
-        } as never),
+        }) as never,
     });
     const body = await (await call("/session")).json();
     expect(body.ok).toBe(true);
@@ -229,7 +237,7 @@ describe("browser panel — GET /session", () => {
             throw new Error("connect ECONNREFUSED");
           },
           leaseAction: async () => ({ took: false, lease: { state: "free" } }),
-        } as never),
+        }) as never,
     });
     const res = await call("/session");
     expect(res.status).toBe(200);
@@ -315,7 +323,7 @@ describe("browser panel — POST /lease", () => {
             took: false,
             lease: { state: "held", holder: "users_other", bootId: "boot-1" },
           }),
-        } as never),
+        }) as never,
     });
     const res = await call("/lease", {
       method: "POST",
@@ -428,7 +436,7 @@ describe("browser panel — forwarding a person's input", () => {
             status: 423,
             error: "lease_held",
           })),
-        } as never),
+        }) as never,
     });
     const res = await post(f, { events: EVENTS });
     expect(res.status).toBe(423);
@@ -446,7 +454,7 @@ describe("browser panel — forwarding a person's input", () => {
             status: 404,
             error: "unknown_tab",
           })),
-        } as never),
+        }) as never,
     });
     expect((await post(f, { events: EVENTS, tabId: "gone" })).status).toBe(404);
   });
@@ -467,7 +475,7 @@ describe("browser panel — forwarding a person's input", () => {
               status,
               error: "nope",
             })),
-          } as never),
+          }) as never,
       });
       expect((await post(f, { events: EVENTS })).status).toBe(status);
     }
@@ -534,7 +542,7 @@ describe("browser panel — forwarding a person's input", () => {
             status: 401,
             error: "unauthorized",
           })),
-        } as never),
+        }) as never,
     });
     expect((await post(f, { events: EVENTS })).status).toBe(502);
   });
@@ -587,7 +595,7 @@ describe("browser panel — forwarding a person's input", () => {
             status: 423,
             error: "lease_held",
           })),
-        } as never),
+        }) as never,
     });
     await post(f, { events: EVENTS });
     expect(f.touchSession).not.toHaveBeenCalled();
@@ -604,7 +612,7 @@ describe("browser panel — is this lease mine?", () => {
           lease: vi.fn(async () => state),
           leaseAction: vi.fn(async () => ({ took: true, lease: state })),
           sendInput: vi.fn(),
-        } as never),
+        }) as never,
     });
 
   it("tells the pane the browser is theirs, so it need not guess", async () => {
@@ -680,7 +688,7 @@ describe("browser panel — is this lease mine?", () => {
           }),
           leaseAction: vi.fn(),
           sendInput: vi.fn(),
-        } as never),
+        }) as never,
     });
     expect(await (await f.call("/session")).json()).toMatchObject({
       lease: { state: "unknown" },
@@ -789,7 +797,7 @@ it.each(["/state", "/pane-command", "/viewport"])(
           paneState: async () => ({ seq: 1, tabs: [], viewport }),
           paneCommand: async () => ({ ok: true }),
           paneViewport,
-        } as never),
+        }) as never,
     });
     const response = await call(
       path,
@@ -829,7 +837,7 @@ it("refuses an awake sandbox with an unhealthy or different daemon", async () =>
           userId: CLAIMS.userId,
           projectId: CLAIMS.projectId,
           sandboxRowId: "box-row",
-        } as never),
+        }) as never,
       sandboxInfo: async () =>
         ({
           ok: true,
@@ -838,7 +846,7 @@ it("refuses an awake sandbox with an unhealthy or different daemon", async () =>
             projectId: CLAIMS.projectId,
             providerComputerId: "box",
           },
-        } as never),
+        }) as never,
       lookupSession: async () =>
         ({
           reachable: true,
@@ -847,11 +855,182 @@ it("refuses an awake sandbox with an unhealthy or different daemon", async () =>
             computerId: undefined,
             sandboxRowId: "box-row",
           },
-        } as never),
-      createClient: () => ({ status: async () => status } as never),
+        }) as never,
+      createClient: () => ({ status: async () => status }) as never,
     });
     const response = await call("/session");
     expect(response.status).toBe(503);
     expect(attachSession).not.toHaveBeenCalled();
   }
+});
+
+/**
+ * Waking is a CONTROL-PLANE act, not a side effect of attaching.
+ *
+ * Connecting to a paused E2B box resumes it, so the attach below would wake the
+ * machine on its own — and leave the row `hibernating`, which means running,
+ * unmetered, and skipped by every idle sweep. Since hosted browsers are now
+ * reclaimed within a couple of minutes of nobody watching, that would happen on
+ * every panel re-show.
+ */
+describe("browser panel — ensure wakes a sleeping box", () => {
+  /**
+   * Successive answers from `sandbox-info`, the last one repeating.
+   *
+   * The FIRST is what `authorize` reads (and hands to the ensure path, rather
+   * than paying for a second round trip); the rest are the wake poll.
+   */
+  function withStatuses(
+    statuses: string[],
+    over: Partial<BrowserPanelDeps> = {},
+  ) {
+    let call = 0;
+    return build({
+      sandboxInfo: (async () => ({
+        ok: true,
+        value: {
+          ownerUserId: CLAIMS.userId,
+          projectId: CLAIMS.projectId,
+          providerComputerId: "sbx_1",
+          status: statuses[Math.min(call++, statuses.length - 1)],
+        },
+      })) as unknown as BrowserPanelDeps["sandboxInfo"],
+      ...over,
+    });
+  }
+
+  it("wakes a hibernating computer before attaching to it", async () => {
+    const panel = withStatuses(["hibernating", "ready"]);
+
+    const res = await panel.call("/session?ensure=1");
+
+    expect(res.status).toBe(200);
+    expect(panel.wakeComputer).toHaveBeenCalledWith({
+      computerId: CLAIMS.computerId,
+    });
+  });
+
+  it("does not wake a box that is already awake", async () => {
+    const panel = withStatuses(["ready"]);
+
+    const res = await panel.call("/session?ensure=1");
+
+    expect(res.status).toBe(200);
+    expect(panel.wakeComputer).not.toHaveBeenCalled();
+  });
+
+  it("never wakes without ensure — watching must not resume a parked box", async () => {
+    const panel = withStatuses(["hibernating"]);
+
+    await panel.call("/session");
+
+    expect(panel.wakeComputer).not.toHaveBeenCalled();
+  });
+
+  it("waits for a wake already in flight rather than asking twice", async () => {
+    const panel = withStatuses(["waking", "ready"]);
+
+    const res = await panel.call("/session?ensure=1");
+
+    expect(res.status).toBe(200);
+    // Another replica (or an earlier re-show) already asked.
+    expect(panel.wakeComputer).not.toHaveBeenCalled();
+  });
+
+  it("503s rather than attaching to a box that never comes back", async () => {
+    vi.useFakeTimers();
+    try {
+      const panel = withStatuses(["hibernating", "waking"]);
+      const pending = panel.call("/session?ensure=1");
+      await vi.advanceTimersByTimeAsync(15_000);
+      const res = await pending;
+
+      expect(res.status).toBe(503);
+      expect((await res.json()).error).toBe("browser_unavailable");
+      // The pane retries on its own visibility-gated backoff; holding the
+      // request open would just move the wait somewhere less interruptible.
+      expect(panel.attachSession).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("falls through when the control plane has no wake route yet", async () => {
+    // This is a cost optimisation, not a correctness gate: an inspector that
+    // failed closed here would take the panel down with it during a rollout
+    // where the backend has not deployed. Attaching still resumes the box the
+    // old way, which is exactly the pre-change behaviour.
+    const panel = withStatuses(["hibernating"], {
+      wakeComputer: (async () => ({
+        ok: false,
+        status: 404,
+        error: "Not Found",
+      })) as unknown as BrowserPanelDeps["wakeComputer"],
+    });
+
+    const res = await panel.call("/session?ensure=1");
+
+    expect(res.status).toBe(200);
+  });
+});
+
+describe("browser panel — holding the browser is being here", () => {
+  it("reports presence when a lease is taken or beaten", async () => {
+    // The VNC tier opens no frame socket, so its pane never pings — this is
+    // the only thing telling the control plane somebody is at the machine.
+    // And a lease holder is the strongest case there is: they may be mid-login
+    // or mid-2FA, and reclaiming the box under them is the failure to avoid.
+    for (const action of ["acquire", "heartbeat", "resume"]) {
+      resetPanelActivityThrottleForTests();
+      const panel = build();
+
+      const res = await panel.call("/lease", {
+        method: "POST",
+        body: JSON.stringify({ action }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(panel.touchSession).toHaveBeenCalledWith({
+        sessionId: SESSION.sessionId,
+        kind: "panel",
+      });
+    }
+  });
+
+  it("does not report presence for a lease it failed to take", async () => {
+    resetPanelActivityThrottleForTests();
+    const panel = build({
+      createClient: () =>
+        ({
+          lease: async () => ({ state: "held", bootId: "boot-1" }),
+          leaseAction: async () => ({
+            took: false,
+            lease: { state: "held", holder: "users_other", bootId: "boot-1" },
+          }),
+          status: async () => ({ kind: "ok", bootId: SESSION.bootId }),
+        }) as never,
+    });
+
+    const res = await panel.call("/lease", {
+      method: "POST",
+      body: JSON.stringify({ action: "acquire" }),
+    });
+
+    expect(res.status).toBe(409);
+    expect(panel.touchSession).not.toHaveBeenCalled();
+  });
+
+  it("throttles presence rather than writing once per heartbeat", async () => {
+    resetPanelActivityThrottleForTests();
+    const panel = build();
+
+    for (let i = 0; i < 4; i += 1) {
+      await panel.call("/lease", {
+        method: "POST",
+        body: JSON.stringify({ action: "heartbeat" }),
+      });
+    }
+
+    expect(panel.touchSession).toHaveBeenCalledTimes(1);
+  });
 });

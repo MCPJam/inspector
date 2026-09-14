@@ -20,7 +20,7 @@ The SDK provides APIs to save eval results to MCPJam for visualization in the CI
 
 Use `MCPJAM_BASE_URL` only when you need to override the default ingest host, such as internal development against a non-production backend.
 
-`MCPJAM_API_KEY` controls whether results are uploaded. **Replay credential** capture only happens when you provide `serverReplayConfigs`, `agent`, or `mcpClientManager`. **MCP App widget snapshots** in each result’s trace (for iframe replay in MCPJam) come from [`PromptResult.getWidgetSnapshots()`](/sdk/reference/prompt-result#mcp-app-widget-snapshots), which is only populated when [`HostRunner`](/sdk/reference/host-runner) was constructed with [`mcpClientManager`](/sdk/reference/host-runner#parameters).
+`MCPJAM_API_KEY` controls whether results are uploaded. **Replay credential** capture only happens when you provide `serverReplayConfigs`, `agent`, or `mcpClientManager`. **MCP App widget snapshots** in each result's trace (for iframe replay in MCPJam) come from [`PromptResult.getWidgetSnapshots()`](/sdk/reference/prompt-result#mcp-app-widget-snapshots), which is only populated when [`HostRunner`](/sdk/reference/host-runner) was constructed with [`mcpClientManager`](/sdk/reference/host-runner#parameters).
 
 ---
 
@@ -189,10 +189,6 @@ const reporter = createEvalRunReporter({
   suiteName: "Integration Tests",
   passCriteria: { minimumPassRate: 85 },
   agent,
-  ci: {
-    branch: process.env.GITHUB_REF_NAME,
-    commitSha: process.env.GITHUB_SHA,
-  },
 });
 ```
 
@@ -235,7 +231,7 @@ Uploaded runs can show **Replay this run** / server-side MCP replay when the ing
 - **`HostRunner` vs reporter** — Putting `mcpClientManager` on [`HostRunner`](/sdk/reference/host-runner) fills **MCP App widget snapshots** on [`PromptResult`](/sdk/reference/prompt-result). The **reporter** (and one-shot `report*`) resolves **server replay** from its **own** `agent` / `mcpClientManager` fields. Pass `agent` or `mcpClientManager` into [`createEvalRunReporter`](#createevalrunreporter) as well; **agent-only** wiring can still upload traces and widgets but **omit** `hasServerReplayConfig`.
 - **Teardown order** — `finalize()` / one-shot reporting calls `getServerReplayConfigs()` against **connected** registrations. In `afterAll`, run **`await reporter.finalize()`** (or `reportEvalResults`) **before** **`await manager.disconnectAllServers()`**. Disconnecting first clears manager state and uploads **without** replay metadata.
 
-**LLM API keys** are **not** stored on the run. Replaying in the MCPJam UI still requires provider keys (e.g. OpenRouter) in **Settings** for your suite’s models.
+**LLM API keys** are **not** stored on the run. Replaying in the MCPJam UI still requires provider keys (e.g. OpenRouter) in **Settings** for your suite's models.
 
 ### Using with PromptResult
 
@@ -422,9 +418,11 @@ Advanced replay override. Most users should not construct this manually.
 
 ### EvalCiMetadata
 
+Automatically detected when `ci` is omitted for supported CI services. An explicit object is preserved without filling missing fields; `ci: {}` disables detection. This includes incremental reporters, which accept and preserve `provider`. See [automatic CI metadata](/sdk/concepts/saving-results#automatic-ci-metadata) for providers and available fields.
+
 | Property | Type | Description |
 |----------|------|-------------|
-| `provider` | `string` | CI provider (e.g., `"github"`, `"gitlab"`) |
+| `provider` | `string` | CI provider (e.g., `"github_actions"`, `"gitlab_ci"`) |
 | `pipelineId` | `string` | Pipeline/workflow identifier |
 | `jobId` | `string` | Job identifier |
 | `runUrl` | `string` | URL to the CI run |
@@ -471,10 +469,16 @@ The three widget predicates — `widgetRendered`, `widgetRenderLatencyUnder`, `w
 
 #### Predicate types
 
-The **Measures** column is the link of the [user-value chain](/sdk/concepts/user-value-chain) each kind's evidence is filed at. It is where the evidence is recorded, not a claim about where a failure originated. No predicate files at Connection or Discovery: the runner decides those two from what it observed setting the run up, before your case runs.
+The **Measures** column is the link of the [user-value chain](/sdk/concepts/user-value-chain) each kind's evidence is filed at. It is where the evidence is recorded, not a claim about where a failure originated. Connection is measured by the runner. Discovery also accepts the six catalog assertions below. They require complete raw tools/list capture; absent or partial capture produces an evaluator error.
 
 | Type | Fields | Measures | Description |
 |------|--------|----------|-------------|
+| `toolDescriptionsPresent` | `minLength?` | Discovery | Trimmed descriptions meet the minimum length (default 20). |
+| `toolAnnotationsPresent` | `require?` | Discovery | Every tool declares annotations; optionally require boolean readOnlyHint and destructiveHint. |
+| `toolNamesUnique` | — | Discovery | Raw tool names are unique within each server. |
+| `noDeprecatedToolExposed` | — | Discovery | No description marks itself deprecated. Heuristic; advisory only. |
+| `toolInputSchemasWellFormed` | — | Discovery | Every input schema has an object root and documented properties. |
+| `toolOutputSchemasPresent` | — | Discovery | Every tool declares an output schema; does not validate result conformance. |
 | `toolCalledWith` | `toolName`, `args` ([`ArgMatcher`](#argmatcher)), `minCount?` | Selection | A call to `toolName` whose args satisfy `args` occurred at least `minCount` (default 1) times. |
 | `toolCalledAtLeastOnce` | `toolName` | Selection | `toolName` was called at least once (args irrelevant). |
 | `toolNeverCalled` | `toolName` | Selection | `toolName` was never called (forbidden-tool check). |
@@ -482,6 +486,7 @@ The **Measures** column is the link of the [user-value chain](/sdk/concepts/user
 | `firstToolWas` | `toolName` | Selection | The first tool call observed in the transcript was `toolName`. |
 | `responseContains` | `needle`, `caseSensitive?` | User value | The final assistant message contains `needle`. Case-insensitive by default. |
 | `responseMatches` | `pattern` | User value | The final assistant message matches the regular expression `pattern` (regex source string, no flags). |
+| `responseCloseTo` | `reference`, `maxDistance`, optional `caseSensitive`, `normalizeWhitespace` | User value | Normalized Unicode code-point edit distance; budget overflow is unscored, not a mismatch. |
 | `noToolErrors` | — | Response | No tool produced an error (neither MCP `isError: true` nor a JSON-RPC/transport failure). |
 | `finalAssistantMessageNonEmpty` | — | User value | The final assistant message is a non-empty, non-whitespace string. |
 | `tokenBudgetUnder` | `tokens` | User value | Total token usage for the iteration is strictly under `tokens`. Fails when usage was not measured. |
@@ -502,6 +507,12 @@ The **Measures** column is the link of the [user-value chain](/sdk/concepts/user
 | `noDestructiveToolCalled` | — | Selection | No called tool declares `annotations.destructiveHint`. Reports `status: "error"` when no tool in the inventory declares annotations at all. |
 | `toolErrorNamesInput` | `toolName?` | Response | **Observation.** Every tool error message names one of that tool's input keys or a value the call sent. It does not measure recovery quality — "Rate limited. Retry in 30 seconds." names nothing and is a good message. Warn/Report only. |
 | `fullPageHasContinuation` | `toolName?` | Response | **Observation.** A page whose length equals its requested limit carries recognized continuation metadata. A full page is not proof that more results exist, so this reports rather than fails. Warn/Report only. |
+
+#### Standard checks
+
+Standard checks use the browser-safe `STANDARD_CHECKS` catalog from `@mcpjam/sdk/contract`. Every assertion preset defaults to advisory Warn. UVC reports these evaluator results without turning advisory failures into failed stages. Scored gating discovery failures can fail Discovery; setup failure attribution takes precedence. Empty complete catalogs receive an explicit "no tools advertised" rationale.
+
+Cases can suppress suite check families with `suppressedSuiteStandardCheckIds` (for example, `["response.performance"]`). This filters suite defaults before inherit/extend/replace resolution, preserves explicit case and step assertions, and remains effective after a suite threshold changes. Omitted updates preserve suppression; `[]` clears it. Catalog IDs are authoring references; evaluator reporting keeps its existing content-derived scorer IDs.
 
 #### ArgMatcher
 
@@ -661,3 +672,6 @@ It is on by default and there is nothing to configure. Details worth knowing:
 - [Running Evals](/sdk/concepts/running-evals) - Conceptual guide
 - [EvalTest Reference](/sdk/reference/eval-test) - EvalTest API
 - [EvalSuite Reference](/sdk/reference/eval-suite) - EvalSuite API
+
+
+See [Reliable evals in CI](/sdk/concepts/enterprise-evals) for canonical evaluators, reporting receipts, explicit limits, metadata compatibility, and migration guidance.

@@ -11,6 +11,7 @@ export const tokensCss: string = `@theme {
 
 @custom-variant dark (&:is(.dark *));
 
+.theme-preview-light,
 :root {
   --background: oklch(0.9818 0.0054 95.0986);
   --foreground: oklch(0.3438 0.0269 95.7226);

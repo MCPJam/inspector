@@ -15,6 +15,9 @@ export type ConformanceCiMetadata = {
   job?: string;
   runUrl?: string;
   runId?: string;
+  repositoryUrl?: string;
+  prUrl?: string;
+  branchUrl?: string;
 };
 
 /**
@@ -32,7 +35,7 @@ export type ConformanceCiMetadata = {
  * learning two vocabularies.
  */
 export function detectCiMetadata(
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv = process.env
 ): ConformanceCiMetadata | undefined {
   if (env.GITHUB_ACTIONS !== "true" && env.GITHUB_ACTIONS !== "1") {
     return undefined;
@@ -44,15 +47,46 @@ export function detectCiMetadata(
     : rawServerUrl;
   const runId = env.GITHUB_RUN_ID;
   const runAttempt = env.GITHUB_RUN_ATTEMPT;
+  const event = parseGithubEvent(env.MCPJAM_GITHUB_EVENT_PAYLOAD);
+  const pullRequest = objectValue(event?.pull_request);
+  const head = objectValue(pullRequest?.head);
+  const headRepository = objectValue(head?.repo);
   const prMatch = env.GITHUB_REF?.match(/^refs\/pull\/(\d+)\//);
+  const pullRequestNumber =
+    numberValue(pullRequest?.number) ??
+    numberValue(event?.number) ??
+    (prMatch ? Number(prMatch[1]) : undefined);
+  const isPullRequest = pullRequest != null || prMatch != null;
+  const branch = isPullRequest
+    ? (stringValue(head?.ref) ?? env.GITHUB_HEAD_REF)
+    : env.GITHUB_REF_NAME;
+  const repositoryUrl = repository ? `${serverUrl}/${repository}` : undefined;
+  const headRepositoryName =
+    stringValue(headRepository?.full_name) ??
+    env.GITHUB_HEAD_REPOSITORY ??
+    (isPullRequest ? undefined : repository);
+  const branchRepositoryUrl =
+    stringValue(headRepository?.html_url) ??
+    (headRepositoryName ? `${serverUrl}/${headRepositoryName}` : undefined);
   return {
     provider: "github_actions",
     ...(repository ? { repository } : {}),
     ...(env.GITHUB_SHA ? { commitSha: env.GITHUB_SHA } : {}),
-    ...(env.GITHUB_REF_NAME ? { branch: env.GITHUB_REF_NAME } : {}),
-    ...(prMatch ? { pullRequestNumber: Number(prMatch[1]) } : {}),
+    ...(branch ? { branch } : {}),
+    ...(pullRequestNumber ? { pullRequestNumber } : {}),
     ...(env.GITHUB_WORKFLOW ? { workflow: env.GITHUB_WORKFLOW } : {}),
     ...(env.GITHUB_JOB ? { job: env.GITHUB_JOB } : {}),
+    ...(repositoryUrl ? { repositoryUrl } : {}),
+    ...(stringValue(pullRequest?.html_url)
+      ? { prUrl: stringValue(pullRequest?.html_url)! }
+      : pullRequestNumber && repositoryUrl
+        ? { prUrl: `${repositoryUrl}/pull/${pullRequestNumber}` }
+        : {}),
+    ...(branch && branchRepositoryUrl
+      ? {
+          branchUrl: `${branchRepositoryUrl}/tree/${encodeURIComponent(branch)}`,
+        }
+      : {}),
     ...(repository && runId
       ? {
           runUrl: `${serverUrl}/${repository}/actions/runs/${runId}`,
@@ -62,8 +96,35 @@ export function detectCiMetadata(
   };
 }
 
+function objectValue(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object"
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function parseGithubEvent(
+  value: string | undefined
+): Record<string, unknown> | undefined {
+  if (!value) return undefined;
+  try {
+    return objectValue(JSON.parse(value));
+  } catch {
+    return undefined;
+  }
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value > 0
+    ? value
+    : undefined;
+}
+
 export function githubActionExternalRunId(
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv = process.env
 ): string | undefined {
   const runId = env.GITHUB_RUN_ID;
   if (!runId) return undefined;
@@ -97,7 +158,7 @@ export type LauncherKind = "cli" | "mcp" | "github_action";
  */
 export function detectLauncherKind(
   env: NodeJS.ProcessEnv = process.env,
-  fallback: LauncherKind,
+  fallback: LauncherKind
 ): LauncherKind {
   if (env.GITHUB_ACTIONS === "true" || env.GITHUB_ACTIONS === "1") {
     return "github_action";

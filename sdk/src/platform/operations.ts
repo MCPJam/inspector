@@ -1,4 +1,11 @@
+import {
+  evalBacktestDraftSchema,
+  evalBacktestContinuationSchema,
+  type EvalBacktestReport,
+} from "../contract/eval-backtest.js";
+import { suppressedSuiteStandardCheckIdsSchema } from "../contract/standard-checks.js";
 import { platformBrowserToolPolicySchema } from "./browser-policy.js";
+import { BROWSER_AGENT_ACT_VERBS } from "./browser-agent-contract.js";
 import type { PlatformSessionBrowserCommand } from "./types.js";
 import type { PlatformSessionBrowserOperationResult } from "./types.js";
 /**
@@ -2625,7 +2632,7 @@ function operationInputError(message: string): PlatformApiError {
  *
  * Passing both spellings of ONE selector is a refusal, never a precedence
  * rule — the same call `clients.ts` makes for `--client` / `--host` and this
- * file already makes for `repetitions` / `iterations`. A precedence rule is
+ * file already makes for `iterations` / `repetitions`. A precedence rule is
  * invisible: a script that passes both because someone half-finished a
  * migration keeps running, silently launching against whichever of two
  * possibly-different clients this function happened to prefer, and spends on
@@ -2638,7 +2645,7 @@ function foldClientSelectors<
     hosts?: string[];
     client?: string;
     clients?: string[];
-  },
+  }
 >(input: T): T {
   if (input.client !== undefined && input.host !== undefined) {
     throw operationInputError(
@@ -2677,7 +2684,7 @@ function foldClientSelectors<
  */
 function foldComposeClientSelector<
   C extends { host?: string; client?: string },
-  T extends { compose?: C },
+  T extends { compose?: C }
 >(input: T): T & { compose?: C & { host: string } } {
   const compose = input.compose;
   if (!compose) return input as T & { compose?: C & { host: string } };
@@ -3012,9 +3019,9 @@ function resolveSuiteHostTargets(
 /** The knobs both launch shapes forward, in the wire's own vocabulary. */
 function runKnobBody(
   input: {
-    repetitions?: number;
-    /** Deprecated alias for repetitions. */
     iterations?: number;
+    /** Legacy spelling of iterations. */
+    repetitions?: number;
     notes?: string;
     minPassRate?: number;
     matchOptions?: z.infer<typeof publicMatchOptionsSchema>;
@@ -3026,8 +3033,8 @@ function runKnobBody(
   caseIds: string[] | undefined
 ): Record<string, unknown> {
   return {
-    ...(input.repetitions !== undefined || input.iterations !== undefined
-      ? { iterationOverride: input.repetitions ?? input.iterations }
+    ...(input.iterations !== undefined || input.repetitions !== undefined
+      ? { iterationOverride: input.iterations ?? input.repetitions }
       : {}),
     ...(caseIds ? { caseIds } : {}),
     ...(input.matchOptions ? { matchOptionsOverride: input.matchOptions } : {}),
@@ -3855,15 +3862,10 @@ const importApprovalsSchema = z
   .min(1);
 
 const RUN_KNOB_FIELDS = {
-  repetitions: z
-    .number()
-    .int()
-    .min(1)
-    .max(10)
-    .optional()
-    .describe(
-      "Run each case this many times under verdict policy 2, overriding its saved repetitions FOR THIS RUN ONLY (the suite is untouched). Multiplies what the run costs."
-    ),
+  // `iterations` is the canonical spelling of the configured count
+  // (`docs/evals-vocabulary-consolidation.md`); `repetitions` is its legacy
+  // spelling. Both fold onto the wire's `iterationOverride`, so flipping which
+  // one is canonical changes documentation and precedence, not meaning.
   iterations: z
     .number()
     .int()
@@ -3871,8 +3873,15 @@ const RUN_KNOB_FIELDS = {
     .max(10)
     .optional()
     .describe(
-      "Run each case this many times, overriding its saved iteration count FOR THIS RUN ONLY (the suite is untouched). Multiplies what the run costs."
+      "Run each case this many times under verdict policy 2, overriding its saved iterations FOR THIS RUN ONLY (the suite is untouched). Multiplies what the run costs."
     ),
+  repetitions: z
+    .number()
+    .int()
+    .min(1)
+    .max(10)
+    .optional()
+    .describe("Legacy spelling of iterations."),
   notes: z
     .string()
     .trim()
@@ -4002,12 +4011,12 @@ const runEvalSuiteInput = z
     ...RUN_KNOB_FIELDS,
   })
   .superRefine((input, ctx) => {
-    if (input.repetitions !== undefined && input.iterations !== undefined) {
+    if (input.iterations !== undefined && input.repetitions !== undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ["repetitions"],
+        path: ["iterations"],
         message:
-          "Use either repetitions or the deprecated iterations alias, not both.",
+          "Send iterations or repetitions, not both — they are two spellings of one field.",
       });
     }
   });
@@ -4239,13 +4248,13 @@ export const runEvalSuiteOperation: PlatformOperation<
       project,
       suite,
       detail,
-      input.environment ? [input.environment] : (input.environments ?? []),
+      input.environment ? [input.environment] : input.environments ?? [],
       signal
     );
     const selectedHosts = resolveSuiteHostTargets(
       suite,
       detail,
-      input.host ? [input.host] : (input.hosts ?? [])
+      input.host ? [input.host] : input.hosts ?? []
     );
 
     // Attached environments arrive as bare IDS — the suite detail carries no
@@ -4381,8 +4390,8 @@ export const runEvalSuiteOperation: PlatformOperation<
             ...(disclosureEnvironmentIds.length === 1
               ? { environmentId: disclosureEnvironmentIds[0]! }
               : disclosureEnvironmentIds.length > 1
-                ? { environmentIds: disclosureEnvironmentIds }
-                : {}),
+              ? { environmentIds: disclosureEnvironmentIds }
+              : {}),
             ...(disclosureHostId ? { namedHostId: disclosureHostId } : {}),
           },
           { signal: disclosureBound.signal }
@@ -4627,8 +4636,8 @@ const runEvalCaseInput = z
           DEPRECATED_HOST_SELECTOR_SUFFIX
       ),
     compose: composeRunTargetInput.optional(),
-    repetitions: RUN_KNOB_FIELDS.repetitions,
     iterations: RUN_KNOB_FIELDS.iterations,
+    repetitions: RUN_KNOB_FIELDS.repetitions,
     idempotencyKey: RUN_KNOB_FIELDS.idempotencyKey,
     // A single-case run of an APPROXIMATED case needs the same per-run
     // approval a suite run does. Without it this operation could never launch
@@ -4639,12 +4648,12 @@ const runEvalCaseInput = z
     importApprovals: RUN_KNOB_FIELDS.importApprovals,
   })
   .superRefine((input, ctx) => {
-    if (input.repetitions !== undefined && input.iterations !== undefined) {
+    if (input.iterations !== undefined && input.repetitions !== undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ["repetitions"],
+        path: ["iterations"],
         message:
-          "Use either repetitions or the deprecated iterations alias, not both.",
+          "Send iterations or repetitions, not both — they are two spellings of one field.",
       });
     }
   });
@@ -4800,9 +4809,9 @@ export const runEvalCaseOperation: PlatformOperation<
             ...(environment ? { environmentId: environment.id } : {}),
             ...(host ? { namedHostId: host.id } : {}),
             ...(ephemeralLaunch ? { ephemeralEnvironment: true } : {}),
-            ...(input.repetitions !== undefined ||
-            input.iterations !== undefined
-              ? { iterationOverride: input.repetitions ?? input.iterations }
+            ...(input.iterations !== undefined ||
+            input.repetitions !== undefined
+              ? { iterationOverride: input.iterations ?? input.repetitions }
               : {}),
             ...(input.idempotencyKey
               ? { idempotencyKey: input.idempotencyKey }
@@ -4961,6 +4970,8 @@ const evalCaseInput = z.object({
     .describe(
       "Per-case check gate (advanced): `{ mode: inherit | replace | extend, list: [...] }`. `predicates` is the deprecated spelling of this field; passing both is an error."
     ),
+  suppressedSuiteStandardCheckIds:
+    suppressedSuiteStandardCheckIdsSchema.optional(),
   /** @deprecated Use `checks`. */
   predicates: z
     .record(z.string(), z.any())
@@ -5215,6 +5226,8 @@ const caseFieldsShape = {
   // untouched (omitted). On create, null is treated as "no override".
   matchOptions: publicMatchOptionsSchema.nullable().optional(),
   checks: publicCheckOverrideSchema.nullable().optional(),
+  suppressedSuiteStandardCheckIds:
+    suppressedSuiteStandardCheckIdsSchema.optional(),
   // THE CONVERTER'S CLAIM, on the operation surface too.
   //
   // Without it Zod strips the key and `buildCaseBody` never sees it, so a
@@ -5396,7 +5409,7 @@ export const getEvalRunDisclosureOperation: PlatformOperation<
       project,
       suite,
       detail,
-      input.environment ? [input.environment] : (input.environments ?? []),
+      input.environment ? [input.environment] : input.environments ?? [],
       signal
     );
     // SAME plan resolution `run_eval_suite` uses — including its
@@ -5485,8 +5498,8 @@ export const getEvalRunDisclosureOperation: PlatformOperation<
         ...(disclosureEnvironmentIds.length === 1
           ? { environmentId: disclosureEnvironmentIds[0]! }
           : disclosureEnvironmentIds.length > 1
-            ? { environmentIds: disclosureEnvironmentIds }
-            : {}),
+          ? { environmentIds: disclosureEnvironmentIds }
+          : {}),
         ...(disclosureHostId ? { namedHostId: disclosureHostId } : {}),
       },
       { signal }
@@ -5521,221 +5534,226 @@ const declaredSuiteIdField = z
 // field this surface does not implement, like `judge.groundedness` — returns
 // 200 having written nothing, and the caller has a receipt for a change that
 // never happened. A refusal that names the key is the honest answer.
-const updateEvalSuiteInput = z.strictObject({
-  project: z
-    .string()
-    .trim()
-    .min(1)
-    .optional()
-    .describe(PROJECT_SELECTOR_DESCRIPTION),
-  suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
-  declaredSuiteId: declaredSuiteIdField,
-  name: z.string().trim().min(1).optional(),
-  description: z.string().trim().optional(),
-  environment: z
-    .object({
-      servers: z
-        .array(z.string().trim().min(1))
-        .optional()
-        .describe(
-          "Server selection by name; replaces the suite's server set. Omit to leave it (and its bindings) alone."
-        ),
-      computerEnvironment: z
-        .union([z.string().trim().min(1), z.null()])
-        .optional()
-        .describe(
-          "Custom sandbox image the suite's eval runs boot from, by name or id (see list_sandbox_images). null uses the provider's default base image."
-        ),
-    })
-    .optional()
-    .describe(
-      "Suite environment: server selection and the sandbox image runs boot from. Unspecified fields are preserved."
-    ),
-  executionConfig: z
-    .object({
-      model: z.string().trim().min(1).optional(),
-      systemPrompt: z.string().optional(),
-      temperature: z.number().optional(),
-    })
-    .optional()
-    .describe("Suite execution config; unspecified fields are preserved."),
-  clients: z
-    .array(
-      z.object({
-        client: z.string().trim().min(1).describe("Client name or ID."),
-        servers: z.array(z.string().trim().min(1)).optional(),
+const updateEvalSuiteInput = z
+  .strictObject({
+    project: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(PROJECT_SELECTOR_DESCRIPTION),
+    suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+    declaredSuiteId: declaredSuiteIdField,
+    name: z.string().trim().min(1).optional(),
+    description: z.string().trim().optional(),
+    environment: z
+      .object({
+        servers: z
+          .array(z.string().trim().min(1))
+          .optional()
+          .describe(
+            "Server selection by name; replaces the suite's server set. Omit to leave it (and its bindings) alone."
+          ),
+        computerEnvironment: z
+          .union([z.string().trim().min(1), z.null()])
+          .optional()
+          .describe(
+            "Custom sandbox image the suite's eval runs boot from, by name or id (see list_sandbox_images). null uses the provider's default base image."
+          ),
       })
-    )
-    .optional()
-    .describe(
-      "Client attachments (replace-all). `hosts` is the deprecated spelling of this field."
-    ),
-  hosts: z
-    .array(
-      z.object({
-        host: z.string().trim().min(1).describe("Client name or ID."),
-        servers: z.array(z.string().trim().min(1)).optional(),
+      .optional()
+      .describe(
+        "Suite environment: server selection and the sandbox image runs boot from. Unspecified fields are preserved."
+      ),
+    executionConfig: z
+      .object({
+        model: z.string().trim().min(1).optional(),
+        systemPrompt: z.string().optional(),
+        temperature: z.number().optional(),
       })
-    )
-    .optional()
-    .describe(
-      "Client attachments (replace-all)." + DEPRECATED_HOSTS_SELECTOR_SUFFIX
-    ),
-  settings: z
-    .strictObject({
-      minimumAccuracy: z.number().min(0).max(100).optional(),
-      minimumIterations: z
-        .union([z.number().int().min(1).max(10), z.null()])
-        .optional()
-        .describe(
-          "Floor on per-case iterations, 1–10: every case runs at least this many times. null removes the floor."
-        ),
-      // Nullable to CLEAR suite defaults (vs omit to leave untouched).
-      matchOptions: publicMatchOptionsSchema.nullable().optional(),
-      checks: z.array(publicCheckSchema).nullable().optional(),
-      judge: z
-        .strictObject({
-          enabled: z
-            .boolean()
-            .optional()
-            .describe(
-              "Make the judge available on this suite. On its own this grades nothing — set autoRun (or request grading on a finished run) to make grading happen."
-            ),
-          model: z.string().trim().min(1).optional(),
-          autoRun: z
-            .boolean()
-            .optional()
-            .describe(
-              "Grade every run automatically as it completes. This is the flag that makes LLM-as-judge grading happen; it SPENDS on each run."
-            ),
-          threshold: z
-            .number()
-            .min(0)
-            .max(1)
-            .optional()
-            .describe(
-              "Advisory pass threshold, 0–1 (passed = score >= threshold)."
-            ),
-          role: z
-            .enum(["advisory", "gating"])
-            .optional()
-            .describe(
-              "Whether the judge decides the verdict. `gating` is accepted only on a calibrated judge, and only where the deployment allows it."
-            ),
-          severity: z
-            .literal("warn")
-            .optional()
-            .describe(
-              "Presentation severity for an advisory judge: flag it without failing the run. Legal only with role: advisory."
-            ),
-          rubric: z
-            .union([
-              z.strictObject({
-                criteria: z
-                  .array(
-                    z.strictObject({
-                      id: z
-                        .string()
-                        .regex(/^[A-Za-z0-9_-]{1,64}$/)
-                        .describe(
-                          "Stable id the judge cites in its reasons. Unique within the rubric; editing it retires the suite's calibration."
-                        ),
-                      label: z.string().trim().min(1).max(200),
-                      description: z.string().max(1000).optional(),
-                      required: z.boolean().optional(),
-                    })
-                  )
-                  .min(1)
-                  .max(25),
-              }),
-              z.null(),
-            ])
-            .optional()
-            .describe(
-              "The suite's own grading criteria, handed to the judge alongside each case's expected output. null CLEARS them; an empty criteria array is refused, because a rubric that asks nothing still changes what the judge was asked. Editing this retires the suite's judge calibration."
-            ),
+      .optional()
+      .describe("Suite execution config; unspecified fields are preserved."),
+    clients: z
+      .array(
+        z.object({
+          client: z.string().trim().min(1).describe("Client name or ID."),
+          servers: z.array(z.string().trim().min(1)).optional(),
         })
-        .optional(),
-      repetitions: z
-        .number()
-        .int()
-        .min(1)
-        .max(100)
-        .optional()
-        .describe(
-          "Verdict policy v2 only: trials per case unless the case overrides it. On a legacy suite, sending this together with passThreshold UPGRADES the suite to policy v2; neither alone is accepted there."
-        ),
-      passThreshold: z
-        .number()
-        .min(0)
-        .max(1)
-        .optional()
-        .describe(
-          "Verdict policy v2 only: FRACTION of a case's trials that must pass, 0–1 (0.8 is eighty percent). The v2 replacement for minimumAccuracy, which is a percent; sending both is refused."
-        ),
-      validity: z
-        .object({
-          minEligibleTrials: z.number().int().min(1).optional(),
-          minCompletionRate: z.number().min(0).max(1).optional(),
-          maxEvaluatorErrorRate: z.number().min(0).max(1).optional(),
+      )
+      .optional()
+      .describe(
+        "Client attachments (replace-all). `hosts` is the deprecated spelling of this field."
+      ),
+    hosts: z
+      .array(
+        z.object({
+          host: z.string().trim().min(1).describe("Client name or ID."),
+          servers: z.array(z.string().trim().min(1)).optional(),
         })
-        .strict()
-        .optional()
-        .describe(
-          "Verdict policy v2 only: when a run's measurement is trustworthy enough to decide. Fractions, 0–1. Omitted members keep the contract defaults (minCompletionRate 0.8, maxEvaluatorErrorRate 0.1); supplied members merge over the suite's stored validity rather than replacing it."
-        ),
-      qualityGate: z
-        .union([suiteGatePolicySchema, z.null()])
-        .optional()
-        .describe(
-          "Live quality-gate policy. null CLEARS it. Comparative conditions require a baseline; previous_completed is reserved. Requires expectedRevisionNumber and revisionNote."
-        ),
-    })
-    .optional(),
-  expectedRevisionNumber: z
-    .number()
-    .int()
-    .min(0)
-    .optional()
-    .describe(
-      "The suite's revisionNumber as you last read it. Supplying it makes this edit a compare-and-set: a suite changed since then is refused with 409 having written nothing. Omit for last-write-wins."
-    ),
-  revisionNote: z
-    .string()
-    .max(500)
-    .optional()
-    .describe(
-      "Why this edit is being made. Required (nonblank) whenever settings.qualityGate is present."
-    ),
-}).superRefine((body, ctx) => {
-  if (body.settings?.qualityGate === undefined) return;
-  if (body.expectedRevisionNumber === undefined) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["expectedRevisionNumber"],
-      message:
-        "expectedRevisionNumber is required when settings.qualityGate is present.",
-    });
-  }
-  const note = body.revisionNote?.trim() ?? "";
-  if (note.length === 0) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["revisionNote"],
-      message: "revisionNote is required when settings.qualityGate is present.",
-    });
-  }
-  if (body.settings.qualityGate !== null) {
-    const parsed = parseSuiteGatePolicyForAuthoring(body.settings.qualityGate);
-    if (!parsed.ok) {
+      )
+      .optional()
+      .describe(
+        "Client attachments (replace-all)." + DEPRECATED_HOSTS_SELECTOR_SUFFIX
+      ),
+    settings: z
+      .strictObject({
+        minimumAccuracy: z.number().min(0).max(100).optional(),
+        minimumIterations: z
+          .union([z.number().int().min(1).max(10), z.null()])
+          .optional()
+          .describe(
+            "Floor on per-case iterations, 1–10: every case runs at least this many times. null removes the floor."
+          ),
+        // Nullable to CLEAR suite defaults (vs omit to leave untouched).
+        matchOptions: publicMatchOptionsSchema.nullable().optional(),
+        checks: z.array(publicCheckSchema).nullable().optional(),
+        judge: z
+          .strictObject({
+            enabled: z
+              .boolean()
+              .optional()
+              .describe(
+                "Make the judge available on this suite. On its own this grades nothing — set autoRun (or request grading on a finished run) to make grading happen."
+              ),
+            model: z.string().trim().min(1).optional(),
+            autoRun: z
+              .boolean()
+              .optional()
+              .describe(
+                "Grade every run automatically as it completes. This is the flag that makes LLM-as-judge grading happen; it SPENDS on each run."
+              ),
+            threshold: z
+              .number()
+              .min(0)
+              .max(1)
+              .optional()
+              .describe(
+                "Advisory pass threshold, 0–1 (passed = score >= threshold)."
+              ),
+            role: z
+              .enum(["advisory", "gating"])
+              .optional()
+              .describe(
+                "Whether the judge decides the verdict. `gating` is accepted only on a calibrated judge, and only where the deployment allows it."
+              ),
+            severity: z
+              .literal("warn")
+              .optional()
+              .describe(
+                "Presentation severity for an advisory judge: flag it without failing the run. Legal only with role: advisory."
+              ),
+            rubric: z
+              .union([
+                z.strictObject({
+                  criteria: z
+                    .array(
+                      z.strictObject({
+                        id: z
+                          .string()
+                          .regex(/^[A-Za-z0-9_-]{1,64}$/)
+                          .describe(
+                            "Stable id the judge cites in its reasons. Unique within the rubric; editing it retires the suite's calibration."
+                          ),
+                        label: z.string().trim().min(1).max(200),
+                        description: z.string().max(1000).optional(),
+                        required: z.boolean().optional(),
+                      })
+                    )
+                    .min(1)
+                    .max(25),
+                }),
+                z.null(),
+              ])
+              .optional()
+              .describe(
+                "The suite's own grading criteria, handed to the judge alongside each case's expected output. null CLEARS them; an empty criteria array is refused, because a rubric that asks nothing still changes what the judge was asked. Editing this retires the suite's judge calibration."
+              ),
+          })
+          .optional(),
+        repetitions: z
+          .number()
+          .int()
+          .min(1)
+          .max(100)
+          .optional()
+          .describe(
+            "Verdict policy v2 only: trials per case unless the case overrides it. On a legacy suite, sending this together with passThreshold UPGRADES the suite to policy v2; neither alone is accepted there."
+          ),
+        passThreshold: z
+          .number()
+          .min(0)
+          .max(1)
+          .optional()
+          .describe(
+            "Verdict policy v2 only: FRACTION of a case's trials that must pass, 0–1 (0.8 is eighty percent). The v2 replacement for minimumAccuracy, which is a percent; sending both is refused."
+          ),
+        validity: z
+          .object({
+            minEligibleTrials: z.number().int().min(1).optional(),
+            minCompletionRate: z.number().min(0).max(1).optional(),
+            maxEvaluatorErrorRate: z.number().min(0).max(1).optional(),
+          })
+          .strict()
+          .optional()
+          .describe(
+            "Verdict policy v2 only: when a run's measurement is trustworthy enough to decide. Fractions, 0–1. Omitted members keep the contract defaults (minCompletionRate 0.8, maxEvaluatorErrorRate 0.1); supplied members merge over the suite's stored validity rather than replacing it."
+          ),
+        qualityGate: z
+          .union([suiteGatePolicySchema, z.null()])
+          .optional()
+          .describe(
+            "Live quality-gate policy. null CLEARS it. Comparative conditions require a baseline; previous_completed is reserved. Requires expectedRevisionNumber and revisionNote."
+          ),
+      })
+      .optional(),
+    expectedRevisionNumber: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe(
+        "The suite's revisionNumber as you last read it. Supplying it makes this edit a compare-and-set: a suite changed since then is refused with 409 having written nothing. Omit for last-write-wins."
+      ),
+    revisionNote: z
+      .string()
+      .max(500)
+      .optional()
+      .describe(
+        "Why this edit is being made. Required (nonblank) whenever settings.qualityGate is present."
+      ),
+  })
+  .superRefine((body, ctx) => {
+    if (body.settings?.qualityGate === undefined) return;
+    if (body.expectedRevisionNumber === undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ["settings", "qualityGate"],
-        message: parsed.message,
+        path: ["expectedRevisionNumber"],
+        message:
+          "expectedRevisionNumber is required when settings.qualityGate is present.",
       });
     }
-  }
-});
+    const note = body.revisionNote?.trim() ?? "";
+    if (note.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["revisionNote"],
+        message:
+          "revisionNote is required when settings.qualityGate is present.",
+      });
+    }
+    if (body.settings.qualityGate !== null) {
+      const parsed = parseSuiteGatePolicyForAuthoring(
+        body.settings.qualityGate
+      );
+      if (!parsed.ok) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["settings", "qualityGate"],
+          message: parsed.message,
+        });
+      }
+    }
+  });
 export type UpdateEvalSuiteInput = z.infer<typeof updateEvalSuiteInput>;
 
 export const updateEvalSuiteOperation: PlatformOperation<
@@ -7284,8 +7302,8 @@ const SERVER_FACTS_READING_RULES =
   "Everything here is a FACT ABOUT THE SERVER, and none of it is a verdict: a 57-tool surface is not a defect, a three-second connect is not a failure, and a precheck is a signal. Nothing in this document feeds a gate or changes a pass/fail. " +
   "PAYLOAD SIZE IS THREE DIFFERENT NUMBERS and this document keeps two of them apart by name. `payload.basis` is `aggregated_catalog_json` (the catalog as the client assembled it, measured at capture) or `normalized_snapshot` (the bytes we retained, which is smaller whenever redaction dropped fields — `payload.complete` says so). The third — what the model actually saw — is a per-run HOST fact and is NOT in this document. Never compare numbers across bases and never report either as context consumption. " +
   "TOKENS ARE AN ESTIMATE. `tokenEstimate.method` is `json_chars_div_4`; there is no tokenizer. `referenceWindowShare` is a share of a REFERENCE window (`tokenEstimate.referenceWindowTokens`), not of any model's real context. Quote the estimate with its caveat or not at all. " +
-  "A PRECHECK IS NOT AUTOMATICALLY A VIOLATION. Only `class: \"spec_required\"` names one. A row with `protocolDependent: true` is a rule we could not tell applied — the protocol version was unknown — and reporting it as a defect accuses a server that may be correct. " +
-  "RELATED ASSESSMENTS ARE LINKED, NEVER GRADED. The join is by server id ALONE (`comparability: \"sameServerId\"`): a different server version, environment or auth context is not excluded by it. Each carries its own `createdAt`. None of them is this run's verdict. " +
+  'A PRECHECK IS NOT AUTOMATICALLY A VIOLATION. Only `class: "spec_required"` names one. A row with `protocolDependent: true` is a rule we could not tell applied — the protocol version was unknown — and reporting it as a defect accuses a server that may be correct. ' +
+  'RELATED ASSESSMENTS ARE LINKED, NEVER GRADED. The join is by server id ALONE (`comparability: "sameServerId"`): a different server version, environment or auth context is not excluded by it. Each carries its own `createdAt`. None of them is this run\'s verdict. ' +
   "AN UNOBSERVED SETUP PHASE IS NOT A FAILED ONE: an absent `setup.connection` means nothing was recorded, and `durationMs` is measured ONCE PER RUN — a run with 200 trials did not connect 200 times.";
 
 export type GetEvalRunServerFactsResult = {
@@ -7443,7 +7461,7 @@ const startEvalDescriptionExperimentInput = z.object({
     .max(400)
     .optional()
     .describe(
-      "Refuse the launch if plannedTrials (cases × repetitions × 2) exceeds this. Default 200; hard cap 400."
+      "Refuse the launch if plannedTrials (cases × iterations × 2) exceeds this. Default 200; hard cap 400."
     ),
 });
 
@@ -7463,7 +7481,7 @@ export const startEvalDescriptionExperimentOperation: PlatformOperation<
   name: "start_eval_description_experiment",
   title: "Start an eval description experiment",
   description:
-    "Launch the two-arm description-rewrite experiment: one ORIGINAL replay of the source run and one REWRITE replay that applies the proposed description. SPENDS eval-iteration credits — plannedTrials = cases × repetitions × 2, refused over the cap (default 200, hard 400) — plus whatever the suite's judge auto-run costs on both arms. Returns immediately with a launching receipt; poll get_eval_description_experiment. Report-only: nothing writes result, a gate, or a verdict. Emulated engine only in v1; a harness source is refused.",
+    "Launch the two-arm description-rewrite experiment: one ORIGINAL replay of the source run and one REWRITE replay that applies the proposed description. SPENDS eval-iteration credits — plannedTrials = cases × iterations × 2, refused over the cap (default 200, hard 400) — plus whatever the suite's judge auto-run costs on both arms. Returns immediately with a launching receipt; poll get_eval_description_experiment. Report-only: nothing writes result, a gate, or a verdict. Emulated engine only in v1; a harness source is refused.",
   readOnly: false,
   risk: "spend",
   permalink: noPermalink("mutation-only"),
@@ -7901,6 +7919,57 @@ export type RequestEvalRunJudgeResult = {
   judge: PlatformEvalRunJudgeRequested;
 };
 
+const backtestEvalRunInput = evalRunScopedInput.extend({
+  draft: evalBacktestDraftSchema,
+  continuation: evalBacktestContinuationSchema.optional(),
+});
+export type BacktestEvalRunInput = z.infer<typeof backtestEvalRunInput>;
+export const backtestEvalRunOperation: PlatformOperation<
+  BacktestEvalRunInput,
+  {
+    project: SelectedProjectInfo;
+    runId: string;
+    suiteId: string;
+    report: EvalBacktestReport;
+  }
+> = {
+  name: "backtest_eval_run",
+  title: "Preview MCPJam eval assertions",
+  description:
+    "Preview an explicit assertion draft against stored evidence from a terminal run. Replace, extend or inherit frozen assertions explicitly. No model calls or verdict writes; reserves a one-minute deterministic-preview cooldown, independent of judge previews. Returns partial comparison and per-evaluator missing-evidence reasons. This is not a release verdict. Unsupported custom evaluators are never executed. Use mcpjam cloud eval backtest --run <id> --json <draft> from the CLI.",
+  readOnly: false,
+  risk: "none",
+  permalink: derivePermalinks((result) => [
+    evalRunRef(result.runId, result.suiteId, result.project?.id),
+  ]),
+  inputSchema: backtestEvalRunInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const run = await client.getEvalRun(
+      { projectId: project.id, runId: input.runId },
+      { signal }
+    );
+    const report = await client.backtestEvalRun(
+      {
+        projectId: project.id,
+        runId: input.runId,
+        draft: input.draft,
+        continuation: input.continuation,
+      },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      runId: run.id,
+      suiteId: run.suiteId,
+      report,
+    };
+  },
+};
+
 export const requestEvalRunJudgeOperation: PlatformOperation<
   RequestEvalRunJudgeInput,
   RequestEvalRunJudgeResult
@@ -7971,7 +8040,7 @@ function checkRepoOrganizationOrThrow(project: PlatformProject): string {
 // which name replaced it. One body, so the two spellings cannot describe the
 // same behaviour differently.
 const EVAL_GITHUB_REPOS_LIST_DESCRIPTION =
-  'List the repositories in this organization whose pull requests run an eval suite, and the repositories the MCPJam GitHub App can reach (the choices a connect has). `available: false` means GitHub Checks is not enabled for the organization at all — connecting a repository will not help. `connectable: null` means the lookup failed, so the choices are unknown; an EMPTY connectable list means the App was asked and reaches nothing, which also covers a deployment with no App installed — check that before assuming a permissions problem.';
+  "List the repositories in this organization whose pull requests run an eval suite, and the repositories the MCPJam GitHub App can reach (the choices a connect has). `available: false` means GitHub Checks is not enabled for the organization at all — connecting a repository will not help. `connectable: null` means the lookup failed, so the choices are unknown; an EMPTY connectable list means the App was asked and reaches nothing, which also covers a deployment with no App installed — check that before assuming a permissions problem.";
 const EVAL_GITHUB_REPO_CONNECT_DESCRIPTION =
   "Connect a repository so every pull request to it runs one eval suite and reports a GitHub check. Affects everyone who opens a pull request on that repository, and can block merges depending on outagePolicy. Retargeting, pausing and disconnecting are not on this surface — they live in the app's Settings → Integrations, where every connected repository is visible at once.";
 const DEPRECATED_EVAL_CHECK_REPOS_PREFIX =
@@ -8613,7 +8682,15 @@ export const listChatSessionsOperation: PlatformOperation<
 // everyone in this org has been talking about".
 
 const sendChatMessageInput = z.object({
-  browser: z.object({ policy: platformBrowserToolPolicySchema.optional(), profileId: z.string().min(1).optional() }).optional().describe("Attach the session browser for this turn. The first attachment requires a policy; later turns can send {} to reuse it."),
+  browser: z
+    .object({
+      policy: platformBrowserToolPolicySchema.optional(),
+      profileId: z.string().min(1).optional(),
+    })
+    .optional()
+    .describe(
+      "Attach the session browser for this turn. The first attachment requires a policy; later turns can send {} to reuse it."
+    ),
   idempotencyKey: z
     .string()
     .trim()
@@ -8749,7 +8826,16 @@ export const sendChatMessageOperation: PlatformOperation<
             id: result.sessionId,
             projectId: result.projectId,
           },
-          ...(result.chatSessionId ? [{ type: "playground_conversation" as const, id: result.chatSessionId, browser: !!result.browser?.attached, projectId: result.projectId }] : []),
+          ...(result.chatSessionId
+            ? [
+                {
+                  type: "playground_conversation" as const,
+                  id: result.chatSessionId,
+                  browser: !!result.browser?.attached,
+                  projectId: result.projectId,
+                },
+              ]
+            : []),
         ]
       : []
   ),
@@ -8849,19 +8935,9 @@ const driveSessionBrowserInput = sessionBrowserInput
     if (input.op === "navigate") require("url", !!input.url);
     if (input.op === "act")
       require("command.verb", !!input.command &&
-        [
-          "click",
-          "type",
-          "press",
-          "scroll",
-          "hover",
-          "drag",
-          "select",
-          "close_tab",
-          "activate_tab",
-          "accept_dialog",
-          "dismiss_dialog",
-        ].includes(String(input.command.verb)));
+        (BROWSER_AGENT_ACT_VERBS as readonly string[]).includes(
+          String(input.command.verb)
+        ));
     if (input.op === "invoke") {
       require("toolKey", !!input.toolKey);
       require("input", Object.hasOwn(input, "input"));
@@ -8892,7 +8968,9 @@ const observeSessionBrowserInput = z.object({
 export type DriveChatSessionBrowserInput = z.infer<
   typeof driveSessionBrowserInput
 >;
-export type ObserveChatSessionBrowserInput = z.infer<typeof observeSessionBrowserInput>;
+export type ObserveChatSessionBrowserInput = z.infer<
+  typeof observeSessionBrowserInput
+>;
 export const driveChatSessionBrowserOperation: PlatformOperation<
   DriveChatSessionBrowserInput,
   PlatformSessionBrowserOperationResult
@@ -8977,7 +9055,11 @@ export const driveChatSessionBrowserOperation: PlatformOperation<
       input.op === "navigate"
         ? { op: "navigate", url: input.url }
         : input.op === "invoke"
-        ? { op: "invoke_page_tool", toolKey: input.toolKey, input: input.input }
+        ? {
+            op: "invoke_page_tool",
+            toolKey: input.toolKey,
+            input: input.input,
+          }
         : { ...input.command, op: "act" };
     return client.chatSessionBrowser(
       input.sessionId,
@@ -9069,7 +9151,16 @@ export const getChatSessionOperation: PlatformOperation<
   readOnly: true,
   permalink: derivePermalinks((result) => [
     { type: "chat_session", id: result.sessionId, ...projectIdOf(result) },
-    ...(result.chatSessionId && result.origin === "api" ? [{ type: "playground_conversation" as const, id: result.chatSessionId, browser: !!result.browser, ...projectIdOf(result) }] : []),
+    ...(result.chatSessionId && result.origin === "api"
+      ? [
+          {
+            type: "playground_conversation" as const,
+            id: result.chatSessionId,
+            browser: !!result.browser,
+            ...projectIdOf(result),
+          },
+        ]
+      : []),
   ]),
   inputSchema: getChatSessionInput,
   async execute(input, { client, signal, onScopeResolved }) {
@@ -9142,11 +9233,21 @@ export const getChatSessionTraceOperation: PlatformOperation<
     "Return per-turn execution spans for a session: per-tool-call latency, token usage, and indices into the transcript. INCREMENTAL — returns the LATEST turn by default, not the whole session; use turnId or afterPromptIndex for older turns and includeSpans:false for summaries. A turn whose spans could not be read reports spansUnavailable rather than an empty span list, because 'made no calls' and 'could not fetch' are opposite conclusions.",
   readOnly: true,
   permalink: derivePermalinks((result, _input, context) => {
-    const projectId = projectIdOf(result).projectId ?? context.resolvedScope?.projectId;
+    const projectId =
+      projectIdOf(result).projectId ?? context.resolvedScope?.projectId;
     if (!projectId) return [];
     return [
       { type: "chat_session", id: result.sessionId, projectId },
-      ...(result.chatSessionId ? [{ type: "playground_conversation" as const, id: result.chatSessionId, browser: result.turns.some(turn => !!turn.browser), projectId }] : []),
+      ...(result.chatSessionId
+        ? [
+            {
+              type: "playground_conversation" as const,
+              id: result.chatSessionId,
+              browser: result.turns.some((turn) => !!turn.browser),
+              projectId,
+            },
+          ]
+        : []),
     ];
   }),
   inputSchema: getChatSessionTraceInput,
@@ -10895,7 +10996,7 @@ async function resolveComposeServerGroup(
  * Callers run this once, up front.
  */
 async function materializeComposeServers<
-  T extends { serverGroup?: string; server?: string; servers?: string[] },
+  T extends { serverGroup?: string; server?: string; servers?: string[] }
 >(
   client: PlatformApiClient,
   project: PlatformProject,
@@ -16184,6 +16285,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   waiveEvalGateOperation,
   getEvalGateWaiverOperation,
   revokeEvalGateWaiverOperation,
+  backtestEvalRunOperation,
   requestEvalRunJudgeOperation,
   listEvalGithubReposOperation,
   connectEvalGithubRepoOperation,

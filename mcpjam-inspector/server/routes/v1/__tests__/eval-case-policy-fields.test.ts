@@ -52,7 +52,7 @@ function request(
 }
 
 const LEGACY_SUITE = {
-  _id: "suite_1",
+  _id: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
   projectId: "p1",
   name: "Legacy suite",
   minIterations: 3,
@@ -65,8 +65,8 @@ const V2_SUITE = {
 };
 
 const CASE_DOC = {
-  _id: "case_1",
-  testSuiteId: "suite_1",
+  _id: "case1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  testSuiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
   projectId: "p1",
   caseKey: "ui_abc",
   title: "Lists tools",
@@ -110,7 +110,7 @@ async function message(res: Response): Promise<string> {
   return ((await res.json()) as { message?: string }).message ?? "";
 }
 
-const SUITE_PATH = "/api/v1/projects/p1/eval-suites/suite_1";
+const SUITE_PATH = "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx";
 
 describe("per-case verdict-policy fields", () => {
   beforeEach(() => {
@@ -163,7 +163,7 @@ describe("per-case verdict-policy fields", () => {
       {
         name: "PATCH …/cases/:caseId",
         method: "PATCH",
-        path: `${SUITE_PATH}/cases/case_1`,
+        path: `${SUITE_PATH}/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx`,
         body: (field) => ({ title: "Lists tools", ...field }),
       },
     ];
@@ -191,7 +191,7 @@ describe("per-case verdict-policy fields", () => {
     }
 
     it("leaves an ordinary edit alone — and does not read the suite for it", async () => {
-      const res = await request("PATCH", `${SUITE_PATH}/cases/case_1`, {
+      const res = await request("PATCH", `${SUITE_PATH}/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx`, {
         title: "Renamed",
       });
 
@@ -223,7 +223,7 @@ describe("per-case verdict-policy fields", () => {
     });
 
     it("forwards repetitions and passThreshold on patch", async () => {
-      const res = await request("PATCH", `${SUITE_PATH}/cases/case_1`, {
+      const res = await request("PATCH", `${SUITE_PATH}/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx`, {
         repetitions: 7,
         passThreshold: 0.5,
       });

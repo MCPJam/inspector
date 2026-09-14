@@ -21,7 +21,7 @@ The combined org and project switcher sits at the top of the sidebar. The trigge
 1. **Click the switcher** at the top of the sidebar to open the context menu
 2. **Create a project** - Click **Create project** at the bottom of the list, give it a name, and choose which organization it belongs to
 3. **Add your servers** - Configure your MCP servers in the Connect tab
-4. **Enable auto-connect** - Use the **Auto-connect** toggle in the Connect tab header to automatically connect all project servers whenever a host opens
+4. **Auto-connect** - The **Auto-connect** switch in the Connect tab header (on by default) connects every project server for you in the Playground and debugger tabs. It is a personal setting for your browser — anyone can flip it, and it does not change the project
 5. **Share with your team** - Click the share button and invite collaborators
 
 <Info>
@@ -92,7 +92,7 @@ Project sharing lets your entire team work with the same servers. Set up your pr
 
 ### What Gets Shared
 
-Members get access to every server in the project with the same configuration. Project admins can also configure which servers auto-connect and set per-server overrides (headers, timeout) from the Servers tab — these settings apply across every host in the project.
+Members get access to every server in the project with the same configuration. Per-server overrides (headers, timeout, protocol version) set from the Servers tab apply across every host in the project. Auto-connect is not shared: each member decides for their own browser whether servers connect automatically.
 
 <Note>
 For security, authorization headers and OAuth tokens are never shared. Each team member authenticates with their own credentials when connecting to servers that require authentication.
@@ -118,19 +118,27 @@ If you want to change the **authentication type** (for example, switching from B
 - **Custom headers**: Any edit to headers or the authentication type replaces the stored headers secret on save.
 - If you save without revealing or editing a secret section, the existing stored secret is left unchanged.
 
-### Changing a server's URL
+### Changing a server's destination
+
+Two edits cause the backend to clear a server's stored credentials: changing an HTTP server's **origin**, or changing a stdio server's **command**.
+
+**HTTP servers — origin changes**
 
 Editing the path portion of a server's URL (for example, `/mcp` to `/mcp/v2`) keeps all saved credentials intact.
 
-Changing the **origin** — the scheme, host, or port — clears every credential saved against that server: request headers, environment variables, the bearer token, and any OAuth access token, refresh token, and client secret. The edit form warns you before this happens and lists exactly what will be removed. You must check the acknowledgement box before Save becomes available.
+Changing the **origin** — the scheme, host, or port — clears every credential saved against that server: request headers, environment variables, the bearer token, and any OAuth access token, refresh token, and client secret. The edit form warns you before this happens and names both the old and new origin. You must check the acknowledgement box before Save becomes available.
 
-This affects credentials that other project members may have added and that you may not be able to see.
+**Stdio servers — command changes**
 
-After a cross-origin URL change, each member who had credentials saved for that server needs to re-enter them.
+Changing the **command** (or its arguments) on a stdio server that has stored environment variables clears those variables. The edit form warns you before this happens and shows both the old and new invocation. You must check the acknowledgement box before Save becomes available.
 
-### URL history
+**Both cases**
 
-The server detail panel includes a **URL history** section that shows every time the server's URL was changed, who made the change, and whether saved credentials were cleared as a result. This is visible to all project members regardless of plan, so anyone whose credentials were removed can see what happened and who made the edit.
+The warning applies to credentials that other project members may have added and that you may not be able to see. After the save, each member who had credentials saved for that server needs to re-enter them.
+
+### Destination history
+
+The server detail panel includes a **Destination history** section that shows every time the server's destination was changed, who made the change, and whether saved credentials were cleared as a result. This covers HTTP origin changes, stdio command swaps, and switches between transport types. It is visible to all project members regardless of plan, so anyone whose credentials were removed can see what happened and who made the edit.
 
 ### Real-Time Sync
 

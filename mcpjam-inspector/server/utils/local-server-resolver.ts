@@ -39,6 +39,7 @@ import {
   type InternalLogContext,
   mapInternalToRequestContext,
 } from "./internal-log-context.js";
+import { assertSecretsOriginMatches } from "./secret-origin-binding.js";
 import {
   fetchRuntimeServerSecrets,
   fetchServerClientSecret,
@@ -74,6 +75,13 @@ type LocalAuthorizeServerConfig =
       httpVariant?: "streamable-http" | "sse";
       headers: Record<string, string>;
       hasHeaders?: boolean;
+      /**
+       * The origin this row's ON-ROW stored credentials were bound to (MJ-003).
+       * See `secret-origin-binding.ts`; absence on a row about to spend one is a
+       * refusal, not permission. Declared on the http member only — the stdio
+       * member has no url, so the backend never sends it one.
+       */
+      secretsBoundOrigin?: string;
       timeout?: number;
       clientCapabilities?: unknown;
       useOAuth?: boolean;
@@ -913,8 +921,35 @@ async function applyLocalRuntimeResolution<
     (result.serverConfig.transportType === "http" &&
       result.serverConfig.hasHeaders === true &&
       !hasNonEmptyStringRecord(result.serverConfig.headers));
+  // MJ-003, the same gate the hosted path applies at its own merge — this
+  // resolver is the OTHER place a stored credential is composed onto a target,
+  // and a fix that touched only `auth.ts` would leave the desktop and
+  // `/api/mcp` surfaces open.
+  //
+  // HTTP only. A stdio row has no url, so it has no origin to bind and the
+  // backend sends it no binding; its `env` reaches a locally spawned child
+  // rather than a remote host. Its repoint vector is a `command`/`args` swap,
+  // which the backend clears write-side
+  // (`stdioTargetChangeRedirectsCredentials`), and a transport flip to http is
+  // covered by the same clear, which reads "no origin" to "an origin" as a
+  // change.
+  if (
+    result.serverConfig.transportType === "http" &&
+    result.serverConfig.hasHeaders === true
+  ) {
+    assertSecretsOriginMatches({
+      boundOrigin: result.serverConfig.secretsBoundOrigin,
+      targetUrl: result.serverConfig.url,
+      serverName: args.serverDisplayName ?? args.managerKey,
+    });
+  }
+
   if (needsRuntimeSecrets) {
     const secrets = await fetchRuntimeServerSecrets({
+      expectedTargetUrl:
+        result.serverConfig.transportType === "http"
+          ? result.serverConfig.url
+          : null,
       bearerToken,
       projectId,
       serverId,
@@ -1059,6 +1094,7 @@ export async function readAuthorizedStdioLaunchSpec(args: {
     config.hasEnv === true && !hasNonEmptyStringRecord(config.env)
       ? (
           await fetchRuntimeServerSecrets({
+            expectedTargetUrl: null,
             bearerToken: args.bearerToken,
             projectId: args.projectId,
             serverId: args.serverId,
@@ -1347,6 +1383,19 @@ export async function resolveLocalServerForConnect(
     const registrationMode = resolveXaaConnectRegistrationMode(
       sc.registrationMode
     );
+    // MJ-003, the same XAA gate the hosted path applies — this surface reaches
+    // the identical `buildXaaMintArgs({ resolveServerSecret })`, so leaving it
+    // out would keep desktop and `/api/mcp` open. `preregistered` and `dcr`
+    // reveal the row's stored client secret and post it to a token endpoint
+    // discovered from the row's CURRENT url; `cimd` sends no row secret.
+    // Refused before the mint, so the secret is never fetched.
+    if (registrationMode !== "cimd") {
+      assertSecretsOriginMatches({
+        boundOrigin: sc.secretsBoundOrigin,
+        targetUrl: sc.url,
+        serverName: options?.serverDisplayName ?? serverId,
+      });
+    }
     const xaaFailureTarget = {
       serverId,
       serverName: options?.serverDisplayName ?? serverId,

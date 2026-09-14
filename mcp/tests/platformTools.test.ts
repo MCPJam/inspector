@@ -209,6 +209,7 @@ const PLAIN_TOOLS = [
   "get_eval_gate_waiver",
   "get_eval_run_steps",
   "cancel_eval_run",
+  "backtest_eval_run",
   "request_eval_run_judge",
   // The description-rewrite experiment: agent-oriented payloads (a diff and
   // two arm counts), no widget view.
@@ -472,6 +473,7 @@ describe("platform tool registration", () => {
       "get_eval_iteration_trace",
       "get_eval_run_steps",
       "cancel_eval_run",
+      "backtest_eval_run",
       "request_eval_run_judge",
       "propose_eval_description_rewrite",
       "start_eval_description_experiment",
@@ -495,8 +497,8 @@ describe("platform tool registration", () => {
       "list_chat_sessions",
       "search_sessions",
       "send_chat_message",
-  "drive_chat_session_browser",
-  "observe_chat_session_browser",
+      "drive_chat_session_browser",
+      "observe_chat_session_browser",
       "get_chat_session",
       "get_chat_session_trace",
       "get_capabilities",
@@ -632,6 +634,7 @@ describe("platform tool registration", () => {
       "generate_eval_cases",
       // Grading SPENDS but writes only an advisory result onto the run — the
       // deterministic verdict stays authoritative, so nothing is destroyed.
+      "backtest_eval_run",
       "request_eval_run_judge",
       // Proposing SPENDS one model call and starting SPENDS trials, but both
       // only ever create rows: the proposal and two replay runs. The source

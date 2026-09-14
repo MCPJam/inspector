@@ -153,6 +153,41 @@ describe("the frame wire reader", () => {
     expect(bitmaps[0]?.closed).toBe(true);
   });
 
+  it("refuses a picture that finished decoding after a drop, and stays open", async () => {
+    const frames: { seq: number }[] = [];
+    const reader = createFrameWireReader({
+      onFrame: (f) => frames.push({ seq: f.seq }),
+    });
+    reader.push(frameRecord({ seq: 7 }));
+    // Dropped WHILE the decode is in flight — live view turned off on a socket
+    // that stays open because it can be turned back on.
+    reader.drop();
+    await settle();
+    expect(frames).toHaveLength(0);
+    expect(bitmaps[0]?.closed).toBe(true);
+
+    // Still open: the next frame paints, which is the whole difference between
+    // `drop()` and `close()`.
+    reader.push(frameRecord({ seq: 8 }));
+    await settle();
+    expect(frames).toEqual([{ seq: 8 }]);
+    expect(bitmaps[1]?.closed).toBe(false);
+  });
+
+  it("drops the record waiting behind an in-flight decode", async () => {
+    const frames: { seq: number }[] = [];
+    const reader = createFrameWireReader({
+      onFrame: (f) => frames.push({ seq: f.seq }),
+    });
+    reader.push(frameRecord({ seq: 7 }));
+    // Queued behind the first, which is still decoding.
+    reader.push(frameRecord({ seq: 8 }));
+    reader.drop();
+    await settle();
+    await settle();
+    expect(frames).toHaveLength(0);
+  });
+
   it("survives a picture that will not decode", async () => {
     vi.stubGlobal("createImageBitmap", async () => {
       throw new Error("not an image");
