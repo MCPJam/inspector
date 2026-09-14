@@ -10,6 +10,10 @@ import { ArrowUpRight, ChevronRight, Search } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import {
+  ToggleGroup,
+  ToggleGroupItem,
+} from "@mcpjam/design-system/toggle-group";
+import {
   Sheet,
   SheetContent,
   SheetHeader,
@@ -60,10 +64,10 @@ const outcomeTone = (result: string) =>
       ? "bg-destructive/10 text-foreground border-destructive/40"
       : "bg-muted/40 text-foreground border-border";
 
-function CellMetrics({ items }: { items: EvalIteration[] }) {
+type MatrixView = "results" | "metrics";
+
+function CellResults({ items }: { items: EvalIteration[] }) {
   const counts = resultCounts(items);
-  const tokens = items.filter((item) => item.tokensUsed != null);
-  const calls = items.filter((item) => item.actualToolCalls != null);
   const status = counts.pending
     ? "Running"
     : counts.failed
@@ -79,104 +83,111 @@ function CellMetrics({ items }: { items: EvalIteration[] }) {
         ? "text-muted-foreground"
         : "text-success";
   const breakdown = `${counts.passed} passed, ${counts.failed} failed, ${counts.pending} in progress, ${counts.cancelled} cancelled`;
-  const compact = (n: number) =>
-    Intl.NumberFormat(undefined, {
-      notation: "compact",
-      maximumFractionDigits: 1,
-    }).format(n);
-  const metricLabel =
-    "block text-[9px] font-medium uppercase tracking-wide text-muted-foreground";
   return (
-    <>
-      <span className="w-full space-y-2">
-        <span className="flex items-center justify-between gap-3 tabular-nums">
-          <span className="flex min-w-0 items-center gap-2">
-            <span
-              className={cn(
-                "flex items-center gap-1.5 text-xs font-semibold",
-                statusTone,
-              )}
-            >
-              <span
-                aria-hidden="true"
-                className="size-1.5 shrink-0 rounded-full bg-current"
-              />
-              {status}
-            </span>
-          </span>
+    <span className="w-full space-y-2">
+      <span className="flex items-center justify-between gap-3 tabular-nums">
+        <span className="flex min-w-0 items-center gap-2">
           <span
-            className="shrink-0 text-[11px] text-muted-foreground"
-            aria-label={`${counts.passed} of ${items.length} iterations passed`}
+            className={cn(
+              "flex items-center gap-1.5 text-xs font-semibold",
+              statusTone,
+            )}
           >
-            {counts.passed}/{items.length}
+            <span
+              aria-hidden="true"
+              className="size-1.5 shrink-0 rounded-full bg-current"
+            />
+            {status}
           </span>
         </span>
         <span
-          role="img"
-          aria-label={breakdown}
-          title={breakdown}
-          className="flex h-1.5 w-full overflow-hidden rounded-full bg-muted"
+          className="shrink-0 text-[11px] text-muted-foreground"
+          aria-label={`${counts.passed} of ${items.length} iterations passed`}
         >
-          {(["passed", "failed", "pending", "cancelled"] as const).map(
-            (outcome) =>
-              counts[outcome] > 0 && (
-                <span
-                  key={outcome}
-                  aria-hidden="true"
-                  className={cn(
-                    outcome === "passed"
-                      ? "bg-success"
-                      : outcome === "failed"
-                        ? "bg-destructive"
-                        : outcome === "pending"
-                          ? "bg-pending"
-                          : "bg-muted-foreground/40",
-                  )}
-                  style={{
-                    width: `${(counts[outcome] / items.length) * 100}%`,
-                  }}
-                />
-              ),
-          )}
+          {counts.passed}/{items.length}
         </span>
       </span>
-      <span className="grid w-full grid-cols-3 divide-x divide-border/60 text-[11px] tabular-nums [&>span]:px-2 [&>span:first-child]:pl-0 [&>span:last-child]:pr-0">
-        <span>
-          <span className={metricLabel}>Latency</span>
-          <span className="mt-1 block">
-            <span className="text-[9px] text-muted-foreground">P50 </span>
-            {formatRunCaseLatencyMs(iterationLatencyP50(items))}
-          </span>
-          <span className="mt-1 block">
-            <span className="text-[9px] text-muted-foreground">P95 </span>
-            {formatRunCaseLatencyMs(iterationLatencyP95(items))}
-          </span>
-        </span>
-        <span>
-          <span className={metricLabel}>Tokens</span>
-          <span className="mt-1 block font-medium">
-            {tokens.length
-              ? compact(
-                  tokens.reduce((sum, item) => sum + (item.tokensUsed ?? 0), 0),
-                )
-              : "—"}
-          </span>
-        </span>
-        <span>
-          <span className={metricLabel}>Tool calls</span>
-          <span className="mt-1 block font-medium">
-            {calls.length
-              ? compact(
-                  calls.reduce(
-                    (sum, item) => sum + (item.actualToolCalls?.length ?? 0),
-                    0,
-                  ),
-                )
-              : "—"}
-          </span>
+      <span
+        role="img"
+        aria-label={breakdown}
+        title={breakdown}
+        className="flex h-1.5 w-full overflow-hidden rounded-full bg-muted"
+      >
+        {(["passed", "failed", "pending", "cancelled"] as const).map(
+          (outcome) =>
+            counts[outcome] > 0 && (
+              <span
+                key={outcome}
+                aria-hidden="true"
+                className={cn(
+                  outcome === "passed"
+                    ? "bg-success"
+                    : outcome === "failed"
+                      ? "bg-destructive"
+                      : outcome === "pending"
+                        ? "bg-pending"
+                        : "bg-muted-foreground/40",
+                )}
+                style={{
+                  width: `${(counts[outcome] / items.length) * 100}%`,
+                }}
+              />
+            ),
+        )}
+      </span>
+    </span>
+  );
+}
+
+function CellMetricValues({ items }: { items: EvalIteration[] }) {
+  const tokens = items.filter((item) => item.tokensUsed != null);
+  const calls = items.filter((item) => item.actualToolCalls != null);
+  const compact = (n: number) =>
+    n >= 1000
+      ? `${(n / 1000).toFixed(1).replace(/\.0$/, "")}k`
+      : n.toLocaleString();
+  const metricLabel =
+    "text-[11px] font-semibold uppercase leading-[14px] tracking-[0.04em] text-muted-foreground";
+  const metric = "flex min-w-0 flex-1 flex-col gap-0.5";
+  const divider = "border-r border-border pr-2";
+  return (
+    <span className="flex min-h-16 w-full items-center tabular-nums">
+      <span className={cn(metric, divider)}>
+        <span className={metricLabel}>P50</span>
+        <span className="text-base font-semibold leading-5">
+          {formatRunCaseLatencyMs(iterationLatencyP50(items))}
         </span>
       </span>
-    </>
+      <span className={cn(metric, divider, "px-2")}>
+        <span className={metricLabel}>P95</span>
+        <span className="text-base font-semibold leading-5">
+          {formatRunCaseLatencyMs(iterationLatencyP95(items))}
+        </span>
+      </span>
+      <span className={cn(metric, divider, "px-2")}>
+        <span className={metricLabel}>Tokens</span>
+        <span className="text-base font-semibold leading-5">
+          {tokens.length
+            ? compact(
+                tokens.reduce((sum, item) => sum + (item.tokensUsed ?? 0), 0),
+              )
+            : "—"}
+        </span>
+      </span>
+      <span className={cn(metric, "pl-2")}>
+        <span className={metricLabel}>Calls</span>
+        <span className="text-base font-semibold leading-5">
+          {calls.length
+            ? compact(
+                calls.reduce(
+                  (sum, item) => sum + (item.actualToolCalls?.length ?? 0),
+                  0,
+                ),
+              )
+            : "—"}
+        </span>
+      </span>
+    </span>
   );
 }
 
@@ -225,6 +236,7 @@ export function RunResultsMatrix({
   }, [run, runs, iterations, hostNamesById, modelIds]);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState(ALL_EVAL_FILTER_VALUES);
+  const [view, setView] = useState<MatrixView>("results");
   const showPending = [run, ...runs].some(
     (item) => !isTerminalEvalRunStatus(item.status),
   );
@@ -288,10 +300,32 @@ export function RunResultsMatrix({
       data-testid="run-results-matrix"
     >
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-        <h3 className="text-lg font-semibold tracking-tight">
-          <span className="tabular-nums">{data.rows.length}</span>{" "}
-          {data.rows.length === 1 ? "Test case" : "Test cases"}
-        </h3>
+        <div className="flex items-center gap-4">
+          <h3 className="text-lg font-semibold tracking-tight">
+            <span className="tabular-nums">{data.rows.length}</span>{" "}
+            {data.rows.length === 1 ? "Test case" : "Test cases"}
+          </h3>
+          <ToggleGroup
+            type="single"
+            value={view}
+            onValueChange={(value) => value && setView(value as MatrixView)}
+            aria-label="Test case data view"
+            className="gap-0.5 bg-muted p-0.5"
+          >
+            <ToggleGroupItem
+              value="results"
+              className="h-7 min-w-0 flex-none rounded-sm px-2.5 text-xs font-medium text-muted-foreground data-[state=on]:bg-card data-[state=on]:font-semibold data-[state=on]:text-card-foreground data-[state=on]:shadow-sm first:rounded-sm last:rounded-sm"
+            >
+              Results
+            </ToggleGroupItem>
+            <ToggleGroupItem
+              value="metrics"
+              className="h-7 min-w-0 flex-none rounded-sm px-2.5 text-xs font-medium text-muted-foreground data-[state=on]:bg-card data-[state=on]:font-semibold data-[state=on]:text-card-foreground data-[state=on]:shadow-sm first:rounded-sm last:rounded-sm"
+            >
+              Metrics
+            </ToggleGroupItem>
+          </ToggleGroup>
+        </div>
         <div
           className="flex flex-wrap items-center gap-2"
           data-testid="run-results-toolbar"
@@ -441,9 +475,18 @@ export function RunResultsMatrix({
                             })
                           }
                           aria-label={`Inspect ${row.title} on ${target.client} · ${target.model}`}
-                          className="flex h-full min-h-28 w-full flex-col gap-3 px-3 py-4 text-left transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                          className={cn(
+                            "flex h-full w-full flex-col px-3 text-left transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                            view === "results"
+                              ? "min-h-16 justify-center py-4"
+                              : "min-h-16 justify-center py-3",
+                          )}
                         >
-                          <CellMetrics items={items} />
+                          {view === "results" ? (
+                            <CellResults items={items} />
+                          ) : (
+                            <CellMetricValues items={items} />
+                          )}
                         </button>
                       ) : (
                         <div className="p-4 text-muted-foreground">
