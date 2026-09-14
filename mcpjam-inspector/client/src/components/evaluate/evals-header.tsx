@@ -25,7 +25,7 @@ const EVALUATE_HEADER_DESCRIPTION =
   "Build a durable test suite from the prompts you already run by hand and automatically measure performance over time.";
 
 export const EVAL_LANDING_VIEW_OPTIONS = [
-  { value: "runs", label: "Runs" },
+  { value: "runs", label: "Overview" },
   { value: "suites", label: "Suites" },
 ] as const satisfies readonly ViewModeSelectorOption<"suites" | "runs">[];
 

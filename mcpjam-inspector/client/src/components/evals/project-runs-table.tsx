@@ -1,4 +1,5 @@
 import { Skeleton } from "@mcpjam/design-system/skeleton";
+import { SuiteHealth } from "../evaluate/suite-health";
 import {
   EvaluateHistoryHeader,
   EvaluateHistoryRow,
@@ -321,6 +322,13 @@ export function ProjectRunsTable({
   // Hydrate loaded history before display filters: options and comparison baselines
   // must not disappear when another row is hidden.
   const history = useProjectRunHistory(projectId, rows, historyMetricsEnabled);
+  // Suite Health averages all runs, not just the first page. Finish each
+  // bounded page before requesting the next; legacy tables remain manual.
+  useEffect(() => {
+    if (evaluateLayout && status === "CanLoadMore" && !history.loading) {
+      loadMore(PROJECT_RUNS_PAGE_SIZE);
+    }
+  }, [evaluateLayout, status, history.loading, loadMore]);
   const projectEnvironmentsEnabled = useProjectEnvironmentsEnabled();
   const platformPostLaunchEnabled = usePlatformPostLaunchEnabled();
   const platformFilters = useMemo(
@@ -374,7 +382,7 @@ export function ProjectRunsTable({
   );
   const suiteOverview = useQuery(
     "testSuites:getTestSuitesOverview" as any,
-    hasEphemeralCheckServer ? ({ projectId } as any) : "skip",
+    hasEphemeralCheckServer || evaluateLayout ? ({ projectId } as any) : "skip",
   ) as EvalSuiteOverviewEntry[] | undefined;
   const suiteServersById = useMemo(
     () =>
@@ -737,6 +745,22 @@ export function ProjectRunsTable({
         !embedded && "h-full min-h-0 overflow-y-auto px-6 pb-6 pt-5",
       )}
     >
+      {evaluateLayout && (
+        <SuiteHealth
+          key={projectId}
+          rows={rows}
+          details={history.details}
+          complete={
+            status === "Exhausted" &&
+            !history.loading &&
+            rows.every((row) => history.details.has(row._id))
+          }
+          failed={history.errorCount > 0}
+          onRetry={history.retry}
+          hostNamesById={hostNamesById}
+          suiteOverview={suiteOverview}
+        />
+      )}
       <section
         className={evaluateLayout ? "shrink-0" : runHistorySurfaceClass}
         aria-label="Project run history"
@@ -997,8 +1021,8 @@ export function ProjectRunsTable({
         {hasClientSideFilter && canLoadMore && (
           <p className="px-[18px] pb-3 text-[11px] text-muted-foreground">
             Filtering the{" "}
-            {historyMetricsEnabled ? loadedRunCount : scopedRowCount}{" "}
-            most recent runs loaded so far. Load more below to widen the search.
+            {historyMetricsEnabled ? loadedRunCount : scopedRowCount} most
+            recent runs loaded so far. Load more below to widen the search.
           </p>
         )}
         <div

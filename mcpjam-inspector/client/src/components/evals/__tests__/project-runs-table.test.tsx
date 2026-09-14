@@ -573,7 +573,7 @@ describe("project run history metrics", () => {
     });
   }
 
-  it("renders Ding Dong as flat runs without the deferred health chart", async () => {
+  it("renders Ding Dong as flat runs with Suite Health", async () => {
     arrangeHistory();
     const onSelectRun = vi.fn();
     render(
@@ -596,7 +596,8 @@ describe("project run history metrics", () => {
       "Result",
       "Rate",
       "Platform",
-      "When",
+      "Commit",
+      "Date",
       "Latency",
       "Tokens",
       "Calls",
