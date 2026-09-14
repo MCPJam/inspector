@@ -1,0 +1,5 @@
+# The artifact the preview renders. Copied in by scripts/findings-preview.mjs
+# from wherever --replay points; it can carry evidence exported from a real
+# run, so it never lands in the repository.
+replay.json
+dist/

@@ -26185,6 +26185,81 @@
               "$ref": "#/components/schemas/ActionableFinding"
             }
           },
+          "currentFindings": {
+            "type": "array",
+            "description": "EXPERIMENTAL, and absent unless the deployment runs the unified-findings experiment. The always-available observation view: findings assembled from deterministic evidence plus any identity-matching model enrichment, populated INDEPENDENTLY of `status`. Read `currentFindings ?? findings` — and treat an explicit `[]` as a real \"nothing here needs a change\" rather than falling back to the generated array.",
+            "items": {
+              "$ref": "#/components/schemas/ActionableFinding"
+            }
+          },
+          "observationState": {
+            "type": "string",
+            "description": "EXPERIMENTAL. How much of the population `currentFindings` describes — distinct from `status`, which describes a model GENERATION. `unavailable` means nothing could be measured, which is NOT the same as an empty `currentFindings`.",
+            "enum": ["ready", "partial", "unavailable"]
+          },
+          "observationCoverage": {
+            "type": "object",
+            "required": ["unit", "analyzed", "total", "gradedCount", "exclusions"],
+            "description": "EXPERIMENTAL. Coverage for `currentFindings`, describing ITS population. Deliberately separate from `coverage`, whose counters describe the generation's population.",
+            "properties": {
+              "unit": {
+                "type": "string",
+                "enum": ["iterations"]
+              },
+              "analyzed": {
+                "type": "integer"
+              },
+              "total": {
+                "type": "integer"
+              },
+              "gradedCount": {
+                "type": "integer"
+              },
+              "exclusions": {
+                "type": "object",
+                "description": "Counted reasons an iteration was left out, keyed by reason. An OPEN map: a new exclusion class must not require a consumer change to keep validating.",
+                "additionalProperties": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "unifiedFindings": {
+            "type": "object",
+            "required": [
+              "capability",
+              "snapshot",
+              "job",
+              "canBuild",
+              "canEnrich",
+              "writesEnabled"
+            ],
+            "description": "EXPERIMENTAL, and absent on any deployment not running the unified-findings experiment. Its PRESENCE says the deployment serves the experiment; `snapshot: null` says this resource has none built yet — two different answers a caller must not conflate. The inner shape is not stable and should not be depended on.",
+            "properties": {
+              "capability": {
+                "type": "string",
+                "enum": ["unified_findings_v1"]
+              },
+              "snapshot": {
+                "type": ["object", "null"],
+                "description": "The built findings snapshot: its deterministic findings, per-finding provenance, any model enrichment, and the preserved previous analysis. `null` means none has been built for this resource."
+              },
+              "job": {
+                "type": ["object", "null"],
+                "description": "The in-flight or last-failed operation, so a refusal never renders as a completed analysis."
+              },
+              "canBuild": {
+                "type": "boolean"
+              },
+              "canEnrich": {
+                "type": "boolean"
+              },
+              "writesEnabled": {
+                "type": "boolean",
+                "description": "False when the deployment's experiment gate is off. Reads still work."
+              }
+            }
+          },
           "runHealth": {
             "type": "object",
             "required": ["targets"],

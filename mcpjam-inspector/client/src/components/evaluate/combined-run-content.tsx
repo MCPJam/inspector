@@ -38,7 +38,18 @@ type MemberReport = {
   chains: ReadonlyMap<string, EvalRunDecisionChain>;
 };
 
-/** One report, even when execution was distributed across several clients. */
+/**
+ * One report, even when execution was distributed across several clients.
+ *
+ * NOT a unified-findings mount, deliberately. A findings snapshot is built for
+ * ONE run: its counts, its eligible population and its coherence stamp all
+ * describe that run's evidence. This view aggregates several runs, and both
+ * honest options for it are worse than nothing tonight — one section per run
+ * would mean one subscription and one generation controller EACH (the thing
+ * the experiment's contract forbids), and a merged section would need a
+ * cross-run population that nothing currently computes. So the experiment
+ * mounts on the single-run view only.
+ */
 export function CombinedRunContent({
   runs,
   projectId,

@@ -1,0 +1,229 @@
+{
+  "coverage": {
+    "analyzed": 8,
+    "gradedCount": 8,
+    "lowConfidence": false,
+    "total": 8,
+    "truncated": false,
+    "unit": "iterations"
+  },
+  "currentFindings": [
+    {
+      "acceptanceCriteria": [
+        "search returns 200 for the same query"
+      ],
+      "actionTarget": "environment",
+      "actionability": "investigate",
+      "affected": {
+        "count": 3,
+        "total": 8,
+        "unit": "iterations"
+      },
+      "attribution": "environment",
+      "category": "tool_runtime",
+      "confidence": "medium",
+      "evidence": [
+        {
+          "errorCode": "-32001",
+          "excerpt": "Authentication failed (-32001)",
+          "iterationId": "<iterationId>",
+          "kind": "tool_error",
+          "toolName": "search"
+        },
+        {
+          "errorCode": "-32001",
+          "excerpt": "Authentication failed (-32001)",
+          "iterationId": "<iterationId>",
+          "kind": "tool_error",
+          "toolName": "search"
+        },
+        {
+          "errorCode": "-32001",
+          "excerpt": "Authentication failed (-32001)",
+          "iterationId": "<iterationId>",
+          "kind": "tool_error",
+          "toolName": "search"
+        },
+        {
+          "excerpt": "Iteration in the same host/model partition completed every contract stage and passed.",
+          "iterationId": "<iterationId>",
+          "kind": "contrast"
+        }
+      ],
+      "id": "<findingId>",
+      "observed": "\"search\" failed (-32001) on server acme-crm in 3 of 8 iterations that reached the \"call\" stage on gpt-5.4-mini.",
+      "recommendation": "Refresh the acme-crm credential in the run environment and re-run the suite.",
+      "rootCause": "The pinned token expired mid-run.",
+      "severity": "high",
+      "signalFingerprint": "<fingerprint>",
+      "title": "Expired CRM credential"
+    }
+  ],
+  "error": null,
+  "findings": [
+    {
+      "acceptanceCriteria": [
+        "Re-run the eval suite; iterations exercising \"search\" pass without this issue."
+      ],
+      "actionTarget": "investigate",
+      "actionability": "investigate",
+      "affected": {
+        "count": 0,
+        "total": 8,
+        "unit": "iterations"
+      },
+      "attribution": "unknown",
+      "category": "tool_contract",
+      "confidence": "low",
+      "evidence": [],
+      "id": "<findingId>",
+      "observed": "serverQuality rated \"search\" needs_improvement across 8 graded iterations",
+      "recommendation": "Improve error handling.",
+      "severity": "medium",
+      "signalFingerprint": "<fingerprint>",
+      "title": "Errors are opaque."
+    }
+  ],
+  "generatedAt": "<timestamp>",
+  "observationCoverage": {
+    "analyzed": 8,
+    "exclusions": {
+      "cancelled": 0,
+      "chainMissing": 0,
+      "chainUnverified": 0,
+      "chainVersionAhead": 0,
+      "evaluatorErrored": 0,
+      "judgePending": 0,
+      "judgeSkipped": 0,
+      "notTerminal": 0
+    },
+    "gradedCount": 0,
+    "total": 8,
+    "unit": "iterations"
+  },
+  "observationState": "ready",
+  "reasonCode": null,
+  "retryable": false,
+  "schemaVersion": 1,
+  "scope": {
+    "kind": "eval_run",
+    "id": "<runId>"
+  },
+  "status": "completed",
+  "summary": "A previous analysis, preserved for the comparison view.",
+  "truncation": {
+    "contractTruncated": false,
+    "omittedEvidence": 0,
+    "omittedFindings": 0,
+    "truncated": false
+  },
+  "unifiedFindings": {
+    "canBuild": true,
+    "canEnrich": true,
+    "capability": "unified_findings_v1",
+    "job": {
+      "kind": "build",
+      "startedAt": "<timestamp>",
+      "status": "completed",
+      "updatedAt": "<timestamp>"
+    },
+    "snapshot": {
+      "baseline": {
+        "capturedAt": "<timestamp>",
+        "clipped": false,
+        "generatedAt": "<timestamp>",
+        "inputIdentity": "unknown",
+        "lines": [
+          "tool search — needs_improvement: Errors are opaque."
+        ],
+        "modelUsed": "openai/gpt-5.4-mini",
+        "source": "serverQuality",
+        "summary": "A previous analysis, preserved for the comparison view.",
+        "toolInsightCount": 1,
+        "workflowInsightCount": 0
+      },
+      "builtAt": "<timestamp>",
+      "deterministicFindings": [
+        {
+          "acceptanceCriteria": [],
+          "actionTarget": "investigate",
+          "actionability": "investigate",
+          "affected": {
+            "count": 3,
+            "total": 8,
+            "unit": "iterations"
+          },
+          "attribution": "unknown",
+          "category": "tool_runtime",
+          "confidence": "low",
+          "evidence": [
+            {
+              "errorCode": "-32001",
+              "excerpt": "Authentication failed (-32001)",
+              "iterationId": "<iterationId>",
+              "kind": "tool_error",
+              "toolName": "search"
+            },
+            {
+              "errorCode": "-32001",
+              "excerpt": "Authentication failed (-32001)",
+              "iterationId": "<iterationId>",
+              "kind": "tool_error",
+              "toolName": "search"
+            },
+            {
+              "errorCode": "-32001",
+              "excerpt": "Authentication failed (-32001)",
+              "iterationId": "<iterationId>",
+              "kind": "tool_error",
+              "toolName": "search"
+            },
+            {
+              "excerpt": "Iteration in the same host/model partition completed every contract stage and passed.",
+              "iterationId": "<iterationId>",
+              "kind": "contrast"
+            }
+          ],
+          "id": "<findingId>",
+          "observed": "\"search\" failed (-32001) on server acme-crm in 3 of 8 iterations that reached the \"call\" stage on gpt-5.4-mini.",
+          "recommendation": "Open the exemplar sessions and identify the mechanism before changing anything.",
+          "severity": "high",
+          "signalFingerprint": "<fingerprint>",
+          "title": "\"search\" failed (-32001) on server acme-crm in 3 of 8 iterations that reached the \"call\" stage on gpt-5.4-mini."
+        }
+      ],
+      "enrichment": {
+        "acceptedCount": 1,
+        "generatedAt": "<timestamp>",
+        "modelUsed": "openai/gpt-5.4-mini",
+        "rejectedCount": 1,
+        "status": "ready",
+        "summary": "The pinned CRM credential expired during the run."
+      },
+      "minerVersion": 1,
+      "omittedGroups": 0,
+      "provenance": [
+        {
+          "affectedIterationIds": [
+            "<iterationId>",
+            "<iterationId>",
+            "<iterationId>"
+          ],
+          "basis": "measured",
+          "candidateId": "<findingId>",
+          "groupKind": "tool_failure",
+          "mechanismBasis": "complete",
+          "proseOrigin": {
+            "acceptanceCriteria": "ai",
+            "recommendation": "ai",
+            "rootCause": "ai",
+            "title": "ai"
+          }
+        }
+      ],
+      "sourceRevision": "<revision>"
+    },
+    "writesEnabled": true
+  },
+  "updatedAt": "<timestamp>"
+}

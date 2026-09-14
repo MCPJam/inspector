@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": "../..",
+    "types": ["vite/client"],
+    "paths": {
+      "@/*": ["./src/*"],
+      "@mcpjam/sdk/platform": ["../../sdk/src/platform/index.ts"],
+      "@mcpjam/sdk/*": ["../../sdk/src/*"]
+    }
+  },
+  "include": ["./**/*.ts", "./**/*.tsx"]
+}
