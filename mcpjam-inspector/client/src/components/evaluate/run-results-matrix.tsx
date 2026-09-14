@@ -650,6 +650,13 @@ function CaseIterations({
   onSelectIteration: (iterationId: string) => void;
 }) {
   const items = target.cells.get(caseKey) ?? [];
+  if (!items.length) {
+    return (
+      <p className="py-6 text-sm text-muted-foreground">
+        No recorded iterations for this case on this client and model.
+      </p>
+    );
+  }
   const counts = resultCounts(items);
   const tokenAverage = average(
     items.flatMap((item) =>
@@ -785,11 +792,6 @@ function CaseIterations({
           })}
         </div>
       </div>
-      {!items.length && (
-        <p className="py-6 text-sm text-muted-foreground">
-          No recorded iterations for this case on this client and model.
-        </p>
-      )}
     </>
   );
 }

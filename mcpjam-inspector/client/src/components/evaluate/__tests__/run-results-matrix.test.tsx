@@ -61,6 +61,38 @@ const names = new Map([
 ]);
 
 describe("run results matrix", () => {
+  it("shows only the empty state when switching to a pairing without iterations", async () => {
+    const user = userEvent.setup();
+    render(
+      <RunResultsMatrix
+        run={run("one")}
+        runs={[run("two", { namedHostId: "cursor", effectiveModelId: "gpt" })]}
+        iterations={[iteration("pass", "one")]}
+        hostNamesById={names}
+      />,
+    );
+    await user.click(
+      screen.getByRole("button", {
+        name: "Inspect Refund order on Claude · sonnet",
+      }),
+    );
+    const drawer = within(screen.getByRole("dialog"));
+    expect(drawer.getByText("1/1")).toBeVisible();
+    await user.click(drawer.getByRole("button", { name: "Cursor · gpt" }));
+    expect(
+      drawer.getAllByText(
+        "No recorded iterations for this case on this client and model.",
+      ),
+    ).toHaveLength(1);
+    expect(drawer.queryByText("0/0")).toBeNull();
+    expect(drawer.queryByText("Passed")).toBeNull();
+    expect(drawer.queryByText("P50")).toBeNull();
+    expect(drawer.queryByText("Iterations")).toBeNull();
+    expect(drawer.queryByText("Client / Model")).toBeNull();
+    await user.click(drawer.getByRole("button", { name: "Claude · sonnet" }));
+    expect(drawer.getByText("1/1")).toBeVisible();
+  });
+
   it("uses persisted models only to seed queued columns, never phantom completed columns", () => {
     const current = run("legacy", {
       namedHostId: undefined,
