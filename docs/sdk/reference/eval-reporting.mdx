@@ -459,7 +459,7 @@ Automatically detected when `ci` is omitted for supported CI services. An explic
 
 Predicates add a deterministic, state-based assertion layer on top of tool-call matching. Each predicate is a pure function of the iteration transcript — same transcript, same verdict — which makes it suitable as a CI release gate.
 
-Predicates can be authored two ways: on a hosted suite or case (in the corpus JSON, or through the Inspector's per-case **Checks** editor), or **code-first** from SDK 3.0 onward by passing `predicates` to [`EvalTest`](/sdk/reference/eval-test) or [`EvalSuite`](/sdk/reference/eval-suite). Either way the runner evaluates them and persists per-predicate verdicts under [`metadata.predicates`](#predicate-results-in-metadata). A case passes the predicate gate iff every **gating** predicate passes. A predicate authored `role: "advisory"` — which every observation kind must be — is recorded and surfaced, and never fails the case; so is one whose `status` is `"error"`, a check that could not be scored at all. An absent or empty list means no predicate gate (the case is judged solely by tool-call matching and `failOnToolError`).
+Predicates can be authored two ways: on a hosted suite or case (in the corpus JSON, or through the Inspector's per-case **Checks** editor), or **code-first** from SDK 3.0 onward by passing `predicates` to [`EvalTest`](/sdk/reference/eval-test) or [`EvalSuite`](/sdk/reference/eval-suite). Either way the runner evaluates them and persists per-predicate verdicts under [`metadata.predicates`](#predicate-results-in-metadata). A case passes the predicate gate iff every **required** predicate passes. A check's `role` is `"required"` (legacy spelling: `"gating"`) or `"advisory"`; absent means required. A predicate authored `role: "advisory"` — which every observation kind must be — is recorded and surfaced, and never fails the case; so is one whose `status` is `"error"`, a check that could not be scored at all. An absent or empty list means no predicate gate (the case is judged solely by tool-call matching and `failOnToolError`).
 
 <Note>
   Before SDK 3.0 the predicate engine was hosted-only: `EvalResultInput` had no predicate field, and a code-first run could not evaluate them. Code-first predicates now gate the iteration locally **and** report the same verdicts, so a suite reads identically whether it ran from your test file or from the platform.
@@ -494,7 +494,7 @@ The **Measures** column is the link of the [user-value chain](/sdk/concepts/user
 | `widgetRenderLatencyUnder` | `ms`, `toolName?` | User value | Every rendered widget observation (narrowed to `toolName` when set) mounted in strictly under `ms` milliseconds. Fails when nothing in scope rendered — an unrendered widget has no latency to check. |
 | `widgetNoConsoleErrors` | `toolName?` | User value | No widget render observation (narrowed to `toolName` when set) captured console errors. Fails when the iteration recorded no render observations in scope. |
 | `turnCountUnder` | `turns` | User value | The iteration used strictly fewer than `turns` user turns. Fails when the transcript carries no turn count. |
-| `noEndingQuestion` | — | User value | **Observation.** The final assistant message's last non-empty line does not end with `?`. Cannot tell an offer ("Would you like a breakdown?") from a request for missing input, so it is Advisory only — `role: "advisory"` is required and a gating one is refused. |
+| `noEndingQuestion` | — | User value | **Observation.** The final assistant message's last non-empty line does not end with `?`. Cannot tell an offer ("Would you like a breakdown?") from a request for missing input, so it is Advisory only — `role: "advisory"` is required and a required one is refused. |
 | `toolLatencyUnder` | `ms`, `toolName?` | Response | Every observed call in scope settled in strictly under `ms`. Reports `status: "error"` when the run captured no per-call timing. |
 | `toolResultContains` | `needle`, `caseSensitive?`, `toolName?` | Response | A tool result in scope contains `needle`, searched over the model-visible text and the structured payload. |
 | `toolResultMatchesSchema` | `schema`, `toolName?` | Response | Every tool result in scope validates against the authored JSON Schema. Any JSON root — 2026-07-28 dropped the object-only restriction on `structuredContent`. |
@@ -531,7 +531,7 @@ A predicate that cannot be evaluated fails the case instead of silently passing.
 
 Some kinds above are marked **Observation**. They are heuristics — a pattern
 that can be right about what it saw and still wrong about what it means — so
-they carry one rule everywhere: `role: "advisory"` is required, a gating one is
+they carry one rule everywhere: `role: "advisory"` is required, a required one is
 refused by the schema and by the backend, the authoring UI offers Advisory
 only, and they never enter `allGatingScorersPassed`.
 
