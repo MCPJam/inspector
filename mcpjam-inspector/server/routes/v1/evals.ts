@@ -5036,6 +5036,7 @@ evals.post("/projects/:projectId/eval-suites/from-file", async (c) => {
     token,
     projectId,
     String(result.suite._id),
+    vocabularyOf(c),
   );
   return v1Resource(
     c,
@@ -7634,7 +7635,10 @@ async function readSuiteDetail(
   convexAuthToken: string,
   projectId: string,
   suiteId: string,
-  vocabulary: EvalVocabulary = 1,
+  // REQUIRED, deliberately: a default of 1 here is a silent fallback, and it
+  // already cost us one endpoint that answered a vocabulary-2 request with the
+  // legacy spelling. Making the compiler ask means a new reader cannot forget.
+  vocabulary: EvalVocabulary,
 ) {
   const convex = createConvexReadClient(convexAuthToken);
   let suite: SuiteDoc | null;
