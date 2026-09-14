@@ -48,7 +48,7 @@ export function SuggestedFromRunCard({
   const visible = showAll ? suggestions : suggestions.slice(0, VISIBLE);
   const hidden = suggestions.length - visible.length;
   const pending = suggestions.filter((s) => !accepted.has(s.key));
-  const requirements = pending.filter((s) => s.role === "gate").length;
+  const requirements = pending.filter((s) => s.role === "required").length;
 
   const groups = new Map<string, Suggestion[]>();
   for (const suggestion of visible) {
@@ -71,8 +71,10 @@ export function SuggestedFromRunCard({
           </h3>
           <p className="text-[11px] text-muted-foreground">
             {diagnosis
-              ? "Reports only — requirements need a run that worked."
-              : `Held in every iteration of the newest batch${of > 0 ? `, and every iteration accomplished the goal` : ""}.`}
+              ? "Advisory only — requirements need a run that worked."
+              : `Held in every iteration of the newest batch${
+                  of > 0 ? `, and every iteration accomplished the goal` : ""
+                }.`}
           </p>
         </div>
         {pending.length >= 2 ? (
@@ -100,7 +102,9 @@ export function SuggestedFromRunCard({
           <p className="text-foreground">
             {diagnosis.noSignal
               ? "Nothing confirmed that this run accomplished the goal."
-              : `${diagnosis.unsuccessful} of ${diagnosis.of} ${measurementUnitLabel(
+              : `${diagnosis.unsuccessful} of ${
+                  diagnosis.of
+                } ${measurementUnitLabel(
                   "trial",
                   diagnosis.of,
                 )} did not accomplish the goal.`}
@@ -132,8 +136,8 @@ export function SuggestedFromRunCard({
           <p className="text-foreground">
             Add {requirements}{" "}
             {requirements === 1 ? "requirement" : "requirements"} and{" "}
-            {pending.length - requirements}{" "}
-            {pending.length - requirements === 1 ? "report" : "reports"}?
+            {pending.length - requirements} advisory{" "}
+            {pending.length - requirements === 1 ? "check" : "checks"}?
             Requirements fail this case on future runs when they are not met.
           </p>
           <div className="flex gap-1.5">
@@ -223,12 +227,19 @@ function ReadState({
   const lines: string[] = [];
   if (read.failed > 0) {
     lines.push(
-      `${read.failed} ${read.failed === 1 ? "trace" : "traces"} could not be read, so wording and error assertions are not offered.`,
+      `${read.failed} ${
+        read.failed === 1 ? "trace" : "traces"
+      } could not be read, so wording and error assertions are not offered.`,
     );
   }
   if (read.capped > 0) {
     lines.push(
-      `This batch has ${read.total} ${measurementUnitLabel("trial", read.total)}; traces are read for ${read.total - read.capped}, so only assertions that need no trace are offered.`,
+      `This batch has ${read.total} ${measurementUnitLabel(
+        "trial",
+        read.total,
+      )}; traces are read for ${
+        read.total - read.capped
+      }, so only assertions that need no trace are offered.`,
     );
   }
   if (lines.length === 0) return null;
@@ -315,10 +326,9 @@ export function SuggestionRow({
       >
         {lonely
           ? "1 of 1 — run more to be sure"
-          : `held in ${suggestion.stability.held} of ${suggestion.stability.of} ${measurementUnitLabel(
-              "trial",
-              suggestion.stability.of,
-            )}`}
+          : `held in ${suggestion.stability.held} of ${
+              suggestion.stability.of
+            } ${measurementUnitLabel("trial", suggestion.stability.of)}`}
       </p>
     </li>
   );

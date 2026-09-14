@@ -15,6 +15,7 @@ import {
   evaluationConfigSnapshotSchema,
   scoreResultSchema,
 } from "@mcpjam/sdk/contract";
+import { isRequiredRole } from "@mcpjam/sdk/predicates";
 import {
   EVAL_FAILED_BADGE_STRONG_CLASS,
   EVAL_PASSED_BADGE_STRONG_CLASS,
@@ -110,11 +111,11 @@ function joinScores(
 }
 
 function isGating(joined: JoinedScore): boolean {
-  return joined.definition?.role === "gating";
+  return isRequiredRole(joined.definition?.role);
 }
 
 /**
- * Does this row belong in a "N / M gating evaluators passed" count?
+ * Does this row belong in a "N / M required evaluators passed" count?
  *
  * Deliberately NOT `isGating`, and the difference is the whole point of two
  * predicates:
@@ -131,14 +132,14 @@ function isGating(joined: JoinedScore): boolean {
  */
 function countsTowardGate(joined: JoinedScore): boolean {
   if (joined.definition === null) return true;
-  if (joined.definition.role !== "gating") return false;
+  if (!isRequiredRole(joined.definition.role)) return false;
   return joined.score.status !== "not_applicable";
 }
 
 /** Does this row count against the gate? Mirrors the SDK's `scoresPassed`. */
 function failsGate(joined: JoinedScore): boolean {
   if (!joined.definition) return true; // unjoinable ⇒ fails closed
-  if (joined.definition.role !== "gating") return false;
+  if (!isRequiredRole(joined.definition.role)) return false;
   switch (joined.score.status) {
     case "scored":
       return joined.score.passed !== true;
@@ -185,29 +186,34 @@ function statusBadge(joined: JoinedScore) {
     return {
       label: "UNRESOLVED",
       icon: AlertTriangle,
-      className:
-        "bg-warning/15 text-warning border border-warning/30",
+      className: "bg-warning/15 text-warning border border-warning/30",
     };
   }
   if (status === "scored") {
     return passed
-      ? { label: "PASS", icon: CheckCircle2, className: EVAL_PASSED_BADGE_STRONG_CLASS }
-      : { label: "FAIL", icon: XCircle, className: EVAL_FAILED_BADGE_STRONG_CLASS };
+      ? {
+          label: "PASS",
+          icon: CheckCircle2,
+          className: EVAL_PASSED_BADGE_STRONG_CLASS,
+        }
+      : {
+          label: "FAIL",
+          icon: XCircle,
+          className: EVAL_FAILED_BADGE_STRONG_CLASS,
+        };
   }
   if (status === "error") {
     return {
       label: "ERROR",
       icon: AlertTriangle,
-      className:
-        "bg-warning/15 text-warning border border-warning/30",
+      className: "bg-warning/15 text-warning border border-warning/30",
     };
   }
   if (status === "skipped") {
     return {
       label: "SKIPPED",
       icon: CircleSlash,
-      className:
-        "bg-warning/10 text-warning border border-warning/20",
+      className: "bg-warning/10 text-warning border border-warning/20",
     };
   }
   return {
@@ -310,11 +316,13 @@ export function ScoresList({
     integrityInvalid
       ? { tone: "failed", label: "evaluator evidence did not verify" }
       : counted.length === 0
-        ? { tone: "none", label: "no gating evaluators" }
-        : {
-            tone: countedFailures === 0 ? "passed" : "failed",
-            label: `${counted.length - countedFailures} / ${counted.length} gating evaluators passed`,
-          };
+      ? { tone: "none", label: "no required evaluators" }
+      : {
+          tone: countedFailures === 0 ? "passed" : "failed",
+          label: `${counted.length - countedFailures} / ${
+            counted.length
+          } required evaluators passed`,
+        };
   const tone = SUMMARY_TONE[summary.tone];
   const SummaryIcon = tone.icon;
 
@@ -356,7 +364,7 @@ export function ScoresList({
       ) : null}
 
       <ScoreGroup
-        title="Gating"
+        title="Required"
         rows={gating}
         keyPrefix="gating"
         hideJudgeRows={hidingJudges}
@@ -457,9 +465,7 @@ function ScoreRow({ row }: { row: JoinedScore }) {
         </summary>
         <div className="space-y-1 px-2 pb-2 text-[11px] text-muted-foreground">
           {row.score.error ? (
-            <div className="text-warning">
-              {row.score.error}
-            </div>
+            <div className="text-warning">{row.score.error}</div>
           ) : null}
           {row.score.rationale ? <div>{row.score.rationale}</div> : null}
           {row.score.evidence?.length ? (

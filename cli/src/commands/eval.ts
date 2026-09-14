@@ -4807,8 +4807,11 @@ export function registerEvalCommands(program: Command): void {
       "Minimum share of iterations that must pass, as a percentage"
     )
     .option(
+      // The FLAG keeps its name. It is a published CI contract — renaming it
+      // breaks every pipeline that spells it — and it names the quality gate,
+      // not an assertion's policy role. Only the help text moves.
       "--no-gating-score-errors",
-      "Fail if any gating scorer errored during the run"
+      "Fail if any required scorer errored during the run"
     )
     .option(
       "--min-scorer-pass-rate <scorerId=percent>",
@@ -4840,7 +4843,7 @@ export function registerEvalCommands(program: Command): void {
     )
     .option(
       "--gate-deterministic-regressions",
-      "Fail if a deterministic gating scorer flipped from passed to failed; requires --baseline or --baseline-sha"
+      "Fail if a deterministic required scorer flipped from passed to failed; requires --baseline or --baseline-sha"
     )
     .option(
       "--max-p95-latency-increase-ms <ms>",
@@ -4959,7 +4962,7 @@ export function registerEvalCommands(program: Command): void {
     )
     .option(
       "--gate-deterministic-regressions",
-      "Fail if a deterministic gating scorer flipped from passed to failed"
+      "Fail if a deterministic required scorer flipped from passed to failed"
     )
     .option(
       "--max-p95-latency-increase-ms <ms>",
