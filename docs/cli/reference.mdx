@@ -1954,6 +1954,13 @@ An unreadable or missing path is a usage error and goes to stderr in the CLI's
 standard error envelope rather than as findings — nothing was read, so there is
 nothing to report about.
 
+**Suite file dialects.** Two dialects are accepted. Dialect `"1"` spells the
+configured run count `repetitions` and the case's rules `checks` (with
+`assertions` as a deprecated alias). Dialect `"2"` spells them `iterations`
+and `assertions` respectively; the dialect-1 spellings are unknown keys in
+dialect 2. `eval export` always writes dialect 1. A wrong-dialect key produces
+a finding that names the other dialect's spelling and offers both fixes.
+
 **What "valid" does not mean, without `--project`.** The offline check judges
 the file against the suite-file contract. It does **not** re-resolve tool names,
 server references or fixtures against a project's live discovery, so a file that
