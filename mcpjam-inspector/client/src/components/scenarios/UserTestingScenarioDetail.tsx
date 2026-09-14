@@ -852,7 +852,7 @@ export function UserTestingScenarioDetail({
           value: tab,
           options: TAB_OPTIONS,
           onChange: goToTab,
-          ariaLabel: "Scenario view",
+          ariaLabel: "Study view",
           indicatorId: "user-testing-detail",
         }}
       />
@@ -982,7 +982,7 @@ export function UserTestingScenarioDetail({
                         kind: "scenario",
                         scenarioId: scenario.scenarioId,
                       }}
-                      context={{ rerunLabel: "this user-testing scenario" }}
+                      context={{ rerunLabel: "this user-testing study" }}
                       onOpenSession={(threadId) => {
                         navigate(
                           buildUserTestingScenarioPath(scenario.scenarioId, {

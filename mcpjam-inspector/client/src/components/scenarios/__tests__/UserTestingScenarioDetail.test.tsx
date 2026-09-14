@@ -322,7 +322,7 @@ describe("UserTestingScenarioDetail", () => {
     expect(screen.getByTestId("stub-scenario-findings")).toBeInTheDocument();
     expect(screen.queryByTestId("stub-usage-insights")).not.toBeInTheDocument();
     expect(screen.queryByTestId("stub-usage-sessions")).not.toBeInTheDocument();
-    const nav = screen.getByRole("navigation", { name: "Scenario view" });
+    const nav = screen.getByRole("navigation", { name: "Study view" });
     // `stub-share-empty` is the Insights empty state and no longer renders
     // on the landing tab.
     expect(
@@ -336,7 +336,7 @@ describe("UserTestingScenarioDetail", () => {
     ).not.toBeInTheDocument();
     expect(screen.getByTestId("user-testing-edit-button")).toBeInTheDocument();
     // Edit is a header action + route, not a view-mode tab.
-    const tabNav = screen.getByRole("navigation", { name: "Scenario view" });
+    const tabNav = screen.getByRole("navigation", { name: "Study view" });
     expect(within(tabNav).queryByRole("button", { name: "Edit" })).toBeNull();
   });
 
@@ -398,7 +398,7 @@ describe("UserTestingScenarioDetail", () => {
       screen.queryByTestId("stub-scenario-findings"),
     ).not.toBeInTheDocument();
     expect(screen.getByTestId("stub-share-empty")).toBeInTheDocument();
-    const nav = screen.getByRole("navigation", { name: "Scenario view" });
+    const nav = screen.getByRole("navigation", { name: "Study view" });
     expect(
       within(nav).getByRole("button", { name: "Insights" }),
     ).toBeInTheDocument();
