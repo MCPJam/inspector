@@ -175,7 +175,7 @@ export function TrialScorecardRow({
                 : cn(
                     row.result.state === "passed"
                       ? "bg-success/15"
-                      : row.result.state === "failed" && row.role === "gate"
+                      : row.result.state === "failed" && row.role === "required"
                         ? "bg-destructive/10"
                         : "bg-muted",
                     // Success stays in the tint; small text needs the reading
@@ -220,7 +220,7 @@ export function TrialScorecardRow({
         {row.evidence?.frozenRole && !withheld && (
           <p className="text-xs text-muted-foreground">
             Graded as{" "}
-            {row.evidence.frozenRole === "gating" ? "Gate" : "advisory"} — this
+            {isRequiredRole(row.evidence.frozenRole) ? "required" : "advisory"} — this
             scorer's role has changed since the run.
           </p>
         )}

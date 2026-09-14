@@ -9,7 +9,7 @@ const check = {
   provenance: "suite",
   label: "End-to-end latency ≤ 30s",
   kindLabel: "End-to-end latency",
-  role: "gate",
+  role: "required",
   roleLock: "inherited",
   editable: false,
   tooltip: "This gates the trial",
@@ -41,13 +41,13 @@ describe("Scorecard report", () => {
     expect(screen.getByText("Finished within the budget.")).toBeVisible();
     expect(screen.queryByText("This gates the trial")).toBeNull();
   });
-  it("labels missing evidence honestly and retains warning semantics", () => {
+  it("labels missing evidence honestly and retains advisory semantics", () => {
     render(
       <ul>
         <TrialScorecardRow
           row={{
             ...check,
-            role: "warn",
+            role: "advisory",
             result: { state: "failed", source: "scoreRow" },
             evidence: undefined,
           }}
@@ -55,7 +55,7 @@ describe("Scorecard report", () => {
         />
       </ul>,
     );
-    expect(screen.getByText("Missed · warning")).toBeVisible();
+    expect(screen.getByText("Missed · advisory")).toBeVisible();
     expect(screen.getByText("No observation recorded.")).toBeVisible();
     expect(screen.getByText("No reason recorded.")).toBeVisible();
   });
