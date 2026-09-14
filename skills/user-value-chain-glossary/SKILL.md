@@ -112,7 +112,7 @@ what arrives, never widen it.
 | `toolError` | the server reported a tool error |
 | `protocolError` | the call never produced a result |
 | `renderFailed` | the widget did not render |
-| `predicateFailed` | a check on the result did not hold |
+| `predicateFailed` | an assertion on the result did not hold |
 
 **Measured passes**
 
@@ -236,7 +236,7 @@ signals.
 | `noToolCalls` | no tool calls to look at | The trial made none, so there is no sequence to read. |
 | `resultsUnavailable` | tool results were not retained | At least one call's result was not stored, so what a later call could have used is unknown. |
 | `orderingUnknown` | the calls cannot be placed in a causal order | The trial mixes ordering modes, or carries a call that cannot be placed against the others — so "later" cannot be established. |
-| `evidenceIncomplete` | the evidence for this trial has a known hole | Two causes, and neither is a fact about the run: a gap the producer knows about, or a retained argument that cannot be read canonically. The second is why the whole document is withheld rather than the offending call skipped — dropping one call would renumber every index after it. The call count stays honest either way. |
+| `evidenceIncomplete` | the evidence for this iteration has a known hole | Two causes, and neither is a fact about the run: a gap the producer knows about, or a retained argument that cannot be read canonically. The second is why the whole document is withheld rather than the offending call skipped — dropping one call would renumber every index after it. The call count stays honest either way. |
 | `truncated` | too many tool calls to measure | The trial exceeded the per-trial call cap. |
 
 ## The nine suspected conditions

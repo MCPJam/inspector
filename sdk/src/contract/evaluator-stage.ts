@@ -78,6 +78,12 @@ export type AssertionKind =
  * table. (`noToolErrors` was one of these; analyzer 11 moved it.)
  */
 export const ASSERTION_STAGE: Record<AssertionKind, UserValueStage> = {
+  toolDescriptionsPresent: "discovery",
+  toolAnnotationsPresent: "discovery",
+  toolNamesUnique: "discovery",
+  noDeprecatedToolExposed: "discovery",
+  toolInputSchemasWellFormed: "discovery",
+  toolOutputSchemasPresent: "discovery",
   // ── Selection: which tool the model chose ───────────────────────────────
   toolCalledWith: "selection",
   toolCalledAtLeastOnce: "selection",
@@ -116,6 +122,7 @@ export const ASSERTION_STAGE: Record<AssertionKind, UserValueStage> = {
   toolErrorNamesInput: "response",
   fullPageHasContinuation: "response",
   // ── User value: did the person get what they asked for ──────────────────
+  responseCloseTo: "userValue",
   responseContains: "userValue",
   responseMatches: "userValue",
   finalAssistantMessageNonEmpty: "userValue",

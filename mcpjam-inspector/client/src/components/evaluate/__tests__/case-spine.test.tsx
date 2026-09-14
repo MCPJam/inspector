@@ -132,7 +132,7 @@ describe("the first-run form", () => {
     expect(screen.getByRole("button", { name: "Add" })).toBeInTheDocument();
     // The vocabulary a newcomer has not earned yet.
     const text = screen.getByTestId("case-spine").textContent ?? "";
-    expect(text).not.toMatch(/Scorers|Gate|Warn|Report|Judge · /);
+    expect(text).not.toMatch(/Evaluators|Scorers|Gate|Warn|Report|Judge · /);
     expect(screen.getByTestId("spine-actions")).toBeInTheDocument();
     expect(screen.queryByTestId("spine-after-the-run")).toBeNull();
   });
@@ -156,7 +156,7 @@ describe("the first-run form", () => {
     ).toHaveClass("justify-end");
     await user.click(add);
     await user.type(
-      screen.getByLabelText("Filter steps and checks"),
+      screen.getByLabelText("Filter steps and assertions"),
       "element",
     );
     await user.click(screen.getByTestId("add-step-item-widget:elementVisible"));
@@ -174,7 +174,7 @@ describe("the first-run form", () => {
     await user.click(trigger);
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     expect(
-      screen.getByLabelText("Filter steps and checks"),
+      screen.getByLabelText("Filter steps and assertions"),
     ).toBeInTheDocument();
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -187,7 +187,7 @@ describe("the first-run form", () => {
     render(<StatefulSpine steps={[]} onStepsChange={onStepsChange} />);
     await user.click(screen.getByRole("button", { name: "Add" }));
     await user.type(
-      screen.getByLabelText("Filter steps and checks"),
+      screen.getByLabelText("Filter steps and assertions"),
       "element",
     );
     await user.click(screen.getByTestId("add-step-item-widget:elementVisible"));
@@ -310,7 +310,10 @@ describe("the spine", () => {
     const user = await openSpine({ steps: golden, onStepsChange });
     const [prompt] = screen.getAllByTestId("spine-action-row");
     await user.click(within(prompt!).getByRole("button", { name: "Add" }));
-    await user.type(screen.getByLabelText("Filter steps and checks"), "errors");
+    await user.type(
+      screen.getByLabelText("Filter steps and assertions"),
+      "errors",
+    );
     await user.click(screen.getByTestId("add-step-item-check:noToolErrors"));
     const written = onStepsChange.mock.calls.at(-1)![0] as TestStep[];
     // After the prompt's whole block — behind a1 and a2, never in front of
@@ -328,7 +331,7 @@ describe("the spine", () => {
     const [, click] = screen.getAllByTestId("spine-action-row");
     await user.click(within(click!).getByRole("button", { name: "Add" }));
     await user.type(
-      screen.getByLabelText("Filter steps and checks"),
+      screen.getByLabelText("Filter steps and assertions"),
       "element",
     );
     expect(
@@ -670,7 +673,7 @@ it("adds an action from Add after the selected prompt", async () => {
   render(<StatefulSpine steps={[]} onStepsChange={onStepsChange} />);
   await user.click(screen.getByRole("button", { name: "Add" }));
   expect(screen.getByText("Actions")).toBeVisible();
-  expect(screen.getByText("Assertions · Tool selection")).toBeVisible();
+  expect(screen.getByText("Assertions · Selection")).toBeVisible();
   const choice = screen.getByTestId("add-step-item-toolCall");
   expect(choice.querySelector("svg")).not.toBeNull();
   await user.click(choice);

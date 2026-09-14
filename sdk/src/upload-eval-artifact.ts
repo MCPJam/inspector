@@ -12,10 +12,7 @@ import { reportEvalResultsInternal } from "./report-eval-results.js";
 import { captureEvalReportingFailure } from "./sentry.js";
 
 export type EvalArtifactFormat =
-  | "junit-xml"
-  | "jest-json"
-  | "vitest-json"
-  | "custom";
+  "junit-xml" | "jest-json" | "vitest-json" | "custom";
 
 export type UploadEvalArtifactInput = Omit<
   ReportEvalResultsInput,
@@ -87,6 +84,22 @@ export async function uploadEvalArtifact(
   input: UploadEvalArtifactInput
 ): Promise<ReportEvalResultsOutput> {
   try {
+    const maxBytes = input.transport?.maxArtifactBytes ?? 16 * 1024 * 1024;
+    if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0)
+      throw new Error("Invalid artifact byte limit");
+    const size =
+      input.artifact instanceof Uint8Array
+        ? input.artifact.byteLength
+        : Buffer.byteLength(
+            typeof input.artifact === "string"
+              ? input.artifact
+              : JSON.stringify(input.artifact),
+            "utf8"
+          );
+    if (size > maxBytes)
+      throw new Error(
+        "Eval artifact exceeds the configured byte limit; split the artifact before parsing"
+      );
     const results = parseArtifactResults(input);
     return await reportEvalResultsInternal({
       suiteName: input.suiteName,

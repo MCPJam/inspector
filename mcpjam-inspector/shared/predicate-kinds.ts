@@ -31,12 +31,21 @@ export function rolesForPredicateKind(
 }
 
 export const PREDICATE_KIND_LABELS: Record<PredicateKind, string> = {
+  toolDescriptionsPresent: "Tool descriptions meet the minimum length",
+  toolAnnotationsPresent: "Every tool declares annotations",
+  toolNamesUnique: "Tool names are unique within each server",
+  noDeprecatedToolExposed: "No tool description marks itself deprecated",
+  toolInputSchemasWellFormed:
+    "Input schemas have an object root and documented parameters",
+  toolOutputSchemasPresent: "Every tool declares an output schema",
+
   toolCalledWith: "Tool was called with…",
   toolCalledAtLeastOnce: "Tool was called at least once",
   toolNeverCalled: "Tool was never called",
   onlyToolsCalled: "Only these tools may be called",
   firstToolWas: "First tool called was…",
   responseContains: "Response contains…",
+  responseCloseTo: "Response close to…",
   responseMatches: "Response matches regex…",
   noToolErrors: "No tool errors",
   finalAssistantMessageNonEmpty: "Final message non-empty",
@@ -98,12 +107,20 @@ export function isScenarioPredicateKind(kind: PredicateKind): boolean {
 }
 
 export const PREDICATE_KIND_ORDER: PredicateKind[] = [
+  "toolDescriptionsPresent",
+  "toolAnnotationsPresent",
+  "toolNamesUnique",
+  "noDeprecatedToolExposed",
+  "toolInputSchemasWellFormed",
+  "toolOutputSchemasPresent",
+
   "toolCalledWith",
   "toolCalledAtLeastOnce",
   "toolNeverCalled",
   "onlyToolsCalled",
   "firstToolWas",
   "responseContains",
+  "responseCloseTo",
   "responseMatches",
   "noToolErrors",
   "finalAssistantMessageNonEmpty",
@@ -224,6 +241,14 @@ export function labelForInlineAssert(kind: PredicateKind): string {
 
 export function blankPredicate(kind: PredicateKind): Predicate {
   switch (kind) {
+    case "toolDescriptionsPresent":
+      return { type: kind, minLength: 20, role: "advisory", severity: "warn" };
+    case "toolAnnotationsPresent":
+    case "toolNamesUnique":
+    case "noDeprecatedToolExposed":
+    case "toolInputSchemasWellFormed":
+    case "toolOutputSchemasPresent":
+      return { type: kind, role: "advisory", severity: "warn" };
     case "toolCalledWith":
       return { type: "toolCalledWith", toolName: "", args: { args: {} } };
     case "toolCalledAtLeastOnce":
@@ -237,6 +262,8 @@ export function blankPredicate(kind: PredicateKind): Predicate {
       return { type: "onlyToolsCalled", toolNames: [] };
     case "firstToolWas":
       return { type: "firstToolWas", toolName: "" };
+    case "responseCloseTo":
+      return { type: "responseCloseTo", reference: "", maxDistance: 0.1 };
     case "responseContains":
       return { type: "responseContains", needle: "" };
     case "responseMatches":
@@ -335,6 +362,12 @@ export function formatCriterion(
   const predicate = entry.predicate;
   const base = PREDICATE_KIND_LABELS[predicate.type];
   switch (predicate.type) {
+    case "toolDescriptionsPresent":
+      return `Tool descriptions have at least ${num(predicate.minLength ?? 20)} characters`;
+    case "toolAnnotationsPresent":
+      return predicate.require?.length
+        ? `Tools declare boolean annotations: ${predicate.require.join(", ")}`
+        : base;
     case "toolCalledWith":
     case "toolCalledAtLeastOnce":
     case "toolNeverCalled":
@@ -350,6 +383,8 @@ export function formatCriterion(
         ? "No tool should be called"
         : `Only these tools may be called: ${names.join(", ")}`;
     }
+    case "responseCloseTo":
+      return `Response distance ≤ ${num(predicate.maxDistance)} from reference`;
     case "responseContains":
       return `Response contains "${predicate.needle}"`;
     case "responseMatches":

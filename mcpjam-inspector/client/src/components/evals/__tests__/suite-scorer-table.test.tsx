@@ -48,8 +48,11 @@ function renderTable(
     <SuiteScorerTable
       matchOptions={undefined}
       onMatchOptionsChange={onMatchOptionsChange}
-      predicates={overrides.predicates ?? []}
-      onPredicatesChange={onPredicatesChange}
+      scope={{
+        kind: "suite",
+        predicates: overrides.predicates ?? [],
+        onPredicatesChange,
+      }}
       judgeConfig={overrides.judgeConfig}
       onJudgeConfigChange={onJudgeConfigChange}
       availableModels={[]}
@@ -293,12 +296,14 @@ describe("SuiteScorerTable", () => {
   it("lists library categories that have kinds", async () => {
     const user = userEvent.setup();
     renderTable();
-    await user.click(screen.getByRole("button", { name: "Add scorer" }));
+    await user.click(screen.getByRole("button", { name: "Add assertion" }));
     for (const name of [
-      "Assertions · Tool selection",
-      "Assertions · Answer and outcome",
-      "Limits · Time and usage",
-      "Assertions · Tool inputs and results",
+      "Assertions · Discovery",
+      "Assertions · Selection",
+      "Assertions · Tool call",
+      "Assertions · Response",
+      "Assertions · User value",
+      "Assertions · Budgets",
     ]) {
       expect(screen.getByRole("region", { name })).toBeInTheDocument();
     }
@@ -310,7 +315,7 @@ describe("SuiteScorerTable", () => {
     const heads = Array.from(container.querySelectorAll("thead th")).map(
       (head) => head.textContent?.trim(),
     );
-    expect(heads).toEqual(["Scorer", "Kind", "Threshold", "Role"]);
+    expect(heads).toEqual(["On", "Evaluator", "Kind", "Threshold", "Role"]);
     expect(container.textContent).not.toMatch(/Last run/i);
     expect(container.textContent).not.toMatch(/Trend/i);
   });
@@ -319,7 +324,7 @@ describe("SuiteScorerTable", () => {
     const { container } = renderTable({
       predicates: [{ type: "noToolErrors" }],
     });
-    expect(screen.queryByRole("group", { name: "Check role" })).toBeNull();
+    expect(screen.queryByRole("group", { name: "Assertion role" })).toBeNull();
     const row = container.querySelector(
       '[data-scorer-id="predicate:0"]',
     ) as HTMLElement;
@@ -336,7 +341,7 @@ describe("SuiteScorerTable", () => {
         { type: "noToolErrors", role: "advisory", severity: "warn" } as never,
       ],
     });
-    expect(screen.queryByRole("group", { name: "Check role" })).toBeNull();
+    expect(screen.queryByRole("group", { name: "Assertion role" })).toBeNull();
     const row = container.querySelector(
       '[data-scorer-id="predicate:0"]',
     ) as HTMLElement;
@@ -365,4 +370,17 @@ describe("SuiteScorerTable — role colour", () => {
     expect(warn.className).not.toBe(report.className);
     expect(warn.className).toMatch(/amber|warn/i);
   });
+});
+
+it("keeps each standard numeric criterion in its own editable field", () => {
+  renderTable({ predicates: [
+    { type: "toolDescriptionsPresent", minLength: 31 },
+    { type: "toolLatencyUnder", ms: 1234 },
+    { type: "toolResultSizeUnder", maxBytes: 64000 },
+    { type: "toolCallCountUnder", count: 4 },
+  ] });
+  expect(screen.getByRole("spinbutton", { name: "Minimum tool description length" })).toHaveValue(31);
+  expect(screen.getByRole("spinbutton", { name: "Tool latency budget in ms" })).toHaveValue(1234);
+  expect(screen.getByRole("spinbutton", { name: "Tool result size budget in bytes" })).toHaveValue(64000);
+  expect(screen.getByRole("spinbutton", { name: "Tool call budget" })).toHaveValue(4);
 });

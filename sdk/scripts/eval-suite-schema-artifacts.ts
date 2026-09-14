@@ -148,9 +148,9 @@ export function buildEvalSuiteSchemaDocument(): Record<string, unknown> {
       "(unique case ids, unique step ids within a case, a per-case import " +
       "block requiring top-level provenance, a per-case import note " +
       "being required when the claimed status is exact, and an OBSERVATION " +
-      "check — noEndingQuestion, noRepeatedIdenticalCall, " +
+      "check — noDeprecatedToolExposed, noEndingQuestion, noRepeatedIdenticalCall, " +
       "noDeprecatedToolCalled, toolErrorNamesInput, fullPageHasContinuation " +
-      "— being refused unless it carries role: \"advisory\", because a " +
+      '— being refused unless it carries role: "advisory", because a ' +
       "heuristic must not decide a release) and serialized-size caps on " +
       "tool-call arguments and on toolResultMatchesSchema's authored schema, " +
       "none of which JSON Schema can express. " +

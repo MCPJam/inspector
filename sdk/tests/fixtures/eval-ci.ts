@@ -27,6 +27,8 @@ export const ciFixtures: Array<{
       pipelineId: "42.2",
       jobId: "evals",
       runUrl: "https://github.example.com/acme/server/actions/runs/42",
+      repositoryUrl: "https://github.example.com/acme/server",
+      prUrl: "https://github.example.com/acme/server/pull/123",
     },
   },
   {

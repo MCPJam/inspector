@@ -9,14 +9,12 @@ describe("SDK eval CI detection", () => {
     }
   );
 
-  it.each([
-    {},
-    { CI: "true" },
-    { GITHUB_SHA: commitSha },
-    { JENKINS_HOME: " " },
-  ])("does not guess a provider from %j", (env) => {
-    expect(detectEvalCiMetadata(env)).toBeUndefined();
-  });
+  it.each([{}, { GITHUB_SHA: commitSha }, { JENKINS_HOME: " " }])(
+    "does not guess a provider from %j",
+    (env) => {
+      expect(detectEvalCiMetadata(env)).toBeUndefined();
+    }
+  );
 
   it.each([
     "GITHUB_ACTIONS",
@@ -144,13 +142,22 @@ describe("SDK eval CI detection", () => {
   it("preserves explicit settings and allows opting out with an empty object", () => {
     const ci = Object.freeze({
       provider: "custom",
-      commitSha: "custom-ref",
-      runUrl: "custom-url",
+      commitSha: "c".repeat(40),
+      runUrl: "https://ci.example.com/run",
     });
-    expect(resolveEvalCiMetadata(ci, ciFixtures[0].env)).toBe(ci);
+    expect(resolveEvalCiMetadata(ci, ciFixtures[0].env)).toEqual({
+      ...ciFixtures[0].expected,
+      ...ci,
+    });
     expect(resolveEvalCiMetadata({}, ciFixtures[0].env)).toEqual({});
     expect(resolveEvalCiMetadata(undefined, ciFixtures[0].env)).toEqual(
       ciFixtures[0].expected
     );
+  });
+  it("omits malformed explicit commit identity through the same sanitizer", () => {
+    expect(resolveEvalCiMetadata({ commitSha: "not-a-sha" }, {})).toEqual({});
+    expect(
+      resolveEvalCiMetadata({ commitSha: "  " + "d".repeat(40) + "  " }, {})
+    ).toEqual({ commitSha: "d".repeat(40) });
   });
 });

@@ -18,6 +18,21 @@ const mocks = vi.hoisted(() => ({
   /** Whether the fake backend honours `origins`; off by default so tests
    *  about the loaded page see it unfiltered. */
   backendFiltersOrigins: false,
+  /** `testSuites:getTestSuitesOverview` — only the suites' servers matter here. */
+  suiteOverview: {
+    current: undefined as
+      | Array<{
+          suite: {
+            _id: string;
+            environment: { servers: string[] };
+            hostAttachments?: Array<{ resolvedServerNames: string[] }>;
+          };
+        }>
+      | undefined,
+  },
+  /** `platform-post-launch`. On by default so the chip tests below keep
+   *  reaching MCP/Scheduled/GitHub. */
+  platformPostLaunchEnabled: true,
 }));
 
 const convexClient = { query: mocks.query };
@@ -28,6 +43,13 @@ vi.mock("@/hooks/useClients", () => ({
 
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabled: () => true,
+}));
+
+// The existing platform-chip tests drive MCP/Scheduled/GitHub, which only
+// exist once `platform-post-launch` is on. Flag-off chip trimming has its own
+// test below.
+vi.mock("@/hooks/usePlatformPostLaunchEnabled", () => ({
+  usePlatformPostLaunchEnabled: () => mocks.platformPostLaunchEnabled,
 }));
 
 vi.mock("convex/react", () => ({
@@ -46,6 +68,8 @@ vi.mock("convex/react", () => ({
       ),
     };
   },
+  useQuery: (_fn: unknown, args: unknown) =>
+    args === "skip" ? undefined : mocks.suiteOverview.current,
   useConvex: () => convexClient,
 }));
 
@@ -109,6 +133,8 @@ beforeEach(() => {
   mocks.query.mockReset();
   mocks.queryArgs.length = 0;
   mocks.backendFiltersOrigins = false;
+  mocks.suiteOverview.current = undefined;
+  mocks.platformPostLaunchEnabled = true;
 });
 
 describe("ProjectRunsTable", () => {
@@ -233,6 +259,21 @@ describe("ProjectRunsTable", () => {
     // shown for a suite whose GitHub runs were simply further down.
     expect(inTable().getByText("CI suite")).toBeTruthy();
     expect(inTable().getByText("Playground suite")).toBeTruthy();
+  });
+
+  it("hides the unlaunched platform chips until platform-post-launch is on", async () => {
+    const user = userEvent.setup();
+    mocks.platformPostLaunchEnabled = false;
+    setRows([makeRow({ source: "sdk" })]);
+    render(<ProjectRunsTable projectId="proj_1" onSelectRun={vi.fn()} />);
+
+    await user.click(
+      screen.getByRole("button", { name: "Filter by platform" }),
+    );
+    const chips = screen
+      .getAllByRole("menuitemcheckbox")
+      .map((chip) => chip.textContent);
+    expect(chips).toEqual(["SDK", "UI", "API", "CLI"]);
   });
 
   it("maps the GitHub chip onto both stored GitHub origins", async () => {
@@ -749,6 +790,55 @@ describe("project run history metrics", () => {
     await user.click(screen.getByRole("button", { name: "Clear filters" }));
     expect(screen.getByText(/2 of 2 loaded runs/)).toBeVisible();
     expect(screen.getByTestId("project-run-history-metrics")).toBeVisible();
+  });
+
+  it("names a GitHub check's server after its suite, not the throwaway row", async () => {
+    arrangeHistory();
+    const original = mocks.query.getMockImplementation()!;
+    setRows([makeRow({ _id: "new", source: "github_check", createdAt: 2000 })]);
+    // A check runs the pull request's own build, so the name it freezes is the
+    // ephemeral `servers` row the worker made for it — an id, not a name any
+    // reader chose. One per check run would fill the filter with ids.
+    mocks.query.mockImplementation(async (name, args: any) => {
+      const result = await original(name, args);
+      return name === "testSuites:getTestSuiteRun"
+        ? {
+            ...result,
+            configSnapshot: {
+              tests: [],
+              environment: { servers: ["gh-check-p57h0dafyahm32m3s38vp"] },
+            },
+          }
+        : result;
+    });
+    // A suite that picks its servers through a host attachment leaves the
+    // legacy flat list empty — the shape that made this read "PR server".
+    mocks.suiteOverview.current = [
+      {
+        suite: {
+          _id: "suite_1",
+          environment: { servers: [] },
+          hostAttachments: [{ resolvedServerNames: ["bart"] }],
+        },
+      },
+    ];
+    const user = userEvent.setup();
+    render(
+      <ProjectRunsTable
+        projectId="proj_1"
+        onSelectRun={vi.fn()}
+        historyMetricsEnabled
+      />,
+    );
+    await screen.findByTestId("project-run-history-metrics");
+    await user.click(
+      screen.getByRole("combobox", { name: "Filter by server" }),
+    );
+    expect(screen.getByRole("option", { name: "bart" })).toBeVisible();
+    expect(screen.queryByText(/^gh-check-/)).toBeNull();
+    // And it still filters: the substituted name is what the row matches on.
+    await user.click(screen.getByRole("option", { name: "bart" }));
+    expect(screen.getByText(/1 of 1 loaded runs/)).toBeVisible();
   });
 
   it("shows one complete run per row, preserves pairings when filtering, and opens its report", async () => {
