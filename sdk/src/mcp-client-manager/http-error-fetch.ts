@@ -1,4 +1,8 @@
-import { SdkHttpError, SdkErrorCode } from "@modelcontextprotocol/client";
+import {
+  SdkHttpError,
+  SdkErrorCode,
+  extractWWWAuthenticateParams,
+} from "@modelcontextprotocol/client";
 
 function isToolCall(body: RequestInit["body"]): boolean {
   if (typeof body !== "string") return false;
@@ -25,6 +29,10 @@ export function wrapFetchForHttpErrors(
       // HTTP 400 can carry a JSON-RPC error the transport needs to dispatch.
       response.status === 400 ||
       // The transport must handle authentication and scope retries itself.
+      // It raises InsufficientScopeError for step-up even without a provider.
+      (response.status === 403 &&
+        extractWWWAuthenticateParams(response).error ===
+          "insufficient_scope") ||
       (hasAuthProvider && (response.status === 401 || response.status === 403))
     ) {
       return response;

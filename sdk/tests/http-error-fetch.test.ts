@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  InsufficientScopeError,
   SdkHttpError,
   SdkErrorCode,
   PROTOCOL_VERSION_META_KEY,
@@ -104,6 +105,28 @@ describe("Streamable HTTP error diagnostics", () => {
       expect(response.headers.get("www-authenticate")).toBe(challenge);
     }
   );
+
+  it("lets insufficient_scope 403 reach step-up without an auth provider", async () => {
+    const transport = new StreamableHTTPClientTransport(url, {
+      fetch: wrapFetchForHttpErrors(
+        vi.fn(
+          async () =>
+            new Response(null, {
+              status: 403,
+              headers: {
+                "WWW-Authenticate":
+                  'Bearer error="insufficient_scope", scope="tools:write"',
+              },
+            })
+        ) as typeof fetch,
+        false
+      ),
+      onInsufficientScope: "throw",
+    });
+    const error = await transport.send(request).catch((error) => error);
+    expect(error).toBeInstanceOf(InsufficientScopeError);
+    expect(error.requiredScope).toBe("tools:write");
+  });
 
   it("leaves the optional GET listen stream response intact", async () => {
     const response = new Response(null, { status: 405 });
