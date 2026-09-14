@@ -70,7 +70,7 @@ describe("run results matrix", () => {
       />,
     );
     expect(screen.getByLabelText("1 of 1 iterations passed")).toHaveClass(
-      "text-[26px]",
+      "text-lg",
       "font-semibold",
       "text-card-foreground",
     );
