@@ -290,6 +290,92 @@ describe("connection & discovery", () => {
     expect(failureCategory).toBe("setup");
   });
 
+  test("a failed phase's reasons ride into the row as predicateReasons, in every state", () => {
+    const cases = [
+      {
+        attribution: "theirs" as const,
+        egressVerified: true,
+        state: "failed",
+        reason: "connectFailed",
+      },
+      {
+        attribution: "theirs" as const,
+        state: "notMeasured",
+        reason: "egressUnverified",
+      },
+      {
+        attribution: "unknown" as const,
+        state: "notMeasured",
+        reason: "egressUnverified",
+      },
+      {
+        attribution: "ours" as const,
+        state: "notMeasured",
+        reason: "setupAborted",
+      },
+    ];
+    for (const c of cases) {
+      const { stageResults } = deriveStageResults({
+        authored: modelDrivenCase,
+        evidence: {
+          setupSignals: {
+            connection: {
+              outcome: "failed",
+              attribution: c.attribution,
+              ...(c.egressVerified ? { egressVerified: true } : {}),
+              spanIds: ["run-connect-s1"],
+              reasons: ['"s1" rejected the stored token (invalid_token).'],
+            },
+          },
+        },
+        iteration: { status: "failed" },
+      });
+      expect(stateOf(stageResults, "connection"), c.reason).toMatchObject({
+        state: c.state,
+        reason: c.reason,
+        evidence: {
+          spanIds: ["run-connect-s1"],
+          predicateReasons: ['"s1" rejected the stored token (invalid_token).'],
+        },
+      });
+    }
+  });
+
+  test("reasons are bounded like judge reasons and ignored on an ok signal", () => {
+    const long = "x".repeat(MAX_EVIDENCE_REASON_CHARS + 50);
+    const { stageResults } = deriveStageResults({
+      authored: modelDrivenCase,
+      evidence: {
+        setupSignals: {
+          connection: { outcome: "ok", reasons: ["should not appear"] },
+          discovery: {
+            outcome: "failed",
+            attribution: "ours",
+            reasons: Array.from(
+              { length: MAX_EVIDENCE_REASONS + 3 },
+              () => long
+            ),
+          },
+        },
+      },
+      iteration: { status: "failed" },
+    });
+    expect(
+      stateOf(stageResults, "connection")?.evidence?.predicateReasons
+    ).toBeUndefined();
+    const discovery = stateOf(stageResults, "discovery");
+    expect(discovery).toMatchObject({
+      state: "notMeasured",
+      reason: "setupAborted",
+    });
+    expect(discovery?.evidence?.predicateReasons).toHaveLength(
+      MAX_EVIDENCE_REASONS
+    );
+    for (const reason of discovery?.evidence?.predicateReasons ?? []) {
+      expect(reason.length).toBeLessThanOrEqual(MAX_EVIDENCE_REASON_CHARS);
+    }
+  });
+
   test("failed + theirs without canary ⇒ notMeasured/egressUnverified", () => {
     const { stageResults, firstFailedStage } = deriveStageResults({
       authored: modelDrivenCase,
