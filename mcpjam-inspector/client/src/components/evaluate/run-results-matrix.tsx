@@ -118,7 +118,7 @@ function CellResults({ items }: { items: EvalIteration[] }) {
           </span>
         </span>
         <span
-          className="shrink-0 text-[11px] text-muted-foreground"
+          className="shrink-0 text-[26px] font-semibold leading-8 text-card-foreground"
           aria-label={`${counts.passed} of ${items.length} iterations passed`}
         >
           {counts.passed}/{items.length}

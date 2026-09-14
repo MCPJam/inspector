@@ -61,6 +61,21 @@ const names = new Map([
 ]);
 
 describe("run results matrix", () => {
+  it("renders result fractions with the larger dark design treatment", () => {
+    render(
+      <RunResultsMatrix
+        run={run("one")}
+        iterations={[iteration("pass", "one")]}
+        hostNamesById={names}
+      />,
+    );
+    expect(screen.getByLabelText("1 of 1 iterations passed")).toHaveClass(
+      "text-[26px]",
+      "font-semibold",
+      "text-card-foreground",
+    );
+  });
+
   it("opens evaluator settings from the iteration scorecard", async () => {
     const onEditEvaluator = vi.fn();
     render(
