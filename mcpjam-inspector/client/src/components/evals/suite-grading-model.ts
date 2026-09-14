@@ -269,7 +269,7 @@ export const STAGE_EMPTY_COPY: Record<UserValueStage, string> = {
   connection:
     "Observed by the runner — decided by the client and server connection settings",
   discovery:
-    "Observed by the runner — decided by the client's discovery settings",
+    "Observed by the runner; add assertions to check the advertised catalog",
   selection: "No evaluator",
   call: "Observed by the runner — nothing to configure",
   response: "No evaluator",

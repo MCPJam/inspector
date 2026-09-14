@@ -87,6 +87,8 @@ export interface EvalIterationVerdictInput {
    * plainly the server declared it.
    */
   selectionToolAnnotations?: Record<string, Record<string, unknown>>;
+  toolDeclarations?: import("@mcpjam/sdk/predicates").TranscriptToolDeclaration[];
+  declarationsCaptured?: "complete" | "partial" | "absent";
 
   // ── gates ──
   iterationError: string | undefined;
@@ -146,6 +148,8 @@ export function buildEvalIterationVerdict(
           resultsCaptured: evidence.resultsCaptured,
           toolCallTimings: evidence.toolCallTimings,
           timingsCaptured: evidence.timingsCaptured,
+          toolDeclarations: input.toolDeclarations,
+          declarationsCaptured: input.declarationsCaptured,
           ...(input.selectionTools
             ? {
                 toolInventory: toTranscriptToolInventory(

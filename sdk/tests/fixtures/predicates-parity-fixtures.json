@@ -711,6 +711,101 @@
         "role": "advisory",
         "severity": "warn"
       }
+    },
+    {
+      "label": "toolDescriptionsPresent — report",
+      "value": {
+        "type": "toolDescriptionsPresent",
+        "role": "advisory"
+      }
+    },
+    {
+      "label": "toolDescriptionsPresent — warn",
+      "value": {
+        "type": "toolDescriptionsPresent",
+        "role": "advisory",
+        "severity": "warn",
+        "minLength": 20
+      }
+    },
+    {
+      "label": "toolAnnotationsPresent — report",
+      "value": {
+        "type": "toolAnnotationsPresent",
+        "role": "advisory"
+      }
+    },
+    {
+      "label": "toolAnnotationsPresent — warn",
+      "value": {
+        "type": "toolAnnotationsPresent",
+        "role": "advisory",
+        "severity": "warn",
+        "require": [
+          "readOnlyHint",
+          "destructiveHint"
+        ]
+      }
+    },
+    {
+      "label": "toolNamesUnique — report",
+      "value": {
+        "type": "toolNamesUnique",
+        "role": "advisory"
+      }
+    },
+    {
+      "label": "toolNamesUnique — warn",
+      "value": {
+        "type": "toolNamesUnique",
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "noDeprecatedToolExposed — report",
+      "value": {
+        "type": "noDeprecatedToolExposed",
+        "role": "advisory"
+      }
+    },
+    {
+      "label": "noDeprecatedToolExposed — warn",
+      "value": {
+        "type": "noDeprecatedToolExposed",
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "toolInputSchemasWellFormed — report",
+      "value": {
+        "type": "toolInputSchemasWellFormed",
+        "role": "advisory"
+      }
+    },
+    {
+      "label": "toolInputSchemasWellFormed — warn",
+      "value": {
+        "type": "toolInputSchemasWellFormed",
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "toolOutputSchemasPresent — report",
+      "value": {
+        "type": "toolOutputSchemasPresent",
+        "role": "advisory"
+      }
+    },
+    {
+      "label": "toolOutputSchemasPresent — warn",
+      "value": {
+        "type": "toolOutputSchemasPresent",
+        "role": "advisory",
+        "severity": "warn"
+      }
     }
   ],
   "reject": [
@@ -1235,6 +1330,52 @@
         "toolNames": "search"
       },
       "why": "a bare string would silently allow only its characters"
+    },
+    {
+      "label": "noDeprecatedToolExposed — invalid discovery policy or parameter {}",
+      "value": {
+        "type": "noDeprecatedToolExposed"
+      }
+    },
+    {
+      "label": "noDeprecatedToolExposed — invalid discovery policy or parameter {'role': 'gating'}",
+      "value": {
+        "type": "noDeprecatedToolExposed",
+        "role": "gating"
+      }
+    },
+    {
+      "label": "toolDescriptionsPresent — invalid discovery policy or parameter {'minLength': 0}",
+      "value": {
+        "type": "toolDescriptionsPresent",
+        "minLength": 0
+      }
+    },
+    {
+      "label": "toolDescriptionsPresent — invalid discovery policy or parameter {'minLength': 1.5}",
+      "value": {
+        "type": "toolDescriptionsPresent",
+        "minLength": 1.5
+      }
+    },
+    {
+      "label": "toolAnnotationsPresent — invalid discovery policy or parameter {'require': ['other']}",
+      "value": {
+        "type": "toolAnnotationsPresent",
+        "require": [
+          "other"
+        ]
+      }
+    },
+    {
+      "label": "toolAnnotationsPresent — invalid discovery policy or parameter {'require': ['readOnlyHint', 'readOnlyHint']}",
+      "value": {
+        "type": "toolAnnotationsPresent",
+        "require": [
+          "readOnlyHint",
+          "readOnlyHint"
+        ]
+      }
     }
   ]
 }

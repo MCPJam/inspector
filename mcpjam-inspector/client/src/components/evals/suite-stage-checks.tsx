@@ -1,120 +1,164 @@
+import { useId } from "react";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import {
-  SUITE_STAGE_CHECKS,
-  normalizeDisabledStageChecks,
-} from "./suite-stage-check-catalog";
+  STANDARD_CHECKS,
+  USER_VALUE_STAGES,
+  USER_VALUE_STAGE_LABELS,
+} from "@mcpjam/sdk/contract";
+import type { Predicate } from "@/shared/eval-matching";
+import type { SuiteCapabilities } from "@/hooks/use-suite-capabilities";
+import { formatCriterion } from "@/shared/predicate-kinds";
+import { authorablePredicateKinds } from "./suite-scorer-table-model";
+import {
+  standardCheckState,
+  type AssertionCheck,
+  type StandardCheckDraft,
+} from "./standard-checks-model";
 
 export function SuiteStageChecks({
-  disabledChecks = [],
-  onChange,
+  suitePredicates,
+  caseDraft,
+  onToggle,
   readOnly = false,
-  suiteDisabledChecks,
-  editableCheckIds,
+  capabilities,
+  judgeSkipped = false,
+  onJudgeSkippedChange,
+  onEditRules,
 }: {
-  disabledChecks?: readonly string[];
-  onChange: (disabled: string[] | undefined) => void;
+  suitePredicates: Predicate[];
+  caseDraft?: StandardCheckDraft;
+  onToggle: (check: AssertionCheck, enabled: boolean) => void;
   readOnly?: boolean;
-  suiteDisabledChecks?: readonly string[];
-  editableCheckIds?: readonly string[];
+  capabilities?: SuiteCapabilities | null;
+  judgeSkipped?: boolean;
+  onJudgeSkippedChange?: (skipped: boolean) => void;
+  onEditRules?: () => void;
 }) {
+  const titleId = useId();
+  const supported = authorablePredicateKinds(
+    capabilities?.scorers?.predicateKinds,
+  );
   return (
     <section
-      data-setting-key="checks"
-      aria-labelledby="suite-stage-checks-title"
+      aria-labelledby={titleId}
+      className="space-y-4"
     >
-      <div className="mb-5 space-y-1.5">
-        <h3
-          id="suite-stage-checks-title"
-          className="text-lg font-semibold tracking-tight text-foreground"
-        >
+      <div>
+        <h3 id={titleId} className="text-lg font-semibold">
           Assertions by stage
         </h3>
         <p className="text-sm text-muted-foreground">
-          {suiteDisabledChecks
-            ? "Standard assertions inherited from the suite. Changes for this case are marked below."
-            : "Choose which assertions to run at each stage. All assertions are on by default."}
+          Suite and case assertions. Each toggle covers all rules for that
+          standard check. Step assertions are configured in the case flow.
         </p>
       </div>
-      <table className="w-full table-fixed border-collapse text-left text-sm">
-        <thead>
-          <tr className="border-b border-border">
-            <th
-              scope="col"
-              className="w-[32%] py-3 pr-6 align-bottom text-xs font-medium text-muted-foreground"
-            >
-              Stage of user value chain
-            </th>
-            <th
-              scope="col"
-              className="py-3 text-xs font-medium text-muted-foreground"
-            >
-              What we check
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {SUITE_STAGE_CHECKS.map(({ stage, label, checks }) => (
-            <tr
-              key={stage}
-              data-stage-group={stage}
-              className="border-b border-border last:border-0"
-            >
-              <th
-                scope="row"
-                className="py-5 pr-6 align-top font-medium text-foreground"
-              >
-                {label}
-              </th>
-              <td className="py-5 align-top">
-                <ul className="space-y-3 text-foreground">
-                  {checks.map(({ id, label: checkLabel }) => {
-                    const differs =
-                      suiteDisabledChecks !== undefined &&
-                      disabledChecks.includes(id) !==
-                        suiteDisabledChecks.includes(id);
-                    return (
-                      <li key={id}>
-                        <label className="flex cursor-pointer items-start gap-2.5 has-[:disabled]:cursor-default has-[:disabled]:opacity-60">
-                          <Checkbox
-                            className="mt-0.5"
-                            checked={!disabledChecks.includes(id)}
-                            aria-label={checkLabel}
-                            disabled={
-                              readOnly ||
-                              (editableCheckIds !== undefined &&
-                                !editableCheckIds.includes(id))
-                            }
-                            onCheckedChange={(checked) =>
-                              onChange(
-                                normalizeDisabledStageChecks(
-                                  checked === true
-                                    ? disabledChecks.filter(
-                                        (checkId) => checkId !== id,
-                                      )
-                                    : [...disabledChecks, id],
-                                ),
-                              )
-                            }
-                          />
-                          <span>{checkLabel}</span>
-                          {differs ? (
-                            <span
-                              className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
-                              title="Overrides the suite default"
-                            >
-                              Override
-                            </span>
-                          ) : null}
-                        </label>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {USER_VALUE_STAGES.map((stage) => (
+        <div
+          key={stage}
+          data-standard-check-stage={stage}
+          className="border-b border-border pb-4"
+        >
+          <h4 className="mb-3 font-medium">{USER_VALUE_STAGE_LABELS[stage]}</h4>
+          <ul className="space-y-3">
+            {STANDARD_CHECKS.filter((check) => check.stage === stage).map(
+              (check) => {
+                if (check.kind === "runner")
+                  return (
+                    <li
+                      key={check.id}
+                      className="text-sm text-muted-foreground"
+                    >
+                      {check.label} — measured by the runner
+                    </li>
+                  );
+                if (check.kind === "judge")
+                  return (
+                    <li key={check.id}>
+                      <label className="flex items-center gap-2 text-sm">
+                        <Checkbox
+                          aria-label={check.label}
+                      checked={!judgeSkipped}
+                          disabled={readOnly || !onJudgeSkippedChange}
+                          onCheckedChange={(enabled) =>
+                            onJudgeSkippedChange?.(enabled !== true)
+                          }
+                        />
+                        {check.label} — judge configuration
+                      </label>
+                    </li>
+                  );
+                const state = standardCheckState(
+                  check,
+                  suitePredicates,
+                  caseDraft,
+                );
+                const unsupported = !supported.includes(check.preset.type);
+                const suppressionUnavailable =
+                  !!caseDraft &&
+                  (state.suiteCount > 0 ||
+                    caseDraft.suppressedSuiteStandardCheckIds?.includes(
+                      check.id,
+                    )) &&
+                  capabilities?.scorers?.suppressedSuiteStandardCheckIds !==
+                    true;
+                return (
+                  <li key={check.id}>
+                    <label className="flex items-start gap-2 text-sm">
+                      <Checkbox
+                        className="mt-0.5"
+                        aria-label={check.label}
+                        checked={state.enabled}
+                        disabled={
+                          readOnly || unsupported || suppressionUnavailable
+                        }
+                        onCheckedChange={(enabled) =>
+                          onToggle(check, enabled === true)
+                        }
+                      />
+                      <span>
+                        {check.label}
+                        <span className="block text-xs text-muted-foreground">
+                          {state.enabled
+                            ? `${state.customized ? "Customized" : "Preset"} · ${state.suiteCount} suite, ${state.caseCount} case rules`
+                            : "Not configured"}
+                        </span>
+                        {state.rules.map((rule, i) => (
+                          <span
+                            key={i}
+                            className="block text-xs text-muted-foreground"
+                          >
+                            {formatCriterion({ predicate: rule })} ·{" "}
+                            {rule.role === "advisory"
+                              ? rule.severity === "warn"
+                                ? "Warn"
+                                : "Report"
+                              : "Gate"}
+                          </span>
+                        ))}
+                        {unsupported || suppressionUnavailable ? (
+                          <span className="block text-xs text-muted-foreground">
+                            Requires backend support before this check can be
+                            changed.
+                          </span>
+                        ) : null}
+                      </span>
+                    </label>
+                  </li>
+                );
+              },
+            )}
+          </ul>
+        </div>
+      ))}
+      {onEditRules ? (
+        <button
+          type="button"
+          className="text-sm underline"
+          onClick={onEditRules}
+        >
+          Edit individual rules and criteria
+        </button>
+      ) : null}
     </section>
   );
 }

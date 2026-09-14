@@ -11,8 +11,8 @@ import { EvalAddDrawer } from "@/components/evaluate/case-spine/assertion-drawer
 vi.mock("posthog-js/react", () => ({ useFeatureFlagEnabled: () => false }));
 afterEach(cleanup);
 it("covers every predicate, widget assertion, action and outcome once, each with an icon", () => {
-  expect(EVAL_ADD_CATALOG).toHaveLength(36);
-  expect(new Set(EVAL_ADD_CATALOG.map((e) => e.key)).size).toBe(36);
+  expect(EVAL_ADD_CATALOG).toHaveLength(42);
+  expect(new Set(EVAL_ADD_CATALOG.map((e) => e.key)).size).toBe(42);
   expect(
     EVAL_ADD_CATALOG.filter((e) => e.choice.kind === "check")
       .map((e) => e.key)
@@ -33,7 +33,7 @@ it("covers every predicate, widget assertion, action and outcome once, each with
   );
   for (const entry of EVAL_ADD_CATALOG) expect(entry.Icon).toBeTruthy();
   expect(EVAL_ADD_CATALOG.filter((e) => e.scope === "whole-run")).toHaveLength(
-    11,
+    17,
   );
   for (const entry of EVAL_ADD_CATALOG.filter((e) => e.advisory)) {
     if (entry.choice.kind === "check")

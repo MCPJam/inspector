@@ -1,3 +1,4 @@
+import { filterSuppressedSuiteAssertions } from "@mcpjam/sdk/contract";
 /**
  * Pass criteria for the case-edit surface — a gear popover (same affordance
  * as suite settings) containing validators + checks overrides.
@@ -36,6 +37,7 @@ export interface CasePassCriteriaPopoverProps {
   predicates: CasePredicates | undefined;
   onPredicatesChange: (next: CasePredicates | undefined) => void;
   suiteDefaultPredicates: Predicate[];
+  suppressedSuiteStandardCheckIds?: string[];
   availableTools?: string[];
   onAppendScenarioToSteps?: (scenarioAsserts: Predicate[]) => void;
 }
@@ -68,6 +70,7 @@ export function CasePassCriteriaPopover({
   predicates,
   onPredicatesChange,
   suiteDefaultPredicates,
+  suppressedSuiteStandardCheckIds,
   availableTools,
   onAppendScenarioToSteps,
 }: CasePassCriteriaPopoverProps) {
@@ -148,7 +151,10 @@ export function CasePassCriteriaPopover({
         <CaseChecksSection
           value={predicates}
           onChange={onPredicatesChange}
-          suiteDefaults={suiteDefaultPredicates}
+          suiteDefaults={filterSuppressedSuiteAssertions(
+            suiteDefaultPredicates,
+            suppressedSuiteStandardCheckIds,
+          )}
           availableTools={availableTools}
           embedded
           onAppendScenarioToSteps={onAppendScenarioToSteps}

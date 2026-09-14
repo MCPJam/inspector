@@ -135,6 +135,8 @@ export interface BuildTranscriptInput {
    * Absent ⇒ declaration-comparing checks report `status: "error"`.
    */
   toolInventory?: TranscriptToolInventoryEntry[];
+  toolDeclarations?: import("./types.js").TranscriptToolDeclaration[];
+  declarationsCaptured?: import("./types.js").TranscriptCaptureState;
 }
 
 /**
@@ -245,6 +247,14 @@ export function buildIterationTranscript(
       MAX_TOOL_CALL_TIMING_ROWS
     ),
     toolInventory: input.toolInventory === undefined ? "absent" : "complete",
+    ...(input.declarationsCaptured !== undefined
+      ? {
+          toolDeclarations:
+            input.toolDeclarations === undefined
+              ? "absent"
+              : input.declarationsCaptured,
+        }
+      : {}),
   };
   return {
     toolCalls: input.toolCalls,
@@ -271,6 +281,9 @@ export function buildIterationTranscript(
         }
       : {}),
     ...(input.toolInventory ? { toolInventory: input.toolInventory } : {}),
+    ...(input.toolDeclarations
+      ? { toolDeclarations: input.toolDeclarations }
+      : {}),
     capture,
   };
 }

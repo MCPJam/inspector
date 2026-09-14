@@ -306,6 +306,7 @@ interface TestTemplate {
   matchOptions?: EvalMatchOptions;
   /** Case-level predicate gate override; undefined ⇒ inherit suite defaults. */
   predicates?: CasePredicates;
+  suppressedSuiteStandardCheckIds?: string[];
   /** Authored rubric for the model judge. Empty string clears it. */
   expectedOutput?: string;
   /**
@@ -1337,6 +1338,8 @@ export function TestTemplateEditor({
       advancedConfig: normalizeAdvancedConfig(currentTestCase.advancedConfig),
       matchOptions: currentTestCase.matchOptions,
       predicates: currentTestCase.predicates,
+      suppressedSuiteStandardCheckIds:
+        currentTestCase.suppressedSuiteStandardCheckIds,
       expectedOutput: currentTestCase.expectedOutput ?? "",
       judgeConfigOverride: currentTestCase.judgeConfigOverride,
       kind: currentTestCase.kind,
@@ -1907,12 +1910,16 @@ export function TestTemplateEditor({
     const normalizedCurrentMatchOptions = JSON.stringify(
       normalizeForComparison(currentTestCase.matchOptions ?? null),
     );
-    const normalizedPredicates = JSON.stringify(
+    const normalizedPredicates = JSON.stringify([
       normalizeForComparison(editForm.predicates ?? null),
-    );
-    const normalizedCurrentPredicates = JSON.stringify(
+      normalizeForComparison(editForm.suppressedSuiteStandardCheckIds ?? []),
+    ]);
+    const normalizedCurrentPredicates = JSON.stringify([
       normalizeForComparison(currentTestCase.predicates ?? null),
-    );
+      normalizeForComparison(
+        currentTestCase.suppressedSuiteStandardCheckIds ?? [],
+      ),
+    ]);
     const normalizedExpectedOutput = (editForm.expectedOutput ?? "").trim();
     const normalizedCurrentExpectedOutput = (
       currentTestCase.expectedOutput ?? ""
@@ -1969,6 +1976,8 @@ export function TestTemplateEditor({
       suiteDefaultMatchOptions: suite?.defaultMatchOptions,
       predicates: editForm?.predicates,
       suiteDefaultPredicates: (suite?.defaultPredicates ?? []) as Predicate[],
+      suppressedSuiteStandardCheckIds:
+        editForm?.suppressedSuiteStandardCheckIds,
       expectedOutput: editForm?.expectedOutput,
       judgeConfigOverride: editForm?.judgeConfigOverride,
       suiteJudgeConfig: suite?.judgeConfig,
@@ -2579,6 +2588,13 @@ export function TestTemplateEditor({
       advancedConfig: normalizeAdvancedConfig(form.advancedConfig),
       matchOptions: form.matchOptions,
       predicates: normalizedPredicates,
+      ...(caseCapabilities.capabilities?.scorers
+        ?.suppressedSuiteStandardCheckIds === true
+        ? {
+            suppressedSuiteStandardCheckIds:
+              form.suppressedSuiteStandardCheckIds ?? [],
+          }
+        : {}),
       // Omitted when undefined: `createTestCase` admits no `null` for this
       // field, and `handleSave` supplies the null-clear on the update path.
       ...(form.judgeConfigOverride !== undefined
@@ -3138,6 +3154,12 @@ export function TestTemplateEditor({
             advancedConfig,
             matchOptions: savePayload.matchOptions,
             predicates: savePayload.predicates,
+            ...(savePayload.suppressedSuiteStandardCheckIds !== undefined
+              ? {
+                  suppressedSuiteStandardCheckIds:
+                    savePayload.suppressedSuiteStandardCheckIds,
+                }
+              : {}),
           },
         });
 
@@ -3224,7 +3246,12 @@ export function TestTemplateEditor({
       const startedAt = Date.now();
       const launchSnapshot = {
         steps: savePayload.steps,
-        predicates: savePayload.predicates,
+        // Freeze the same effective whole-run list the quick-run resolver executes.
+        predicates: resolveCasePredicates(
+          (suite?.defaultPredicates ?? []) as Predicate[],
+          savePayload.predicates,
+          savePayload.suppressedSuiteStandardCheckIds ?? currentTestCase?.suppressedSuiteStandardCheckIds,
+        ),
         matchOptions: savePayload.matchOptions,
         expectedOutput: savePayload.expectedOutput,
         isNegativeTest: savePayload.isNegativeTest,
@@ -3741,6 +3768,7 @@ export function TestTemplateEditor({
     predicates: resolveCasePredicates(
       (suite?.defaultPredicates ?? []) as Predicate[],
       editForm?.predicates,
+      editForm?.suppressedSuiteStandardCheckIds,
     ),
     matchOptions: resolveMatchOptions(
       suite?.defaultMatchOptions,
@@ -3873,6 +3901,7 @@ export function TestTemplateEditor({
     suiteDefaultMatchOptions: suite?.defaultMatchOptions,
     predicates: editForm?.predicates,
     suiteDefaultPredicates: (suite?.defaultPredicates ?? []) as Predicate[],
+    suppressedSuiteStandardCheckIds: editForm?.suppressedSuiteStandardCheckIds,
     expectedOutput: editForm?.expectedOutput,
     judgeConfigOverride: editForm?.judgeConfigOverride,
     suiteJudgeConfig: suite?.judgeConfig,
@@ -3977,15 +4006,15 @@ export function TestTemplateEditor({
       {checksPage && editForm ? (
         <CaseChecksPage
           title={editForm.title}
-          disabledChecks={suite?.disabledStageChecks}
           predicates={editForm.predicates}
+          suppressedSuiteStandardCheckIds={
+            editForm.suppressedSuiteStandardCheckIds
+          }
           suitePredicates={(suite?.defaultPredicates ?? []) as Predicate[]}
-          availableTools={assertableTools.map((tool) =>
-            typeof tool === "string" ? tool : tool.name,
-          )}
-          onPredicatesChange={(predicates) =>
+          capabilities={caseCapabilities.capabilities}
+          onChecksChange={(next) =>
             setEditForm((current) =>
-              current ? { ...current, predicates } : current,
+              current ? { ...current, ...next } : current,
             )
           }
           judgeSkipped={
@@ -4048,6 +4077,9 @@ export function TestTemplateEditor({
               availableTools={assertableTools}
               suiteServers={effectiveSuiteServers}
               projectServers={projectServers}
+              suppressedSuiteStandardCheckIds={
+                editForm?.suppressedSuiteStandardCheckIds
+              }
               suiteDefaultPredicates={
                 (suite?.defaultPredicates ?? []) as Predicate[]
               }
@@ -4055,7 +4087,6 @@ export function TestTemplateEditor({
               capabilities={caseCapabilities.capabilities}
               defaultChecks={
                 <DefaultChecksReference
-                  disabledChecks={suite?.disabledStageChecks}
                   onConfigureSuite={onOpenSuiteSettings}
                   onOverride={onOpenCaseChecks}
                 />
@@ -4188,6 +4219,9 @@ export function TestTemplateEditor({
                       setEditForm((current) =>
                         current ? { ...current, predicates: next } : current,
                       )
+                    }
+                    suppressedSuiteStandardCheckIds={
+                      editForm?.suppressedSuiteStandardCheckIds
                     }
                     suiteDefaultPredicates={
                       (suite?.defaultPredicates ?? []) as Predicate[]
@@ -4624,7 +4658,6 @@ export function TestTemplateEditor({
                     <CaseSpine
                       defaultChecks={
                         <DefaultChecksReference
-                          disabledChecks={suite?.disabledStageChecks}
                           onConfigureSuite={onOpenSuiteSettings}
                           onOverride={onOpenCaseChecks}
                         />
@@ -4660,6 +4693,9 @@ export function TestTemplateEditor({
                         setEditForm((current) =>
                           current ? { ...current, predicates: next } : current,
                         )
+                      }
+                      suppressedSuiteStandardCheckIds={
+                        editForm?.suppressedSuiteStandardCheckIds
                       }
                       suiteDefaultPredicates={
                         (suite?.defaultPredicates ?? []) as Predicate[]
@@ -4770,6 +4806,9 @@ export function TestTemplateEditor({
                         setEditForm((current) =>
                           current ? { ...current, predicates: next } : current,
                         )
+                      }
+                      suppressedSuiteStandardCheckIds={
+                        editForm?.suppressedSuiteStandardCheckIds
                       }
                       suiteDefaultPredicates={
                         (suite?.defaultPredicates ?? []) as Predicate[]

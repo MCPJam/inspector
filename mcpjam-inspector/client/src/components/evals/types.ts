@@ -453,6 +453,7 @@ export type EvalCase = {
    * `{ mode: "inherit", list: [] }`.
    */
   predicates?: CasePredicates;
+  suppressedSuiteStandardCheckIds?: string[];
   /**
    * Per-case judge override. V1 carries opt-out only — no alt model or
    * threshold (see backend `convex/lib/judgeConfig.ts` for rationale).

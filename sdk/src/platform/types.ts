@@ -1928,6 +1928,7 @@ export interface PlatformEvalCase {
   models: PlatformEvalCaseModel[];
   matchOptions?: PublicMatchOptions;
   checks?: PublicCheckOverride;
+  suppressedSuiteStandardCheckIds?: string[];
   /**
    * The converter's CLAIM about this case, when it was imported rather than
    * authored here. ABSENT means natively authored — a different fact from
