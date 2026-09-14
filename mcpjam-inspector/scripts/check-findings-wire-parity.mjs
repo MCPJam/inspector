@@ -26,15 +26,26 @@ const OURS = resolve(
 const RELATIVE_BACKEND_PATH =
   "tests/fixtures/eval-findings-wire/wire-parity-envelope.json";
 
-const argv = process.argv.slice(2);
-let backend = process.env.MCPJAM_BACKEND_DIR ?? "../mcpjam-backend";
-for (let i = 0; i < argv.length; i += 1) {
-  if (argv[i] === "--backend") backend = argv[++i] ?? backend;
-}
-
 function fail(message) {
   console.error(`check:findings-wire-parity: ${message}`);
   process.exit(1);
+}
+
+// STRICT. A mirror check that shrugs at `--backed` and then compares against
+// the default checkout reports a pass about a directory nobody asked for,
+// which is the failure mode this script exists to prevent.
+const argv = process.argv.slice(2);
+let backend = process.env.MCPJAM_BACKEND_DIR ?? "../mcpjam-backend";
+for (let i = 0; i < argv.length; i += 1) {
+  if (argv[i] !== "--backend") {
+    fail(`unknown argument "${argv[i]}". Usage: --backend <path>`);
+  }
+  const value = argv[i + 1];
+  if (value === undefined || value.startsWith("--")) {
+    fail("--backend needs a path to the mcpjam-backend checkout");
+  }
+  backend = value;
+  i += 1;
 }
 
 if (!existsSync(OURS)) {

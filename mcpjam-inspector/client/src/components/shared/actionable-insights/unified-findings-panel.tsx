@@ -184,7 +184,9 @@ function CoverageLine({
   trim: { droppedEvidence: number; droppedCandidates: number } | null;
 }) {
   if (!coverage) return null;
-  const exclusions = Object.entries(coverage.exclusions).filter(
+  // Same reason as `judgeCoverageLine`: the envelope is cast, not validated,
+  // so a version skew must cost the exclusions line, not the whole panel.
+  const exclusions = Object.entries(coverage.exclusions ?? {}).filter(
     ([, count]) => count > 0,
   );
   return (

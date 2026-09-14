@@ -37,7 +37,12 @@ export default defineConfig({
     dedupe: ["react", "react-dom"],
   },
   server: {
-    host: true,
+    // LOCALHOST ONLY. This server is unauthenticated and `/replay.json` can
+    // carry excerpts, identifiers and contract data exported from a real run.
+    // `host: true` binds every interface, LAN and public alike, which would
+    // hand that file to anyone who can reach the workstation. Opt in
+    // deliberately with FINDINGS_PREVIEW_HOST if you need it off-box.
+    host: process.env.FINDINGS_PREVIEW_HOST ?? "127.0.0.1",
     port: Number(process.env.FINDINGS_PREVIEW_PORT ?? 5175),
     strictPort: false,
   },

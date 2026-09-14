@@ -7,11 +7,18 @@
  * checkout, from the real envelope query after a real build and a real
  * enrichment attach. This side commits a byte-identical copy and:
  *
- *   1. type-checks it against the SDK's `InsightsEnvelope`, so a field the
- *      backend sends that the SDK does not declare fails the client typecheck
+ *   1. VALIDATES it against the SDK's `InsightsEnvelope` at runtime, so a
+ *      field the backend sends that the SDK does not declare fails here
  *      rather than being silently dropped in a transport projection;
  *   2. runs the shipped selector and helpers over it, so a consumer reading
  *      through them gets what the producer meant.
+ *
+ * The check has to be a RUNTIME one. `client/tsconfig.typecheck.json`
+ * excludes `src/**\/__tests__/**`, so nothing in this file is ever compiled
+ * by `npm run typecheck:client`; a `const envelope: InsightsEnvelope = ... as
+ * InsightsEnvelope` here would be an unchecked cast in a file no compiler
+ * reads — a guarantee in the comment and nothing behind it. `npm test` runs
+ * this, so what `validateEnvelope` asserts is what actually holds.
  *
  * Matching TypeScript names would prove nothing. The fixture is the proof.
  */
@@ -34,11 +41,183 @@ const FIXTURE = join(
   "wire-parity-envelope.json",
 );
 
-// The assignment IS the assertion: an unknown field or a changed type on the
-// backend fails `npm run typecheck:client` here.
-const envelope: InsightsEnvelope = JSON.parse(
-  readFileSync(FIXTURE, "utf8"),
-) as InsightsEnvelope;
+/**
+ * Every top-level key `PlatformInsightsEnvelope` declares.
+ *
+ * Pinned by hand because that is the point: a backend that starts sending a
+ * key the SDK never declared is a field the client will silently drop, and
+ * the only way to notice is to be told. Adding a key here is a deliberate
+ * act that should come with the SDK type change in the same commit.
+ */
+const DECLARED_ENVELOPE_KEYS = new Set([
+  // Legacy contract, unchanged by this experiment.
+  "schemaVersion",
+  "scope",
+  "status",
+  "reasonCode",
+  "retryable",
+  "error",
+  "generatedAt",
+  "updatedAt",
+  "summary",
+  "coverage",
+  "findings",
+  "runHealth",
+  "truncation",
+  // The four the experiment adds.
+  "currentFindings",
+  "observationState",
+  "observationCoverage",
+  "unifiedFindings",
+]);
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+function must(condition: boolean, what: string): void {
+  if (!condition) {
+    throw new Error(`the backend's envelope broke the contract: ${what}`);
+  }
+}
+
+/**
+ * Narrow the fixture to `InsightsEnvelope` by CHECKING it, not by asserting.
+ *
+ * Scoped to what the client actually dereferences — including the nested
+ * coverage counts the panel reads without guarding, which is where a
+ * version skew would otherwise surface as a TypeError mid-render.
+ */
+function validateEnvelope(raw: unknown): InsightsEnvelope {
+  must(isRecord(raw), "the top level is not an object");
+  const value = raw as Record<string, unknown>;
+
+  for (const key of Object.keys(value)) {
+    must(
+      DECLARED_ENVELOPE_KEYS.has(key),
+      `"${key}" is not declared by the SDK's InsightsEnvelope`,
+    );
+  }
+
+  must(
+    typeof value.schemaVersion === "number",
+    "schemaVersion is not a number",
+  );
+  must(isRecord(value.scope), "scope is not an object");
+  must(typeof value.status === "string", "status is not a string");
+  must(Array.isArray(value.findings), "findings is not an array");
+  must(isRecord(value.coverage), "coverage is not an object");
+  must(
+    (value.coverage as Record<string, unknown>).unit === "iterations",
+    'coverage.unit is not "iterations"',
+  );
+
+  if (value.currentFindings !== undefined) {
+    must(
+      Array.isArray(value.currentFindings),
+      "currentFindings is not an array",
+    );
+    for (const finding of value.currentFindings as unknown[]) {
+      must(isRecord(finding), "currentFindings holds a non-object");
+      const row = finding as Record<string, unknown>;
+      for (const field of ["id", "observed", "recommendation", "category"]) {
+        must(
+          typeof row[field] === "string",
+          `currentFindings[].${field} is not a string`,
+        );
+      }
+    }
+  }
+
+  if (value.observationState !== undefined) {
+    must(
+      ["ready", "partial", "unavailable"].includes(
+        value.observationState as string,
+      ),
+      `observationState "${String(value.observationState)}" is not a declared state`,
+    );
+  }
+
+  if (value.observationCoverage !== undefined) {
+    const coverage = value.observationCoverage;
+    must(isRecord(coverage), "observationCoverage is not an object");
+    const row = coverage as Record<string, unknown>;
+    for (const field of ["analyzed", "total", "gradedCount"]) {
+      must(
+        typeof row[field] === "number",
+        `observationCoverage.${field} is not a number`,
+      );
+    }
+    // The panel calls Object.entries on this without guarding.
+    must(
+      isRecord(row.exclusions),
+      "observationCoverage.exclusions is not an object",
+    );
+    for (const [reason, count] of Object.entries(
+      row.exclusions as Record<string, unknown>,
+    )) {
+      must(
+        typeof count === "number",
+        `observationCoverage.exclusions.${reason} is not a number`,
+      );
+    }
+  }
+
+  if (value.unifiedFindings !== undefined) {
+    const experiment = value.unifiedFindings;
+    must(isRecord(experiment), "unifiedFindings is not an object");
+    const row = experiment as Record<string, unknown>;
+    must(
+      row.capability === "unified_findings_v1",
+      "unifiedFindings.capability is not the declared capability",
+    );
+    for (const field of ["canBuild", "canEnrich", "writesEnabled"]) {
+      must(
+        typeof row[field] === "boolean",
+        `unifiedFindings.${field} is not a boolean`,
+      );
+    }
+    if (row.snapshot !== null && row.snapshot !== undefined) {
+      must(isRecord(row.snapshot), "unifiedFindings.snapshot is not an object");
+      const snapshot = row.snapshot as Record<string, unknown>;
+      must(
+        typeof snapshot.minerVersion === "number",
+        "snapshot.minerVersion is not a number",
+      );
+      must(
+        typeof snapshot.sourceRevision === "string",
+        "snapshot.sourceRevision is not a string",
+      );
+      must(
+        Array.isArray(snapshot.deterministicFindings),
+        "snapshot.deterministicFindings is not an array",
+      );
+      must(
+        Array.isArray(snapshot.provenance),
+        "snapshot.provenance is not an array",
+      );
+      for (const entry of snapshot.provenance as unknown[]) {
+        must(isRecord(entry), "snapshot.provenance holds a non-object");
+        const judgeCoverage = (entry as Record<string, unknown>).judgeCoverage;
+        if (judgeCoverage === undefined || judgeCoverage === null) continue;
+        must(
+          isRecord(judgeCoverage),
+          "provenance[].judgeCoverage is not an object",
+        );
+        // `judgeCoverageLine` reads these counts.
+        must(
+          isRecord((judgeCoverage as Record<string, unknown>).nonGraded),
+          "provenance[].judgeCoverage.nonGraded is missing",
+        );
+      }
+    }
+  }
+
+  return value as unknown as InsightsEnvelope;
+}
+
+const envelope: InsightsEnvelope = validateEnvelope(
+  JSON.parse(readFileSync(FIXTURE, "utf8")),
+);
 
 describe("the eval envelope as the backend actually sends it", () => {
   test("carries the legacy contract unchanged", () => {

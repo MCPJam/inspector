@@ -111,7 +111,7 @@ real run is in until someone asks for one.
 
 ## 4. Where the code is
 
-| Responsibility                       | File (under `mcpjam-inspector/client/src/`)                        |
+| Responsibility                       | File (under `mcpjam-inspector/client/src/` unless marked ↗)        |
 | ------------------------------------ | ------------------------------------------------------------------ |
 | Envelope contract + the one selector | `lib/insights-envelope-api.ts`                                     |
 | Provenance labelling rules           | `components/shared/actionable-insights/finding-provenance.ts`      |
@@ -121,8 +121,8 @@ real run is in until someone asks for one.
 | The controller                       | `components/shared/actionable-insights/use-unified-findings.ts`    |
 | Evaluate mount                       | `components/evaluate/unified-findings-section.tsx`                 |
 | Client flag                          | `hooks/useUnifiedFindingsEnabled.ts`                               |
-| Offline preview                      | `client/dev/findings-preview/`                                     |
-| SDK contract (additive)              | `sdk/src/platform/types.ts`                                        |
+| Offline preview ↗                    | `mcpjam-inspector/client/dev/findings-preview/`                    |
+| SDK contract (additive) ↗            | `sdk/src/platform/types.ts` (repo root)                            |
 
 **The client's third copy of the envelope types is gone.**
 `lib/insights-envelope-api.ts` now aliases the SDK's published types instead of
@@ -247,8 +247,8 @@ unavailable state, and the not-built / AI-failed / older-backend states.
 | SDK build                     | `npm run build -w @mcpjam/sdk`                                                                    | **pass**                                                                                                                                                                    |
 | SDK tests                     | `npm run test -w @mcpjam/sdk`                                                                     | **pass** — 8,221                                                                                                                                                            |
 | Repo checks                   | `npm run test:checks`                                                                             | **pass**                                                                                                                                                                    |
-| Findings components           | `npx vitest run --project client client/src/components/shared/actionable-insights/__tests__/`     | **pass** — 78                                                                                                                                                               |
-| Evaluate components           | `npx vitest run --project client client/src/components/evaluate`                                  | **pass** — 1,167 in 93 files                                                                                                                                                |
+| Findings components           | `npx vitest run --project client client/src/components/shared/actionable-insights/__tests__/`     | **pass** — 92                                                                                                                                                               |
+| Evaluate components           | `npx vitest run --project client client/src/components/evaluate`                                  | **pass** — 1,259 in 99 files (with the findings components in the same run)                                                                                                 |
 | OpenAPI ↔ SDK parity          | `npx vitest run --project server server/routes/v1/__tests__/openapi-types-parity.test.ts`         | **pass** — the four additive envelope fields are documented in `docs/reference/openapi.json`                                                                                |
 | Envelope route                | `npx vitest run --project server server/routes/v1/__tests__/insights-envelope.test.ts`            | **pass** — 51                                                                                                                                                               |
 | Wire parity                   | `npm run check:findings-wire-parity -w @mcpjam/inspector -- --backend ../mcpjam-backend-findings` | **pass**                                                                                                                                                                    |
@@ -280,9 +280,18 @@ The wire-parity check **fails when it cannot compare**. It needs
 `--backend <path>` (or `MCPJAM_BACKEND_DIR`); with neither it exits non-zero
 saying so rather than printing "skipping" and passing. The fixture it compares
 is produced by the backend's real envelope query after a real build and a real
-enrichment attach, and this repo's copy is type-checked against the SDK's
-`InsightsEnvelope` — so a field the backend sends that the SDK does not declare
-fails the client typecheck instead of being silently dropped.
+enrichment attach, and this repo's copy is validated against the SDK's
+`InsightsEnvelope` **at runtime** by `wire-parity.test.ts` — so a field the
+backend sends that the SDK does not declare fails `npm test` instead of being
+silently dropped.
+
+That check had to be a runtime one, and an earlier revision of this branch got
+it wrong: `client/tsconfig.typecheck.json` excludes `src/**/__tests__/**`, so
+nothing in that test file is ever compiled and the `as InsightsEnvelope` it
+used to carry proved nothing at all. The validator that replaced it is
+negative-tested — a wrong scalar type, an undeclared top-level key, a null
+`exclusions` map, an unknown `observationState` and a missing
+`judgeCoverage.nonGraded` each fail it.
 
 ---
 
@@ -382,3 +391,35 @@ missing evidence is the thing to fix first, and §9.3 names it.
 5. Optional: §5 + §8 steps 2–4 on a **dev** deployment.
 6. `npm run check:findings-wire-parity -w @mcpjam/inspector -- --backend ../mcpjam-backend-findings`
    if you want the cross-repo contract confirmed on your machine.
+
+---
+
+## 11. What the automated review round changed
+
+Codex and CodeRabbit reviewed the first push. Their findings were verified
+against the code rather than taken on trust; these were real and are fixed on
+this branch.
+
+| Finding                                                         | What was actually wrong                                                                                                                                                                                                                                                                                                |
+| --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Enrichment could be requested twice by one double-click         | `enrich.pending` is the borrowed controller's document-backed value, so it stays false until the run subscription reports the job. The build path already had a synchronous ref guard; the enrich path — the **metered** one — did not. It does now, with an optimistic `pending` so the button disables on the click. |
+| Controller state outlived the run it described                  | `EvaluateRunContent` is not keyed by run id, so selecting another run kept run A's build error, its `ai` mode and its in-flight flag. State is now reset on `suiteRunId` change, and a rejection that settles after navigation is dropped instead of written onto the new run.                                         |
+| The offline preview listened on every interface                 | `host: true` binds LAN and public addresses, and `/replay.json` can carry excerpts exported from a real run. It is `127.0.0.1` now, with `FINDINGS_PREVIEW_HOST` as a deliberate opt-out.                                                                                                                              |
+| The preview invented a `minerVersion`                           | `experimentFor` stamped the literal `1` while the artifact carried the producer's real version. For an experiment about honest provenance that is the worst possible place to guess. The artifact's value is threaded through.                                                                                         |
+| The replay parser checked presence, not shape                   | `coverage: { exclusions: null }` passed a `!== undefined` check and then threw a `TypeError` out of `Object.entries` mid-render, instead of the named `ReplayArtifactError` the preview can show. Nested fields are validated at that boundary now.                                                                    |
+| The wire-parity test's guarantee did not exist                  | It read `JSON.parse(...) as InsightsEnvelope` under a comment claiming the client typecheck would catch a drifted field. `as` checks nothing — and `client/tsconfig.typecheck.json` excludes `src/**/__tests__/**`, so that file is never compiled at all. Replaced with a runtime validator that `npm test` runs.     |
+| `replay-artifact.ts` cited a parity test that was never written | The file it named now exists, covering the validator and parsing the producer's real `findings:replay` output when the paired backend checkout is present.                                                                                                                                                             |
+| The SDK union was mis-formatted                                 | A genuine `prettier/prettier` ESLint error in `sdk/src/platform/types.ts`, left behind by the hand-repair of the prettier-2 damage.                                                                                                                                                                                    |
+| The mirror script accepted a mistyped flag                      | `--backed` was ignored and the comparison silently ran against the default checkout — the same "reports a pass about something nobody asked for" failure the script exists to prevent. Unknown arguments and a value-less `--backend` now exit non-zero.                                                               |
+
+Two findings were **not** taken as written, with reasons:
+
+- **"Load sampled traces before discarding chat session IDs."** Correct that
+  emulated runs produce no tool identity, and the docblock claiming a fallback
+  to exemplar transcripts was wrong — that claim is gone. But adding the
+  fallback means a transcript read per finding, which is exactly the
+  per-finding query this experiment's read budget forbids. The gap stays,
+  named, as limitation 3.
+- The four pre-existing Prettier warnings under `actionable-insights/` and the
+  259 SDK files with ESLint errors predate this branch (verified by stashing).
+  Reformatting them is the broad reformat the brief rules out.

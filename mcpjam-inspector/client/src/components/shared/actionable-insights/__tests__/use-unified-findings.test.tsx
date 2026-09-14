@@ -234,3 +234,136 @@ describe("an older backend", () => {
     expect(result.current.findings).toEqual([]);
   });
 });
+
+describe("enrichment is metered, so one click is one call", () => {
+  it("coalesces a double-click into one request", () => {
+    const controller = generation();
+    const { result } = renderHook(() =>
+      useUnifiedFindings({
+        suiteRunId: "run_1",
+        envelope: ENVELOPE,
+        generation: controller,
+      }),
+    );
+    act(() => {
+      result.current.enrich.onRun();
+      result.current.enrich.onRun();
+    });
+    // `pending` is document-backed and still false here, which is exactly the
+    // window a second click used to slip through — into a PROVIDER call.
+    expect(controller.requestInsight).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports pending optimistically, before the document says so", () => {
+    const controller = generation();
+    const { result } = renderHook(() =>
+      useUnifiedFindings({
+        suiteRunId: "run_1",
+        envelope: ENVELOPE,
+        generation: controller,
+      }),
+    );
+    expect(result.current.enrich.pending).toBe(false);
+    act(() => result.current.enrich.onRun());
+    expect(result.current.enrich.pending).toBe(true);
+  });
+
+  it("hands authority back once the document reports the job", () => {
+    const { result, rerender } = renderHook(
+      (props: { pending: boolean }) =>
+        useUnifiedFindings({
+          suiteRunId: "run_1",
+          envelope: ENVELOPE,
+          generation: generation({ pending: props.pending }),
+        }),
+      { initialProps: { pending: false } },
+    );
+    act(() => result.current.enrich.onRun());
+    rerender({ pending: true });
+    expect(result.current.enrich.pending).toBe(true);
+    // The optimistic flag has cleared, so the document alone decides now.
+    rerender({ pending: false });
+    expect(result.current.enrich.pending).toBe(false);
+  });
+
+  it("does not stick disabled when the request fails without going pending", () => {
+    const { result, rerender } = renderHook(
+      (props: { error: string | null }) =>
+        useUnifiedFindings({
+          suiteRunId: "run_1",
+          envelope: ENVELOPE,
+          generation: generation({ error: props.error }),
+        }),
+      { initialProps: { error: null as string | null } },
+    );
+    act(() => result.current.enrich.onRun());
+    expect(result.current.enrich.pending).toBe(true);
+    rerender({ error: "the request was refused" });
+    expect(result.current.enrich.pending).toBe(false);
+  });
+});
+
+describe("state is scoped to ONE run", () => {
+  it("drops a build error when the reader selects another run", async () => {
+    mutation.fn.mockImplementation(async () => {
+      throw new Error("run A could not be built");
+    });
+    const { result, rerender } = renderHook(
+      (props: { suiteRunId: string }) =>
+        useUnifiedFindings({
+          suiteRunId: props.suiteRunId,
+          envelope: ENVELOPE,
+          generation: generation(),
+        }),
+      { initialProps: { suiteRunId: "run_A" } },
+    );
+    await act(async () => {
+      result.current.build.onRun();
+    });
+    expect(result.current.build.error).toContain("could not be built");
+
+    rerender({ suiteRunId: "run_B" });
+    expect(result.current.build.error).toBeNull();
+  });
+
+  it("never writes a late rejection onto the run the reader moved to", async () => {
+    let rejectRequest: ((error: Error) => void) | undefined;
+    mutation.fn.mockImplementation(
+      () =>
+        new Promise<{ jobId: string }>((_resolve, reject) => {
+          rejectRequest = reject;
+        }),
+    );
+    const { result, rerender } = renderHook(
+      (props: { suiteRunId: string }) =>
+        useUnifiedFindings({
+          suiteRunId: props.suiteRunId,
+          envelope: ENVELOPE,
+          generation: generation(),
+        }),
+      { initialProps: { suiteRunId: "run_A" } },
+    );
+    act(() => result.current.build.onRun());
+    rerender({ suiteRunId: "run_B" });
+    await act(async () => {
+      rejectRequest?.(new Error("run A could not be built"));
+    });
+    expect(result.current.build.error).toBeNull();
+  });
+
+  it("falls back to the deterministic view on the newly selected run", () => {
+    const { result, rerender } = renderHook(
+      (props: { suiteRunId: string }) =>
+        useUnifiedFindings({
+          suiteRunId: props.suiteRunId,
+          envelope: ENVELOPE,
+          generation: generation(),
+        }),
+      { initialProps: { suiteRunId: "run_A" } },
+    );
+    act(() => result.current.setMode("ai"));
+    expect(result.current.mode).toBe("ai");
+    rerender({ suiteRunId: "run_B" });
+    expect(result.current.mode).toBe("deterministic");
+  });
+});

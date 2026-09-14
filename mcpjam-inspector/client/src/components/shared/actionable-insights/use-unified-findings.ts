@@ -10,7 +10,7 @@
  * The envelope subscription is the shared `useInsightsEnvelope`, which is the
  * same query the legacy panel reads; mounting both costs one subscription.
  */
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation } from "convex/react";
 import {
   selectCurrentFindings,
@@ -86,11 +86,67 @@ export function useUnifiedFindings(args: {
    */
   const buildInFlight = useRef(false);
 
+  /**
+   * The same guard for the ENRICH path, which needs it more.
+   *
+   * `enrich.pending` is the borrowed controller's document-backed value, so it
+   * stays false until the run subscription reports the job. Two clicks inside
+   * that window both reach `requestInsight`, and unlike a build that is a
+   * METERED provider call. The ref blocks the second one synchronously; the
+   * state beside it is what the button disables from.
+   */
+  const enrichInFlight = useRef(false);
+  const [enrichRequested, setEnrichRequested] = useState(false);
+  /** The controller's error as it stood at the click, so a request that fails
+   *  without ever going pending still hands authority back. */
+  const enrichErrorAtRequest = useRef<string | null>(null);
+
   const buildMutation = useMutation(BUILD_FINDINGS_MUTATION as never);
   const experiment = unifiedFindingsOf(args.envelope);
 
+  /**
+   * Every piece of state above is scoped to ONE run.
+   *
+   * `EvaluateRunContent` is not keyed by run id, so selecting a different run
+   * re-renders this same hook instance. Without this, run A's build error
+   * stays on screen for run B, and an `ai` mode selection survives onto a run
+   * that has no enrichment at all. Adjusting during render is React's
+   * documented way to do this: it re-renders before committing, so the stale
+   * values are never painted.
+   */
+  const runId = args.suiteRunId ?? null;
+  const [boundRunId, setBoundRunId] = useState<string | null>(runId);
+  /** The bound run, readable synchronously from an async callback. */
+  const boundRunIdRef = useRef<string | null>(runId);
+  if (boundRunId !== runId) {
+    boundRunIdRef.current = runId;
+    setBoundRunId(runId);
+    setMode("deterministic");
+    setBuildError(null);
+    setBuildRequested(false);
+    buildInFlight.current = false;
+    enrichInFlight.current = false;
+    setEnrichRequested(false);
+  }
+
+  useEffect(() => {
+    if (!enrichRequested) return;
+    // The document has spoken — either it reports the job, or the request
+    // failed outright. Either way the optimistic flag has done its work.
+    if (
+      args.generation.pending ||
+      args.generation.error !== enrichErrorAtRequest.current
+    ) {
+      enrichInFlight.current = false;
+      setEnrichRequested(false);
+    }
+  }, [enrichRequested, args.generation.pending, args.generation.error]);
+
   const onBuild = useCallback(() => {
     if (!args.suiteRunId) return;
+    // The run this request belongs to. A rejection that settles after the
+    // reader has moved on must not write its error onto another run.
+    const requestedFor = args.suiteRunId;
     // A second click while one is in flight must not become a second job. The
     // backend refuses it anyway (the claim is the real guard); this only keeps
     // the UI from asking.
@@ -107,9 +163,11 @@ export function useUnifiedFindings(args: {
       ...(experiment?.snapshot ? { force: true } : {}),
     })
       .catch((error: unknown) => {
+        if (boundRunIdRef.current !== requestedFor) return;
         setBuildError(error instanceof Error ? error.message : String(error));
       })
       .finally(() => {
+        if (boundRunIdRef.current !== requestedFor) return;
         buildInFlight.current = false;
         setBuildRequested(false);
       });
@@ -121,6 +179,10 @@ export function useUnifiedFindings(args: {
   ]);
 
   const onEnrich = useCallback(() => {
+    if (enrichInFlight.current || args.generation.pending) return;
+    enrichInFlight.current = true;
+    enrichErrorAtRequest.current = args.generation.error;
+    setEnrichRequested(true);
     // The existing controller, in the experiment's mode. `force: true` because
     // a run that already has a legacy serverQuality result would otherwise be
     // refused as "already completed" — the metering and the job-id guard are
@@ -178,7 +240,7 @@ export function useUnifiedFindings(args: {
         experiment?.canEnrich === true &&
         !args.generation.unavailable &&
         args.generation.canRequest,
-      pending: args.generation.pending,
+      pending: enrichRequested || args.generation.pending,
       error: args.generation.failedGeneration
         ? (args.generation.error ??
           "The AI explanation did not complete. The observations below are unaffected.")

@@ -224,7 +224,11 @@ function Preview({ artifact }: { artifact: ReplayArtifact }) {
     );
   }
 
-  const experiment = experimentFor(replayCase, artifact.generatedAt);
+  const experiment = experimentFor(
+    replayCase,
+    artifact.generatedAt,
+    artifact.minerVersion,
+  );
   const snapshot = simulated === "no-snapshot" ? null : experiment.snapshot;
 
   return (

@@ -104,7 +104,15 @@ export function judgeCoverageLine(
   // "graded 0 of 0 eligible" is noise, not coverage: it says the evaluator was
   // never asked, which the finding's own sentence already says better.
   if (coverage.eligible === 0) return null;
-  const nonGraded = coverage.nonGraded;
+  // The envelope arrives from Convex as a cast, not a validated value, so a
+  // backend at a different version can omit this. Absent counts mean the
+  // breakdown is dropped and "graded X of Y eligible" still renders — that
+  // sentence is the useful half, and it does not depend on these.
+  const nonGraded = coverage.nonGraded ?? {
+    pending: 0,
+    skipped: 0,
+    errored: 0,
+  };
   const outstanding = [
     nonGraded.pending > 0 ? `${nonGraded.pending} pending` : null,
     nonGraded.skipped > 0 ? `${nonGraded.skipped} skipped` : null,

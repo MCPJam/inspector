@@ -4073,9 +4073,7 @@ export interface PlatformActionableFinding {
  * never as `unavailable`.
  */
 export type PlatformInsightsObservationState =
-  | "ready"
-  | "partial"
-  | "unavailable";
+  "ready" | "partial" | "unavailable";
 
 /** Coverage for `currentFindings`, describing its OWN population. */
 export interface PlatformInsightsObservationCoverage {
