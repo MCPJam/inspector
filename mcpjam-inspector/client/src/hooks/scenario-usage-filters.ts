@@ -68,9 +68,9 @@ export type StageChipState = "passed" | "failed";
 /**
  * Build a stage chip value. Mirrors `stageChipValue` on the server.
  *
- * Build only. A stage chip is minted for ONE server round trip and is never
- * put into a `UsageFilterState`, so there is no client-side matcher to keep in
- * step — `convex/lib/usageInsights/filters.ts` is the only thing that reads
+ * Build only. The state a stage chip goes into is handed straight to the
+ * server and never to a client-side matcher, so there is nothing here to keep
+ * in step — `convex/lib/usageInsights/filters.ts` is the only thing that reads
  * one back, and it is tested there.
  */
 export function stageChipValue(
@@ -344,10 +344,10 @@ export function threadMatchesChip(
       if (result === undefined) return false;
       return result.passed === (parsed.verdict === CRITERION_PASS);
     }
-    // No `stage` case on purpose. Stage chips go to the server and come back
-    // as a page; they never reach a `UsageFilterState`, so a client matcher
-    // here would be unreachable code encoding a subtle staleness rule that
-    // nobody could see break.
+    // No `stage` case on purpose. Stage chips are built for the server and
+    // come back as a page, so nothing reaches this matcher — a branch here
+    // would be unreachable code encoding a staleness rule nobody could see
+    // break.
     default:
       return false;
   }

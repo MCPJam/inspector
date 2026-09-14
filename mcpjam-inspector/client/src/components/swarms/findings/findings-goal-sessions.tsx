@@ -5,10 +5,9 @@
  * Renders the list only (no card). The parent mounts this under
  * "What happened" so the sessions sit with the evidence they explain.
  *
- * Remount on the goal AND the stage narrowing (the parent keys this) so paging
- * state never leaks across either. Leaking across stages is the failure this
- * list exists to prevent: the rows would be the previous stage's, under a
- * header counting this one's.
+ * The parent keys this on the goal, the narrowing and the scope, so the
+ * CURSOR and the pages already fetched cannot outlive the selection that
+ * fetched them. The page in view reconciles itself; `before` does not.
  */
 
 import type { UserValueStage } from "@mcpjam/sdk/contract";

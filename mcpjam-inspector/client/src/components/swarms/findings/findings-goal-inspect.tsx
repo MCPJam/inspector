@@ -89,32 +89,30 @@ export function FindingsGoalInspect({
           chainStage: CHAIN_STAGE_BY_JOURNEY[selectedStage],
           state: stageModel.state === "ok" ? "passed" : "failed",
         };
-  // Paging accumulates rows, so the list must not survive a change of
-  // narrowing or one stage's sessions would be appended to the previous
-  // stage's.
-  //
-  // The evidence row wrapping it is keyed on the observation TEXT, so in
-  // practice two stages that phrase themselves differently remount anyway.
-  // That is prose, not a guarantee, which is why this key exists — and
-  // `findings-goal-inspect.stage.test.tsx` pins it by giving every stage the
-  // same observation string, so the ancestor key cannot do the work and
-  // deleting this line fails that test.
-  const sessionsKey = `${goal.runId}:${stageNarrowing ? `${stageNarrowing.chainStage}:${stageNarrowing.state}` : "all"}`;
+  // Everything the list's contents depend on: the goal, the narrowing, and
+  // the SCOPE, which carries the tab's filters. Editing a filter chip rebuilds
+  // the scope, and without it here the retained `before` cursor and the pages
+  // already fetched would outlive the query that produced them — the previous
+  // cohort's rows under a header counting the new one.
+  const sessionsKey = `${goal.runId}:${
+    stageNarrowing ? `${stageNarrowing.chainStage}:${stageNarrowing.state}` : "all"
+  }:${JSON.stringify(sessionScope ?? null)}`;
   /**
    * The stage's session list, wrapped and keyed ONCE for both mount sites.
    *
-   * Keyed because the list accumulates pages in state: without it one stage's
-   * sessions are appended to the previous stage's. Only one of the two sites
-   * used to carry that key; the other was relying on its ancestor evidence row
-   * being keyed on the observation TEXT, which is prose and stops being true
-   * the moment two stages phrase themselves the same way.
+   * KEYED for two things the page-replacing effect does not cover. `before`
+   * and the pages already fetched are component state, so after a "Load more"
+   * they survive a change of narrowing and the reader sees the previous
+   * stage's extra pages under this stage's header. And `ErrorBoundary` has no
+   * `resetKeys`: once it has caught, it stays in its fallback for the life of
+   * the element, so an unkeyed one would swallow the list for every LATER
+   * stage after a single failure.
    *
-   * Bounded because `useGoalOutcomeDrilldown` throws, and the nearest boundary
-   * above this is the app root — a backend that does not know the `stage` chip
-   * would take the whole inspector to "Something went wrong", and the reader
-   * does not even have to click a stage to get there. The key does double duty:
-   * a boundary that has caught stays in its fallback for the life of the
-   * element, so an unkeyed one would swallow the list for every LATER stage.
+   * BOUNDED because `useGoalOutcomeDrilldown` throws, and a backend that does
+   * not know the `stage` chip would otherwise blank the whole Findings tab
+   * through the boundary in `UserTestingScenarioDetail`. This keeps the
+   * failure to the one list it belongs to, and the reader does not have to
+   * click a stage to reach it.
    */
   const stageSessions =
     sessionScope && onOpenSession ? (
