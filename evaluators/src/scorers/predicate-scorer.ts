@@ -14,6 +14,7 @@ import {
 } from "../predicates/types.js";
 import { predicateScoreDefinition } from "../contract/adapters.js";
 import { canonicalDigest } from "../contract/canonical.js";
+import { canonicalizeCheckRole } from "../predicates/policy.js";
 import type { ScorerRole } from "../contract/types.js";
 import type { Scorer } from "./types.js";
 
@@ -80,9 +81,16 @@ export function predicateScorer(
   // predicate type + 64 hex is comfortably inside MAX_SCORER_ID_LENGTH, so
   // there is nothing to buy by shortening it. Two IDENTICAL predicates still
   // land on one id — they are one definition, and the builder collapses them.
+  //
+  // The rule goes through `canonicalizeCheckRole` first. `role` is ON the
+  // digested object here — unlike `assertion()`, which strips policy off the
+  // rule before minting — so a raw `predicateScorer({...}, ...)` caller who
+  // spelled the role `"required"` would otherwise mint a DIFFERENT id for the
+  // same rule than one who spelled it `"gating"`, and the two would stop
+  // joining to each other's score history.
   if (options?.id === undefined && options?.ordinal === undefined) {
     definition.scorerId = `predicate:${predicate.type}#${canonicalDigest(
-      predicate,
+      canonicalizeCheckRole(predicate),
     )}`;
   }
 

@@ -2356,6 +2356,9 @@
         "description": "Creates a suite run from an existing `suiteId` (rerun) and/or inline `tests`, then **detaches execution and responds `202` immediately** with the `runId`. Validation and quota errors surface on this request; poll `GET /eval-runs/{runId}` for progress. The run appears live in the hosted UI Runs tab, tagged `source: \"api\"`.\n\nA bare `suiteId` with no inline tests reruns the suite as configured. Per-organization concurrency is capped (default 2 concurrent runs); exceeding it returns `429` with `details.reason: \"CONCURRENT_RUN_LIMIT\"`.\n\nFor a suite with attached project environments, pass `environmentId` to choose which one the run uses; the `202` echoes the resolved `environment` triple, and `GET /eval-runs/{runId}` reports the same triple for the life of the run.\n\nTo make the run readable as something more specific than `API` in the Runs table, send `x-mcpjam-launcher` (and `x-mcpjam-ci` from a CI job). Both are labels: `source` is stamped `api` either way.",
         "parameters": [
           {
+            "$ref": "#/components/parameters/evalVocabularyHeader"
+          },
+          {
             "$ref": "#/components/parameters/projectId"
           },
           {
@@ -2467,6 +2470,9 @@
         "description": "Run status, result, and summary. Poll until `status` is terminal (`completed`, `failed`, `cancelled` or `timed_out`). `grading` is not terminal — every trial has finished and the run is held for its gating judge, with `result` still `pending` — so keep polling.",
         "parameters": [
           {
+            "$ref": "#/components/parameters/evalVocabularyHeader"
+          },
+          {
             "$ref": "#/components/parameters/projectId"
           },
           {
@@ -2512,6 +2518,9 @@
         "summary": "Get a run's decision summary",
         "description": "The canonical, versioned run decision contract: the verdict and where it came from, the counts with the population they count, the run's own verdict decision when it has one, and one page of per-trial diagnostics carrying the user-value chain, the first failed stage, the failure category, evidence scoped to that stage, and one next action.\n\nADDITIVE and composed: it is the same two reads a caller could make by hand (`GET …/eval-runs/{runId}` and `GET …/iterations`), assembled once here so every client shares one reading of a run instead of inventing its own. `cursor` and `limit` page the DIAGNOSTICS using the same cursors the iterations endpoint issues, and `diagnostics.complete` says honestly whether the page you got is the run's whole non-passing set.",
         "parameters": [
+          {
+            "$ref": "#/components/parameters/evalVocabularyHeader"
+          },
           {
             "$ref": "#/components/parameters/projectId"
           },
@@ -2580,6 +2589,9 @@
         "description": "Compare this run against a baseline run: per-case status (`regressed`, `fixed`, `new_case`, `removed_case`, `changed`), per-scorer pass-rate and mean deltas from the evaluation contract, and whether the evaluation config changed. Omit `baseRunId` to compare against the nearest earlier **completed** run in the same suite. Returns `404` with `details.reason` = `BASELINE_NOT_FOUND` when there is no comparable predecessor — that is an incomplete comparison, not a failing one. A scorer whose `definitionChanged` is `true` was graded by a different definition on each side, so its delta is not a regression.",
         "parameters": [
           {
+            "$ref": "#/components/parameters/evalVocabularyHeader"
+          },
+          {
             "$ref": "#/components/parameters/projectId"
           },
           {
@@ -2643,6 +2655,9 @@
         "summary": "List run iterations",
         "description": "Per-iteration results: actual tool calls, structured token usage, and latency. Cursor-paginated.",
         "parameters": [
+          {
+            "$ref": "#/components/parameters/evalVocabularyHeader"
+          },
           {
             "$ref": "#/components/parameters/projectId"
           },
@@ -2711,6 +2726,9 @@
         "description": "Full trace envelope for one iteration: conversation messages, expected-vs-actual tool call analysis, and spans. The shape is rich and may evolve — treat it as an open document. Returns `404` with `details.reason: \"TRACE_NOT_AVAILABLE\"` when the iteration finished without a stored trace.",
         "parameters": [
           {
+            "$ref": "#/components/parameters/evalVocabularyHeader"
+          },
+          {
             "$ref": "#/components/parameters/projectId"
           },
           {
@@ -2761,6 +2779,9 @@
         "summary": "Get an iteration's step results",
         "description": "One row per authored test step, in order, with `status` (`ok`/`fail`/`skipped`/`pending`), a `reason`, and any `evidence` (screenshots, replay-video offset, widget tool calls). The fastest way to see which step failed and why. Unlike `/trace`, a missing trace is not a `404` — step verdicts still return, just without evidence.",
         "parameters": [
+          {
+            "$ref": "#/components/parameters/evalVocabularyHeader"
+          },
           {
             "$ref": "#/components/parameters/projectId"
           },
@@ -2856,6 +2877,9 @@
         "description": "Request cancellation of an in-flight run; marks the run and its pending/running iterations `cancelled`. A run held in `grading` for its gating judge CAN be cancelled — it lands `cancelled` with no verdict, which is the honest outcome for a run nobody waited out. A no-op success when the run is already cancelled; returns `409` when the run already reached a terminal status (`completed`/`failed`/`timed_out`).",
         "parameters": [
           {
+            "$ref": "#/components/parameters/evalVocabularyHeader"
+          },
+          {
             "$ref": "#/components/parameters/projectId"
           },
           {
@@ -2904,6 +2928,9 @@
         "summary": "List a suite's runs",
         "description": "Recent runs for a suite, newest first.",
         "parameters": [
+          {
+            "$ref": "#/components/parameters/evalVocabularyHeader"
+          },
           {
             "$ref": "#/components/parameters/projectId"
           },
@@ -2962,6 +2989,9 @@
         "summary": "List a suite's settings history",
         "description": "One entry per committed edit to the suite's settings, newest first: who made it, which STORED fields moved, the note they left, how many runs were launched against it, and the revision group that ties one request's writes together. Rows carry no configuration snapshots. Send a `revisionNumber` back as `expectedRevisionNumber` on `PATCH /eval-suites/{suiteId}` to make that edit a compare-and-set.",
         "parameters": [
+          {
+            "$ref": "#/components/parameters/evalVocabularyHeader"
+          },
           {
             "$ref": "#/components/parameters/projectId"
           },
@@ -3032,6 +3062,9 @@
         "summary": "List a suite's per-run stage analytics",
         "description": "One materialized stage-analytics document per RUN, newest completion first: where trials fell out of the six-stage user-value chain (connection, discovery, selection, tool call, response, user value), overall and sliced marginally by intent, model and host.\n\nEach item is one run's COMPLETE document and stands alone. There is deliberately no cross-run aggregate — two funnels averaged together describe no run — so compare runs by rendering them side by side, never by summing these documents.\n\nCounts are returned; RATES are not. A zero denominator is `notMeasured`, never `0`, and every excluded observation is counted under a named class so a denominator can never shrink silently.\n\nNOT backfilled: a run that completed before this shipped has no document at all, and that absence means UNMEASURED — it is never a funnel of zeros.",
         "parameters": [
+          {
+            "$ref": "#/components/parameters/evalVocabularyHeader"
+          },
           {
             "$ref": "#/components/parameters/projectId"
           },
@@ -3135,6 +3168,9 @@
         "description": "ONE run's materialized stage-analytics document: where its trials fell out of the six-stage user-value chain (connection, discovery, selection, tool call, response, user value), overall and sliced marginally by intent, model and host.\n\nThe same document the suite listing returns, addressed by run. Use this rather than paging `/eval-suites/{suiteId}/stage-analytics` to reach a known run: that listing is newest-first, so walking it costs work proportional to how long ago the run finished and cannot answer once the run falls outside the pages read.\n\nCounts are returned; RATES are not. A zero denominator is `notMeasured`, never `0`, and every excluded observation is counted under a named class so a denominator can never shrink silently.\n\n`404` covers BOTH \"this run has no document\" and \"this run is not visible to you\", and the two are deliberately not distinguished — separating them would confirm that a run exists in a project you cannot see. NOT backfilled either: a run that completed before this shipped has no document, and that absence means UNMEASURED, never a funnel of zeros.",
         "parameters": [
           {
+            "$ref": "#/components/parameters/evalVocabularyHeader"
+          },
+          {
             "$ref": "#/components/parameters/projectId"
           },
           {
@@ -3182,6 +3218,9 @@
         "summary": "Get one run's suite quality-gate report",
         "description": "ONE run's stored suite quality-gate report (`SuiteGateReportV1`): passed, failed, non_gateable, or not_configured.\n\n`not_configured` is a 200 report — the suite has no active conditions — never a missing route. A 404 means the run is not visible. A deployment that predates the evaluator answers 501 FEATURE_NOT_SUPPORTED; that is a fact about the deployment, not proof the suite has no policy. A run waiver never covers this report.",
         "parameters": [
+          {
+            "$ref": "#/components/parameters/evalVocabularyHeader"
+          },
           {
             "$ref": "#/components/parameters/projectId"
           },
@@ -3233,6 +3272,9 @@
         "summary": "Enable, repoint, or disable a suite's schedule",
         "description": "A schedule fires exactly ONE run per interval, so an environment-based suite must pin exactly one of its attached environments. Omitting `environmentId` on a single-environment suite means that environment; omitting it on a multi-environment suite is a VALIDATION_ERROR. Disabling preserves the existing pin. Responds with the full updated suite.",
         "parameters": [
+          {
+            "$ref": "#/components/parameters/evalVocabularyHeader"
+          },
           {
             "$ref": "#/components/parameters/projectId"
           },
@@ -3956,6 +3998,9 @@
         "description": "APPEND one project environment to the suite's attachments, if it is not already there.\n\nDistinct from `PATCH /eval-suites/{suiteId}` with `environmentIds`, which REPLACES the whole list. An append built on the replace door is a read-modify-write across two round trips, and a concurrent attach landing in between is silently DETACHED. The compose-and-run path attaches on every launch, which makes that race ordinary rather than theoretical, so the append happens inside one transaction instead.\n\nIdempotent: attaching an already-attached environment reports `attached: false` and changes nothing, which is what lets a retried launch converge instead of erroring. Subject to the same cap, membership and schedule-pin rules as the replace door — growing a single-environment suite to two is exactly the edit that strands an enabled unpinned schedule.",
         "parameters": [
           {
+            "$ref": "#/components/parameters/evalVocabularyHeader"
+          },
+          {
             "$ref": "#/components/parameters/projectId"
           },
           {
@@ -4014,6 +4059,9 @@
         "summary": "Launch one run per target as a group (async)",
         "description": "Launches ONE run per target — attached project environments, or attached named hosts — under a single **server-minted** `runGroupId`, then detaches execution and responds `202` with a per-target receipt.\n\nThis is the only endpoint with grouped-launch semantics. `POST /eval-runs` also accepts a `runGroupId`, but purely as a display label: it groups sibling rows in the UI and gives N separate launches no group treatment. Here the server bounds the fan-out (max 10 targets), validates EVERY target before launching any of them (an unattached target, a heterogeneous target list, or a target whose host selects an unavailable harness returns `400` with zero runs started), and holds exactly ONE organization concurrency slot for the whole group — released only when the last sibling finishes.\n\nTargets fan out along ONE axis: all `environmentId` or all `namedHostId`, never a mix. Duplicates are deduplicated by id, preserving order.\n\nA per-target failure does NOT abort its siblings, so read `outcome` rather than treating the `202` as \"everything started\": `started` means every target launched, `partial` means some did, `failed` means none did.\n\nSend `Idempotency-Key` (or `idempotencyKey`) to make the launch replayable: the group id is DERIVED from the key, and each target carries a run key derived from that, so a retry after a crash mid-launch returns the original run ids instead of double-launching the targets that already started.\n\n`x-mcpjam-launcher` and `x-mcpjam-ci` are read once and applied to EVERY sibling: one fan-out is one launch by one process, so the targets badge identically.",
         "parameters": [
+          {
+            "$ref": "#/components/parameters/evalVocabularyHeader"
+          },
           {
             "$ref": "#/components/parameters/projectId"
           },
@@ -4123,6 +4171,9 @@
         "description": "Eval suites in the project with latest-run summaries and pass-rate trends — the `suiteId`s the eval-run routes take.",
         "parameters": [
           {
+            "$ref": "#/components/parameters/evalVocabularyHeader"
+          },
+          {
             "$ref": "#/components/parameters/projectId"
           }
         ],
@@ -4163,6 +4214,9 @@
         "summary": "Create an eval suite (author-only, does not run)",
         "description": "Creates a runnable eval suite — the suite record plus its test cases — and responds `201` **synchronously**, WITHOUT executing anything. Use this to author a suite, then run it later with `POST /eval-runs` (passing the returned `suiteId`).\n\nThis is distinct from `POST /eval-runs`, which creates a run and **detaches execution**, responding `202` with a `runId`. There is no concurrency cap here (no run is started).\n\nThe body uses an ergonomic authoring shape: a suite-level default `model` (and optional `provider`) applies to every test unless the test overrides it; `provider` is derived from a `provider/model` id when neither is supplied. Each test's case body is an ordered `steps` array (prompt / toolCall / interact / assert).\n\nGuest callers are denied (suite creation is a write).",
         "parameters": [
+          {
+            "$ref": "#/components/parameters/evalVocabularyHeader"
+          },
           {
             "$ref": "#/components/parameters/projectId"
           }
@@ -4248,6 +4302,9 @@
         "description": "Resolve a file-owned suite by declared id within the project, or create one. Lookup is by `(projectId, declaredSuiteId)` and never by name. A UI-authored suite has no declared id and cannot be claimed. The inspector parses the suite file; this body is the declared identity, source hash, optional provenance, and hosted settings — not the raw file.\n\n`201` on first create; `200` on a later update of the same declared id.",
         "parameters": [
           {
+            "$ref": "#/components/parameters/evalVocabularyHeader"
+          },
+          {
             "$ref": "#/components/parameters/projectId"
           }
         ],
@@ -4317,6 +4374,9 @@
         "description": "The suite's full settings — attached environments, hosts, execution config, judge, schedule. The list route returns run rollups instead; this is the shape the edit routes read and write.",
         "parameters": [
           {
+            "$ref": "#/components/parameters/evalVocabularyHeader"
+          },
+          {
             "$ref": "#/components/parameters/projectId"
           },
           {
@@ -4360,6 +4420,9 @@
         "summary": "Update an eval suite's settings",
         "description": "Partial update — omitted fields are left as they are. `environmentIds` is tri-state: a non-empty array sets/replaces, `null` clears (reverting the suite to legacy config), and `[]` is rejected rather than silently treated as a clear. Responds with the full updated suite.",
         "parameters": [
+          {
+            "$ref": "#/components/parameters/evalVocabularyHeader"
+          },
           {
             "$ref": "#/components/parameters/projectId"
           },
@@ -4424,6 +4487,9 @@
         "description": "Deletes the suite and its cases. Past runs are not deleted.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses this with `409`; send its file's `suite.id` as `declaredSuiteId` to delete as the file.",
         "parameters": [
           {
+            "$ref": "#/components/parameters/evalVocabularyHeader"
+          },
+          {
             "$ref": "#/components/parameters/projectId"
           },
           {
@@ -4475,6 +4541,9 @@
         "summary": "Get the pre-run disclosure for a suite launch plan",
         "description": "What happens to a run's content BEFORE you launch it: which models it calls and where they route, which LLM analyzers/judges can fire and where their evidence goes, capture/retention/region facts, and the subprocessors engaged. Read-only — never launches or gates a run. Keyed by the SAME destination-affecting subset a launch selects (`caseIds`/`environmentId`/`environmentIds`); pass the selectors you would pass to a run so what this discloses is what that run would do. `run_eval_suite` already fetches this itself and returns it on the receipt's `disclosure` field — call this route directly when you need the disclosure BEFORE deciding to launch. A deployment that predates this contract answers 422 `FEATURE_NOT_SUPPORTED` with `details.reason: \"contract_unavailable\"`, never a partial payload — this is a GUARANTEE only when the deployment's missing-function error reaches this route unredacted. Production Convex can redact that same failure to a generic \"Server Error\" indistinguishable from a genuine handler crash on a suite the caller CAN see; this route has no independent way to tell the two apart in that one case, so it answers 502 instead of guessing 422 — a caller cannot rely on this code alone to detect an old production deployment, and a 502 does not imply the contract is available either. `projectId` is positional only, for REST consistency with sibling routes — this endpoint authorizes per-suite, not per-project, so any `projectId` returns the same disclosure for a `suiteId` you can reach.",
         "parameters": [
+          {
+            "$ref": "#/components/parameters/evalVocabularyHeader"
+          },
           {
             "$ref": "#/components/parameters/projectId"
           },
@@ -5051,6 +5120,9 @@
         "summary": "Delete an eval case",
         "description": "Removes the case from the suite. Past runs that executed it are not affected.\n\nA case in a CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses this with `409`; send the suite file's `suite.id` as `declaredSuiteId` to delete as the file.",
         "parameters": [
+          {
+            "$ref": "#/components/parameters/evalVocabularyHeader"
+          },
           {
             "$ref": "#/components/parameters/projectId"
           },
@@ -6252,6 +6324,9 @@
         "description": "Mints a short-lived URL for uploading a widget blob or other artifact referenced by an ingested run.\n\nHow eval runs executed OUTSIDE the platform (local dev, CI) reach the Evals dashboard. Authenticate like any other `/api/v1` route (typically an `sk_` key); the gateway swaps in a delegated org-scoped token so the backend's fail-closed org scoping applies.\n\nThe `{projectId}` segment declares where results land and always wins over any `projectId` in the body. The literal `default` resolves to the key org's Default project — the zero-config CI case.\n\nSTATUS AND BODY PASS THROUGH VERBATIM: success shapes are the legacy `{ ok: true, ... }` envelopes the SDK reporter parses, not the v1 resource envelope.",
         "parameters": [
           {
+            "$ref": "#/components/parameters/evalVocabularyHeader"
+          },
+          {
             "name": "projectId",
             "in": "path",
             "required": true,
@@ -6316,6 +6391,9 @@
         "summary": "Discover authenticated eval ingestion capabilities",
         "description": "Discover authenticated eval ingestion capabilities. Uses the SDK reporting transport and the same tenant/project authorization as eval ingestion. Unsupported capabilities remain absent.",
         "parameters": [
+          {
+            "$ref": "#/components/parameters/evalVocabularyHeader"
+          },
           {
             "name": "projectId",
             "in": "path",
@@ -6397,6 +6475,9 @@
         "summary": "Persist advisory case-run evaluations",
         "description": "Persist advisory case-run evaluations. Uses the SDK reporting transport and the same tenant/project authorization as eval ingestion. Unsupported capabilities remain absent.",
         "parameters": [
+          {
+            "$ref": "#/components/parameters/evalVocabularyHeader"
+          },
           {
             "name": "projectId",
             "in": "path",
@@ -6496,6 +6577,9 @@
         "description": "The whole-run variant: submit a finished run and its iterations in a single request. This is what the SDK reporter uses by default.\n\nHow eval runs executed OUTSIDE the platform (local dev, CI) reach the Evals dashboard. Authenticate like any other `/api/v1` route (typically an `sk_` key); the gateway swaps in a delegated org-scoped token so the backend's fail-closed org scoping applies.\n\nThe `{projectId}` segment declares where results land and always wins over any `projectId` in the body. The literal `default` resolves to the key org's Default project — the zero-config CI case.\n\nSTATUS AND BODY PASS THROUGH VERBATIM: success shapes are the legacy `{ ok: true, ... }` envelopes the SDK reporter parses, not the v1 resource envelope.",
         "parameters": [
           {
+            "$ref": "#/components/parameters/evalVocabularyHeader"
+          },
+          {
             "name": "projectId",
             "in": "path",
             "required": true,
@@ -6560,6 +6644,9 @@
         "summary": "Close an open ingestion run",
         "description": "Marks the run complete and computes its rollups. Until this is called the run stays open in the dashboard.\n\nHow eval runs executed OUTSIDE the platform (local dev, CI) reach the Evals dashboard. Authenticate like any other `/api/v1` route (typically an `sk_` key); the gateway swaps in a delegated org-scoped token so the backend's fail-closed org scoping applies.\n\nThe `{projectId}` segment declares where results land and always wins over any `projectId` in the body. The literal `default` resolves to the key org's Default project — the zero-config CI case.\n\nSTATUS AND BODY PASS THROUGH VERBATIM: success shapes are the legacy `{ ok: true, ... }` envelopes the SDK reporter parses, not the v1 resource envelope.",
         "parameters": [
+          {
+            "$ref": "#/components/parameters/evalVocabularyHeader"
+          },
           {
             "name": "projectId",
             "in": "path",
@@ -6626,6 +6713,9 @@
         "description": "Appends one batch of iteration results to a run opened by `runs/start`.\n\nHow eval runs executed OUTSIDE the platform (local dev, CI) reach the Evals dashboard. Authenticate like any other `/api/v1` route (typically an `sk_` key); the gateway swaps in a delegated org-scoped token so the backend's fail-closed org scoping applies.\n\nThe `{projectId}` segment declares where results land and always wins over any `projectId` in the body. The literal `default` resolves to the key org's Default project — the zero-config CI case.\n\nSTATUS AND BODY PASS THROUGH VERBATIM: success shapes are the legacy `{ ok: true, ... }` envelopes the SDK reporter parses, not the v1 resource envelope.",
         "parameters": [
           {
+            "$ref": "#/components/parameters/evalVocabularyHeader"
+          },
+          {
             "name": "projectId",
             "in": "path",
             "required": true,
@@ -6690,6 +6780,9 @@
         "summary": "Open a run for incremental ingestion",
         "description": "Opens a run that iterations are appended to, for a long CI job that reports as it goes. Pair with `runs/iterations` and `runs/finalize`.\n\nHow eval runs executed OUTSIDE the platform (local dev, CI) reach the Evals dashboard. Authenticate like any other `/api/v1` route (typically an `sk_` key); the gateway swaps in a delegated org-scoped token so the backend's fail-closed org scoping applies.\n\nThe `{projectId}` segment declares where results land and always wins over any `projectId` in the body. The literal `default` resolves to the key org's Default project — the zero-config CI case.\n\nSTATUS AND BODY PASS THROUGH VERBATIM: success shapes are the legacy `{ ok: true, ... }` envelopes the SDK reporter parses, not the v1 resource envelope.",
         "parameters": [
+          {
+            "$ref": "#/components/parameters/evalVocabularyHeader"
+          },
           {
             "name": "projectId",
             "in": "path",
@@ -10195,6 +10288,9 @@
     "/projects/{projectId}/eval-runs/{runId}/insights": {
       "parameters": [
         {
+          "$ref": "#/components/parameters/evalVocabularyHeader"
+        },
+        {
           "$ref": "#/components/parameters/projectId"
         },
         {
@@ -10253,6 +10349,9 @@
     },
     "/projects/{projectId}/eval-runs/{runId}/judge": {
       "parameters": [
+        {
+          "$ref": "#/components/parameters/evalVocabularyHeader"
+        },
         {
           "$ref": "#/components/parameters/projectId"
         },
@@ -12137,6 +12236,9 @@
         "description": "Override a FAILING run's release gate until an expiry you name. This does NOT make the run pass: the run keeps its `result`, the waiver is a separate audited record, and every surface that honors it — the GitHub Check Run and the CLI's `eval gate` — reports the gate as waived, by whom, why, and until when.\n\nRequires the manage tier; whoever launched the run gets no exception for having launched it. `reason` is stored UNREDACTED and readable by anyone who can see the suite, for as long as the suite exists.\n\n`400` covers five distinct refusals, each with a message written for the caller: the suite belongs to no organization, the reason is blank, the reason exceeds 500 characters, the expiry is not in the future, or the expiry is more than 30 days out. `403` means the caller can see the suite but lacks the manage tier — deliberately not collapsed to `404`, which would send a legitimate member hunting for a run sitting in front of them.",
         "parameters": [
           {
+            "$ref": "#/components/parameters/evalVocabularyHeader"
+          },
+          {
             "$ref": "#/components/parameters/projectId"
           },
           {
@@ -12216,6 +12318,9 @@
         "description": "The waiver in force over this run, or `null`. Available to anyone who can VIEW the run, not only to those who can grant one — a waiver its readers cannot see is not a visible waiver.\n\nA client gating on this run does not need this endpoint: `GET /eval-runs/{runId}` already carries `gateWaiver`, so a gate can fold one in without a second round trip.",
         "parameters": [
           {
+            "$ref": "#/components/parameters/evalVocabularyHeader"
+          },
+          {
             "$ref": "#/components/parameters/projectId"
           },
           {
@@ -12261,6 +12366,9 @@
         "summary": "Revoke a gate waiver",
         "description": "End a waiver early, putting the gate and the GitHub Check Run back. Requires the manage tier.\n\nIDEMPOTENT, and `already_revoked` is a SUCCESS: it reports the ORIGINAL revocation rather than restamping it, so a retry cannot overwrite the record of who actually ended the waiver. An already-expired waiver may still be revoked — the audit trail distinguishes \"this was wrong\" from \"this ran out\".",
         "parameters": [
+          {
+            "$ref": "#/components/parameters/evalVocabularyHeader"
+          },
           {
             "$ref": "#/components/parameters/projectId"
           },
@@ -13041,6 +13149,9 @@
         "description": "Requires suite configuration permission and a terminal run. Reserves a 60-second deterministic-preview cooldown, independent of judge previews. Supply the returned continuation object with the unchanged draft to read the next bounded population. Reads at most 100 iterations within a 30-second operation deadline; partial evidence is explicitly ungradable. Runs no model calls and never overwrites original verdicts. Draft assertions explicitly replace, extend, or inherit the frozen rules.",
         "parameters": [
           {
+            "$ref": "#/components/parameters/evalVocabularyHeader"
+          },
+          {
             "$ref": "#/components/parameters/projectId"
           },
           {
@@ -13136,7 +13247,7 @@
         "name": "x-mcpjam-eval-vocabulary",
         "in": "header",
         "required": false,
-        "description": "Which spelling of the eval authoring fields this request speaks. Absent means `1`, which is byte-for-byte the documented contract: the same request fields, the same refusals, the same response projection. `2` selects the canonical evaluator vocabulary (`assertions` for `checks`, `iterations` for the configured count with `legacyIterations` for the legacy floor) on the eval-suite and eval-run operations that carry this parameter; those operations document their vocabulary-2 shapes under the `x-mcpjam-eval-vocabulary` extension. Any value other than `1` or `2` is a `400 VALIDATION_ERROR` — a vocabulary is never guessed at, because the same key (`iterations`) means a floor under 1 and an exact count under 2. Responses that vary by vocabulary carry `Vary: x-mcpjam-eval-vocabulary`. Read `ProjectCapabilities.vocabulary` to learn what a deployment understands rather than inferring it from a field's presence.",
+        "description": "Which vocabulary this request and its response speak. Absent means `1`, which is byte-for-byte today's contract: the same request fields, the same refusals, the same response projection. `2` is the canonical vocabulary. Any other value is a `400` with `code: \"VALIDATION_ERROR\"`.\n\nToday it decides one thing: the spelling of an evaluator's policy `role`. Vocabulary 1 accepts and returns `gating`; vocabulary 2 accepts both spellings and returns the canonical `required`. Sending `required` without the header is a `400`, deliberately \u2014 vocabulary 1 is not widened to meet vocabulary 2 half way, because a boundary that accepts a spelling it does not announce is one two implementations can disagree about.\n\nA response that varies by vocabulary sends `Vary: x-mcpjam-eval-vocabulary`.",
         "schema": {
           "type": "string",
           "enum": ["1", "2"]
@@ -13709,7 +13820,8 @@
                 "type": "string",
                 "enum": [
                   "gating",
-                  "advisory"
+                  "advisory",
+                  "required"
                 ]
               },
               "severity": {
@@ -13743,7 +13855,8 @@
                 "type": "string",
                 "enum": [
                   "gating",
-                  "advisory"
+                  "advisory",
+                  "required"
                 ]
               },
               "severity": {
@@ -13766,7 +13879,8 @@
                 "type": "string",
                 "enum": [
                   "gating",
-                  "advisory"
+                  "advisory",
+                  "required"
                 ]
               },
               "severity": {
@@ -13789,7 +13903,8 @@
                 "type": "string",
                 "enum": [
                   "gating",
-                  "advisory"
+                  "advisory",
+                  "required"
                 ]
               },
               "severity": {
@@ -13812,7 +13927,8 @@
                 "type": "string",
                 "enum": [
                   "gating",
-                  "advisory"
+                  "advisory",
+                  "required"
                 ]
               },
               "severity": {
@@ -13835,7 +13951,8 @@
                 "type": "string",
                 "enum": [
                   "gating",
-                  "advisory"
+                  "advisory",
+                  "required"
                 ]
               },
               "severity": {
@@ -13890,7 +14007,8 @@
                 "type": "string",
                 "enum": [
                   "gating",
-                  "advisory"
+                  "advisory",
+                  "required"
                 ]
               },
               "severity": {
@@ -13919,7 +14037,8 @@
                 "type": "string",
                 "enum": [
                   "gating",
-                  "advisory"
+                  "advisory",
+                  "required"
                 ]
               },
               "severity": {
@@ -13947,7 +14066,8 @@
                 "type": "string",
                 "enum": [
                   "gating",
-                  "advisory"
+                  "advisory",
+                  "required"
                 ]
               },
               "severity": {
@@ -13978,7 +14098,8 @@
                 "type": "string",
                 "enum": [
                   "gating",
-                  "advisory"
+                  "advisory",
+                  "required"
                 ]
               },
               "severity": {
@@ -14006,7 +14127,8 @@
                 "type": "string",
                 "enum": [
                   "gating",
-                  "advisory"
+                  "advisory",
+                  "required"
                 ]
               },
               "severity": {
@@ -14037,7 +14159,8 @@
                 "type": "string",
                 "enum": [
                   "gating",
-                  "advisory"
+                  "advisory",
+                  "required"
                 ]
               },
               "severity": {
@@ -14065,7 +14188,8 @@
                 "type": "string",
                 "enum": [
                   "gating",
-                  "advisory"
+                  "advisory",
+                  "required"
                 ]
               },
               "severity": {
@@ -14089,7 +14213,8 @@
                 "type": "string",
                 "enum": [
                   "gating",
-                  "advisory"
+                  "advisory",
+                  "required"
                 ]
               },
               "severity": {
@@ -14112,7 +14237,8 @@
                 "type": "string",
                 "enum": [
                   "gating",
-                  "advisory"
+                  "advisory",
+                  "required"
                 ]
               },
               "severity": {
@@ -14140,7 +14266,8 @@
                 "type": "string",
                 "enum": [
                   "gating",
-                  "advisory"
+                  "advisory",
+                  "required"
                 ]
               },
               "severity": {
@@ -14168,7 +14295,8 @@
                 "type": "string",
                 "enum": [
                   "gating",
-                  "advisory"
+                  "advisory",
+                  "required"
                 ]
               },
               "severity": {
@@ -14200,7 +14328,8 @@
                 "type": "string",
                 "enum": [
                   "gating",
-                  "advisory"
+                  "advisory",
+                  "required"
                 ]
               },
               "severity": {
@@ -14228,7 +14357,8 @@
                 "type": "string",
                 "enum": [
                   "gating",
-                  "advisory"
+                  "advisory",
+                  "required"
                 ]
               },
               "severity": {
@@ -14256,7 +14386,8 @@
                 "type": "string",
                 "enum": [
                   "gating",
-                  "advisory"
+                  "advisory",
+                  "required"
                 ]
               },
               "severity": {
@@ -14280,7 +14411,8 @@
                 "type": "string",
                 "enum": [
                   "gating",
-                  "advisory"
+                  "advisory",
+                  "required"
                 ]
               },
               "severity": {
@@ -14312,7 +14444,8 @@
                 "type": "string",
                 "enum": [
                   "gating",
-                  "advisory"
+                  "advisory",
+                  "required"
                 ]
               },
               "severity": {
@@ -14348,7 +14481,8 @@
                 "type": "string",
                 "enum": [
                   "gating",
-                  "advisory"
+                  "advisory",
+                  "required"
                 ]
               },
               "severity": {
@@ -14377,7 +14511,8 @@
                 "type": "string",
                 "enum": [
                   "gating",
-                  "advisory"
+                  "advisory",
+                  "required"
                 ]
               },
               "severity": {
@@ -14410,7 +14545,8 @@
                 "type": "string",
                 "enum": [
                   "gating",
-                  "advisory"
+                  "advisory",
+                  "required"
                 ]
               },
               "severity": {
@@ -14438,7 +14574,8 @@
                 "type": "string",
                 "enum": [
                   "gating",
-                  "advisory"
+                  "advisory",
+                  "required"
                 ]
               },
               "severity": {
@@ -14465,7 +14602,8 @@
                 "type": "string",
                 "enum": [
                   "gating",
-                  "advisory"
+                  "advisory",
+                  "required"
                 ]
               },
               "severity": {
@@ -14497,7 +14635,8 @@
                 "type": "string",
                 "enum": [
                   "gating",
-                  "advisory"
+                  "advisory",
+                  "required"
                 ]
               },
               "severity": {
@@ -14529,7 +14668,8 @@
                 "type": "string",
                 "enum": [
                   "gating",
-                  "advisory"
+                  "advisory",
+                  "required"
                 ]
               },
               "severity": {
@@ -14554,7 +14694,8 @@
                 "type": "string",
                 "enum": [
                   "gating",
-                  "advisory"
+                  "advisory",
+                  "required"
                 ]
               },
               "severity": {
@@ -14577,7 +14718,8 @@
                 "type": "string",
                 "enum": [
                   "gating",
-                  "advisory"
+                  "advisory",
+                  "required"
                 ]
               },
               "severity": {
@@ -14604,7 +14746,8 @@
                 "type": "string",
                 "enum": [
                   "gating",
-                  "advisory"
+                  "advisory",
+                  "required"
                 ]
               },
               "severity": {
@@ -14631,7 +14774,8 @@
                 "type": "string",
                 "enum": [
                   "gating",
-                  "advisory"
+                  "advisory",
+                  "required"
                 ]
               },
               "severity": {
@@ -19890,8 +20034,8 @@
           },
           "idSource": {
             "type": "string",
-            "description": "`generated` ids are positional and UNSTABLE across config edits; only `explicit` ids may be referenced by a gate policy or tracked across runs.",
-            "enum": ["explicit", "generated"]
+            "description": "`generated` ids are positional and UNSTABLE across config edits; only `explicit` ids may be referenced by a gate policy or tracked across runs. `platform` marks a scorer the platform owns rather than the suite author \u2014 the hosted judge \u2014 whose id is stable but not author-editable.",
+            "enum": ["explicit", "generated", "platform"]
           },
           "scorerVersion": {
             "type": "string"
@@ -19914,8 +20058,8 @@
           },
           "role": {
             "type": "string",
-            "description": "Only `gating` scorers decide the iteration's verdict.",
-            "enum": ["gating", "advisory"]
+            "description": "Only required scorers decide the iteration's verdict. `required` is the canonical spelling and `gating` its legacy one; a response uses `gating` unless the request sent `x-mcpjam-eval-vocabulary: 2`.",
+            "enum": ["gating", "advisory", "required"]
           },
           "onError": {
             "type": "string",

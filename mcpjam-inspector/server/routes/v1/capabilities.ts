@@ -30,7 +30,7 @@ import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1Resource } from "./envelope.js";
 import { translateConvexReadError } from "./convex-read-errors.js";
 import { resolveAgentSurface } from "../../utils/agent-attribution.js";
-import { EVAL_VOCABULARY_CAPABILITY } from "../../utils/eval-vocabulary.js";
+import { EVAL_VOCABULARY_CAPABILITY } from "./eval-vocabulary.js";
 
 const capabilities = new Hono();
 

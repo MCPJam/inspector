@@ -33,6 +33,7 @@ import {
   type Scorer,
   type ScorerRunOptions,
 } from "./types.js";
+import { isRequiredRole } from "../predicates/policy.js";
 
 class ScorerTimeoutError extends Error {
   constructor(timeoutMs: number) {
@@ -178,7 +179,7 @@ export function scoresPassed(
   for (const score of scores) {
     const definition = byHash.get(score.definitionHash);
     if (!definition) return false;
-    if (definition.role !== "gating") continue;
+    if (!isRequiredRole(definition.role)) continue;
 
     switch (score.status) {
       case "scored":
@@ -206,7 +207,7 @@ export function scoresPassed(
   // as a pass" the whole contract exists to prevent.
   const present = new Set(scores.map((score) => score.definitionHash));
   for (const [hash, definition] of byHash) {
-    if (definition.role === "gating" && !present.has(hash)) return false;
+    if (isRequiredRole(definition.role) && !present.has(hash)) return false;
   }
   return true;
 }

@@ -684,14 +684,14 @@ function stepRows(
         label: kindLabel,
         kindLabel,
         // A DOM assertion carries no check policy — there is no field to
-        // author — so it is a gate and says so rather than inventing a role.
-        role: "gate",
+        // author — so it is required and says so rather than inventing a role.
+        role: "required",
         roleLock: "widget",
         editable: true,
         stepNumber,
         stepId: step.id,
         widgetAssertion: assertion,
-        tooltip: rowTooltip(kindLabel, "gate", true),
+        tooltip: rowTooltip(kindLabel, "required", true),
         join: { kind: "step", stepId: step.id },
       });
       continue;
@@ -747,13 +747,13 @@ export function buildCaseScorecard(input: CaseScorecardInput): CaseScorecard {
     provenance: "route",
     label: routeLabel(route),
     kindLabel: "Route",
-    // The matcher is always a gate: an advisory route is not a route (see
+    // The matcher is always required: an advisory route is not a route (see
     // `isToolCalledWithAssert`), so there is nothing here to lower.
-    role: "gate",
+    role: "required",
     roleLock: "route",
     editable: route.kind !== "locked",
     route,
-    tooltip: rowTooltip("Tool-call matching", "gate", false),
+    tooltip: rowTooltip("Tool-call matching", "required", false),
     ...(route.kind === "tools" || route.kind === "noTool"
       ? {
           join: {

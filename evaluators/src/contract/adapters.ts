@@ -28,6 +28,7 @@ import {
   type ScorerRole,
   type ScoreResult,
 } from "./types.js";
+import { authoredRequiredRole } from "./policy-spelling.js";
 
 /** Stable id of the scorer that projects `config.expectedToolCalls`. */
 export const TOOL_MATCH_SCORER_ID = "tool-match";
@@ -83,7 +84,11 @@ export function predicateScoreDefinition(
     label: predicate.type,
     deterministic: true,
     passThreshold: 1,
-    role: options.role ?? checkRole(predicate),
+    // `checkRole` returns the EFFECTIVE pair; a required one is then written
+    // in whichever spelling this build emits.
+    role:
+      options.role ??
+      (checkRole(predicate) === "advisory" ? "advisory" : authoredRequiredRole()),
   };
 }
 
@@ -155,7 +160,7 @@ export function toolMatchScoreDefinition(options: {
     label: "expected tool calls",
     deterministic: true,
     passThreshold: 1,
-    role: options.role ?? "gating",
+    role: options.role ?? authoredRequiredRole(),
   };
 }
 
@@ -235,7 +240,7 @@ export function legacyTestScoreDefinition(options?: {
     label: "test()",
     deterministic: true,
     passThreshold: 1,
-    role: options?.role ?? "gating",
+    role: options?.role ?? authoredRequiredRole(),
   };
 }
 

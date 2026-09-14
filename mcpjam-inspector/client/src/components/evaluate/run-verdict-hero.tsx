@@ -1,10 +1,12 @@
 /**
- * Pairing pass/fail bars, the sentence, the action — then the page measurements.
+ * One measurement row per client/model pairing, then the insights.
  *
- * Reading order IS the design here. Pass/fail is a per-client decision, so it
- * sits with the pairing — logo, name, bar, and key — not as one rolled-up
- * PASSED tile. Insights follow. Latency, tokens, and tool calls stay a
- * page-level strip at the bottom.
+ * Reading order IS the design here. Everything a run measures is a per-client
+ * fact, so the whole row belongs to the pairing: logo, name, pass rate,
+ * passed/failed, and the four measurements. Latency, tokens, and tool calls
+ * used to be one page-level strip underneath; rolled up across two clients
+ * that figure described neither of them, so it now sits in each row against
+ * the pairing it was measured on.
  *
  * Every string comes from {@link buildRunVerdictHero}. The view chooses type
  * and colour; it never decides what is true.
@@ -33,7 +35,6 @@ import {
   type HeroPairingPass,
   type HeroStatDelta,
 } from "./run-verdict-hero-deltas";
-import { ResultCountBar, ResultCountKey } from "./result-count-bar";
 import type {
   HeroVerdictTone,
   RunVerdictHeroView,
@@ -48,8 +49,9 @@ const VERDICT_TONE_CLASS: Record<HeroVerdictTone, string> = {
   neutral: "text-muted-foreground",
 };
 
+/** Absent stays absent — a dash, never a zero. Callers label it for a reader. */
 function formatCount(value: number | null): string {
-  if (value === null) return "not recorded";
+  if (value === null) return "—";
   return formatHeroCount(value);
 }
 
@@ -60,12 +62,10 @@ const DELTA_TONE_CLASS = {
 } as const;
 
 function StatDelta({ delta }: { delta: HeroStatDelta }) {
-  const Arrow =
-    delta.direction === "up"
-      ? ArrowUp
-      : delta.direction === "down"
-        ? ArrowDown
-        : null;
+  // An unchanged measurement says nothing worth a second glyph. The row is
+  // dense enough without a column of lonely equals signs.
+  if (delta.direction === "same") return null;
+  const Arrow = delta.direction === "up" ? ArrowUp : ArrowDown;
   return (
     <span
       className={cn(
@@ -75,37 +75,50 @@ function StatDelta({ delta }: { delta: HeroStatDelta }) {
       aria-label={`${delta.label} vs previous run`}
       data-testid="run-verdict-stat-delta"
     >
-      {Arrow ? <Arrow className="size-3" aria-hidden /> : null}
+      <Arrow className="size-3" aria-hidden />
       {delta.label}
     </span>
   );
 }
 
-function Stat({
+const PAIRING_STAT_TONE_CLASS = {
+  pass: "text-success",
+  fail: "text-destructive",
+  neutral: "text-foreground",
+} as const;
+
+/** One labelled measurement inside a pairing row. */
+function PairingStat({
   label,
   value,
-  detail,
   delta,
+  tone = "neutral",
+  unavailable = false,
 }: {
   label: string;
   value: string;
-  detail?: string;
   delta?: HeroStatDelta | null;
+  tone?: keyof typeof PAIRING_STAT_TONE_CLASS;
+  /** Absent is not zero. The dash carries the reason for a screen reader. */
+  unavailable?: boolean;
 }) {
   return (
-    <div className="min-w-0 px-4 py-2 first:pl-0">
-      <div className="text-[10.5px] font-medium uppercase tracking-wide text-muted-foreground">
+    <div className="min-w-0" data-testid="run-verdict-pairing-stat">
+      <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
         {label}
       </div>
-      <div className="mt-0.5 flex flex-wrap items-baseline gap-x-1.5">
-        <div className="text-[15px] font-semibold tabular-nums text-foreground">
+      <div className="mt-0.5 flex flex-wrap items-baseline gap-x-1">
+        <span
+          className={cn(
+            "text-[13px] font-semibold tabular-nums",
+            PAIRING_STAT_TONE_CLASS[tone],
+          )}
+          {...(unavailable ? { "aria-label": `${label} not recorded` } : {})}
+        >
           {value}
-        </div>
+        </span>
         {delta ? <StatDelta delta={delta} /> : null}
       </div>
-      {detail ? (
-        <div className="text-[11.5px] text-muted-foreground">{detail}</div>
-      ) : null}
     </div>
   );
 }
@@ -128,44 +141,96 @@ function PairingPassList({ pairings }: { pairings: HeroPairingPass[] }) {
       className="divide-y divide-border/60"
       data-testid="run-verdict-pairings"
     >
-      {pairings.map((pairing) => {
-        const counts = {
-          passed: pairing.passed,
-          failed: pairing.failed,
-          pending: pairing.pending,
-          cancelled: pairing.cancelled,
-        };
-        const showDelta =
-          pairing.delta != null && pairing.delta.direction !== "same";
-        return (
-          <li
-            key={pairing.key}
-            className="flex min-w-0 items-center gap-4 py-4"
-            data-testid="run-verdict-pairing"
-          >
-            <div className="flex w-44 shrink-0 items-center gap-2">
-              <img
-                src={resolveHostLogoByName(pairing.client, theme)}
-                alt=""
-                className="size-4 shrink-0 object-contain"
-              />
-              <span className="min-w-0 truncate text-[13px] leading-none">
-                <span className="font-medium text-foreground">
-                  {pairing.client}
-                </span>
-                <span className="text-muted-foreground"> · {pairing.model}</span>
+      {pairings.map((pairing) => (
+        <li
+          key={pairing.key}
+          className="flex min-w-0 flex-wrap items-center gap-x-6 gap-y-3 py-4"
+          data-testid="run-verdict-pairing"
+        >
+          <div className="flex w-48 min-w-0 shrink-0 items-center gap-2">
+            <img
+              src={resolveHostLogoByName(pairing.client, theme)}
+              alt=""
+              className="size-5 shrink-0 object-contain"
+            />
+            <span className="min-w-0">
+              <span className="block truncate text-[13px] font-semibold text-foreground">
+                {pairing.client}
               </span>
-            </div>
-            <div className="flex w-40 shrink-0 items-center gap-2">
-              <ResultCountKey counts={counts} />
-              {showDelta && pairing.delta ? (
-                <StatDelta delta={pairing.delta} />
-              ) : null}
-            </div>
-            <ResultCountBar counts={counts} className="min-w-0 flex-1" />
-          </li>
-        );
-      })}
+              <span className="block truncate font-mono text-[11px] text-muted-foreground">
+                {pairing.model}
+              </span>
+            </span>
+          </div>
+
+          <div
+            className="flex shrink-0 items-baseline gap-1.5"
+            data-testid="run-verdict-pairing-rate"
+          >
+            <span className="text-[26px] font-bold leading-none tabular-nums text-foreground">
+              {pairing.passRate == null
+                ? "—"
+                : `${Math.round(pairing.passRate)}%`}
+            </span>
+            {pairing.passRateDelta ? (
+              <StatDelta delta={pairing.passRateDelta} />
+            ) : null}
+          </div>
+
+          <div className="flex shrink-0 items-start gap-5">
+            <PairingStat
+              label="Passed"
+              value={String(pairing.passed)}
+              tone="pass"
+              delta={pairing.delta}
+            />
+            <PairingStat
+              label="Failed"
+              value={String(pairing.failed)}
+              tone="fail"
+            />
+            {/* Only when they exist: a run with no pending rows should not
+                carry a column of zeroes, but one that has them must not be
+                reported as though every iteration decided. */}
+            {pairing.pending > 0 ? (
+              <PairingStat label="Pending" value={String(pairing.pending)} />
+            ) : null}
+            {pairing.cancelled > 0 ? (
+              <PairingStat
+                label="Cancelled"
+                value={String(pairing.cancelled)}
+              />
+            ) : null}
+          </div>
+
+          <div className="flex min-w-0 flex-1 items-start gap-5 border-l border-border/60 pl-5">
+            <PairingStat
+              label="P50"
+              value={formatRunCaseLatencyMs(pairing.stats.latencyP50Ms)}
+              delta={pairing.statDeltas.latencyP50}
+              unavailable={pairing.stats.latencyP50Ms == null}
+            />
+            <PairingStat
+              label="P95"
+              value={formatRunCaseLatencyMs(pairing.stats.latencyP95Ms)}
+              delta={pairing.statDeltas.latencyP95}
+              unavailable={pairing.stats.latencyP95Ms == null}
+            />
+            <PairingStat
+              label="Tokens"
+              value={formatCount(pairing.stats.tokens)}
+              delta={pairing.statDeltas.tokens}
+              unavailable={pairing.stats.tokens == null}
+            />
+            <PairingStat
+              label="Calls"
+              value={formatCount(pairing.stats.toolCalls)}
+              delta={pairing.statDeltas.toolCalls}
+              unavailable={pairing.stats.toolCalls == null}
+            />
+          </div>
+        </li>
+      ))}
     </ul>
   );
 }
@@ -336,28 +401,6 @@ export function RunVerdictHero({
             ) : null}
           </div>
         ) : null}
-      </div>
-
-      <div
-        className="grid grid-cols-3 divide-x divide-border/40 border-t border-border/60 pt-3"
-        data-testid="run-verdict-stats"
-      >
-        <Stat
-          label="Latency p50"
-          value={formatRunCaseLatencyMs(view.stats.latencyP50Ms)}
-          detail={`p95 ${formatRunCaseLatencyMs(view.stats.latencyP95Ms)}`}
-          delta={view.deltas?.latency}
-        />
-        <Stat
-          label="Tokens"
-          value={formatCount(view.stats.tokens)}
-          delta={view.deltas?.tokens}
-        />
-        <Stat
-          label="Tool calls"
-          value={formatCount(view.stats.toolCalls)}
-          delta={view.deltas?.toolCalls}
-        />
       </div>
     </section>
   );

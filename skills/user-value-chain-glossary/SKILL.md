@@ -90,6 +90,12 @@ what arrives, never widen it.
 | `egressUnverified` | the connection failed with no evidence that our own network egress works |
 | `lifecycleStopped` | the run was stopped mid-flight |
 
+A `setupAborted`, `egressUnverified`, `connectFailed` or `toolsListFailed` row
+may carry the producer's one-line explanation in `evidence.predicateReasons`
+— "rejected the stored token (invalid_token)", "MCPJam could not reach its
+authorization server" — the same slot judge reasons use. It explains the
+state; it never changes it.
+
 **The stage does not apply**
 
 | Wire value | …because |
@@ -286,8 +292,8 @@ Getting these wrong produces numbers that look authoritative and mean nothing.
 
 1. **Read `measurementUnit` before quoting any count.** Under verdict policy
    v2 the counts are `caseVariant` — one case under one provider/model
-   execution variant, with repetitions as TRIALS inside it. On a legacy run
-   they are `trial`. A 3-case suite with 5 repetitions is legitimately "3"
+   execution variant, with its configured iterations as TRIALS inside it. On a legacy run
+   they are `trial`. A 3-case suite with 5 iterations is legitimately "3"
    under one unit and "15" under the other, so a count quoted without its unit
    is not a fact.
 2. **A zero denominator is NOT MEASURED, never `0`.** Stage analytics stores

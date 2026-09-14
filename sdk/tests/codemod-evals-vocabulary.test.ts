@@ -810,12 +810,59 @@ describe("the evaluator-vocabulary scanner", () => {
     const protectedSpec = JSON.parse(
       readFileSync(join(dir, "protected.json"), "utf8")
     ) as { fields: Array<{ name: string; paths?: string[] }> };
+    // Every key the configuration-revision payload names, plus `role` — whose
+    // VALUE is frozen in that payload for the same reason the keys are: the
+    // payload is an identity, and rotating it renames nothing while orphaning
+    // everything.
     expect(
       protectedSpec.fields
         .filter((f) => f.paths?.includes("convex/lib/evalConfigRevision.ts"))
         .map((f) => f.name)
         .sort()
-    ).toEqual(["defaultPredicates", "predicates", "repetitions", "runs"]);
+    ).toEqual([
+      "defaultPredicates",
+      "predicates",
+      "repetitions",
+      "role",
+      "runs",
+    ]);
+  });
+
+  it("protects `role` inside both hash payloads, not just the revision one", () => {
+    // `definitionHash` is the join key between a stored score row and its
+    // definition, and the selector `eval gate --baseline` resolves a scorer
+    // set with. A rename that reached `derive.ts` would turn this program's
+    // value rename into a rehash: every historical row stops joining, every
+    // baseline reports its whole scorer set replaced, and both sides of the
+    // rehash agree with each other so nothing goes red.
+    const dir = dirname(SCANNER);
+    const protectedSpec = JSON.parse(
+      readFileSync(join(dir, "protected.json"), "utf8")
+    ) as { fields: Array<{ name: string; paths?: string[] }> };
+    const role = protectedSpec.fields.find((f) => f.name === "role");
+    expect(role, "`role` must be a protected field").toBeDefined();
+    for (const owner of [
+      "evaluators/src/contract/derive.ts",
+      "sdk/src/contract/derive.ts",
+      "convex/lib/scoreContract.ts",
+      "convex/lib/evalConfigRevision.ts",
+    ]) {
+      expect(role!.paths, owner).toContain(owner);
+    }
+  });
+
+  it("proposes no rename of the role VALUE — it is an alias, not a move", () => {
+    // `gating` → `required` is deliberately absent from the mapping. The two
+    // are one value with two spellings and the legacy one is frozen in the
+    // hash payload forever, so there is nothing for a codemod to rewrite. The
+    // scanner would refuse it anyway: `required` is already in use as a word.
+    const dir = dirname(SCANNER);
+    const mapping = JSON.parse(
+      readFileSync(join(dir, "mapping.json"), "utf8")
+    ) as { renames: Array<{ from: string; to: string }> };
+    expect(
+      mapping.renames.filter((r) => r.from === "gating" || r.to === "required")
+    ).toEqual([]);
   });
 
   const COUNT_CASE = {

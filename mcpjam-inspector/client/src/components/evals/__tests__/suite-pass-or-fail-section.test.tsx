@@ -116,7 +116,7 @@ describe("SuitePassOrFailSection", () => {
     }
   });
 
-  it("marks the judge advisory by default and gating when the role says so", () => {
+  it("marks the judge advisory by default and required when the role says so", () => {
     const advisory = renderSection();
     expect(
       advisory.container.querySelector(
@@ -131,13 +131,13 @@ describe("SuitePassOrFailSection", () => {
     const card = gating.container.querySelector(
       '[data-testid="stage-chain-card-userValue"]',
     );
-    expect(card?.textContent).toContain("Gated");
+    expect(card?.textContent).toContain("Required");
     const group = gating.container.querySelector(
       '[data-stage-group="userValue"]',
     ) as HTMLElement;
     const judgeRole = group.querySelector('[aria-label="Judge role"]');
     expect(
-      within(judgeRole as HTMLElement).getByRole("button", { name: "Gate" }),
+      within(judgeRole as HTMLElement).getByRole("button", { name: "Required" }),
     ).toHaveAttribute("aria-pressed", "true");
   });
 

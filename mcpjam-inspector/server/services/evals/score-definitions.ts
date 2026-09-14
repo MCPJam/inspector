@@ -68,6 +68,8 @@ export {
   HOSTED_TOOL_MATCH_SCORER_ID,
   HOSTED_JUDGE_SCORER_ID,
 } from "@/shared/hosted-criterion-id";
+import { authoredRequiredRole } from "@mcpjam/sdk/contract";
+import { isRequiredRole } from "@mcpjam/sdk/predicates";
 
 /**
  * Version of the hosted predicate projection — the "predicate evaluator
@@ -150,7 +152,7 @@ export function hostedToolMatchScoreDefinition(args: {
     label: "expected tool calls",
     deterministic: true,
     passThreshold: 1,
-    role: "gating",
+    role: authoredRequiredRole(),
   };
 }
 
@@ -171,13 +173,21 @@ export function hostedJudgeScoreDefinition(args: {
   model?: string;
   /**
    * What the RUN's frozen config said this judge was allowed to do, read off
-   * the verdict the backend stamped. Absent, or anything but the literal
-   * `"gating"`, is advisory — the default has to fail closed, because a role
-   * this build does not recognise must never be read as licence to fail a run.
+   * the verdict the backend stamped. Absent, or anything the build does not
+   * recognise, is advisory — the default has to fail closed, because a role
+   * this build cannot read must never be read as licence to fail a run.
+   *
+   * BOTH spellings of the required role are recognised. The backend stamped
+   * `"gating"` before the rename and stamps `"required"` after it, and this
+   * field is read off historical evidence, so "recognised" has to mean both
+   * forever — a comparator that took only one would un-gate every judge on one
+   * side of that line, silently.
    */
-  role?: "advisory" | "gating";
+  role?: ScorerRole;
 }): ScoreDefinition {
-  const role = args.role ?? "advisory";
+  const role: ScorerRole = isRequiredRole(args.role)
+    ? authoredRequiredRole()
+    : "advisory";
   return {
     scorerId: HOSTED_JUDGE_SCORER_ID,
     idSource: "platform",

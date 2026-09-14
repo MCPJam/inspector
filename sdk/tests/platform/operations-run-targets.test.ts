@@ -1655,3 +1655,76 @@ describe("run operations declare their hazard", () => {
     expect(runEvalCaseOperation.risk).toBe("spend");
   });
 });
+/**
+ * The run knob's two spellings. `iterations` is the canonical word for the
+ * configured count (`docs/evals-vocabulary-consolidation.md`); `repetitions`
+ * is its legacy spelling. Both fold onto the wire's `iterationOverride`, so
+ * which one is canonical is a fact about documentation and refusals — never
+ * about what a run does.
+ */
+describe("run knob spelling: iterations is canonical, repetitions legacy", () => {
+  const BOTH_SPELLINGS =
+    "Send iterations or repetitions, not both — they are two spellings of one field.";
+
+  it("documents iterations as the knob and repetitions as its legacy spelling", () => {
+    for (const operation of [runEvalSuiteOperation, runEvalCaseOperation]) {
+      const shape = operation.inputSchema.shape;
+      expect(shape.iterations.description).toContain("FOR THIS RUN ONLY");
+      expect(shape.repetitions.description).toBe(
+        "Legacy spelling of iterations."
+      );
+    }
+  });
+
+  it("folds iterations alone onto iterationOverride", async () => {
+    const { client, fetchMock } = makeClient();
+    await runEvalSuiteOperation.execute(
+      { suite: "Smoke", iterations: 4 },
+      { client }
+    );
+    expect(bodiesTo(fetchMock, "/eval-runs")[0].iterationOverride).toBe(4);
+  });
+
+  it("still folds the legacy repetitions spelling onto iterationOverride", async () => {
+    const { client, fetchMock } = makeClient();
+    await runEvalSuiteOperation.execute(
+      { suite: "Smoke", repetitions: 4 },
+      { client }
+    );
+    expect(bodiesTo(fetchMock, "/eval-runs")[0].iterationOverride).toBe(4);
+
+    const single = makeClient();
+    await runEvalCaseOperation.execute(
+      { suite: "Smoke", case: "echo works", repetitions: 2 },
+      single
+    );
+    expect(bodiesTo(single.fetchMock, "/eval-runs")[0].iterationOverride).toBe(
+      2
+    );
+  });
+
+  it("refuses both spellings at once, on the canonical path, with one sentence", () => {
+    // A precedence rule would be invisible: a half-migrated script passing
+    // both keeps running and spends on whichever count won. The refusal names
+    // the canonical field so the fix is the same on every surface.
+    for (const [operation, input] of [
+      [
+        runEvalSuiteOperation,
+        { suite: "Smoke", iterations: 3, repetitions: 3 },
+      ],
+      [
+        runEvalCaseOperation,
+        { suite: "Smoke", case: "echo works", iterations: 3, repetitions: 3 },
+      ],
+    ] as const) {
+      const parsed = operation.inputSchema.safeParse(input);
+      expect(parsed.success).toBe(false);
+      if (parsed.success) continue;
+      const issue = parsed.error.issues.find((entry) =>
+        entry.message.includes("two spellings")
+      );
+      expect(issue?.message).toBe(BOTH_SPELLINGS);
+      expect(issue?.path).toEqual(["iterations"]);
+    }
+  });
+});

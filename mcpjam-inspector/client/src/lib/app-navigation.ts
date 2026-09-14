@@ -211,13 +211,14 @@ export function buildHostComparePath(
 export const userTestingCreatePath = `${routePaths.userTesting}/new`;
 
 /**
- * Detail sub-tabs on `/user-testing/:scenarioId`. Findings is the landing tab.
- * Edit is a sibling route (`/edit`), not a tab.
+ * Detail sub-tabs on `/user-testing/:scenarioId`. Edit is a sibling route
+ * (`/edit`), not a tab.
  *
- * Findings took the landing spot from Insights (BB-146). Both the parser's
- * fallback and the builder's omission rule below have to agree on which tab
- * that is, or a link either carries a redundant `?tab=` or silently drops the
- * one it meant.
+ * Which tab a BARE path lands on is not a constant — see
+ * {@link defaultUserTestingDetailTab}. Both the parser's fallback and the
+ * builder's omission rule below take it as an argument, and they have to be
+ * given the same one, or a link either carries a redundant `?tab=` or silently
+ * drops the one it meant.
  */
 export type UserTestingDetailTab = "sessions" | "insights" | "findings";
 
@@ -226,6 +227,35 @@ const USER_TESTING_DETAIL_TABS: ReadonlySet<string> = new Set([
   "insights",
   "findings",
 ]);
+
+/**
+ * Which tab a bare `/user-testing/:scenarioId` opens on, for a study holding
+ * `sessionCount` tester sessions.
+ *
+ * Findings took the landing spot from Insights (BB-146), and keeps it for
+ * every study that has anything to find. A study with NO sessions is the one
+ * case where it is the wrong door: Findings is a summary of what testers did,
+ * so with nobody through the link it renders as an empty frame that reads like
+ * a broken page rather than a new one. Insights opens on the study's own empty
+ * state, which says what is missing and how to get it.
+ *
+ * ABSENT IS NOT ZERO. `sessionCount` is optional on the list row — a
+ * deployment that does not report the counter says `undefined`, which means
+ * "we don't know", and a study we cannot count is far more likely to have
+ * sessions than not. Only a counted zero moves the door; everything else lands
+ * on Findings exactly as before.
+ *
+ * The answer changes when the first session lands, so a reader sitting on a
+ * bare URL watching an empty study is moved from Insights to Findings at that
+ * moment. That is deliberate: they expressed no preference (a chosen tab is
+ * named in the URL and wins over this), and the tab they arrive on is the one
+ * that just got the data they were waiting for.
+ */
+export function defaultUserTestingDetailTab(
+  sessionCount: number | undefined,
+): UserTestingDetailTab {
+  return sessionCount === 0 ? "insights" : "findings";
+}
 
 /**
  * Build a path to one User Testing scenario. `scenarioId` is the scenario's
@@ -242,6 +272,14 @@ export function buildUserTestingScenarioPath(
   scenarioId: string,
   opts: {
     tab?: UserTestingDetailTab;
+    /**
+     * The landing tab this link's reader will fall back to, from
+     * {@link defaultUserTestingDetailTab}. Callers that know the study's
+     * session count pass it so `tab` can be omitted when it matches; callers
+     * that don't (a plain link to a scenario, which names no tab anyway) leave
+     * it and get the historical default.
+     */
+    defaultTab?: UserTestingDetailTab;
     session?: string;
     sel?: string;
     /** Typed like `tab`, so an unknown view cannot be minted into a link. */
@@ -251,9 +289,14 @@ export function buildUserTestingScenarioPath(
   const base = `${routePaths.userTesting}/${encodeURIComponent(scenarioId)}`;
   const search = new URLSearchParams();
   // Omit the landing tab, name every other one. This must track the parser's
-  // fallback: naming the default would put a redundant `?tab=findings` on every
-  // link, and omitting a non-default would drop the reader back to Findings.
-  if (opts.tab && opts.tab !== "findings") search.set("tab", opts.tab);
+  // fallback — given the SAME `defaultTab`: naming the default would put a
+  // redundant `?tab=` on every link, and omitting a non-default would drop the
+  // reader back onto the landing tab. On an empty study that second failure is
+  // the one that bites: the default is Insights there, so a Findings link that
+  // omitted its tab would bounce the reader straight back to Insights and the
+  // tab would look unclickable.
+  const defaultTab = opts.defaultTab ?? "findings";
+  if (opts.tab && opts.tab !== defaultTab) search.set("tab", opts.tab);
   if (opts.session) search.set("session", opts.session);
   if (opts.sel) search.set("sel", opts.sel);
   // `flow` is the default; only the non-default view needs saying.
@@ -277,17 +320,24 @@ export function isLegacyUserTestingEditTab(search: string): boolean {
 }
 
 /**
- * Parse the sub-tab query on a scenario path. Missing / unknown → findings.
- * A `session` deep-link without an explicit tab still opens Sessions.
+ * Parse the sub-tab query on a scenario path. Missing / unknown → `defaultTab`
+ * (from {@link defaultUserTestingDetailTab}; findings for callers that cannot
+ * count the study's sessions). A `session` deep-link without an explicit tab
+ * still opens Sessions — that outranks the landing tab, because the link names
+ * a session and Sessions is the only tab that can show one.
+ *
  * Legacy edit/share/preview queries are NOT returned here — use
  * {@link isLegacyUserTestingEditTab} and redirect to `/edit`.
  *
  * `?tab=insights` stays an explicit, honoured value: links handed out while
  * Insights was the landing tab must still land on Insights rather than being
- * silently rehomed by the change of default.
+ * silently rehomed by the change of default. The same rule is what makes
+ * `?tab=findings` work on an empty study, where findings is no longer the
+ * fallback: an explicitly named tab always wins over the default.
  */
 export function parseUserTestingDetailTab(
   search: string,
+  defaultTab: UserTestingDetailTab = "findings",
 ): UserTestingDetailTab {
   const params = new URLSearchParams(search);
   const tab = params.get("tab");
@@ -296,7 +346,7 @@ export function parseUserTestingDetailTab(
     return tab as UserTestingDetailTab;
   }
   if (params.get("session")) return "sessions";
-  return "findings";
+  return defaultTab;
 }
 
 /** The Swarms create route. Static, so it outranks `:swarmId`. */

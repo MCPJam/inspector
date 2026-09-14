@@ -14,9 +14,8 @@ import { dirname, resolve } from "node:path";
  *   - an `x-mcpjam-eval-vocabulary` extension naming, per vocabulary, the
  *     component schemas its request body and response conform to.
  *
- * This pins the two halves together: an operation carrying one without the
- * other is a documented header that changes nothing, or an undocumented
- * shape a client cannot generate.
+ * This pins that every extension sits behind the header (a shape no request
+ * could select is documentation of nothing) and names real `…V2` schemas.
  */
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -59,16 +58,23 @@ describe("x-mcpjam-eval-vocabulary in openapi.json", () => {
     );
   });
 
-  it("documents vocabulary 2 on exactly the operations that carry the header", () => {
-    const withHeader = operations
-      .filter((op) => op.parameters?.some((p) => p.$ref === HEADER_REF))
-      .map((op) => op.operationId);
+  it("documents vocabulary-2 shapes only on operations that carry the header", () => {
+    // The header is on every eval operation whose response carries a policy
+    // role (the value projection); the extension is on the subset whose
+    // FIELD spellings differ. An extension without the header would document
+    // a shape no request can select.
+    const withHeader = new Set(
+      operations
+        .filter((op) => op.parameters?.some((p) => p.$ref === HEADER_REF))
+        .map((op) => op.operationId),
+    );
     const withExtension = operations
       .filter((op) => op["x-mcpjam-eval-vocabulary"] !== undefined)
       .map((op) => op.operationId);
-    expect(withHeader.sort()).toEqual(withExtension.sort());
-    // The guard above is vacuous on an empty set.
-    expect(withHeader.length).toBeGreaterThan(0);
+    expect(withExtension.length).toBeGreaterThan(0);
+    for (const opId of withExtension) {
+      expect(withHeader.has(opId), `${opId} lacks the header`).toBe(true);
+    }
   });
 
   it("names only schemas that exist, and never the vocabulary-1 one", () => {

@@ -20,6 +20,7 @@ import {
   normalizeInitialLegacyHashBookmark,
   normalizeReturnTargetPath,
   parseSwarmDetailTab,
+  defaultUserTestingDetailTab,
   parseUserTestingDetailTab,
   pathnameToActiveTab,
   buildProjectSettingsTarget,
@@ -147,6 +148,60 @@ describe("User Testing detail / edit navigation", () => {
         ).search
       )
     ).toBe("sessions");
+  });
+
+  describe("landing tab depends on whether the study has sessions", () => {
+    it("sends a counted-empty study to Insights and everything else to Findings", () => {
+      // Findings summarises tester sessions; with none through the link it
+      // renders as an empty frame that reads like a broken page.
+      expect(defaultUserTestingDetailTab(0)).toBe("insights");
+      expect(defaultUserTestingDetailTab(1)).toBe("findings");
+      expect(defaultUserTestingDetailTab(42)).toBe("findings");
+    });
+
+    it("treats an unreported count as unknown, not as zero", () => {
+      // `sessionCount` is optional on the wire. A study we cannot count is far
+      // likelier to have sessions than not, so only a counted zero moves the
+      // door — otherwise a deployment without the counter would send every
+      // study, however busy, to the empty-study tab.
+      expect(defaultUserTestingDetailTab(undefined)).toBe("findings");
+    });
+
+    it("falls back to the landing tab it is given", () => {
+      expect(parseUserTestingDetailTab("", "insights")).toBe("insights");
+      expect(parseUserTestingDetailTab("", "findings")).toBe("findings");
+      // A session deep-link still outranks the landing tab: the link names a
+      // session, and Sessions is the only tab that can show one.
+      expect(parseUserTestingDetailTab("?session=thread-1", "insights")).toBe(
+        "sessions"
+      );
+    });
+
+    it("keeps Findings clickable on an empty study", () => {
+      // The regression this pairs with: with Insights as the fallback, a
+      // Findings link that omitted its tab would parse back to Insights, and
+      // the tab would look unclickable. Naming it is what stops that.
+      const path = buildUserTestingScenarioPath("cb-1", {
+        tab: "findings",
+        defaultTab: "insights",
+      });
+      expect(path).toBe("/user-testing/cb-1?tab=findings");
+      expect(
+        parseUserTestingDetailTab(new URL(`http://x${path}`).search, "insights")
+      ).toBe("findings");
+    });
+
+    it("omits Insights when Insights is the landing tab", () => {
+      const path = buildUserTestingScenarioPath("cb-1", {
+        tab: "insights",
+        defaultTab: "insights",
+        sel: "topic:c1",
+      });
+      expect(path).toBe("/user-testing/cb-1?sel=topic%3Ac1");
+      expect(
+        parseUserTestingDetailTab(new URL(`http://x${path}`).search, "insights")
+      ).toBe("insights");
+    });
   });
 
   it("builds the edit path and recognizes legacy edit/share/preview tabs", () => {

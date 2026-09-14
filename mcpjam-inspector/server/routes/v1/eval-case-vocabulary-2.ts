@@ -29,7 +29,7 @@ import {
   CASE_FIELD_ALIASES_V2,
   addBothSpellingsIssues,
   type EvalVocabulary,
-} from "../../utils/eval-vocabulary.js";
+} from "./eval-vocabulary.js";
 
 /**
  * Canonical → legacy pairs a vocabulary-2 case body refuses together.

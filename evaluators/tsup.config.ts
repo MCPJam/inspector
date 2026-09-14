@@ -14,6 +14,7 @@ export default defineConfig({
     "src/contract/adapters.ts",
     "src/contract/canonical.ts",
     "src/contract/derive.ts",
+    "src/contract/policy-spelling.ts",
     "src/contract/evaluator-types.ts",
     "src/contract/evaluator-derive.ts",
     "src/scorers/types.ts",
