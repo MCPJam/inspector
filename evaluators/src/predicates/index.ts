@@ -76,6 +76,10 @@ export {
   stripCheckPolicy,
   checkRole,
   checkSeverity,
+  isRequiredRole,
+  canonicalizeCheckRole,
+  canonicalizeCheckRoles,
+  type AuthoredCheckRole,
   type CheckRole,
   type CheckSeverity,
 } from "./policy.js";

@@ -9,6 +9,7 @@ import {
 import { useGoalCompletion } from "@/components/evals/use-goal-completion";
 import { GOAL_COMPLETION_DEFAULTS } from "@/shared/judge-defaults";
 import { JudgeAnswerRow, judgeAnswerState } from "./judge-answer-row";
+import { isRequiredRole } from "@mcpjam/sdk/predicates";
 
 export function CaseJudgeAnswer({
   run,
@@ -50,7 +51,9 @@ export function CaseJudgeAnswer({
     run?.goalCompletion?.threshold ??
     judgeConfig?.threshold ??
     GOAL_COMPLETION_DEFAULTS.threshold;
-  const gating = judgeConfig?.role === "gating";
+  // Either spelling: storage said `"gating"` before the rename and says
+  // `"required"` after it, and this row renders both old and new runs.
+  const gating = isRequiredRole(judgeConfig?.role);
   const status = run?.goalCompletionStatus;
 
   const judgeCase = resolveIterationJudge(iteration, run ? [run] : []);

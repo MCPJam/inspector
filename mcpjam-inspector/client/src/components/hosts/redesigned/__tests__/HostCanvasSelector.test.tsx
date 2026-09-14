@@ -164,10 +164,10 @@ describe("HostCanvasSelector", () => {
 
     await user.click(screen.getByTestId("host-canvas-current"));
 
-    // Deliberately asserts the same concrete value as the matching case in
-    // HostOverlayBar.test.tsx. The two pickers used to disagree here — one drew
-    // an empty circle — so pinning it from both sides is what catches a picker
-    // going back to its own resolver.
+    // Pins the concrete value, not just "some logo". This picker and the
+    // retired header bar used to disagree here — one drew an empty circle —
+    // so the assertion is what catches it going back to its own resolver
+    // instead of `resolveHostLogoByName`.
     const row = await screen.findByRole("menuitemradio", {
       name: /Acme Internal Bot/,
     });

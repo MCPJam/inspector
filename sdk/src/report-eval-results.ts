@@ -32,6 +32,11 @@ import {
 import { resolveRunLevelHostSnapshot } from "./sdk-evals-host-config-source.js";
 import { redactTelemetryString } from "./telemetry-redaction.js";
 import type { HostJson } from "./host-config/public-types.js";
+import {
+  capabilityAcceptsCanonicalRole,
+  definitionsForDeployment,
+} from "./contract/policy-spelling.js";
+import type { ScorerRole } from "./contract/types.js";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 const DEFAULT_RETRY_DELAYS_MS = [250, 750, 1750];
@@ -55,6 +60,13 @@ type RuntimeConfig = ReportingTransportOptions & {
   project: string;
   timeoutMs: number;
   retryDelaysMs: number[];
+  /**
+   * The target's advertised capabilities, resolved at most once per run by
+   * {@link resolveTargetCapabilities}. `null` records a probe that failed —
+   * distinct from `undefined`, which means "not asked yet" — so a target that
+   * cannot answer is not re-probed once per consumer.
+   */
+  capabilitiesCache?: unknown;
 };
 
 type StartRunResponse = {
@@ -99,8 +111,8 @@ export function projectRunVerdict(
     result: isEvalRunVerdict(run.result)
       ? run.result
       : run.result === "pending"
-        ? "pending"
-        : "failed",
+      ? "pending"
+      : "failed",
     ...(run.verdictPolicyVersion !== undefined
       ? {
           verdictPolicyVersion:
@@ -777,8 +789,8 @@ async function requestWithRetry<T>(
       typeof value.error === "string"
         ? value.error
         : typeof value.message === "string"
-          ? value.message
-          : "Reporting request was rejected"
+        ? value.message
+        : "Reporting request was rejected"
     );
   try {
     return await reportingRequest(
@@ -1118,9 +1130,8 @@ async function reportEvalResultsInternal(
   const uploadedResults = input.results;
   const externalRunId = input.externalRunId ?? generateExternalRunId();
   const serverReplayConfigs = resolveServerReplayConfigs(input);
-  const resultsWithIterationIds = withExternalIterationIds(
-    uploadedResults,
-    externalRunId
+  const resultsWithIterationIds = resultsWithFrozenPolicySpelling(
+    withExternalIterationIds(uploadedResults, externalRunId)
   );
 
   // Resolved once per `reportEvalResultsInternal` call so both code paths
@@ -1263,6 +1274,99 @@ export {
   withExternalIterationIds,
 };
 
+/**
+ * The target's advertised capabilities, fetched at most ONCE per run.
+ *
+ * Three consumers need them — the run-metadata gate, the run-evaluations gate,
+ * and the policy-role projection below — and each used to probe for itself. One
+ * memoized probe is both cheaper and more honest: two consumers can no longer
+ * disagree about what this deployment supports because their probes landed on
+ * either side of a deploy.
+ *
+ * Never throws for a target that cannot answer: a failed probe caches `null`
+ * and every consumer reads it as "does not advertise", which is the safe
+ * direction for all three. An explicit cancellation still propagates.
+ */
+async function resolveTargetCapabilities(
+  config: RuntimeConfig
+): Promise<unknown> {
+  if (config.capabilitiesCache !== undefined) return config.capabilitiesCache;
+  try {
+    const response = await requestWithRetry<{ capabilities?: unknown }>(
+      config,
+      ingestPath(config, "capabilities"),
+      {}
+    );
+    config.capabilitiesCache = response?.capabilities ?? null;
+  } catch (error) {
+    if (config.signal?.aborted) throw error;
+    config.capabilitiesCache = null;
+  }
+  return config.capabilitiesCache;
+}
+
+/**
+ * Freeze every policy role in the PRIMARY iteration payload at the legacy
+ * spelling.
+ *
+ * `scoreMetadata` embeds each iteration's `evaluationConfig` — definitions and
+ * all — into the results that go to `/report` and `/runs/iterations`. That is
+ * the payload almost every run sends, and a target that has not deployed the
+ * canonical spelling refuses a `required` role there. The refusal does not fail
+ * the upload: it quarantines every iteration of the run as
+ * `score_integrity_invalid`, so the dashboard shows an EMPTY run rather than a
+ * broken one.
+ *
+ * Frozen rather than negotiated, and that is the point. Negotiating would mean
+ * probing `/capabilities` before the first upload of every run, and a run whose
+ * probe was slow, cached, or answered by the wrong deployment would be exactly
+ * the run that got quarantined. The payload needs no canonical word anyway: it
+ * is a STORED contract, the backend keeps what it is given, and a vocabulary-2
+ * reader gets `required` from the read projection regardless. This is the same
+ * promise `hashSpelling` makes for the digest and `legacyRoleSpelling` makes
+ * for the gate report — a stored contract is historical evidence, and the
+ * spelling it was written in does not move.
+ *
+ * The optional `/runs/evaluations` path is the one place that DOES negotiate,
+ * because it already handshakes with the target for its own reasons and its
+ * rows are advisory by construction.
+ *
+ * Returns the input uncopied when nothing moves, so a run whose definitions
+ * carry no canonical role sends the bytes it has always sent.
+ */
+function resultsWithFrozenPolicySpelling(
+  results: EvalResultInput[]
+): EvalResultInput[] {
+  let changed = false;
+  const out = results.map((result) => {
+    const metadata = result.metadata as
+      | { evaluationConfig?: { definitions?: unknown } }
+      | undefined;
+    const definitions = metadata?.evaluationConfig?.definitions;
+    if (!Array.isArray(definitions)) return result;
+    // `definitionsForDeployment` with no advertised capability IS the freeze:
+    // one function decides the legacy spelling for both paths, so they cannot
+    // drift apart.
+    const frozen = definitionsForDeployment(
+      definitions as { role: ScorerRole }[],
+      undefined
+    );
+    if (frozen === definitions) return result;
+    changed = true;
+    return {
+      ...result,
+      metadata: {
+        ...metadata,
+        evaluationConfig: {
+          ...metadata!.evaluationConfig,
+          definitions: [...frozen],
+        },
+      },
+    } as EvalResultInput;
+  });
+  return changed ? out : results;
+}
+
 export async function requireReportingCapabilities(
   config: RuntimeConfig,
   input:
@@ -1270,16 +1374,14 @@ export async function requireReportingCapabilities(
     | import("./eval-reporting-types.js").MCPJamReportingConfig
 ): Promise<void> {
   if (!requiresRunMetadataCapability(input)) return;
-  try {
-    const response = await requestWithRetry<{
-      capabilities: { evalsRunMetadata?: number };
-    }>(config, ingestPath(config, "capabilities"), {});
-    if (response.capabilities.evalsRunMetadata === 1) return;
-  } catch (error) {
-    // Optional compatibility probing cannot discard the core run. An explicit
-    // upload cancellation still stops work immediately.
-    if (config.signal?.aborted) throw error;
-  }
+  // Optional compatibility probing cannot discard the core run; the shared
+  // resolver caches a failed probe as `null` and only rethrows an explicit
+  // upload cancellation.
+  const capabilities = (await resolveTargetCapabilities(config)) as
+    | { evalsRunMetadata?: number }
+    | null
+    | undefined;
+  if (capabilities?.evalsRunMetadata === 1) return;
   omitRunMetadata(input);
   addReportingWarning(config, {
     code: "RUN_METADATA_OMITTED",
@@ -1310,15 +1412,10 @@ export async function reportCaseRunEvaluations(
   evaluations: import("./run-evaluators.js").CaseRunEvaluation[]
 ): Promise<void> {
   try {
-    let supported = false;
-    try {
-      const support = await requestWithRetry<{
-        capabilities: { evalsRunEvaluations?: number };
-      }>(config, ingestPath(config, "capabilities"), {});
-      supported = support.capabilities.evalsRunEvaluations === 1;
-    } catch (error) {
-      if (config.signal?.aborted) throw error;
-    }
+    const capabilities = await resolveTargetCapabilities(config);
+    const supported =
+      (capabilities as { evalsRunEvaluations?: number } | null | undefined)
+        ?.evalsRunEvaluations === 1;
     if (!supported) {
       addReportingWarning(config, {
         code: "RUN_EVALUATIONS_OMITTED",
@@ -1330,7 +1427,15 @@ export async function reportCaseRunEvaluations(
     await requestWithRetry(config, ingestPath(config, "runs/evaluations"), {
       runId,
       externalRunId,
-      evaluations,
+      // The policy role's spelling is settled HERE, against the handshake this
+      // call already makes, rather than at the dozen builders that mint a
+      // definition. A target that does not advertise `vocabulary.values.role`
+      // has a `validateScorePayload` that refuses `required`, and the refusal
+      // is not a rejected upload — it quarantines every iteration of the run
+      // as `score_integrity_invalid`, so the dashboard shows an empty run
+      // rather than a broken one. Hash-neutral, so the rows file under the
+      // same digests either way.
+      evaluations: evaluationsForDeployment(evaluations, capabilities),
     });
   } catch {
     // The core run has already been acknowledged. Keep that fact even when
@@ -1341,6 +1446,37 @@ export async function reportCaseRunEvaluations(
         "Advisory case-run persistence could not be confirmed. Core eval results are persisted; local advisory results remain available.",
     });
   }
+}
+
+/**
+ * Put every definition's role into the spelling this target accepts.
+ *
+ * Returns the input unchanged and uncopied when nothing moves, which is both
+ * the common case and the one that matters: a target that speaks the canonical
+ * vocabulary gets a byte-identical body.
+ */
+function evaluationsForDeployment(
+  evaluations: import("./run-evaluators.js").CaseRunEvaluation[],
+  capabilities: unknown
+): import("./run-evaluators.js").CaseRunEvaluation[] {
+  if (capabilityAcceptsCanonicalRole(capabilities)) return evaluations;
+  let changed = false;
+  const out = evaluations.map((envelope) => {
+    const definitions = definitionsForDeployment(
+      envelope.evaluationConfig.definitions,
+      capabilities
+    );
+    if (definitions === envelope.evaluationConfig.definitions) return envelope;
+    changed = true;
+    return {
+      ...envelope,
+      evaluationConfig: {
+        ...envelope.evaluationConfig,
+        definitions: [...definitions],
+      },
+    };
+  });
+  return changed ? out : evaluations;
 }
 
 function addReportingWarning(
@@ -1373,10 +1509,22 @@ export async function resolveTerminationStatus(
   input: import("./eval-reporting-types.js").MCPJamReportingConfig
 ): Promise<"cancelled" | "timed_out" | undefined> {
   if (!input.terminalStatus) return undefined;
-  const support = await requestWithRetry<{
-    capabilities: { evalsRunTermination?: number };
-  }>(config, ingestPath(config, "capabilities"), {});
-  if (support.capabilities.evalsRunTermination !== 1)
+  // Reuse the run's answer when there IS one, but never inherit a failed probe.
+  // `resolveTargetCapabilities` caches a failure as `null` because every other
+  // consumer wants "does not advertise" — here that would turn a transport
+  // error into "your target does not support termination", which is a claim we
+  // have not earned. So a cache miss or a cached failure asks again and lets
+  // the transport error reach the caller as itself.
+  const cached = config.capabilitiesCache;
+  const capabilities =
+    cached && typeof cached === "object"
+      ? (cached as { evalsRunTermination?: number })
+      : (
+          await requestWithRetry<{
+            capabilities: { evalsRunTermination?: number };
+          }>(config, ingestPath(config, "capabilities"), {})
+        ).capabilities;
+  if (capabilities.evalsRunTermination !== 1)
     throw new EvalReportingError(
       "SDK_RUN_TERMINATION_UNSUPPORTED: target support is required to explicitly terminate a partial run",
       { isReportingBackendIncompatible: true }

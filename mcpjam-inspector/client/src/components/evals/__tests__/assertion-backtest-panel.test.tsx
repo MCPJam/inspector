@@ -1,5 +1,5 @@
 import { beforeEach, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 const mocks = vi.hoisted(() => ({ fetch: vi.fn() }));
 vi.mock("@/lib/session-token", () => ({ authFetch: mocks.fetch }));
@@ -126,13 +126,16 @@ it("continues a frozen preview during cooldown without re-running on edits", asy
   await userEvent.click(
     screen.getByRole("button", { name: "Preview assertions" }),
   );
-  expect(
-    (
-      screen.getByRole("button", {
-        name: "Preview assertions",
-      }) as HTMLButtonElement
-    ).disabled,
-  ).toBe(true);
+  // The response starts the cooldown in an effect after the click completes.
+  await waitFor(() =>
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Preview assertions",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true),
+  );
   await userEvent.click(
     screen.getByRole("button", { name: "Load more evidence" }),
   );

@@ -48,13 +48,17 @@ export type ScoreStatus = "scored" | "error" | "skipped" | "not_applicable";
 /**
  * Whether a scorer's verdict decides the iteration.
  *
- *   - `"gating"`   — a failing (or, per policy, an errored/skipped) score fails
- *     the iteration.
+ *   - `"required"` — a failing (or, per policy, an errored/skipped) score fails
+ *     the iteration. `"gating"` is its LEGACY spelling: one value, two words.
+ *     Every definition written before the rename carries `"gating"`, every
+ *     hash payload carries it forever (see `hashSpelling` in `./derive`), and
+ *     a reader must accept both — compare with `isRequiredRole`, never with a
+ *     literal.
  *   - `"advisory"` — reported and rendered, never consulted for `passed`. The
  *     hosted stance for judges ("Never mutates the run's `passed`") is the
  *     default here too.
  */
-export type ScorerRole = "gating" | "advisory";
+export type ScorerRole = "gating" | "advisory" | "required";
 
 /**
  * What a gating scorer's non-verdict status does to the iteration.

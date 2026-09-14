@@ -25,6 +25,8 @@ import type {
   ScorerRole,
 } from "../contract/types.js";
 import { DEFAULT_SCORER_TIMEOUT_MS, type Scorer } from "./types.js";
+import { authoredRequiredRole } from "../contract/policy-spelling.js";
+import { isRequiredRole } from "../predicates/policy.js";
 
 /**
  * Version of the prompt TEMPLATE this file renders. Distinct from the author's
@@ -199,7 +201,15 @@ export function judgeScorer(options: JudgeScorerOptions): Scorer {
       `judgeScorer threshold must be a number in [0,1], got ${String(options.threshold)}.`
     );
   }
-  const role = options.role ?? "advisory";
+  // An author who spelled it `"required"` gets this build's emitted spelling,
+  // so the definition (and therefore its hash) does not depend on which word
+  // they typed. Default stays advisory: a judge never gates unless asked.
+  const role: ScorerRole =
+    options.role === undefined
+      ? "advisory"
+      : isRequiredRole(options.role)
+        ? authoredRequiredRole()
+        : "advisory";
   const timeoutMs = options.timeoutMs ?? DEFAULT_SCORER_TIMEOUT_MS;
   const instruction = renderInstruction(options);
   // The author's rubric is POLICY, so it goes in the system channel with the

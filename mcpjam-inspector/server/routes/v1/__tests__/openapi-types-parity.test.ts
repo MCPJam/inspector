@@ -90,6 +90,15 @@ const PAIRS: Readonly<Record<string, string>> = {
   EvalSuiteFromFileSynced: "PlatformFileOwnedEvalSuiteSynced",
   EvalIteration: "PlatformEvalIteration",
   EvalCase: "PlatformEvalCase",
+  // The vocabulary-2 twins: what a client constructed with `evalVocabulary: 2`
+  // reads back. Paired so the canonical spellings the route projects and the
+  // ones the SDK types cannot drift apart without a red test.
+  EvalCaseV2: "PlatformEvalCaseV2",
+  EvalSuiteDetailV2: "PlatformEvalSuiteDetailV2",
+  // The policy `role` lives on this schema, and it is the one field the
+  // vocabulary negotiation projects. Pinned so the published enum and the one
+  // the boundary serves cannot drift apart without a red test.
+  ResolvedScoreDefinition: "PlatformResolvedScoreDefinition",
   EvalDeleted: "PlatformEvalSuiteDeleted",
   Client: "PlatformClient",
   ClientDetail: "PlatformClientDetail",
