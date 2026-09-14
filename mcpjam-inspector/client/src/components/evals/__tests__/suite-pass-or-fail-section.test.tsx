@@ -83,12 +83,7 @@ describe("SuitePassOrFailSection", () => {
 
   it("says 'No grader' for an unconfigured response stage", () => {
     const { container } = renderSection();
-    // The card carries the claim. The table under it lists the stage's
-    // standard checks as off rows, none of them a grader.
-    expect(
-      container.querySelector('[data-testid="stage-chain-card-response"]')
-        ?.textContent,
-    ).toContain("No grader");
+    // The stage lists its standard checks as off rows, none of them a grader.
     const rows = Array.from(
       container.querySelectorAll(
         '[data-stage-group="response"] [data-scorer-row]',
@@ -119,19 +114,17 @@ describe("SuitePassOrFailSection", () => {
   it("marks the judge advisory by default and gating when the role says so", () => {
     const advisory = renderSection();
     expect(
-      advisory.container.querySelector(
-        '[data-testid="stage-chain-card-userValue"]',
-      )?.textContent,
-    ).toContain("Judge on request");
+      within(
+        advisory.container.querySelector(
+          '[data-scorer-id="judge:goalCompletion"]',
+        ) as HTMLElement,
+      ).getByText("Report"),
+    ).toBeTruthy();
     advisory.unmount();
 
     const gating = renderSection({
       judgeConfig: { goalCompletion: { role: "gating" } },
     });
-    const card = gating.container.querySelector(
-      '[data-testid="stage-chain-card-userValue"]',
-    );
-    expect(card?.textContent).toContain("Gated");
     const group = gating.container.querySelector(
       '[data-stage-group="userValue"]',
     ) as HTMLElement;

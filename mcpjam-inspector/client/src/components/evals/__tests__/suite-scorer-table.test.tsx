@@ -91,16 +91,6 @@ describe("SuiteScorerTable", () => {
     }
   });
 
-  it("marks the stage group when a chain card is selected", async () => {
-    const user = userEvent.setup();
-    const { container } = renderTable();
-    await user.click(screen.getByTestId("stage-chain-card-selection"));
-    const group = container.querySelector(
-      '[data-stage-group="selection"]',
-    ) as HTMLElement;
-    expect(group.getAttribute("data-selected")).toBe("true");
-  });
-
   it("drafts severity when a predicate is set to Warn", async () => {
     const user = userEvent.setup();
     const predicates: Predicate[] = [{ type: "noToolErrors" }];
@@ -130,10 +120,10 @@ describe("SuiteScorerTable", () => {
         revisionNumber: 1,
       },
     });
-    // The role control lives in the row's editor, opened from its title.
-    await user.click(
-      screen.getByRole("button", { name: "No tool returns an error" }),
-    );
+    // The role control sits on the row; a rule with no fields opens nothing.
+    expect(
+      screen.queryByRole("button", { name: "No tool returns an error" }),
+    ).toBeNull();
     await user.click(screen.getByRole("button", { name: "Warn" }));
     expect(nextPredicates()).toEqual([
       { type: "noToolErrors", role: "advisory", severity: "warn" },
@@ -382,12 +372,14 @@ describe("SuiteScorerTable — role colour", () => {
 });
 
 it("keeps each standard numeric criterion in its own editable field", () => {
-  renderTable({ predicates: [
-    { type: "toolDescriptionsPresent", minLength: 31 },
-    { type: "toolLatencyUnder", ms: 1234 },
-    { type: "toolResultSizeUnder", maxBytes: 64000 },
-    { type: "toolCallCountUnder", count: 4 },
-  ] });
+  renderTable({
+    predicates: [
+      { type: "toolDescriptionsPresent", minLength: 31 },
+      { type: "toolLatencyUnder", ms: 1234 },
+      { type: "toolResultSizeUnder", maxBytes: 64000 },
+      { type: "toolCallCountUnder", count: 4 },
+    ],
+  });
   // Each row reads its number, and opens its own field from the title.
   const cases: [string, string, number][] = [
     [

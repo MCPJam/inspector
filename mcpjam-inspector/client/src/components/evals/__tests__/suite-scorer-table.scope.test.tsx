@@ -300,6 +300,21 @@ describe("case scope", () => {
 
   it("reads the judge as the case's skip flag, and cannot revive a judge the suite turned off", async () => {
     const user = userEvent.setup();
+    const judged = renderCase(
+      [],
+      {},
+      { judgeConfig: { goalCompletion: { threshold: 0.7 } } },
+    );
+    // Read-only threshold and role: the suite's, not the case's to edit.
+    expect(screen.getByText(/threshold 0\.7/i)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Goal completion judge" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("spinbutton", { name: "Judge threshold" }),
+    ).toBeNull();
+    judged.unmount();
+
     const skipped = renderCase(
       [],
       {},
@@ -310,11 +325,8 @@ describe("case scope", () => {
     );
     const box = screen.getByRole("checkbox", { name: "Goal completion judge" });
     expect(box).not.toBeChecked();
-    // Read-only threshold and role: the suite's, not the case's to edit.
-    expect(
-      screen.queryByRole("spinbutton", { name: "Judge threshold" }),
-    ).toBeNull();
-    expect(screen.getByText(/threshold 0\.7/)).toBeInTheDocument();
+    // Off says only its name.
+    expect(screen.queryByText(/threshold 0\.7/i)).toBeNull();
     await user.click(box);
     expect(skipped.onJudgeSkippedChange).toHaveBeenCalledWith(false);
     skipped.unmount();
