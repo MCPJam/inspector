@@ -80,6 +80,19 @@ What the case owns is the goal sentence, and the hint under it says what the jud
 
 **Skip the judge for this case** turns the judge off for this case only. It applies to the next saved run.
 
+### User value chain assertions
+
+The **User Value Chain Assertions** page (opened from the case workspace via **Save overrides**) shows the same numbered 01–06 scorer table as the suite's Settings → Scorers page. Both pages share one layout so the same check reads the same way in both places.
+
+On the case page the table has two sections:
+
+- **From suite** — the suite's rules, listed read-only. You can turn off an entire standard-check family for this case by unchecking its row; the row stays visible (unchecked, muted) so you can see what you turned off and turn it back on. Turning off a family that covers multiple suite rules shows how many rules that affects. Rules outside any standard-check family cannot be turned off per case.
+- **This case** — rules you added here. These edit in place: threshold, role, and body are all changeable. Use **Add scorer** to add a new rule.
+
+The **Goal completion judge** row controls this case's judge-skip flag. Unchecking it skips the judge for this case only; you cannot switch on a judge the suite has turned off.
+
+Every stage also lists the standard checks nothing has authored yet as off rows (muted, with the preset's criterion and role), so you can see what you could turn on without leaving the page.
+
 **Also in this case**
 
 A case can hold steps this form has no section for — a second prompt, or a pinned tool call. Those are listed at the bottom of the column with the turn they belong to. Click **Edit in Steps** to open the full step list.
