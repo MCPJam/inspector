@@ -43,6 +43,7 @@ import {
   type EvaluationConfigSnapshot,
   type ResolvedScoreDefinition,
   type ScoreDefinition,
+  type ScorerRole,
 } from "@mcpjam/sdk/contract";
 import {
   checkRole,
@@ -257,8 +258,17 @@ export type HostedScoreDefinitionInputs = {
     judgeTemplateHash?: string;
     objectiveScoreCap?: number;
     model?: string;
-    /** From the run's frozen config, via the stamped verdict. Fails closed. */
-    role?: "advisory" | "gating";
+    /**
+     * From the run's frozen config, via the stamped verdict. Fails closed.
+     *
+     * `ScorerRole` rather than a hand-written union, because the backend
+     * stamps `"gating"` before the rename and `"required"` after it and this
+     * is read off historical evidence — a narrower type here would claim a
+     * required judge cannot reach this builder, which is exactly the judge it
+     * must not drop. `hostedJudgeScoreDefinition` resolves both through
+     * `isRequiredRole`.
+     */
+    role?: ScorerRole;
   };
   /** A boolean, not the assessment, so the detail never affects the scorer's hash. */
   agentActivityFired?: boolean;
