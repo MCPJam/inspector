@@ -122,6 +122,55 @@ describe("stage narrowing on a scenario goal", () => {
     expect(lastArgs().filters).toEqual(PERSONA_FILTERS);
   });
 
+  it("drops a session the live query stopped returning", async () => {
+    // The drilldown is REACTIVE. A session regraded while the goal is open
+    // stops matching the stage that opened it, and the old list kept it —
+    // appending only unseen ids can never express a removal. Clicking it then
+    // landed on a transcript that no longer failed where the header said.
+    const session = (id: string) => ({
+      _id: id,
+      firstMessagePreview: id,
+      lastActivityAt: 1,
+    });
+    mockUseGoalOutcomeDrilldown.mockReturnValue({
+      drilldown: {
+        sessions: [session("sess-a"), session("sess-b")],
+        total: 2,
+        nextBefore: null,
+      },
+      isLoading: false,
+    });
+
+    const props = {
+      scope: {
+        kind: "scenario" as const,
+        scenarioId: "scn-1",
+        filters: PERSONA_FILTERS,
+      },
+      goalId: "cluster-export",
+      expectedCount: 2,
+      stage: { chainStage: "discovery" as const, state: "failed" as const },
+      onOpenSession: vi.fn(),
+    };
+    const { rerender, findAllByTestId, queryAllByTestId } = render(
+      <FindingsGoalSessions {...props} />,
+    );
+    expect(await findAllByTestId("findings-goal-session")).toHaveLength(2);
+
+    // Same page, one row fewer.
+    mockUseGoalOutcomeDrilldown.mockReturnValue({
+      drilldown: {
+        sessions: [session("sess-a")],
+        total: 1,
+        nextBefore: null,
+      },
+      isLoading: false,
+    });
+    rerender(<FindingsGoalSessions {...props} />);
+
+    expect(queryAllByTestId("findings-goal-session")).toHaveLength(1);
+  });
+
   it("never sends a stage chip on a swarm goal", () => {
     // A swarm goal pages by run id and its backend reader takes no chips, so a
     // stage chip there would be silently ignored rather than narrowing.

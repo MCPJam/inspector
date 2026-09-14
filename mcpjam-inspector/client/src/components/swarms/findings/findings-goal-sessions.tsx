@@ -56,6 +56,11 @@ export type FindingsStageNarrowing = {
   state: "passed" | "failed";
 };
 
+/** `undefined` (the first page) and a real cursor must not collide. */
+function cursorKey(cursor: number | null | undefined): string {
+  return cursor == null ? "first" : String(cursor);
+}
+
 export function FindingsGoalSessions({
   scope,
   goalId,
@@ -91,14 +96,31 @@ export function FindingsGoalSessions({
       : { preset: "all" as const, chips: [chip] };
   }, [scope, stage]);
 
+  type SessionRow = {
+    _id: string;
+    firstMessagePreview?: string;
+    lastActivityAt: number;
+  };
+
   const [before, setBefore] = useState<number | undefined>(undefined);
-  const [rows, setRows] = useState<
-    Array<{
-      _id: string;
-      firstMessagePreview?: string;
-      lastActivityAt: number;
-    }>
-  >([]);
+  /**
+   * Pages, kept BY THE CURSOR that produced them rather than concatenated.
+   *
+   * The drilldown is a live query, so its answer for the page in view changes
+   * under us — a session regraded while the goal is open stops matching the
+   * stage that opened it. Appending only rows we had not seen could never
+   * express that: the row stayed until the whole list remounted, and clicking
+   * it landed on a transcript that no longer failed where the header said.
+   *
+   * Only the page named by `before` is subscribed, so earlier pages stay as
+   * the snapshots they were. That is the honest limit of one subscription, and
+   * it still fixes the case that actually happens: nobody has clicked "load
+   * more", there is one page, and it is live.
+   */
+  const [pageCursors, setPageCursors] = useState<Array<number | null>>([null]);
+  const [pagesByCursor, setPagesByCursor] = useState<
+    Record<string, SessionRow[]>
+  >({});
 
   const { drilldown, isLoading } = useGoalOutcomeDrilldown(
     scope.kind === "swarm"
@@ -127,12 +149,29 @@ export function FindingsGoalSessions({
 
   useEffect(() => {
     if (!drilldown) return;
-    setRows((prev) => {
-      const seen = new Set(prev.map((row) => row._id));
-      const fresh = drilldown.sessions.filter((row) => !seen.has(row._id));
-      return fresh.length === 0 ? prev : [...prev, ...fresh];
-    });
-  }, [drilldown]);
+    // REPLACES this page. The previous answer for this cursor is gone, which
+    // is the whole point.
+    setPagesByCursor((prev) => ({
+      ...prev,
+      [cursorKey(before)]: drilldown.sessions,
+    }));
+  }, [drilldown, before]);
+
+  const rows = useMemo(() => {
+    const seen = new Set<string>();
+    const out: SessionRow[] = [];
+    for (const cursor of pageCursors) {
+      for (const session of pagesByCursor[cursorKey(cursor)] ?? []) {
+        // Pages are cursor-bounded and do not normally overlap, but a page
+        // that shrank can let the next one slide back over it. Rendering a
+        // session twice would double a count the reader is checking.
+        if (seen.has(session._id)) continue;
+        seen.add(session._id);
+        out.push(session);
+      }
+    }
+    return out;
+  }, [pageCursors, pagesByCursor]);
 
   const nextBefore = drilldown?.nextBefore ?? null;
 
@@ -175,7 +214,12 @@ export function FindingsGoalSessions({
         <button
           type="button"
           className="mt-2 text-[11px] font-medium text-orange-300 underline-offset-4 hover:text-orange-200 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-300"
-          onClick={() => setBefore(nextBefore)}
+          onClick={() => {
+            setBefore(nextBefore);
+            setPageCursors((prev) =>
+              prev.includes(nextBefore) ? prev : [...prev, nextBefore],
+            );
+          }}
         >
           Load {PAGE_SIZE} more
         </button>
