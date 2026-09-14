@@ -463,11 +463,17 @@ const MAX_METADATA_REDIRECTS = 5;
  */
 type MetadataRedirectPolicy = (url: string) => Record<string, string>;
 
+// The statuses `fetch` itself follows. 3xx is wider than that: a `304 Not
+// Modified` carrying a stale `Location` is not a redirect, and following it
+// would put a request on the wire that the automatic path never makes
+// (CodeRabbit).
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+
 function redirectTargetOf(
   response: Response,
   currentUrl: string
 ): string | null {
-  if (response.status < 300 || response.status > 399) return null;
+  if (!REDIRECT_STATUSES.has(response.status)) return null;
   const location = response.headers.get("location");
   if (!location) return null;
   try {

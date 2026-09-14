@@ -122,4 +122,46 @@ describe("metadata redirects against a real fetch (#5000)", () => {
     expect(landed).toBeDefined();
     expect(landed!.headers["x-api-key"]).toBeUndefined();
   });
+
+  it("a 304 carrying a Location is not a redirect and is not followed", async () => {
+    // 3xx is wider than the redirect statuses. `fetch` follows 301, 302, 303,
+    // 307 and 308 and nothing else, so a `304 Not Modified` that happens to
+    // carry a stale `Location` must not put a request on the wire that the
+    // automatic path would never make (CodeRabbit).
+    const hops: Hop[] = [];
+    const target = await listen((req, res) => {
+      hops.push({ path: "target", headers: { ...req.headers } });
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ resource: "x", authorization_servers: [] }));
+    });
+
+    let serverBase = "";
+    serverBase = await listen((req, res) => {
+      if (req.url === "/mcp") {
+        hops.push({ path: "mcp", headers: { ...req.headers } });
+        res.writeHead(401, {
+          "www-authenticate": `Bearer resource_metadata="${serverBase}/prm"`,
+        });
+        res.end();
+        return;
+      }
+      if (req.url === "/prm") {
+        hops.push({ path: "prm", headers: { ...req.headers } });
+        res.writeHead(304, { location: `${target}/prm` });
+        res.end();
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+
+    await probeMcpServer({
+      url: `${serverBase}/mcp`,
+      headers: { "X-Api-Key": "vendor-key-value" },
+      allowPrivateNetwork: true,
+    });
+
+    expect(hops.find((hop) => hop.path === "prm")).toBeDefined();
+    expect(hops.find((hop) => hop.path === "target")).toBeUndefined();
+  });
 });
