@@ -18,6 +18,9 @@ const mocks = vi.hoisted(() => ({
   /** Whether the fake backend honours `origins`; off by default so tests
    *  about the loaded page see it unfiltered. */
   backendFiltersOrigins: false,
+  /** `platform-post-launch`. On by default so the chip tests below keep
+   *  reaching MCP/Scheduled/GitHub. */
+  platformPostLaunchEnabled: true,
 }));
 
 const convexClient = { query: mocks.query };
@@ -28,6 +31,13 @@ vi.mock("@/hooks/useClients", () => ({
 
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabled: () => true,
+}));
+
+// The existing platform-chip tests drive MCP/Scheduled/GitHub, which only
+// exist once `platform-post-launch` is on. Flag-off chip trimming has its own
+// test below.
+vi.mock("@/hooks/usePlatformPostLaunchEnabled", () => ({
+  usePlatformPostLaunchEnabled: () => mocks.platformPostLaunchEnabled,
 }));
 
 vi.mock("convex/react", () => ({
@@ -109,6 +119,7 @@ beforeEach(() => {
   mocks.query.mockReset();
   mocks.queryArgs.length = 0;
   mocks.backendFiltersOrigins = false;
+  mocks.platformPostLaunchEnabled = true;
 });
 
 describe("ProjectRunsTable", () => {
@@ -233,6 +244,21 @@ describe("ProjectRunsTable", () => {
     // shown for a suite whose GitHub runs were simply further down.
     expect(inTable().getByText("CI suite")).toBeTruthy();
     expect(inTable().getByText("Playground suite")).toBeTruthy();
+  });
+
+  it("hides the unlaunched platform chips until platform-post-launch is on", async () => {
+    const user = userEvent.setup();
+    mocks.platformPostLaunchEnabled = false;
+    setRows([makeRow({ source: "sdk" })]);
+    render(<ProjectRunsTable projectId="proj_1" onSelectRun={vi.fn()} />);
+
+    await user.click(
+      screen.getByRole("button", { name: "Filter by platform" }),
+    );
+    const chips = screen
+      .getAllByRole("menuitemcheckbox")
+      .map((chip) => chip.textContent);
+    expect(chips).toEqual(["SDK", "UI", "API", "CLI"]);
   });
 
   it("maps the GitHub chip onto both stored GitHub origins", async () => {
