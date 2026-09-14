@@ -1,6 +1,10 @@
 import { Plus } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { ViewModeSelector } from "@/components/shared/view-mode-selector";
+import {
+  PageHeaderShell,
+  PAGE_HEADER_TAB_CLASSNAME,
+} from "@/components/shared/page-header-shell";
 
 export type SwarmViewMode = "overview" | "journeys" | "sessions";
 
@@ -9,8 +13,8 @@ export type SwarmViewOption = {
   label: string;
 };
 
-const TAB_CLASSNAME =
-  "mt-0 w-auto min-w-0 shrink justify-start overflow-x-auto [&_button]:min-h-8 [&_button]:px-2.5 [&_button]:py-1 [&_button]:text-sm sm:[&_button]:min-h-8 sm:[&_button]:px-3 sm:[&_button]:text-sm md:[&_button]:min-h-8 lg:[&_button]:px-3.5";
+export const SWARMS_HEADER_DESCRIPTION =
+  "No recruiting, no scheduling, no setup. Agents find what breaks in every client.";
 
 interface SwarmsTabHeaderProps {
   projectId: string | null;
@@ -30,28 +34,22 @@ export function SwarmsTabHeader({
   creatingSwarm = false,
 }: SwarmsTabHeaderProps) {
   return (
-    <div
-      className="relative shrink-0 border-b border-border/40 px-8 py-3"
-      data-testid="swarms-tab-header-chrome"
-    >
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div className="flex min-w-0 items-center gap-3">
-          <h1 className="shrink-0 text-xl font-bold tracking-tight text-foreground">
-            Swarm
-          </h1>
-          <div
-            className="hidden h-4 w-px shrink-0 bg-border/60 sm:block"
-            aria-hidden="true"
-          />
-          <ViewModeSelector
-            value={viewMode}
-            ariaLabel="Swarm view"
-            indicatorId="swarms-tab"
-            onChange={onViewModeChange}
-            options={viewOptions}
-            className={TAB_CLASSNAME}
-          />
-        </div>
+    <PageHeaderShell
+      title="Swarm"
+      description={SWARMS_HEADER_DESCRIPTION}
+      className="px-8 py-3"
+      testId="swarms-tab-header-chrome"
+      tabs={
+        <ViewModeSelector
+          value={viewMode}
+          ariaLabel="Swarm view"
+          indicatorId="swarms-tab"
+          onChange={onViewModeChange}
+          options={viewOptions}
+          className={PAGE_HEADER_TAB_CLASSNAME}
+        />
+      }
+      actions={
         <Button
           type="button"
           size="sm"
@@ -62,7 +60,7 @@ export function SwarmsTabHeader({
           <Plus className="mr-1.5 size-4" />
           Create new swarm
         </Button>
-      </div>
-    </div>
+      }
+    />
   );
 }

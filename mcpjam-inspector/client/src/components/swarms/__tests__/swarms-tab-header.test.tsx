@@ -1,6 +1,10 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { SwarmsTabHeader, type SwarmViewOption } from "../swarms-tab-header";
+import {
+  SwarmsTabHeader,
+  SWARMS_HEADER_DESCRIPTION,
+  type SwarmViewOption,
+} from "../swarms-tab-header";
 
 const VIEW_OPTIONS = [
   { value: "overview", label: "Overview" },
@@ -34,7 +38,9 @@ describe("SwarmsTabHeader", () => {
     expect(onViewModeChange).toHaveBeenCalledWith("journeys");
   });
 
-  it("does not render a header subtitle", () => {
+  // BB-236 reverses #4372: the headline is back, under the title row, the way
+  // the Evaluate header renders its description.
+  it("renders the headline under the title row", () => {
     render(
       <SwarmsTabHeader
         projectId="proj-1"
@@ -46,9 +52,12 @@ describe("SwarmsTabHeader", () => {
     );
 
     const header = screen.getByTestId("swarms-tab-header-chrome");
-    expect(header.querySelector("p")).toBeNull();
-    expect(
-      within(header).queryByText(/no recruiting, no scheduling/i),
-    ).toBeNull();
+    const subtitle = within(header).getByText(SWARMS_HEADER_DESCRIPTION);
+    expect(subtitle.tagName).toBe("P");
+
+    // Under the title row, not inside it.
+    const title = screen.getByRole("heading", { name: "Swarm" });
+    const row = title.closest("div.flex.items-center.justify-between");
+    expect(row?.contains(subtitle)).toBe(false);
   });
 });
