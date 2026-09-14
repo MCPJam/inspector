@@ -367,11 +367,11 @@ function Preview({ artifact }: { artifact: ReplayArtifact }) {
             What this preview is
           </h2>
           <p className="mt-1 text-[12.5px] leading-relaxed text-muted-foreground">
-            Every finding on this page came out of the backend&apos;s real
-            miner and the shared finalizer, replayed from an evidence bundle.
-            Nothing here was written by hand, and nothing here called a model.
-            Rows marked <em>Mocked AI output</em> exercise the enrichment join
-            only — they are not evidence that a model improves anything.
+            Every finding on this page came out of the backend&apos;s real miner
+            and the shared finalizer, replayed from an evidence bundle. Nothing
+            here was written by hand, and nothing here called a model. Rows
+            marked <em>Mocked AI output</em> exercise the enrichment join only —
+            they are not evidence that a model improves anything.
           </p>
         </section>
       </main>

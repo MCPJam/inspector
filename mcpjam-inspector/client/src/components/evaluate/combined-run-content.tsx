@@ -39,6 +39,21 @@ type MemberReport = {
 };
 
 /** One report, even when execution was distributed across several clients. */
+/**
+ * NOT a unified-findings mount, deliberately.
+ *
+ * A findings snapshot is built for ONE run: its counts, its eligible
+ * population and its coherence stamp all describe that run's evidence. This
+ * view aggregates several runs, and the two honest options for it are both
+ * worse than nothing tonight — one section per run would mean one
+ * subscription and one generation controller EACH (the thing the experiment's
+ * contract forbids), and a merged section would need a cross-run population
+ * that nothing currently computes.
+ *
+ * So the experiment mounts on the single-run view only, and a reader who
+ * lands here follows a run through to see it. Recorded as a known limitation
+ * rather than left to be discovered.
+ */
 export function CombinedRunContent({
   runs,
   projectId,
@@ -344,23 +359,23 @@ export function combinedReportView(
     verdict: pending
       ? { word: "Loading results", tone: "neutral", undecidedLine: null }
       : filtered
-        ? {
-            word: "Filtered results",
-            tone: "neutral",
-            undecidedLine: "Across the selected client/model pairings",
-          }
-        : words.size === 1
-          ? {
-              ...views[0].verdict,
-              undecidedLine: filtered
-                ? "Across the selected client/model pairings"
-                : `Across all ${runs.length} client/model configurations`,
-            }
-          : {
-              word: "Mixed results",
-              tone: "neutral",
-              undecidedLine: [...words].join(" · "),
-            },
+      ? {
+          word: "Filtered results",
+          tone: "neutral",
+          undecidedLine: "Across the selected client/model pairings",
+        }
+      : words.size === 1
+      ? {
+          ...views[0].verdict,
+          undecidedLine: filtered
+            ? "Across the selected client/model pairings"
+            : `Across all ${runs.length} client/model configurations`,
+        }
+      : {
+          word: "Mixed results",
+          tone: "neutral",
+          undecidedLine: [...words].join(" · "),
+        },
     focus: focusView?.focus ?? null,
     sentence:
       focusView?.sentence ??

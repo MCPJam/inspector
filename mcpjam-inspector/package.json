@@ -113,7 +113,8 @@
     "pretest:watch": "npm run build -w @mcpjam/evaluators",
     "pretest:coverage": "npm run build -w @mcpjam/evaluators",
     "findings:preview": "node scripts/findings-preview.mjs",
-    "typecheck:findings-preview": "tsc --noEmit -p client/dev/findings-preview/tsconfig.json"
+    "typecheck:findings-preview": "tsc --noEmit -p client/dev/findings-preview/tsconfig.json",
+    "check:findings-wire-parity": "node scripts/check-findings-wire-parity.mjs"
   },
   "dependencies": {
     "@ai-sdk/amazon-bedrock": "^4.0.116",

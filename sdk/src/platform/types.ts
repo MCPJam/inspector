@@ -50,7 +50,12 @@ export type PlatformSessionBrowserTrace = {
   screenshots: PlatformBrowserScreenshot[];
 };
 export type PlatformSessionBrowserOperation =
-  "open" | "command" | "note" | "trace" | "artifact" | "close";
+  | "open"
+  | "command"
+  | "note"
+  | "trace"
+  | "artifact"
+  | "close";
 export interface PlatformSessionBrowserBodies {
   open: PlatformSessionBrowserInput;
   command: { command: BrowserAgentCommand; commandId?: string; tabId?: string };
@@ -708,7 +713,10 @@ export interface PlatformWidgetRender {
  * and tolerate an unknown value rather than assuming this list is closed.
  */
 export type PlatformSessionSourceType =
-  "direct" | "scenario" | "eval" | "swarm";
+  | "direct"
+  | "scenario"
+  | "eval"
+  | "swarm";
 
 /** The session's parent run, discriminated on `kind`. Also open-ended. */
 export interface PlatformSessionParentRef {
@@ -1112,7 +1120,8 @@ export interface PlatformEvalRunJudgeState {
   threshold: number | null;
 }
 
-export interface PlatformEvalRunGoalCompletionJudge extends PlatformEvalRunJudgeState {
+export interface PlatformEvalRunGoalCompletionJudge
+  extends PlatformEvalRunJudgeState {
   /**
    * Per-case grades. EMPTY unless `status` is `"completed"` — a pending or
    * failed judge carries no cases, and `status` is what says which.
@@ -1120,7 +1129,8 @@ export interface PlatformEvalRunGoalCompletionJudge extends PlatformEvalRunJudge
   cases: PlatformEvalRunGoalCompletionCase[];
 }
 
-export interface PlatformEvalRunGroundednessJudge extends PlatformEvalRunJudgeState {
+export interface PlatformEvalRunGroundednessJudge
+  extends PlatformEvalRunJudgeState {
   /** Per-case grades. EMPTY unless `status` is `"completed"`. */
   cases: PlatformEvalRunGroundednessCase[];
 }
@@ -1147,12 +1157,14 @@ export interface PlatformEvalRunJudgeCase {
   reason: string | null;
 }
 
-export interface PlatformEvalRunGoalCompletionCase extends PlatformEvalRunJudgeCase {
+export interface PlatformEvalRunGoalCompletionCase
+  extends PlatformEvalRunJudgeCase {
   /** Rubric criteria the answer satisfied. */
   rubricHits: string[];
 }
 
-export interface PlatformEvalRunGroundednessCase extends PlatformEvalRunJudgeCase {
+export interface PlatformEvalRunGroundednessCase
+  extends PlatformEvalRunJudgeCase {
   /** Claims the tool trajectory does not support. */
   unsupportedClaims: string[];
 }
@@ -1199,10 +1211,14 @@ export interface PlatformNotApplicableRailDisclosure {
 }
 
 export type PlatformRailDisclosure =
-  PlatformManagedRailDisclosure | PlatformNotApplicableRailDisclosure;
+  | PlatformManagedRailDisclosure
+  | PlatformNotApplicableRailDisclosure;
 
 export type PlatformDisclosureTenantEgress =
-  "mcpjam-hosted" | "byok-cloud" | "byok-local" | "unknown";
+  | "mcpjam-hosted"
+  | "byok-cloud"
+  | "byok-local"
+  | "unknown";
 
 export interface PlatformByokDisclosure {
   providerKey: string;
@@ -1230,7 +1246,9 @@ export interface PlatformDisclosedModel {
  * a fourth runtime kind.
  */
 export type PlatformDisclosureEngine =
-  "emulated" | "mixed" | `harness:${string}`;
+  | "emulated"
+  | "mixed"
+  | `harness:${string}`;
 
 /**
  * Whether this run executes MCPJam-hosted or on the caller's own machine.
@@ -1241,7 +1259,8 @@ export type PlatformDisclosureEngine =
  * the union defensively — a caller MUST NOT treat it as `hosted: false`.
  */
 export type PlatformEvalRunDisclosureLocus =
-  { known: true; hosted: boolean } | { known: false; reason: string };
+  | { known: true; hosted: boolean }
+  | { known: false; reason: string };
 
 export interface PlatformExecutionDisclosure {
   engine: PlatformDisclosureEngine;
@@ -1848,7 +1867,13 @@ export interface PlatformEvalSuiteRevision {
   revisionNumber: number;
   /** Where the edit came from. `unattributed` is a write nothing claimed. */
   source:
-    "ui" | "api" | "cli" | "file_sync" | "import" | "system" | "unattributed";
+    | "ui"
+    | "api"
+    | "cli"
+    | "file_sync"
+    | "import"
+    | "system"
+    | "unattributed";
   /** The user id, or `null` for a write with no human actor. */
   createdBy: string | null;
   /** A display name when one is resolvable; `null` otherwise. */
@@ -2319,7 +2344,10 @@ export interface PlatformRunCompare {
 
 /** Delivery channel a pinned skill reached a run through. */
 export type PlatformRunCompareSkillChannel =
-  "host" | "environment" | "plugin" | "mcp-server";
+  | "host"
+  | "environment"
+  | "plugin"
+  | "mcp-server";
 
 /** One skill's identity + content fingerprint on one side of a comparison. */
 export interface PlatformRunCompareSkillSide {
@@ -2802,7 +2830,8 @@ export interface PlatformEnvironmentSecretSelection {
 
 /** Why a skill cannot be pinned into an environment's `skillSelection`. */
 export type PlatformSkillPinnability =
-  { ok: true } | { ok: false; reason: string };
+  | { ok: true }
+  | { ok: false; reason: string };
 
 /** One skill visible to the caller: project-shared, or their own draft. */
 export interface PlatformProjectSkill {
@@ -3759,7 +3788,8 @@ export interface PlatformTraceDestinationHealth {
  * a caller can size the gap — NOTHING was queued while it was paused, and the
  * only way to fill the window is a backfill.
  */
-export interface PlatformTraceDestinationResumed extends PlatformTraceDestination {
+export interface PlatformTraceDestinationResumed
+  extends PlatformTraceDestination {
   pausedSince: number | null;
 }
 
@@ -3967,7 +3997,11 @@ export interface PlatformFindingDismissed {
  * - Reads never trigger generation; `status` is observational.
  */
 export type PlatformInsightsStatus =
-  "not_available" | "not_requested" | "pending" | "completed" | "failed";
+  | "not_available"
+  | "not_requested"
+  | "pending"
+  | "completed"
+  | "failed";
 
 export type PlatformInsightScope =
   | { kind: "eval_run"; id: string }
@@ -3997,7 +4031,9 @@ export type PlatformInsightActionTarget =
   | "environment";
 
 export type PlatformInsightActionability =
-  "informational" | "investigate" | "ready";
+  | "informational"
+  | "investigate"
+  | "ready";
 
 export interface PlatformActionableFindingEvidence {
   sessionId?: string;
@@ -4503,7 +4539,8 @@ export interface PlatformUserTestingScenario {
  * Scenario detail — the read shape, widened with the environment link and
  * the insights envelope.
  */
-export interface PlatformUserTestingScenarioDetail extends PlatformUserTestingScenario {
+export interface PlatformUserTestingScenarioDetail
+  extends PlatformUserTestingScenario {
   environmentId: string | null;
   /**
    * Present when the caller may have it. The envelope is gated on workspace
@@ -4633,7 +4670,8 @@ export type PlatformReadinessKind = "claude" | "openai";
  * in this type would let a caller write a request the server refuses.
  */
 export type PlatformReadinessSubmissionMode =
-  "mcp-only" | "mcp-imported-skills";
+  | "mcp-only"
+  | "mcp-imported-skills";
 
 export type PlatformReadinessLaneStatus = "ready" | "not-ready" | "incomplete";
 
@@ -4770,7 +4808,8 @@ export interface PlatformReadinessStartBody {
   includeLlmObservations?: boolean;
 }
 
-export interface PlatformOpenAIReadinessStartBody extends PlatformReadinessStartBody {
+export interface PlatformOpenAIReadinessStartBody
+  extends PlatformReadinessStartBody {
   /**
    * The DECLARED submission shape. REQUIRED, and never inferred.
    *

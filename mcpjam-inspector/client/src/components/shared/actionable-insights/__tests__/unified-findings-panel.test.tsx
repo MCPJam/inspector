@@ -24,7 +24,9 @@ vi.mock("@/lib/clipboard", () => ({
   },
 }));
 
-function finding(overrides: Partial<ActionableFinding> = {}): ActionableFinding {
+function finding(
+  overrides: Partial<ActionableFinding> = {},
+): ActionableFinding {
   return {
     id: "rf_aaaa000000000001",
     signalFingerprint: "sha256:fp1",
@@ -90,7 +92,9 @@ const coverage = {
   exclusions: {},
 };
 
-function renderPanel(props: Partial<Parameters<typeof UnifiedFindingsPanel>[0]> = {}) {
+function renderPanel(
+  props: Partial<Parameters<typeof UnifiedFindingsPanel>[0]> = {},
+) {
   const onModeChange = vi.fn();
   const view = render(
     <UnifiedFindingsPanel
@@ -113,20 +117,37 @@ describe("the two operations are distinguishable and independent", () => {
   it("says the deterministic operation does not use AI", () => {
     renderPanel();
     expect(
-      screen.getByText(/Reads this run's recorded evidence\. Does not use AI\./),
+      screen.getByText(
+        /Reads this run's recorded evidence\. Does not use AI\./,
+      ),
     ).toBeTruthy();
   });
 
   it("never runs anything on mount", () => {
-    const build = { available: true, pending: false, error: null, onRun: vi.fn() };
-    const enrich = { available: true, pending: false, error: null, onRun: vi.fn() };
+    const build = {
+      available: true,
+      pending: false,
+      error: null,
+      onRun: vi.fn(),
+    };
+    const enrich = {
+      available: true,
+      pending: false,
+      error: null,
+      onRun: vi.fn(),
+    };
     renderPanel({ build, enrich });
     expect(build.onRun).not.toHaveBeenCalled();
     expect(enrich.onRun).not.toHaveBeenCalled();
   });
 
   it("does not generate when the comparison view changes", () => {
-    const enrich = { available: true, pending: false, error: null, onRun: vi.fn() };
+    const enrich = {
+      available: true,
+      pending: false,
+      error: null,
+      onRun: vi.fn(),
+    };
     const { onModeChange } = renderPanel({
       enrich,
       snapshot: snapshot({
@@ -146,7 +167,12 @@ describe("the two operations are distinguishable and independent", () => {
   });
 
   it("does not generate when evidence is opened", () => {
-    const enrich = { available: true, pending: false, error: null, onRun: vi.fn() };
+    const enrich = {
+      available: true,
+      pending: false,
+      error: null,
+      onRun: vi.fn(),
+    };
     renderPanel({ enrich });
     fireEvent.click(screen.getByTestId("unified-finding-toggle"));
     expect(enrich.onRun).not.toHaveBeenCalled();
@@ -164,9 +190,9 @@ describe("the two operations are distinguishable and independent", () => {
     expect(screen.getByTestId("unified-findings-enrich-error")).toBeTruthy();
     expect(screen.queryByTestId("unified-findings-build-error")).toBeNull();
     // The observation is still on screen — the property the experiment tests.
-    expect(screen.getByTestId("unified-finding-observed").textContent).toContain(
-      '"search" failed (401)',
-    );
+    expect(
+      screen.getByTestId("unified-finding-observed").textContent,
+    ).toContain('"search" failed (401)');
   });
 
   it("shows a build failure without claiming the model failed", () => {
@@ -194,7 +220,10 @@ describe("the states are four different sentences", () => {
   });
 
   it("a known-empty result is not the same as unavailable", () => {
-    renderPanel({ findings: [], snapshot: snapshot({ deterministicFindings: [] }) });
+    renderPanel({
+      findings: [],
+      snapshot: snapshot({ deterministicFindings: [] }),
+    });
     expect(screen.getByTestId("unified-findings-empty")).toBeTruthy();
     expect(screen.queryByTestId("unified-findings-unavailable")).toBeNull();
   });
@@ -225,8 +254,7 @@ describe("the states are four different sentences", () => {
     renderPanel({
       snapshot: null,
       findings: [],
-      backendUnavailableNote:
-        "the connected backend does not serve it",
+      backendUnavailableNote: "the connected backend does not serve it",
     });
     expect(
       screen.getByTestId("unified-findings-backend-missing").textContent,
@@ -279,11 +307,15 @@ describe("provenance labelling", () => {
     const detail = screen.getByTestId("unified-finding-detail");
     const cause = within(detail).getByText("Proposed cause").parentElement!;
     expect(
-      within(cause).getByTestId("finding-prose-source").getAttribute("data-source"),
+      within(cause)
+        .getByTestId("finding-prose-source")
+        .getAttribute("data-source"),
     ).toBe("ai");
     const next = within(detail).getByText("What to investigate").parentElement!;
     expect(
-      within(next).getByTestId("finding-prose-source").getAttribute("data-source"),
+      within(next)
+        .getByTestId("finding-prose-source")
+        .getAttribute("data-source"),
     ).toBe("deterministic");
   });
 
@@ -360,9 +392,7 @@ describe("provenance labelling", () => {
       screen.getByTestId("unified-findings-stale-enrichment").textContent,
     ).toContain("not being shown");
     expect(
-      screen
-        .getByTestId("unified-findings-mode-ai")
-        .hasAttribute("disabled"),
+      screen.getByTestId("unified-findings-mode-ai").hasAttribute("disabled"),
     ).toBe(true);
   });
 });
@@ -403,7 +433,10 @@ describe("actions stay behind the backend's own gate", () => {
   it("an environment row offers no prompt at all", () => {
     renderPanel({
       findings: [
-        finding({ actionTarget: "environment", actionability: "informational" }),
+        finding({
+          actionTarget: "environment",
+          actionability: "informational",
+        }),
       ],
     });
     expect(screen.queryByTestId("finding-copy-prompt")).toBeNull();
@@ -429,7 +462,7 @@ describe("lead and secondary presentation", () => {
   it("opens the lead finding and leaves the secondary ones folded", () => {
     const second = finding({
       id: "rf_aaaa000000000002",
-      observed: "8 of 10 iterations that reached \"connection\" failed there.",
+      observed: '8 of 10 iterations that reached "connection" failed there.',
     });
     renderPanel({
       findings: [finding(), second],

@@ -79,11 +79,15 @@ if (replay) {
   }
   const { size } = statSync(source);
   if (size > MAX_ARTIFACT_BYTES) {
-    fail(`${source} is ${size} bytes, past the ${MAX_ARTIFACT_BYTES}-byte limit`);
+    fail(
+      `${source} is ${size} bytes, past the ${MAX_ARTIFACT_BYTES}-byte limit`,
+    );
   }
   rmSync(target, { force: true });
   copyFileSync(source, target);
-  console.log(`findings:preview: loaded ${source} (${(size / 1024).toFixed(1)} KiB)`);
+  console.log(
+    `findings:preview: loaded ${source} (${(size / 1024).toFixed(1)} KiB)`,
+  );
 } else if (!existsSync(target)) {
   fail(
     "no artifact loaded yet. Pass --replay <path> pointing at the output of `npm run findings:replay` in the mcpjam-backend checkout.",

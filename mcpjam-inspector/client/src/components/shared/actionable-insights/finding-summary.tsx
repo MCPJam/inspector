@@ -111,11 +111,13 @@ function CopyPromptButton({
       data-testid="finding-copy-prompt"
       data-server-fix={isServerReady(finding) ? "true" : "false"}
       onClick={() => {
-        void copyToClipboard(buildFindingPrompt(finding, context)).then((ok) => {
-          if (!ok) return;
-          setCopied(true);
-          setTimeout(() => setCopied(false), 2000);
-        });
+        void copyToClipboard(buildFindingPrompt(finding, context)).then(
+          (ok) => {
+            if (!ok) return;
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+          },
+        );
       }}
     >
       {copied ? (
@@ -242,10 +244,7 @@ export function FindingSummary({
           data-testid="unified-finding-toggle"
         >
           <ChevronRight
-            className={cn(
-              "size-3.5 transition-transform",
-              open && "rotate-90",
-            )}
+            className={cn("size-3.5 transition-transform", open && "rotate-90")}
             aria-hidden="true"
           />
           {open ? "Hide the evidence and next step" : "What supports this?"}
@@ -344,7 +343,10 @@ export function FindingSummary({
             </section>
           ) : null}
 
-          <CopyPromptButton finding={finding} {...(context ? { context } : {})} />
+          <CopyPromptButton
+            finding={finding}
+            {...(context ? { context } : {})}
+          />
         </div>
       ) : null}
     </article>

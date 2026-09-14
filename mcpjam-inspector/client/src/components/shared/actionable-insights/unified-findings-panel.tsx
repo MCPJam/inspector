@@ -89,8 +89,8 @@ function StateNote({
         tone === "destructive"
           ? "border-destructive/40 bg-destructive/10 text-destructive"
           : tone === "warning"
-            ? "border-warning/40 bg-warning/10 text-foreground"
-            : "border-border/60 bg-muted/30 text-muted-foreground",
+          ? "border-warning/40 bg-warning/10 text-foreground"
+          : "border-border/60 bg-muted/30 text-muted-foreground",
       )}
       data-testid={testId}
     >
@@ -160,7 +160,8 @@ function ModeTabs({
             mode === tab.value
               ? "bg-background text-foreground shadow-2xs"
               : "text-muted-foreground hover:text-foreground",
-            !tab.enabled && "cursor-not-allowed opacity-50 hover:text-muted-foreground",
+            !tab.enabled &&
+              "cursor-not-allowed opacity-50 hover:text-muted-foreground",
           )}
           data-testid={`unified-findings-mode-${tab.value}`}
         >
@@ -244,7 +245,9 @@ function humanExclusion(reason: string): string {
 function BaselineView({
   baseline,
 }: {
-  baseline: NonNullable<NonNullable<UnifiedFindingsExperiment["snapshot"]>["baseline"]>;
+  baseline: NonNullable<
+    NonNullable<UnifiedFindingsExperiment["snapshot"]>["baseline"]
+  >;
 }) {
   return (
     <div className="space-y-2" data-testid="unified-findings-baseline">
@@ -303,10 +306,7 @@ export function UnifiedFindingsPanel(props: UnifiedFindingsPanelProps) {
     return map;
   }, [provenance]);
 
-  const sorted = useMemo(
-    () => sortFindingsForDisplay(findings),
-    [findings],
-  );
+  const sorted = useMemo(() => sortFindingsForDisplay(findings), [findings]);
 
   const view: FindingView = mode === "ai" ? "ai" : "deterministic";
   const [lead, ...secondary] = sorted;
@@ -396,7 +396,10 @@ export function UnifiedFindingsPanel(props: UnifiedFindingsPanelProps) {
           />
 
           {snapshot.enrichment?.status === "stale" ? (
-            <StateNote tone="warning" testId="unified-findings-stale-enrichment">
+            <StateNote
+              tone="warning"
+              testId="unified-findings-stale-enrichment"
+            >
               A previous AI explanation was written against older evidence and
               is not being shown. Rebuilding changed what these findings
               describe, so the old advice is not reattached to the new counts.

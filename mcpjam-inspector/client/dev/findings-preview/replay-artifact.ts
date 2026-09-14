@@ -98,12 +98,16 @@ export function parseReplayArtifact(raw: unknown): ReplayArtifact {
   }
   if (raw.kind !== REPLAY_ARTIFACT_KIND) {
     throw new ReplayArtifactError(
-      `this file is not a unified-findings replay artifact (kind: ${String(raw.kind)})`,
+      `this file is not a unified-findings replay artifact (kind: ${String(
+        raw.kind,
+      )})`,
     );
   }
   if (raw.artifactVersion !== REPLAY_ARTIFACT_VERSION) {
     throw new ReplayArtifactError(
-      `artifactVersion ${String(raw.artifactVersion)} is not supported (this preview reads ${REPLAY_ARTIFACT_VERSION}). Re-run npm run findings:replay from the paired backend checkout.`,
+      `artifactVersion ${String(
+        raw.artifactVersion,
+      )} is not supported (this preview reads ${REPLAY_ARTIFACT_VERSION}). Re-run npm run findings:replay from the paired backend checkout.`,
     );
   }
   if (!Array.isArray(raw.cases)) {
@@ -187,8 +191,9 @@ export function provenanceForView(
     return origin
       ? {
           ...row,
-          proseOrigin:
-            origin as NonNullable<InsightsFindingProvenance["proseOrigin"]>,
+          proseOrigin: origin as NonNullable<
+            InsightsFindingProvenance["proseOrigin"]
+          >,
         }
       : row;
   });
