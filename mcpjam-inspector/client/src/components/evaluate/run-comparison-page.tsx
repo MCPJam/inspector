@@ -5,6 +5,7 @@ import { Checkbox } from "@mcpjam/design-system/checkbox";
 import type { EvalIteration, EvalSuiteRun } from "../evals/types";
 import {
   runHostLabel,
+  snapshotTestModels,
   iterationLatencyP50,
   iterationLatencyP95,
   computeIterationSummary,
@@ -76,7 +77,7 @@ export function RunComparisonPage({
   const rows: { name: string; value: (column: Column) => string }[] = [
     {
       name: "Client",
-      value: ({ run }) => runHostLabel(run, hostNamesById) ?? "Unknown client",
+      value: ({ run }) => runHostLabel(run, hostNamesById) ?? "Suite default",
     },
     {
       name: "Model",
@@ -89,8 +90,13 @@ export function RunComparisonPage({
         ].join(", ") ||
         [
           ...new Set(
-            run.configSnapshot?.tests.map(
-              (test) => `${test.provider}/${test.model}`,
+            run.configSnapshot?.tests.flatMap((test) =>
+              snapshotTestModels(test).map(
+              ({ provider, model }) =>
+                provider && !model.startsWith(`${provider}/`)
+                  ? `${provider}/${model}`
+                  : model,
+              ),
             ) ?? [],
           ),
         ].join(", ") ||
@@ -205,7 +211,7 @@ export function RunComparisonPage({
                 }
               />
               {label(run)} ·{" "}
-              {runHostLabel(run, hostNamesById) ?? "Unknown client"}
+              {runHostLabel(run, hostNamesById) ?? "Suite default"}
             </label>
           ))}
         </div>
