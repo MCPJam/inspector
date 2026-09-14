@@ -78,15 +78,14 @@ describe("GitHub Action eval receipts", () => {
       report
     );
 
-    const files = (await readdir(directory)).sort();
+    const files = await readdir(directory);
+    expect(files).toHaveLength(1);
     const written = await Promise.all(
       files.map(async (file) =>
         JSON.parse(await readFile(join(directory, file), "utf8"))
       )
     );
-    expect(
-      written.map((receipt) => receipt.projectId).sort()
-    ).toEqual(["project-9", undefined]);
+    expect(written.map((receipt) => receipt.projectId)).toEqual(["project-9"]);
   });
 
   it("does nothing outside the action", async () => {

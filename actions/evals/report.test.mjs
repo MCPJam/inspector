@@ -34,8 +34,10 @@ test("reads only valid, unique SDK action receipts", async (t) => {
 
 test("fetches every iteration page for the exact receipt run", async () => {
   const urls = [];
-  const fetchImpl = async (url) => {
+  const requests = [];
+  const fetchImpl = async (url, init) => {
     urls.push(String(url));
+    requests.push(init);
     if (!String(url).includes("/iterations"))
       return response({ id: "run1", runNumber: 3, status: "completed", result: "passed" });
     if (!String(url).includes("cursor=next"))
@@ -45,6 +47,7 @@ test("fetches every iteration page for the exact receipt run", async () => {
   const bundle = await fetchRunBundle(receipt, "sk-test", fetchImpl);
   assert.deepEqual(bundle.iterations.map((row) => row.id), ["i1", "i2"]);
   assert.ok(urls.every((url) => url.includes("/projects/project1/eval-runs/run1")));
+  assert.ok(requests.every((init) => init.signal instanceof AbortSignal));
 });
 
 test("renders the client summary and failed-case tables from stored results", () => {
@@ -198,6 +201,17 @@ test("truncates an oversized report instead of losing it whole", () => {
   assert.equal(truncateMarkdown("short", 200, "\n\n_trimmed_"), "short");
 });
 
+test("counts UTF-8 bytes when truncating multibyte reports", () => {
+  const limit = 200;
+  const cut = truncateMarkdown(
+    `header\n${"🔥 row\n".repeat(100)}`,
+    limit,
+    "\n\n_trimmed_",
+  );
+  assert.ok(Buffer.byteLength(cut, "utf8") <= limit);
+  assert.ok(cut.endsWith("_trimmed_"));
+});
+
 test("refuses a receipt that points at another deployment", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "mcpjam-receipts-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -217,6 +231,10 @@ test("refuses a receipt that points at another deployment", async (t) => {
   assert.deepEqual(
     (await readActionReceipts(directory)).map((row) => row.runId).sort(),
     ["run1", "run2"],
+  );
+  assert.deepEqual(
+    await readActionReceipts(directory, "http://app.mcpjam.com"),
+    [],
   );
 });
 

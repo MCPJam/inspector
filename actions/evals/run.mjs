@@ -112,17 +112,28 @@ export function parseInputs(env) {
  * origin is refused rather than sent the API key.
  */
 export function resolveConfiguredOrigin(env) {
-  const raw = (env.MCPJAM_BASE_URL || env.MCPJAM_API_URL || "").trim();
-  if (!raw) return "https://app.mcpjam.com";
-  let url;
-  try {
-    url = new URL(raw);
-  } catch {
-    throw new Error("MCPJAM_BASE_URL must be an absolute URL.");
-  }
-  if (url.username || url.password)
-    throw new Error("MCPJAM_BASE_URL must not carry credentials.");
-  return url.origin;
+  const configured = [
+    ["MCPJAM_BASE_URL", env.MCPJAM_BASE_URL],
+    ["MCPJAM_API_URL", env.MCPJAM_API_URL],
+  ].flatMap(([name, value]) => {
+    const raw = (value ?? "").trim();
+    if (!raw) return [];
+    let url;
+    try {
+      url = new URL(raw);
+    } catch {
+      throw new Error(`${name} must be an absolute URL.`);
+    }
+    if (url.username || url.password)
+      throw new Error(`${name} must not carry credentials.`);
+    if (url.protocol !== "https:")
+      throw new Error(`${name} must use HTTPS.`);
+    return [url.origin];
+  });
+  if (configured.length === 0) return "https://app.mcpjam.com";
+  if (new Set(configured).size > 1)
+    throw new Error("MCPJAM_BASE_URL and MCPJAM_API_URL must use the same origin.");
+  return configured[0];
 }
 
 export function deriveIdempotencyKey(env, inputs) {
@@ -580,14 +591,22 @@ export async function runAction(
     // The verdict block is never replaced by the rendered report: it carries
     // the action's own result, the exit codes and the run ids, and GitHub
     // discards an oversized summary whole rather than trimming it.
-    const verdict = `### MCPJam evals: ${state.result}\n\n${state.message}\n\nRun exit code: ${state.runExitCode === "" ? "not started" : state.runExitCode}\n\nRuns: ${state.runIds.join(", ") || "none"}\n\nGate exit codes: ${JSON.stringify(state.gateExitCodes)}\n`;
-    const detail = renderedSummary
-      ? `${truncateMarkdown(renderedSummary, SUMMARY_LIMIT - verdict.length, "\n\n_Report truncated. See the uploaded reports and the MCPJam run._")}\n\n---\n\n`
-      : "";
-    await appendFile(
-      env.GITHUB_STEP_SUMMARY,
-      redactSecret(`${detail}${verdict}`, key),
+    const verdict = redactSecret(
+      `### MCPJam evals: ${state.result}\n\n${state.message}\n\nRun exit code: ${state.runExitCode === "" ? "not started" : state.runExitCode}\n\nRuns: ${state.runIds.join(", ") || "none"}\n\nGate exit codes: ${JSON.stringify(state.gateExitCodes)}\n`,
+      key,
     );
+    const separator = "\n\n---\n\n";
+    const safeSummary = redactSecret(renderedSummary, key);
+    const detail = renderedSummary
+      ? `${truncateMarkdown(
+          safeSummary,
+          SUMMARY_LIMIT -
+            Buffer.byteLength(verdict, "utf8") -
+            Buffer.byteLength(separator, "utf8"),
+          "\n\n_Report truncated. See the uploaded reports and the MCPJam run._",
+        )}${separator}`
+      : "";
+    await appendFile(env.GITHUB_STEP_SUMMARY, `${detail}${verdict}`);
   }
   await output(
     env,

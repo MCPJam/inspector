@@ -68,10 +68,13 @@ export async function writeGithubActionReceipt(
     return;
   }
 
+  const projectId = resolveReceiptProjectId(report.projectId, config.project);
+  if (!projectId) return;
+
   const receipt = {
     schemaVersion: 1,
     baseUrl,
-    projectId: resolveReceiptProjectId(report.projectId, config.project),
+    projectId,
     suiteId: report.suiteId,
     suiteName: input.suiteName,
     framework: input.framework,

@@ -11,11 +11,13 @@ import {
 import { tmpdir } from "node:os";
 import { join, delimiter } from "node:path";
 import { test } from "node:test";
+import { SUMMARY_LIMIT } from "./report.mjs";
 import {
   finalExitCode,
   invokeCli,
   parseInputs,
   redactSecret,
+  resolveConfiguredOrigin,
   runAction,
 } from "./run.mjs";
 
@@ -205,6 +207,44 @@ test("runs an SDK eval command and reports only its exact receipt run", async (t
   assert.equal(result.result, "passed");
   assert.deepEqual(result.runIds, ["run1"]);
   assert.match(await readFile(f.env.GITHUB_STEP_SUMMARY, "utf8"), /Client \/ Model/);
+});
+
+test("uses one secure configured deployment origin", () => {
+  assert.equal(
+    resolveConfiguredOrigin({
+      MCPJAM_BASE_URL: "https://staging.example.com/path",
+      MCPJAM_API_URL: "https://staging.example.com/api/v1",
+    }),
+    "https://staging.example.com",
+  );
+  assert.throws(
+    () =>
+      resolveConfiguredOrigin({
+        MCPJAM_BASE_URL: "https://one.example.com",
+        MCPJAM_API_URL: "https://two.example.com/api/v1",
+      }),
+    /must use the same origin/,
+  );
+  assert.throws(
+    () => resolveConfiguredOrigin({ MCPJAM_BASE_URL: "http://example.com" }),
+    /must use HTTPS/,
+  );
+});
+
+test("keeps a redacted multibyte step summary within GitHub's byte limit", async (t) => {
+  const f = await fixture(t, { MCPJAM_API_KEY: "🔥" });
+  f.behavior.iterations = [
+    {
+      ...f.behavior.iterations[0],
+      title: "🔥".repeat(100_000),
+      result: "failed",
+      error: "🔥",
+    },
+  ];
+  await f.run();
+  const summary = await readFile(f.env.GITHUB_STEP_SUMMARY, "utf8");
+  assert.ok(Buffer.byteLength(summary, "utf8") <= SUMMARY_LIMIT);
+  assert.doesNotMatch(summary, /🔥/);
 });
 
 test("a waived gate reports the action verdict, not the failed run result", async (t) => {

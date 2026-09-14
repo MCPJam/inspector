@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 const TERMINAL = new Set(["completed", "failed", "cancelled", "timed_out"]);
 const MAX_PAGES = 100;
 const COMMENT_LIMIT = 64_000;
+const REPORT_REQUEST_TIMEOUT_MS = 30_000;
 // GitHub discards a step summary over 1 MiB, taking the verdict with it.
 export const SUMMARY_LIMIT = 900_000;
 
@@ -22,8 +23,9 @@ function receiptOrigin(value, allowedOrigin) {
     return undefined;
   }
   if (url.username || url.password) return undefined;
+  if (url.protocol !== "https:") return undefined;
   if (allowedOrigin) return url.origin === allowedOrigin ? url.origin : undefined;
-  return url.protocol === "https:" ? url.origin : undefined;
+  return url.origin;
 }
 
 export async function readActionReceipts(directory, allowedOrigin) {
@@ -57,6 +59,7 @@ async function apiJson(baseUrl, path, apiKey, fetchImpl) {
   const url = new URL(path, `${baseUrl.replace(/\/$/, "")}/`);
   const response = await fetchImpl(url, {
     headers: { authorization: `Bearer ${apiKey}` },
+    signal: AbortSignal.timeout(REPORT_REQUEST_TIMEOUT_MS),
   });
   if (!response.ok) throw new Error(`MCPJam API returned ${response.status}.`);
   return response.json();
@@ -251,11 +254,14 @@ function buildCaseRows(bundle) {
 }
 
 export function truncateMarkdown(text, limit, note) {
-  if (text.length <= limit) return text;
+  const bytes = (value) => Buffer.byteLength(value, "utf8");
+  if (bytes(text) <= limit) return text;
+  if (bytes(note) > limit) return "";
   let content = "";
   for (const line of text.split("\n")) {
-    if (content.length + line.length + 1 + note.length > limit) break;
-    content += `${content ? "\n" : ""}${line}`;
+    const next = `${content ? `${content}\n` : ""}${line}`;
+    if (bytes(next) + bytes(note) > limit) break;
+    content = next;
   }
   return content + note;
 }
