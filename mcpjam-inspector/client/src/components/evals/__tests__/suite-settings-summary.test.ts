@@ -34,7 +34,7 @@ describe("suite-settings-summary", () => {
       describeJudge({
         goalCompletion: { role: "gating", threshold: 0.8 },
       }),
-    ).toContain("Gating");
+    ).toContain("Required");
   });
 
   it("enumerates quality-gate conditions and treats zero as configured", () => {

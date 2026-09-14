@@ -48,7 +48,7 @@ export function SuggestedFromRunCard({
   const visible = showAll ? suggestions : suggestions.slice(0, VISIBLE);
   const hidden = suggestions.length - visible.length;
   const pending = suggestions.filter((s) => !accepted.has(s.key));
-  const requirements = pending.filter((s) => s.role === "gate").length;
+  const requirements = pending.filter((s) => s.role === "required").length;
 
   const groups = new Map<string, Suggestion[]>();
   for (const suggestion of visible) {

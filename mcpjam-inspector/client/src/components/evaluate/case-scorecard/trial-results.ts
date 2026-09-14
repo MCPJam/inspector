@@ -25,9 +25,9 @@
  * is also what the server does, since it de-dupes definitions by id.
  *
  * ADVISORY IS NOT A STATE. An advisory miss is a `failed` FACT; the row's role
- * decides whether it is worn as a Warn, a muted "reported", or a red cross.
- * The summary counts gates only, and it is a tally of facts — the trial's
- * verdict word stays where it already is, on the header.
+ * decides whether it is worn muted or as a red cross. The summary counts
+ * required rows only, and it is a tally of facts — the trial's verdict word
+ * stays where it already is, on the header.
  */
 
 import {
@@ -457,11 +457,11 @@ function scoreEvidence(
   definition: ResolvedScoreDefinition | null,
   row: ScorecardRow,
 ): TrialRowEvidence | undefined {
-  const authoredIsGating = row.role === "gate";
+  const authoredIsRequired = row.role === "required";
   const frozen = definition?.role;
   const drifted =
     frozen !== undefined &&
-    ((frozen === "gating") !== authoredIsGating);
+    ((frozen === "gating") !== authoredIsRequired);
   const evidence: TrialRowEvidence = {
     ...(score.evidence && score.evidence.length > 0
       ? { scoreEvidence: [...score.evidence] }
@@ -472,19 +472,19 @@ function scoreEvidence(
 }
 
 export type TrialScorecardSummary = {
-  gates: { passed: number; counted: number };
-  warn: number;
-  report: number;
+  required: { passed: number; counted: number };
+  /** Advisory misses, with or without `severity: "warn"`. */
+  advisory: number;
   errors: number;
   notMeasured: number;
   pending: number;
 };
 
 /**
- * Count GATES, and only gates.
+ * Count REQUIRED rows, and only required rows.
  *
- * A Warn or Report miss is real and is shown on its row, but it did not fail
- * the trial and must not read as though it did. Rows with no measurement are
+ * An advisory miss is real and is shown on its row, but it did not fail the
+ * trial and must not read as though it did. Rows with no measurement are
  * excluded from the denominator rather than counted as failures — "1 of 2"
  * when one scorer never ran would claim a failure nobody observed.
  */
@@ -492,9 +492,8 @@ export function summarizeTrialScorecard(
   groups: ReadonlyArray<{ rows: readonly JoinedScorecardRow[] }>,
 ): TrialScorecardSummary {
   const summary: TrialScorecardSummary = {
-    gates: { passed: 0, counted: 0 },
-    warn: 0,
-    report: 0,
+    required: { passed: 0, counted: 0 },
+    advisory: 0,
     errors: 0,
     notMeasured: 0,
     pending: 0,
@@ -505,18 +504,17 @@ export function summarizeTrialScorecard(
       if (state === "notMeasured") summary.notMeasured += 1;
       if (state === "pending") summary.pending += 1;
       if (state === "error") summary.errors += 1;
-      if (row.role === "gate") {
+      if (row.role === "required") {
         if (state === "passed") {
-          summary.gates.counted += 1;
-          summary.gates.passed += 1;
+          summary.required.counted += 1;
+          summary.required.passed += 1;
         } else if (state === "failed" || state === "error") {
-          summary.gates.counted += 1;
+          summary.required.counted += 1;
         }
         continue;
       }
       if (state !== "failed") continue;
-      if (row.role === "warn") summary.warn += 1;
-      else summary.report += 1;
+      summary.advisory += 1;
     }
   }
   return summary;

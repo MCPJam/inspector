@@ -48,14 +48,14 @@ Every case opens in this form, however it was authored — in the app, through t
 
 One list, one Add menu. Each row says what it checks, who wrote it, and what a miss does:
 
-- **Route** — the first row under Selection. It answers "which tool should handle it?" and carries that answer's strictness: *Reach the tool* allows extra calls, *Exact route* requires the exact order with no extras. The route is always a Gate.
+- **Route** — the first row under Selection. It answers "which tool should handle it?" and carries that answer's strictness: *Reach the tool* allows extra calls, *Exact route* requires the exact order with no extras. The route is always Required.
 - **Step N** — a check written as a step (what the CLI and the SDK produce). It is graded in place, at its position in the run, and is labelled by that position: a step-level "no tool errors" reads **No tool errors so far**, because it only sees the transcript up to that point. Editing one rewrites that step; it never becomes a case-level check.
 - **This case** — a check you added here. It is graded once, over the finished transcript.
 - **Suite** — a default the suite applies to every case. Read-only here, with a link to the suite settings.
 
-A row's **role** says what a miss does: **Gate** fails the trial, **Warn** highlights the miss without failing it, **Report** only records it. The control appears when your deployment supports check policy; otherwise the role still shows, read-only.
+A row's **role** says what a miss does: **Required** fails the trial, **Advisory** shows the miss without failing it. The control appears when your deployment supports check policy; otherwise the role still shows, read-only.
 
-Because a failing gate halts the run, a check written as a step can leave later checks unrun. The trial column marks those **Skipped**.
+Because a failing required check halts the run, a check written as a step can leave later checks unrun. The trial column marks those **Skipped**.
 
 **The route question**
 
@@ -92,7 +92,7 @@ A case can hold steps this form has no section for — a second prompt, or a pin
 
 The trial opens on its **Scorecard**: the same scorers the left column lists, in the same order, each with what happened to it on this trial. A row shows its result, its provenance, its role, and — where there is one — the reason, which for a step is the message the runner recorded.
 
-The summary line counts **gates only**: "2 of 2 gates passed · 1 warn". A Warn miss is shown on its row and never counted as a failure, because it did not fail the trial. A scorer with no result reads **Not measured** rather than passing by default. The verdict word itself stays in the header above.
+The summary line counts **required rows only**: "2 of 2 required passed · 1 advisory". An advisory miss is shown on its row and never counted as a failure, because it did not fail the trial. A scorer with no result reads **Not measured** rather than passing by default. The verdict word itself stays in the header above.
 
 The judge's row hosts the judge panel, so labelling a trial works where the judge sits. Under the rows, **Score rows** expands the raw score contract, including any row the backend could not join.
 

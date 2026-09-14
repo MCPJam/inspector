@@ -356,7 +356,7 @@ export function ScoresList({
       ) : null}
 
       <ScoreGroup
-        title="Gating"
+        title="Required"
         rows={gating}
         keyPrefix="gating"
         hideJudgeRows={hidingJudges}

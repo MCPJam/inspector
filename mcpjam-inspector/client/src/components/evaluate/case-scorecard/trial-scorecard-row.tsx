@@ -20,7 +20,6 @@ import {
   XCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { EVAL_WARN_BADGE_STRONG_CLASS } from "@/components/evals/constants";
 import { RoleChip } from "@/components/evals/scorer-role-control";
 import { ProvenanceChip } from "./provenance-chip";
 import { RowMarker } from "./row-marker";
@@ -41,20 +40,15 @@ export function resultGlyph(
     case "passed":
       return { Icon: CheckCircle2, cls: "text-success", label: "Passed" };
     case "failed":
-      if (role === "gate") {
+      if (role === "required") {
         return { Icon: XCircle, cls: "text-destructive", label: "Failed" };
       }
-      if (role === "warn") {
-        return {
-          Icon: AlertTriangle,
-          cls: EVAL_WARN_BADGE_STRONG_CLASS,
-          label: "Missed · warning",
-        };
-      }
+      // One advisory glyph. Warn and Report differed only by this icon and
+      // its colour, and neither changed the iteration's verdict.
       return {
         Icon: Circle,
         cls: "text-muted-foreground",
-        label: "Missed · reported",
+        label: "Missed · advisory",
       };
     case "error":
       return {
@@ -215,8 +209,9 @@ export function TrialScorecardRow({
           ) : null}
           {row.evidence?.frozenRole ? (
             <p className="text-[11px] text-muted-foreground/80">
-              Graded as {row.evidence.frozenRole === "gating" ? "Gate" : "advisory"}{" "}
-              — this scorer's role has changed since the run.
+              Graded as{" "}
+              {row.evidence.frozenRole === "gating" ? "required" : "advisory"} —
+              this scorer's role has changed since the run.
             </p>
           ) : null}
         </div>

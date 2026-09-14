@@ -183,7 +183,7 @@ describe("ScoresList", () => {
     renderAll();
     // The single most misleading thing this view could do is let a red
     // advisory judge read as the reason a run failed.
-    expect(screen.getByText("Gating")).toBeInTheDocument();
+    expect(screen.getByText("Required")).toBeInTheDocument();
     expect(screen.getByText("Advisory")).toBeInTheDocument();
   });
 

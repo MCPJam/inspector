@@ -59,10 +59,11 @@ export type GraderRowKind = "match" | "predicate" | "judge";
 /**
  * One grader, as the settings page shows it.
  *
- * `role` is DERIVED. Match rules are always gates. A predicate's role is
- * `checkRole(predicate)` — absent means gating; only the literal `"advisory"`
- * is advisory. The judge's role is whatever `judgeConfig.goalCompletion.role`
- * says, defaulting to advisory.
+ * `role` is DERIVED and carries the STORAGE spelling, not the label: a match
+ * rule is always required, a predicate's role is `checkRole(predicate)` —
+ * absent means required; only the literal `"advisory"` is advisory — and the
+ * judge's role is whatever `judgeConfig.goalCompletion.role` says, defaulting
+ * to advisory. `ROLE_LEGEND` turns `"gating"` into the word "Required".
  */
 export type GraderRow = {
   /** Stable within one render; used as a React key, not persisted. */
@@ -307,12 +308,14 @@ export type StageConfigState = {
     | "judgeOnRequest"
     | "judgeAutomatic"
     | "judgeOff";
-  /** Deterministic gating rows (match + predicate). The judge is excluded. */
-  gates: number;
-  /** Advisory predicates authored as Warn. The judge is excluded. */
-  warn: number;
-  /** Advisory predicates without warn severity. The judge is excluded. */
-  report: number;
+  /** Deterministic required rows (match + predicate). The judge is excluded. */
+  required: number;
+  /**
+   * Advisory predicates, with or without `severity: "warn"`. The judge is
+   * excluded. Warn and Report were one tier by consequence — neither failed
+   * the iteration — so they count as one here.
+   */
+  advisory: number;
   /** Only on `userValue`. */
   judge?: JudgeMode;
 };
@@ -323,29 +326,24 @@ export function stageConfigStates(
 ): StageConfigState[] {
   return USER_VALUE_STAGES.map((stage) => {
     const rows = model.byStage[stage].filter((row) => row.kind !== "judge");
-    const gates = rows.filter((row) => row.role === "gating").length;
-    const warn = rows.filter(
-      (row) => row.role === "advisory" && row.severity === "warn",
-    ).length;
-    const report = rows.filter(
-      (row) => row.role === "advisory" && row.severity !== "warn",
-    ).length;
+    const advisory = rows.filter((row) => row.role === "advisory").length;
+    const required = rows.length - advisory;
     if (stage !== "userValue") {
-      if (gates >= 1) return { stage, state: "gated", gates, warn, report };
+      if (required >= 1) return { stage, state: "gated", required, advisory };
       if (!stageEmptyIsGap(stage)) {
-        return { stage, state: "runner", gates, warn, report };
+        return { stage, state: "runner", required, advisory };
       }
-      return { stage, state: "gap", gates, warn, report };
+      return { stage, state: "gap", required, advisory };
     }
-    if (gates >= 1 || judge === "gating") {
-      return { stage, state: "gated", gates, warn, report, judge };
+    if (required >= 1 || judge === "gating") {
+      return { stage, state: "gated", required, advisory, judge };
     }
     if (judge === "automatic") {
-      return { stage, state: "judgeAutomatic", gates, warn, report, judge };
+      return { stage, state: "judgeAutomatic", required, advisory, judge };
     }
     if (judge === "manual") {
-      return { stage, state: "judgeOnRequest", gates, warn, report, judge };
+      return { stage, state: "judgeOnRequest", required, advisory, judge };
     }
-    return { stage, state: "judgeOff", gates, warn, report, judge };
+    return { stage, state: "judgeOff", required, advisory, judge };
   });
 }

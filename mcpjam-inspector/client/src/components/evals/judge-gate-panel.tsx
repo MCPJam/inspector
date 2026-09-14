@@ -167,7 +167,7 @@ export function JudgeGatePanel({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="text-xs text-foreground">
-            {isGating ? "Gate" : "Advisory"}
+            {isGating ? "Required" : "Advisory"}
           </div>
           <p className="text-[11px] text-muted-foreground/60">
             {isGating

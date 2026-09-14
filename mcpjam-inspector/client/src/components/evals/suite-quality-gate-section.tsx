@@ -25,7 +25,7 @@ export const QUALITY_GATE_ALLOWED_DROP_HINT =
   "Maximum decrease in a gating evaluator's pass rate, in percentage points.";
 
 export const QUALITY_GATE_ROLE_LEGEND =
-  "Gate, Warn, and Report describe how an evaluator is configured, not a run result.";
+  "Required and Advisory describe how an evaluator is configured, not a run result.";
 
 export const QUALITY_GATE_CLI_ENFORCEMENT =
   "Applied by mcpjam cloud eval gate.";

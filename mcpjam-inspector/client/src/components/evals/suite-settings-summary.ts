@@ -55,7 +55,7 @@ export function describeJudge(value: EvalJudgeConfig | undefined): string {
   const goal = value?.goalCompletion;
   if (!goal) return "Not configured";
   if (goal.enabled === false) return "Off";
-  const bits = [goal.role === "gating" ? "Gating" : "Advisory"];
+  const bits = [goal.role === "gating" ? "Required" : "Advisory"];
   if (goal.autoRun) bits.push("runs automatically");
   if (goal.judgeModel) bits.push(goal.judgeModel);
   if (goal.threshold !== undefined) {
