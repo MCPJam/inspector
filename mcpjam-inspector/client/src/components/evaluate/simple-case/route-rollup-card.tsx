@@ -70,7 +70,7 @@ export function RouteRollupCard({
           className="h-7 text-xs"
           onClick={onAdoptTrialRoute}
         >
-          Use this trial&apos;s route as expected
+          Use this iteration&apos;s route as expected
         </Button>
       ) : null}
     </div>
