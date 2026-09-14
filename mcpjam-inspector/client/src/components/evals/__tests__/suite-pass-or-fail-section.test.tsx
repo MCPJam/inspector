@@ -83,7 +83,25 @@ describe("SuitePassOrFailSection", () => {
 
   it("says 'No grader' for an unconfigured response stage", () => {
     const { container } = renderSection();
-    expect(emptyCopy(container, "response")).toBe("No grader");
+    // The card carries the claim. The table under it lists the stage's
+    // standard checks as off rows, none of them a grader.
+    expect(
+      container.querySelector('[data-testid="stage-chain-card-response"]')
+        ?.textContent,
+    ).toContain("No grader");
+    const rows = Array.from(
+      container.querySelectorAll(
+        '[data-stage-group="response"] tr[data-scorer-row]',
+      ),
+    );
+    expect(rows.length).toBeGreaterThan(0);
+    expect(
+      rows.every(
+        (row) =>
+          row.getAttribute("data-scorer-row") === "preset" &&
+          row.getAttribute("data-scorer-enabled") === "false",
+      ),
+    ).toBe(true);
   });
 
   it("never tells a reader connection or discovery is ungraded", () => {
