@@ -57,14 +57,14 @@ const kinds = (out: ReturnType<typeof suggestScorers>) =>
   out.suggestions.map((s) => s.predicate?.type ?? s.kind);
 
 describe("requirements need demonstrated success", () => {
-  it("offers gates when every trial accomplished the goal", () => {
+  it("offers required rules when every trial accomplished the goal", () => {
     const out = suggestScorers(input());
     expect(out.diagnosis).toBeNull();
     expect(kinds(out)).toContain("noToolErrors");
-    expect(out.suggestions.some((s) => s.role === "gate")).toBe(true);
+    expect(out.suggestions.some((s) => s.role === "required")).toBe(true);
   });
 
-  it("offers NO gate when one trial did not accomplish the goal", () => {
+  it("offers NO required rule when one trial did not accomplish the goal", () => {
     // Three runs that all called the wrong tool agree with each other
     // perfectly. Requiring that route would harden the bug.
     const out = suggestScorers(
@@ -77,7 +77,7 @@ describe("requirements need demonstrated success", () => {
       of: 3,
       noSignal: false,
     });
-    expect(out.suggestions.every((s) => s.role !== "gate")).toBe(true);
+    expect(out.suggestions.every((s) => s.role !== "required")).toBe(true);
   });
 
   it("still reports budgets on a batch that failed — they cost nothing", () => {
@@ -85,7 +85,7 @@ describe("requirements need demonstrated success", () => {
       input({ trials: [facts({ successSignal: "none" })] }),
     );
     expect(kinds(out)).toContain("tokenBudgetUnder");
-    expect(out.suggestions.every((s) => s.role === "report")).toBe(true);
+    expect(out.suggestions.every((s) => s.role === "advisory")).toBe(true);
   });
 
   it("flags a batch with no success signal at all", () => {
@@ -229,7 +229,7 @@ describe("dedupe against what the case already grades", () => {
 });
 
 describe("roles follow the kind of claim", () => {
-  it("never proposes a Gate from wording", () => {
+  it("never proposes a Required rule from wording", () => {
     const out = suggestScorers(
       input({
         goal: "States the signed-in account email address",
@@ -241,23 +241,23 @@ describe("roles follow the kind of claim", () => {
     );
     for (const suggestion of out.suggestions) {
       if (suggestion.predicate?.type === "responseContains") {
-        expect(suggestion.role).toBe("warn");
+        expect(suggestion.role).toBe("advisory");
       }
     }
   });
 
-  it("makes budgets reports, never gates", () => {
+  it("makes budgets advisory, never required", () => {
     const out = suggestScorers(input());
     const budget = out.suggestions.find(
       (s) => s.predicate?.type === "tokenBudgetUnder",
     );
-    expect(budget?.role).toBe("report");
+    expect(budget?.role).toBe("advisory");
   });
 
-  it("gives every gate a consequence the reader can act on", () => {
+  it("gives every required rule a consequence the reader can act on", () => {
     const out = suggestScorers(input());
     for (const suggestion of out.suggestions) {
-      if (suggestion.role === "gate") {
+      if (suggestion.role === "required") {
         expect(suggestion.consequence).toMatch(/will fail this case/);
       }
     }
@@ -390,7 +390,7 @@ describe("the route", () => {
   it("is offered when the case has none and every trial agreed", () => {
     const out = suggestScorers(input({ route: { kind: "unset" } }));
     expect(out.suggestions[0]?.kind).toBe("route");
-    expect(out.suggestions[0]?.role).toBe("gate");
+    expect(out.suggestions[0]?.role).toBe("required");
   });
 
   it("is not offered once the case already has one", () => {
@@ -493,7 +493,7 @@ describe("heldInEvery", () => {
 
 describe("a placeholder route is not a success signal", () => {
   it("does not treat an unrestricted route as a gate that proved success", () => {
-    // The Route row is always `role: "gate"`, including when it restricts
+    // The Route row is always `role: "required"`, including when it restricts
     // nothing. Counting it made a prompt-and-goal case look gated, so a
     // passing unjudged run supplied a signal it had not earned — and the
     // engine went on to suggest requiring whatever tool it happened to call.
@@ -507,7 +507,7 @@ describe("a placeholder route is not a success signal", () => {
       }),
     );
     expect(out.diagnosis?.noSignal).toBe(true);
-    expect(out.suggestions.every((s) => s.role !== "gate")).toBe(true);
+    expect(out.suggestions.every((s) => s.role !== "required")).toBe(true);
     expect(
       out.suggestions.some((s) =>
         JSON.stringify(s.predicate ?? {}).includes("wrong_tool"),

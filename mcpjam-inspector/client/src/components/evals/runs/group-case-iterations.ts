@@ -11,7 +11,7 @@
  * batch are ordered by `iterationNumber` (falling back to createdAt).
  */
 import {
-  formatRunId,
+  runClientIdentity,
   runEnvironmentRef,
   runRevisionLabel,
   type RunContextSource,
@@ -132,12 +132,11 @@ export function resolveCaseRunBatchHost(
         revisionLabel: runRevisionLabel(run) ?? undefined,
       };
     }
-    if (run?.namedHostId) {
-      const hostName =
-        hostNamesById?.get(run.namedHostId) ?? formatRunId(run.namedHostId);
+    if (run && (run.client || run.namedHostId)) {
+      const identity = runClientIdentity(run, hostNamesById);
       return {
-        hostId: run.namedHostId,
-        hostName: hostName ?? run.namedHostId,
+        hostId: identity.namedHostId,
+        hostName: identity.name,
       };
     }
   }

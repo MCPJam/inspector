@@ -502,73 +502,100 @@ describe("useChatSession — local computer engine transmission", () => {
     );
   });
 
-  it("runs a page call immediately when approval is off, instead of stalling", async () => {
-    // The client claims every owned `page_*` call so it can hold it until the
-    // user decides. With the switch off the server declares no approval and
-    // sends no pill, so a claim with nothing to release it waits forever: the
-    // model's call never resolves and the turn stops with no error and no
-    // result. It has to run the call itself.
-    const pageTool = {
-      alias: pageToolAlias("session-1", `https://shop.test::add_to_cart\u0000${JSON.stringify({ frameId: "main", registrationSeq: 1 })}`),
-      sessionId: "session-1",
-      toolKey: "https://shop.test::add_to_cart",
-      rawName: "add_to_cart",
-      origin: "https://shop.test",
-    };
-    useWebmcpInspectorStore.setState({
-      session: { sessionId: pageTool.sessionId, status: "ready" } as never,
-      tools: [
-        {
-          toolKey: pageTool.toolKey,
-          binding: { frameId: "main", registrationSeq: 1 },
-          name: pageTool.rawName,
-          origin: pageTool.origin,
-          fromSubframe: false,
-          registrationKind: "imperative",
-        } as never,
-      ],
-      chatEnabled: true,
-    });
-    const invoke = vi.fn(async () => ({ state: "succeeded", output: "added" }));
-    const initialStore = useWebmcpInspectorStore.getState();
-    vi.spyOn(useWebmcpInspectorStore, "getState").mockReturnValue({
-      ...initialStore,
-      session: { sessionId: pageTool.sessionId, status: "ready" } as never,
-      invokeToolForResult: invoke as never,
-    });
+  it.each([false, true])(
+    "runs successive ungated page calls (guest: %s)",
+    async (guest) => {
+      if (guest) mockState.getAccessToken.mockResolvedValue(null);
+      // The client claims every owned `page_*` call so it can hold it until the
+      // user decides. With the switch off the server declares no approval and
+      // sends no pill, so a claim with nothing to release it waits forever: the
+      // model's call never resolves and the turn stops with no error and no
+      // result. It has to run the call itself.
+      const pageTool = {
+        alias: pageToolAlias(
+          "session-1",
+          `https://shop.test::add_to_cart\u0000${JSON.stringify({
+            frameId: "main",
+            registrationSeq: 1,
+          })}`,
+        ),
+        sessionId: "session-1",
+        toolKey: "https://shop.test::add_to_cart",
+        rawName: "add_to_cart",
+        origin: "https://shop.test",
+      };
+      useWebmcpInspectorStore.setState({
+        session: { sessionId: pageTool.sessionId, status: "ready" } as never,
+        tools: [
+          {
+            toolKey: pageTool.toolKey,
+            binding: { frameId: "main", registrationSeq: 1 },
+            name: pageTool.rawName,
+            origin: pageTool.origin,
+            fromSubframe: false,
+            registrationKind: "imperative",
+          } as never,
+        ],
+        chatEnabled: true,
+      });
+      const invoke = vi.fn(async () => ({
+        state: "succeeded",
+        output: "added",
+      }));
+      const initialStore = useWebmcpInspectorStore.getState();
+      vi.spyOn(useWebmcpInspectorStore, "getState").mockReturnValue({
+        ...initialStore,
+        session: { sessionId: pageTool.sessionId, status: "ready" } as never,
+        invokeToolForResult: invoke as never,
+      });
 
-    await renderWithEngine(undefined, undefined, {
-      usePageTools: true,
-      requireToolApproval: false,
-    });
-    const advertised = lastTransport().body.pageTools as Array<{
-      alias: string;
-    }>;
-    setAdvertisedPageTools(advertised as never);
+      await renderWithEngine(undefined, undefined, {
+        usePageTools: true,
+        requireToolApproval: false,
+      });
+      const advertised = lastTransport().body.pageTools as Array<{
+        alias: string;
+      }>;
+      setAdvertisedPageTools(advertised as never);
 
-    await mockState.chatOnToolCall!({
-      toolCall: {
-        toolName: advertised[0]!.alias,
-        toolCallId: "page-call-ungated",
-        input: { sku: "ABC-123" },
-      },
-    });
+      await mockState.chatOnToolCall!({
+        toolCall: {
+          toolName: advertised[0]!.alias,
+          toolCallId: "page-call-ungated",
+          input: { sku: "ABC-123" },
+        },
+      });
 
-    // No pill was requested and none is coming, so the result has to arrive
-    // from here.
-    await waitFor(() => expect(mockState.addToolOutput).toHaveBeenCalled());
-    expect(invoke).toHaveBeenCalledWith(
-      pageTool.toolKey,
-      { sku: "ABC-123" },
-      { frameId: "main", registrationSeq: 1 },
-    );
-    expect(mockState.addToolOutput).toHaveBeenCalledWith(
-      expect.objectContaining({
-        tool: advertised[0]!.alias,
-        toolCallId: "page-call-ungated",
-      }),
-    );
-  });
+      // No pill was requested and none is coming, so the result has to arrive
+      // from here.
+      await waitFor(() => expect(mockState.addToolOutput).toHaveBeenCalled());
+      expect(invoke).toHaveBeenCalledWith(
+        pageTool.toolKey,
+        { sku: "ABC-123" },
+        { frameId: "main", registrationSeq: 1 },
+      );
+      expect(mockState.addToolOutput).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tool: advertised[0]!.alias,
+          toolCallId: "page-call-ungated",
+          output: expect.objectContaining({
+            pageTool: { rawName: pageTool.rawName, origin: pageTool.origin },
+          }),
+        }),
+      );
+      await mockState.chatOnToolCall!({
+        toolCall: {
+          toolName: advertised[0]!.alias,
+          toolCallId: "page-call-next",
+          input: { sku: "DEF-456" },
+        },
+      });
+      await waitFor(() =>
+        expect(mockState.addToolOutput).toHaveBeenCalledTimes(2),
+      );
+      expect(invoke).toHaveBeenCalledTimes(2);
+    },
+  );
 
   // The switch is a live control and the response is a stream, so a user can
   // move it while a turn is in flight. The SERVER decided each tool's

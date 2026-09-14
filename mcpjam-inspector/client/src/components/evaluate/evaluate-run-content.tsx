@@ -21,6 +21,7 @@
  */
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { Copy } from "lucide-react";
+import { runClientIdentity } from "../evals/helpers";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 
@@ -104,6 +105,7 @@ import { useEvaluateRunPageHeaderActions } from "./evaluate-run-page";
 export function SingleRunContent({
   projectId,
   run,
+  suiteName,
   iterations,
   allIterations,
   siblingRuns = [],
@@ -116,6 +118,7 @@ export function SingleRunContent({
 }: {
   projectId: string | null | undefined;
   run: EvalSuiteRun;
+  suiteName?: string;
   iterations: readonly EvalIteration[];
   /** Every iteration in the suite, so the previous run's fractions are known. */
   allIterations?: readonly EvalIteration[];
@@ -170,10 +173,7 @@ export function SingleRunContent({
         {
           key: run._id,
           run,
-          client: run.namedHostId
-            ? (names.get(run.namedHostId) ??
-              `Client …${run.namedHostId.slice(-6)}`)
-            : "Suite client",
+          client: runClientIdentity(run, names).name,
           modelId,
           model: compactModelIdTail(modelLabel),
           iterations,
@@ -563,6 +563,7 @@ export function SingleRunContent({
         <RunResultsMatrix
           key={run._id}
           run={run}
+          suiteName={suiteName}
           runs={siblingRuns}
           diagnostics={detail.diagnostics}
           chains={chains.chains}
@@ -577,7 +578,6 @@ export function SingleRunContent({
               : iterations
           }
           hostNamesById={hostNamesById}
-          onOpenIteration={onOpenIteration}
         />
       </div>
 

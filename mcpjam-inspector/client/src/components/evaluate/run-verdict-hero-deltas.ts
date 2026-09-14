@@ -1,10 +1,15 @@
 /**
- * Compact previous-run deltas for the hero metric strip.
+ * Compact previous-run deltas for the hero's per-pairing measurement rows.
  *
  * Colour is progress vs regression, not "up = green". The arrow follows the
  * number; the tone follows whether that movement helped.
  */
-import { compareRunsBySequence } from "../evals/helpers";
+import {
+  compareRunsBySequence,
+  iterationLatencyP50,
+  iterationLatencyP95,
+  runClientIdentity,
+} from "../evals/helpers";
 import { formatRunCaseLatencyMs } from "../evals/run-case-groups";
 import type { EvalIteration, EvalSuiteRun } from "../evals/types";
 import type { HeroStats } from "./run-verdict-hero-model";
@@ -26,6 +31,28 @@ export type HeroStatDeltas = {
   toolCalls: HeroStatDelta | null;
 };
 
+/**
+ * The measurements the hero reports for ONE client/model pairing.
+ *
+ * Latency, tokens, and tool calls used to be a single page-level strip. They
+ * are per-pairing here because that is the only altitude at which they answer
+ * anything: two clients on one page have two different latencies, and the
+ * average of the two describes neither.
+ */
+export type HeroPairingStats = {
+  latencyP50Ms: number | null;
+  latencyP95Ms: number | null;
+  tokens: number | null;
+  toolCalls: number | null;
+};
+
+export type HeroPairingStatDeltas = {
+  latencyP50: HeroStatDelta | null;
+  latencyP95: HeroStatDelta | null;
+  tokens: HeroStatDelta | null;
+  toolCalls: HeroStatDelta | null;
+};
+
 /** One client/model pairing's pass/fail counts, for the hero list above the insights. */
 export type HeroPairingPass = {
   key: string;
@@ -37,6 +64,16 @@ export type HeroPairingPass = {
   cancelled: number;
   total: number;
   delta: HeroStatDelta | null;
+  /**
+   * Passed as a share of the iterations that DECIDED — pending and cancelled
+   * rows are not failures, and counting them as such would report a defect the
+   * run never observed. Null when nothing has decided yet.
+   */
+  passRate: number | null;
+  /** Movement in percentage points against the same pairing's previous run. */
+  passRateDelta: HeroStatDelta | null;
+  stats: HeroPairingStats;
+  statDeltas: HeroPairingStatDeltas;
 };
 
 export type HeroPairingSource = {
@@ -75,7 +112,11 @@ function toneOf(delta: number, invert: boolean): HeroDeltaTone {
   return improved ? "progress" : "regression";
 }
 
-function deltaOf(
+/**
+ * One signed movement between two measurements, or null when either side is
+ * missing — there is no honest delta against a baseline that does not exist.
+ */
+export function deltaOf(
   current: number | null,
   previous: number | null,
   formatAbs: (value: number) => string,
@@ -148,7 +189,7 @@ export function previousCompletedRunOf(
         (run) =>
           run._id !== current._id &&
           run.status === "completed" &&
-          run.namedHostId === current.namedHostId &&
+          runClientIdentity(run).key === runClientIdentity(current).key &&
           run.effectiveModelId === current.effectiveModelId &&
           (!current.runGroupId || run.runGroupId !== current.runGroupId) &&
           compareRunsBySequence(run, current) < 0,
@@ -158,7 +199,9 @@ export function previousCompletedRunOf(
 }
 
 export function pairingKey(run: EvalSuiteRun, modelId?: string): string {
-  return `${run.namedHostId ?? ""}::${modelId ?? run.effectiveModelId ?? ""}`;
+  return `${runClientIdentity(run).key}::${
+    modelId ?? run.effectiveModelId ?? run.client?.modelId ?? ""
+  }`;
 }
 
 /** Passed polarity: more is progress, fewer is regression. No fake zeros. */
@@ -167,6 +210,47 @@ export function buildPassedDelta(
   previous: number | null,
 ): HeroStatDelta | null {
   return deltaOf(current, previous, String, false);
+}
+
+/** Latency, tokens, and tool calls over one pairing's rows. Absent stays absent. */
+export function pairingStatsOf(
+  iterations: readonly EvalIteration[],
+): HeroPairingStats {
+  let tokens: number | null = null;
+  let toolCalls: number | null = null;
+  for (const iteration of iterations) {
+    if (typeof iteration.tokensUsed === "number") {
+      tokens = (tokens ?? 0) + iteration.tokensUsed;
+    }
+    if (Array.isArray(iteration.actualToolCalls)) {
+      toolCalls = (toolCalls ?? 0) + iteration.actualToolCalls.length;
+    }
+  }
+  // The latency helpers take a mutable array and filter to completed rows
+  // themselves, so these percentiles describe the same population the rest of
+  // the product reports.
+  const latencyInput = [...iterations];
+  return {
+    latencyP50Ms: iterationLatencyP50(latencyInput),
+    latencyP95Ms: iterationLatencyP95(latencyInput),
+    tokens,
+    toolCalls,
+  };
+}
+
+/**
+ * Passed over the rows that DECIDED.
+ *
+ * Pending and cancelled iterations have not failed, so they leave the
+ * denominator rather than dragging the rate toward a failure nobody observed.
+ */
+export function pairingPassRate(counts: {
+  passed: number;
+  failed: number;
+}): number | null {
+  const decided = counts.passed + counts.failed;
+  if (decided === 0) return null;
+  return (counts.passed / decided) * 100;
 }
 
 /**
@@ -185,12 +269,16 @@ export function buildHeroPairings({
 }): HeroPairingPass[] {
   return targets.map((target) => {
     const counts = resultCounts(target.iterations);
-    const previousPassed = previousPassedFor(
+    const previousRows = previousRowsFor(
       target,
       previousLaunch,
       previousIterations,
       targets.length,
     );
+    const previousCounts = previousRows ? resultCounts(previousRows) : null;
+    const stats = pairingStatsOf(target.iterations);
+    const previousStats = previousRows ? pairingStatsOf(previousRows) : null;
+    const passRate = pairingPassRate(counts);
     return {
       key: target.key,
       client: target.client,
@@ -200,17 +288,52 @@ export function buildHeroPairings({
       pending: counts.pending,
       cancelled: counts.cancelled,
       total: target.iterations.length,
-      delta: buildPassedDelta(counts.passed, previousPassed),
+      delta: buildPassedDelta(counts.passed, previousCounts?.passed ?? null),
+      passRate,
+      passRateDelta: deltaOf(
+        passRate,
+        previousCounts ? pairingPassRate(previousCounts) : null,
+        (points) => `${Math.round(points)}%`,
+        false,
+      ),
+      stats,
+      statDeltas: {
+        latencyP50: deltaOf(
+          stats.latencyP50Ms,
+          previousStats?.latencyP50Ms ?? null,
+          (ms) => formatRunCaseLatencyMs(ms).replace("—", ""),
+          true,
+        ),
+        latencyP95: deltaOf(
+          stats.latencyP95Ms,
+          previousStats?.latencyP95Ms ?? null,
+          (ms) => formatRunCaseLatencyMs(ms).replace("—", ""),
+          true,
+        ),
+        tokens: deltaOf(
+          stats.tokens,
+          previousStats?.tokens ?? null,
+          formatHeroCount,
+          true,
+        ),
+        toolCalls: deltaOf(
+          stats.toolCalls,
+          previousStats?.toolCalls ?? null,
+          formatHeroCount,
+          true,
+        ),
+      },
     };
   });
 }
 
-function previousPassedFor(
+/** The previous run's iteration rows for this same client/model, or null. */
+function previousRowsFor(
   target: HeroPairingSource,
   previousLaunch: readonly EvalSuiteRun[] | null,
   previousIterations: readonly EvalIteration[] | null,
   targetCount: number,
-): number | null {
+): EvalIteration[] | null {
   if (!previousIterations || previousIterations.length === 0) return null;
   if (previousLaunch && previousLaunch.length > 0) {
     const key = pairingKey(target.run, target.modelId);
@@ -219,14 +342,12 @@ function previousPassedFor(
     const rows = previousIterations.filter(
       (iteration) => iteration.suiteRunId === twin._id,
     );
-    if (rows.length === 0) return null;
-    return rows.filter((iteration) => iteration.result === "passed").length;
+    return rows.length === 0 ? null : rows;
   }
   // Single-run page: previous rows are already scoped to that pairing.
   // Never roll a multi-pairing launch into every row.
   if (targetCount !== 1) return null;
-  return previousIterations.filter((iteration) => iteration.result === "passed")
-    .length;
+  return [...previousIterations];
 }
 
 /**
@@ -312,7 +433,8 @@ export function previousHeroIterations({
 
   const rows = allIterations.filter(
     (iteration) =>
-      iteration.suiteRunId != null && previousIds.includes(iteration.suiteRunId),
+      iteration.suiteRunId != null &&
+      previousIds.includes(iteration.suiteRunId),
   );
   return rows.length > 0 ? rows : null;
 }

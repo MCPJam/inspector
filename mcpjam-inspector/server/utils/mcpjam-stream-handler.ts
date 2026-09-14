@@ -5,7 +5,7 @@
  * The LLM lives in Convex (to protect the OpenRouter key),
  * while MCP tools execute locally in this Express server.
  */
-
+import { withPageToolAttributionMetadata } from "./page-tool-call-attribution";
 import {
   createUIMessageStream,
   createUIMessageStreamResponse,
@@ -2043,7 +2043,18 @@ async function processStream(
           flushText();
           flushReasoning();
           const toolCallId = normalizeToolCallId(chunk.toolCallId);
-          writer.write({ ...chunk, toolCallId });
+          const providerMetadata =
+            "toolName" in chunk && typeof chunk.toolName === "string"
+              ? withPageToolAttributionMetadata(
+                  chunk.providerMetadata,
+                  tools[chunk.toolName],
+                )
+              : undefined;
+          writer.write({
+            ...chunk,
+            toolCallId,
+            ...(providerMetadata ? { providerMetadata } : {}),
+          });
           break;
         }
 
@@ -2058,7 +2069,10 @@ async function processStream(
           // `mergePageToolBindingMetadata`.
           const providerMetadata = mergePageToolBindingMetadata(
             mergeMcpToolOriginMetadata(
-              chunk.providerMetadata,
+              withPageToolAttributionMetadata(
+                chunk.providerMetadata,
+                tools[chunk.toolName],
+              ),
               serverIdForToolCall,
             ),
             pageToolBindingOf(tools[chunk.toolName]),

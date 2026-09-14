@@ -3,6 +3,7 @@ import { AlertTriangle, Loader2, Share2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import { copyToClipboard } from "@/lib/clipboard";
+import { cn } from "@/lib/utils";
 import type { ModelDefinition, ModelProvider } from "@/shared/types";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import {
@@ -288,6 +289,21 @@ interface ShareUsageThreadDetailProps {
     /** Overrides the default navigate-to-test-editor behavior. */
     onImported?: (result: { suiteId: string; testCaseId: string }) => void;
   };
+  /**
+   * Softens the Chat transcript's top and bottom edges as you scroll it
+   * (`scroll-fade-y`), so a cut-off message reads as "there is more" rather
+   * than as a pane that stops mid-sentence.
+   *
+   * OPT-IN, and off by default, because this component is the session detail
+   * for FIVE surfaces — User Testing, the two Swarm panels, the cross-surface
+   * Sessions page and the host share-usage dialog. The same treatment would
+   * suit all of them; turning it on for all of them is a call the people who
+   * own those surfaces should make, not a side effect of fixing one.
+   *
+   * Chat only. The Trace tab's timeline has sticky column headers, and a mask
+   * on their scroll container would fade the headers as well as the rows.
+   */
+  fadeTranscriptEdges?: boolean;
 }
 
 /**
@@ -303,6 +319,7 @@ export function ShareUsageThreadDetail({
   threadId,
   sessionLink,
   promote,
+  fadeTranscriptEdges = false,
 }: ShareUsageThreadDetailProps) {
   const { thread } = useSharedChatThread({ threadId });
   const { snapshots } = useSharedChatWidgetSnapshots({ threadId });
@@ -719,7 +736,16 @@ export function ShareUsageThreadDetail({
             />
           </div>
         ) : effectiveViewMode === "chat" ? (
-          <div className="min-h-0 flex-1 overflow-y-auto">
+          <div
+            className={cn(
+              "min-h-0 flex-1 overflow-y-auto",
+              // `scroll-fade-y`, not `-b`: the top edge runs under the tab bar
+              // and cuts a message just as flatly there. Each edge only paints
+              // when there is something to scroll toward, so a transcript that
+              // fits shows neither.
+              fadeTranscriptEdges && "scroll-fade-y",
+            )}
+          >
             {/* Ships dark: `sessionScores:listBySession` reaches production
                 only on the next release promotion, and `useQuery` against an
                 undeployed function throws. The fallback is the transcript

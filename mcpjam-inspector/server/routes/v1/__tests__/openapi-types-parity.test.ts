@@ -90,6 +90,10 @@ const PAIRS: Readonly<Record<string, string>> = {
   EvalSuiteFromFileSynced: "PlatformFileOwnedEvalSuiteSynced",
   EvalIteration: "PlatformEvalIteration",
   EvalCase: "PlatformEvalCase",
+  // The policy `role` lives on this schema, and it is the one field the
+  // vocabulary negotiation projects. Pinned so the published enum and the one
+  // the boundary serves cannot drift apart without a red test.
+  ResolvedScoreDefinition: "PlatformResolvedScoreDefinition",
   EvalDeleted: "PlatformEvalSuiteDeleted",
   Client: "PlatformClient",
   ClientDetail: "PlatformClientDetail",

@@ -44,6 +44,7 @@ import scenarios from "./scenarios.js";
 import userTesting from "./user-testing.js";
 import shares from "./shares.js";
 import sandboxImages from "./images.js";
+import evalBacktest from "./eval-backtest.js";
 import evalIngest from "./eval-ingest.js";
 import conformanceIngest from "./conformance-ingest.js";
 import agent from "./agent.js";
@@ -216,6 +217,7 @@ v1.route("/", shares);
 // GUEST_ALLOWED_V1_RULES entry) — every operation requires an authenticated,
 // project-scoped caller.
 v1.route("/", sandboxImages);
+v1.route("/", evalBacktest);
 v1.route("/", evalIngest);
 v1.route("/", conformanceIngest);
 // Headless agent turn (Slack bot terminal). Guest-DENIED by default (no

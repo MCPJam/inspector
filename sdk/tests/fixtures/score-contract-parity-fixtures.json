@@ -1,6 +1,5 @@
 {
   "__readme": "Shared parity fixtures for the versioned evaluation contract. Loaded by sdk/tests/score-contract-parity.test.ts in mcpjam-inspector (Zod: scoreResultSchema / resolvedScoreDefinitionSchema / evaluationConfigSnapshotSchema in sdk/src/contract/schemas.ts) AND, VERBATIM, by tests/convex/scoreContractParity.test.ts in mcpjam-backend (the hand-mirrored v.* validators in convex/lib/scoreContract.ts, exercised through the real ingest mutation boundary). The backend cannot import @mcpjam/sdk into convex/ default-runtime code, so this file is the only common ground truth — copy it byte for byte, do not re-author it. LOAD RULE: strip EVERY key whose name starts with '__' before handing a row to a validator; they are fixture annotations (__label, __why, __kind) and both validators reject unknown fields. DISPATCH: '__kind' selects which validator a row is for — 'result', 'definition', or 'snapshot'. The __digests block pins LITERAL hash constants produced by the SDK implementation; the backend asserts its own canonical-JSON + SHA-256 twin reproduces them exactly, rather than recomputing an expectation on both sides (which would prove only that each side agrees with itself). If a digest assertion fails, the two canonicalizations have drifted — STOP, do not edit the constants. When the contract shape changes, edit BOTH validator files AND this fixture in the same PR.",
-
   "accept": [
     {
       "__kind": "definition",
@@ -43,7 +42,10 @@
       "role": "gating",
       "onError": "fail",
       "onSkipped": "fail",
-      "scope": { "kind": "turn", "promptIndex": 2 }
+      "scope": {
+        "kind": "turn",
+        "promptIndex": 2
+      }
     },
     {
       "__kind": "definition",
@@ -72,7 +74,6 @@
       "onError": "ignore",
       "onSkipped": "ignore"
     },
-
     {
       "__kind": "result",
       "__label": "result — scored and passing at threshold 1",
@@ -151,9 +152,15 @@
       "passThreshold": 1,
       "passed": true,
       "rationale": "criterion met",
-      "evidence": ["acknowledged the refund", "quoted the order id"],
+      "evidence": [
+        "acknowledged the refund",
+        "quoted the order id"
+      ],
       "deterministic": true,
-      "scope": { "kind": "turn", "promptIndex": 1 }
+      "scope": {
+        "kind": "turn",
+        "promptIndex": 1
+      }
     },
     {
       "__kind": "result",
@@ -191,7 +198,6 @@
       "rationale": "no expected tool calls were configured",
       "deterministic": true
     },
-
     {
       "__kind": "snapshot",
       "__label": "snapshot — empty definition set",
@@ -228,9 +234,21 @@
           "model": "anthropic/claude-sonnet-4-6"
         }
       ]
+    },
+    {
+      "__kind": "definition",
+      "__label": "definition — role `required`, the canonical spelling of gating",
+      "scorerId": "refund-mentioned",
+      "idSource": "explicit",
+      "scorerVersion": "1",
+      "implementationHash": "impl-refund-predicate-v1",
+      "deterministic": true,
+      "passThreshold": 1,
+      "role": "required",
+      "onError": "fail",
+      "onSkipped": "fail"
     }
   ],
-
   "reject": [
     {
       "__kind": "result",
@@ -423,9 +441,11 @@
       "status": "skipped",
       "passThreshold": 1,
       "deterministic": true,
-      "scope": { "kind": "turn", "promptIndex": -1 }
+      "scope": {
+        "kind": "turn",
+        "promptIndex": -1
+      }
     },
-
     {
       "__kind": "definition",
       "__label": "definition — missing implementationHash",
@@ -541,7 +561,6 @@
       "onError": "ignore",
       "onSkipped": "ignore"
     },
-
     {
       "__kind": "snapshot",
       "__label": "snapshot — duplicate scorerIds",
@@ -595,10 +614,8 @@
       ]
     }
   ],
-
   "__digests": {
     "__readme": "PINNED CROSS-RUNTIME HASH CONSTANTS. Each `definitions` row holds an AUTHORED ScoreDefinition (onError/onSkipped may be absent) and the definitionHash it must produce AFTER resolution — that is what proves an omitted default and an explicit default hash identically. Each `configs` row holds authored definitions and the evaluationConfigHash of the resolved set. Both sides compute; neither side recomputes the expectation.",
-
     "definitions": [
       {
         "__label": "D1 — defaults OMITTED",
@@ -731,12 +748,28 @@
           "deterministic": true,
           "passThreshold": 1,
           "role": "gating",
-          "scope": { "kind": "turn", "promptIndex": 2 }
+          "scope": {
+            "kind": "turn",
+            "promptIndex": 2
+          }
         },
         "definitionHash": "1727fc2953bec6c1b5b5618f3fa4244b76d662bae8f26d3f13ca7acc964d8580"
+      },
+      {
+        "__label": "D10 — role spelled `required` (must equal D1)",
+        "__why": "The canonical spelling of `gating`. The hash payload emits the frozen `gating` spelling whichever one the definition carries, so renaming the value rotates NO identity: every stored score row still joins to its definition, and every `eval gate --baseline` still finds the scorers it was pinned against. This row is the proof — if it ever stops equalling D1, the rename has become a rehash and the pinned contract's \"hash payloads stay frozen\" has been broken.",
+        "definition": {
+          "scorerId": "refund-mentioned",
+          "idSource": "explicit",
+          "scorerVersion": "1",
+          "implementationHash": "impl-refund-predicate-v1",
+          "deterministic": true,
+          "passThreshold": 1,
+          "role": "required"
+        },
+        "definitionHash": "c9ff5b95e1bf2ac3c30df469ee6c504b8384c01ececcb5cd1158d130b06e4818"
       }
     ],
-
     "configs": [
       {
         "__label": "C1 — [D1, D6]",
@@ -838,7 +871,6 @@
       }
     ]
   },
-
   "__verdicts": {
     "__readme": "PINNED CROSS-RUNTIME VERDICT ARITHMETIC for `allGatingScorersPassed` — the function the score contract becomes AUTHORITATIVE with at grading mode `enforce`. The inspector's copy lives in sdk/src/contract/derive.ts and decides an iteration's `result`; the backend's hand-mirror lives in convex/lib/scoreContract.ts and VERIFIES that reported result against the rows that were actually persisted. Two implementations of \"did the gates hold\" is exactly how a hosted run and a CI gate end up disagreeing about the same rows, so both sides run these cases. SHAPE: `definitions` are AUTHORED (onError/onSkipped may be absent — each side resolves them, which is also what proves an omitted default and an explicit one behave identically). `rows` name their definition by `scorerId`; each side stamps the resolved `definitionHash` onto the row before calling, because the join is BY HASH and hard-coding hashes here would duplicate what the __digests block already pins. A row whose scorerId matches no definition is intentionally left unjoinable. `expected` is `{passed, disagreeing, unresolved}` with both id lists sorted.",
     "cases": [

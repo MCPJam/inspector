@@ -333,6 +333,7 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
     "undismissSwarmFinding",
   "post /projects/{projectId}/eval-runs/{runId}/insights":
     "requestEvalRunInsights",
+  "post /projects/{projectId}/eval-runs/{runId}/backtest": "backtestEvalRun",
   "post /projects/{projectId}/eval-runs/{runId}/judge": "requestEvalRunJudge",
   "get /organizations/{organizationId}/eval-check-repos": "listEvalCheckRepos",
   "post /organizations/{organizationId}/eval-check-repos":
@@ -456,6 +457,10 @@ const EXCLUDED_FROM_SDK: Readonly<Record<string, string>> = {
     "An interactive OAuth probe for the Inspector UI's connect flow, whose result only makes sense to something that can then open a browser.",
   "post /projects/{projectId}/servers/{serverId}/oauth/import-tokens":
     "Imports an OAuth grant obtained out of band. Deliberately hard to reach: an SDK method would make bulk credential injection the easy path.",
+  "post /projects/{projectId}/eval-ingest/capabilities":
+    "Authenticated SDK reporting capability negotiation is owned by the reporter.",
+  "post /projects/{projectId}/eval-ingest/runs/evaluations":
+    "Advisory case-run persistence is owned by the SDK reporter, alongside report terminalization.",
   "post /projects/{projectId}/eval-ingest/report":
     "SDK eval-result INGESTION. Already covered by the SDK's reporter, which owns the payload shape end to end; a second, lower-level way to post the same body would let the two drift.",
   "post /projects/{projectId}/eval-ingest/runs/start":

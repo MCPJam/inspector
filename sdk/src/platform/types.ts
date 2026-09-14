@@ -540,7 +540,17 @@ export interface PlatformTurnUsage {
  */
 export interface PlatformChatTurn {
   chatSessionId?: string;
-  browser?: Partial<PlatformSessionBrowser> & { attached: boolean; effectivePolicy?: { tools: readonly string[] | null; origins: readonly string[] | null }; reason?: string; screenshots?: PlatformBrowserScreenshot[]; notices?: string[]; handoff?: { waited: boolean; resumed: boolean } };
+  browser?: Partial<PlatformSessionBrowser> & {
+    attached: boolean;
+    effectivePolicy?: {
+      tools: readonly string[] | null;
+      origins: readonly string[] | null;
+    };
+    reason?: string;
+    screenshots?: PlatformBrowserScreenshot[];
+    notices?: string[];
+    handoff?: { waited: boolean; resumed: boolean };
+  };
   sessionId: string | null;
   turnId: string;
   /**
@@ -619,7 +629,11 @@ export interface PlatformChatSessionDetail {
 
 /** One turn's entry in a trace read. */
 export interface PlatformChatSessionTraceTurn {
-  browser?: { browserSessionId: string; bootId?: string; box?: { sandboxRowId: string } | { computerId: string } };
+  browser?: {
+    browserSessionId: string;
+    bootId?: string;
+    box?: { sandboxRowId: string } | { computerId: string };
+  };
   screenshots?: PlatformBrowserScreenshot[];
   turnId: string;
   promptIndex: number;
@@ -699,7 +713,10 @@ export interface PlatformWidgetRender {
  * and tolerate an unknown value rather than assuming this list is closed.
  */
 export type PlatformSessionSourceType =
-  "direct" | "scenario" | "eval" | "swarm";
+  | "direct"
+  | "scenario"
+  | "eval"
+  | "swarm";
 
 /** The session's parent run, discriminated on `kind`. Also open-ended. */
 export interface PlatformSessionParentRef {
@@ -893,6 +910,11 @@ export interface PlatformEvalRunAttribution {
  * the condensed latest-run projection embedded in `PlatformEvalSuite`.
  */
 export interface PlatformEvalRun {
+  name?: string;
+  tags?: string[];
+  runMetadata?: Record<string, string | number | boolean>;
+  ciMetadata?: import("../eval-reporting-types.js").EvalCiMetadata;
+  runEvaluationsByCase?: import("../run-evaluators.js").CaseRunEvaluation[];
   id: string;
   suiteId: string;
   runNumber: number | null;
@@ -961,12 +983,20 @@ export interface PlatformEvalRun {
    * absent on API deployments that predate run environment attribution.
    */
   environment?: PlatformEvalRunEnvironment | null;
+  /** Durable execution client; absent on older runs. Distinct from launcher. */
+  client?: {
+    id: string | null;
+    name: string;
+    hostStyle?: string;
+    modelId?: string;
+    source: "environment" | "attached_host" | "suite_default" | "sdk";
+  };
   /** Shared by every per-target run from the same fan-out launch. */
   runGroupId?: string;
   /** Model the run actually executed with. Absent on pre-attribution rows. */
   effectiveModelId?: string;
-  /** `"client_default"` inherited the host model; `"override"` used env.modelId. */
-  modelSource?: "client_default" | "override";
+  /** `case` uses the sole snapshot model; the other values describe environment attribution. */
+  modelSource?: "client_default" | "override" | "case";
   /**
    * Which engine executed the run: `"emulated"` (the platform's own turn loop)
    * or `"harness:<id>"` (a real agent runtime such as Claude Code).
@@ -1090,7 +1120,8 @@ export interface PlatformEvalRunJudgeState {
   threshold: number | null;
 }
 
-export interface PlatformEvalRunGoalCompletionJudge extends PlatformEvalRunJudgeState {
+export interface PlatformEvalRunGoalCompletionJudge
+  extends PlatformEvalRunJudgeState {
   /**
    * Per-case grades. EMPTY unless `status` is `"completed"` — a pending or
    * failed judge carries no cases, and `status` is what says which.
@@ -1098,7 +1129,8 @@ export interface PlatformEvalRunGoalCompletionJudge extends PlatformEvalRunJudge
   cases: PlatformEvalRunGoalCompletionCase[];
 }
 
-export interface PlatformEvalRunGroundednessJudge extends PlatformEvalRunJudgeState {
+export interface PlatformEvalRunGroundednessJudge
+  extends PlatformEvalRunJudgeState {
   /** Per-case grades. EMPTY unless `status` is `"completed"`. */
   cases: PlatformEvalRunGroundednessCase[];
 }
@@ -1125,12 +1157,14 @@ export interface PlatformEvalRunJudgeCase {
   reason: string | null;
 }
 
-export interface PlatformEvalRunGoalCompletionCase extends PlatformEvalRunJudgeCase {
+export interface PlatformEvalRunGoalCompletionCase
+  extends PlatformEvalRunJudgeCase {
   /** Rubric criteria the answer satisfied. */
   rubricHits: string[];
 }
 
-export interface PlatformEvalRunGroundednessCase extends PlatformEvalRunJudgeCase {
+export interface PlatformEvalRunGroundednessCase
+  extends PlatformEvalRunJudgeCase {
   /** Claims the tool trajectory does not support. */
   unsupportedClaims: string[];
 }
@@ -1177,10 +1211,14 @@ export interface PlatformNotApplicableRailDisclosure {
 }
 
 export type PlatformRailDisclosure =
-  PlatformManagedRailDisclosure | PlatformNotApplicableRailDisclosure;
+  | PlatformManagedRailDisclosure
+  | PlatformNotApplicableRailDisclosure;
 
 export type PlatformDisclosureTenantEgress =
-  "mcpjam-hosted" | "byok-cloud" | "byok-local" | "unknown";
+  | "mcpjam-hosted"
+  | "byok-cloud"
+  | "byok-local"
+  | "unknown";
 
 export interface PlatformByokDisclosure {
   providerKey: string;
@@ -1208,7 +1246,9 @@ export interface PlatformDisclosedModel {
  * a fourth runtime kind.
  */
 export type PlatformDisclosureEngine =
-  "emulated" | "mixed" | `harness:${string}`;
+  | "emulated"
+  | "mixed"
+  | `harness:${string}`;
 
 /**
  * Whether this run executes MCPJam-hosted or on the caller's own machine.
@@ -1219,7 +1259,8 @@ export type PlatformDisclosureEngine =
  * the union defensively — a caller MUST NOT treat it as `hosted: false`.
  */
 export type PlatformEvalRunDisclosureLocus =
-  { known: true; hosted: boolean } | { known: false; reason: string };
+  | { known: true; hosted: boolean }
+  | { known: false; reason: string };
 
 export interface PlatformExecutionDisclosure {
   engine: PlatformDisclosureEngine;
@@ -1826,7 +1867,13 @@ export interface PlatformEvalSuiteRevision {
   revisionNumber: number;
   /** Where the edit came from. `unattributed` is a write nothing claimed. */
   source:
-    "ui" | "api" | "cli" | "file_sync" | "import" | "system" | "unattributed";
+    | "ui"
+    | "api"
+    | "cli"
+    | "file_sync"
+    | "import"
+    | "system"
+    | "unattributed";
   /** The user id, or `null` for a write with no human actor. */
   createdBy: string | null;
   /** A display name when one is resolvable; `null` otherwise. */
@@ -1928,6 +1975,7 @@ export interface PlatformEvalCase {
   models: PlatformEvalCaseModel[];
   matchOptions?: PublicMatchOptions;
   checks?: PublicCheckOverride;
+  suppressedSuiteStandardCheckIds?: string[];
   /**
    * The converter's CLAIM about this case, when it was imported rather than
    * authored here. ABSENT means natively authored — a different fact from
@@ -2118,6 +2166,34 @@ export interface PlatformScoreContractScorer {
   errorCount: { base: number; compare: number };
 }
 
+/**
+ * `ResolvedScoreDefinition` as the PUBLIC API returns it.
+ *
+ * Declared here so `openapi-types-parity` can pin it against the published
+ * schema — which is the point: `role` is the field the vocabulary negotiation
+ * projects, and without a twin to compare against, the published enum and the
+ * one the boundary actually serves could drift apart silently.
+ *
+ * `role` carries the WIRE spelling, not the effective one. A response says
+ * `"gating"` unless the request sent `x-mcpjam-eval-vocabulary: 2`; only then
+ * does it say `"required"`. A reader compares with `isRequiredRole`, never a
+ * literal.
+ */
+export interface PlatformResolvedScoreDefinition {
+  scorerId: string;
+  idSource: "explicit" | "generated" | "platform";
+  scorerVersion: string;
+  implementationHash: string;
+  label?: string;
+  deterministic: boolean;
+  passThreshold: number;
+  role: "gating" | "advisory" | "required";
+  onError: "fail" | "ignore";
+  onSkipped: "fail" | "ignore";
+  model?: string;
+  scope?: Record<string, unknown>;
+}
+
 export interface PlatformScoreContractDiff {
   base: PlatformScoreContractSide;
   compare: PlatformScoreContractSide;
@@ -2205,8 +2281,9 @@ export interface PlatformRunCompareSide {
     passRate: number;
   } | null;
   environment?: { id: string; name: string | null };
+  client?: { name: string };
   effectiveModelId?: string;
-  modelSource?: "client_default" | "override";
+  modelSource?: "client_default" | "override" | "case";
 }
 
 /**
@@ -2295,7 +2372,10 @@ export interface PlatformRunCompare {
 
 /** Delivery channel a pinned skill reached a run through. */
 export type PlatformRunCompareSkillChannel =
-  "host" | "environment" | "plugin" | "mcp-server";
+  | "host"
+  | "environment"
+  | "plugin"
+  | "mcp-server";
 
 /** One skill's identity + content fingerprint on one side of a comparison. */
 export interface PlatformRunCompareSkillSide {
@@ -2778,7 +2858,8 @@ export interface PlatformEnvironmentSecretSelection {
 
 /** Why a skill cannot be pinned into an environment's `skillSelection`. */
 export type PlatformSkillPinnability =
-  { ok: true } | { ok: false; reason: string };
+  | { ok: true }
+  | { ok: false; reason: string };
 
 /** One skill visible to the caller: project-shared, or their own draft. */
 export interface PlatformProjectSkill {
@@ -3187,6 +3268,19 @@ export interface PlatformEvalStepResult {
   reason: string | null;
   evidence?: PlatformEvalStepEvidence;
 }
+
+/**
+ * A page of step results, plus whether the evidence read behind them actually
+ * completed.
+ *
+ * The route serves verdicts even when the trace blob cannot be loaded, so an
+ * item with no `evidence` is ambiguous on its own: the step may have produced
+ * none, or the blob loader may be down. `"unavailable"` says the second one
+ * happened. Optional so a caller tolerates a backend that predates the marker.
+ */
+export type PlatformEvalStepsPage = PlatformPage<PlatformEvalStepResult> & {
+  evidence?: "resolved" | "unavailable";
+};
 
 /**
  * Share link for a scenario. The URL embeds the access token; it is visible
@@ -3722,7 +3816,8 @@ export interface PlatformTraceDestinationHealth {
  * a caller can size the gap — NOTHING was queued while it was paused, and the
  * only way to fill the window is a backfill.
  */
-export interface PlatformTraceDestinationResumed extends PlatformTraceDestination {
+export interface PlatformTraceDestinationResumed
+  extends PlatformTraceDestination {
   pausedSince: number | null;
 }
 
@@ -3930,7 +4025,11 @@ export interface PlatformFindingDismissed {
  * - Reads never trigger generation; `status` is observational.
  */
 export type PlatformInsightsStatus =
-  "not_available" | "not_requested" | "pending" | "completed" | "failed";
+  | "not_available"
+  | "not_requested"
+  | "pending"
+  | "completed"
+  | "failed";
 
 export type PlatformInsightScope =
   | { kind: "eval_run"; id: string }
@@ -3960,7 +4059,9 @@ export type PlatformInsightActionTarget =
   | "environment";
 
 export type PlatformInsightActionability =
-  "informational" | "investigate" | "ready";
+  | "informational"
+  | "investigate"
+  | "ready";
 
 export interface PlatformActionableFindingEvidence {
   sessionId?: string;
@@ -4204,6 +4305,26 @@ export interface PlatformCapabilities {
     features: Record<string, unknown>;
   } | null;
   /**
+   * The eval vocabulary this deployment understands: what a request sending
+   * `x-mcpjam-eval-vocabulary: 2` may spell, and the legacy spellings such a
+   * body may still use per canonical field. Absent on a deployment that
+   * predates the negotiation, which then speaks only vocabulary 1.
+   */
+  vocabulary?: {
+    version: number;
+    evaluatorKinds: string[];
+    assertionKinds: string[];
+    /**
+     * Canonical field name → the legacy spellings a vocabulary-2 body may
+     * still use for it. Keyed by name rather than declared field-by-field
+     * so this type does not spell the canonical names before the platform
+     * operations do — the vocabulary codemod reads this file, and a canonical
+     * name written here ahead of its rename step is what that scanner exists
+     * to refuse.
+     */
+    fields: Record<string, string[]>;
+  };
+  /**
    * The booleans to branch on. Note that the exposure-REDUCING ones
    * (`cancelJourneyRun`, `unpublishUserTestingScenario`) stay true for an org
    * that has lost the beta — losing the feature is exactly when stopping it
@@ -4352,7 +4473,8 @@ export interface PlatformUserTestingScenario {
  * Scenario detail — the read shape, widened with the environment link and
  * the insights envelope.
  */
-export interface PlatformUserTestingScenarioDetail extends PlatformUserTestingScenario {
+export interface PlatformUserTestingScenarioDetail
+  extends PlatformUserTestingScenario {
   environmentId: string | null;
   /**
    * Present when the caller may have it. The envelope is gated on workspace
@@ -4482,7 +4604,8 @@ export type PlatformReadinessKind = "claude" | "openai";
  * in this type would let a caller write a request the server refuses.
  */
 export type PlatformReadinessSubmissionMode =
-  "mcp-only" | "mcp-imported-skills";
+  | "mcp-only"
+  | "mcp-imported-skills";
 
 export type PlatformReadinessLaneStatus = "ready" | "not-ready" | "incomplete";
 
@@ -4619,7 +4742,8 @@ export interface PlatformReadinessStartBody {
   includeLlmObservations?: boolean;
 }
 
-export interface PlatformOpenAIReadinessStartBody extends PlatformReadinessStartBody {
+export interface PlatformOpenAIReadinessStartBody
+  extends PlatformReadinessStartBody {
   /**
    * The DECLARED submission shape. REQUIRED, and never inferred.
    *

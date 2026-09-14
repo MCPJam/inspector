@@ -62,8 +62,8 @@ vi.mock("convex/browser", () => ({
 
 import v1Routes from "../index.js";
 
-const PROJECT_ID = "p_1";
-const SUITE_ID = "s_1";
+const PROJECT_ID = "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx";
+const SUITE_ID = "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx";
 
 /** A host that pins one of everything the connection can carry. */
 const PINNED_HOST = {
@@ -125,7 +125,7 @@ beforeEach(() => {
   });
   prepareEvalRunMock.mockResolvedValue({
     suiteId: SUITE_ID,
-    runId: "run_1",
+    runId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
     caseUpsert: { committed: [], failed: [] },
     recorder: { finalize: vi.fn() },
     execute: vi.fn().mockResolvedValue(undefined),
@@ -138,6 +138,110 @@ afterEach(() => {
 });
 
 describe("v1 eval run — connects as the run's host", () => {
+  it.each([true, false])(
+    "projects only the durable client fields when present: %s",
+    async (hasClient) => {
+      const client = {
+        namedHostId: "host-1",
+        name: "Frozen client",
+        hostStyle: "claude",
+        modelId: "haiku",
+        source: "attached_host",
+        backfilled: true,
+        hostConfigId: "private-config",
+      };
+      convexQueryMock.mockImplementation(async (fn: string) =>
+        fn === "testSuites:getTestSuiteRun"
+          ? {
+              _id: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+              suiteId: SUITE_ID,
+              projectId: PROJECT_ID,
+              status: "completed",
+              modelSource: "case",
+              ...(hasClient ? { client } : {}),
+            }
+          : null,
+      );
+      const app = new Hono();
+      app.route("/api/v1", v1Routes);
+      const response = await app.request(
+        `/api/v1/projects/${PROJECT_ID}/eval-runs/run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx`,
+        { headers: { Authorization: "Bearer tok" } },
+      );
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.modelSource).toBe("case");
+      if (hasClient)
+        expect(body.client).toEqual({
+          id: "host-1",
+          name: "Frozen client",
+          hostStyle: "claude",
+          modelId: "haiku",
+          source: "attached_host",
+        });
+      else expect(body).not.toHaveProperty("client");
+    },
+  );
+  it("resolves inline hosts before authoring and launches with their config", async () => {
+    convexQueryMock.mockResolvedValue([{ hostId: "host-1", name: "Claude" }]);
+    const response = await request({
+      suiteName: "Inline",
+      serverIds: ["srv-1"],
+      serverNames: ["alpha"],
+      hosts: [{ host: "Claude", servers: ["alpha"] }],
+      tests: [
+        {
+          title: "Smoke",
+          steps: [{ id: "s1", kind: "prompt", prompt: "Hello" }],
+          model: "openai/gpt-4o",
+          provider: "openai",
+          runs: 1,
+        },
+      ],
+    });
+    expect(response.status, await response.clone().text()).toBe(202);
+    expect(prepareEvalRunMock.mock.calls[0][1]).toMatchObject({
+      namedHostId: "host-1",
+      hostAttachments: [
+        { namedHostId: "host-1", selectedServerIds: ["srv-1"] },
+      ],
+    });
+    expect(loadSuiteHostConfigMock).toHaveBeenCalledWith(
+      expect.anything(),
+      undefined,
+      "host-1",
+    );
+  });
+
+  it("rejects inline attachments on existing suites before authoring", async () => {
+    const response = await request({
+      suiteId: SUITE_ID,
+      hosts: [{ host: "Claude" }],
+    });
+    expect(response.status).toBe(400);
+    expect(prepareEvalRunMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects unknown inline hosts before authoring or connecting", async () => {
+    convexQueryMock.mockResolvedValue([]);
+    const response = await request({
+      suiteName: "Inline",
+      serverIds: ["srv-1"],
+      hosts: [{ host: "Missing" }],
+      tests: [
+        {
+          title: "Smoke",
+          steps: [{ id: "s1", kind: "prompt", prompt: "Hello" }],
+          model: "openai/gpt-4o",
+          provider: "openai",
+          runs: 1,
+        },
+      ],
+    });
+    expect(response.status, await response.clone().text()).toBe(404);
+    expect(prepareEvalRunMock).not.toHaveBeenCalled();
+    expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
+  });
   it("sends the host's initialize pins, capabilities and timeouts", async () => {
     const response = await request({ suiteId: SUITE_ID, serverIds: ["srv-1"] });
     expect(response.status).toBeLessThan(400);

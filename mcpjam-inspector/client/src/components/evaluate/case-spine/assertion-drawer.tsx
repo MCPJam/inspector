@@ -66,7 +66,7 @@ export function EvalAddDrawer({
       !kinds.includes(item.choice.predicateKind)
     )
       return false;
-    return `${item.label} ${item.section} ${item.key} ${item.scope === "whole-run" || wholeRunOnly ? "After the run" : "After this action"} ${item.advisory ? "Warn Report" : ""} ${reason(item) ?? ""}`
+    return `${item.label} ${item.section} ${item.key} ${item.scope === "whole-run" || wholeRunOnly ? "After the run" : "After this action"} ${item.advisory ? "Advisory" : ""} ${reason(item) ?? ""}`
       .toLowerCase()
       .includes(search.trim().toLowerCase());
   });
@@ -102,7 +102,7 @@ export function EvalAddDrawer({
         }}
       >
         <SheetHeader className="shrink-0 pr-12">
-          <SheetTitle>Add actions and checks</SheetTitle>
+          <SheetTitle>Add actions and assertions</SheetTitle>
           <SheetDescription>
             Choose what happens next or what this test verifies.
           </SheetDescription>
@@ -110,8 +110,8 @@ export function EvalAddDrawer({
         <div className="px-4 pb-3">
           <Input
             autoFocus
-            aria-label="Filter steps and checks"
-            placeholder="Search all actions and checks…"
+            aria-label="Filter steps and assertions"
+            placeholder="Search all actions and assertions…"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             className="bg-popover"
@@ -170,7 +170,7 @@ export function EvalAddDrawer({
                                           item.scope === "whole-run"
                                         ? "After the run"
                                         : "After this action")}
-                              {item.advisory ? " · Warn or Report only" : ""}
+                              {item.advisory ? " · Advisory only" : ""}
                             </span>
                           </span>
                         </button>
@@ -183,7 +183,7 @@ export function EvalAddDrawer({
           })}
           {!entries.length && (
             <p className="py-4 text-sm text-muted-foreground">
-              No matching actions or checks.
+              No matching actions or assertions.
             </p>
           )}
         </div>

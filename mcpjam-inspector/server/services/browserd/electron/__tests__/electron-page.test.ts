@@ -132,6 +132,29 @@ describe("electron page — clicking", () => {
   });
 });
 
+describe("electron page — scrolling", () => {
+  it("wheels at (0,0) for a document scroll", () => {
+    // Unchanged, and pinned: `scrollBy` is what a bare `scroll` reaches, and
+    // (0,0) is the top-left of the page — the document scroller.
+    const { page, dbg } = makePage();
+    return page.scrollBy({ dx: 0, dy: 250 }).then(() => {
+      expect(mouseEvents(dbg)).toEqual([
+        { type: "mouseWheel", x: 0, y: 0, deltaX: 0, deltaY: 250 },
+      ]);
+    });
+  });
+
+  it("wheels AT the point it is given", async () => {
+    // The top-left corner of the page is almost never the scroll container a
+    // caller meant, so a wheel there moves the document instead of the list.
+    const { page, dbg } = makePage();
+    await page.scrollAt!({ x: 120, y: 400 }, { dx: 0, dy: -250 });
+    expect(mouseEvents(dbg)).toEqual([
+      { type: "mouseWheel", x: 120, y: 400, deltaX: 0, deltaY: -250 },
+    ]);
+  });
+});
+
 describe("electron page — the keyboard", () => {
   it("types through insertText rather than a key event per letter", async () => {
     const { page, dbg } = makePage();
@@ -140,6 +163,24 @@ describe("electron page — the keyboard", () => {
       dbg.calls.filter((c) => c.method === "Input.insertText"),
     ).toHaveLength(1);
     expect(keyEvents(dbg)).toHaveLength(0);
+  });
+
+  it("types keystrokes when asked to", async () => {
+    // The twin of the test above, which stays and pins the DEFAULT. Both are
+    // needed: the point of the flag is that the two paths coexist for a
+    // release, and a suite that only covered the new one would not notice the
+    // day the old one stopped working.
+    const { page, dbg } = makePage();
+    await page.typeText("hi", { keystrokes: true });
+    expect(dbg.calls.filter((c) => c.method === "Input.insertText")).toHaveLength(
+      0,
+    );
+    expect(keyEvents(dbg).map((e) => `${e.type}:${e.key}`)).toEqual([
+      "keyDown:h",
+      "keyUp:h",
+      "keyDown:i",
+      "keyUp:i",
+    ]);
   });
 
   it("presses a key with the text it inserts", async () => {

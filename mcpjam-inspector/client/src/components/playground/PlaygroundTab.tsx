@@ -1,3 +1,4 @@
+import { LocalBrowserOnboarding } from "@/components/browser/LocalBrowserOnboarding";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useConvexAuth } from "convex/react";
@@ -159,8 +160,8 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     hostId: previewedHostId,
   });
   const effectiveHostConfig = previewedHostId
-    ? (previewedHost?.config ?? null)
-    : (props.activeHost ?? null);
+    ? previewedHost?.config ?? null
+    : props.activeHost ?? null;
   const activeMcpProfile = effectiveHostConfig?.mcpProfile;
 
   // Host-derived widget runtime values. The preferences store is the
@@ -182,29 +183,22 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     effectiveHostConfig?.chatUiOverride ?? prefChatUiOverride;
   const shellStyle = getScenarioShellStyle(hostStyle, themeMode);
 
-  // Auto-connect the effective host's REQUIRED servers once per session.
-  // Preview mode wins; otherwise fall back to the project default host so
-  // the connect path matches the host config this surface renders with.
-  // Optional servers stay disconnected until the user manually toggles them
-  // in the Servers tab.
+  // Auto-connect every project server once per session (personal
+  // preference; see `useAutoConnectProjectServers`). The effective host only
+  // supplies the scope key: preview mode wins; otherwise the project default
+  // host, so a client switch re-runs the handshake under the new identity.
   const { servers: projectServersList } = useProjectServers({
     projectId: props.sharedProjectId ?? null,
     isAuthenticated: isConvexAuthenticated,
   });
-  const effectiveHostRequiredNames = useMemo(() => {
-    const requiredIds = effectiveHostConfig?.serverIds ?? [];
-    if (requiredIds.length === 0 || !projectServersList) return [];
-    const byId = new Map(
-      projectServersList.map((s) => [s._id, s.name] as const),
-    );
-    return requiredIds
-      .map((id) => byId.get(id))
-      .filter((name): name is string => !!name);
-  }, [effectiveHostConfig?.serverIds, projectServersList]);
+  const projectServerNames = useMemo(
+    () => (projectServersList ?? []).map((s) => s.name),
+    [projectServersList],
+  );
   useAutoConnectProjectServers({
     projectId: props.sharedProjectId ?? props.activeProjectId ?? null,
     hostScopeKey: previewedHostId ?? effectiveHostConfig?.id ?? null,
-    requiredServerNames: effectiveHostRequiredNames,
+    serverNames: projectServerNames,
   });
 
   const playgroundState = usePlaygroundState({
@@ -291,7 +285,11 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   const projectScope = props.sharedProjectId ?? props.activeProjectId ?? null;
   const browsersEnabled = useBrowserEnabledState();
   const browserEngine = useBrowserEngine(projectScope);
-  const browserToolIds = useBrowserToolIds(effectiveHostConfig, browserEngine.selectedEngine);
+  const browserToolIds = useBrowserToolIds(
+    effectiveHostConfig,
+    browserEngine.selectedEngine,
+    { projectId: projectScope, hostId: previewedHostId },
+  );
   // Polled only on the local engine, where the question means something: on
   // hosted this route describes a machine that is not the one running the
   // browser.
@@ -415,6 +413,13 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                     dropdown in the global header) and re-snapshots its
                     persisted config into the chip stores when it changes.
                     Renders nothing. */}
+                    <LocalBrowserOnboarding
+                      projectId={projectScope}
+                      authReady={
+                        !props.isWorkOsAuthLoading &&
+                        (!props.isSignedInWithWorkOs || isConvexAuthenticated)
+                      }
+                    />
                     <PlaygroundPreviewedClientSync
                       projectId={
                         props.sharedProjectId ?? props.activeProjectId ?? null
@@ -537,6 +542,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                           >
                             <PlaygroundBrowserPanel
                               projectId={projectScope}
+                              hostId={previewedHostId ?? null}
                               // MOUNTED but not claiming while the panel is off
                               // screen. Dropping the socket would stop the
                               // screencast and lose whatever the agent was

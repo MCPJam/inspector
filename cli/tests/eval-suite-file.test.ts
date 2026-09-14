@@ -35,7 +35,7 @@ import path from "node:path";
 import { loadEvalSuiteFile } from "@mcpjam/sdk";
 import {
   fractionToPercent,
-  modalRepetitions,
+  modalIterations,
   percentToFraction,
 } from "../src/lib/eval-suite-export.js";
 import {
@@ -594,15 +594,15 @@ describe("directed --file overload", () => {
   });
 });
 
-describe("modalRepetitions", () => {
+describe("modalIterations", () => {
   test("picks the most common count, smallest on a tie", () => {
-    assert.equal(modalRepetitions([5, 5, 9]), 5);
-    assert.equal(modalRepetitions([9, 5, 5]), 5);
+    assert.equal(modalIterations([5, 5, 9]), 5);
+    assert.equal(modalIterations([9, 5, 5]), 5);
     // A tie must resolve the SAME way whatever order the cases arrive in, or
     // an export's diff moves when somebody reorders the suite.
-    assert.equal(modalRepetitions([9, 3]), 3);
-    assert.equal(modalRepetitions([3, 9]), 3);
-    assert.equal(modalRepetitions([]), 1);
+    assert.equal(modalIterations([9, 3]), 3);
+    assert.equal(modalIterations([3, 9]), 3);
+    assert.equal(modalIterations([]), 1);
   });
 });
 
@@ -954,6 +954,9 @@ describe("eval export", () => {
       const reloaded = loadEvalSuiteFile(text);
       assert.equal(reloaded.ok, true);
       if (!reloaded.ok) return;
+      // Export writes dialect 1, whose count is spelled `repetitions`.
+      assert.equal(reloaded.authored.schemaVersion, "1");
+      if (reloaded.authored.schemaVersion !== "1") return;
       assert.equal(reloaded.authored.suite.id, "s_billing");
       assert.equal(reloaded.authored.defaults.passThreshold, 0.8);
       assert.equal(reloaded.authored.defaults.repetitions, 5);
@@ -1397,6 +1400,9 @@ describe("eval export", () => {
       );
       assert.equal(loaded.ok, true);
       if (!loaded.ok) return;
+      // Export writes dialect 1, whose count is spelled `repetitions`.
+      assert.equal(loaded.authored.schemaVersion, "1");
+      if (loaded.authored.schemaVersion !== "1") return;
 
       // The modal count is the suite default and the odd one out is explicit.
       assert.equal(loaded.authored.defaults.repetitions, 5);
@@ -1411,8 +1417,8 @@ describe("eval export", () => {
       assert.equal(loaded.authored.defaults.provider, "openai");
 
       // Resolution puts each case back on the count it was fetched with.
-      assert.equal(loaded.resolved.cases[0].repetitions, 5);
-      assert.equal(loaded.resolved.cases[1].repetitions, 9);
+      assert.equal(loaded.resolved.cases[0].iterations, 5);
+      assert.equal(loaded.resolved.cases[1].iterations, 9);
     });
   });
 
@@ -1474,6 +1480,63 @@ describe("eval export", () => {
       );
       assert.equal(forced.exitCode, 0, forced.stderr);
       assert.match(await readFile(out, "utf8"), /schemaVersion: "1"/);
+    });
+  });
+
+  test("--schema-version 2 writes the dialect-2 spellings, and the file reloads", async () => {
+    await withTempDir(async (dir) => {
+      const out = path.join(dir, "suite-v2.yaml");
+      const run = await runExport(
+        {
+          cases: [
+            { iterations: 5 },
+            { id: "case_row_2", title: "Refuses twice", iterations: 9 },
+          ],
+        },
+        "--suite",
+        "Billing smoke",
+        "--out",
+        out,
+        "--schema-version",
+        "2"
+      );
+      assert.equal(run.exitCode, 0, run.stderr);
+      const text = await readFile(out, "utf8");
+      assert.match(text, /schemaVersion: "2"/);
+      assert.match(text, /^  iterations: 5$/m);
+      // The dialect-1 words never appear: the writer emits ONE dialect.
+      assert.doesNotMatch(text, /repetitions/);
+      assert.doesNotMatch(text, /^\s+checks:/m);
+
+      const loaded = loadEvalSuiteFile(text);
+      assert.equal(loaded.ok, true);
+      if (!loaded.ok) return;
+      assert.equal(loaded.authored.schemaVersion, "2");
+      if (loaded.authored.schemaVersion !== "2") return;
+      assert.equal(loaded.authored.defaults.iterations, 5);
+      assert.equal(loaded.authored.cases[0].iterations, undefined);
+      assert.equal(loaded.authored.cases[1].iterations, 9);
+      assert.equal(loaded.resolved.cases[0].iterations, 5);
+      assert.equal(loaded.resolved.cases[1].iterations, 9);
+    });
+  });
+
+  test("--schema-version outside the dialects this build writes is a usage error", async () => {
+    await withTempDir(async (dir) => {
+      const out = path.join(dir, "suite.yaml");
+      const run = await runExport(
+        {},
+        "--suite",
+        "Billing smoke",
+        "--out",
+        out,
+        "--schema-version",
+        "3"
+      );
+      assert.equal(run.exitCode, 2);
+      // `--format json` escapes the quotes in the message; match the words.
+      assert.match(run.stderr, /--schema-version must be .*1.* or .*2/);
+      assert.match(run.stderr, /USAGE_ERROR/);
     });
   });
 
@@ -3153,6 +3216,17 @@ describe("file-owned case bodies and idempotency", () => {
     assert.equal(loaded.ok, true);
     if (!loaded.ok) return;
     const testCase = loaded.resolved.enabledCases[0];
+    assert.deepEqual(
+      fileCaseToUpdateBody({
+        ...testCase,
+        suppressedSuiteStandardCheckIds: ["response.errors"],
+      }).suppressedSuiteStandardCheckIds,
+      ["response.errors"],
+    );
+    assert.deepEqual(
+      fileCaseToUpdateBody(testCase, ["response.errors"]).suppressedSuiteStandardCheckIds,
+      [],
+    );
     const created = fileCaseToCreateBody(testCase);
     assert.equal("isNegative" in created, false);
     assert.equal("checks" in created, false);

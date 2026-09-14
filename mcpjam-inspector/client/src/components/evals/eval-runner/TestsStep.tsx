@@ -98,7 +98,9 @@ export function TestsStep({
       </div>
 
       <div className="space-y-2">
-        <Label className="text-xs uppercase text-muted-foreground">Runs</Label>
+        <Label className="text-xs uppercase text-muted-foreground">
+          Iterations
+        </Label>
         <Input
           type="number"
           min={1}
@@ -202,7 +204,9 @@ export function TestsStep({
       </div>
 
       <div className="space-y-2">
-        <Label className="text-xs uppercase text-muted-foreground">Runs</Label>
+        <Label className="text-xs uppercase text-muted-foreground">
+          Iterations
+        </Label>
         <Input
           type="number"
           min={1}

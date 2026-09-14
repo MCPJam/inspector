@@ -1,4 +1,3 @@
-import { BrowserRuntimeControls } from "@/components/browser/BrowserRuntimeControls";
 import { useCallback, useEffect } from "react";
 import { Maximize2, Minimize2, PanelRightClose } from "lucide-react";
 import { cn } from "@mcpjam/design-system/cn";
@@ -31,6 +30,7 @@ import { ComparisonBrowser } from "@/components/browser/ComparisonBrowser";
 
 export interface PlaygroundBrowserPanelProps {
   projectId: string | null;
+  hostId?: string | null;
   /**
    * Is the panel on screen?
    *
@@ -47,6 +47,7 @@ export interface PlaygroundBrowserPanelProps {
 
 export function PlaygroundBrowserPanel({
   projectId,
+  hostId = null,
   visible,
   onClose,
 }: PlaygroundBrowserPanelProps) {
@@ -141,7 +142,6 @@ export function PlaygroundBrowserPanel({
             <Maximize2 className="size-3.5" aria-hidden />
           )}
         </button>
-        <BrowserRuntimeControls projectId={projectId} compact />
         <button
           type="button"
           onClick={onClose}
@@ -177,6 +177,7 @@ export function PlaygroundBrowserPanel({
             sessionId={browserSessionId}
             consentGranted={engine.consent.granted}
             consentToken={engine.consent.token}
+            hostId={hostId}
             active={visible}
           />
         ) : (
@@ -185,6 +186,7 @@ export function PlaygroundBrowserPanel({
             projectId={projectId}
             sessionId={browserSessionId}
             mintToken={mintHostedBrowserToken}
+            hostId={hostId}
             active={visible}
           />
         )}

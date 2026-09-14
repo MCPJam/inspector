@@ -21,6 +21,7 @@ import {
 } from "../judge-second-pass.js";
 import type { Predicate } from "@mcpjam/sdk/predicates";
 import { hostedCriterionId } from "../score-definitions.js";
+import { authoredRequiredRole } from "@mcpjam/sdk/contract";
 
 // =============================================================================
 // The second pass is the only component that WRITES because of a judge, so the
@@ -1191,12 +1192,12 @@ describe("the projected judge definition carries the run's role", () => {
     );
   }
 
-  test("a gating verdict projects a gating definition and a failing row", async () => {
+  test("a required verdict projects a required definition and a failing row", async () => {
     const { value, applied } = ports({ fetchRun: withRole("gating") });
     await runJudgeSecondPass("run1", value);
 
     const body = applied[0]!.body;
-    expect(judgeDefinition(body)?.role).toBe("gating");
+    expect(judgeDefinition(body)?.role).toBe(authoredRequiredRole());
     // The judge scored 0.2 against a 0.8 threshold, so the row fails — and on
     // a gating definition that row now counts.
     expect(judgeRow(body)?.passed).toBe(false);
@@ -1205,6 +1206,19 @@ describe("the projected judge definition carries the run's role", () => {
     expect(body).not.toHaveProperty("status");
     expect(body).not.toHaveProperty("result");
     expect(body).not.toHaveProperty("passed");
+  });
+
+  test("both spellings of a required verdict project one definition", async () => {
+    // The backend stamped `"gating"` before the rename and stamps `"required"`
+    // after it, and this pass reads historical evidence. The projection has to
+    // read both, or every hosted judge on one side of that line stops gating.
+    const legacy = ports({ fetchRun: withRole("gating") });
+    await runJudgeSecondPass("run1", legacy.value);
+    const canonical = ports({ fetchRun: withRole("required") });
+    await runJudgeSecondPass("run1", canonical.value);
+    expect(judgeDefinition(canonical.applied[0]!.body)).toEqual(
+      judgeDefinition(legacy.applied[0]!.body),
+    );
   });
 
   test("an advisory verdict is byte-identical with or without the field", async () => {

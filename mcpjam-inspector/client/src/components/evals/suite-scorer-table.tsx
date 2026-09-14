@@ -3,6 +3,22 @@
  *
  * Configuration only. There is no Last run or Trend column — those are a
  * later slice that needs run data this page does not have.
+ *
+ * ONE TABLE, TWO PAGES. The suite settings page and a case's checks page
+ * render this same component. The `scope` prop says which list a click
+ * writes to:
+ *
+ *   - `suite`: every rule is the suite's. Off removes it; a preset row
+ *     switched on appends the standard check's preset.
+ *   - `case`: the suite's rules are listed first as inherited — read-only,
+ *     and switchable off only as a whole standard-check family, which is
+ *     the one suppression the backend stores. The case's own rules follow
+ *     and edit like the suite's. A preset row switched on authors a case
+ *     rule, moving an inheriting case to `extend`.
+ *
+ * Every stage also lists the standard checks nothing authors yet, off, with
+ * the preset's criterion and role — so "what could I turn on here" is read
+ * in the same place as "what is on".
  */
 
 import { useMemo, useState } from "react";
@@ -13,11 +29,11 @@ import { MATCH_OPTIONS_DEFAULTS } from "@/shared/eval-matching";
 import { STAGE_CHIP_TONE_CLASS } from "@/components/evaluate/stage-chain-model";
 import { StageChainCards } from "@/components/evaluate/stage-chain-cards";
 import { cn } from "@/lib/utils";
+import { Checkbox } from "@mcpjam/design-system/checkbox";
 import { Input } from "@mcpjam/design-system/input";
 import type { ModelDefinition } from "@/shared/types";
 import type { SuiteCapabilities } from "@/hooks/use-suite-capabilities";
 import { DEFAULT_JUDGE_THRESHOLD } from "@/components/shared/session-quality/judge-config";
-import { hasJudgeSeverityCapability } from "@/hooks/use-suite-capabilities";
 import { ValidatorsSection } from "./validators-section";
 import { CheckRow, blankPredicate } from "./checks-section";
 import { GlobalGatesSectionInfoHint } from "./global-gates-info";
@@ -36,18 +52,50 @@ import {
   type ScorerUiRole,
 } from "./suite-scorer-table-model";
 import { RoleChip, RoleSegmentGroup } from "./scorer-role-control";
-import { groupGradersByStage } from "./suite-grading-model";
+import { groupGradersByStage, judgeMode } from "./suite-grading-model";
 import { rolesForPredicateKind } from "@/shared/predicate-kinds";
 import type { EvalJudgeConfig } from "./types";
+import {
+  addCaseRule,
+  listEffectiveRules,
+  removeCaseRule,
+  setSuiteFamilySuppressed,
+  standardCheckOfKind,
+  toggleCaseStandardCheck,
+  toggleSuiteStandardCheck,
+  updateCaseRule,
+  type EffectiveRule,
+  type StandardCheckDraft,
+} from "./standard-checks-model";
+
+export type ScorerTableScope =
+  | {
+      kind: "suite";
+      predicates: Predicate[];
+      onPredicatesChange: (
+        next: Predicate[] | ((previous: Predicate[]) => Predicate[]),
+      ) => void;
+    }
+  | {
+      kind: "case";
+      suitePredicates: Predicate[];
+      draft: StandardCheckDraft;
+      onDraftChange: (next: StandardCheckDraft) => void;
+      judgeSkipped: boolean;
+      onJudgeSkippedChange: (skipped: boolean) => void;
+    };
+
+/** The one sentence a disabled On box gives when the deployment is behind. */
+export const BACKEND_SUPPORT_HINT =
+  "Requires backend support before this check can be changed.";
 
 export function SuiteScorerTable({
+  scope,
   matchOptions,
   onMatchOptionsChange,
-  predicates,
-  onPredicatesChange,
   judgeConfig,
   onJudgeConfigChange,
-  availableModels,
+  availableModels = [],
   scenarioMigrationNotice,
   judgeAccessory,
   rubricEditor,
@@ -58,15 +106,14 @@ export function SuiteScorerTable({
   judgeHint,
   groundednessEvidence,
 }: {
-  matchOptions: EvalMatchOptions | undefined;
-  onMatchOptionsChange: (next: EvalMatchOptions | undefined) => void;
-  predicates: Predicate[];
-  onPredicatesChange: (
-    next: Predicate[] | ((previous: Predicate[]) => Predicate[]),
-  ) => void;
+  scope: ScorerTableScope;
+  matchOptions?: EvalMatchOptions;
+  /** Suite scope only: the match editor is the suite's. */
+  onMatchOptionsChange?: (next: EvalMatchOptions | undefined) => void;
   judgeConfig: EvalJudgeConfig | undefined;
-  onJudgeConfigChange: (next: EvalJudgeConfig | undefined) => void;
-  availableModels: ModelDefinition[];
+  /** Suite scope only: a case reads the judge's config and may only skip it. */
+  onJudgeConfigChange?: (next: EvalJudgeConfig | undefined) => void;
+  availableModels?: ModelDefinition[];
   scenarioMigrationNotice?: React.ReactNode;
   judgeAccessory?: React.ReactNode;
   rubricEditor?: React.ReactNode;
@@ -77,19 +124,56 @@ export function SuiteScorerTable({
   judgeHint: string;
   groundednessEvidence?: GroundednessRunEvidence;
 }) {
+  const suitePredicates =
+    scope.kind === "suite" ? scope.predicates : scope.suitePredicates;
+  const draft = scope.kind === "case" ? scope.draft : undefined;
+  const rules = useMemo(
+    () => listEffectiveRules(suitePredicates, draft),
+    [suitePredicates, draft],
+  );
+  const predicates = useMemo(
+    () => rules.map((rule) => rule.predicate),
+    [rules],
+  );
+  const activePredicates = useMemo(
+    () =>
+      rules.filter((rule) => !rule.suppressed).map((rule) => rule.predicate),
+    [rules],
+  );
   const model = useMemo(
     () => groupGradersByStage({ matchOptions, predicates, judgeConfig }),
     [matchOptions, predicates, judgeConfig],
   );
+  const activeModel = useMemo(
+    () =>
+      groupGradersByStage({
+        matchOptions,
+        predicates: activePredicates,
+        judgeConfig,
+      }),
+    [matchOptions, activePredicates, judgeConfig],
+  );
+  const judgeEnabled = scope.kind === "case" ? !scope.judgeSkipped : undefined;
   const table = useMemo(
     () =>
       buildScorerTable({
         model,
+        activeModel,
         predicates,
+        rules,
         judgeConfig,
+        judgeEnabled,
         judgeCapabilities: capabilities?.judge,
       }),
-    [model, predicates, judgeConfig, capabilities?.judge],
+    [
+      model,
+      activeModel,
+      predicates,
+      rules,
+      judgeConfig,
+      judgeEnabled,
+      capabilities?.judge,
+    ],
   );
   const [selected, setSelected] = useState<UserValueStage | null>(null);
   const [expandedPredicate, setExpandedPredicate] = useState<number | null>(
@@ -100,26 +184,135 @@ export function SuiteScorerTable({
   const authorableKinds = authorablePredicateKinds(
     capabilities?.scorers?.predicateKinds,
   );
+  const suppressionSupported =
+    capabilities?.scorers?.suppressedSuiteStandardCheckIds === true;
   const judgeDisabledReason = gateSwitchDisabledReason(
     capabilities?.judge,
     unavailableReason,
   );
-  const judgeSeveritySupported = hasJudgeSeverityCapability(capabilities);
+
+  /** A rule this page may edit in place: its own list, not an inherited one. */
+  const editable = (rule: EffectiveRule | undefined) =>
+    rule !== undefined && !rule.suppressed && rule.source === scope.kind;
 
   const updatePredicate = (index: number, next: Predicate) => {
-    onPredicatesChange((previous) => {
-      const copy = previous.slice();
-      copy[index] = next;
-      return copy;
-    });
+    const rule = rules[index];
+    if (!editable(rule)) return;
+    if (scope.kind === "suite") {
+      scope.onPredicatesChange((previous) => {
+        const copy = previous.slice();
+        copy[rule.index] = next;
+        return copy;
+      });
+    } else {
+      scope.onDraftChange(updateCaseRule(scope.draft, rule.index, next));
+    }
   };
   const removePredicate = (index: number) => {
-    onPredicatesChange((previous) => {
-      const copy = previous.slice();
-      copy.splice(index, 1);
-      return copy;
-    });
+    const rule = rules[index];
+    if (!editable(rule)) return;
+    if (scope.kind === "suite") {
+      scope.onPredicatesChange((previous) => {
+        const copy = previous.slice();
+        copy.splice(rule.index, 1);
+        return copy;
+      });
+    } else {
+      scope.onDraftChange(removeCaseRule(scope.draft, rule.index));
+    }
     setExpandedPredicate(null);
+  };
+  const addPredicate = (predicate: Predicate) => {
+    if (scope.kind === "suite") {
+      scope.onPredicatesChange((previous) => [...previous, predicate]);
+    } else {
+      scope.onDraftChange(addCaseRule(scope.draft, predicate));
+    }
+  };
+
+  /**
+   * The On column, per row kind.
+   *
+   * A preset switches on by authoring its preset where this page writes. A
+   * rule switches off by removal when this page owns it, and by family
+   * suppression when it is inherited. The judge row is the suite's
+   * `enabled` flag, or the case's skip flag.
+   */
+  const onDisabledReason = (row: ScorerTableRow): string | undefined => {
+    if (row.kind === "preset") {
+      return row.preset && !authorableKinds.includes(row.preset.type)
+        ? BACKEND_SUPPORT_HINT
+        : undefined;
+    }
+    if (row.kind === "predicate" && scope.kind === "case") {
+      const rule =
+        row.predicateIndex !== undefined
+          ? rules[row.predicateIndex]
+          : undefined;
+      if (rule?.source !== "suite") return undefined;
+      if (!row.family) {
+        return "Only standard checks can be turned off per case. Edit this rule in suite settings.";
+      }
+      return suppressionSupported ? undefined : BACKEND_SUPPORT_HINT;
+    }
+    if (
+      row.kind === "judge" &&
+      row.judgeSlot === "goalCompletion" &&
+      scope.kind === "case"
+    ) {
+      // A case can skip a judge that runs, never switch on one the suite
+      // turned off.
+      return judgeMode(judgeConfig) === "off"
+        ? "The suite's judge is off."
+        : undefined;
+    }
+    return undefined;
+  };
+  const setRowEnabled = (row: ScorerTableRow, enabled: boolean) => {
+    if (row.kind === "preset") {
+      if (!enabled || !row.preset) return;
+      const check = standardCheckOfKind(row.preset.type);
+      if (!check) return;
+      if (scope.kind === "suite") {
+        scope.onPredicatesChange((previous) =>
+          toggleSuiteStandardCheck(previous, check, true),
+        );
+      } else {
+        scope.onDraftChange(
+          toggleCaseStandardCheck(
+            scope.suitePredicates,
+            scope.draft,
+            check,
+            true,
+          ),
+        );
+      }
+      return;
+    }
+    if (row.kind === "predicate" && row.predicateIndex !== undefined) {
+      const rule = rules[row.predicateIndex];
+      if (!rule) return;
+      if (rule.source === scope.kind) {
+        if (!enabled) removePredicate(row.predicateIndex);
+        return;
+      }
+      if (scope.kind === "case" && row.family) {
+        scope.onDraftChange(
+          setSuiteFamilySuppressed(scope.draft, row.family.id, !enabled),
+        );
+      }
+      return;
+    }
+    if (row.kind === "judge" && row.judgeSlot === "goalCompletion") {
+      if (scope.kind === "case") {
+        scope.onJudgeSkippedChange(!enabled);
+        return;
+      }
+      onJudgeConfigChange?.({
+        ...judgeConfig,
+        goalCompletion: { ...(judgeConfig?.goalCompletion ?? {}), enabled },
+      });
+    }
   };
 
   return (
@@ -137,7 +330,7 @@ export function SuiteScorerTable({
           <div className="space-y-1">
             <div className="flex items-center gap-1.5">
               <h3 className="text-lg font-semibold tracking-tight text-foreground">
-                Scorers
+                Assertions
               </h3>
               <GlobalGatesSectionInfoHint />
             </div>
@@ -145,26 +338,30 @@ export function SuiteScorerTable({
           </div>
           <SuiteScorerLibraryMenu
             authorableKinds={authorableKinds}
-            onAdd={(kind) =>
-              onPredicatesChange((previous) => [
-                ...previous,
-                blankPredicate(kind),
-              ])
-            }
+            onAdd={(kind) => addPredicate(blankPredicate(kind))}
           />
         </div>
         {scenarioMigrationNotice ? (
           <div className="mb-4">{scenarioMigrationNotice}</div>
+        ) : null}
+        {scope.kind === "case" && scope.draft.predicates?.mode === "replace" ? (
+          <p
+            className="mb-4 text-xs text-muted-foreground"
+            data-testid="case-replaces-suite-rules"
+          >
+            This case replaces the suite&apos;s rules. Only its own are listed.
+          </p>
         ) : null}
 
         <div className="overflow-x-auto">
           <table className="w-full min-w-[40rem] border-collapse text-left text-xs">
             <thead>
               <tr className="border-b border-border/60 text-[10px] uppercase tracking-[0.06em] text-muted-foreground">
-                <th className="py-2 pr-3 font-medium">Scorer</th>
+                <th className="w-8 py-2 pr-2 font-medium">On</th>
+                <th className="py-2 pr-3 font-medium">Evaluator</th>
                 <th className="py-2 pr-3 font-medium">Kind</th>
                 <th className="py-2 pr-3 font-medium">Threshold</th>
-                <th className="py-2 font-medium">Role</th>
+                <th className="py-2 font-medium">If it fails</th>
               </tr>
             </thead>
             {table.groups.map((group) => (
@@ -178,10 +375,7 @@ export function SuiteScorerTable({
                 )}
               >
                 <tr>
-                  <th
-                    colSpan={4}
-                    className="pb-1 pt-5 text-left font-normal"
-                  >
+                  <th colSpan={5} className="pb-1 pt-5 text-left font-normal">
                     <div className="space-y-0.5">
                       <div className="flex items-baseline gap-2">
                         <span className="text-[10px] tabular-nums text-muted-foreground/70">
@@ -200,14 +394,14 @@ export function SuiteScorerTable({
                 {group.rows.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={4}
+                      colSpan={5}
                       className={cn(
                         "pb-3 text-sm",
                         STAGE_CHIP_TONE_CLASS.unmeasured,
                       )}
                       data-stage-empty={group.stage}
                     >
-                      No grader
+                      No evaluator
                     </td>
                   </tr>
                 ) : (
@@ -215,10 +409,16 @@ export function SuiteScorerTable({
                     <ScorerRow
                       key={row.id}
                       row={row}
-                      predicates={predicates}
+                      rule={
+                        row.predicateIndex !== undefined
+                          ? rules[row.predicateIndex]
+                          : undefined
+                      }
+                      scope={scope.kind}
+                      onDisabledReason={onDisabledReason(row)}
+                      onEnabledChange={(enabled) => setRowEnabled(row, enabled)}
                       checkPolicy={checkPolicy}
                       judgeDisabledReason={judgeDisabledReason}
-                      judgeSeveritySupported={judgeSeveritySupported}
                       judgeConfig={judgeConfig}
                       expanded={
                         row.predicateIndex !== undefined &&
@@ -232,10 +432,14 @@ export function SuiteScorerTable({
                             : row.predicateIndex ?? null,
                         );
                       }}
+                      editable={
+                        row.predicateIndex !== undefined &&
+                        editable(rules[row.predicateIndex])
+                      }
                       onPredicateChange={updatePredicate}
                       onPredicateRemove={removePredicate}
                       onJudgeRoleChange={(role) => {
-                        onJudgeConfigChange({
+                        onJudgeConfigChange?.({
                           ...judgeConfig,
                           goalCompletion: withGoalCompletionRole(
                             judgeConfig?.goalCompletion ?? {},
@@ -244,7 +448,7 @@ export function SuiteScorerTable({
                         });
                       }}
                       onJudgeThresholdChange={(threshold) => {
-                        onJudgeConfigChange({
+                        onJudgeConfigChange?.({
                           ...judgeConfig,
                           goalCompletion: {
                             ...(judgeConfig?.goalCompletion ?? {}),
@@ -260,9 +464,11 @@ export function SuiteScorerTable({
                     />
                   ))
                 )}
-                {group.stage === "selection" ? (
+                {scope.kind === "suite" &&
+                onMatchOptionsChange &&
+                group.stage === "selection" ? (
                   <tr>
-                    <td colSpan={4} className="pb-3 pt-1">
+                    <td colSpan={5} className="pb-3 pt-1">
                       <details
                         className="rounded-md border border-border/50 bg-muted/10 px-3 py-2"
                         data-setting-key="matchOptions"
@@ -291,9 +497,11 @@ export function SuiteScorerTable({
                     </td>
                   </tr>
                 ) : null}
-                {group.stage === "userValue" ? (
+                {scope.kind === "suite" &&
+                onJudgeConfigChange &&
+                group.stage === "userValue" ? (
                   <tr>
-                    <td colSpan={4} className="pb-3 pt-1">
+                    <td colSpan={5} className="pb-3 pt-1">
                       <div
                         className="space-y-5"
                         data-setting-key="judge"
@@ -337,14 +545,23 @@ export function SuiteScorerTable({
   );
 }
 
+/** Whether a row has an On box at all. Observed and match rows are facts. */
+function hasOnControl(row: ScorerTableRow): boolean {
+  if (row.kind === "predicate" || row.kind === "preset") return true;
+  return row.kind === "judge" && row.judgeSlot === "goalCompletion";
+}
+
 function ScorerRow({
   row,
-  predicates,
+  rule,
+  scope,
+  onDisabledReason,
+  onEnabledChange,
   checkPolicy,
   judgeDisabledReason,
-  judgeSeveritySupported,
   judgeConfig,
   expanded,
+  editable,
   onToggleExpand,
   onPredicateChange,
   onPredicateRemove,
@@ -353,12 +570,16 @@ function ScorerRow({
   facts,
 }: {
   row: ScorerTableRow;
-  predicates: Predicate[];
+  rule: EffectiveRule | undefined;
+  scope: ScorerTableScope["kind"];
+  onDisabledReason: string | undefined;
+  onEnabledChange: (enabled: boolean) => void;
   checkPolicy: boolean;
   judgeDisabledReason: string | undefined;
-  judgeSeveritySupported: boolean;
   judgeConfig: EvalJudgeConfig | undefined;
   expanded: boolean;
+  /** This page may change the row's threshold, role and body in place. */
+  editable: boolean;
   onToggleExpand: () => void;
   onPredicateChange: (index: number, next: Predicate) => void;
   onPredicateRemove: (index: number) => void;
@@ -366,10 +587,23 @@ function ScorerRow({
   onJudgeThresholdChange: (threshold: number) => void;
   facts?: React.ReactNode;
 }) {
-  const predicate =
-    row.predicateIndex !== undefined
-      ? predicates[row.predicateIndex]
-      : undefined;
+  const predicate = rule?.predicate;
+  // The family label names what the box switches; a rule outside any family
+  // is named by its criterion, the only name it has.
+  const onLabel = row.family?.label ?? row.name;
+  const inherited = scope === "case" && rule?.source === "suite";
+  const sourceLine =
+    scope === "case" && row.kind === "predicate"
+      ? row.suppressed
+        ? "From suite · off for this case"
+        : inherited
+          ? "From suite"
+          : "This case"
+      : null;
+  const familyLine =
+    inherited && row.family && row.family.suiteRules > 1
+      ? `Turns off all ${row.family.suiteRules} suite rules of this kind for this case.`
+      : null;
 
   return (
     <>
@@ -380,16 +614,31 @@ function ScorerRow({
         )}
         data-scorer-row={row.kind}
         data-scorer-id={row.id}
+        data-scorer-source={rule?.source}
+        data-scorer-enabled={
+          hasOnControl(row) ? String(row.enabled) : undefined
+        }
       >
+        <td className="py-2 pr-2">
+          {hasOnControl(row) ? (
+            <Checkbox
+              className="mt-0.5"
+              aria-label={onLabel}
+              checked={row.enabled}
+              disabled={onDisabledReason !== undefined}
+              onCheckedChange={(next) => onEnabledChange(next === true)}
+            />
+          ) : null}
+        </td>
         <td className="py-2 pr-3">
-          {row.kind === "predicate" ? (
+          {row.kind === "predicate" && editable ? (
             <button
               type="button"
               className="text-left text-xs text-foreground hover:underline"
               onClick={onToggleExpand}
               aria-expanded={expanded}
             >
-              {row.name}
+              {row.family ? row.family.label : row.name}
             </button>
           ) : (
             <span
@@ -398,9 +647,32 @@ function ScorerRow({
                 row.kind === "observed" ? row.observedStage : undefined
               }
             >
-              {row.name}
+              {row.family ? row.family.label : row.name}
             </span>
           )}
+          {row.family ? (
+            <span className="block text-[11px] text-muted-foreground">
+              {row.name}
+            </span>
+          ) : null}
+          {sourceLine ? (
+            <span className="block text-[11px] text-muted-foreground">
+              {sourceLine}
+            </span>
+          ) : null}
+          {familyLine ? (
+            <span className="block text-[11px] text-muted-foreground">
+              {familyLine}
+            </span>
+          ) : null}
+          {onDisabledReason ? (
+            <span
+              className="block text-[11px] text-muted-foreground"
+              data-testid="on-disabled-reason"
+            >
+              {onDisabledReason}
+            </span>
+          ) : null}
           {row.kind === "observed" && facts ? (
             <details className="mt-1">
               <summary className="cursor-pointer text-[11px] text-muted-foreground">
@@ -412,30 +684,41 @@ function ScorerRow({
         </td>
         <td className="py-2 pr-3 text-muted-foreground">{row.kindLabel}</td>
         <td className="py-2 pr-3">
-          <ThresholdCell
-            row={row}
-            predicate={predicate}
-            judgeConfig={judgeConfig}
-            onPredicateChange={onPredicateChange}
-            onJudgeThresholdChange={onJudgeThresholdChange}
-          />
+          {editable || (row.kind === "judge" && scope === "suite") ? (
+            <ThresholdCell
+              row={row}
+              predicate={predicate}
+              judgeConfig={judgeConfig}
+              onPredicateChange={onPredicateChange}
+              onJudgeThresholdChange={onJudgeThresholdChange}
+            />
+          ) : row.threshold ? (
+            <span className="tabular-nums text-muted-foreground">
+              {row.threshold}
+            </span>
+          ) : null}
         </td>
         <td className="py-2">
-          <RoleCell
-            row={row}
-            predicate={predicate}
-            checkPolicy={checkPolicy}
-            judgeDisabledReason={judgeDisabledReason}
-            judgeSeveritySupported={judgeSeveritySupported}
-            onPredicateChange={onPredicateChange}
-            onJudgeRoleChange={onJudgeRoleChange}
-          />
+          {editable || row.kind !== "predicate" ? (
+            <RoleCell
+              row={row}
+              predicate={predicate}
+              checkPolicy={checkPolicy}
+              judgeDisabledReason={judgeDisabledReason}
+              judgeEditable={scope === "suite"}
+              onPredicateChange={onPredicateChange}
+              onJudgeRoleChange={onJudgeRoleChange}
+            />
+          ) : (
+            <RoleChip role={row.role} />
+          )}
         </td>
       </tr>
-      {expanded && predicate && row.predicateIndex !== undefined ? (
+      {expanded && editable && predicate && row.predicateIndex !== undefined ? (
         <tr className="border-b border-border/40">
-          <td colSpan={4} className="pb-3 pt-1">
+          <td colSpan={5} className="pb-3 pt-1">
             <CheckRow
+              noun="assertion"
               embedded
               predicate={predicate}
               onChange={(next) => onPredicateChange(row.predicateIndex!, next)}
@@ -520,18 +803,21 @@ function ThresholdCell({
       );
     }
     if (
+      predicate.type === "toolDescriptionsPresent" ||
       predicate.type === "toolLatencyUnder" ||
       predicate.type === "toolResultSizeUnder" ||
       predicate.type === "toolCallCountUnder"
     ) {
       const { field, value, label } =
-        predicate.type === "toolLatencyUnder"
+        predicate.type === "toolDescriptionsPresent"
           ? {
-              field: "ms" as const,
-              value: predicate.ms,
-              label: "Tool latency budget in ms",
+              field: "minLength" as const,
+              value: predicate.minLength ?? 20,
+              label: "Minimum tool description length",
             }
-          : predicate.type === "toolResultSizeUnder"
+          : predicate.type === "toolLatencyUnder"
+            ? { field: "ms" as const, value: predicate.ms, label: "Tool latency budget in ms" }
+            : predicate.type === "toolResultSizeUnder"
             ? {
                 field: "maxBytes" as const,
                 value: predicate.maxBytes,
@@ -599,7 +885,7 @@ function RoleCell({
   predicate,
   checkPolicy,
   judgeDisabledReason,
-  judgeSeveritySupported,
+  judgeEditable,
   onPredicateChange,
   onJudgeRoleChange,
 }: {
@@ -607,28 +893,33 @@ function RoleCell({
   predicate: Predicate | undefined;
   checkPolicy: boolean;
   judgeDisabledReason: string | undefined;
-  judgeSeveritySupported: boolean;
+  /** The suite page edits the judge's role; a case only reads it. */
+  judgeEditable: boolean;
   onPredicateChange: (index: number, next: Predicate) => void;
   onJudgeRoleChange: (role: ScorerUiRole) => void;
 }) {
   if (row.kind === "observed") return null;
   if (row.kind === "match") {
-    return <RoleChip role="gate" />;
+    return <RoleChip role="required" />;
+  }
+  if (row.kind === "preset") {
+    return <RoleChip role={row.role} />;
   }
   if (row.kind === "judge") {
-    if (row.judgeSlot === "groundedness") {
+    if (row.judgeSlot === "groundedness" || !judgeEditable) {
       return <RoleChip role={row.role} />;
     }
-    const gateEnabled = judgeDisabledReason === undefined;
-    const roles: ScorerUiRole[] = judgeSeveritySupported
-      ? ["gate", "warn", "report"]
-      : ["gate", "report"];
+    const requiredEnabled = judgeDisabledReason === undefined;
+    // Two segments unconditionally. The judge-severity capability used to
+    // decide whether a third segment, Warn, could be offered; with Warn and
+    // Report collapsed into Advisory there is no third tier for it to gate.
+    const roles: ScorerUiRole[] = ["required", "advisory"];
     return (
       <div className="space-y-1">
         <RoleSegmentGroup
           value={row.role}
           roles={roles}
-          disabledRoles={gateEnabled ? undefined : ["gate"]}
+          disabledRoles={requiredEnabled ? undefined : ["required"]}
           ariaLabel="Judge role"
           onChange={onJudgeRoleChange}
         />
@@ -646,20 +937,20 @@ function RoleCell({
   if (row.kind === "predicate" && predicate && row.predicateIndex !== undefined) {
     if (!checkPolicy) {
       // Read-only, but honest: an SDK- or CLI-authored advisory check still
-      // reads Warn/Report here rather than being relabelled Gate.
+      // reads Advisory here rather than being relabelled Required.
       return <RoleChip role={row.role} />;
     }
-    // Observations get two segments, the same way groundedness does: a
-    // heuristic must not decide a release, and offering a Gate the schema is
-    // going to refuse is a control that lies.
+    // Observations get one segment, the same way groundedness does: a
+    // heuristic must not decide a release, and offering a Required the schema
+    // is going to refuse is a control that lies.
     return (
       <RoleSegmentGroup
         value={row.role}
-        // An observation is a heuristic, so it is offered as Warn or Report
-        // and never as a Gate — the same rule the Zod schema enforces at the
+        // An observation is a heuristic, so it is offered as Advisory only and
+        // never as Required — the same rule the Zod schema enforces at the
         // save, surfaced as an absent segment rather than a refused save.
         roles={rolesForPredicateKind(predicate.type)}
-        ariaLabel="Check role"
+        ariaLabel="Assertion role"
         onChange={(role) =>
           onPredicateChange(
             row.predicateIndex!,

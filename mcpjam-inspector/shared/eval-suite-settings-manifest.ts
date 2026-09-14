@@ -84,7 +84,7 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   },
   {
     key: "passOrFail",
-    label: "Scorers and judges",
+    label: "Evaluators",
     // A PRESENTATION grouping, not a setting. It has no stored field of its
     // own: it arranges settings.matchOptions, settings.checks and
     // settings.judge under the chain stage each one measures, and every one of
@@ -99,7 +99,7 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   },
   {
     key: "checks",
-    label: "Scorers",
+    label: "Assertions",
     api: "settings.checks",
   },
   {
@@ -111,6 +111,11 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
     key: "judgeRubric",
     label: "Judge criteria",
     api: "settings.judge.rubric",
+  },
+  {
+    key: "assertionBacktest",
+    label: "Assertion preview",
+    op: "backtest_eval_run",
   },
   {
     key: "judgeGroundedness",
@@ -132,7 +137,7 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   },
   {
     key: "repetitions",
-    label: "Repetitions",
+    label: "Iterations",
     api: "settings.repetitions",
   },
   {
@@ -167,7 +172,7 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   },
   {
     key: "qualityGateNoGatingScoreErrors",
-    label: "Any gating scorer errored",
+    label: "Any required evaluator errored",
     api: "settings.qualityGate.noGatingScoreErrors",
   },
   {
@@ -259,6 +264,28 @@ export const SAMPLE_BY_PATH: Readonly<Record<string, unknown>> = {
 };
 
 /**
+ * Vocabulary-2 samples: the same settings, in the canonical spellings.
+ *
+ * Separate from {@link SAMPLE_BY_PATH} rather than replacing entries in it,
+ * because the two are checked against DIFFERENT boundaries. The vocabulary-1
+ * samples must keep parsing byte-for-byte as they do today; these must be
+ * refused without `x-mcpjam-eval-vocabulary: 2` and accepted with it.
+ *
+ * `settings.checks` keeps its advisory `severity: "warn"` row in the
+ * vocabulary-1 sample for the reason stated above — dropping `severity` is a
+ * contraction step, not this one.
+ */
+export const CANONICAL_ROLE_SAMPLE_BY_PATH: Readonly<
+  Record<string, unknown>
+> = {
+  "settings.checks": [
+    { type: "responseContains", needle: "hi" },
+    { type: "noToolErrors", role: "required" },
+  ],
+  "settings.judge": { enabled: true, role: "required" },
+};
+
+/**
  * Full PATCH bodies that exercise `settings.qualityGate` against the
  * refined schema. A standalone leaf is not enough: the refine requires
  * `expectedRevisionNumber` and `revisionNote`, and comparative leaves
@@ -337,7 +364,7 @@ export const QUALITY_GATE_REQUEST_SAMPLES: ReadonlyArray<{
     name: "gating-score errors",
     body: {
       expectedRevisionNumber: 3,
-      revisionNote: "Fail on gating scorer errors.",
+      revisionNote: "Fail on required scorer errors.",
       settings: {
         qualityGate: { noGatingScoreErrors: true },
       },
