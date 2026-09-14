@@ -7,7 +7,11 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { PREDICATE_KINDS, USER_VALUE_STAGES } from "@mcpjam/sdk/contract";
+import {
+  authoredRequiredRole,
+  PREDICATE_KINDS,
+  USER_VALUE_STAGES,
+} from "@mcpjam/sdk/contract";
 import type { Predicate } from "@mcpjam/sdk/predicates";
 import { groupGradersByStage } from "../suite-grading-model";
 import {
@@ -361,15 +365,16 @@ describe("roleOfJudgeSlot", () => {
 });
 
 describe("withGoalCompletionRole", () => {
-  // The LABEL is two-tier; the wire value this writes is unchanged, so a
-  // suite saved by this build still reads correctly to an installed CLI.
-  it("writes the legacy gating spelling for required and strips severity", () => {
+  // The wire value is whatever THIS BUILD emits: the client and the server it
+  // writes to are one deployment, so there is no handshake to wait for — a
+  // deployment that shipped this build shipped the boundary with it.
+  it("writes the emitted spelling for required and strips severity", () => {
     expect(
       withGoalCompletionRole(
         { role: "advisory", severity: "warn", threshold: 0.8 },
         "required",
       ),
-    ).toEqual({ threshold: 0.8, role: "gating" });
+    ).toEqual({ threshold: 0.8, role: authoredRequiredRole() });
     expect(
       withGoalCompletionRole(
         { role: "advisory", severity: "warn", threshold: 0.8 },

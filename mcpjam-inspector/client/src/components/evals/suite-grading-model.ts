@@ -52,6 +52,7 @@ import {
 } from "@/shared/predicate-kinds";
 import { ARGS_OPTIONS, ORDER_OPTIONS } from "./validators-section";
 import type { EvalJudgeConfig } from "./types";
+import { isRequiredRole } from "@mcpjam/sdk/predicates";
 
 /** Which of the suite's three grader sources a row came from. */
 export type GraderRowKind = "match" | "predicate" | "judge";
@@ -230,7 +231,7 @@ export function groupGradersByStage(input: {
     kind: "judge",
     label: "Goal completion judge",
     role:
-      input.judgeConfig?.goalCompletion?.role === "gating"
+      isRequiredRole(input.judgeConfig?.goalCompletion?.role)
         ? "gating"
         : "advisory",
     severity: input.judgeConfig?.goalCompletion?.severity,
@@ -286,15 +287,17 @@ export function stageEmptyIsGap(stage: UserValueStage): boolean {
  * How the judge is configured, not what a run did.
  *
  * Absent config is `manual`: `enabled` defaults on and `autoRun` defaults off,
- * matching `judges-section.tsx`. `role` is only `gating` when the literal
- * `"gating"` is stored.
+ * matching `judges-section.tsx`. The `gating` mode means the stored role is
+ * required — under EITHER spelling. Storage said `"gating"` before the rename
+ * and says `"required"` after it, and a comparator that took one word would
+ * read a required judge as merely manual on one side of that line.
  */
 export type JudgeMode = "off" | "manual" | "automatic" | "gating";
 
 export function judgeMode(judgeConfig: EvalJudgeConfig | undefined): JudgeMode {
   const goal = judgeConfig?.goalCompletion;
   if (goal?.enabled === false) return "off";
-  if (goal?.role === "gating") return "gating";
+  if (isRequiredRole(goal?.role)) return "gating";
   if (goal?.autoRun === true) return "automatic";
   return "manual";
 }

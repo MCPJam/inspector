@@ -32,6 +32,10 @@ import {
 import { resolveRunLevelHostSnapshot } from "./sdk-evals-host-config-source.js";
 import { redactTelemetryString } from "./telemetry-redaction.js";
 import type { HostJson } from "./host-config/public-types.js";
+import {
+  capabilityAcceptsCanonicalRole,
+  definitionsForDeployment,
+} from "./contract/policy-spelling.js";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 const DEFAULT_RETRY_DELAYS_MS = [250, 750, 1750];
@@ -1311,11 +1315,13 @@ export async function reportCaseRunEvaluations(
 ): Promise<void> {
   try {
     let supported = false;
+    let capabilities: unknown;
     try {
       const support = await requestWithRetry<{
         capabilities: { evalsRunEvaluations?: number };
       }>(config, ingestPath(config, "capabilities"), {});
       supported = support.capabilities.evalsRunEvaluations === 1;
+      capabilities = support.capabilities;
     } catch (error) {
       if (config.signal?.aborted) throw error;
     }
@@ -1330,7 +1336,15 @@ export async function reportCaseRunEvaluations(
     await requestWithRetry(config, ingestPath(config, "runs/evaluations"), {
       runId,
       externalRunId,
-      evaluations,
+      // The policy role's spelling is settled HERE, against the handshake this
+      // call already makes, rather than at the dozen builders that mint a
+      // definition. A target that does not advertise `vocabulary.values.role`
+      // has a `validateScorePayload` that refuses `required`, and the refusal
+      // is not a rejected upload — it quarantines every iteration of the run
+      // as `score_integrity_invalid`, so the dashboard shows an empty run
+      // rather than a broken one. Hash-neutral, so the rows file under the
+      // same digests either way.
+      evaluations: evaluationsForDeployment(evaluations, capabilities),
     });
   } catch {
     // The core run has already been acknowledged. Keep that fact even when
@@ -1341,6 +1355,37 @@ export async function reportCaseRunEvaluations(
         "Advisory case-run persistence could not be confirmed. Core eval results are persisted; local advisory results remain available.",
     });
   }
+}
+
+/**
+ * Put every definition's role into the spelling this target accepts.
+ *
+ * Returns the input unchanged and uncopied when nothing moves, which is both
+ * the common case and the one that matters: a target that speaks the canonical
+ * vocabulary gets a byte-identical body.
+ */
+function evaluationsForDeployment(
+  evaluations: import("./run-evaluators.js").CaseRunEvaluation[],
+  capabilities: unknown
+): import("./run-evaluators.js").CaseRunEvaluation[] {
+  if (capabilityAcceptsCanonicalRole(capabilities)) return evaluations;
+  let changed = false;
+  const out = evaluations.map((envelope) => {
+    const definitions = definitionsForDeployment(
+      envelope.evaluationConfig.definitions,
+      capabilities
+    );
+    if (definitions === envelope.evaluationConfig.definitions) return envelope;
+    changed = true;
+    return {
+      ...envelope,
+      evaluationConfig: {
+        ...envelope.evaluationConfig,
+        definitions: [...definitions],
+      },
+    };
+  });
+  return changed ? out : evaluations;
 }
 
 function addReportingWarning(

@@ -172,7 +172,7 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   },
   {
     key: "qualityGateNoGatingScoreErrors",
-    label: "Any gating evaluator errored",
+    label: "Any required evaluator errored",
     api: "settings.qualityGate.noGatingScoreErrors",
   },
   {
@@ -364,7 +364,7 @@ export const QUALITY_GATE_REQUEST_SAMPLES: ReadonlyArray<{
     name: "gating-score errors",
     body: {
       expectedRevisionNumber: 3,
-      revisionNote: "Fail on gating scorer errors.",
+      revisionNote: "Fail on required scorer errors.",
       settings: {
         qualityGate: { noGatingScoreErrors: true },
       },

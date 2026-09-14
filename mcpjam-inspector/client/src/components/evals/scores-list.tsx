@@ -114,7 +114,7 @@ function isGating(joined: JoinedScore): boolean {
 }
 
 /**
- * Does this row belong in a "N / M gating evaluators passed" count?
+ * Does this row belong in a "N / M required evaluators passed" count?
  *
  * Deliberately NOT `isGating`, and the difference is the whole point of two
  * predicates:
@@ -310,10 +310,10 @@ export function ScoresList({
     integrityInvalid
       ? { tone: "failed", label: "evaluator evidence did not verify" }
       : counted.length === 0
-        ? { tone: "none", label: "no gating evaluators" }
+        ? { tone: "none", label: "no required evaluators" }
         : {
             tone: countedFailures === 0 ? "passed" : "failed",
-            label: `${counted.length - countedFailures} / ${counted.length} gating evaluators passed`,
+            label: `${counted.length - countedFailures} / ${counted.length} required evaluators passed`,
           };
   const tone = SUMMARY_TONE[summary.tone];
   const SummaryIcon = tone.icon;

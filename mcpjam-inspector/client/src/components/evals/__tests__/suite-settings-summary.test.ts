@@ -48,7 +48,7 @@ describe("suite-settings-summary", () => {
     ).toBe("Run run_abc, 0% allowed drop, 0ms p95 increase");
     expect(
       describeGatePolicy({ noGatingScoreErrors: true }),
-    ).toBe("any gating evaluator errored");
+    ).toBe("any required evaluator errored");
   });
 
   it("describes validity ceilings as percents", () => {

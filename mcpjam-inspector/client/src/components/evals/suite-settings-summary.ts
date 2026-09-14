@@ -123,7 +123,7 @@ export function describeGatePolicy(
     parts.push(`${policy.maximumP95LatencyIncreaseMs}ms p95 increase`);
   }
   if (policy.noGatingScoreErrors === true) {
-    parts.push("any gating evaluator errored");
+    parts.push("any required evaluator errored");
   }
   return parts.length > 0 ? parts.join(", ") : "None";
 }

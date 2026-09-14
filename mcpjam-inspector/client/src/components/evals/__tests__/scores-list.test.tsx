@@ -136,7 +136,7 @@ describe("gate helpers", () => {
 
   it("excludes a not_applicable row from the gate DENOMINATOR", () => {
     // Counting it would render "1 / 1 assertions passed" for an iteration whose
-    // only gating evaluator was never in scope — the exact conflation
+    // only required evaluator was never in scope — the exact conflation
     // `not_applicable` exists to prevent.
     expect(isGatingScore(notApplicableScoreResult(gate), snapshot)).toBe(false);
     // …while an UNJOINABLE row still counts, because it fails closed.
@@ -198,7 +198,7 @@ describe("ScoresList", () => {
       />,
     );
     expect(
-      screen.getByText("1 / 1 gating evaluators passed"),
+      screen.getByText("1 / 1 required evaluators passed"),
     ).toBeInTheDocument();
   });
 
@@ -218,7 +218,7 @@ describe("ScoresList", () => {
         evaluationConfig={snapshot}
       />,
     );
-    expect(screen.getByText("1 / 1 gating evaluators passed")).toBeInTheDocument();
+    expect(screen.getByText("1 / 1 required evaluators passed")).toBeInTheDocument();
     expect(screen.getByText("N/A")).toBeInTheDocument();
     expect(isGatingScore(notApplicable, snapshot)).toBe(false);
   });
@@ -237,7 +237,7 @@ describe("ScoresList", () => {
     );
     // It renders in its own section, but "1 / 1 passed" beside a row nobody can
     // verify is the reassurance this view must never give.
-    expect(screen.getByText("1 / 2 gating evaluators passed")).toBeInTheDocument();
+    expect(screen.getByText("1 / 2 required evaluators passed")).toBeInTheDocument();
   });
 
   it("stays NEUTRAL when there was nothing to gate on", () => {
@@ -250,10 +250,10 @@ describe("ScoresList", () => {
     // Neither verdict is available to claim here: a green check would say a
     // threshold was cleared, a red cross would report a regression that never
     // happened. "0 / 0 passed" under either badge is the version to avoid.
-    const badge = screen.getByText("no gating evaluators");
+    const badge = screen.getByText("no required evaluators");
     expect(badge.className).not.toContain(EVAL_PASSED_BADGE_STRONG_CLASS);
     expect(badge.className).not.toContain(EVAL_FAILED_BADGE_STRONG_CLASS);
-    expect(screen.queryByText(/gating evaluators passed/)).toBeNull();
+    expect(screen.queryByText(/required evaluators passed/)).toBeNull();
   });
 
   it("renders a row with no matching definition as unresolved, not a crash", () => {
@@ -311,7 +311,7 @@ describe("ScoresList", () => {
     expect(
       screen.getByText("evaluator evidence did not verify"),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/gating evaluators passed/)).toBeNull();
+    expect(screen.queryByText(/required evaluators passed/)).toBeNull();
   });
 
   it("renders an integrity-only payload with no surviving rows", () => {
@@ -401,7 +401,7 @@ describe("ScoresList", () => {
     expect(screen.queryByText("0.42 / 0.7")).toBeNull();
     expect(screen.queryByText(/The answer never named the file/)).toBeNull();
     expect(
-      screen.getByText("1 / 1 gating evaluators passed"),
+      screen.getByText("1 / 1 required evaluators passed"),
     ).toBeInTheDocument();
     expect(screen.getByText(/judge hidden/i)).toBeInTheDocument();
   });

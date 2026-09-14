@@ -35,6 +35,7 @@ import {
   type EvaluationConfigSnapshot,
   type ResolvedScoreDefinition,
   type ScoreResult,
+  type ScorerRole,
 } from "@mcpjam/sdk/contract";
 import type { EvalRunDecisionChain } from "@mcpjam/sdk/contract";
 import { hostedCriterionId } from "@/shared/hosted-criterion-id";
@@ -54,6 +55,7 @@ import type { EvalStepStatus } from "@/shared/eval-stream-events";
 import type { EvalIteration } from "@/components/evals/types";
 import type { JudgeCase } from "@/components/evals/goal-completion-presentation";
 import type { ScorecardGroup, ScorecardRow } from "./case-scorecard-model";
+import { isRequiredRole } from "@mcpjam/sdk/predicates";
 
 export type TrialRowResultSource =
   | "stepResult"
@@ -91,8 +93,12 @@ export type TrialRowEvidence = {
    * The role the trial was actually GRADED under, when it differs from what
    * the case now says. A role edited after a run does not re-grade it, and a
    * row that silently showed the new role would misreport what happened.
+   *
+   * The STORED spelling, verbatim — a run graded before the rename says
+   * `"gating"` and one graded after says `"required"`. Read it with
+   * `isRequiredRole`; the row renders one word either way.
    */
-  frozenRole?: "gating" | "advisory";
+  frozenRole?: ScorerRole;
 };
 
 export type JoinedScorecardRow = ScorecardRow & {
@@ -461,7 +467,7 @@ function scoreEvidence(
   const frozen = definition?.role;
   const drifted =
     frozen !== undefined &&
-    ((frozen === "gating") !== authoredIsRequired);
+    (isRequiredRole(frozen) !== authoredIsRequired);
   const evidence: TrialRowEvidence = {
     ...(score.evidence && score.evidence.length > 0
       ? { scoreEvidence: [...score.evidence] }

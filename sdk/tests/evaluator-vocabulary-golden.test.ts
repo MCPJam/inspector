@@ -27,6 +27,12 @@ import golden from "./fixtures/evaluator-vocabulary-golden.json" with { type: "j
 import { EvalTest } from "../src/EvalTest.js";
 import { judgeScorer, predicateScorer } from "../src/scorers/index.js";
 import { assertion } from "../src/evaluators/assertion.js";
+import {
+  authoredRequiredRole,
+  capabilityAcceptsCanonicalRole,
+  definitionsForDeployment,
+  roleForDeployment,
+} from "../src/contract/policy-spelling.js";
 import { definitionHash } from "../src/contract/derive.js";
 import type { EvaluationConfigSnapshot } from "../src/contract/types.js";
 import type { Predicate } from "../src/predicates/types.js";
@@ -414,7 +420,10 @@ describe("required is a spelling, not a new evaluator", () => {
     expect(definitionHash(resolveForHash(required))).toBe(
       definitionHash(resolveForHash(bare)),
     );
-    expect(required.role).toBe("gating");
+    // The spelling this build EMITS, which is now the canonical one. The
+    // digest above is identical either way, which is what made flipping it
+    // free.
+    expect(required.role).toBe(authoredRequiredRole());
   });
 
   it("leaves an explicit `gating` rule's existing identity exactly where it was", () => {
@@ -426,7 +435,7 @@ describe("required is a spelling, not a new evaluator", () => {
     expect(legacy.scorerId).not.toBe(bare.scorerId);
     // And its definition still resolves to the same effective role, so the two
     // differ in identity only, never in what they do.
-    expect(legacy.role).toBe("gating");
+    expect(legacy.role).toBe(authoredRequiredRole());
   });
 
   it("gives `assertion()` one identity for all three spellings", () => {
@@ -503,6 +512,81 @@ describe("required is a spelling, not a new evaluator", () => {
     expect(definitionHash({ ...base, role: "advisory" })).not.toBe(
       definitionHash({ ...base, role: "gating" }),
     );
+  });
+});
+
+/**
+ * The capability gate on EMITTING the canonical spelling.
+ *
+ * The two repositories deploy independently and "merged" is not "deployed", so
+ * an SDK that emits `required` may be talking to a backend whose
+ * `validateScorePayload` still refuses it. That failure is the expensive one:
+ * every iteration of the run is quarantined `score_integrity_invalid`, and the
+ * dashboard then looks EMPTY rather than broken — the run appears to have
+ * produced no evidence at all, and nothing says why.
+ */
+describe("emitting the canonical spelling is gated on the deployment", () => {
+  const WITH_CAPABILITY = { vocabulary: { values: { role: ["gating"] } } };
+
+  it("reads the capability VALUE, never the presence of a field beside it", () => {
+    expect(capabilityAcceptsCanonicalRole(WITH_CAPABILITY)).toBe(true);
+    // `vocabulary` without `values.role` is a deployment that speaks the field
+    // vocabulary and not this value — exactly the case a version check or a
+    // "does it have `vocabulary`?" test would get wrong.
+    expect(
+      capabilityAcceptsCanonicalRole({ vocabulary: { version: 2, fields: {} } }),
+    ).toBe(false);
+    expect(capabilityAcceptsCanonicalRole(undefined)).toBe(false);
+    expect(capabilityAcceptsCanonicalRole({})).toBe(false);
+    expect(capabilityAcceptsCanonicalRole(null)).toBe(false);
+  });
+
+  it("falls back to the legacy spelling against a deployment that does not advertise it", () => {
+    expect(roleForDeployment("required", WITH_CAPABILITY)).toBe("required");
+    expect(roleForDeployment("required", undefined)).toBe("gating");
+    // Advisory is one word in both vocabularies and never moves.
+    expect(roleForDeployment("advisory", undefined)).toBe("advisory");
+    expect(roleForDeployment("advisory", WITH_CAPABILITY)).toBe("advisory");
+  });
+
+  it("is hash-neutral, which is what makes the fallback safe", () => {
+    // Downgrading on the way out must not change any identity, or a run
+    // against an older backend would file its rows under different digests
+    // than the same run against a newer one.
+    const definition = {
+      scorerId: "refund-mentioned",
+      idSource: "explicit" as const,
+      scorerVersion: "1",
+      implementationHash: "impl-refund-predicate-v1",
+      deterministic: true,
+      passThreshold: 1,
+      role: "required" as const,
+      onError: "fail" as const,
+      onSkipped: "fail" as const,
+    };
+    const [downgraded] = definitionsForDeployment([definition], undefined);
+    expect(downgraded.role).toBe("gating");
+    expect(definitionHash(downgraded)).toBe(definitionHash(definition));
+  });
+
+  it("leaves the list uncopied when nothing moves", () => {
+    const definitions = [
+      {
+        scorerId: "a",
+        idSource: "explicit" as const,
+        scorerVersion: "1",
+        implementationHash: "h",
+        deterministic: true,
+        passThreshold: 1,
+        role: "advisory" as const,
+        onError: "ignore" as const,
+        onSkipped: "ignore" as const,
+      },
+    ];
+    expect(definitionsForDeployment(definitions, WITH_CAPABILITY)).toBe(
+      definitions,
+    );
+    expect(definitionsForDeployment(definitions, undefined)).toBe(definitions);
   });
 });
 

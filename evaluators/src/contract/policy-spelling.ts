@@ -24,23 +24,18 @@ import type { ScorerRole } from "./types.js";
  * with no upside, and the runtime capability check below is the part that is
  * allowed to vary per deployment.
  */
-export const EMIT_CANONICAL_ROLE = false;
+export const EMIT_CANONICAL_ROLE = true;
 
 /**
- * What a required role should be WRITTEN as by this build.
+ * What a required role is WRITTEN as by this build.
  *
- * `capabilityAcceptsCanonicalRole` is the per-deployment half: even with the
- * constant on, a runner talking to an older backend must fall back, because
- * the two repositories deploy independently and "merged" is not "deployed".
- * This is the pinned contract's rule — a client reads a capability VALUE, it
- * never infers support from the presence of a field on an unrelated object.
+ * Build-time only. The per-deployment half is {@link roleForDeployment}, and
+ * it is deliberately NOT folded in here: a definition builder has no
+ * handshake, and threading a capability through every one of them would put
+ * the check in a dozen places that could each forget it.
  */
-export function authoredRequiredRole(
-  capabilityAcceptsCanonical?: boolean,
-): ScorerRole {
-  return EMIT_CANONICAL_ROLE && capabilityAcceptsCanonical === true
-    ? "required"
-    : "gating";
+export function authoredRequiredRole(): ScorerRole {
+  return EMIT_CANONICAL_ROLE ? "required" : "gating";
 }
 
 /**
@@ -48,16 +43,52 @@ export function authoredRequiredRole(
  *
  * True iff `vocabulary.values.role` is present. The backend advertises that
  * key only from the deploy whose validators actually take `"required"`, so its
- * presence — not the presence of `vocabulary`, and not a version number — is
- * the signal. Absent or malformed is read as "no", fail-safe.
+ * PRESENCE — not the presence of `vocabulary`, and not a version number — is
+ * the signal. This is the pinned contract's rule: a client reads a capability
+ * value, and never infers support from a field on an unrelated object.
+ *
+ * Absent or malformed reads as "no", which is the safe direction: emitting
+ * legacy to a backend that would have taken canonical costs nothing.
  */
-export function capabilityAcceptsCanonicalRole(
-  capabilities: unknown,
-): boolean {
+export function capabilityAcceptsCanonicalRole(capabilities: unknown): boolean {
   const values = (
-    capabilities as
-      | { vocabulary?: { values?: { role?: unknown } } }
-      | undefined
+    capabilities as { vocabulary?: { values?: { role?: unknown } } } | undefined
   )?.vocabulary?.values?.role;
   return Array.isArray(values);
+}
+
+/**
+ * The spelling a role may be SENT as to one deployment.
+ *
+ * The runtime half, applied ONCE on the way out rather than at every builder.
+ * The two repositories deploy independently and "merged" is not "deployed", so
+ * a runner whose SDK emits `required` may still be talking to a backend whose
+ * `validateScorePayload` refuses it — and that failure is the expensive one:
+ * every iteration of the run is quarantined `score_integrity_invalid`, and the
+ * dashboard then looks empty rather than broken.
+ *
+ * Hash-neutral by construction: `hashSpelling` freezes the payload's spelling,
+ * so downgrading here changes no `definitionHash` and orphans no score row.
+ */
+export function roleForDeployment(
+  role: ScorerRole,
+  capabilities: unknown,
+): ScorerRole {
+  if (role !== "required") return role;
+  return capabilityAcceptsCanonicalRole(capabilities) ? "required" : "gating";
+}
+
+/** {@link roleForDeployment} over a definition list, uncopied when nothing moves. */
+export function definitionsForDeployment<T extends { role: ScorerRole }>(
+  definitions: readonly T[],
+  capabilities: unknown,
+): readonly T[] {
+  if (capabilityAcceptsCanonicalRole(capabilities)) return definitions;
+  let changed = false;
+  const out = definitions.map((definition) => {
+    if (definition.role !== "required") return definition;
+    changed = true;
+    return { ...definition, role: "gating" as const };
+  });
+  return changed ? out : definitions;
 }

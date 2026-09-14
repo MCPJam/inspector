@@ -7,6 +7,7 @@
  */
 
 import {
+  authoredRequiredRole,
   GRADER_PRESENTATION_GROUP,
   PREDICATE_KINDS,
   PREDICATE_STAGE,
@@ -16,7 +17,11 @@ import {
   type PredicateKind,
   type UserValueStage,
 } from "@mcpjam/sdk/contract";
-import { checkRole, type Predicate } from "@mcpjam/sdk/predicates";
+import {
+  checkRole,
+  isRequiredRole,
+  type Predicate,
+} from "@mcpjam/sdk/predicates";
 import {
   formatCriterion,
   PREDICATE_KIND_LABELS,
@@ -158,7 +163,9 @@ export function roleOfJudgeSlot(
   judgeConfig: EvalJudgeConfig | undefined,
 ): ScorerUiRole {
   if (slot === "groundedness") return "advisory";
-  return judgeConfig?.goalCompletion?.role === "gating"
+  // Either spelling: a suite configured before the rename stores `"gating"`
+  // and one configured after stores `"required"`, and this table renders both.
+  return isRequiredRole(judgeConfig?.goalCompletion?.role)
     ? "required"
     : "advisory";
 }
@@ -166,16 +173,17 @@ export function roleOfJudgeSlot(
 /**
  * Authored goal-completion role a settings row can write.
  *
- * Still writes the legacy `"gating"` spelling on the wire: the client authors
- * through the same v1 boundary an installed CLI reads, and that boundary does
- * not accept `"required"` until the backend does. Only the LABEL changed here.
+ * Writes the spelling this build emits, which is the canonical one now that
+ * the boundary takes it. Deliberately NOT capability-gated: the client and the
+ * server it writes to are one deployment, unlike an SDK runner in somebody's
+ * CI — and a deployment that shipped this build shipped the boundary with it.
  */
 export function withGoalCompletionRole(
   current: NonNullable<EvalJudgeConfig["goalCompletion"]>,
   role: ScorerUiRole,
 ): NonNullable<EvalJudgeConfig["goalCompletion"]> {
   const { role: _role, severity: _severity, ...rest } = current;
-  if (role === "required") return { ...rest, role: "gating" };
+  if (role === "required") return { ...rest, role: authoredRequiredRole() };
   return { ...rest, role: "advisory" };
 }
 

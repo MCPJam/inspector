@@ -24,6 +24,7 @@ import { RoleChip } from "@/components/evals/scorer-role-control";
 import { ProvenanceChip } from "./provenance-chip";
 import { RowMarker } from "./row-marker";
 import type { JoinedScorecardRow, TrialRowResult } from "./trial-results";
+import { isRequiredRole } from "@mcpjam/sdk/predicates";
 
 type Glyph = {
   Icon: typeof CheckCircle2;
@@ -210,7 +211,8 @@ export function TrialScorecardRow({
           {row.evidence?.frozenRole ? (
             <p className="text-[11px] text-muted-foreground/80">
               Graded as{" "}
-              {row.evidence.frozenRole === "gating" ? "required" : "advisory"} —
+              {isRequiredRole(row.evidence.frozenRole) ? "required" : "advisory"}{" "}
+              —
               this scorer's role has changed since the run.
             </p>
           ) : null}
