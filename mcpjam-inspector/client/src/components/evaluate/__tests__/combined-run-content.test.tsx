@@ -191,7 +191,9 @@ describe("combined run report", () => {
         .map((stat) => stat.textContent),
     ).toEqual(expect.arrayContaining([expect.stringContaining("P50")]));
     expect(screen.getAllByRole("columnheader")).toHaveLength(4);
-    expect(screen.getByRole("heading", { name: /Test cases/ })).toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: /^\d+ Test cases?$/ }),
+    ).toBeVisible();
     expect(screen.queryByText("Run results")).toBeNull();
     expect(
       screen.queryByText(

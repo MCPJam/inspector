@@ -289,7 +289,8 @@ export function RunResultsMatrix({
     >
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
         <h3 className="text-lg font-semibold tracking-tight">
-          <span className="tabular-nums">{data.rows.length}</span> Test cases
+          <span className="tabular-nums">{data.rows.length}</span>{" "}
+          {data.rows.length === 1 ? "Test case" : "Test cases"}
         </h3>
         <div
           className="flex flex-wrap items-center gap-2"
