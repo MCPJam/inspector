@@ -181,13 +181,19 @@ export function useUnifiedFindings(args: {
     // The run this request belongs to. A rejection that settles after the
     // reader has moved on must not write its error onto another run.
     const requestedFor = args.suiteRunId;
-    const token = (buildToken.current += 1);
-    const stale = () =>
-      boundRunIdRef.current !== requestedFor || buildToken.current !== token;
     // A second click while one is in flight must not become a second job. The
     // backend refuses it anyway (the claim is the real guard); this only keeps
     // the UI from asking.
+    //
+    // This guard runs BEFORE the token is taken, and the order matters: a
+    // blocked click that still bumped the token would make the LIVE request
+    // stale, its `finally` would skip the cleanup, and the button would stay
+    // disabled for the rest of the run's life. Only a request that is really
+    // starting gets to move the token.
     if (buildInFlight.current || experiment?.job?.status === "pending") return;
+    const token = (buildToken.current += 1);
+    const stale = () =>
+      boundRunIdRef.current !== requestedFor || buildToken.current !== token;
     buildInFlight.current = true;
     setBuildError(null);
     setBuildRequested(true);

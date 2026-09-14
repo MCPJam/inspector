@@ -82,6 +82,12 @@ describe("build", () => {
     await act(async () => {
       resolveRequest?.();
     });
+    // The blocked second click must not have stranded the live request's
+    // cleanup. Asserting only the call count missed exactly that: the button
+    // stayed disabled for the rest of the run's life.
+    expect(result.current.build.pending).toBe(false);
+    act(() => result.current.build.onRun());
+    expect(mutation.fn).toHaveBeenCalledTimes(2);
   });
 
   it("rebuilds with force when a snapshot already exists", () => {

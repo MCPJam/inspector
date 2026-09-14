@@ -420,6 +420,8 @@ this branch.
 | The build's run-id guard had an ABA hole | Select run A, then B, then A again, and a callback from the _first_ A request still matched the run id and could clear the second request's pending flag or overwrite its error. A monotonic token settles it. |
 | The new parity test shelled out during the normal suite | It invoked the backend's `findings:replay` whenever a sibling checkout existed, so a broken `node_modules` over there would fail the Inspector suite — an environment gap, not a parity failure. It is opt-in via `npm run test:replay-artifact-parity`, and throws rather than skipping if asked to run without the checkout. |
 
+| The ABA token fix introduced a worse bug than it fixed | The token was taken BEFORE the duplicate-request guard, so a blocked second click still bumped it — which made the LIVE request stale, skipped its `finally` cleanup, and left the build button disabled for the rest of that run's life. A double-click is far likelier than the A→B→A case the token was for. The token is taken after the guard now, so only a request that really starts can move it. The double-click test asserted the call count and never that pending cleared, which is exactly why it passed; it now settles the request and asserts a third click still works. |
+
 Two findings were **not** taken as written, with reasons:
 
 - **"Load sampled traces before discarding chat session IDs."** Correct that
