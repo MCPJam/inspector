@@ -343,6 +343,14 @@ missing evidence is the thing to fix first, and §9.3 names it.
    them and the flag with it.
 7. **The preview's state buttons simulate props, not data.** They cannot show
    you a real build failing; that needs §5.
+8. **Findings can be built for more runs than AI can explain.** The build
+   accepts any settled run — `completed`, `failed`, `cancelled`, `timed_out`.
+   The AI path goes through the existing `assertCanRequestInsight`, which
+   accepts `completed` only. So a failed run can have observations with the
+   _Add AI explanation_ button disabled. That asymmetry is inherited, not
+   introduced, and it is the honest behaviour for now: the existing generation
+   path genuinely refuses a non-completed run. Worth a decision before a
+   production cutover.
 
 ---
 
