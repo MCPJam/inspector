@@ -18,6 +18,7 @@ import type {
   XaaEnterprisePolicy,
 } from "@mcpjam/sdk";
 import { HOSTED_MODE, WEB_CALL_TIMEOUT_MS } from "../../config.js";
+import { observeConnectionFetch } from "../../services/connection-failure-context.js";
 import { hostedMcpBaseFetch } from "../../utils/hosted-mcp-base-fetch.js";
 import { HOSTED_TASK_BATCH_MAX as HOSTED_TASK_BATCH_MAX_SHARED } from "../../../shared/hosted-tasks.js";
 import {
@@ -1888,7 +1889,7 @@ export async function createAuthorizedManager(
               serverName: serverNamesById?.[serverId] ?? null,
               serverUrl: auth.serverConfig.url,
             },
-          );
+          ).withSetupFailureSource("authorization_required");
         };
       }
 
@@ -1974,7 +1975,20 @@ export async function createAuthorizedManager(
     throw error;
   });
 
-  const manager = new MCPClientManager(Object.fromEntries(configEntries), {
+  // Each server owns its capture even when two configs use the same URL.
+  // Install before construction: the manager starts connecting eagerly.
+  const observedConfigs = Object.fromEntries(
+    configEntries.map(([id, config]) => [
+      id,
+      {
+        ...config,
+        baseFetch: observeConnectionFetch(
+          config.baseFetch ?? hostedMcpBaseFetch(),
+        ),
+      },
+    ]),
+  );
+  const manager = new MCPClientManager(observedConfigs, {
     defaultTimeout: timeoutMs,
     rpcLogger: options?.rpcLogger,
     httpLogger: options?.httpLogger,

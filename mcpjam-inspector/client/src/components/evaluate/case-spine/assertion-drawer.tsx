@@ -66,7 +66,7 @@ export function EvalAddDrawer({
       !kinds.includes(item.choice.predicateKind)
     )
       return false;
-    return `${item.label} ${item.section} ${item.key} ${item.scope === "whole-run" || wholeRunOnly ? "After the run" : "After this action"} ${item.advisory ? "Warn Report" : ""} ${reason(item) ?? ""}`
+    return `${item.label} ${item.section} ${item.key} ${item.scope === "whole-run" || wholeRunOnly ? "After the run" : "After this action"} ${item.advisory ? "Advisory" : ""} ${reason(item) ?? ""}`
       .toLowerCase()
       .includes(search.trim().toLowerCase());
   });
@@ -170,7 +170,7 @@ export function EvalAddDrawer({
                                           item.scope === "whole-run"
                                         ? "After the run"
                                         : "After this action")}
-                              {item.advisory ? " · Warn or Report only" : ""}
+                              {item.advisory ? " · Advisory only" : ""}
                             </span>
                           </span>
                         </button>

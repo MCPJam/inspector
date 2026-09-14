@@ -335,7 +335,7 @@ export function requiresRenderObservations(kind: string): boolean {
  * does not make any of that an objective grade.
  *
  * So the policy is one rule carried through validation and presentation:
- * an observation kind is **Warn or Report only**. It is refused as gating at
+ * an observation kind is **advisory only**. It is refused as gating at
  * the write boundary (here, and in the backend's `assertValidPredicate`), it
  * is not offered a Gate segment in the UI, it is never promoted into
  * `expectedToolCalls`, and it never enters `allGatingScorersPassed`.
@@ -420,9 +420,18 @@ export const argMatcherSchema = z.object({
  * valid with `role: "advisory"` — enforced by {@link predicateSchema}'s
  * `superRefine`, not here, so the underlying discriminated union keeps
  * `.options` for kind lists (do not read `.options` from the refinement).
+ *
+ * `"required"` and `"gating"` are one value, two spellings — `"required"` is
+ * canonical, `"gating"` is what every rule written before the rename says and
+ * what a dialect-1 suite file still says. Widened HERE, in the one shape every
+ * variant spreads, rather than wrapped: Zod 4's JSON-schema processor
+ * describes a `z.preprocess` by its INPUT type, so a wrapper would leave the
+ * generated `eval-suite.schema.json` advertising the unwidened enum while the
+ * loader accepted the new value — exactly the divergence
+ * `scripts/eval-suite-schema-artifacts.ts` refuses to publish.
  */
 const checkPolicyShape = {
-  role: z.enum(["gating", "advisory"]).optional(),
+  role: z.enum(["gating", "advisory", "required"]).optional(),
   severity: z.literal("warn").optional(),
 };
 

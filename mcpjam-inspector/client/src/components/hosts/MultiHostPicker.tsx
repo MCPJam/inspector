@@ -26,7 +26,7 @@ import { clientDisplayName } from "@/lib/client-display-name";
 
 /**
  * MultiHostPicker — playground "Compare" affordance that lets the user
- * stack 2–N clients side-by-side. The navbar `HostOverlayBar` is the
+ * stack 2–N clients side-by-side. Connect's `HostCanvasSelector` is the
  * canonical lead-client picker; this component is exclusively for
  * entering/leaving compare mode and managing the comparison lineup.
  *
@@ -176,7 +176,7 @@ export function MultiHostPicker({
   const leadHostName = leadHost ? clientDisplayName(leadHost) : "Select host";
 
   // When NOT actively comparing (single-host, or multi-host enabled but
-  // only the lead is selected), the navbar `HostOverlayBar` already
+  // only the lead is selected), Connect's `HostCanvasSelector` already
   // shows the lead host name + cycle controls. Surfacing the same name
   // here is pure duplication, so collapse the trigger into a "Compare"
   // affordance whose only job is to open the multi-host popover. The

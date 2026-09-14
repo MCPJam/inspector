@@ -702,7 +702,7 @@
                                     },
                                     "role": {
                                       "type": "string",
-                                      "enum": ["gating", "advisory"]
+                                      "enum": ["gating", "advisory", "required"]
                                     },
                                     "severity": {
                                       "type": "string",
@@ -731,7 +731,7 @@
                                     },
                                     "role": {
                                       "type": "string",
-                                      "enum": ["gating", "advisory"]
+                                      "enum": ["gating", "advisory", "required"]
                                     },
                                     "severity": {
                                       "type": "string",
@@ -749,7 +749,7 @@
                                     },
                                     "role": {
                                       "type": "string",
-                                      "enum": ["gating", "advisory"]
+                                      "enum": ["gating", "advisory", "required"]
                                     },
                                     "severity": {
                                       "type": "string",
@@ -767,7 +767,7 @@
                                     },
                                     "role": {
                                       "type": "string",
-                                      "enum": ["gating", "advisory"]
+                                      "enum": ["gating", "advisory", "required"]
                                     },
                                     "severity": {
                                       "type": "string",
@@ -785,7 +785,7 @@
                                     },
                                     "role": {
                                       "type": "string",
-                                      "enum": ["gating", "advisory"]
+                                      "enum": ["gating", "advisory", "required"]
                                     },
                                     "severity": {
                                       "type": "string",
@@ -803,7 +803,7 @@
                                     },
                                     "role": {
                                       "type": "string",
-                                      "enum": ["gating", "advisory"]
+                                      "enum": ["gating", "advisory", "required"]
                                     },
                                     "severity": {
                                       "type": "string",
@@ -845,7 +845,7 @@
                                     },
                                     "role": {
                                       "type": "string",
-                                      "enum": ["gating", "advisory"]
+                                      "enum": ["gating", "advisory", "required"]
                                     },
                                     "severity": {
                                       "type": "string",
@@ -867,7 +867,7 @@
                                     },
                                     "role": {
                                       "type": "string",
-                                      "enum": ["gating", "advisory"]
+                                      "enum": ["gating", "advisory", "required"]
                                     },
                                     "severity": {
                                       "type": "string",
@@ -889,7 +889,7 @@
                                     },
                                     "role": {
                                       "type": "string",
-                                      "enum": ["gating", "advisory"]
+                                      "enum": ["gating", "advisory", "required"]
                                     },
                                     "severity": {
                                       "type": "string",
@@ -914,7 +914,7 @@
                                     },
                                     "role": {
                                       "type": "string",
-                                      "enum": ["gating", "advisory"]
+                                      "enum": ["gating", "advisory", "required"]
                                     },
                                     "severity": {
                                       "type": "string",
@@ -936,7 +936,7 @@
                                     },
                                     "role": {
                                       "type": "string",
-                                      "enum": ["gating", "advisory"]
+                                      "enum": ["gating", "advisory", "required"]
                                     },
                                     "severity": {
                                       "type": "string",
@@ -968,7 +968,7 @@
                                     },
                                     "role": {
                                       "type": "string",
-                                      "enum": ["gating", "advisory"]
+                                      "enum": ["gating", "advisory", "required"]
                                     },
                                     "severity": {
                                       "type": "string",
@@ -995,7 +995,7 @@
                                     "caseSensitive": { "type": "boolean" },
                                     "role": {
                                       "type": "string",
-                                      "enum": ["gating", "advisory"]
+                                      "enum": ["gating", "advisory", "required"]
                                     },
                                     "severity": {
                                       "type": "string",
@@ -1017,7 +1017,7 @@
                                     },
                                     "role": {
                                       "type": "string",
-                                      "enum": ["gating", "advisory"]
+                                      "enum": ["gating", "advisory", "required"]
                                     },
                                     "severity": {
                                       "type": "string",
@@ -1035,7 +1035,7 @@
                                     },
                                     "role": {
                                       "type": "string",
-                                      "enum": ["gating", "advisory"]
+                                      "enum": ["gating", "advisory", "required"]
                                     },
                                     "severity": {
                                       "type": "string",
@@ -1053,7 +1053,7 @@
                                     },
                                     "role": {
                                       "type": "string",
-                                      "enum": ["gating", "advisory"]
+                                      "enum": ["gating", "advisory", "required"]
                                     },
                                     "severity": {
                                       "type": "string",
@@ -1076,7 +1076,7 @@
                                     },
                                     "role": {
                                       "type": "string",
-                                      "enum": ["gating", "advisory"]
+                                      "enum": ["gating", "advisory", "required"]
                                     },
                                     "severity": {
                                       "type": "string",
@@ -1098,7 +1098,7 @@
                                     },
                                     "role": {
                                       "type": "string",
-                                      "enum": ["gating", "advisory"]
+                                      "enum": ["gating", "advisory", "required"]
                                     },
                                     "severity": {
                                       "type": "string",
@@ -1125,7 +1125,7 @@
                                     },
                                     "role": {
                                       "type": "string",
-                                      "enum": ["gating", "advisory"]
+                                      "enum": ["gating", "advisory", "required"]
                                     },
                                     "severity": {
                                       "type": "string",
@@ -1147,7 +1147,7 @@
                                     },
                                     "role": {
                                       "type": "string",
-                                      "enum": ["gating", "advisory"]
+                                      "enum": ["gating", "advisory", "required"]
                                     },
                                     "severity": {
                                       "type": "string",
@@ -1170,7 +1170,7 @@
                                     },
                                     "role": {
                                       "type": "string",
-                                      "enum": ["gating", "advisory"]
+                                      "enum": ["gating", "advisory", "required"]
                                     },
                                     "severity": {
                                       "type": "string",
@@ -1188,7 +1188,7 @@
                                     },
                                     "role": {
                                       "type": "string",
-                                      "enum": ["gating", "advisory"]
+                                      "enum": ["gating", "advisory", "required"]
                                     },
                                     "severity": {
                                       "type": "string",
@@ -1215,7 +1215,7 @@
                                     },
                                     "role": {
                                       "type": "string",
-                                      "enum": ["gating", "advisory"]
+                                      "enum": ["gating", "advisory", "required"]
                                     },
                                     "severity": {
                                       "type": "string",
@@ -1243,7 +1243,7 @@
                                     },
                                     "role": {
                                       "type": "string",
-                                      "enum": ["gating", "advisory"]
+                                      "enum": ["gating", "advisory", "required"]
                                     },
                                     "severity": {
                                       "type": "string",
@@ -1266,7 +1266,7 @@
                                     },
                                     "role": {
                                       "type": "string",
-                                      "enum": ["gating", "advisory"]
+                                      "enum": ["gating", "advisory", "required"]
                                     },
                                     "severity": {
                                       "type": "string",
@@ -1293,7 +1293,7 @@
                                     },
                                     "role": {
                                       "type": "string",
-                                      "enum": ["gating", "advisory"]
+                                      "enum": ["gating", "advisory", "required"]
                                     },
                                     "severity": {
                                       "type": "string",
@@ -1315,7 +1315,7 @@
                                     },
                                     "role": {
                                       "type": "string",
-                                      "enum": ["gating", "advisory"]
+                                      "enum": ["gating", "advisory", "required"]
                                     },
                                     "severity": {
                                       "type": "string",
@@ -1337,7 +1337,7 @@
                                     },
                                     "role": {
                                       "type": "string",
-                                      "enum": ["gating", "advisory"]
+                                      "enum": ["gating", "advisory", "required"]
                                     },
                                     "severity": {
                                       "type": "string",
@@ -1364,7 +1364,7 @@
                                     },
                                     "role": {
                                       "type": "string",
-                                      "enum": ["gating", "advisory"]
+                                      "enum": ["gating", "advisory", "required"]
                                     },
                                     "severity": {
                                       "type": "string",
@@ -1390,7 +1390,7 @@
                                     },
                                     "role": {
                                       "type": "string",
-                                      "enum": ["gating", "advisory"]
+                                      "enum": ["gating", "advisory", "required"]
                                     },
                                     "severity": {
                                       "type": "string",
@@ -1412,7 +1412,7 @@
                                     },
                                     "role": {
                                       "type": "string",
-                                      "enum": ["gating", "advisory"]
+                                      "enum": ["gating", "advisory", "required"]
                                     },
                                     "severity": {
                                       "type": "string",
@@ -1430,7 +1430,7 @@
                                     },
                                     "role": {
                                       "type": "string",
-                                      "enum": ["gating", "advisory"]
+                                      "enum": ["gating", "advisory", "required"]
                                     },
                                     "severity": {
                                       "type": "string",
@@ -1452,7 +1452,7 @@
                                     },
                                     "role": {
                                       "type": "string",
-                                      "enum": ["gating", "advisory"]
+                                      "enum": ["gating", "advisory", "required"]
                                     },
                                     "severity": {
                                       "type": "string",
@@ -1474,7 +1474,7 @@
                                     },
                                     "role": {
                                       "type": "string",
-                                      "enum": ["gating", "advisory"]
+                                      "enum": ["gating", "advisory", "required"]
                                     },
                                     "severity": {
                                       "type": "string",
@@ -1519,7 +1519,7 @@
                     },
                     "role": {
                       "type": "string",
-                      "enum": ["gating", "advisory"]
+                      "enum": ["gating", "advisory", "required"]
                     },
                     "severity": { "type": "string", "const": "warn" }
                   },
@@ -1542,7 +1542,7 @@
                     },
                     "role": {
                       "type": "string",
-                      "enum": ["gating", "advisory"]
+                      "enum": ["gating", "advisory", "required"]
                     },
                     "severity": { "type": "string", "const": "warn" }
                   },
@@ -1554,7 +1554,7 @@
                     "type": { "type": "string", "const": "toolNamesUnique" },
                     "role": {
                       "type": "string",
-                      "enum": ["gating", "advisory"]
+                      "enum": ["gating", "advisory", "required"]
                     },
                     "severity": { "type": "string", "const": "warn" }
                   },
@@ -1569,7 +1569,7 @@
                     },
                     "role": {
                       "type": "string",
-                      "enum": ["gating", "advisory"]
+                      "enum": ["gating", "advisory", "required"]
                     },
                     "severity": { "type": "string", "const": "warn" }
                   },
@@ -1584,7 +1584,7 @@
                     },
                     "role": {
                       "type": "string",
-                      "enum": ["gating", "advisory"]
+                      "enum": ["gating", "advisory", "required"]
                     },
                     "severity": { "type": "string", "const": "warn" }
                   },
@@ -1599,7 +1599,7 @@
                     },
                     "role": {
                       "type": "string",
-                      "enum": ["gating", "advisory"]
+                      "enum": ["gating", "advisory", "required"]
                     },
                     "severity": { "type": "string", "const": "warn" }
                   },
@@ -1632,7 +1632,7 @@
                     },
                     "role": {
                       "type": "string",
-                      "enum": ["gating", "advisory"]
+                      "enum": ["gating", "advisory", "required"]
                     },
                     "severity": { "type": "string", "const": "warn" }
                   },
@@ -1648,7 +1648,7 @@
                     "toolName": { "type": "string", "minLength": 1 },
                     "role": {
                       "type": "string",
-                      "enum": ["gating", "advisory"]
+                      "enum": ["gating", "advisory", "required"]
                     },
                     "severity": { "type": "string", "const": "warn" }
                   },
@@ -1661,7 +1661,7 @@
                     "toolName": { "type": "string", "minLength": 1 },
                     "role": {
                       "type": "string",
-                      "enum": ["gating", "advisory"]
+                      "enum": ["gating", "advisory", "required"]
                     },
                     "severity": { "type": "string", "const": "warn" }
                   },
@@ -1677,7 +1677,7 @@
                     },
                     "role": {
                       "type": "string",
-                      "enum": ["gating", "advisory"]
+                      "enum": ["gating", "advisory", "required"]
                     },
                     "severity": { "type": "string", "const": "warn" }
                   },
@@ -1690,7 +1690,7 @@
                     "toolName": { "type": "string", "minLength": 1 },
                     "role": {
                       "type": "string",
-                      "enum": ["gating", "advisory"]
+                      "enum": ["gating", "advisory", "required"]
                     },
                     "severity": { "type": "string", "const": "warn" }
                   },
@@ -1714,7 +1714,7 @@
                     "normalizeWhitespace": { "type": "boolean" },
                     "role": {
                       "type": "string",
-                      "enum": ["gating", "advisory"]
+                      "enum": ["gating", "advisory", "required"]
                     },
                     "severity": { "type": "string", "const": "warn" }
                   },
@@ -1728,7 +1728,7 @@
                     "caseSensitive": { "type": "boolean" },
                     "role": {
                       "type": "string",
-                      "enum": ["gating", "advisory"]
+                      "enum": ["gating", "advisory", "required"]
                     },
                     "severity": { "type": "string", "const": "warn" }
                   },
@@ -1741,7 +1741,7 @@
                     "pattern": { "type": "string", "minLength": 1 },
                     "role": {
                       "type": "string",
-                      "enum": ["gating", "advisory"]
+                      "enum": ["gating", "advisory", "required"]
                     },
                     "severity": { "type": "string", "const": "warn" }
                   },
@@ -1753,7 +1753,7 @@
                     "type": { "type": "string", "const": "noToolErrors" },
                     "role": {
                       "type": "string",
-                      "enum": ["gating", "advisory"]
+                      "enum": ["gating", "advisory", "required"]
                     },
                     "severity": { "type": "string", "const": "warn" }
                   },
@@ -1768,7 +1768,7 @@
                     },
                     "role": {
                       "type": "string",
-                      "enum": ["gating", "advisory"]
+                      "enum": ["gating", "advisory", "required"]
                     },
                     "severity": { "type": "string", "const": "warn" }
                   },
@@ -1785,7 +1785,7 @@
                     },
                     "role": {
                       "type": "string",
-                      "enum": ["gating", "advisory"]
+                      "enum": ["gating", "advisory", "required"]
                     },
                     "severity": { "type": "string", "const": "warn" }
                   },
@@ -1798,7 +1798,7 @@
                     "toolName": { "type": "string", "minLength": 1 },
                     "role": {
                       "type": "string",
-                      "enum": ["gating", "advisory"]
+                      "enum": ["gating", "advisory", "required"]
                     },
                     "severity": { "type": "string", "const": "warn" }
                   },
@@ -1819,7 +1819,7 @@
                     "toolName": { "type": "string", "minLength": 1 },
                     "role": {
                       "type": "string",
-                      "enum": ["gating", "advisory"]
+                      "enum": ["gating", "advisory", "required"]
                     },
                     "severity": { "type": "string", "const": "warn" }
                   },
@@ -1835,7 +1835,7 @@
                     "toolName": { "type": "string", "minLength": 1 },
                     "role": {
                       "type": "string",
-                      "enum": ["gating", "advisory"]
+                      "enum": ["gating", "advisory", "required"]
                     },
                     "severity": { "type": "string", "const": "warn" }
                   },
@@ -1852,7 +1852,7 @@
                     },
                     "role": {
                       "type": "string",
-                      "enum": ["gating", "advisory"]
+                      "enum": ["gating", "advisory", "required"]
                     },
                     "severity": { "type": "string", "const": "warn" }
                   },
@@ -1864,7 +1864,7 @@
                     "type": { "type": "string", "const": "noEndingQuestion" },
                     "role": {
                       "type": "string",
-                      "enum": ["gating", "advisory"]
+                      "enum": ["gating", "advisory", "required"]
                     },
                     "severity": { "type": "string", "const": "warn" }
                   },
@@ -1882,7 +1882,7 @@
                     "toolName": { "type": "string", "minLength": 1 },
                     "role": {
                       "type": "string",
-                      "enum": ["gating", "advisory"]
+                      "enum": ["gating", "advisory", "required"]
                     },
                     "severity": { "type": "string", "const": "warn" }
                   },
@@ -1901,7 +1901,7 @@
                     "toolName": { "type": "string", "minLength": 1 },
                     "role": {
                       "type": "string",
-                      "enum": ["gating", "advisory"]
+                      "enum": ["gating", "advisory", "required"]
                     },
                     "severity": { "type": "string", "const": "warn" }
                   },
@@ -1918,7 +1918,7 @@
                     "toolName": { "type": "string", "minLength": 1 },
                     "role": {
                       "type": "string",
-                      "enum": ["gating", "advisory"]
+                      "enum": ["gating", "advisory", "required"]
                     },
                     "severity": { "type": "string", "const": "warn" }
                   },
@@ -1939,7 +1939,7 @@
                     "toolName": { "type": "string", "minLength": 1 },
                     "role": {
                       "type": "string",
-                      "enum": ["gating", "advisory"]
+                      "enum": ["gating", "advisory", "required"]
                     },
                     "severity": { "type": "string", "const": "warn" }
                   },
@@ -1955,7 +1955,7 @@
                     "toolName": { "type": "string", "minLength": 1 },
                     "role": {
                       "type": "string",
-                      "enum": ["gating", "advisory"]
+                      "enum": ["gating", "advisory", "required"]
                     },
                     "severity": { "type": "string", "const": "warn" }
                   },
@@ -1971,7 +1971,7 @@
                     "toolName": { "type": "string", "minLength": 1 },
                     "role": {
                       "type": "string",
-                      "enum": ["gating", "advisory"]
+                      "enum": ["gating", "advisory", "required"]
                     },
                     "severity": { "type": "string", "const": "warn" }
                   },
@@ -1989,7 +1989,7 @@
                     "toolName": { "type": "string", "minLength": 1 },
                     "role": {
                       "type": "string",
-                      "enum": ["gating", "advisory"]
+                      "enum": ["gating", "advisory", "required"]
                     },
                     "severity": { "type": "string", "const": "warn" }
                   },
@@ -2003,7 +2003,7 @@
                     "beforeToolName": { "type": "string", "minLength": 1 },
                     "role": {
                       "type": "string",
-                      "enum": ["gating", "advisory"]
+                      "enum": ["gating", "advisory", "required"]
                     },
                     "severity": { "type": "string", "const": "warn" }
                   },
@@ -2018,7 +2018,7 @@
                     },
                     "role": {
                       "type": "string",
-                      "enum": ["gating", "advisory"]
+                      "enum": ["gating", "advisory", "required"]
                     },
                     "severity": { "type": "string", "const": "warn" }
                   },
@@ -2033,7 +2033,7 @@
                     },
                     "role": {
                       "type": "string",
-                      "enum": ["gating", "advisory"]
+                      "enum": ["gating", "advisory", "required"]
                     },
                     "severity": { "type": "string", "const": "warn" }
                   },
@@ -2049,7 +2049,7 @@
                     "toolName": { "type": "string", "minLength": 1 },
                     "role": {
                       "type": "string",
-                      "enum": ["gating", "advisory"]
+                      "enum": ["gating", "advisory", "required"]
                     },
                     "severity": { "type": "string", "const": "warn" }
                   },
@@ -2065,7 +2065,7 @@
                     "toolName": { "type": "string", "minLength": 1 },
                     "role": {
                       "type": "string",
-                      "enum": ["gating", "advisory"]
+                      "enum": ["gating", "advisory", "required"]
                     },
                     "severity": { "type": "string", "const": "warn" }
                   },

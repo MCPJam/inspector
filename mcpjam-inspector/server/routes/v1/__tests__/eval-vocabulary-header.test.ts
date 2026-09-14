@@ -2,12 +2,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 
 /**
- * The `x-mcpjam-eval-vocabulary` header on the eval routes — the plumbing
- * only. No field is renamed here: this pins that the header is READ (a bad
- * value is a uniform 400 across the eval surface), that a well-formed value
- * changes nothing yet (vocabulary 2 answers byte-for-byte as vocabulary 1
- * until a later step adds the projections), and that routes outside the eval
- * surface ignore it entirely.
+ * The `x-mcpjam-eval-vocabulary` header as the case routes and the
+ * capabilities read see it. The reader itself (`eval-vocabulary.ts`) is
+ * pinned in `eval-edit.test.ts` ("eval vocabulary negotiation"); this pins
+ * what the field-spelling steps build on: that a refusal lands before any
+ * platform read, that vocabulary 2 differs from vocabulary 1 in exactly the
+ * keys the vocabulary renames and nothing else. (`main`'s reader is mounted
+ * on the whole v1 app, so an unknown value is refused everywhere in v1, the
+ * capabilities read included.)
  */
 
 const { validateGuestTokenMock, convexQueryMock, convexMutationMock } =
@@ -31,7 +33,10 @@ vi.mock("convex/browser", () => ({
 }));
 
 import v1Routes from "../index.js";
-import { EVAL_VOCABULARY_HEADER } from "../../../utils/eval-vocabulary.js";
+import {
+  EVAL_VOCABULARY_HEADER,
+  UNKNOWN_VOCABULARY_MESSAGE,
+} from "../eval-vocabulary.js";
 
 function request(
   method: string,
@@ -76,6 +81,9 @@ const CASE_DOC = {
 
 const CASE_PATH = `/api/v1/projects/p1/eval-suites/${SUITE._id}/cases/${CASE_DOC._id}`;
 
+/** The keys a case DTO renames between vocabulary 1 and 2. None yet. */
+const RENAMED: Record<string, string> = {};
+
 describe("x-mcpjam-eval-vocabulary on the eval routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -104,7 +112,7 @@ describe("x-mcpjam-eval-vocabulary on the eval routes", () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { code?: string; message?: string };
     expect(body.code).toBe("VALIDATION_ERROR");
-    expect(body.message).toContain(EVAL_VOCABULARY_HEADER);
+    expect(body.message).toBe(UNKNOWN_VOCABULARY_MESSAGE);
     // The refusal came from the boundary, not from a handler that reached
     // the platform first.
     expect(convexQueryMock).not.toHaveBeenCalledWith(
@@ -113,25 +121,18 @@ describe("x-mcpjam-eval-vocabulary on the eval routes", () => {
     );
   });
 
-  it("answers vocabulary 2 exactly as vocabulary 1 while nothing varies yet", async () => {
+  it("answers vocabulary 2 as vocabulary 1 with exactly the renamed keys", async () => {
+    // The projection is a rename in place, never a reshaping: the two bodies
+    // differ in the keys the vocabulary renames and in nothing else.
     const one = await request("GET", CASE_PATH);
     const two = await request("GET", CASE_PATH, { vocabulary: "2" });
     expect(one.status).toBe(200);
     expect(two.status).toBe(200);
-    expect(await two.text()).toBe(await one.text());
-  });
-
-  it("accepts an explicit 1 and a blank value as the default", async () => {
-    for (const vocabulary of ["1", " ", ""]) {
-      const res = await request("GET", CASE_PATH, { vocabulary });
-      expect(res.status, JSON.stringify(vocabulary)).toBe(200);
-    }
-  });
-
-  it("is ignored by routes outside the eval surface", async () => {
-    const res = await request("GET", "/api/v1/projects/p1/capabilities", {
-      vocabulary: "3",
-    });
-    expect(res.status).toBe(200);
+    const expected = Object.fromEntries(
+      Object.entries((await one.json()) as Record<string, unknown>).map(
+        ([key, value]) => [RENAMED[key] ?? key, value],
+      ),
+    );
+    expect(await two.json()).toEqual(expected);
   });
 });

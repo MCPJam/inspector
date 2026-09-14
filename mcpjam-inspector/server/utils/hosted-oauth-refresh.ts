@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { UnauthorizedRefreshHandler } from "@mcpjam/sdk";
+import { describeError, type UnauthorizedRefreshHandler } from "@mcpjam/sdk";
 import type { OAuthTokens } from "@modelcontextprotocol/client";
 import {
   ErrorCode,
@@ -586,7 +586,7 @@ function translateLocalRefreshFailure(
     502,
     ErrorCode.SERVER_UNREACHABLE,
     `Could not reach the authorization server at ${authorizationServerOrigin}: ${message}`,
-    { serverId, serverName }
+    { serverId, serverName, authorizationServerUnreachable: true },
   );
 }
 
@@ -623,18 +623,36 @@ export function buildHostedOAuthUnauthorizedHandler(
   const refresh = args.allowPrivateAuthorizationServerFallback
     ? refreshHostedOAuthAccessTokenWithLocalFallback
     : forceRefreshHostedOAuthAccessToken;
-  return async () => ({
-    accessToken: await refresh(
-      args.bearerToken,
-      args.projectId,
-      args.serverId,
-      {
-        accessScope: args.accessScope,
-        shareToken: args.shareToken,
-        scenarioId: args.scenarioId,
-        accessVersion: args.accessVersion,
-        serverName: args.serverName,
+  return async () => {
+    try {
+      return {
+        accessToken: await refresh(
+          args.bearerToken,
+          args.projectId,
+          args.serverId,
+          {
+            accessScope: args.accessScope,
+            shareToken: args.shareToken,
+            scenarioId: args.scenarioId,
+            accessVersion: args.accessVersion,
+            serverName: args.serverName,
+          },
+        ),
+      };
+    } catch (error) {
+      if (error instanceof WebRouteError) {
+        throw error.withSetupFailureSource("oauth_refresh");
       }
-    ),
-  });
+      const normalized = describeError(error);
+      const failure = new WebRouteError(
+        502,
+        ErrorCode.SERVER_UNREACHABLE,
+        normalized.rawMessage || "OAuth token refresh failed.",
+        undefined,
+        normalized,
+      ).withSetupFailureSource("oauth_refresh");
+      failure.cause = error;
+      throw failure;
+    }
+  };
 }

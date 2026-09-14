@@ -695,6 +695,7 @@ describe("web auth manager batching", () => {
     ).rejects.toMatchObject<WebRouteError>({
       status: 401,
       code: "UNAUTHORIZED",
+      setupFailureSource: "authorization_required",
       message: 'Server "Asana" requires authorization.',
       details: {
         oauthRequired: true,

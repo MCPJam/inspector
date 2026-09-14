@@ -34,7 +34,7 @@ describe("suite-settings-summary", () => {
       describeJudge({
         goalCompletion: { role: "gating", threshold: 0.8 },
       }),
-    ).toContain("Gating");
+    ).toContain("Required");
   });
 
   it("enumerates quality-gate conditions and treats zero as configured", () => {
@@ -46,9 +46,9 @@ describe("suite-settings-summary", () => {
         maximumP95LatencyIncreaseMs: 0,
       }),
     ).toBe("Run run_abc, 0% allowed drop, 0ms p95 increase");
-    expect(
-      describeGatePolicy({ noGatingScoreErrors: true }),
-    ).toBe("any gating evaluator errored");
+    expect(describeGatePolicy({ noGatingScoreErrors: true })).toBe(
+      "any required evaluator errored",
+    );
   });
 
   it("describes validity ceilings as percents", () => {
@@ -115,5 +115,25 @@ describe("suite-settings-summary", () => {
     });
     expect(active.chips?.[0]?.label).toContain("Active");
     expect(active.chips?.[0]?.label).toContain("Fail open");
+  });
+});
+
+describe("describeJudge reads both spellings of one role", () => {
+  // The review dialog is where an author confirms what they are about to save.
+  // A canonical `required` reading as "Advisory" there tells them the judge
+  // cannot fail the run, when it can.
+  it.each(["gating", "required"] as const)(
+    "calls a %s judge Required",
+    (role) => {
+      expect(describeJudge({ goalCompletion: { role } } as never)).toContain(
+        "Required",
+      );
+    },
+  );
+
+  it("still calls an advisory judge Advisory", () => {
+    expect(
+      describeJudge({ goalCompletion: { role: "advisory" } } as never),
+    ).toContain("Advisory");
   });
 });

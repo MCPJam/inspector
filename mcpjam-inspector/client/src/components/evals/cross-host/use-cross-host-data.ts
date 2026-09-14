@@ -459,6 +459,8 @@ export function useCrossHostData(
       modelKey: string;
       envIds: string[];
       isHistorical: boolean;
+      /** The column id is a real `hosts` row, not a synthetic style/sdk key. */
+      addressable: boolean;
     };
     const pending = new Map<string, PendingColumn>();
     // Keep the existing named-host column ids; synthetic identities cannot
@@ -479,7 +481,7 @@ export function useCrossHostData(
     const touch = (
       hostId: string,
       modelKey: string,
-      opts: { envId?: string; historical: boolean },
+      opts: { envId?: string; historical: boolean; addressable: boolean },
     ) => {
       const key = groupKey(hostId, modelKey);
       const existing = pending.get(key);
@@ -489,6 +491,7 @@ export function useCrossHostData(
           modelKey,
           envIds: opts.envId ? [opts.envId] : [],
           isHistorical: opts.historical,
+          addressable: opts.addressable,
         });
         return;
       }
@@ -496,20 +499,29 @@ export function useCrossHostData(
         existing.envIds.push(opts.envId);
       }
       existing.isHistorical = existing.isHistorical && opts.historical;
+      existing.addressable = existing.addressable || opts.addressable;
     };
 
     for (const a of attachments) {
-      touch(a.namedHostId, CLIENT_DEFAULT_MODEL_KEY, { historical: false });
+      touch(a.namedHostId, CLIENT_DEFAULT_MODEL_KEY, {
+        historical: false,
+        addressable: true,
+      });
     }
 
     for (const run of runs) {
-      const hostId = clientColumnId(run);
+      const identity = runClientIdentity(run);
+      const hostId = identity.namedHostId ?? identity.key;
       const modelKey = modelKeyForRun(run, envById);
       const ref = runEnvironmentRef(run);
       const historical = !attachedHostIds.has(hostId) && ref === null;
       touch(hostId, modelKey, {
         envId: ref?.environmentId,
         historical,
+        // Only a run that resolved to a real host contributes an addressable
+        // id. A pre-descriptor run can still carry an environmentRef, so
+        // "this group has env ids" does NOT make its id a host id.
+        addressable: Boolean(identity.namedHostId),
       });
     }
 
@@ -530,6 +542,7 @@ export function useCrossHostData(
       touch(env.hostId, modelKey, {
         envId: env.environmentId,
         historical: false,
+        addressable: true,
       });
     }
 
@@ -553,8 +566,7 @@ export function useCrossHostData(
     const hostColumns: HostColumn[] = [];
     for (const group of pending.values()) {
       const identity = identities.get(group.hostId);
-      const namedHostId = identity?.namedHostId ??
-        (attachedHostIds.has(group.hostId) || group.envIds.length ? group.hostId : undefined);
+      const namedHostId = group.addressable ? group.hostId : undefined;
       const groupEnvs = group.envIds
         .map((id) => envById.get(id))
         .filter((e): e is CrossHostEnvironment => Boolean(e));

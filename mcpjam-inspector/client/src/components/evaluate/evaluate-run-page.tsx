@@ -107,6 +107,7 @@ export function EvaluateRunPage({
   onExport,
   iterations,
   launchReview,
+  suiteName,
   children,
 }: {
   run: EvalSuiteRun;
@@ -120,6 +121,8 @@ export function EvaluateRunPage({
   /** Used to recover the model when the list projection omitted effectiveModelId. */
   iterations?: readonly EvalIteration[];
   launchReview?: Omit<SuiteRunReviewProps, "onClose">;
+  /** Names the run in the heading. Omitted where the suite is not in scope. */
+  suiteName?: string;
   children: ReactNode;
 }) {
   const [comparing, setComparing] = useState(false);
@@ -128,6 +131,7 @@ export function EvaluateRunPage({
     setReviewing(false);
   }, [run._id]);
   const targets = launchRuns(run, relatedRuns ?? otherRuns);
+  const scope = runScopeSummary(targets, iterations);
   const [headerActions, setHeaderActions] =
     useState<EvaluateRunPageHeaderActions | null>(null);
   const [, setHeaderVerdict] = useState<HeaderVerdict | null>(null);
@@ -144,18 +148,28 @@ export function EvaluateRunPage({
             className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 px-5 py-4"
             data-testid="evaluate-run-header"
           >
-            <div className="flex min-w-0 items-center gap-3">
-              <h2 className="text-2xl font-bold leading-8 tracking-tight text-foreground">
-                {targets[0].runNumber
-                  ? `Run #${targets[0].runNumber}`
-                  : `Run ${formatRunId(targets[0]._id)}`}{" "}
-                Results
-              </h2>
-              <RunPairingDecisions
-                targets={targets}
-                hostNamesById={hostNamesById}
-                iterations={iterations}
-              />
+            <div className="flex min-w-0 flex-col gap-1.5">
+              <div className="flex min-w-0 items-center gap-3">
+                <h2 className="min-w-0 truncate text-2xl font-bold leading-8 tracking-tight text-foreground">
+                  {targets[0].runNumber
+                    ? `Run #${targets[0].runNumber}`
+                    : `Run ${formatRunId(targets[0]._id)}`}
+                  {suiteName ? ` of ${suiteName}` : ""}
+                </h2>
+                <RunPairingDecisions
+                  targets={targets}
+                  hostNamesById={hostNamesById}
+                  iterations={iterations}
+                />
+              </div>
+              {scope ? (
+                <p
+                  className="text-[12.5px] text-muted-foreground"
+                  data-testid="evaluate-run-scope"
+                >
+                  {scope}
+                </p>
+              ) : null}
             </div>
             <div className="flex min-w-0 flex-wrap items-center gap-1">
               {SHOW_EXPORT_REPORT && onExport && (
@@ -190,7 +204,9 @@ export function EvaluateRunPage({
                 title={
                   canCompare ? "Compare two runs" : "Need at least two runs"
                 }
-                onClick={() => onOpenComparison ? onOpenComparison() : setComparing(true)}
+                onClick={() =>
+                  onOpenComparison ? onOpenComparison() : setComparing(true)
+                }
                 data-testid="evaluate-run-compare-open"
               >
                 <TrendingUp className="size-3.5" aria-hidden />
@@ -327,7 +343,9 @@ function pairingModel(
 ): string {
   const recovered = modelsFromRun(
     target,
-    (iterations ?? []).filter((iteration) => iteration.suiteRunId === target._id),
+    (iterations ?? []).filter(
+      (iteration) => iteration.suiteRunId === target._id,
+    ),
   );
   return recovered[0] ?? "Client default";
 }
@@ -368,6 +386,41 @@ function groupPairingsByDecision(
     const bucket = buckets.get(tone);
     return bucket ? [{ tone, ...bucket }] : [];
   });
+}
+
+function plural(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
+/**
+ * What this page measured: cases, iterations, and client/model pairings.
+ *
+ * `iterations` is the whole suite's rows, so the counts are taken only from
+ * the runs actually on this page — a suite's lifetime totals would describe a
+ * different population than the one above them. Null when no rows have
+ * arrived, because a run that has recorded nothing has not recorded zero.
+ */
+export function runScopeSummary(
+  targets: readonly EvalSuiteRun[],
+  iterations: readonly EvalIteration[] | undefined,
+): string | null {
+  const targetIds = new Set(targets.map((target) => target._id));
+  const rows = (iterations ?? []).filter(
+    (iteration) =>
+      iteration.suiteRunId != null && targetIds.has(iteration.suiteRunId),
+  );
+  if (rows.length === 0) return null;
+  const cases = new Set(
+    rows.flatMap((iteration) =>
+      iteration.testCaseId ? [iteration.testCaseId] : [],
+    ),
+  ).size;
+  const parts = [
+    ...(cases > 0 ? [plural(cases, "case")] : []),
+    plural(rows.length, "iteration"),
+    plural(targets.length, "client-model combo"),
+  ];
+  return parts.join(" · ");
 }
 
 function RunPairingDecisions({
