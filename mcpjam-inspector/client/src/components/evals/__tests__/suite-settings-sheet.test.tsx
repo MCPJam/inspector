@@ -206,7 +206,7 @@ describe("adding a scorer", () => {
     const { container } = renderSettingsSheet();
     openSettingsRow(container, "checks");
 
-    await user.click(screen.getByRole("button", { name: "Add scorer" }));
+    await user.click(screen.getByRole("button", { name: "Add assertion" }));
     await user.click(
       await screen.findByTestId("add-step-item-check:noToolErrors"),
     );

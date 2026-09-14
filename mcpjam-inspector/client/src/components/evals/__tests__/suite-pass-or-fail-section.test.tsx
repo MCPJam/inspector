@@ -14,7 +14,7 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SuitePassOrFailSection } from "../suite-pass-or-fail-section";
 import {
@@ -91,7 +91,7 @@ describe("SuitePassOrFailSection", () => {
     ).toContain("No grader");
     const rows = Array.from(
       container.querySelectorAll(
-        '[data-stage-group="response"] tr[data-scorer-row]',
+        '[data-stage-group="response"] [data-scorer-row]',
       ),
     );
     expect(rows.length).toBeGreaterThan(0);
@@ -108,7 +108,7 @@ describe("SuitePassOrFailSection", () => {
     const { container } = renderSection();
     for (const stage of ["connection", "discovery"]) {
       const copy = emptyCopy(container, stage) ?? "";
-      expect(copy, stage).toContain("Observed by the runner");
+      expect(copy, stage).toContain("Measured by the runner");
       expect(copy.toLowerCase(), stage).not.toContain("no grader");
       // The run-state word. Settings has observed nothing, so claiming a
       // measurement did not happen states something nobody looked at.
@@ -135,6 +135,17 @@ describe("SuitePassOrFailSection", () => {
     const group = gating.container.querySelector(
       '[data-stage-group="userValue"]',
     ) as HTMLElement;
+    // The row reads Gate; its control opens from the title.
+    expect(
+      within(
+        group.querySelector(
+          '[data-scorer-id="judge:goalCompletion"]',
+        ) as HTMLElement,
+      ).getByText("Gate"),
+    ).toBeTruthy();
+    fireEvent.click(
+      within(group).getByRole("button", { name: "Goal completion judge" }),
+    );
     const judgeRole = group.querySelector('[aria-label="Judge role"]');
     expect(
       within(judgeRole as HTMLElement).getByRole("button", { name: "Gate" }),

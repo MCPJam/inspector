@@ -408,12 +408,26 @@ function hasAuthoredThreshold(predicate: Predicate): boolean {
   );
 }
 
+/**
+ * What the runner measures at a stage without any authored rule: named as a
+ * check ("Successful connection"), because that is how it reads beside the
+ * rules, but never a box — it is on for every trial and cannot be turned off.
+ */
+export const RUNNER_MEASUREMENT_LABELS: Record<UserValueStage, string> = {
+  connection: "Successful connection",
+  discovery: "Tools listed by the server",
+  selection: "A tool was selected",
+  call: "Tool call completed",
+  response: "Result returned to the model",
+  userValue: "Observed by the runner",
+};
+
 function observedRow(stage: UserValueStage): ScorerTableRow {
   return {
     id: `observed:${stage}`,
     kind: "observed",
     enabled: true,
-    name: "Observed by the runner",
+    name: RUNNER_MEASUREMENT_LABELS[stage],
     kindLabel: "Runner",
     threshold: "",
     thresholdKind: "none",

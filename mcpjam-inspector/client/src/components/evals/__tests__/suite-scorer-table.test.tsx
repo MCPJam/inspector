@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Predicate } from "@mcpjam/sdk/predicates";
 import { SuiteScorerTable } from "../suite-scorer-table";
@@ -82,7 +82,7 @@ describe("SuiteScorerTable", () => {
       const group = container.querySelector(
         `[data-stage-group="${stage}"]`,
       ) as HTMLElement;
-      expect(group.textContent).toContain("Observed by the runner");
+      expect(group.textContent).toContain("Measured by the runner");
       const details = group.querySelector("details");
       expect(details).toBeTruthy();
       expect(
@@ -130,6 +130,10 @@ describe("SuiteScorerTable", () => {
         revisionNumber: 1,
       },
     });
+    // The role control lives in the row's editor, opened from its title.
+    await user.click(
+      screen.getByRole("button", { name: "No tool returns an error" }),
+    );
     await user.click(screen.getByRole("button", { name: "Warn" }));
     expect(nextPredicates()).toEqual([
       { type: "noToolErrors", role: "advisory", severity: "warn" },
@@ -189,6 +193,9 @@ describe("SuiteScorerTable", () => {
         revisionNumber: 1,
       },
     });
+    await user.click(
+      screen.getByRole("button", { name: "Goal completion judge" }),
+    );
     const judgeRole = document.querySelector('[aria-label="Judge role"]');
     expect(within(judgeRole as HTMLElement).getByText("Warn")).toBeTruthy();
     await user.click(within(judgeRole as HTMLElement).getByText("Warn"));
@@ -240,6 +247,9 @@ describe("SuiteScorerTable", () => {
         revisionNumber: 1,
       },
     });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Goal completion judge" }),
+    );
     const judgeRole = container.querySelector('[aria-label="Judge role"]');
     expect(judgeRole).toBeTruthy();
     expect(within(judgeRole as HTMLElement).queryByText("Warn")).toBeNull();
@@ -284,6 +294,9 @@ describe("SuiteScorerTable", () => {
         revisionNumber: 1,
       },
     });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Goal completion judge" }),
+    );
     const gate = screen
       .getAllByRole("button", { name: "Gate" })
       .find((button) => button.closest('[aria-label="Judge role"]'));
@@ -296,7 +309,7 @@ describe("SuiteScorerTable", () => {
   it("lists library categories that have kinds", async () => {
     const user = userEvent.setup();
     renderTable();
-    await user.click(screen.getByRole("button", { name: "Add scorer" }));
+    await user.click(screen.getByRole("button", { name: "Add assertion" }));
     for (const name of [
       "Assertions · Tool selection",
       "Assertions · Answer and outcome",
@@ -310,10 +323,8 @@ describe("SuiteScorerTable", () => {
 
   it("has no Last run or Trend column", () => {
     const { container } = renderTable();
-    const heads = Array.from(container.querySelectorAll("thead th")).map(
-      (head) => head.textContent?.trim(),
-    );
-    expect(heads).toEqual(["On", "Scorer", "Kind", "Threshold", "Role"]);
+    // A list, not a grid: no column headers to grow a Last run into.
+    expect(container.querySelector("table")).toBeNull();
     expect(container.textContent).not.toMatch(/Last run/i);
     expect(container.textContent).not.toMatch(/Trend/i);
   });
@@ -377,8 +388,32 @@ it("keeps each standard numeric criterion in its own editable field", () => {
     { type: "toolResultSizeUnder", maxBytes: 64000 },
     { type: "toolCallCountUnder", count: 4 },
   ] });
-  expect(screen.getByRole("spinbutton", { name: "Minimum tool description length" })).toHaveValue(31);
-  expect(screen.getByRole("spinbutton", { name: "Tool latency budget in ms" })).toHaveValue(1234);
-  expect(screen.getByRole("spinbutton", { name: "Tool result size budget in bytes" })).toHaveValue(64000);
-  expect(screen.getByRole("spinbutton", { name: "Tool call budget" })).toHaveValue(4);
+  // Each row reads its number, and opens its own field from the title.
+  const cases: [string, string, number][] = [
+    [
+      "Tool descriptions meet the minimum length",
+      "Minimum description length",
+      31,
+    ],
+    [
+      "Tool latency stays below the configured limit",
+      "Max time in ms (strictly under)",
+      1234,
+    ],
+    [
+      "Tool result size stays below the configured limit",
+      "Max result size in bytes (strictly under)",
+      64000,
+    ],
+    [
+      "Tool call count stays below the configured limit",
+      "Max tool calls (strictly under)",
+      4,
+    ],
+  ];
+  for (const [title, field, value] of cases) {
+    fireEvent.click(screen.getByRole("button", { name: title }));
+    expect(screen.getByRole("spinbutton", { name: field })).toHaveValue(value);
+    fireEvent.click(screen.getByRole("button", { name: title }));
+  }
 });

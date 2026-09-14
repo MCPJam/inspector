@@ -569,7 +569,7 @@ export function describeChange(
     case "defaultPredicates":
       return {
         key,
-        label: "Scorers",
+        label: "Evaluators by stage",
         before: describePredicates(before.defaultPredicates),
         after: describePredicates(after.defaultPredicates),
       };

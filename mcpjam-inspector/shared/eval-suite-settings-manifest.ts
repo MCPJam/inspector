@@ -99,7 +99,7 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   },
   {
     key: "checks",
-    label: "Scorers",
+    label: "Evaluators by stage",
     api: "settings.checks",
   },
   {
