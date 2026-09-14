@@ -30,7 +30,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1 # full file tree (code + docs) so feature greps work
           persist-credentials: false # job has write perms; Claude uses gh, not git auth
