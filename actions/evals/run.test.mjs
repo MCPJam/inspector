@@ -108,6 +108,63 @@ test("runs a suite, retains CI metadata, publishes output IDs and a report direc
   );
 });
 
+test("runs an SDK eval command and reports only its exact receipt run", async (t) => {
+  const f = await fixture(t, {
+    MCPJAM_ACTION_PROJECT: "",
+    MCPJAM_ACTION_SUITE: "",
+    MCPJAM_ACTION_COMMAND: "npm run eval:smoke",
+  });
+  const execute = async (command, env) => {
+    assert.equal(command, "npm run eval:smoke");
+    await writeFile(
+      join(env.MCPJAM_ACTION_RECEIPT_DIR, "receipt.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        baseUrl: "https://app.mcpjam.com",
+        projectId: "project1",
+        suiteId: "suite1",
+        suiteName: "SDK suite",
+        framework: "vitest",
+        runId: "run1",
+      }),
+    );
+    return { code: 0 };
+  };
+  const fetchImpl = async (url) => ({
+    ok: true,
+    status: 200,
+    json: async () =>
+      String(url).includes("/iterations")
+        ? {
+            items: [
+              {
+                id: "iteration1",
+                testCaseId: "case1",
+                title: "passes",
+                status: "completed",
+                result: "passed",
+                model: null,
+                provider: null,
+                durationMs: 10,
+                usage: null,
+                actualToolCalls: [],
+                error: null,
+              },
+            ],
+          }
+        : {
+            id: "run1",
+            runNumber: 1,
+            status: "completed",
+            result: "passed",
+          },
+  });
+  const result = await runAction(f.env, undefined, () => {}, execute, fetchImpl);
+  assert.equal(result.result, "passed");
+  assert.deepEqual(result.runIds, ["run1"]);
+  assert.match(await readFile(f.env.GITHUB_STEP_SUMMARY, "utf8"), /Client \/ Model/);
+});
+
 for (const [name, overrides] of Object.entries({
   "missing key": { MCPJAM_API_KEY: "" },
   "missing project": { MCPJAM_ACTION_PROJECT: "" },

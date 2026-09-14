@@ -1,12 +1,12 @@
 # MCPJam evals action
 
-Run an existing hosted eval suite, wait for its result, and save reports as a
-GitHub Actions artifact. Optional gates can apply thresholds, compare a baseline,
-and honor existing run waivers. The action does not create waivers.
+Run an existing hosted eval suite or an SDK eval command, publish a detailed job
+summary, and save reports as a GitHub Actions artifact. On pull requests it can
+also post the client/model and failed-case tables as one updated comment.
 
-This action supports GitHub.com and Ubuntu runners. It tests the suite's saved
-server; it does **not** build or deploy the code in a pull request. Use MCPJam's
-GitHub App integration for builds from PR source.
+This action supports GitHub.com and Ubuntu runners. Hosted mode tests a suite's
+saved server. Command mode runs the repository's own SDK eval command against
+whatever server its workflow started.
 
 ## Setup
 
@@ -27,6 +27,37 @@ Node setup step is required when using the published action.
     project: "My project"
     suite: "My eval suite"
 ```
+
+### SDK eval command and PR comment
+
+Use `command` after checking out the repository, installing its dependencies,
+and starting any server the evals need. The command must use an MCPJam SDK version
+that supports action receipts. The action links each uploaded run directly; it
+never searches for the latest run.
+
+```yaml
+permissions:
+  contents: read
+  pull-requests: write
+
+steps:
+  - uses: actions/checkout@v4
+  - run: npm ci
+  - run: npm run build
+  - name: Start the MCP server
+    run: npm run serve &
+  - uses: MCPJam/inspector/actions/evals@evals-v1
+    with:
+      api-key: ${{ secrets.MCPJAM_API_KEY }}
+      command: npm run eval:smoke
+      comment: true
+```
+
+The checks summary contains the complete report. The PR comment contains only
+the client/model result table, the failed-case matrix, and MCPJam run links.
+Failure reasons are copied from stored results in the full summary; the action
+does not infer them. A missing comment permission warns without changing the eval
+verdict.
 
 **Release status:** `evals-v1` becomes usable only after the release procedure
 below succeeds and the tag is published. Until then, test with a checkout and
@@ -62,8 +93,11 @@ its own thresholds or deciding whether a waiver is active.
 | Input                   | Default     | Meaning                                                                      |
 | ----------------------- | ----------- | ---------------------------------------------------------------------------- |
 | `api-key`               | Required    | API key from GitHub Actions secrets.                                         |
-| `project`               | Required    | Existing project name or ID.                                                 |
-| `suite`                 | Required    | Existing hosted suite name or ID.                                            |
+| `project`               | Hosted mode | Existing project name or ID.                                                 |
+| `suite`                 | Hosted mode | Existing hosted suite name or ID.                                            |
+| `command`               | None        | SDK eval command; replaces `project` and `suite`.                             |
+| `comment`               | `false`     | Create or update the PR result comment.                                      |
+| `github-token`          | Workflow token | Optional token override for PR comments.                                  |
 | `gate`                  | `false`     | Let `eval gate` decide the result.                                           |
 | `min-pass-rate-percent` | CLI default | Gate threshold, 0–100; requires `gate: true`.                                |
 | `baseline-run`          | None        | Baseline run ID; requires gates.                                             |
@@ -84,8 +118,9 @@ need to preserve identity across changes to the workflow's step layout.
 
 ## Reports and outputs
 
-The action saves `eval-report.json`, one `gate-N.xml` per attempted gate when
-enabled, and `action-result.json`. It uploads them before the final failure step,
+The action saves JSON and Markdown eval reports, one `gate-N.xml` per attempted
+hosted gate when enabled, and `action-result.json`. It uploads them before the
+final failure step,
 using a unique artifact name per invocation. Reports use the CLI's redaction, with
 an additional literal API-key scrub. Raw CLI stdout and stderr are not uploaded.
 

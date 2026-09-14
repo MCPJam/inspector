@@ -19,6 +19,7 @@ import type {
 } from "./eval-reporting-types.js";
 import { EvalReportingError } from "./errors.js";
 import { buildAppPermalink } from "./platform/permalinks.js";
+import { writeGithubActionReceipt } from "./github-action-receipt.js";
 import {
   isEvalRunVerdict,
   evalVerdictDecisionSchema,
@@ -1300,7 +1301,9 @@ async function finishReportedRun(
       input.externalRunId!,
       input.runEvaluations
     );
-  return attachReportingWarnings(config, report);
+  const completed = attachReportingWarnings(config, report);
+  await writeGithubActionReceipt(config, input, completed);
+  return completed;
 }
 
 export async function reportCaseRunEvaluations(

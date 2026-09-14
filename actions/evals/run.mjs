@@ -10,6 +10,12 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import {
+  fetchRunBundle,
+  publishPullRequestComment,
+  readActionReceipts,
+  renderReports,
+} from "./report.mjs";
 
 const validId = (value) =>
   typeof value === "string" && /^[a-zA-Z0-9_-]+$/.test(value);
@@ -29,13 +35,22 @@ export function parseInputs(env) {
     waitTimeout: get("WAIT_TIMEOUT"),
     cliVersion: get("CLI_VERSION") || "5.7.1",
     idempotencyKey: get("IDEMPOTENCY_KEY"),
+    command: get("COMMAND"),
+    comment: get("COMMENT") || "false",
   };
-  for (const key of ["apiKey", "project", "suite"]) {
+  for (const key of ["apiKey"]) {
     if (!inputs[key])
       throw new Error(
         `Missing required input: ${key === "apiKey" ? "api-key (add MCPJAM_API_KEY to GitHub Actions secrets)" : key}.`,
       );
   }
+  if (!inputs.command && (!inputs.project || !inputs.suite))
+    throw new Error("Provide project and suite, or provide command.");
+  if (inputs.command && (inputs.project || inputs.suite))
+    throw new Error("Use command or project/suite, not both.");
+  if (!["true", "false"].includes(inputs.comment))
+    throw new Error("comment must be true or false.");
+  inputs.comment = inputs.comment === "true";
   if (!["true", "false"].includes(inputs.gate))
     throw new Error("gate must be true or false.");
   inputs.gate = inputs.gate === "true";
@@ -44,6 +59,15 @@ export function parseInputs(env) {
     (inputs.minPassRate || inputs.baselineRun || inputs.baselineSha)
   ) {
     throw new Error("Gate settings require gate: true.");
+  }
+  if (
+    inputs.command &&
+    (inputs.gate ||
+      inputs.minPassRate ||
+      inputs.baselineRun ||
+      inputs.baselineSha)
+  ) {
+    throw new Error("Gate settings are not supported with command.");
   }
   if (inputs.baselineRun && inputs.baselineSha)
     throw new Error("Use baseline-run or baseline-sha, not both.");
@@ -71,7 +95,7 @@ export function parseInputs(env) {
     throw new Error("cli-version must be an exact version, such as 5.7.1.");
   if (inputs.idempotencyKey.length > 256)
     throw new Error("idempotency-key must be at most 256 characters.");
-  if (!inputs.idempotencyKey)
+  if (!inputs.idempotencyKey && !inputs.command)
     inputs.idempotencyKey = deriveIdempotencyKey(env, inputs);
   return inputs;
 }
@@ -143,6 +167,18 @@ export function invokeCli(args, env) {
           stdout: Buffer.concat(chunks).toString("utf8"),
         });
     });
+  });
+}
+
+export function invokeCommand(command, env) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, {
+      env,
+      shell: true,
+      stdio: "inherit",
+    });
+    child.on("error", () => reject(new Error("Could not start the eval command.")));
+    child.on("close", (code) => resolve({ code: code ?? 1 }));
   });
 }
 
@@ -223,10 +259,49 @@ async function output(env, values, apiKey) {
   }
 }
 
+async function publishDetailedReports({
+  receipts,
+  directory,
+  jsonName,
+  inputs,
+  env,
+  log,
+  fetchImpl,
+}) {
+  const bundles = await Promise.all(
+    receipts.map((receipt) =>
+      fetchRunBundle(receipt, inputs.apiKey, fetchImpl),
+    ),
+  );
+  const reports = renderReports(bundles);
+  await writeFile(join(directory, "eval-report.md"), `${reports.summary}\n`);
+  await writeFile(
+    join(directory, jsonName),
+    JSON.stringify({ schemaVersion: 1, runs: bundles }, null, 2),
+  );
+  if (inputs.comment && env.MCPJAM_ACTION_PULL_REQUEST) {
+    try {
+      const outcome = await publishPullRequestComment(
+        reports.comment,
+        env,
+        fetchImpl,
+      );
+      log(`MCPJam PR comment ${outcome}.`);
+    } catch {
+      log(
+        "::warning::Could not publish the MCPJam PR comment. Check pull-requests: write permission.",
+      );
+    }
+  }
+  return { bundles, summary: reports.summary };
+}
+
 export async function runAction(
   env = process.env,
   invoke = invokeCli,
   log = (message) => process.stdout.write(`${message}\n`),
+  execute = invokeCommand,
+  fetchImpl = fetch,
 ) {
   const state = {
     result: "failed",
@@ -235,6 +310,7 @@ export async function runAction(
     gateExitCodes: {},
     message: "Evaluation did not complete.",
   };
+  let renderedSummary = "";
   const key = (env.MCPJAM_API_KEY ?? "").trim();
   if (key) log(`::add-mask::${escapeCommand(key)}`);
   let directory;
@@ -243,94 +319,160 @@ export async function runAction(
     directory = await mkdtemp(
       join(env.RUNNER_TEMP || tmpdir(), "mcpjam-evals-"),
     );
-    const prefix = [
-      "--yes",
-      `@mcpjam/cli@${inputs.cliVersion}`,
-      "cloud",
-      "eval",
-    ];
-    const reportPath = join(directory, "eval-report.json");
-    const args = [
-      ...prefix,
-      "run",
-      `--project=${inputs.project}`,
-      `--suite=${inputs.suite}`,
-      "--wait",
-      `--out=${reportPath}`,
-      "--format=json",
-      `--idempotency-key=${inputs.idempotencyKey}`,
-    ];
-    if (inputs.waitTimeout) args.push(`--wait-timeout=${inputs.waitTimeout}`);
-    const cliEnv = { ...env, MCPJAM_API_KEY: inputs.apiKey };
-    const run = await invoke(args, cliEnv);
-    state.runExitCode = run.code;
-    const { receipt, ids } = parseReceipt(run.stdout);
-    state.runIds = ids;
-    let report;
-    try {
-      report = JSON.parse(await readFile(reportPath, "utf8"));
-    } catch {
-      /* Missing evidence cannot pass. */
-    }
-    let safeToPass =
-      [0, 1].includes(run.code) && completeEvidence(report, receipt, ids);
-    if (inputs.gate) {
-      for (const [index, row] of receipt.runs.entries()) {
-        if (row.status !== "completed") continue;
-        const gatePath = join(directory, `gate-${index + 1}.xml`);
-        const gateArgs = [
-          ...prefix,
-          "gate",
-          `--project=${receipt.launch.project?.id || inputs.project}`,
-          `--run=${row.id}`,
-          "--wait",
-          "--reporter=junit-xml",
-          `--out=${gatePath}`,
-        ];
-        if (inputs.minPassRate)
-          gateArgs.push(`--min-pass-rate-percent=${inputs.minPassRate}`);
-        if (inputs.baselineRun)
-          gateArgs.push(`--baseline=${inputs.baselineRun}`);
-        if (inputs.baselineSha)
-          gateArgs.push(`--baseline-sha=${inputs.baselineSha}`);
-        if (inputs.waitTimeout)
-          gateArgs.push(`--wait-timeout=${inputs.waitTimeout}`);
-        let gate;
-        try {
-          gate = await invoke(gateArgs, cliEnv);
-        } catch {
-          state.gateExitCodes[row.id] = 3;
-          safeToPass = false;
-          continue;
-        }
-        state.gateExitCodes[row.id] = gate.code;
-        let xml = "";
-        try {
-          xml = await readFile(gatePath, "utf8");
-        } catch {
-          /* A missing gate report fails the action. */
-        }
-        safeToPass &&=
-          gate.code === 0 &&
-          xml.includes("<testsuites ") &&
-          xml.includes("</testsuites>");
+    if (inputs.command) {
+      const receiptDirectory = directory;
+      const command = await execute(inputs.command, {
+        ...env,
+        MCPJAM_API_KEY: inputs.apiKey,
+        MCPJAM_ACTION_RECEIPT_DIR: receiptDirectory,
+      });
+      state.runExitCode = command.code;
+      const receipts = await readActionReceipts(receiptDirectory);
+      if (receipts.length === 0) {
+        state.message =
+          "The eval command uploaded no action receipt. Upgrade @mcpjam/sdk and ensure it reports results.";
+        throw new Error(state.message);
       }
-      safeToPass &&= Object.keys(state.gateExitCodes).length === ids.length;
+      state.runIds = receipts.map((receipt) => receipt.runId);
+      const details = await publishDetailedReports({
+        receipts,
+        directory,
+        jsonName: "eval-report.json",
+        inputs,
+        env,
+        log,
+        fetchImpl,
+      });
+      renderedSummary = details.summary;
+      const allPassed = details.bundles.every(
+        (bundle) => bundle.run.result === "passed",
+      );
+      state.result = command.code === 0 && allPassed ? "passed" : "failed";
+      state.message =
+        state.result === "passed"
+          ? "All eval runs passed."
+          : "The eval command or an uploaded run failed.";
     } else {
-      safeToPass &&=
-        run.code === 0 && receipt.runs.every((row) => row.result === "passed");
+      const prefix = [
+        "--yes",
+        `@mcpjam/cli@${inputs.cliVersion}`,
+        "cloud",
+        "eval",
+      ];
+      const reportPath = join(directory, "eval-report.json");
+      const args = [
+        ...prefix,
+        "run",
+        `--project=${inputs.project}`,
+        `--suite=${inputs.suite}`,
+        "--wait",
+        `--out=${reportPath}`,
+        "--format=json",
+        `--idempotency-key=${inputs.idempotencyKey}`,
+      ];
+      if (inputs.waitTimeout) args.push(`--wait-timeout=${inputs.waitTimeout}`);
+      const cliEnv = { ...env, MCPJAM_API_KEY: inputs.apiKey };
+      const run = await invoke(args, cliEnv);
+      state.runExitCode = run.code;
+      const { receipt, ids } = parseReceipt(run.stdout);
+      state.runIds = ids;
+      let report;
+      try {
+        report = JSON.parse(await readFile(reportPath, "utf8"));
+      } catch {
+        /* Missing evidence cannot pass. */
+      }
+      let safeToPass =
+        [0, 1].includes(run.code) && completeEvidence(report, receipt, ids);
+      if (inputs.gate) {
+        for (const [index, row] of receipt.runs.entries()) {
+          if (row.status !== "completed") continue;
+          const gatePath = join(directory, `gate-${index + 1}.xml`);
+          const gateArgs = [
+            ...prefix,
+            "gate",
+            `--project=${receipt.launch.project?.id || inputs.project}`,
+            `--run=${row.id}`,
+            "--wait",
+            "--reporter=junit-xml",
+            `--out=${gatePath}`,
+          ];
+          if (inputs.minPassRate)
+            gateArgs.push(`--min-pass-rate-percent=${inputs.minPassRate}`);
+          if (inputs.baselineRun)
+            gateArgs.push(`--baseline=${inputs.baselineRun}`);
+          if (inputs.baselineSha)
+            gateArgs.push(`--baseline-sha=${inputs.baselineSha}`);
+          if (inputs.waitTimeout)
+            gateArgs.push(`--wait-timeout=${inputs.waitTimeout}`);
+          let gate;
+          try {
+            gate = await invoke(gateArgs, cliEnv);
+          } catch {
+            state.gateExitCodes[row.id] = 3;
+            safeToPass = false;
+            continue;
+          }
+          state.gateExitCodes[row.id] = gate.code;
+          let xml = "";
+          try {
+            xml = await readFile(gatePath, "utf8");
+          } catch {
+            /* A missing gate report fails the action. */
+          }
+          safeToPass &&=
+            gate.code === 0 &&
+            xml.includes("<testsuites ") &&
+            xml.includes("</testsuites>");
+        }
+        safeToPass &&= Object.keys(state.gateExitCodes).length === ids.length;
+      } else {
+        safeToPass &&=
+          run.code === 0 && receipt.runs.every((row) => row.result === "passed");
+      }
+      state.result = safeToPass ? "passed" : "failed";
+      state.message = safeToPass
+        ? inputs.gate
+          ? "All gates passed or were waived."
+          : "All eval runs passed."
+        : "Eval, gate, or reporting failed or was incomplete. See the reports and exit codes.";
+      const projectId = receipt.launch.project?.id;
+      const suiteId = receipt.launch.suite?.id;
+      if (ids.length > 0 && validId(projectId) && validId(suiteId)) {
+        const baseUrl = env.MCPJAM_API_URL
+          ? new URL(env.MCPJAM_API_URL).origin
+          : "https://app.mcpjam.com";
+        const detailReceipts = ids.map((runId) => ({
+          schemaVersion: 1,
+          baseUrl,
+          projectId,
+          suiteId,
+          suiteName: receipt.launch.suite.name || inputs.suite,
+          runId,
+        }));
+        try {
+          const details = await publishDetailedReports({
+            receipts: detailReceipts,
+            directory,
+            jsonName: "eval-details.json",
+            inputs,
+            env,
+            log,
+            fetchImpl,
+          });
+          renderedSummary = details.summary;
+        } catch {
+          log("::warning::Could not load detailed MCPJam results for the summary.");
+        }
+      }
     }
-    state.result = safeToPass ? "passed" : "failed";
-    state.message = safeToPass
-      ? inputs.gate
-        ? "All gates passed or were waived."
-        : "All eval runs passed."
-      : "Eval, gate, or reporting failed or was incomplete. See the reports and exit codes.";
   } catch (error) {
     // Only validation errors are echoed; unexpected filesystem/process errors
     // can contain credentials or other data from the environment.
     state.message = directory
-      ? "Could not finish the eval action. Check the reports and CLI exit code."
+      ? state.message === "Evaluation did not complete."
+        ? "Could not finish the eval action. Check the reports and CLI exit code."
+        : state.message
       : redactSecret(error.message, key);
   }
   if (directory) {
@@ -356,7 +498,7 @@ export async function runAction(
     await appendFile(
       env.GITHUB_STEP_SUMMARY,
       redactSecret(
-        `### MCPJam evals: ${state.result}\n\n${state.message}\n\nRun exit code: ${state.runExitCode === "" ? "not started" : state.runExitCode}\n\nRuns: ${state.runIds.join(", ") || "none"}\n\nGate exit codes: ${JSON.stringify(state.gateExitCodes)}\n`,
+        renderedSummary || `### MCPJam evals: ${state.result}\n\n${state.message}\n\nRun exit code: ${state.runExitCode === "" ? "not started" : state.runExitCode}\n\nRuns: ${state.runIds.join(", ") || "none"}\n\nGate exit codes: ${JSON.stringify(state.gateExitCodes)}\n`,
         key,
       ),
     );
