@@ -264,6 +264,28 @@ export const SAMPLE_BY_PATH: Readonly<Record<string, unknown>> = {
 };
 
 /**
+ * Vocabulary-2 samples: the same settings, in the canonical spellings.
+ *
+ * Separate from {@link SAMPLE_BY_PATH} rather than replacing entries in it,
+ * because the two are checked against DIFFERENT boundaries. The vocabulary-1
+ * samples must keep parsing byte-for-byte as they do today; these must be
+ * refused without `x-mcpjam-eval-vocabulary: 2` and accepted with it.
+ *
+ * `settings.checks` keeps its advisory `severity: "warn"` row in the
+ * vocabulary-1 sample for the reason stated above — dropping `severity` is a
+ * contraction step, not this one.
+ */
+export const CANONICAL_ROLE_SAMPLE_BY_PATH: Readonly<
+  Record<string, unknown>
+> = {
+  "settings.checks": [
+    { type: "responseContains", needle: "hi" },
+    { type: "noToolErrors", role: "required" },
+  ],
+  "settings.judge": { enabled: true, role: "required" },
+};
+
+/**
  * Full PATCH bodies that exercise `settings.qualityGate` against the
  * refined schema. A standalone leaf is not enough: the refine requires
  * `expectedRevisionNumber` and `revisionNote`, and comparative leaves

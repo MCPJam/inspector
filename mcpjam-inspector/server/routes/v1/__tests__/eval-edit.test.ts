@@ -79,7 +79,8 @@ function request(
   method: string,
   path: string,
   body?: Record<string, unknown>,
-  token = "tok"
+  token = "tok",
+  extraHeaders: Record<string, string> = {}
 ): Promise<Response> {
   return Promise.resolve(
     makeApp().request(path, {
@@ -87,10 +88,22 @@ function request(
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
+        ...extraHeaders,
       },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     })
   );
+}
+
+/** The same request, announcing the canonical vocabulary. */
+function requestV2(
+  method: string,
+  path: string,
+  body?: Record<string, unknown>
+): Promise<Response> {
+  return request(method, path, body, "tok", {
+    "x-mcpjam-eval-vocabulary": "2",
+  });
 }
 
 const SUITE_DOC = {
@@ -4238,5 +4251,108 @@ describe("v1 eval-edit — CI-owned suites", () => {
     // Without this the first sign that a suite is read-only was a 409 on a
     // write the caller had no way to know would be refused.
     expect(body.managedBy).toBe("ci");
+  });
+});
+
+// =============================================================================
+// `x-mcpjam-eval-vocabulary` — the negotiation header.
+//
+// Absent means vocabulary 1, which is byte-for-byte today's contract. The
+// header is not decoration: a published `mcpjam cloud eval gate` finds the
+// scorers that decide a run by filtering definition roles on the literal
+// `"gating"`, so an unannounced `required` in a response would empty its
+// gating set and let a failing run pass — silently, in exactly the workflow a
+// gate exists to serve.
+// =============================================================================
+
+describe("eval vocabulary negotiation", () => {
+  const SUITE_PATH =
+    "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx";
+
+  const updateArgs = () =>
+    convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestSuite"
+    )![1];
+
+  it("refuses a value it does not speak, naming both it does", async () => {
+    const res = await request("GET", SUITE_PATH, undefined, "tok", {
+      "x-mcpjam-eval-vocabulary": "3",
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { code?: string; message?: string };
+    expect(body.code).toBe("VALIDATION_ERROR");
+    expect(body.message).toContain("x-mcpjam-eval-vocabulary");
+  });
+
+  it("sets Vary so a cache cannot serve one client another's spelling", async () => {
+    const res = await request("GET", SUITE_PATH);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Vary") ?? "").toContain(
+      "x-mcpjam-eval-vocabulary"
+    );
+  });
+
+  it("refuses a canonical role under vocabulary 1 — today's contract is not widened", async () => {
+    const res = await request("PATCH", SUITE_PATH, {
+      settings: { checks: [{ type: "noToolErrors", role: "required" }] },
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { code?: string; message?: string };
+    expect(body.code).toBe("VALIDATION_ERROR");
+    expect(body.message).toContain("x-mcpjam-eval-vocabulary: 2");
+  });
+
+  it("accepts it under vocabulary 2, and stores the form Gate always had", async () => {
+    const res = await requestV2("PATCH", SUITE_PATH, {
+      settings: { checks: [{ type: "noToolErrors", role: "required" }] },
+    });
+    expect(res.status).toBe(200);
+    // The ABSENT field, not `"gating"`: that is a predicate's required form,
+    // so the suite's configuration revision does not move for a spelling.
+    expect(updateArgs().defaultPredicates).toEqual([{ type: "noToolErrors" }]);
+  });
+
+  it("leaves an advisory check untouched under either vocabulary", async () => {
+    for (const send of [request, requestV2]) {
+      convexMutationMock.mockClear();
+      const res = await send("PATCH", SUITE_PATH, {
+        settings: {
+          checks: [{ type: "noToolErrors", role: "advisory", severity: "warn" }],
+        },
+      });
+      expect(res.status).toBe(200);
+      expect(updateArgs().defaultPredicates).toEqual([
+        { type: "noToolErrors", role: "advisory", severity: "warn" },
+      ]);
+    }
+  });
+
+  it("forwards the judge role — the field the SDK sent and this route dropped", async () => {
+    // `updateEvalSuiteInput.settings.judge.role` has been in the SDK's request
+    // type since the judge gate shipped, and the PATCH schema had no `role`
+    // key, so zod stripped it. Authoring a judge role over the API, over MCP
+    // or from the CLI did nothing at all, and no test covered it.
+    const res = await request("PATCH", SUITE_PATH, {
+      settings: { judge: { role: "gating" } },
+    });
+    expect(res.status).toBe(200);
+    expect(updateArgs().judgeConfig.goalCompletion.role).toBe("gating");
+  });
+
+  it("normalizes a canonical judge role to the stored spelling under vocabulary 2", async () => {
+    // A judge's required form IS a present value, unlike a check's, so this
+    // one maps to `gating` rather than being stripped.
+    const res = await requestV2("PATCH", SUITE_PATH, {
+      settings: { judge: { role: "required" } },
+    });
+    expect(res.status).toBe(200);
+    expect(updateArgs().judgeConfig.goalCompletion.role).toBe("gating");
+  });
+
+  it("refuses a canonical judge role under vocabulary 1", async () => {
+    const res = await request("PATCH", SUITE_PATH, {
+      settings: { judge: { role: "required" } },
+    });
+    expect(res.status).toBe(400);
   });
 });
