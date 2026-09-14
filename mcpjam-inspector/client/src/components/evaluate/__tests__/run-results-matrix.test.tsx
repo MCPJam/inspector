@@ -9,6 +9,13 @@ import {
 } from "../run-results-matrix-model";
 import type { EvalIteration, EvalSuiteRun } from "../../evals/types";
 
+vi.mock("convex/react", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("convex/react")>()),
+  useAction: () => vi.fn(),
+  useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
+  useQuery: () => undefined,
+}));
+
 function run(id: string, overrides: Partial<EvalSuiteRun> = {}): EvalSuiteRun {
   return {
     _id: id,
@@ -16,6 +23,7 @@ function run(id: string, overrides: Partial<EvalSuiteRun> = {}): EvalSuiteRun {
     runGroupId: "launch",
     namedHostId: "claude",
     effectiveModelId: "sonnet",
+    runNumber: 3,
     status: "completed",
     configSnapshot: { tests: [], environment: { servers: [] } },
     ...overrides,
@@ -180,7 +188,8 @@ describe("run results matrix", () => {
     expect(matrix.targets[2].iterations).toEqual([]);
   });
 
-  it("reports cell status, latency, usage and cost without inventing missing measurements", () => {
+  it("switches each case between results and metrics", async () => {
+    const user = userEvent.setup();
     render(
       <RunResultsMatrix
         run={run("one")}
@@ -207,11 +216,17 @@ describe("run results matrix", () => {
     expect(cell.queryByText("50%")).toBeNull();
     expect(cell.getByText("1/2")).toBeVisible();
     expect(cell.getByText("Fail", { exact: true })).toBeVisible();
+    expect(cell.queryByText("P50")).toBeNull();
+    expect(screen.getByRole("radio", { name: "Results" })).toBeChecked();
+    await user.click(screen.getByRole("radio", { name: "Metrics" }));
+    expect(cell.queryByText("Fail", { exact: true })).toBeNull();
+    expect(cell.queryByRole("img")).toBeNull();
     expect(cell.getByText("P50")).toBeVisible();
     expect(cell.getByText("P95")).toBeVisible();
-    expect(cell.getByText("2K")).toBeVisible();
+    expect(cell.getByText("1k")).toBeVisible();
     expect(cell.queryByText("Cost")).toBeNull();
-    expect(cell.getByText("Tool calls")).toBeVisible();
+    expect(cell.getByText("Calls")).toBeVisible();
+    expect(screen.getByRole("radio", { name: "Metrics" })).toBeChecked();
     expect(
       screen.getByRole("columnheader", { name: "Test case" }),
     ).toBeVisible();
@@ -318,10 +333,10 @@ describe("run results matrix", () => {
 
   it("filters cases and opens the correct evidence when switching client/model in the drawer", async () => {
     const user = userEvent.setup();
-    const open = vi.fn();
     render(
       <RunResultsMatrix
         run={run("one")}
+        suiteName="excalidraw"
         runs={[run("two", { namedHostId: "cursor", effectiveModelId: "gpt" })]}
         iterations={[
           iteration("pass", "one"),
@@ -331,7 +346,6 @@ describe("run results matrix", () => {
           }),
         ]}
         hostNamesById={names}
-        onOpenIteration={open}
       />,
     );
     expect(screen.getAllByRole("columnheader")).toHaveLength(3);
@@ -358,13 +372,23 @@ describe("run results matrix", () => {
       }),
     );
     const drawer = within(screen.getByRole("dialog"));
+    expect(drawer.getByRole("heading", { name: "Refund order" })).toBeVisible();
+    expect(drawer.getByText("Test case averages")).toBeVisible();
+    expect(drawer.getByText("Iterations")).toBeVisible();
+    expect(drawer.getByText("Client / Model")).toBeVisible();
     await user.click(drawer.getByRole("button", { name: "Cursor · gpt" }));
-    expect(drawer.getByText("Missing reason argument")).toBeVisible();
-    await user.click(drawer.getByRole("button", { name: "Open details" }));
-    expect(open).toHaveBeenCalledWith({
-      testCaseId: "refund",
-      iterationId: "fail",
-    });
+    expect(drawer.getByText("Failed")).toBeVisible();
+    await user.click(
+      drawer.getByRole("button", { name: "Open iteration 1 details" }),
+    );
+    expect(
+      drawer.getByRole("button", { name: "Back to test case iterations" }),
+    ).toHaveTextContent("Refund order › Run #3");
+    expect(
+      drawer.getByRole("heading", { name: "#1 excalidraw" }),
+    ).toBeVisible();
+    expect(drawer.getByText("Failed")).toBeVisible();
+    expect(drawer.getByRole("button", { name: "Scorecard" })).toBeVisible();
   });
 
   it("keeps Pending while a run is live and hides it once every run is terminal", async () => {
