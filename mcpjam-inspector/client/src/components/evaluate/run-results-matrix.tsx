@@ -185,15 +185,35 @@ function CellMetricValues({ items }: { items: EvalIteration[] }) {
           {formatRunCaseLatencyMs(iterationLatencyP95(items))}
         </span>
       </span>
-      <span className={cn(metric, divider, "px-2")}>
+      {/* Both are the MEAN per iteration, not the case total — the heading has
+          no room to say so, so the accessible name carries it. Reading these
+          as totals would overstate a repeated case by its iteration count. */}
+      <span
+        className={cn(metric, divider, "px-2")}
+        title="Average tokens per iteration"
+      >
         <span className={metricLabel}>Tokens</span>
-        <span className="text-base font-semibold leading-5">
+        <span
+          className="text-base font-semibold leading-5"
+          aria-label={
+            tokenAverage === null
+              ? "Tokens not recorded"
+              : `${Math.round(tokenAverage).toLocaleString()} tokens per iteration on average`
+          }
+        >
           {tokenAverage === null ? "—" : compactMetric(tokenAverage)}
         </span>
       </span>
-      <span className={cn(metric, "pl-2")}>
+      <span className={cn(metric, "pl-2")} title="Average tool calls per iteration">
         <span className={metricLabel}>Calls</span>
-        <span className="text-base font-semibold leading-5">
+        <span
+          className="text-base font-semibold leading-5"
+          aria-label={
+            callAverage === null
+              ? "Tool calls not recorded"
+              : `${callAverage.toFixed(1)} tool calls per iteration on average`
+          }
+        >
           {callAverage === null ? "—" : compactMetric(callAverage)}
         </span>
       </span>

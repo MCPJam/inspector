@@ -1434,17 +1434,26 @@ export function average(values: readonly number[]): number | null {
 
 /**
  * Compact metric numbers for the run matrix and case workspace tiles:
- * `1240` → `1.2k`, `2000` → `2k`, `18` → `18`, `1.75` → `1.8`.
+ * `1240` → `1.2k`, `2000` → `2k`, `1500000` → `1.5m`, `18` → `18`,
+ * `1.75` → `1.8`.
  *
- * Lowercase `k` on purpose (the matrix toggle's design), which is why this
- * is not `Intl.NumberFormat`'s compact notation.
+ * Lowercase units on purpose (the matrix toggle's design), which is why this
+ * is not `Intl.NumberFormat`'s compact notation. It still has to carry the
+ * millions step the way that formatter did: without it a long agent run's
+ * token average renders as `1500k` and overflows the fixed-width tile.
  */
 export function compactMetric(value: number): string {
-  return value >= 1000
-    ? `${(value / 1000).toFixed(1).replace(/\.0$/, "")}k`
-    : Number.isInteger(value)
-      ? value.toLocaleString()
-      : value.toFixed(1);
+  const unit = (divisor: number, suffix: string) =>
+    `${(value / divisor).toFixed(1).replace(/\.0$/, "")}${suffix}`;
+  return value >= 1_000_000_000
+    ? unit(1_000_000_000, "b")
+    : value >= 1_000_000
+      ? unit(1_000_000, "m")
+      : value >= 1000
+        ? unit(1000, "k")
+        : Number.isInteger(value)
+          ? value.toLocaleString()
+          : value.toFixed(1);
 }
 
 /**

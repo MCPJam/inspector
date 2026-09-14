@@ -23,10 +23,6 @@ import type { EvalIteration, EvalSuiteRun } from "@/components/evals/types";
 
 const modelName = (it: EvalIteration) =>
   it.testCaseSnapshot?.model || "Unknown model";
-const duration = (it: EvalIteration) =>
-  it.startedAt != null && it.updatedAt != null
-    ? Math.max(0, it.updatedAt - it.startedAt)
-    : null;
 const age = (ts: number) => {
   const minutes = Math.max(0, Math.floor((Date.now() - ts) / 60000));
   return minutes < 1
@@ -148,8 +144,20 @@ export function CaseRunTimeline({
     }
     return [...grouped.values()];
   }, [latestLaunchIterations, pendingRun, runMetadata]);
+  const pendingKey = pendingRun
+    ? `${pendingRun.client ?? "Suite default"}\u0000${pendingRun.model}`
+    : null;
+  // Until the reader picks a target, default to the one the LIVE run is on.
+  // Falling straight through to `targets[0]` left a run launched against a
+  // client/model the case has no history for invisible — its target is
+  // appended last, so `showPendingRun` below was false and the row the user
+  // just triggered never appeared.
   const selectedTarget =
-    targets.find((target) => target.key === targetKey) ?? targets[0];
+    targets.find((target) => target.key === targetKey) ??
+    (pendingKey
+      ? targets.find((target) => target.key === pendingKey)
+      : undefined) ??
+    targets[0];
   const selectedTargetKey = selectedTarget?.key ?? null;
   const filtered = useMemo(
     () =>
@@ -160,9 +168,6 @@ export function CaseRunTimeline({
       ),
     [selectedTarget],
   );
-  const pendingKey = pendingRun
-    ? `${pendingRun.client ?? "Suite default"}\u0000${pendingRun.model}`
-    : null;
   const showPendingRun = Boolean(
     pendingRun && pendingKey === selectedTargetKey,
   );
@@ -180,8 +185,13 @@ export function CaseRunTimeline({
       typeof it.tokensUsed === "number" ? [it.tokensUsed] : [],
     ),
   );
+  // An iteration that recorded NO tool-call list did not make zero calls — it
+  // measured nothing. Excluding it matches the same average in the run matrix;
+  // counting it as 0 dragged this one down against the other.
   const callAverage = average(
-    completed.map((it) => it.actualToolCalls?.length ?? 0),
+    completed.flatMap((it) =>
+      it.actualToolCalls ? [it.actualToolCalls.length] : [],
+    ),
   );
   const selected = iterations.find((it) => it._id === selectedIterationId);
   const result = selected ? computeIterationResult(selected) : null;
@@ -389,7 +399,11 @@ export function CaseRunTimeline({
                             : "Running"}
                   </span>
                   <span className="tabular-nums text-muted-foreground">
-                    {it ? formatRunCaseLatencyMs(duration(it)) : "—"}
+                    {/* Same reading the P50/P95 cards above are built from,
+                        and the same one the run matrix shows per iteration —
+                        `duration()` reported a latency for iterations the
+                        cards excluded, so a row and the header disagreed. */}
+                    {it ? formatRunCaseLatencyMs(iterationLatencyP95([it])) : "—"}
                   </span>
                   <span className="tabular-nums text-muted-foreground">
                     {it && typeof it.tokensUsed === "number"
