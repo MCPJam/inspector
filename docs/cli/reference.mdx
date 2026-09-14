@@ -1891,8 +1891,8 @@ Show an eval suite's full settings.
 ### `cloud eval validate`
 
 Validate a local eval **suite file** — the versioned declarative document that
-describes a suite, its defaults and its cases (`schemaVersion: "1"`, YAML
-canonical, JSON accepted, conventionally `.mcpjam/evals/*.yaml`).
+describes a suite, its defaults and its cases (`schemaVersion: "1"` or `"2"`,
+YAML canonical, JSON accepted, conventionally `.mcpjam/evals/*.yaml`).
 
 Offline by default: without `--project` this command builds no API client, reads
 no API key and never touches the network. Passing `--project` is the only thing
