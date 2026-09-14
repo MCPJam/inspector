@@ -75,6 +75,7 @@ export function suiteReviewTargets(
     }));
   return [
     {
+      // Defensive fallback for older suites; the backend self-heals on launch.
       id: "suite-default",
       client: "Suite configuration",
       model: "Case models",

@@ -85,7 +85,7 @@ export function CaseRunTimeline({
               model: run?.effectiveModelId || modelName(it),
               client:
                 (run ? runHostLabel(run, hostNamesById) : null) ||
-                "Unknown client",
+                "Suite default",
             },
           ];
         }),
@@ -103,7 +103,7 @@ export function CaseRunTimeline({
     ...new Set(
       [...runMetadata.values()]
         .map((item) => item.client)
-        .concat(pendingRun ? [pendingRun.client ?? "Unknown client"] : []),
+        .concat(pendingRun ? [pendingRun.client ?? "Suite default"] : []),
     ),
   ].sort();
   const filtered = useMemo(
@@ -123,7 +123,7 @@ export function CaseRunTimeline({
     pendingRun &&
     (model === ALL_EVAL_FILTER_VALUES || model === pendingRun.model) &&
     (client === ALL_EVAL_FILTER_VALUES ||
-      client === (pendingRun.client ?? "Unknown client")),
+      client === (pendingRun.client ?? "Suite default")),
   );
   const completed = filtered.filter((it) =>
     ["passed", "failed", "timed_out"].includes(computeIterationResult(it)),
@@ -271,7 +271,7 @@ export function CaseRunTimeline({
           const { client, model: recordedModel } = it
             ? runMetadata.get(it._id)!
             : {
-                client: pendingRun?.client ?? "Unknown client",
+                client: pendingRun?.client ?? "Suite default",
                 model: pendingRun!.model,
               };
           const open =
@@ -317,10 +317,10 @@ export function CaseRunTimeline({
                 </span>
                 <span
                   className="min-w-0"
-                  title={`${client ?? "Unknown client"} · ${recordedModel}`}
+                  title={`${client ?? "Suite default"} · ${recordedModel}`}
                 >
                   <span className="block truncate">
-                    {client ?? "Unknown client"}
+                    {client ?? "Suite default"}
                   </span>
                   <span className="block truncate text-muted-foreground">
                     {compactModelIdTail(recordedModel)}
