@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
 import {
+  AlertTriangle,
   ChevronDown,
   ChevronRight,
   Info,
@@ -467,6 +468,24 @@ export function ServerGroupPicker({
                   <p className="text-xs leading-snug">{infoText}</p>
                 </TooltipContent>
               </Tooltip>
+            </div>
+            {/*
+              Whatever group is picked here is what the agents actually act
+              on, and they act for real: a swarm's agents read, write, and
+              delete to exercise the server. This line is the warning Vig
+              asked for (BB-234) — deliberately inline rather than a modal,
+              so it lands at the moment of choice without reading as a
+              scare-screen that stops people running swarms at all.
+            */}
+            <div className="flex items-start gap-1.5 px-2 pb-1.5 pt-0.5">
+              <AlertTriangle className="mt-[1px] size-3 shrink-0 text-amber-600 dark:text-amber-500" />
+              <p
+                className="text-[11px] leading-snug text-muted-foreground"
+                data-testid="server-group-production-warning"
+              >
+                Agents take real actions on these servers, including writing
+                and deleting data. Use development servers, not production.
+              </p>
             </div>
             {serverAttachments.length === 0 && !isLoading ? (
               <p className="px-2 py-1.5 text-xs text-muted-foreground">
