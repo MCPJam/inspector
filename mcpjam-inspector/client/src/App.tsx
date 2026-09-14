@@ -939,10 +939,10 @@ export function HostsRoute() {
     idShapedHostId === null
       ? "none"
       : isRouteHostListLoading
-        ? "pending"
-        : routeHosts.some((h) => h.hostId === idShapedHostId)
-          ? "live"
-          : "dead";
+      ? "pending"
+      : routeHosts.some((h) => h.hostId === idShapedHostId)
+      ? "live"
+      : "dead";
 
   // The id the canvas may open. A dead id resolves to null HERE, before it
   // reaches shared state, which is what keeps this route out of a fight with
@@ -1569,7 +1569,7 @@ export function ConformanceRoute() {
     projectId: convexProjectId,
   });
   const savedServerId = selectedServerEntry?.name
-    ? (serversByName.get(selectedServerEntry.name) ?? null)
+    ? serversByName.get(selectedServerEntry.name) ?? null
     : null;
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -2036,7 +2036,8 @@ export function SkillsRoute() {
   const { convexProjectId, isAuthenticated, isGuestProjectActor, appState } =
     useAppRouteContext();
   const servers = appState?.servers as
-    Record<string, ServerWithName> | undefined;
+    | Record<string, ServerWithName>
+    | undefined;
   // Names, in both modes. The local manager registers connections under their
   // name, and the hosted API layer resolves a name to its Convex server id
   // inside `buildServerRequest` — so resolving here too would duplicate that,
@@ -2671,8 +2672,8 @@ export default function App() {
     activeTab === "oauth-flow"
       ? "oauth"
       : activeTab === "xaa-flow" && xaaEnabled === true
-        ? "xaa"
-        : null;
+      ? "xaa"
+      : null;
   const { hidden: hiddenHeaderServers, hide: hideHeaderServer } =
     useHiddenHeaderServers(headerHiddenSurface);
 
@@ -3106,8 +3107,8 @@ export default function App() {
         !appReturnPath
           ? "absent"
           : restoredPath === appReturnPath
-            ? "restored"
-            : "superseded",
+          ? "restored"
+          : "superseded",
       );
       const projectReturnIntent =
         createProjectSignInReturnRecoveryIntent(restoredPath);
@@ -3322,8 +3323,8 @@ export default function App() {
     const names = appState.selectedMultipleServers.length
       ? appState.selectedMultipleServers
       : appState.selectedServer && appState.selectedServer !== "none"
-        ? [appState.selectedServer]
-        : [];
+      ? [appState.selectedServer]
+      : [];
     publishSelectedServerNames(names);
   }, [appState.selectedMultipleServers, appState.selectedServer]);
   const persistRuntimeServerToProjectRef = useRef(
@@ -3423,64 +3424,6 @@ export default function App() {
       !areServersHydrated ||
       !activeProjectId ||
       activeProjectId === "none");
-  // A "Verify against your server" deep-link (`/hosts?template=claude`) must
-  // reach HostsRoute so it can open/create that client's host. Without this
-  // guard the first-run onboarding redirect below fires on the fresh load and
-  // navigates to Playground, dropping the `?template` param before it's handled.
-  // Only a *known* template id suppresses onboarding — an unknown/stale value
-  // (e.g. `?template=bogus` from an old link) is never consumed by the deep-link
-  // handler, so treating it as a real deep-link would strand new users on an
-  // empty surface with onboarding silently disabled.
-  const hasHostTemplateVerifyParam =
-    typeof window !== "undefined" &&
-    (() => {
-      const raw = new URLSearchParams(window.location.search).get("template");
-      return raw != null && HOST_TEMPLATES.some((t) => t.id === raw);
-    })();
-  const hasProjectScopedFirstRunDestination =
-    typeof window !== "undefined" &&
-    (hasProjectDeepLinkParam(window.location.search) ||
-      readProjectPathSegment(window.location.pathname) !== null);
-  const shouldRouteToFirstRunOnboarding =
-    !isHostedChatRoute &&
-    pendingCheckoutIntent === null &&
-    !isBareCaniuseRoute &&
-    !isLoginInitiationRoute &&
-    !hasHostTemplateVerifyParam &&
-    !isWorkOsLoading &&
-    effectiveHostedShellGateState === "ready" &&
-    !(isAuthenticated && currentUser === undefined) &&
-    (!HOSTED_MODE ||
-      (isAuthenticated &&
-        !isLoadingRemoteProjects &&
-        areServersHydrated &&
-        !!activeProjectId &&
-        activeProjectId !== "none")) &&
-    (firstRunOverlaySessionStarted ||
-      isFirstRunConnectionActive ||
-      isFirstRunServerChoiceEligible(
-        hasAnyFirstRunBlockingProjectServers && !isFirstRunConnectionActive,
-        activeTab,
-        initialFirstRunServerChoiceState,
-        !!workOsUser,
-        isNewSignedInAccount,
-      ));
-  const shouldRouteToFirstRunHome =
-    shouldRouteToFirstRunOnboarding &&
-    !firstRunOverlayDismissed &&
-    activeTab !== "home" &&
-    !hasProjectScopedFirstRunDestination;
-  const shouldShowFirstRunOverlay =
-    shouldRouteToFirstRunOnboarding &&
-    (activeTab === "home" || hasProjectScopedFirstRunDestination) &&
-    !firstRunOverlayDismissed;
-
-  useLayoutEffect(() => {
-    if (shouldRouteToFirstRunOnboarding) {
-      setFirstRunOverlaySessionStarted(true);
-    }
-  }, [shouldRouteToFirstRunOnboarding]);
-
   const openFirstRunServerConnection = useCallback(
     (draft: FirstRunServerDraft) => {
       const stdioCommandParts = draft.urlOrCommand
@@ -3596,16 +3539,17 @@ export default function App() {
             toolCount: tools.length,
           });
         })
-        .catch((error: unknown) => {
+        .catch(() => {
           if (firstRunConnectionAttemptRef.current !== attemptId) return;
+          // Tool discovery is supplemental to the successful MCP handshake.
+          // Keep the server connected and let Playground retry discovery
+          // rather than presenting a false connection failure.
+          markFirstRunServerChoiceCompleted();
           setFirstRunConnectionState({
-            status: "failed",
+            status: "connected",
             serverName,
             serverKind,
-            error:
-              error instanceof Error
-                ? error.message
-                : "MCPJam connected, but could not load this server's tools.",
+            toolCount: null,
           });
         });
       return;
@@ -3877,7 +3821,7 @@ export default function App() {
     setHostsTabSelectedHostId(null);
   }, [convexProjectId]);
   const routeScopedOrganizationId = hasRouteOrganization
-    ? (routeOrganizationId ?? null)
+    ? routeOrganizationId ?? null
     : null;
   const rawBillingOrganizationId =
     routeScopedOrganizationId ??
@@ -3982,10 +3926,10 @@ export default function App() {
   const createProjectDisabledReason = guestProjectLimitReached
     ? "Sign in to create more projects"
     : noOrganizationsAvailable
-      ? "Create or join an organization to create projects"
-      : insufficientOrgRoleForCreate
-        ? "You don't have permission to create projects"
-        : (projectCreationGate.denialMessage ?? undefined);
+    ? "Create or join an organization to create projects"
+    : insufficientOrgRoleForCreate
+    ? "You don't have permission to create projects"
+    : projectCreationGate.denialMessage ?? undefined;
   const [trialModalDismissedForOrg, setTrialModalDismissedForOrg] = useState<
     string | null
   >(null);
@@ -4453,8 +4397,8 @@ export default function App() {
         const selectedServers = appState.selectedMultipleServers?.length
           ? appState.selectedMultipleServers
           : focused
-            ? [focused]
-            : [];
+          ? [focused]
+          : [];
         return {
           path: pathname,
           activeTab: pathnameToActiveTab(pathname),
@@ -4602,12 +4546,6 @@ export default function App() {
     setSelectedMCPConfigs,
     syncAgentStatus,
   ]);
-
-  useLayoutEffect(() => {
-    if (shouldRouteToFirstRunHome) {
-      navigateApp(routePaths.home);
-    }
-  }, [shouldRouteToFirstRunHome]);
 
   // The snap-to-Servers effect that used to live here is gone with the URL
   // migration. It existed because a project switch changed hidden state and
@@ -4982,6 +4920,74 @@ export default function App() {
     switchProject: switchProjectForRoute,
   });
 
+  // A "Verify against your server" deep-link (`/hosts?template=claude`) must
+  // reach HostsRoute so it can open/create that client's host. Without this
+  // guard the first-run onboarding redirect below drops the deep-link.
+  const hasHostTemplateVerifyParam =
+    typeof window !== "undefined" &&
+    (() => {
+      const raw = new URLSearchParams(window.location.search).get("template");
+      return raw != null && HOST_TEMPLATES.some((t) => t.id === raw);
+    })();
+  const requestedFirstRunProjectId =
+    typeof window !== "undefined"
+      ? readProjectPathSegment(window.location.pathname)
+      : null;
+  const hasProjectScopedFirstRunDestination =
+    typeof window !== "undefined" &&
+    (hasProjectDeepLinkParam(window.location.search) ||
+      requestedFirstRunProjectId !== null);
+  const isProjectScopedFirstRunDestinationReady =
+    requestedFirstRunProjectId === null ||
+    (projectRouteState.status === "ready" &&
+      projectRouteState.projectId === requestedFirstRunProjectId);
+  const shouldRouteToFirstRunOnboarding =
+    !isHostedChatRoute &&
+    pendingCheckoutIntent === null &&
+    !isBareCaniuseRoute &&
+    !isLoginInitiationRoute &&
+    !hasHostTemplateVerifyParam &&
+    isProjectScopedFirstRunDestinationReady &&
+    !isWorkOsLoading &&
+    effectiveHostedShellGateState === "ready" &&
+    !(isAuthenticated && currentUser === undefined) &&
+    (!HOSTED_MODE ||
+      (isAuthenticated &&
+        !isLoadingRemoteProjects &&
+        areServersHydrated &&
+        !!activeProjectId &&
+        activeProjectId !== "none")) &&
+    (firstRunOverlaySessionStarted ||
+      isFirstRunConnectionActive ||
+      isFirstRunServerChoiceEligible(
+        hasAnyFirstRunBlockingProjectServers && !isFirstRunConnectionActive,
+        activeTab,
+        initialFirstRunServerChoiceState,
+        !!workOsUser,
+        isNewSignedInAccount,
+      ));
+  const shouldRouteToFirstRunHome =
+    shouldRouteToFirstRunOnboarding &&
+    !firstRunOverlayDismissed &&
+    activeTab !== "home" &&
+    !hasProjectScopedFirstRunDestination;
+  const shouldShowFirstRunOverlay =
+    shouldRouteToFirstRunOnboarding &&
+    (activeTab === "home" || hasProjectScopedFirstRunDestination) &&
+    !firstRunOverlayDismissed;
+
+  useLayoutEffect(() => {
+    if (shouldRouteToFirstRunOnboarding) {
+      setFirstRunOverlaySessionStarted(true);
+    }
+  }, [shouldRouteToFirstRunOnboarding]);
+
+  useLayoutEffect(() => {
+    if (shouldRouteToFirstRunHome) {
+      navigateApp(routePaths.home);
+    }
+  }, [shouldRouteToFirstRunHome]);
+
   const authoritativeMembershipProjectIds =
     isUserReady && !isLoadingRemoteProjects
       ? allMembershipProjectIds
@@ -4989,7 +4995,7 @@ export default function App() {
   const fallbackProjectIdForStaleReturn =
     activeProject && authoritativeMembershipProjectIds?.has(activeProjectId)
       ? activeProjectId
-      : (allMembershipProjects?.[0]?._id ?? null);
+      : allMembershipProjects?.[0]?._id ?? null;
   const projectReturnRecoveryDecision = resolveProjectSignInReturnRecovery({
     intent: pendingProjectReturnRecovery,
     membershipProjectIds: authoritativeMembershipProjectIds,
@@ -5153,7 +5159,8 @@ export default function App() {
     ]);
 
   const playgroundServerSelectorProps = useMemo(():
-    PlaygroundServerSelectorProps | undefined => {
+    | PlaygroundServerSelectorProps
+    | undefined => {
     if (activeTab !== "playground") return undefined;
     return {
       serverConfigs: displayServerConfigs,
@@ -5343,8 +5350,8 @@ export default function App() {
             activeTab === "xaa-flow" && xaaEnabled === true
               ? () => setXaaServerModalNonce((n) => n + 1)
               : activeTab === "oauth-flow"
-                ? () => setOauthServerModalNonce((n) => n + 1)
-                : undefined,
+              ? () => setOauthServerModalNonce((n) => n + 1)
+              : undefined,
           isMultiSelectEnabled: activeTab === "chat",
           onMultiServerToggle: toggleServerSelection,
           selectedMultipleServers: appState.selectedMultipleServers,

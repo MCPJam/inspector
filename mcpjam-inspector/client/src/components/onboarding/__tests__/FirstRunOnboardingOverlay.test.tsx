@@ -294,6 +294,16 @@ describe("FirstRunOnboardingOverlay", () => {
       "animate-in",
     );
     expect(screen.getByText("3 tools ready to use.")).toBeInTheDocument();
+
+    rerenderWithConnectionState({
+      status: "connected",
+      serverName: "My server",
+      serverKind: "personal",
+      toolCount: null,
+    });
+    expect(
+      screen.getByText("Connected — tools can finish loading in Playground."),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Open Playground" }));
     expect(onOpenPlayground).toHaveBeenCalledOnce();
   });

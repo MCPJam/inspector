@@ -1599,6 +1599,45 @@ describe("useServerState OAuth callback failures", () => {
     );
   });
 
+  it("does not publish a late connect result after a runtime disconnect", async () => {
+    let resolveConnection!: (value: { success: true; initInfo: null }) => void;
+    testConnectionMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveConnection = resolve;
+        })
+    );
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch);
+
+    let connectPromise!: Promise<void>;
+    act(() => {
+      connectPromise = result.current.handleConnect({
+        name: "demo-server",
+        type: "http",
+        url: "https://example.com/mcp",
+      } as any);
+    });
+    await waitFor(() => expect(testConnectionMock).toHaveBeenCalledOnce());
+
+    act(() => result.current.handleRuntimeDisconnect("demo-server"));
+    await act(async () => {
+      resolveConnection({ success: true, initInfo: null });
+      await connectPromise;
+    });
+
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "DISCONNECT",
+      name: "demo-server",
+    });
+    expect(
+      dispatch.mock.calls.some(
+        ([action]) =>
+          action.type === "CONNECT_SUCCESS" || action.type === "CONNECT_FAILURE"
+      )
+    ).toBe(false);
+  });
+
   it("does not resurrect a stale 2026 pin when the form downgrades to 2025", async () => {
     // Regression: switching an existing OAuth server from 2026 back to 2025
     // must not recover the stale 2026 pin from the stored server.config /
