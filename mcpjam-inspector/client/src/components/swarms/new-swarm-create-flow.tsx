@@ -65,8 +65,10 @@ import {
 } from "@/components/swarms/new-swarm-flow-draft";
 import {
   DEFAULT_SWARM_INTENSITY,
+  DEFAULT_SWARM_ITERATIONS,
+  MAX_SWARM_ITERATIONS,
+  MIN_SWARM_ITERATIONS,
   SWARM_INTENSITY_PRESETS,
-  type SwarmPushIntensity,
 } from "@/components/swarms/swarm-intensity";
 import {
   SOLO_HERO_CHARACTERS,
@@ -513,8 +515,33 @@ export function NewSwarmCreateFlow({
   const [materializing, setMaterializing] = useState(false);
   /** "Add existing personas" popover. */
   const [personaPickerOpen, setPersonaPickerOpen] = useState(false);
-  const [pushIntensity, setPushIntensity] = useState<SwarmPushIntensity>(
-    restoredDraft?.pushIntensity ?? DEFAULT_SWARM_INTENSITY,
+  // Sizes GENERATION only — how many personas and goals the Describe step
+  // asks for. Confirm no longer picks it: iterations is the control there.
+  const pushIntensity =
+    restoredDraft?.pushIntensity ?? DEFAULT_SWARM_INTENSITY;
+  // One entry per persona, keyed by its proposal key. Absent means the
+  // default: a persona the user has not touched costs nothing to store,
+  // and a regenerated slate mints new keys rather than inheriting numbers
+  // from personas that no longer exist.
+  const [iterationsByPersona, setIterationsByPersona] = useState<
+    Record<string, number>
+  >(restoredDraft?.iterationsByPersona ?? {});
+  const handleIterationsChange = useCallback(
+    (personaKey: string, value: number) => {
+      // Clearing the field reports "", which Number() turns into 0; the clamp
+      // below lifts that to the minimum rather than quoting zero conversations.
+      // The guard covers anything that cannot be clamped at all.
+      if (!Number.isFinite(value)) return;
+      const next = Math.min(
+        MAX_SWARM_ITERATIONS,
+        Math.max(MIN_SWARM_ITERATIONS, Math.round(value)),
+      );
+      setIterationsByPersona((current) => ({
+        ...current,
+        [personaKey]: next,
+      }));
+    },
+    [],
   );
   const [reusedIds, setReusedIds] = useState<string[]>(
     restoredDraft?.reusedIds ?? [],
@@ -1194,7 +1221,7 @@ export function NewSwarmCreateFlow({
                 ? { environmentIds: envPayload.environmentIds }
                 : {}),
               config: {
-                sessionsPerTarget: preset.sessionsPerTarget,
+                sessionsPerTarget: DEFAULT_SWARM_ITERATIONS,
                 maxTurns: preset.maxTurns,
               },
               ...(payload.judgeConfig
@@ -1333,7 +1360,9 @@ export function NewSwarmCreateFlow({
                   hostIds: envPayload!.hostIds,
                   environmentIds: envPayload!.environmentIds,
                   config: {
-                    sessionsPerTarget: preset.sessionsPerTarget,
+                    sessionsPerTarget:
+                      iterationsByPersona[persona.key] ??
+                      DEFAULT_SWARM_ITERATIONS,
                     maxTurns: preset.maxTurns,
                   },
                   ...(payload.judgeConfig
@@ -1511,6 +1540,7 @@ export function NewSwarmCreateFlow({
       onCreateJourney,
       onCreatePersona,
       onUpdateJourney,
+      iterationsByPersona,
       personaList.length,
       preset,
       proposed,
@@ -1576,6 +1606,7 @@ export function NewSwarmCreateFlow({
       resolvedEnvironments,
       createdEnvOverlay,
       pushIntensity,
+      iterationsByPersona,
       reusedIds,
       proposed,
       launchedRuns,
@@ -1594,6 +1625,7 @@ export function NewSwarmCreateFlow({
     draft,
     generatingSince,
     hasResumableWork,
+    iterationsByPersona,
     nameEdited,
     launchedRuns,
     projectId,
@@ -1835,9 +1867,8 @@ export function NewSwarmCreateFlow({
             onRemoveReused={(personaId) =>
               setReusedIds((ids) => ids.filter((id) => id !== personaId))
             }
-            preset={preset}
-            pushIntensity={pushIntensity}
-            onPushIntensityChange={setPushIntensity}
+            iterationsByPersona={iterationsByPersona}
+            onIterationsChange={handleIterationsChange}
             environmentCount={environmentIds.length}
             environmentLabels={environmentLabels}
             launching={launching}
