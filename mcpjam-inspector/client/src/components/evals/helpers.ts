@@ -366,15 +366,23 @@ export function runHostLabel(
   run: RunContextSource,
   hostNamesById?: Map<string, string | null>,
 ): string | null {
-  // Old environment-only rows have no resolved host to reveal with the flag off.
-  if (runEnvironmentRef(run) && !run.client && !run.namedHostId) return null;
+  // A run that names no client at all stays null rather than borrowing
+  // `runClientIdentity`'s "Suite default" placeholder. That string is a label
+  // for a client the run DOES have and could not name; handing it back here
+  // would invent a host for rows that never recorded one, and callers read a
+  // non-null label as "this run ran somewhere nameable" — one of them turns it
+  // into a client filter option.
+  if (!run.client && !run.namedHostId) return null;
   return runClientIdentity(run, hostNamesById).name;
 }
 
 /**
  * Display name for a run's context: the environment name for environment-backed
  * runs, the resolved host name (falling back to a truncated id) for legacy runs.
- * `null` when the run names neither — the caller decides what to show instead.
+ * A run that names neither gets the neutral "Suite default" placeholder rather
+ * than `null` — a context chip always says something. Callers that want to show
+ * their own text instead (a count, say) must read {@link runHostLabel}, which
+ * DOES return `null` there.
  *
  * This CAN return environment identity, so every call site must sit behind
  * `project-environments-enabled`; the flag-off branch uses
@@ -386,7 +394,13 @@ export function runContextLabel(
 ): string | null {
   const ref = runEnvironmentRef(run);
   if (ref) return ref.name;
-  return runHostLabel(run, hostNamesById);
+  // A context chip always says something, so a run that names no client falls
+  // back to the neutral placeholder. `runHostLabel` deliberately does not —
+  // see the note there.
+  return (
+    runHostLabel(run, hostNamesById) ??
+    runClientIdentity(run, hostNamesById).name
+  );
 }
 
 /**

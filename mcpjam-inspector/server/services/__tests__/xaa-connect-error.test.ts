@@ -21,6 +21,7 @@ describe("toXaaConnectFailure", () => {
       target
     );
 
+    expect(framed.setupFailureSource).toBe("xaa_mint");
     expect(framed.status).toBe(401);
     expect(framed.code).toBe(ErrorCode.UNAUTHORIZED);
     expect(framed.details).toMatchObject({
@@ -45,6 +46,7 @@ describe("toXaaConnectFailure", () => {
       target
     );
 
+    expect(framed.setupFailureSource).toBe("xaa_mint");
     expect(framed.status).toBe(401);
     expect(framed.details).toMatchObject({
       reason: XaaConnectFailureReason.REAUTH_REQUIRED,

@@ -90,6 +90,12 @@ what arrives, never widen it.
 | `egressUnverified` | the connection failed with no evidence that our own network egress works |
 | `lifecycleStopped` | the run was stopped mid-flight |
 
+A `setupAborted`, `egressUnverified`, `connectFailed` or `toolsListFailed` row
+may carry the producer's one-line explanation in `evidence.predicateReasons`
+— "rejected the stored token (invalid_token)", "MCPJam could not reach its
+authorization server" — the same slot judge reasons use. It explains the
+state; it never changes it.
+
 **The stage does not apply**
 
 | Wire value | …because |
