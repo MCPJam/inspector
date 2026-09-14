@@ -217,16 +217,21 @@ const evals = new Hono();
  * extend this one middleware instead of adding a second header reader.
  */
 evals.use("*", async (c, next) => {
+  // FIRST, before the refusal below can return. `vocabularyOf` is the only
+  // thing that appends `Vary`, so running it after the early return left the
+  // 400 without one — and a cache holding an un-`Vary`d error replays it to
+  // the next caller on that URL, including one who sent a header we accept.
+  // An error response is exactly the one you least want served to somebody
+  // else's request. The value itself is re-read per handler through
+  // `vocabularyOf`, which is cheap and keeps the handlers explicit about the
+  // fact that they project.
+  vocabularyOf(c);
   if (hasUnknownVocabulary(c)) {
     return v1Error(c, ErrorCode.VALIDATION_ERROR, UNKNOWN_VOCABULARY_MESSAGE, {
       header: EVAL_VOCABULARY_HEADER,
       supported: ["1", "2"],
     });
   }
-  // Reads the header and sets `Vary`; the value itself is re-read per handler
-  // through `vocabularyOf`, which is cheap and keeps the handlers explicit
-  // about the fact that they project.
-  vocabularyOf(c);
   await next();
 });
 

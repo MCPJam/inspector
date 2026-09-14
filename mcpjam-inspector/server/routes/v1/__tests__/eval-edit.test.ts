@@ -4424,6 +4424,17 @@ describe("eval vocabulary negotiation", () => {
     expect(body.message).toContain("x-mcpjam-eval-vocabulary");
   });
 
+  it("sets Vary on the REFUSAL too, not only on the success path", async () => {
+    // A cache holding an un-Vary'd 400 replays it to the next caller on that
+    // URL — including one who sent a header this deployment accepts. An error
+    // response is the one you least want served to somebody else's request.
+    const res = await request("GET", SUITE_PATH, undefined, "tok", {
+      "x-mcpjam-eval-vocabulary": "3",
+    });
+    expect(res.status).toBe(400);
+    expect(res.headers.get("Vary") ?? "").toContain("x-mcpjam-eval-vocabulary");
+  });
+
   it("refuses an explicitly EMPTY header rather than defaulting it", async () => {
     // Only an ABSENT header means vocabulary 1. Accepting blank would make it
     // a third, undocumented spelling of "1", so a client whose header came out

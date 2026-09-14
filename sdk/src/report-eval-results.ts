@@ -1509,10 +1509,22 @@ export async function resolveTerminationStatus(
   input: import("./eval-reporting-types.js").MCPJamReportingConfig
 ): Promise<"cancelled" | "timed_out" | undefined> {
   if (!input.terminalStatus) return undefined;
-  const support = await requestWithRetry<{
-    capabilities: { evalsRunTermination?: number };
-  }>(config, ingestPath(config, "capabilities"), {});
-  if (support.capabilities.evalsRunTermination !== 1)
+  // Reuse the run's answer when there IS one, but never inherit a failed probe.
+  // `resolveTargetCapabilities` caches a failure as `null` because every other
+  // consumer wants "does not advertise" — here that would turn a transport
+  // error into "your target does not support termination", which is a claim we
+  // have not earned. So a cache miss or a cached failure asks again and lets
+  // the transport error reach the caller as itself.
+  const cached = config.capabilitiesCache;
+  const capabilities =
+    cached && typeof cached === "object"
+      ? (cached as { evalsRunTermination?: number })
+      : (
+          await requestWithRetry<{
+            capabilities: { evalsRunTermination?: number };
+          }>(config, ingestPath(config, "capabilities"), {})
+        ).capabilities;
+  if (capabilities.evalsRunTermination !== 1)
     throw new EvalReportingError(
       "SDK_RUN_TERMINATION_UNSUPPORTED: target support is required to explicitly terminate a partial run",
       { isReportingBackendIncompatible: true }
