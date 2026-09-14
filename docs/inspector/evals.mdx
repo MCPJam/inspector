@@ -17,10 +17,10 @@ Evals are available to both signed-in users and guests. Guests authenticate auto
     Holds your servers and your suites. Everything below lives in one project.
   </Step>
   <Step title="Suite">
-    A group of cases plus the defaults they share: attached servers, models to run against, default checks, judge config, and argument-matching mode.
+    A group of cases plus the defaults they share: attached servers, models to run against, default assertions, judge config, and argument-matching mode.
   </Step>
   <Step title="Case">
-    One scenario you want to verify — a prompt (or a sequence of prompts), the tools you expect to fire, an optional expected output, and the checks that decide pass/fail.
+    One scenario you want to verify — a prompt (or a sequence of prompts), the tools you expect to fire, an optional expected output, and the assertions that decide pass/fail.
   </Step>
   <Step title="Run">
     One execution of a suite. Produces **iterations** — one per case × model. Each iteration has its own transcript, tool calls, tokens, duration, and verdict.
