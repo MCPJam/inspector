@@ -105,6 +105,7 @@ import { useEvaluateRunPageHeaderActions } from "./evaluate-run-page";
 export function SingleRunContent({
   projectId,
   run,
+  suiteName,
   iterations,
   allIterations,
   siblingRuns = [],
@@ -117,6 +118,7 @@ export function SingleRunContent({
 }: {
   projectId: string | null | undefined;
   run: EvalSuiteRun;
+  suiteName?: string;
   iterations: readonly EvalIteration[];
   /** Every iteration in the suite, so the previous run's fractions are known. */
   allIterations?: readonly EvalIteration[];
@@ -561,6 +563,7 @@ export function SingleRunContent({
         <RunResultsMatrix
           key={run._id}
           run={run}
+          suiteName={suiteName}
           runs={siblingRuns}
           diagnostics={detail.diagnostics}
           chains={chains.chains}
@@ -575,7 +578,6 @@ export function SingleRunContent({
               : iterations
           }
           hostNamesById={hostNamesById}
-          onOpenIteration={onOpenIteration}
         />
       </div>
 

@@ -67,6 +67,7 @@ import {
 } from "@/components/chat-v2/chat-input/attachments/file-utils";
 import {
   STARTER_PROMPTS,
+  shouldShowStarterPrompts,
   formatErrorMessage,
   buildMcpPromptMessages,
   buildSkillToolMessages,
@@ -2308,8 +2309,13 @@ export function ChatTabV2({
     onManageOrgProviders: manageOrgProviders,
   };
 
-  const showStarterPrompts =
-    !showDisabledCallout && !effectiveHasMessages && !isAuthLoading;
+  // Off on the hosted study page — see `shouldShowStarterPrompts` for why.
+  const showStarterPrompts = shouldShowStarterPrompts({
+    hasMessages: effectiveHasMessages,
+    isAuthLoading,
+    showDisabledCallout,
+    hostedScenarioId,
+  });
 
   return (
     <div className="flex flex-1 h-full min-h-0 flex-col overflow-hidden">
