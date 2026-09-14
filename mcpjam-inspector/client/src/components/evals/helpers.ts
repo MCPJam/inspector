@@ -6,6 +6,8 @@ import {
   EvalSuite,
   EvalSuiteOverviewEntry,
   EvalSuiteRun,
+  EvalSuiteConfigTest,
+  RunClientDescriptor,
   SuiteAggregate,
   TagGroupAggregate,
 } from "./types";
@@ -14,6 +16,11 @@ import { toast } from "sonner";
 import { RESULT_STATUS } from "./constants";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { clientDisplayName } from "@/lib/client-display-name";
+import { findHostStyle, type HostThemeMode } from "@/lib/client-styles";
+import {
+  getScenarioHostLabel,
+  getScenarioHostLogo,
+} from "@/lib/scenario-client-style";
 
 /**
  * What servers can this suite see at run-time? Mirrors the precedence
@@ -68,6 +75,7 @@ export type SuiteHostRunPlan = {
 };
 
 function suiteDefaultRunPlan(serverIds: string[]): SuiteHostRunPlan {
+  // Defensive mixed-version fallback; the backend now attaches a default client.
   return {
     namedHostId: undefined,
     hostName: null,
@@ -240,7 +248,7 @@ export function formatRunId(runId: string): string {
 /**
  * The launch provenance the context helpers below read. Structurally narrower
  * than `EvalSuiteRun` on purpose: case-history and rail code carries partial
- * run rows, and every call site only ever needs these two fields.
+ * run rows, and callers only need the descriptor and launch context.
  *
  * NOTE `configSnapshot.environment` (the flat `{ servers }` bag) is a THIRD,
  * unrelated meaning of the word "environment" — a raw server-name list. It is
@@ -249,6 +257,7 @@ export function formatRunId(runId: string): string {
  */
 export type RunContextSource = {
   namedHostId?: string;
+  client?: RunClientDescriptor | null;
   configSnapshot?: {
     environmentRef?: {
       environmentId: string;
@@ -268,40 +277,98 @@ export function runEnvironmentRef(
 }
 
 /**
- * Canonical identity for "which context produced this run" — the unit every
- * user-visible run grouping/labelling keys on.
- *
- * Keyed by the environment ID, **never** the revision. An environment is
- * live-editable, so every edit bumps `revision`; keying on it would shatter a
- * suite's history into singletons on each edit. Two environments that resolve
- * to the SAME host stay distinct because the ids differ. Legacy/host-backed
- * runs key on `namedHostId` exactly as before.
- *
- * This is NOT the host dimension: cross-host comparison code that deliberately
- * compares resolved hosts must keep using `namedHostId`.
+ * Execution-client identity, independent of the environment that selected it.
+ * A historical style or SDK harness is a valid comparison key without a host ID.
  */
+export type RunClientIdentity = {
+  name: string;
+  hostStyle?: string;
+  key: string;
+  source: RunClientDescriptor["source"] | "unknown";
+  namedHostId?: string;
+};
+
+export function runClientIdentity(
+  run: RunContextSource,
+  hostNamesById?: ReadonlyMap<string, string | null>,
+): RunClientIdentity {
+  const client = run.client;
+  const namedHostId = client?.namedHostId ?? run.namedHostId;
+  if (client) {
+    const hostStyle = client.hostStyle?.trim();
+    // Use the persisted style, not the inspector's default: the backend's
+    // historical fallback is Claude while the inspector defaults to MCPJam.
+    const name =
+      (namedHostId && hostNamesById?.get(namedHostId)?.trim()) ||
+      (client.source === "suite_default" && findHostStyle(hostStyle)
+        ? getScenarioHostLabel(hostStyle!)
+        : client.name.trim()) ||
+      "Client";
+    return {
+      name,
+      hostStyle,
+      namedHostId,
+      source: client.source,
+      key: namedHostId
+        ? `host:${namedHostId}`
+        : client.source === "sdk"
+          ? "sdk"
+          : `style:${hostStyle || "unknown"}`,
+    };
+  }
+  if (namedHostId)
+    return {
+      name: hostNamesById?.get(namedHostId)?.trim() || formatRunId(namedHostId),
+      namedHostId,
+      key: `host:${namedHostId}`,
+      source: "unknown",
+    };
+  return { name: "Suite default", key: "style:unknown", source: "unknown" };
+}
+
+export function runClientLogo(
+  run: RunContextSource,
+  theme?: HostThemeMode,
+): string | undefined {
+  const style = runClientIdentity(run).hostStyle;
+  return style && findHostStyle(style)
+    ? getScenarioHostLogo(style, undefined, theme)
+    : undefined;
+}
+
+export function snapshotTestModels(
+  test: Pick<EvalSuiteConfigTest, "models" | "model" | "provider">,
+): Array<{ model: string; provider: string }> {
+  if (Array.isArray(test.models))
+    return test.models.filter((entry) => Boolean(entry.model));
+  return test.model
+    ? [{ model: test.model, provider: test.provider ?? "" }]
+    : [];
+}
+
+/** Context groups retain environment identity, never its mutable revision. */
 export function runContextKey(run: RunContextSource): string {
   const ref = runEnvironmentRef(run);
   return ref
     ? `environment:${ref.environmentId}`
-    : `host:${run.namedHostId ?? "none"}`;
+    : runClientIdentity(run).key;
 }
 
 /**
  * The run's resolved HOST name only — never its environment name. Falls back to
- * a truncated host id, and returns `null` when the run names no host.
+ * a truncated host id or the descriptor's durable name for historical runs.
  *
  * This is the branch the `project-environments-enabled` kill-switch falls back
- * to. An environment-backed run carries no `namedHostId`, so with the flag off
- * it yields `null` here and the caller shows a neutral placeholder rather than
- * leaking the environment name through a host-shaped chip.
+ * to. An old environment-backed run without a resolved host or descriptor
+ * yields `null` so its environment name cannot leak through a host chip.
  */
 export function runHostLabel(
   run: RunContextSource,
   hostNamesById?: Map<string, string | null>,
 ): string | null {
-  if (!run.namedHostId) return null;
-  return hostNamesById?.get(run.namedHostId) ?? formatRunId(run.namedHostId);
+  // Old environment-only rows have no resolved host to reveal with the flag off.
+  if (runEnvironmentRef(run) && !run.client && !run.namedHostId) return null;
+  return runClientIdentity(run, hostNamesById).name;
 }
 
 /**

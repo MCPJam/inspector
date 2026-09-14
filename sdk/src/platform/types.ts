@@ -975,12 +975,20 @@ export interface PlatformEvalRun {
    * absent on API deployments that predate run environment attribution.
    */
   environment?: PlatformEvalRunEnvironment | null;
+  /** Durable execution client; absent on older runs. Distinct from launcher. */
+  client?: {
+    id: string | null;
+    name: string;
+    hostStyle?: string;
+    modelId?: string;
+    source: "environment" | "attached_host" | "suite_default" | "sdk";
+  };
   /** Shared by every per-target run from the same fan-out launch. */
   runGroupId?: string;
   /** Model the run actually executed with. Absent on pre-attribution rows. */
   effectiveModelId?: string;
-  /** `"client_default"` inherited the host model; `"override"` used env.modelId. */
-  modelSource?: "client_default" | "override";
+  /** `case` uses the sole snapshot model; the other values describe environment attribution. */
+  modelSource?: "client_default" | "override" | "case";
   /**
    * Which engine executed the run: `"emulated"` (the platform's own turn loop)
    * or `"harness:<id>"` (a real agent runtime such as Claude Code).
@@ -2220,8 +2228,9 @@ export interface PlatformRunCompareSide {
     passRate: number;
   } | null;
   environment?: { id: string; name: string | null };
+  client?: { name: string };
   effectiveModelId?: string;
-  modelSource?: "client_default" | "override";
+  modelSource?: "client_default" | "override" | "case";
 }
 
 /**
