@@ -377,7 +377,8 @@ export function promptsToEvalResult(
     // A caller-declared status wins; otherwise the same named legacy rule, on
     // the error this mapper already derived from the prompts.
     status:
-      overrides.status ?? legacyIterationStatusFromExecutionError(iterationError),
+      overrides.status ??
+      legacyIterationStatusFromExecutionError(iterationError),
     durationMs: durationSum > 0 ? durationSum : undefined,
     provider: overrides.provider ?? first.getProvider(),
     model: overrides.model ?? first.getModel(),
@@ -592,18 +593,26 @@ export function iterationToEvalResult(
     provider,
     model,
     expectedToolCalls: options.expectedToolCalls,
-    actualToolCalls,
-    tokens: {
-      input: iteration.tokens.input,
-      output: iteration.tokens.output,
-      total: iteration.tokens.total,
-    },
+    actualToolCalls: iteration.captureError ? undefined : actualToolCalls,
+    tokens: iteration.captureError
+      ? undefined
+      : {
+          input: iteration.tokens.input,
+          output: iteration.tokens.output,
+          total: iteration.tokens.total,
+        },
     error: iteration.error,
-    trace,
+    trace: iteration.captureError ? undefined : trace,
     widgetSnapshots: widgetSnapshots.length > 0 ? widgetSnapshots : undefined,
     metadata: {
       iterationNumber: index + 1,
       retryCount: iteration.retryCount ?? 0,
+      ...(iteration.captureError
+        ? {
+            captureError: iteration.captureError,
+            captureCompleteness: "unavailable",
+          }
+        : {}),
     },
   };
 }
@@ -1007,7 +1016,7 @@ export function iterationsToEvalResultInputs(
       status: resolveIterationLifecycleStatus(iteration),
       durationMs: durationMs > 0 ? durationMs : undefined,
       expectedToolCalls,
-      actualToolCalls,
+      actualToolCalls: iteration.captureError ? undefined : actualToolCalls,
       // Hosted↔local identity and semantics, on the wire. `caseId` is the
       // DECLARED identity the backend resolves by first (and adopts onto a
       // case that resolved by content hash); `externalCaseId` is the older
@@ -1028,19 +1037,27 @@ export function iterationsToEvalResultInputs(
       ...(caseIdentity?.expectedOutput !== undefined
         ? { expectedOutput: caseIdentity.expectedOutput }
         : {}),
-      tokens: {
-        input: iteration.tokens.input,
-        output: iteration.tokens.output,
-        total: iteration.tokens.total,
-      },
+      tokens: iteration.captureError
+        ? undefined
+        : {
+            input: iteration.tokens.input,
+            output: iteration.tokens.output,
+            total: iteration.tokens.total,
+          },
       error: iteration.error,
-      trace,
+      trace: iteration.captureError ? undefined : trace,
       widgetSnapshots: widgetSnapshots.length > 0 ? widgetSnapshots : undefined,
       advancedConfig,
       matchOptions,
       metadata: mergeHostExtrasIntoMetadata(
         {
           retryCount: iteration.retryCount ?? 0,
+          ...(iteration.captureError
+            ? {
+                captureError: iteration.captureError,
+                captureCompleteness: "unavailable",
+              }
+            : {}),
           iterationNumber: index + 1,
           ...(iteration.predicateResults
             ? { predicates: iteration.predicateResults }
@@ -1114,8 +1131,15 @@ export function suiteTestResultsToEvalResultInputs(
         status: resolveIterationLifecycleStatus(iteration),
         durationMs: durationMs > 0 ? durationMs : undefined,
         expectedToolCalls,
-        actualToolCalls,
-        ...(identity?.caseId !== undefined ? { caseId: identity.caseId } : {}),
+        actualToolCalls: iteration.captureError ? undefined : actualToolCalls,
+        ...(identity?.caseId !== undefined
+          ? {
+              caseId: identity.caseId,
+              ...(testResult.runEvaluation
+                ? { externalIterationId: `${identity.caseId}:${index}` }
+                : {}),
+            }
+          : {}),
         ...(identity?.externalCaseId !== undefined
           ? { externalCaseId: identity.externalCaseId }
           : {}),
@@ -1126,13 +1150,15 @@ export function suiteTestResultsToEvalResultInputs(
         ...(identity?.expectedOutput !== undefined
           ? { expectedOutput: identity.expectedOutput }
           : {}),
-        tokens: {
-          input: iteration.tokens.input,
-          output: iteration.tokens.output,
-          total: iteration.tokens.total,
-        },
+        tokens: iteration.captureError
+          ? undefined
+          : {
+              input: iteration.tokens.input,
+              output: iteration.tokens.output,
+              total: iteration.tokens.total,
+            },
         error: iteration.error,
-        trace,
+        trace: iteration.captureError ? undefined : trace,
         widgetSnapshots:
           widgetSnapshots.length > 0 ? widgetSnapshots : undefined,
         advancedConfig,
@@ -1142,6 +1168,12 @@ export function suiteTestResultsToEvalResultInputs(
             testName,
             iterationNumber: index + 1,
             retryCount: iteration.retryCount ?? 0,
+            ...(iteration.captureError
+              ? {
+                  captureError: iteration.captureError,
+                  captureCompleteness: "unavailable",
+                }
+              : {}),
             ...(iteration.predicateResults
               ? { predicates: iteration.predicateResults }
               : {}),

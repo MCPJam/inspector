@@ -12,6 +12,14 @@
  * triggers it is not: a tool poll every two seconds, an invocation per click.
  * Once a minute is far inside the 30-minute window and costs one write.
  *
+ * THE WINDOW IS NO LONGER 30 MINUTES for a hosted browser. Those boxes are
+ * reclaimed about a minute after the last counted touch — hiding a panel emits
+ * no close event, so presence is polled instead — which makes these touches the
+ * lease rather than a safety net. A minute of throttle still sits inside the
+ * control plane's own 90-second grace, so a renewal always lands before the
+ * reclaim; but a caller that stops touching now loses the box in minutes, not
+ * half an hour. Only touch when somebody is genuinely there.
+ *
  * Per-process, like the panel's original copy of this. A second replica
  * touching the same computer within the same minute sends a second write,
  * which is harmless — the failure this protects against is one replica writing
@@ -90,6 +98,10 @@ const sessionCommandThrottle = createTouchThrottle(
   ACTIVITY_TOUCH_THROTTLE_MS,
   MAX_TRACKED_COMPUTERS,
 );
+const sessionPanelThrottle = createTouchThrottle(
+  ACTIVITY_TOUCH_THROTTLE_MS,
+  MAX_TRACKED_COMPUTERS,
+);
 
 /**
  * May this computer's activity be touched now? Records the decision, so a
@@ -117,9 +129,26 @@ export function shouldTouchSessionCommand(
   return sessionCommandThrottle.shouldTouch(sessionId, now);
 }
 
+/**
+ * May this browser session's PRESENCE clock be touched now?
+ *
+ * Its own key space, not the command one: on a desktop box a single glance
+ * feeds both, and they must be able to be in different phases. Presence
+ * arrives far faster than it needs to be recorded — the WebMCP stream ticks
+ * every 15s and the frame socket every 60s — while the control plane only
+ * needs to hear once a minute to keep a box out of the reclaim window.
+ */
+export function shouldTouchSessionPanel(
+  sessionId: string,
+  now: number = Date.now(),
+): boolean {
+  return sessionPanelThrottle.shouldTouch(sessionId, now);
+}
+
 export function resetActivityThrottleForTests(): void {
   computerThrottle.reset();
   sessionCommandThrottle.reset();
+  sessionPanelThrottle.reset();
 }
 
 export function trackedComputerCountForTests(): number {

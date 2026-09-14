@@ -1,6 +1,5 @@
-import {
-  githubExecutionPolicy,
-} from "../../services/github-checks/credential-policy.js";
+import { suppressedSuiteStandardCheckIdsSchema } from "@mcpjam/sdk/contract";
+import { githubExecutionPolicy } from "../../services/github-checks/credential-policy.js";
 import { ConvexHttpClient } from "convex/browser";
 import type { MCPClientManager, MCPServerReplayConfig } from "@mcpjam/sdk";
 import { readTasksPolicy } from "@mcpjam/sdk";
@@ -344,6 +343,8 @@ export const RunEvalsRequestSchema = z.object({
         // boundary on the wire so it doesn't get silently stripped
         // (feedback_zod_strips_unthreaded_fields).
         predicates: casePredicatesSchema.optional(),
+        suppressedSuiteStandardCheckIds:
+          suppressedSuiteStandardCheckIdsSchema.optional(),
         // Widget-probe discriminant + pinned tool call. Same silent-strip
         // rationale as `predicates` above. Probe entries carry display-only
         // model/provider sentinels to satisfy the required fields; the
@@ -594,6 +595,11 @@ export type RunEvalsRequest = z.infer<typeof RunEvalsRequestSchema>;
  * {@link EvalRunProvenance} beside the mutation call that has to honour it.
  */
 type RunEvalsWithManagerRequest = RunEvalsRequest & {
+  /** Already resolved by the public inline-suite boundary. */
+  hostAttachments?: Array<{
+    namedHostId: string;
+    selectedServerIds?: string[];
+  }>;
   orgModelConfig?: ResolvedOrgModelConfig;
   /**
    * Extra headers stamped on every per-step Convex request this run makes.
@@ -735,6 +741,8 @@ export const RunTestCaseRequestSchema = z.object({
       // through every Zod boundary; the runner resolves it against the
       // suite's `defaultPredicates` per the case mode.
       predicates: casePredicatesSchema.optional(),
+      suppressedSuiteStandardCheckIds:
+        suppressedSuiteStandardCheckIdsSchema.optional(),
     })
     // Convert a legacy `promptTurns` override (top-level OR `advancedConfig`)
     // to `steps` when the caller didn't send `steps` directly, so the runner's
@@ -1419,6 +1427,7 @@ function toCaseBatchItem(
     advancedConfig?: any;
     matchOptions?: import("@/shared/eval-matching").MatchOptionsDTO;
     predicates?: import("@/shared/eval-matching").CasePredicates;
+    suppressedSuiteStandardCheckIds?: string[];
   },
   opts: { idempotencyKey?: string },
 ): EvalCaseBatchItem {
@@ -1440,6 +1449,12 @@ function toCaseBatchItem(
     advancedConfig: sanitizeForConvexTransport(testCaseData.advancedConfig),
     matchOptions: testCaseData.matchOptions,
     predicates: testCaseData.predicates,
+    ...(testCaseData.suppressedSuiteStandardCheckIds !== undefined
+      ? {
+          suppressedSuiteStandardCheckIds:
+            testCaseData.suppressedSuiteStandardCheckIds,
+        }
+      : {}),
     ...(opts.idempotencyKey ? { idempotencyKey: opts.idempotencyKey } : {}),
   };
 }
@@ -1595,6 +1610,10 @@ function flushCaseOutcomes(
  * stays the single run engine that calls this then starts the recorder.
  */
 export async function authorEvalSuite(args: {
+  hostAttachments?: Array<{
+    namedHostId: string;
+    selectedServerIds?: string[];
+  }>;
   convexClient: ReturnType<typeof createConvexClients>["convexClient"];
   tests: RunEvalsRequest["tests"];
   resolvedServerIds: string[];
@@ -1670,6 +1689,7 @@ export async function authorEvalSuite(args: {
       advancedConfig?: any;
       matchOptions?: import("@/shared/eval-matching").MatchOptionsDTO;
       predicates?: import("@/shared/eval-matching").CasePredicates;
+      suppressedSuiteStandardCheckIds?: string[];
     }
   >();
 
@@ -1691,6 +1711,7 @@ export async function authorEvalSuite(args: {
         advancedConfig: test.advancedConfig,
         matchOptions: test.matchOptions,
         predicates: test.predicates,
+        suppressedSuiteStandardCheckIds: test.suppressedSuiteStandardCheckIds,
       });
     }
     // Probe entries carry display-only model sentinels — never collect them
@@ -1866,7 +1887,12 @@ export async function authorEvalSuite(args: {
               judgeRequirementChanged ||
               advancedConfigChanged ||
               matchOptionsChanged ||
-              predicatesChanged;
+              predicatesChanged ||
+              (testCaseData.suppressedSuiteStandardCheckIds !== undefined &&
+                JSON.stringify(testCaseData.suppressedSuiteStandardCheckIds) !==
+                  JSON.stringify(
+                    existingTestCase.suppressedSuiteStandardCheckIds ?? [],
+                  ));
 
             if (hasChanges) {
               await convexClient.mutation("testSuites:updateTestCase" as any, {
@@ -1888,6 +1914,12 @@ export async function authorEvalSuite(args: {
                 ),
                 matchOptions: testCaseData.matchOptions,
                 predicates: testCaseData.predicates,
+                ...(testCaseData.suppressedSuiteStandardCheckIds !== undefined
+                  ? {
+                      suppressedSuiteStandardCheckIds:
+                        testCaseData.suppressedSuiteStandardCheckIds,
+                    }
+                  : {}),
               });
             }
             outcomes[slot] = {
@@ -1940,6 +1972,9 @@ export async function authorEvalSuite(args: {
         description: suiteDescription,
         environment: persistedEnvironment,
         defaultPassCriteria: passCriteria,
+        ...(args.hostAttachments
+          ? { hostAttachments: args.hostAttachments }
+          : {}),
         ...(idempotencyKey ? { idempotencyKey } : {}),
       },
     );
@@ -2358,6 +2393,7 @@ export async function prepareEvalRun(
   // their names so the run record + return below still reference them.
   const { suiteId: resolvedSuiteId, caseUpsert: authoredCaseUpsert } =
     await authorEvalSuite({
+      hostAttachments: request.hostAttachments,
       convexClient,
       tests,
       resolvedServerIds,
@@ -3081,6 +3117,10 @@ export async function runEvalTestCaseWithManager(
       suiteDefaults: suiteDefaultPredicates,
       runOverride: testCaseOverrides?.successPredicates as
         import("@/shared/eval-matching").Predicate[] | undefined,
+      suppressedSuiteStandardCheckIds:
+        testCaseOverrides?.suppressedSuiteStandardCheckIds ??
+        (testCase as { suppressedSuiteStandardCheckIds?: string[] })
+          .suppressedSuiteStandardCheckIds,
       envelope: (testCaseOverrides?.predicates ??
         (testCase as { predicates?: unknown }).predicates) as
         import("@/shared/eval-matching").CasePredicates | undefined,
@@ -3501,6 +3541,10 @@ export async function streamEvalTestCaseWithManager(
       suiteDefaults: suiteDefaultPredicates,
       runOverride: testCaseOverrides?.successPredicates as
         import("@/shared/eval-matching").Predicate[] | undefined,
+      suppressedSuiteStandardCheckIds:
+        testCaseOverrides?.suppressedSuiteStandardCheckIds ??
+        (testCase as { suppressedSuiteStandardCheckIds?: string[] })
+          .suppressedSuiteStandardCheckIds,
       envelope: (testCaseOverrides?.predicates ??
         (testCase as { predicates?: unknown }).predicates) as
         import("@/shared/eval-matching").CasePredicates | undefined,

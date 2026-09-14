@@ -78,10 +78,10 @@ describe("add-step-picker-catalog integrity", () => {
     );
   });
 
-  it("has 6 primary items and 16 secondary items", () => {
+  it("has 6 primary items and 17 secondary items", () => {
     expect(primaryItems()).toHaveLength(6);
-    expect(secondaryItems()).toHaveLength(16);
-    expect(secondaryCount()).toBe(16);
+    expect(secondaryItems()).toHaveLength(17);
+    expect(secondaryCount()).toBe(17);
   });
 
   it("places widgetNoConsoleErrors under viewLifecycle, not transcript", () => {

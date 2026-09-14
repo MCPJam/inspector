@@ -61,6 +61,19 @@ const ALLOWED_IMPORTS = [
   // grading its own output. An evidence extractor cannot do that, and the
   // assertion below pins that it stays that way.
   "./transcript-evidence",
+  // ADDED DELIBERATELY, per the note above, and for a TYPE only.
+  //
+  // `agent-activity.ts` imports NOTHING — it is a pure function from a handful
+  // of facts about the iteration to `active | exempt | no_agent_activity`. It
+  // is an INPUT in the same class as `transcript-evidence`: the verdict is
+  // handed the assessment, it does not compute one, and it certainly cannot
+  // reach the score contract through it.
+  //
+  // WHY THE VERDICT NEEDS TO KNOW. The guard has to set `passed = false`, not
+  // merely emit a row, because under the `shadow` and `off` grading modes the
+  // score rows decide nothing and this boolean still does — a guard that only
+  // produced a row would let a vacuous pass stand in the modes most runs use.
+  "./agent-activity",
 ];
 
 /** The extractor is held to the same seal, so widening it is not a back door. */
@@ -141,5 +154,82 @@ describe("buildEvalIterationVerdict output is unchanged", () => {
     } as unknown as Parameters<typeof buildEvalIterationVerdict>[0]);
     expect(failing.passed).toBe(false);
     expect(JSON.stringify(failing)).toMatchSnapshot();
+  });
+});
+
+describe("the agent-activity gate", () => {
+  const input = {
+    promptTurns: [{ prompt: "hi", expectedToolCalls: ["list_files"] }],
+    toolsCalledByPrompt: [["list_files"]],
+    isNegativeTest: false,
+    matchOptions: undefined,
+    turnCheckResults: [],
+    effectivePredicates: undefined,
+    transcriptInput: { messages: [], toolCalls: [] },
+    trace: undefined,
+    toolErrors: [],
+    failOnToolError: false,
+    scriptedCheckFailures: [],
+  } as unknown as Parameters<typeof buildEvalIterationVerdict>[0];
+
+  test("existing fixtures are unchanged when agentActivity is omitted", () => {
+    // THE COMPATIBILITY PIN. Absent means "do not ask", so every caller and
+    // every recorded fixture gets the verdict it always got.
+    expect(buildEvalIterationVerdict(input).passed).toBe(true);
+  });
+
+  test("a no_agent_activity iteration does NOT pass", () => {
+    // Applied at the VERDICT boundary rather than only as a score row: under
+    // the `shadow` and `off` grading modes the rows decide nothing and this
+    // boolean still does.
+    const verdict = buildEvalIterationVerdict({
+      ...input,
+      agentActivity: {
+        status: "no_agent_activity",
+        detail: "nothing ran",
+      },
+    });
+    expect(verdict.passed).toBe(false);
+    // The MATCHER's own verdict is untouched: the guard is a gate on top of
+    // the evaluation, not a rewrite of it.
+    expect(verdict.evaluation.passed).toBe(true);
+  });
+
+  test("an exempt assessment changes nothing", () => {
+    for (const reason of [
+      "model_free",
+      "negative_test",
+      "no_tool_expected",
+      "no_tool_surface",
+    ] as const) {
+      expect(
+        buildEvalIterationVerdict({
+          ...input,
+          agentActivity: { status: "exempt", reason },
+        }).passed,
+        `exempt:${reason} should not change the verdict`,
+      ).toBe(true);
+    }
+  });
+
+  test("an active assessment changes nothing", () => {
+    expect(
+      buildEvalIterationVerdict({
+        ...input,
+        agentActivity: { status: "active" },
+      }).passed,
+    ).toBe(true);
+  });
+
+  test("does not turn a FAILING iteration into anything else", () => {
+    // The gate only ever removes a pass. A case that already failed on its
+    // matcher keeps failing for its own reason.
+    const verdict = buildEvalIterationVerdict({
+      ...input,
+      toolsCalledByPrompt: [[]],
+      agentActivity: { status: "no_agent_activity", detail: "nothing ran" },
+    });
+    expect(verdict.passed).toBe(false);
+    expect(verdict.evaluation.passed).toBe(false);
   });
 });

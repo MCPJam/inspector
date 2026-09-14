@@ -60,6 +60,14 @@ hosted cleanup/hibernate remains available after rollout withdrawal.
 5. Later, validate hosted template, desktop credit rate, data-plane credentials,
    and `HOSTED_BROWSER_TOOLS_ENABLED`. Target internal signed-in users with the
    hosted flag; test provisioning and billing before widening it.
+6. Before widening hosted beyond the internal cohort, confirm reclaim on real
+   traffic. A hosted box is hibernated about a minute after the last counted
+   presence touch, and woken through `POST /computers/wake`; the cost of getting
+   that wrong is silent and continuous. Deploy the backend before the Inspector
+   build that calls the wake route — the Inspector falls through to the old
+   attach if the route is missing, so a hosted box would run unmetered and
+   unreclaimed until the vendor timeout. Measure mean awake minutes per session
+   against the ~51 min baseline before and after.
 
 ## Required live smoke checks — not completed by unit tests
 
@@ -77,6 +85,14 @@ hosted cleanup/hibernate remains available after rollout withdrawal.
   removable. Existing consent can still be revoked and agent sessions closed.
 - Hosted flag on, local off: signed-in cloud launch works with credits metered;
   guests remain denied. No local fallback occurs.
+- Hosted reclaim, end to end: with the panel open the box is `ready`; hide or
+  close it and the row reaches `hibernating` within ~2.5 min, with
+  `e2b sandbox list -s paused` agreeing. Re-show it and the box returns `ready`
+  with the SAME `bootId` (a resume, not a relaunch) in a second or two.
+- Hosted reclaim, negative cases: a box is never reclaimed while a `browser_*`
+  turn is running with no human watching, while somebody holds the lease, or
+  across a hide/re-show inside the grace window. A hidden pane does NOT wake a
+  reclaimed box; showing it again does.
 
 Older installed clients may still hide Browser behind the Computer flag. They
 need an application update; this rollout deliberately does not enable Computers

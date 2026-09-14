@@ -18,6 +18,7 @@ import type {
   XaaEnterprisePolicy,
 } from "@mcpjam/sdk";
 import { HOSTED_MODE, WEB_CALL_TIMEOUT_MS } from "../../config.js";
+import { observeConnectionFetch } from "../../services/connection-failure-context.js";
 import { hostedMcpBaseFetch } from "../../utils/hosted-mcp-base-fetch.js";
 import { HOSTED_TASK_BATCH_MAX as HOSTED_TASK_BATCH_MAX_SHARED } from "../../../shared/hosted-tasks.js";
 import {
@@ -72,6 +73,7 @@ import {
   buildHostedOAuthUnauthorizedHandler,
   refreshHostedOAuthAccessTokenWithLocalFallback,
 } from "../../utils/hosted-oauth-refresh.js";
+import { assertSecretsOriginMatches } from "../../utils/secret-origin-binding.js";
 import {
   fetchRuntimeServerSecrets,
   fetchServerClientSecret,
@@ -414,6 +416,15 @@ export type ConvexAuthorizeResponse = {
     httpVariant?: "streamable-http" | "sse";
     headers?: Record<string, string>;
     hasHeaders?: boolean;
+    /**
+     * The origin this row's ON-ROW stored credentials were bound to, from the
+     * backend (`convex/webAuthorize.ts`). MJ-003: the connect path must not send
+     * a credential to a URL it was not saved against. Absent on a row with no
+     * on-row credential — including an OAuth-only row, whose token is bound and
+     * refused backend-side instead — and, on an older backend, on one that has
+     * them, which `assertSecretsOriginMatches` treats as a refusal.
+     */
+    secretsBoundOrigin?: string;
     useOAuth?: boolean;
     // Cross-App Access (XAA) discriminator + non-secret config, surfaced by the
     // hosted authorize endpoint. The confidential client secret + token endpoint
@@ -1734,6 +1745,30 @@ export async function createAuthorizedManager(
       let connectOnUnauthorized = onUnauthorized;
       const useXaa =
         auth.serverConfig.transportType === "http" && effectiveAuth === "xaa";
+      // MJ-003. The XAA mint is not credential-free: `preregistered` and `dcr`
+      // reveal the row's stored client secret and post it to a token endpoint
+      // discovered from the row's CURRENT url (`xaa-mint.ts`
+      // `resolveServerTarget` -> `resolveAuthorizedServerTarget`, which falls
+      // back to the resource URL when no issuer is stored) — the exact repoint
+      // this gate exists to refuse. `cimd` sends no row secret: public client,
+      // or an org-level key whose assertion is audience-bound to the endpoint it
+      // goes to.
+      //
+      // The resulting ACCESS token needs no gate either way: it is minted per
+      // connect with `resource` set to the row's current url, so it is bound by
+      // construction. The gate is about the secret spent to obtain it.
+      if (
+        useXaa &&
+        resolveXaaConnectRegistrationMode(
+          auth.serverConfig.registrationMode,
+        ) !== "cimd"
+      ) {
+        assertSecretsOriginMatches({
+          boundOrigin: auth.serverConfig.secretsBoundOrigin,
+          targetUrl: auth.serverConfig.url,
+          serverName: displayServerName,
+        });
+      }
       if (useXaa) {
         // (`xaaIdentityError` is validated batch-wide in PASS 1 — before any
         // sibling server can mint.)
@@ -1854,8 +1889,19 @@ export async function createAuthorizedManager(
               serverName: serverNamesById?.[serverId] ?? null,
               serverUrl: auth.serverConfig.url,
             },
-          );
+          ).withSetupFailureSource("authorization_required");
         };
+      }
+
+      // Reject an already-stale authorize snapshot before decrypting. The reveal
+      // helper also checks the binding returned with the values: the row may
+      // change between authorize and reveal.
+      if (auth.serverConfig.hasHeaders === true) {
+        assertSecretsOriginMatches({
+          boundOrigin: auth.serverConfig.secretsBoundOrigin,
+          targetUrl: auth.serverConfig.url,
+          serverName: displayServerName,
+        });
       }
 
       const authForConfig =
@@ -1869,6 +1915,7 @@ export async function createAuthorizedManager(
                   ...(auth.serverConfig.headers ?? {}),
                   ...((
                     await fetchRuntimeServerSecrets({
+                      expectedTargetUrl: auth.serverConfig.url,
                       bearerToken,
                       projectId,
                       serverId,
@@ -1928,7 +1975,20 @@ export async function createAuthorizedManager(
     throw error;
   });
 
-  const manager = new MCPClientManager(Object.fromEntries(configEntries), {
+  // Each server owns its capture even when two configs use the same URL.
+  // Install before construction: the manager starts connecting eagerly.
+  const observedConfigs = Object.fromEntries(
+    configEntries.map(([id, config]) => [
+      id,
+      {
+        ...config,
+        baseFetch: observeConnectionFetch(
+          config.baseFetch ?? hostedMcpBaseFetch(),
+        ),
+      },
+    ]),
+  );
+  const manager = new MCPClientManager(observedConfigs, {
     defaultTimeout: timeoutMs,
     rpcLogger: options?.rpcLogger,
     httpLogger: options?.httpLogger,

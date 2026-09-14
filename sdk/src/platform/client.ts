@@ -1,6 +1,20 @@
-import type { PlatformSessionBrowserBodies, PlatformSessionBrowserResults } from "./types.js";
-import type { PlatformSessionBrowserInput, PlatformSessionBrowserOperation, PlatformSessionBrowserOpened, PlatformBrowserToolPolicy } from "./types.js";
+import type {
+  EvalBacktestDraft,
+  EvalBacktestContinuation,
+  EvalBacktestReport,
+} from "../contract/eval-backtest.js";
+import type {
+  PlatformSessionBrowserBodies,
+  PlatformSessionBrowserResults,
+} from "./types.js";
+import type {
+  PlatformSessionBrowserInput,
+  PlatformSessionBrowserOperation,
+  PlatformSessionBrowserOpened,
+  PlatformBrowserToolPolicy,
+} from "./types.js";
 import { PlatformApiError } from "./errors.js";
+import { readSdkVersion } from "../sdk-version.js";
 import type {
   PlatformScenarioSummary,
   PlatformScenarioDetail,
@@ -43,7 +57,7 @@ import type {
   PlatformEvalSuiteDeleted,
   PlatformEvalSuiteDetail,
   PlatformEvalSuiteRevision,
-  PlatformEvalStepResult,
+  PlatformEvalStepsPage,
   PlatformComputerAttached,
   PlatformComputerReset,
   PlatformEnvironment,
@@ -168,7 +182,19 @@ export interface PlatformApiClientOptions {
   fetch?: typeof fetch;
   /** Per-request timeout. */
   timeoutMs?: number;
-  /** Optional User-Agent; ignored by browsers (forbidden header). */
+  /**
+   * A token naming the calling PROGRAM, prefixed onto this client's own
+   * `mcpjam-sdk/<version>` rather than replacing it — see
+   * {@link DEFAULT_PLATFORM_USER_AGENT}. Omit it and the SDK still identifies
+   * itself outside a browser.
+   *
+   * In a browser (a global `window` and `document`) neither the suffix nor the
+   * default is added, and a value given here is sent as-is. Browsers disagree
+   * on the header: Chromium silently drops a script-set `User-Agent`, but
+   * Firefox sends it, because the Fetch spec no longer forbids it. A page
+   * usually bundles the SDK from source, where the version is `unknown`, so a
+   * default there would only log browser users as `mcpjam-sdk/unknown`.
+   */
   userAgent?: string;
   /**
    * Extra headers sent on every request — for a deployment that sits behind an
@@ -242,6 +268,9 @@ export interface PlatformCiMetadataOption {
   job?: string;
   runUrl?: string;
   runId?: string;
+  repositoryUrl?: string;
+  prUrl?: string;
+  branchUrl?: string;
   /** Accepted in the run row's own spelling too, when a caller has it. */
   pipelineId?: string;
   jobId?: string;
@@ -354,6 +383,9 @@ function buildLaunchHeaders(
       "job",
       "jobId",
       "runUrl",
+      "repositoryUrl",
+      "prUrl",
+      "branchUrl",
       "runId",
       "pipelineId",
     ] as const) {
@@ -490,6 +522,43 @@ function stripTrailingSlashes(url: string): string {
   return url.slice(0, end);
 }
 
+/**
+ * What this client calls itself when the caller says nothing.
+ *
+ * It used to say nothing at all, which is why the question "who is on the SDK,
+ * and on which version?" has no answer in the request logs: the header was set
+ * only when a caller supplied one, and most callers do not. That absence is not
+ * a gap in the telemetry — Axiom carries every request — it is a field nobody
+ * populated, and the cost of it is that decisions about this surface get argued
+ * from reasoning rather than settled from data.
+ *
+ * A caller's own token is PREFIXED rather than replaced, so `mcpjam-cli/5.7.1
+ * mcpjam-sdk/8.7.1` says both which program is calling and which SDK it links.
+ * Losing the second was the whole problem; losing the first would trade one
+ * blind spot for another.
+ *
+ * NOT an identity claim, and nothing may treat it as one. A user-agent is
+ * caller-supplied text, this repository already removed UA-derived attribution
+ * once for exactly that reason, and re-introducing it as a log field is only
+ * safe while it stays a log field.
+ */
+export const DEFAULT_PLATFORM_USER_AGENT = `mcpjam-sdk/${readSdkVersion()}`;
+
+/**
+ * Whether this client is running in a browser page, where the default
+ * user-agent must not be sent (see {@link PlatformApiClientOptions.userAgent}).
+ *
+ * Keyed on `window` AND `document`, never on `navigator`: Node 21+, Deno, Bun
+ * and Cloudflare Workers all define `navigator` (in Workers its `userAgent` is
+ * `"Cloudflare-Workers"`), and none of them has a `document`. Requiring both
+ * also keeps Deno 1.x, which defined `window` but no `document`, on the
+ * server side.
+ */
+function isBrowserPage(): boolean {
+  const scope = globalThis as { window?: unknown; document?: unknown };
+  return scope.window !== undefined && scope.document !== undefined;
+}
+
 export class PlatformApiClient {
   private readonly baseUrl: string;
   private readonly getAuth: () => string | Promise<string>;
@@ -517,7 +586,11 @@ export class PlatformApiClient {
     // client instance, which throws "Illegal invocation" in Workers/browsers.
     this.fetchFn = options.fetch ?? fetch.bind(globalThis);
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    this.userAgent = options.userAgent;
+    this.userAgent = isBrowserPage()
+      ? options.userAgent
+      : options.userAgent
+      ? `${options.userAgent} ${DEFAULT_PLATFORM_USER_AGENT}`
+      : DEFAULT_PLATFORM_USER_AGENT;
     this.launchHeaders = buildLaunchHeaders(options);
     // Lower-cased at construction so `request` cannot end up with two spellings
     // of one header — HTTP names are case-insensitive, but a plain object's
@@ -2505,6 +2578,35 @@ export class PlatformApiClient {
   }
 
   /**
+   * Preview deterministic evaluators using stored evidence, without model calls
+   * or verdict writes. Resume a bounded result with its continuation and the
+   * unchanged draft. Starting a new preview has a separate one-minute cooldown.
+   */
+  backtestEvalRun(
+    params: {
+      projectId: string;
+      runId: string;
+      draft: EvalBacktestDraft;
+      continuation?: EvalBacktestContinuation;
+    },
+    options?: RequestOptions
+  ): Promise<EvalBacktestReport> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(params.runId)}/backtest`,
+      {
+        body: {
+          ...params.draft,
+          ...(params.continuation ? { continuation: params.continuation } : {}),
+        },
+      },
+      options
+    );
+  }
+
+  /**
    * Request (or with `force`, re-request) LLM-as-judge grading of a finished
    * run. SPENDS the org's model budget; poll `getEvalRun().judges` rather than
    * re-requesting.
@@ -2998,7 +3100,7 @@ export class PlatformApiClient {
   getEvalRunSteps(
     params: { projectId: string; runId: string; iterationId: string },
     options?: RequestOptions
-  ): Promise<PlatformPage<PlatformEvalStepResult>> {
+  ): Promise<PlatformEvalStepsPage> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(

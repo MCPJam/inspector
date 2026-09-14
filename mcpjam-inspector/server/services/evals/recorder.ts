@@ -15,7 +15,7 @@ import { sanitizeForConvexTransport } from "./convex-sanitize.js";
 import type { RunPinnedPluginVersion } from "./run-plugin-snapshot.js";
 import { finalizeEvalIteration } from "./finalize-iteration.js";
 import { forgetShadowMismatchRun } from "./shadow-mismatch.js";
-import { RUNNER_CAPABILITIES } from "./runner-capabilities.js";
+import { runnerCapabilities } from "./runner-capabilities.js";
 import type {
   RunCiMetadata,
   RunLauncher,
@@ -804,7 +804,7 @@ export const startSuiteRunWithRecorder = async ({
         // self-hosted ones this Inspector talks to.
         ...(launcher ? { launcher } : {}),
         ...(ciMetadata ? { ciMetadata } : {}),
-        runnerCapabilities: RUNNER_CAPABILITIES,
+        runnerCapabilities: runnerCapabilities(),
       }
     );
   } catch (error) {
@@ -965,9 +965,9 @@ export const startSuiteRunWithRecorder = async ({
   ): import("@/shared/eval-matching").Predicate[] | undefined =>
     resolveCaseSuccessPredicates({
       suiteDefaults: suiteDefaultPredicates,
+      suppressedSuiteStandardCheckIds: tc.suppressedSuiteStandardCheckIds,
       envelope: tc.predicates as
-        | import("@/shared/eval-matching").CasePredicates
-        | undefined,
+        import("@/shared/eval-matching").CasePredicates | undefined,
       legacyCase: tc.successPredicates as
         | import("@/shared/eval-matching").Predicate[]
         | undefined,

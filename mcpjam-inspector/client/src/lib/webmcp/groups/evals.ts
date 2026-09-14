@@ -22,7 +22,12 @@ import {
   commandResponseToActionResult,
   dispatchInspectorCommand,
 } from "../ui-actions";
-import { asOptionalString, errorResult, fromActionResult } from "./shared";
+import {
+  PUBLISH_NATIVE,
+  asOptionalString,
+  errorResult,
+  fromActionResult,
+} from "./shared";
 
 const SUITE_PROPERTY = {
   type: "string",
@@ -58,6 +63,7 @@ export function buildEvalsUiTools(): UiToolDefinition[] {
         idempotentHint: true,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE,
       // Opens the /evals/create route (the dialog) on the Evaluate screen.
       mayNavigate: true,
       execute: async (args) => {
@@ -91,6 +97,7 @@ export function buildEvalsUiTools(): UiToolDefinition[] {
         idempotentHint: false,
         openWorldHint: true,
       },
+      nativePublication: PUBLISH_NATIVE,
       // A successful single-host launch lands on the new run's detail page.
       mayNavigate: true,
       execute: async (args) => {
@@ -130,6 +137,7 @@ export function buildEvalsUiTools(): UiToolDefinition[] {
         idempotentHint: true,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE,
       execute: async (args) => {
         const runId = asOptionalString(args.runId);
         if (!runId) {
@@ -162,6 +170,7 @@ export function buildEvalsUiTools(): UiToolDefinition[] {
         idempotentHint: false,
         openWorldHint: true,
       },
+      nativePublication: PUBLISH_NATIVE,
       execute: async (args) => {
         const suite = requireSuite(args.suite);
         if (!suite) {
@@ -214,6 +223,7 @@ export function buildEvalsUiTools(): UiToolDefinition[] {
         idempotentHint: false,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE,
       execute: async (args) => {
         const prompt = asOptionalString(args.prompt);
         if (args.prompt !== undefined && prompt === undefined) {
@@ -297,6 +307,7 @@ export function buildEvalsUiTools(): UiToolDefinition[] {
         idempotentHint: true,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE,
       execute: async (args) => {
         const suite = requireSuite(args.suite);
         if (!suite) {

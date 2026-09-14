@@ -35,7 +35,9 @@ import { WebMcpBridge as Bridge } from "../daemon/webmcp-bridge";
 import { PAGE_TEXT_FN } from "../daemon/page-text";
 import { PAGE_API_PROBE } from "../../webmcp-inspector/launch-args";
 import { DebuggerCdpAdapter } from "./debugger-cdp";
-import { insertsText, resolveKeyPress } from "./key-events";
+// The dispatcher lives in the daemon bundle now: the Playwright engine needs
+// the same key events, and `electron/` is outside that graph.
+import { pressKeyOn, typeByKeystrokes } from "../daemon/keyboard";
 
 /** Matches the Playwright engine's navigation budget. */
 const NAV_TIMEOUT_MS = 30_000;
@@ -817,54 +819,7 @@ export function createElectronPage(
   }
 
   async function pressKey(chord: string): Promise<void> {
-    const cdp = await needCdp();
-    const { key, modifiers, chord: held } = resolveKeyPress(chord);
-
-    for (const modifier of held) {
-      await cdp.send("Input.dispatchKeyEvent", {
-        type: "rawKeyDown",
-        key: modifier.key,
-        code: modifier.code,
-        windowsVirtualKeyCode: modifier.keyCode,
-        modifiers,
-      });
-    }
-
-    const text = insertsText(modifiers) ? key.text : undefined;
-    await cdp.send("Input.dispatchKeyEvent", {
-      // `keyDown` with text, `rawKeyDown` without: sending `keyDown` and no
-      // text makes Chromium synthesise a `char` event for some keys and not
-      // others, which is how a shortcut ends up typing its own letter.
-      type: text === undefined ? "rawKeyDown" : "keyDown",
-      key: key.key,
-      code: key.code,
-      windowsVirtualKeyCode: key.keyCode,
-      modifiers,
-      // `code` alone does not reach `KeyboardEvent.location`, so without this
-      // the page sees a keypad press at location 0 — indistinguishable from
-      // the number row to anything that routes them differently.
-      ...(key.keypad ? { isKeypad: true } : {}),
-      ...(text === undefined ? {} : { text }),
-    });
-    await cdp.send("Input.dispatchKeyEvent", {
-      type: "keyUp",
-      key: key.key,
-      code: key.code,
-      windowsVirtualKeyCode: key.keyCode,
-      modifiers,
-      ...(key.keypad ? { isKeypad: true } : {}),
-    });
-
-    // Released in reverse, so a held Control outlives the Shift inside it.
-    for (const modifier of [...held].reverse()) {
-      await cdp.send("Input.dispatchKeyEvent", {
-        type: "keyUp",
-        key: modifier.key,
-        code: modifier.code,
-        windowsVirtualKeyCode: modifier.keyCode,
-        modifiers: 0,
-      });
-    }
+    await pressKeyOn(await needCdp(), chord);
   }
 
   const page: DriverPage = {
@@ -956,12 +911,17 @@ export function createElectronPage(
         `hovering ${selector}`,
       );
     },
-    async typeText(text) {
-      // `Input.insertText` rather than a key event per character: it is one
-      // round trip instead of three per letter, and it handles anything a
-      // keyboard layout could not produce. The trade is that it fires no
-      // keydown, which matters only for pages that filter input per keystroke.
+    async typeText(text, options) {
+      // `Input.insertText` by default rather than a key event per character:
+      // it is one round trip instead of three per letter, and it handles
+      // anything a keyboard layout could not produce. The trade is that it
+      // fires no keydown, which matters only for pages that filter input per
+      // keystroke — and `keystrokes` is how the driver asks for those.
       const cdp = await needCdp();
+      if (options?.keystrokes) {
+        await typeByKeystrokes(cdp, text, () => {});
+        return;
+      }
       await cdp.send("Input.insertText", { text });
     },
     async fillSelector(selector, text) {
@@ -1173,6 +1133,17 @@ export function createElectronPage(
         type: "mouseWheel",
         x: 0,
         y: 0,
+        deltaX: dx,
+        deltaY: dy,
+      });
+    },
+    // `scrollBy` sends the wheel at (0, 0); this targets the scroller at a point.
+    async scrollAt(point, { dx, dy }) {
+      const cdp = await needCdp();
+      await cdp.send("Input.dispatchMouseEvent", {
+        type: "mouseWheel",
+        x: point.x,
+        y: point.y,
         deltaX: dx,
         deltaY: dy,
       });

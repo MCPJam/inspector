@@ -153,17 +153,22 @@ describe.each(DOC_TABLES)("%s documents every check's stage", (docPath) => {
   });
 });
 
-describe("the chain's unauthorable links", () => {
-  it("keeps connection and discovery free of authored checks", () => {
-    const authorable = [...PREDICATE_KINDS].filter((kind) =>
-      ["connection", "discovery"].includes(PREDICATE_STAGE[kind])
-    );
+describe("runner and discovery authoring", () => {
+  it("keeps connection runner-measured and files the six catalog assertions at discovery", () => {
     expect(
-      authorable,
-      `A predicate now files at connection or discovery. Both docs state ` +
-        `plainly that no check can reach those links — the runner decides them ` +
-        `from setup signals and the egress canary before the case runs. Update ` +
-        `that claim in docs/sdk/concepts/user-value-chain.mdx before shipping.`
+      PREDICATE_KINDS.filter((kind) => PREDICATE_STAGE[kind] === "connection")
     ).toEqual([]);
+    expect(
+      PREDICATE_KINDS.filter(
+        (kind) => PREDICATE_STAGE[kind] === "discovery"
+      ).sort()
+    ).toEqual([
+      "noDeprecatedToolExposed",
+      "toolAnnotationsPresent",
+      "toolDescriptionsPresent",
+      "toolInputSchemasWellFormed",
+      "toolNamesUnique",
+      "toolOutputSchemasPresent",
+    ]);
   });
 });

@@ -334,6 +334,22 @@ function buildEnv(
     options.deviceScaleFactor !== 1
       ? { MCPJAM_BROWSERD_DPR: String(options.deviceScaleFactor) }
       : {}),
+    // Forwarded verbatim: the daemon owns the feature names, so an inspector
+    // never has to be redeployed for a daemon to gain or drop a flag.
+    ...(process.env.MCPJAM_BROWSERD_FEATURES
+      ? { MCPJAM_BROWSERD_FEATURES: process.env.MCPJAM_BROWSERD_FEATURES }
+      : {}),
+    ...(process.env.MCPJAM_BROWSERD_DISABLE_FEATURES
+      ? {
+          MCPJAM_BROWSERD_DISABLE_FEATURES:
+            process.env.MCPJAM_BROWSERD_DISABLE_FEATURES,
+        }
+      : {}),
+    // The shape scrub defaults on; only its kill switch travels, so a rollback
+    // disables it on both sides.
+    ...(process.env.MCPJAM_BROWSER_SHAPE_REDACTION === "0"
+      ? { MCPJAM_BROWSER_SHAPE_REDACTION: "0" }
+      : {}),
   };
   if (options.windowSize) env.MCPJAM_BROWSERD_WINDOW_SIZE = options.windowSize;
   if (options.headless) env.MCPJAM_BROWSERD_HEADLESS = "true";

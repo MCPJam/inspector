@@ -954,6 +954,9 @@ describe("eval export", () => {
       const reloaded = loadEvalSuiteFile(text);
       assert.equal(reloaded.ok, true);
       if (!reloaded.ok) return;
+      // Export writes dialect 1, whose count is spelled `repetitions`.
+      assert.equal(reloaded.authored.schemaVersion, "1");
+      if (reloaded.authored.schemaVersion !== "1") return;
       assert.equal(reloaded.authored.suite.id, "s_billing");
       assert.equal(reloaded.authored.defaults.passThreshold, 0.8);
       assert.equal(reloaded.authored.defaults.repetitions, 5);
@@ -1397,6 +1400,9 @@ describe("eval export", () => {
       );
       assert.equal(loaded.ok, true);
       if (!loaded.ok) return;
+      // Export writes dialect 1, whose count is spelled `repetitions`.
+      assert.equal(loaded.authored.schemaVersion, "1");
+      if (loaded.authored.schemaVersion !== "1") return;
 
       // The modal count is the suite default and the odd one out is explicit.
       assert.equal(loaded.authored.defaults.repetitions, 5);
@@ -1411,8 +1417,8 @@ describe("eval export", () => {
       assert.equal(loaded.authored.defaults.provider, "openai");
 
       // Resolution puts each case back on the count it was fetched with.
-      assert.equal(loaded.resolved.cases[0].repetitions, 5);
-      assert.equal(loaded.resolved.cases[1].repetitions, 9);
+      assert.equal(loaded.resolved.cases[0].iterations, 5);
+      assert.equal(loaded.resolved.cases[1].iterations, 9);
     });
   });
 
@@ -3153,6 +3159,17 @@ describe("file-owned case bodies and idempotency", () => {
     assert.equal(loaded.ok, true);
     if (!loaded.ok) return;
     const testCase = loaded.resolved.enabledCases[0];
+    assert.deepEqual(
+      fileCaseToUpdateBody({
+        ...testCase,
+        suppressedSuiteStandardCheckIds: ["response.errors"],
+      }).suppressedSuiteStandardCheckIds,
+      ["response.errors"],
+    );
+    assert.deepEqual(
+      fileCaseToUpdateBody(testCase, ["response.errors"]).suppressedSuiteStandardCheckIds,
+      [],
+    );
     const created = fileCaseToCreateBody(testCase);
     assert.equal("isNegative" in created, false);
     assert.equal("checks" in created, false);

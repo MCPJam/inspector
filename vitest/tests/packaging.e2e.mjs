@@ -33,12 +33,22 @@
  */
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readdirSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  writeFileSync,
+  readdirSync,
+  readFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const packageDir = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  ".."
+);
 const repoRoot = path.resolve(packageDir, "..");
 const VITEST_VERSION = "3.2.4";
 
@@ -81,6 +91,7 @@ try {
   console.log("packing workspaces...");
   // The SDK is packed too: the fixture must consume the same build a publish
   // would ship, not the workspace symlink.
+  const evaluatorTarball = pack(path.join(repoRoot, "evaluators"), workDir);
   const sdkTarball = pack(path.join(repoRoot, "sdk"), workDir);
   const vitestTarball = pack(packageDir, workDir);
   console.log(`  sdk    ${path.basename(sdkTarball)}`);
@@ -91,7 +102,12 @@ try {
   writeFileSync(
     path.join(fixtureDir, "package.json"),
     `${JSON.stringify(
-      { name: "packaging-fixture", version: "1.0.0", private: true, type: "module" },
+      {
+        name: "packaging-fixture",
+        version: "1.0.0",
+        private: true,
+        type: "module",
+      },
       null,
       2
     )}\n`
@@ -106,9 +122,12 @@ try {
       "--no-fund",
       "--loglevel",
       "error",
+      evaluatorTarball,
       sdkTarball,
       vitestTarball,
       `vitest@${VITEST_VERSION}`,
+      "typescript@5.9.3",
+      "@types/node@22",
     ],
     { cwd: fixtureDir }
   );
@@ -241,15 +260,136 @@ describeEvalSuite("packaged suite", suiteOf(EvalSuite, EvalTest, [
     },
   ];
 
+  scenarios.push(
+    {
+      label:
+        "canonical authoring and declared measurements work from installed artifacts",
+      file: "canonical.test.mjs",
+      expectZero: true,
+      expectInOutput: ["passes", "Reporting: not_requested"],
+      body: `
+import { EvalTest, assertion } from "@mcpjam/sdk";
+import { testEval } from "@mcpjam/vitest";
+import { StubExecutor } from "./support.mjs";
+testEval(new EvalTest({ id: "canonical", name: "canonical", reported: [{id:"quality",version:"1"}],
+execute: async (executor,ctx) => { await executor.run("go"); ctx.report("quality", 0.8); },
+evaluators: { mode:"extend", list:[assertion({type:"noToolErrors"})] } }),
+{executor:new StubExecutor(),run:{iterations:1,mcpjam:{enabled:false}},gate:{minimumPassRate:1}});
+`,
+    },
+    {
+      label: "skip does not instantiate an executor",
+      file: "skip.test.mjs",
+      expectZero: true,
+      expectInOutput: ["skipped"],
+      body: `
+import { it, expect } from "vitest";
+import { EvalTest } from "@mcpjam/sdk";
+import { testEval } from "@mcpjam/vitest";
+let factories=0;
+testEval.skip(new EvalTest({id:"skip",name:"skipped",execute:()=>{throw new Error("executed")}}),
+{factory:()=>{factories++;throw new Error("factory invoked")},run:{iterations:1}});
+it("factory remains unused",()=>expect(factories).toBe(0));
+`,
+    },
+    {
+      label: "focused evals obey CI allowOnly prohibition",
+      file: "focused.test.mjs",
+      expectZero: false,
+      expectInOutput: ["only"],
+      body: `
+import { EvalTest } from "@mcpjam/sdk";
+import { testEval } from "@mcpjam/vitest";
+import { StubExecutor } from "./support.mjs";
+testEval.only(new EvalTest({id:"only",name:"focused",execute:()=>{}}),{executor:new StubExecutor(),run:{iterations:1,mcpjam:{enabled:false}}});
+`,
+    },
+    {
+      label:
+        "cleanup runs when strict reporting fails, and local evidence remains",
+      file: "cleanup.test.mjs",
+      expectZero: false,
+      expectInOutput: ["DISPOSED_WITH_LOCAL_EVIDENCE", "Reporting: failed"],
+      body: `
+import { EvalTest } from "@mcpjam/sdk";
+import { testEval } from "@mcpjam/vitest";
+import { StubExecutor } from "./support.mjs";
+globalThis.fetch=async()=>({ok:false,status:400,json:async()=>({error:"rejected"})});
+const test=new EvalTest({id:"cleanup",name:"strict persistence",execute:async executor=>{await executor.run("go")}});
+testEval(test,{executor:new StubExecutor(),run:{iterations:1,mcpjam:{apiKey:"test-key",strict:true,baseUrl:"https://example.invalid"}},
+dispose:()=>{if(test.getResults()?.successes===1 && test.getReportingReceipt().state==="failed") console.log("DISPOSED_WITH_LOCAL_EVIDENCE")}});
+`,
+    }
+  );
+
+  writeFileSync(
+    path.join(fixtureDir, "consumer.ts"),
+    `
+import { EvalTest, EvalSuite, assertion, type EvalExecutionContext, type RunEvaluator, selectionStability, runVariants } from "@mcpjam/sdk";
+import { testEval, describeEvalSuite } from "@mcpjam/vitest";
+const evaluator: RunEvaluator = selectionStability();
+const test = new EvalTest({id:"typed",name:"typed",execute: async (_executor, ctx:EvalExecutionContext)=>{ctx.report("quality",0.8)},reported:[{id:"quality",version:"1"}],evaluators:{mode:"extend",list:[assertion({type:"noToolErrors"})]},runEvaluators:[evaluator]});
+const suite = new EvalSuite({name:"typed",defaults:{iterations:1,evaluators:[assertion({type:"noToolErrors"})]}}); suite.add(test);
+void testEval; void describeEvalSuite; void runVariants;
+`
+  );
+  const enterpriseDoc = readFileSync(
+    path.join(repoRoot, "docs/sdk/concepts/enterprise-evals.mdx"),
+    "utf8"
+  );
+  const enterpriseExample = enterpriseDoc.match(
+    /```typescript\n([\s\S]*?)```/
+  )?.[1];
+  if (!enterpriseExample)
+    throw new Error("Enterprise eval documentation example is missing");
+  writeFileSync(
+    path.join(fixtureDir, "enterprise-example.ts"),
+    enterpriseExample
+  );
+  const compile = run(
+    "npx",
+    [
+      "tsc",
+      "--noEmit",
+      "--skipLibCheck",
+      "--target",
+      "ES2022",
+      "--module",
+      "NodeNext",
+      "--moduleResolution",
+      "NodeNext",
+      "consumer.ts",
+      "enterprise-example.ts",
+    ],
+    { cwd: fixtureDir }
+  );
+  check(
+    "installed TypeScript consumer and enterprise documentation example compile",
+    compile.status === 0,
+    `${compile.stdout ?? ""}${compile.stderr ?? ""}`
+  );
+
   for (const scenario of scenarios) {
     writeFileSync(path.join(fixtureDir, scenario.file), scenario.body);
   }
 
   console.log("running child vitest processes...");
   for (const scenario of scenarios) {
-    const result = run("npx", ["vitest", "run", scenario.file, "--reporter", "verbose"], {
-      cwd: fixtureDir,
-    });
+    const result = run(
+      "npx",
+      ["vitest", "run", scenario.file, "--reporter", "verbose"],
+      {
+        cwd: fixtureDir,
+        env: {
+          ...process.env,
+          CI: "true",
+          MCPJAM_API_KEY: "",
+          MCPJAM_RUN_METADATA: "",
+          MCPJAM_RUN_NAME: "",
+          MCPJAM_RUN_TAGS: "",
+        },
+      }
+    );
     const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
     const zero = result.status === 0;
 
@@ -269,15 +409,24 @@ describeEvalSuite("packaged suite", suiteOf(EvalSuite, EvalTest, [
 
   // The tarball must not ship sources or tests — `files: ["dist"]` is the
   // claim, and a stray `src/` would mean consumers compile our TypeScript.
-  const installedDir = path.join(fixtureDir, "node_modules", "@mcpjam", "vitest");
+  const installedDir = path.join(
+    fixtureDir,
+    "node_modules",
+    "@mcpjam",
+    "vitest"
+  );
   const shipped = readdirSync(installedDir).sort();
   check(
     `tarball ships only dist + metadata (${shipped.join(", ")})`,
-    !shipped.includes("src") && !shipped.includes("tests") && shipped.includes("dist")
+    !shipped.includes("src") &&
+      !shipped.includes("tests") &&
+      shipped.includes("dist")
   );
 } catch (error) {
   failures += 1;
-  console.error(`\nharness error: ${error instanceof Error ? error.stack : error}`);
+  console.error(
+    `\nharness error: ${error instanceof Error ? error.stack : error}`
+  );
 } finally {
   rmSync(workDir, { recursive: true, force: true });
 }

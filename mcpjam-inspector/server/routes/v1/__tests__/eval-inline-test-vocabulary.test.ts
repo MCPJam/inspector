@@ -135,7 +135,7 @@ describe("v1 inline-test vocabulary", () => {
     validateGuestTokenMock.mockResolvedValue({ valid: false });
     convexQueryMock.mockImplementation(async (fn: string) =>
       fn === "testSuites:getTestSuite"
-        ? { _id: "suite_1", projectId: "p1", name: "Smoke" }
+        ? { _id: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", projectId: "p1", name: "Smoke" }
         : null,
     );
     createAuthorizedManagerMock.mockResolvedValue({
@@ -147,13 +147,13 @@ describe("v1 inline-test vocabulary", () => {
       authenticatedUserId: null,
     });
     authorEvalSuiteMock.mockResolvedValue({
-      suiteId: "suite_new",
+      suiteId: "suitenewxxxxxxxxxxxxxxxxxxxxxxxx",
       suiteName: "Fresh suite",
       caseUpsert: { committed: [{ name: "does not call echo" }], failed: [] },
     });
     prepareEvalRunMock.mockResolvedValue({
-      suiteId: "suite_new",
-      runId: "run_1",
+      suiteId: "suitenewxxxxxxxxxxxxxxxxxxxxxxxx",
+      runId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
       caseUpsert: { committed: [], failed: [] },
       recorder: { finalize: vi.fn() },
       execute: vi.fn().mockResolvedValue(undefined),
@@ -210,10 +210,17 @@ describe("v1 inline-test vocabulary", () => {
       const res = await request(
         "POST",
         "/api/v1/projects/p1/eval-suites",
-        suiteBody({ checks }),
+        suiteBody({
+          checks,
+          suppressedSuiteStandardCheckIds: ["response.errors"],
+        }),
       );
 
       expect(res.status).toBe(201);
+      expect(
+        authorEvalSuiteMock.mock.calls[0][0].tests[0]
+          .suppressedSuiteStandardCheckIds,
+      ).toEqual(["response.errors"]);
       expect(authorEvalSuiteMock.mock.calls[0][0].tests[0].predicates).toEqual(
         checks,
       );
@@ -324,19 +331,19 @@ describe("v1 inline-test vocabulary", () => {
       {
         name: "POST …/cases",
         method: "POST",
-        path: "/api/v1/projects/p1/eval-suites/suite_1/cases",
+        path: "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases",
         body: (extra) => ({ ...CASE_BODY, ...extra }),
       },
       {
         name: "POST …/cases/batch",
         method: "POST",
-        path: "/api/v1/projects/p1/eval-suites/suite_1/cases/batch",
+        path: "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/batch",
         body: (extra) => ({ cases: [{ ...CASE_BODY, ...extra }] }),
       },
       {
         name: "PATCH …/cases/:caseId",
         method: "PATCH",
-        path: "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1",
+        path: "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
         body: (extra) => ({ title: "t", ...extra }),
       },
     ];

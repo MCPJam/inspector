@@ -100,7 +100,10 @@ export function subsectionForSettingKey(
   }
   if (
     groupId === "grading" &&
-    (key === "passOrFail" || key === "checks" || key === "matchOptions")
+    (key === "passOrFail" ||
+      key === "checks" ||
+      key === "matchOptions" ||
+      key === "assertionBacktest")
   ) {
     return subsections.find((sub) => sub.target.type === "passOrFailChecks");
   }

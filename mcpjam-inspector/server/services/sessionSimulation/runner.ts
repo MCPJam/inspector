@@ -117,6 +117,8 @@ import {
 } from "@/shared/widget-snapshot";
 import { resolveWebAuthorizedHarnessStrategy } from "../../utils/harness/harness-proxy-strategy.js";
 import type { HarnessSessionCommitPayload } from "../../utils/harness/harness-session-state.js";
+import { resolveBrowserSecrets } from "../../utils/secrets/browser-secrets.js";
+import { markRuntimeSecretsDelivered } from "../../utils/harness/runtime-secrets.js";
 
 export interface SimulationManagerFactory {
   /**
@@ -662,12 +664,34 @@ export async function runSyntheticHostSession(
           })
         : undefined,
     );
+    // Secrets the browser may type. They are substituted inside the daemon and
+    // never become env vars (see the `runtimeSecrets` note below).
+    const browserSecrets = browserApprovalDelivery
+      ? await resolveBrowserSecrets({
+          bearer: authHeader,
+          projectId,
+          ...(environmentId ? { environmentId } : {}),
+          chatSessionId,
+        })
+      : [];
     const builtInTools = resolveHostTools(
       { builtInToolIds, computer },
       {
         authHeader,
         projectId,
         chatSessionId,
+        ...(browserSecrets.length > 0
+          ? {
+              browserSecrets,
+              onBrowserSecretDelivered: () => {
+                void markRuntimeSecretsDelivered(authHeader, {
+                  projectId,
+                  ...(environmentId ? { environmentId } : {}),
+                  secretCount: browserSecrets.length,
+                });
+              },
+            }
+          : {}),
         isScenarioSession: true,
         // Journey (swarm) surface: WITHOUT a sandbox binding the resolver
         // suppresses computer-backed tools here, because every session in a run
@@ -682,6 +706,11 @@ export async function runSyntheticHostSession(
           kind:
             persist.sourceType === "swarm" ? "swarm_attempt" : "eval_iteration",
           sessionId: chatSessionId,
+        },
+        // A swarm runs many sessions per run, so tag rows with both ids.
+        browserCorrelation: {
+          chatSessionId,
+          ...(persist.journeyRunId ? { swarmId: persist.journeyRunId } : {}),
         },
         // …and WITH one, bash binds to this session's own disposable box. The
         // binding rides `ctx`, never `config`, so it cannot be forged from the

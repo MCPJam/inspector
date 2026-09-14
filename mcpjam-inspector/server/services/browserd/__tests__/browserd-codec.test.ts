@@ -119,3 +119,52 @@ describe("decodeCommandResponse — a 423 carries a CODE, not a fixed string", (
     ).toMatchObject({ status: "lease_blocked", lease: "other_holder" });
   });
 });
+
+describe("decodeCommandResponse — the wire itself", () => {
+  it("reads a 409 protocol_mismatch as its own outcome", () => {
+    // NOT `expired`, which is the other 409 and is retryable on the same
+    // daemon. A wire mismatch refuses every retry until the daemon is
+    // replaced, so a caller told `expired` loops.
+    expect(
+      decodeCommandResponse({
+        status: 409,
+        body: { error: "protocol_mismatch", protocolVersion: 3, bootId: "b" },
+      }),
+    ).toEqual({ status: "protocol_mismatch", running: 3, bootId: "b" });
+  });
+
+  it("keeps the outcome when the daemon names no version of its own", () => {
+    expect(
+      decodeCommandResponse({
+        status: 409,
+        body: { error: "protocol_mismatch", bootId: "b" },
+      }),
+    ).toEqual({ status: "protocol_mismatch", running: undefined, bootId: "b" });
+  });
+
+  it("drops a version of the wrong shape rather than coercing it", () => {
+    // The same rule `decodeIdentity` follows: a garbled build's `"3"` must
+    // read as unknown, not as the number 3.
+    expect(
+      decodeCommandResponse({
+        status: 409,
+        body: { error: "protocol_mismatch", protocolVersion: "3", bootId: "b" },
+      }),
+    ).toMatchObject({ status: "protocol_mismatch", running: undefined });
+  });
+
+  it("still reads every other 409 exactly as before", () => {
+    expect(
+      decodeCommandResponse({
+        status: 409,
+        body: { error: "command_expired", bootId: "b" },
+      }),
+    ).toEqual({ status: "expired", bootId: "b" });
+    expect(
+      decodeCommandResponse({
+        status: 409,
+        body: { error: "command_unknown_boot", bootId: "b" },
+      }),
+    ).toEqual({ status: "unknown_boot", bootId: "b" });
+  });
+});

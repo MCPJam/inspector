@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 import { toast } from "@/lib/toast";
 import { toastServerConnectionFailure } from "@/lib/server-error-toast";
 import { reportCaught } from "@/lib/error-reporting";
@@ -39,6 +46,7 @@ import { useServerForm } from "./hooks/use-server-form";
 import { ServerInfoContent } from "./ServerInfoContent";
 import { ServerInfoToolsMetadataContent } from "./ServerInfoToolsMetadataContent";
 import { EditServerFormContent } from "./EditServerFormContent";
+import { ServerUrlChangeHistory } from "./ServerUrlChangeHistory";
 import { ServerHistoryContent } from "./ServerHistoryContent";
 import { ServerHistoryDriftChip } from "./ServerHistoryDriftChip";
 import { HostCompatContent } from "@/components/compat/HostCompatContent";
@@ -118,7 +126,12 @@ export function ServerDetailModal({
   projectXaaDefaultIdentity = null,
 }: ServerDetailModalProps) {
   const [activeTab, setActiveTab] = useState<ServerDetailTab>(defaultTab);
-  const [isReconnecting, setIsReconnecting] = useState(false);
+  // Reconnects overlap: two quick wire-mode changes start a second one while
+  // the first is still running. A boolean would be cleared by whichever
+  // finished first and let a configuration save through mid-reconnect, so the
+  // guard counts them and lifts only when the last one settles.
+  const [reconnectsInFlight, setReconnectsInFlight] = useState(0);
+  const isReconnecting = reconnectsInFlight > 0;
   const [isSaving, setIsSaving] = useState(false);
   const [isLoadingTools, setIsLoadingTools] = useState(false);
   const [toolsLoadError, setToolsLoadError] = useState<string | null>(null);
@@ -218,27 +231,37 @@ export function ServerDetailModal({
     },
     []
   );
+  /**
+   * The wire-mode override's own reconnect, flagged in flight so the
+   * configuration Save is blocked for its duration like a user-initiated one.
+   * Both paths below reach it — the reactive watcher and the 1.5s safety net —
+   * because neither goes through `handleConnect`, which is where
+   * `isReconnecting` used to be set. Errors are reported, not toasted: the
+   * toggle owns that.
+   */
+  const reconnectForWireModeOverride = useCallback(async () => {
+    setReconnectsInFlight((count) => count + 1);
+    try {
+      await onReconnect(server.name, { allowInteractiveOAuthFlow: false });
+    } catch (err) {
+      reportCaught(err, {
+        source: "server_detail_wire_mode_reconnect",
+        level: "warning",
+      });
+    } finally {
+      setReconnectsInFlight((count) => count - 1);
+    }
+  }, [onReconnect, server.name]);
+
   useEffect(() => {
     const pending = pendingReconnectRef.current;
     if (!pending) return;
     if (currentMcpProtocolVersionOverride !== pending.target) return;
     pendingReconnectRef.current = null;
-    void onReconnect(server.name, { allowInteractiveOAuthFlow: false }).catch(
-      (err) => {
-        // The handler surfaces its own toast; report so a systematically
-        // failing reconnect is visible. Same source/level as the 1.5s
-        // safety-net path below — this is the branch that runs when the
-        // reactive read-back arrives in time, i.e. the common one.
-        reportCaught(err, {
-          source: "server_detail_wire_mode_reconnect",
-          level: "warning",
-        });
-      }
-    );
+    void reconnectForWireModeOverride();
   }, [
     currentMcpProtocolVersionOverride,
-    onReconnect,
-    server.name,
+    reconnectForWireModeOverride,
     pendingReconnectTick,
   ]);
 
@@ -300,17 +323,7 @@ export function ServerDetailModal({
         fallbackReconnectTimerRef.current = null;
         if (pendingReconnectRef.current?.target === next) {
           pendingReconnectRef.current = null;
-          void onReconnect(server.name, {
-            allowInteractiveOAuthFlow: false,
-          }).catch((err) => {
-            // Deliberately not toasted: this is the 1.5s safety-net
-            // reconnect and the toggle has its own error path. Reported so a
-            // systematically failing fallback is visible rather than dropped.
-            reportCaught(err, {
-              source: "server_detail_wire_mode_reconnect",
-              level: "warning",
-            });
-          });
+          void reconnectForWireModeOverride();
         }
       }, 1500);
       // Tick the watcher so it re-evaluates immediately in case the
@@ -473,7 +486,7 @@ export function ServerDetailModal({
     forceOAuthFlow?: boolean;
     allowInteractiveOAuthFlow?: boolean;
   }) => {
-    setIsReconnecting(true);
+    setReconnectsInFlight((count) => count + 1);
     track("server_detail_modal_connect_clicked", {
       location: "server_detail_modal",
       server_id: server.name,
@@ -485,7 +498,7 @@ export function ServerDetailModal({
         error instanceof Error ? error.message : "Unknown error";
       toastServerConnectionFailure(server.name, errorMessage);
     } finally {
-      setIsReconnecting(false);
+      setReconnectsInFlight((count) => count - 1);
     }
   };
 
@@ -522,9 +535,28 @@ export function ServerDetailModal({
   const tabTriggerClass = "min-w-0 flex-1 px-1.5 text-xs sm:px-2 sm:text-sm";
   const isConfigurationTab = activeTab === "configuration";
 
+  /**
+   * The single condition that decides whether this configuration may be saved.
+   *
+   * Extracted because the Save button's `disabled` and the form's submit
+   * handler were two different lists, and Enter in any configuration input
+   * submits the form — so every condition the button enforced was bypassable
+   * from the keyboard. That matters most for MJ-003's credential-clear
+   * acknowledgement, which is there precisely so a destructive save cannot
+   * happen without one, but it was equally true of the duplicate-name check,
+   * the auth-configuration block, and the in-flight reconnect guard.
+   */
+  const saveBlocked =
+    isDuplicateServerName ||
+    isSaving ||
+    isReconnecting ||
+    (!formState.hasChanges && !isConnected) ||
+    formState.authConfigurationBlocksSubmit ||
+    formState.credentialClearBlocksSubmit;
+
   const handleConfigurationSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!isConfigurationTab || isSaving) return;
+    if (!isConfigurationTab || saveBlocked) return;
     void handleSave();
   };
 
@@ -710,6 +742,11 @@ export function ServerDetailModal({
                         : undefined
                     }
                   />
+                  {/* MJ-003 AC 3: where this server has been repointed, and
+                      whether that cleared credentials. Readable on every plan,
+                      unlike the organization audit log. Renders nothing when
+                      there is no history. */}
+                  <ServerUrlChangeHistory serverId={hostedServerId} />
                 </div>
               </TabsContent>
 
@@ -733,13 +770,7 @@ export function ServerDetailModal({
                           })
                       : undefined
                   }
-                  disabled={
-                    isDuplicateServerName ||
-                    isSaving ||
-                    isReconnecting ||
-                    (!formState.hasChanges && !isConnected) ||
-                    formState.authConfigurationBlocksSubmit
-                  }
+                  disabled={saveBlocked}
                   size="sm"
                 >
                   {isSaving || isReconnecting ? (
