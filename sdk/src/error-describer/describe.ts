@@ -13,6 +13,7 @@
  * Never throws. Always returns a `NormalizedError`.
  */
 
+import { unwrapEraNegotiationCause } from "../mcp-client-manager/errors.js";
 import { redactForTelemetry } from "../telemetry-redaction.js";
 import {
   MCP_ERROR_CODES,
@@ -24,6 +25,7 @@ import {
   type ErrorOrigin,
 } from "./catalog.js";
 import { extractNodeErrno } from "./node-errno.js";
+import type { BearerChallengeSummary } from "./challenge.js";
 
 export type NormalizedError = ErrorCatalogEntry & {
   /**
@@ -369,7 +371,7 @@ function captureCause(error: unknown): NormalizedError["cause"] {
   if (!cause || typeof cause !== "object") return undefined;
   const name =
     typeof (cause as { name?: unknown }).name === "string"
-      ? ((cause as { name: string }).name)
+      ? (cause as { name: string }).name
       : "Error";
   const message =
     typeof (cause as { message?: unknown }).message === "string"
@@ -565,6 +567,7 @@ const CREDENTIAL_OWNED_SLUGS: ReadonlySet<string> = new Set([
   "auth/http_403",
   "auth/missing_bearer",
   "auth/oauth_refresh_failed",
+  "auth/authorization_server_unreachable",
   "oauth/invalid_client",
   "oauth/invalid_grant",
   "provider/auth_error",
@@ -589,7 +592,131 @@ export type DescribeContext = {
    * talking to an MCP server should say so.
    */
   surface?: "provider" | "mcpServer";
+  /**
+   * The parsed `WWW-Authenticate` challenge of the response that failed,
+   * when the caller captured one. Only a caller at the fetch boundary can
+   * know it — the transport error carries the status and the body text but
+   * never the header. This records what the response said without assuming
+   * that an absent header makes well-known discovery unavailable.
+   */
+  challenge?: BearerChallengeSummary;
+  /**
+   * The outcome of a token refresh the caller attempted before giving up.
+   * `authorization_server_unreachable` is the refresh that never got an
+   * answer; `token_rejected` is the one the authorization server refused.
+   */
+  refresh?: {
+    outcome: "token_rejected" | "authorization_server_unreachable";
+  };
 };
+
+/**
+ * The HTTP status a connection error carries, wherever it carries it:
+ * `statusCode` (MCPAuthError), `status` (WebRouteError), or a numeric `code`
+ * in the HTTP range (StreamableHTTPError).
+ */
+function httpStatusOf(error: unknown): number | undefined {
+  const seen = new Set<unknown>();
+  let current = error;
+  for (
+    let depth = 0;
+    depth < 5 && current && typeof current === "object" && !seen.has(current);
+    depth++
+  ) {
+    seen.add(current);
+    const field = getHttpStatus(current);
+    if (field !== undefined) return field;
+    const code = getNumericCode(current);
+    if (code !== undefined && code >= 100 && code <= 599) return code;
+    if ((current as { name?: string }).name === "UnauthorizedError") return 401;
+    const unwrapped = unwrapEraNegotiationCause(current);
+    current =
+      unwrapped !== current
+        ? unwrapped
+        : (current as { cause?: unknown }).cause;
+  }
+  return undefined;
+}
+
+/**
+ * A slug the CONTEXT settles before the error is even looked at.
+ *
+ * Runs ahead of `resolveSlug` because the resolver's evidence — class name,
+ * status, message — reads the same for "our stored token was rejected" and
+ * "the server never told us how to authorize". Only the challenge and the
+ * refresh outcome tell those apart, and only the caller has them.
+ */
+function contextSlug(
+  error: unknown,
+  context: DescribeContext | undefined
+): string | undefined {
+  if (!context) return undefined;
+  if (context.refresh?.outcome === "authorization_server_unreachable") {
+    return "auth/authorization_server_unreachable";
+  }
+  if (context.refresh?.outcome === "token_rejected") {
+    return "auth/oauth_refresh_failed";
+  }
+  const challenge = context.challenge;
+  if (!challenge) return undefined;
+  const status = httpStatusOf(error);
+  if (status === 401 && challenge.scheme !== "bearer") {
+    return "oauth/no_bearer_challenge";
+  }
+  if (status === 401) return "auth/http_401";
+  if (status === 403) {
+    if (
+      challenge.scheme === "bearer" &&
+      challenge.error === "insufficient_scope"
+    ) {
+      return "auth/insufficient_scope";
+    }
+    if (challenge.scheme === "bearer" && challenge.error === "invalid_token") {
+      return "oauth/non_compliant_challenge";
+    }
+    if (challenge.scheme === "none" && challenge.bodyKind === "html") {
+      return "auth/proxy_rejected";
+    }
+    return "auth/http_403";
+  }
+  return undefined;
+}
+
+/**
+ * Fold what the challenge said into the one-line for the two generic auth
+ * slugs, so "Unauthorized (401)" reads "… (the server reported invalid_token)"
+ * when the header said so. Catalog copy is otherwise untouched.
+ */
+function annotateWithChallenge(
+  entry: ErrorCatalogEntry,
+  slug: string,
+  context: DescribeContext | undefined
+): ErrorCatalogEntry {
+  if (
+    slug === "auth/insufficient_scope" &&
+    context?.challenge?.scopes?.length
+  ) {
+    return {
+      ...entry,
+      oneLine: truncateOneLine(
+        redactString(
+          `${entry.oneLine} Required scopes: ${context.challenge.scopes.join(
+            " "
+          )}.`
+        )
+      ),
+    };
+  }
+  const error = context?.challenge?.error;
+  if (!error) return entry;
+  if (slug !== "auth/http_401" && slug !== "auth/http_403") return entry;
+  return {
+    ...entry,
+    oneLine: truncateOneLine(
+      redactString(`${entry.oneLine} The server reported \`${error}\`.`)
+    ),
+  };
+}
 
 /**
  * Read an origin off a normalized error, defaulting a missing value to
@@ -659,11 +786,17 @@ export function describeError(
   // Crash-safe: every branch is wrapped so the describer never throws.
   try {
     const rawMessage = redactString(getErrorMessage(error));
-    const resolved = resolveSlug(error);
+    const fromContext = contextSlug(error, context);
+    const resolved = fromContext ? { slug: fromContext } : resolveSlug(error);
     const slug = retargetQuotaForSurface(resolved.slug, context);
-    const rawCode = resolved.rawCode;
+    const rawCode =
+      resolved.rawCode ?? (fromContext ? httpStatusOf(error) : undefined);
     const entry = applyOriginContext(
-      maybePromoteRawMessage(lookupCatalog(slug), slug, rawMessage),
+      annotateWithChallenge(
+        maybePromoteRawMessage(lookupCatalog(slug), slug, rawMessage),
+        slug,
+        context
+      ),
       slug,
       context,
     );

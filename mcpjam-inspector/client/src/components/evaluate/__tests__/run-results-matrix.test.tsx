@@ -9,6 +9,13 @@ import {
 } from "../run-results-matrix-model";
 import type { EvalIteration, EvalSuiteRun } from "../../evals/types";
 
+vi.mock("convex/react", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("convex/react")>()),
+  useAction: () => vi.fn(),
+  useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
+  useQuery: () => undefined,
+}));
+
 function run(id: string, overrides: Partial<EvalSuiteRun> = {}): EvalSuiteRun {
   return {
     _id: id,
@@ -16,6 +23,7 @@ function run(id: string, overrides: Partial<EvalSuiteRun> = {}): EvalSuiteRun {
     runGroupId: "launch",
     namedHostId: "claude",
     effectiveModelId: "sonnet",
+    runNumber: 3,
     status: "completed",
     configSnapshot: { tests: [], environment: { servers: [] } },
     ...overrides,
@@ -53,6 +61,38 @@ const names = new Map([
 ]);
 
 describe("run results matrix", () => {
+  it("uses persisted models only to seed queued columns, never phantom completed columns", () => {
+    const current = run("legacy", {
+      namedHostId: undefined,
+      effectiveModelId: undefined,
+      client: { name: "Claude", hostStyle: "claude", source: "suite_default" },
+      configSnapshot: {
+        environment: { servers: [] },
+        tests: [
+          {
+            title: "Refund order",
+            models: [{ model: "sonnet", provider: "anthropic" }],
+          } as any,
+        ],
+      },
+    });
+    const args = {
+      run: current,
+      runs: [],
+      iterations: [iteration("i", "legacy")],
+      hostNamesById: names,
+    };
+    const completed = buildRunResultsMatrix(args);
+    expect(
+      completed.targets.map((target) => [target.client, target.modelId]),
+    ).toEqual([["Claude", "sonnet"]]);
+    const queued = buildRunResultsMatrix({
+      ...args,
+      run: { ...current, status: "pending" },
+      iterations: [],
+    });
+    expect(queued.targets.map((target) => target.modelId)).toEqual(["sonnet"]);
+  });
   it("scopes columns to one launch and keeps multiple models on one client separate", () => {
     const current = run("one");
     const sibling = run("two", { effectiveModelId: "opus" });
@@ -148,7 +188,8 @@ describe("run results matrix", () => {
     expect(matrix.targets[2].iterations).toEqual([]);
   });
 
-  it("reports cell status, latency, usage and cost without inventing missing measurements", () => {
+  it("switches each case between results and metrics", async () => {
+    const user = userEvent.setup();
     render(
       <RunResultsMatrix
         run={run("one")}
@@ -175,17 +216,26 @@ describe("run results matrix", () => {
     expect(cell.queryByText("50%")).toBeNull();
     expect(cell.getByText("1/2")).toBeVisible();
     expect(cell.getByText("Fail", { exact: true })).toBeVisible();
+    expect(cell.queryByText("P50")).toBeNull();
+    expect(screen.getByRole("radio", { name: "Results" })).toBeChecked();
+    await user.click(screen.getByRole("radio", { name: "Metrics" }));
+    expect(cell.queryByText("Fail", { exact: true })).toBeNull();
+    expect(cell.queryByRole("img")).toBeNull();
     expect(cell.getByText("P50")).toBeVisible();
     expect(cell.getByText("P95")).toBeVisible();
-    expect(cell.getByText("2K")).toBeVisible();
+    expect(cell.getByText("1k")).toBeVisible();
     expect(cell.queryByText("Cost")).toBeNull();
-    expect(cell.getByText("Tool calls")).toBeVisible();
-    expect(screen.getByText("Test case")).toBeVisible();
-    const title = screen.getByRole("heading", { name: /Test cases/ });
+    expect(cell.getByText("Calls")).toBeVisible();
+    expect(screen.getByRole("radio", { name: "Metrics" })).toBeChecked();
+    expect(
+      screen.getByRole("columnheader", { name: "Test case" }),
+    ).toBeVisible();
+    // One row, so the heading counts in the singular rather than "1 Test cases".
+    const title = screen.getByRole("heading", { name: "1 Test case" });
     expect(title).toBeVisible();
-    expect(title.compareDocumentPosition(screen.getByTestId("run-results-toolbar"))).toBe(
-      Node.DOCUMENT_POSITION_FOLLOWING,
-    );
+    expect(
+      title.compareDocumentPosition(screen.getByTestId("run-results-toolbar")),
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(screen.queryByText("Run results")).toBeNull();
     expect(
       screen.queryByText(
@@ -200,9 +250,7 @@ describe("run results matrix", () => {
     expect(
       screen.queryByText(/Showing recorded iterations from this run/),
     ).toBeNull();
-    expect(
-      screen.queryByRole("button", { name: "Clear filters" }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
     const toolbar = screen.getByTestId("run-results-toolbar");
     const search = within(toolbar).getByRole("textbox", {
       name: "Find a test case",
@@ -285,10 +333,10 @@ describe("run results matrix", () => {
 
   it("filters cases and opens the correct evidence when switching client/model in the drawer", async () => {
     const user = userEvent.setup();
-    const open = vi.fn();
     render(
       <RunResultsMatrix
         run={run("one")}
+        suiteName="excalidraw"
         runs={[run("two", { namedHostId: "cursor", effectiveModelId: "gpt" })]}
         iterations={[
           iteration("pass", "one"),
@@ -298,13 +346,10 @@ describe("run results matrix", () => {
           }),
         ]}
         hostNamesById={names}
-        onOpenIteration={open}
       />,
     );
     expect(screen.getAllByRole("columnheader")).toHaveLength(3);
-    expect(
-      screen.queryByRole("button", { name: "Clear filters" }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
     await user.type(
       screen.getByRole("textbox", { name: "Find a test case" }),
       "not present",
@@ -327,13 +372,23 @@ describe("run results matrix", () => {
       }),
     );
     const drawer = within(screen.getByRole("dialog"));
+    expect(drawer.getByRole("heading", { name: "Refund order" })).toBeVisible();
+    expect(drawer.getByText("Test case averages")).toBeVisible();
+    expect(drawer.getByText("Iterations")).toBeVisible();
+    expect(drawer.getByText("Client / Model")).toBeVisible();
     await user.click(drawer.getByRole("button", { name: "Cursor · gpt" }));
-    expect(drawer.getByText("Missing reason argument")).toBeVisible();
-    await user.click(drawer.getByRole("button", { name: "Open details" }));
-    expect(open).toHaveBeenCalledWith({
-      testCaseId: "refund",
-      iterationId: "fail",
-    });
+    expect(drawer.getByText("Failed")).toBeVisible();
+    await user.click(
+      drawer.getByRole("button", { name: "Open iteration 1 details" }),
+    );
+    expect(
+      drawer.getByRole("button", { name: "Back to test case iterations" }),
+    ).toHaveTextContent("Refund order › Run #3");
+    expect(
+      drawer.getByRole("heading", { name: "#1 excalidraw" }),
+    ).toBeVisible();
+    expect(drawer.getByText("Failed")).toBeVisible();
+    expect(drawer.getByRole("button", { name: "Scorecard" })).toBeVisible();
   });
 
   it("keeps Pending while a run is live and hides it once every run is terminal", async () => {
@@ -371,9 +426,7 @@ describe("run results matrix", () => {
     expect(
       screen.getByRole("combobox", { name: "Filter by status" }),
     ).toHaveTextContent("Status");
-    expect(
-      screen.queryByRole("button", { name: "Clear filters" }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
     expect(
       screen.getByRole("button", {
         name: "Inspect Refund order on Claude · sonnet",

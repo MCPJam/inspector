@@ -493,13 +493,18 @@ export type {
   EvalSuiteFile,
   EvalSuiteFileCase,
   EvalSuiteFileCaseImport,
+  EvalSuiteFileCaseV2,
   EvalSuiteFileDefaults,
+  EvalSuiteFileDefaultsV2,
   EvalSuiteFileHost,
   EvalSuiteFileProvenance,
   EvalSuiteFileServer,
   EvalSuiteFileTarget,
   EvalSuiteFileToolPolicy,
+  EvalSuiteFileV1,
+  EvalSuiteFileV2,
   EvalSuiteFileValidity,
+  EvalSuiteSchemaVersion,
 } from "./suite-file.js";
 export type {
   ToolPolicyDecision,
@@ -517,11 +522,15 @@ export {
 } from "./tool-policy.js";
 export {
   EVAL_SUITE_SCHEMA_ID,
+  EVAL_SUITE_SCHEMA_ID_V2,
   EVAL_SUITE_SCHEMA_VERSION,
+  EVAL_SUITE_SCHEMA_VERSION_2,
+  EVAL_SUITE_SCHEMA_VERSIONS,
   MAX_BATCH_CREATE_CASES,
   MAX_CASE_ASSERTIONS,
   MAX_IMPORT_NOTE_CHARS,
   MAX_IMPORT_SOURCE_CASE_KEY_CHARS,
+  MAX_ITERATIONS,
   MAX_REPETITIONS,
   MAX_SUITE_FILE_CASES,
   MAX_SUITE_FILE_TITLE_CHARS,
@@ -530,7 +539,9 @@ export {
   RESERVED_REPORTING_MODES,
   evalSuiteFileCaseImportSchema,
   evalSuiteFileCaseSchema,
+  evalSuiteFileCaseV2Schema,
   evalSuiteFileDefaultsSchema,
+  evalSuiteFileDefaultsV2Schema,
   evalSuiteFileHostSchema,
   evalSuiteFileProvenanceSchema,
   evalSuiteFileSchema,
@@ -538,19 +549,21 @@ export {
   evalSuiteFileStructuralSchema,
   evalSuiteFileTargetSchema,
   evalSuiteFileToolPolicySchema,
+  evalSuiteFileV2StructuralSchema,
   evalSuiteFileValiditySchema,
 } from "./suite-file.js";
 
 /**
- * The generated JSON Schema (draft 2020-12) for the suite file.
+ * The generated JSON Schema (draft 2020-12) for each suite-file dialect.
  *
- * Re-exported from the generated `.ts` twin rather than the `.json` artifact:
- * the contract subpath is consumed by three toolchains and only Node-only code
- * in this repo uses JSON import attributes. The `.json` file is the artifact
- * published at the schema's `$id`; the two are byte-identical documents and a
- * test proves it.
+ * Re-exported from the generated `.ts` twins rather than the `.json`
+ * artifacts: the contract subpath is consumed by three toolchains and only
+ * Node-only code in this repo uses JSON import attributes. Each `.json` file
+ * is the artifact published at its dialect's `$id`; the pairs are
+ * byte-identical documents and a test proves it.
  */
 export { evalSuiteFileJsonSchema } from "./eval-suite.schema.generated.js";
+export { evalSuiteFileV2JsonSchema } from "./eval-suite.v2.schema.generated.js";
 
 // ── the run verdict policy (v2) ──────────────────────────────────────────────
 export type {

@@ -9,6 +9,7 @@ import {
   iterationLatencyP95,
   runContextLabel,
   runHostLabel,
+  runClientIdentity,
 } from "../evals/helpers";
 import { computeRunEffectiveStats } from "../evals/suite-runs-list";
 import { evalRunDecisionRevision } from "@/lib/evals/eval-decision-summary-store";
@@ -94,6 +95,7 @@ export type SuiteRunHistoryRow = {
   platform: string;
   source: NonNullable<EvalSuiteRun["source"]>;
   client: string | null;
+  hostStyle?: string;
   models: string[];
   latencyMs: number | null;
   tokens: number | null;
@@ -283,6 +285,7 @@ export function buildSuiteRunHistoryRows(
         platform: runPlatformLabel(run),
         source: run.source ?? "ui",
         client: runClientLabel(run, hostNamesById, projectEnvironmentsEnabled),
+        hostStyle: runClientIdentity(run).hostStyle,
         models: run.effectiveModelId
           ? [run.effectiveModelId]
           : runModels(iterations),

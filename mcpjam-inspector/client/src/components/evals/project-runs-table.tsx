@@ -17,7 +17,7 @@ import {
   displayRunServerNames,
   isEphemeralCheckServerName,
 } from "./github-check-server-name";
-import { getEffectiveSuiteServers } from "./helpers";
+import { getEffectiveSuiteServers, runClientIdentity } from "./helpers";
 import { MetricStrip } from "./metric-strip";
 import {
   buildSuiteMetricStripData,
@@ -55,7 +55,7 @@ import {
   DropdownMenuContent,
   DropdownMenuCheckboxItem,
 } from "@mcpjam/design-system/dropdown-menu";
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { usePaginatedQuery, useQuery } from "convex/react";
 import { ChevronDown, GitBranch, Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -110,6 +110,8 @@ export const PROJECT_RUNS_PAGE_SIZE = 50;
  * reach for one.
  */
 export interface ProjectRunRow {
+  client?: EvalSuiteRun["client"] | null;
+  namedHostId?: string | null;
   name?: string;
   tags?: string[];
   runMetadata?: Record<string, string | number | boolean>;
@@ -310,6 +312,24 @@ export function ProjectRunsTable({
     () => visibleRunOriginFilters(platformPostLaunchEnabled),
     [platformPostLaunchEnabled],
   );
+  // A chip that disappears takes its filter with it. `platform-post-launch`
+  // can go off mid-session — PostHog re-reads flags, and an unresolved read is
+  // off — which would otherwise leave the table filtered by a chip no longer
+  // in the menu, unreachable except through Clear filters.
+  useEffect(() => {
+    const visible = new Set(platformFilters.map((filter) => filter.value));
+    const hidden = [...sourceFilter].filter((value) => !visible.has(value));
+    if (hidden.length === 0) return;
+    if (hidden.includes("github")) {
+      setRepositoryFilter(ALL_EVAL_FILTER_VALUES);
+      setBranchFilter(ALL_EVAL_FILTER_VALUES);
+      setCommitFilter("");
+    }
+    setSourceFilter(
+      (previous) =>
+        new Set([...previous].filter((value) => visible.has(value))),
+    );
+  }, [platformFilters, sourceFilter]);
   const { hosts } = useHostList({
     isAuthenticated: historyMetricsEnabled,
     projectId,
@@ -374,6 +394,7 @@ export function ProjectRunsTable({
     metricData,
     passRateChanges,
     loadedRunCount,
+    scopedRowCount,
   } = useMemo(() => {
     const hostNamesById = new Map(
       hosts.map((host) => [host.hostId, host.name]),
@@ -418,9 +439,8 @@ export function ProjectRunsTable({
     );
     const clientOptions = [
       ...new Set(
-        [...historyRows.values()].flatMap((row) =>
-          row.client ? [row.client] : [],
-        ),
+        rows.map((row) => historyRows.get(row._id)?.client ??
+          runClientIdentity({ client: row.client, namedHostId: row.namedHostId ?? undefined }, hostNamesById).name),
       ),
     ].sort();
     const serverOptions = [...new Set([...runServers.values()].flat())].sort();
@@ -452,7 +472,11 @@ export function ProjectRunsTable({
     const matching = sourceAndSuiteRows.filter(
       (row) =>
         (clientFilter === ALL_EVAL_FILTER_VALUES ||
-          historyRows.get(row._id)?.client === clientFilter) &&
+          (historyRows.get(row._id)?.client ??
+            runClientIdentity(
+              { client: row.client, namedHostId: row.namedHostId ?? undefined },
+              hostNamesById,
+            ).name) === clientFilter) &&
         (serverFilter === ALL_EVAL_FILTER_VALUES ||
           runServers.get(row._id)?.includes(serverFilter)) &&
         (repositoryFilter === ALL_EVAL_FILTER_VALUES ||
@@ -549,8 +573,21 @@ export function ProjectRunsTable({
       historyMetricsEnabled ? completeRuns : rows,
       comparisonRows,
     );
+    // Scoped to the picked suite: with one suite selected, counting launches
+    // from the others reads as a miscount rather than as pagination headroom.
+    const scopedIds = new Set(
+      rows.flatMap((row) =>
+        suiteFilter === ALL_SUITES || row.suiteId === suiteFilter
+          ? [row._id]
+          : [],
+      ),
+    );
     const loadedRunCount = allSuiteGroups.reduce(
-      (sum, suite) => sum + suite.launches.length,
+      (sum, suite) =>
+        sum +
+        suite.launches.filter((launch) =>
+          launch.runs.some((row) => scopedIds.has(row._id)),
+        ).length,
       0,
     );
     return {
@@ -567,6 +604,7 @@ export function ProjectRunsTable({
       metricData,
       passRateChanges,
       loadedRunCount,
+      scopedRowCount: scopedIds.size,
     };
   }, [
     rows,
@@ -578,6 +616,7 @@ export function ProjectRunsTable({
     projectEnvironmentsEnabled,
     historyMetricsEnabled,
     sourceFilter,
+    suiteFilter,
     clientFilter,
     serverFilter,
     repositoryFilter,
@@ -916,7 +955,8 @@ export function ProjectRunsTable({
         */}
         {hasClientSideFilter && canLoadMore && (
           <p className="px-[18px] pb-3 text-[11px] text-muted-foreground">
-            Filtering the {historyMetricsEnabled ? loadedRunCount : rows.length}{" "}
+            Filtering the{" "}
+            {historyMetricsEnabled ? loadedRunCount : scopedRowCount}{" "}
             most recent runs loaded so far. Load more below to widen the search.
           </p>
         )}
@@ -1033,7 +1073,7 @@ export function ProjectRunsTable({
               : `${
                   historyMetricsEnabled ? launches.length : filtered.length
                 } of ${
-                  historyMetricsEnabled ? loadedRunCount : rows.length
+                  historyMetricsEnabled ? loadedRunCount : scopedRowCount
                 } loaded runs`}
             {status !== "Exhausted" ? " · more available" : ""}
           </span>
@@ -1215,7 +1255,16 @@ function ProjectRunTableRow({
       </TableCell>
       {historyMetricsEnabled ? (
         <TableCell className="text-xs">
-          <RunClientsCell rows={historyRow ? [historyRow] : []} />
+          <RunClientsCell rows={historyRow ? [historyRow] : [
+                    {
+                      client: runClientIdentity({
+                        client: row.client,
+                        namedHostId: row.namedHostId ?? undefined,
+                      }).name,
+                      hostStyle: row.client?.hostStyle,
+                      models: row.client?.modelId ? [row.client.modelId] : [],
+                    },
+                  ]} />
         </TableCell>
       ) : (
         <TableCell>

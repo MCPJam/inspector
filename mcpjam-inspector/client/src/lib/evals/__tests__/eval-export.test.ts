@@ -6,6 +6,7 @@ import {
   buildSdkTestFile,
   buildServerConnections,
   normalizeDraftEvalCaseForExport,
+  normalizeSuiteConfigTestForExport,
   pickSuiteExportCases,
 } from "../eval-export";
 
@@ -18,6 +19,19 @@ const connectedHttpServer = {
 } satisfies ServerWithName;
 
 describe("eval-export", () => {
+  it("exports persisted models without duplicating provider prefixes", () => {
+    const exported = normalizeSuiteConfigTestForExport(
+      {
+        title: "Case",
+        models: [
+          { model: "anthropic/haiku", provider: "anthropic" },
+          { model: "gpt-4o", provider: "openai" },
+        ],
+      } as any,
+      0,
+    );
+    expect(exported.modelHints).toEqual(["anthropic/haiku", "openai/gpt-4o"]);
+  });
   it("normalizes draft input and preserves multi-turn prompt data", () => {
     const draft = normalizeDraftEvalCaseForExport({
       testCaseId: "case-1",

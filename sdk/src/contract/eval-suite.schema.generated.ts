@@ -11,7 +11,7 @@
 // tsc) and only Node-only code in this repo uses import attributes.
 
 /**
- * The eval suite file's JSON Schema (draft 2020-12).
+ * The eval suite file's JSON Schema (draft 2020-12), schemaVersion 1.
  *
  * STRUCTURAL contract only. Cross-field rules the zod validator enforces —
  * unique case ids, unique step ids within a case, a per-case `import` block
