@@ -214,9 +214,26 @@ All three are in the offline preview.
    missing entry, an unknown id and a duplicate id. Observations survive all
    four.
 
+One more pair, worth opening together: **`all-green`** (12 iterations, all
+passed, zero findings — _ready_) next to **`nothing-measurable`** (6 iterations,
+every one excluded, zero findings — _unavailable_). Same empty list, opposite
+meanings, and the panel says which is which:
+
+> _"Nothing in this run could be measured. Every iteration was excluded — see
+> the coverage below — so there is no honest finding to show, which is different
+> from finding nothing wrong."_
+
+**The copy action was exercised in a browser**, not just in a unit test: clicking
+_Copy investigation prompt_ on `hostile-and-secret-evidence` put a 1,697-character
+prompt on the clipboard, built by the real `finding-prompts.ts`. The canary API
+key planted in that fixture's evidence is **absent** from it, the untrusted
+evidence is fenced, and the heading reads _"Investigate a problem observed across
+sessions"_ rather than anything about fixing a server — because the backend never
+promoted that finding.
+
 Screenshots (attached to the session): deterministic light / dark / 420px, the
-AI view with per-field labels, the evidence drawer, the baseline comparison, and
-the not-built / AI-failed / older-backend states.
+AI view with per-field labels, the evidence drawer, the baseline comparison, the
+unavailable state, and the not-built / AI-failed / older-backend states.
 
 ---
 
