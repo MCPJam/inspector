@@ -794,6 +794,81 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(updatePersonaMock).not.toHaveBeenCalled();
   });
 
+  it("edits one goal of a multi-goal existing persona and leaves the other", async () => {
+    // Every goal field carries the same `aria-label`, so the fields are only
+    // ever told apart by their journey id. A persona carrying two named
+    // journeys is what catches a `goalText` keyed off anything else: the
+    // single-journey case passes either way.
+    existingPersonas = [
+      {
+        _id: "p-1",
+        personaId: "p1",
+        name: "Ana",
+        role: "Ops",
+        notes: "Closes the books monthly.",
+      },
+    ];
+    personaJourneys = [
+      {
+        _id: "j-first",
+        name: "Reconcile payouts",
+        goal: "Reconcile every payout against the ledger and flag mismatches",
+        hostIds: ["host-1"],
+        environmentIds: ["env-1"],
+        config: { sessionsPerTarget: 1, maxTurns: 6 },
+      },
+      {
+        _id: "j-second",
+        name: "Chase refunds",
+        goal: "Chase every refund older than thirty days and escalate the rest",
+        hostIds: ["host-1"],
+        environmentIds: ["env-1"],
+        config: { sessionsPerTarget: 1, maxTurns: 6 },
+      },
+    ];
+    openDescribe();
+    pickExistingPersona(/include ana/i);
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-reused-personas");
+    fireEvent.click(screen.getByTestId("new-swarm-persona-compact"));
+    const detail = await screen.findByTestId("new-swarm-persona-detail");
+
+    const goalFields = within(detail).getAllByLabelText("Goal");
+    expect(goalFields).toHaveLength(2);
+    expect(goalFields[0]).toHaveValue(
+      "Reconcile every payout against the ledger and flag mismatches",
+    );
+    expect(goalFields[1]).toHaveValue(
+      "Chase every refund older than thirty days and escalate the rest",
+    );
+
+    fireEvent.change(goalFields[1], {
+      target: { value: "Chase every refund older than seven days" },
+    });
+    // Re-read: the first edit seeds a draft for EVERY goal at once, so this is
+    // where a field reading the draft by anything but its own journey id shows
+    // its neighbour's text back to the user.
+    const edited = within(detail).getAllByLabelText("Goal");
+    expect(edited[1]).toHaveValue("Chase every refund older than seven days");
+    expect(edited[0]).toHaveValue(
+      "Reconcile every payout against the ledger and flag mismatches",
+    );
+
+    fireEvent.click(within(detail).getByTestId("new-swarm-persona-save"));
+
+    await vi.waitFor(() => {
+      expect(updateJourneyMock).toHaveBeenCalled();
+    });
+    // Only the edited journey is written — the other is not touched at all,
+    // since it is shared with every other swarm reusing this persona.
+    expect(updateJourneyMock).toHaveBeenCalledTimes(1);
+    expect(updateJourneyMock.mock.calls[0][0]).toMatchObject({
+      journeyRefId: "j-second",
+      goal: "Chase every refund older than seven days",
+    });
+    expect(updatePersonaMock).not.toHaveBeenCalled();
+  });
+
   it("writes nothing when Save is pressed on an untouched existing persona", async () => {
     // The row is shared with every other swarm reusing it, so a no-op Save
     // must not bump its updatedAt for all of them — it just closes.
