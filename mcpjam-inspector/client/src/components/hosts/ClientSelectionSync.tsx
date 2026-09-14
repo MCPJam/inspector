@@ -15,10 +15,10 @@ export function ClientSelectionSync({ projectId }: { projectId: string }) {
   const catalogState = useHostCatalog();
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const [previewedHostId, setPreviewedHostId] = usePreviewedHostId(projectId);
-  const seededProject = useRef<string | null>(null);
+  const seededProjects = useRef(new Set<string>());
   const defaultName =
     catalogState.status === "live"
-      ? (getCatalogHost(catalogState.catalog, "mcpjam")?.label ?? "MCPJam")
+      ? getCatalogHost(catalogState.catalog, "mcpjam")?.label ?? "MCPJam"
       : "MCPJam";
 
   useEffect(() => {
@@ -26,19 +26,19 @@ export function ClientSelectionSync({ projectId }: { projectId: string }) {
       !isAuthenticated ||
       isLoading ||
       hosts.length ||
-      seededProject.current === projectId ||
+      seededProjects.current.has(projectId) ||
       catalogState.status !== "live"
     )
       return;
     const template = getCatalogTemplate(catalogState.catalog, "mcpjam");
     if (!template) return;
-    seededProject.current = projectId;
+    seededProjects.current.add(projectId);
     createHost({
       projectId,
       name: defaultName,
       input: cloneHostTemplateInput(template, { themeMode }),
     }).catch(() => {
-      seededProject.current = null;
+      seededProjects.current.delete(projectId);
     });
   }, [
     isAuthenticated,

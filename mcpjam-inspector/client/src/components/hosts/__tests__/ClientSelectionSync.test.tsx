@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render } from "@testing-library/react";
+import { act, render } from "@testing-library/react";
 import { ClientSelectionSync } from "../ClientSelectionSync";
 
 const mocks = vi.hoisted(() => ({
@@ -59,6 +59,31 @@ describe("ClientSelectionSync", () => {
     const { rerender } = render(<ClientSelectionSync projectId="p1" />);
     rerender(<ClientSelectionSync projectId="p2" />);
     expect(mocks.create).toHaveBeenCalledTimes(2);
+  });
+  it("does not reseed a project when returning while mutations are pending", () => {
+    mocks.create.mockReturnValue(new Promise(() => {}));
+    const { rerender } = render(<ClientSelectionSync projectId="p1" />);
+    rerender(<ClientSelectionSync projectId="p2" />);
+    rerender(<ClientSelectionSync projectId="p1" />);
+    expect(mocks.create).toHaveBeenCalledTimes(2);
+  });
+  it("a late failure only clears the failed project's guard", async () => {
+    let rejectFirst!: (error: Error) => void;
+    mocks.create.mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectFirst = reject;
+        }),
+    );
+    const { rerender } = render(<ClientSelectionSync projectId="p1" />);
+    rerender(<ClientSelectionSync projectId="p2" />);
+    await act(async () => {
+      rejectFirst(new Error("failed"));
+    });
+    rerender(<ClientSelectionSync projectId="p2" />);
+    expect(mocks.create).toHaveBeenCalledTimes(2);
+    rerender(<ClientSelectionSync projectId="p1" />);
+    expect(mocks.create).toHaveBeenCalledTimes(3);
   });
   it("waits for the host list before creating or reconciling", () => {
     mocks.list.mockReturnValue({ hosts: [], isLoading: true });
