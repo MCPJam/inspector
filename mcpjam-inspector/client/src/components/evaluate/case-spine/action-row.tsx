@@ -85,7 +85,7 @@ export function ActionRow({
       data-ordinal={action.ordinal}
       onMouseEnter={onHover ? () => onHover(step.id) : undefined}
       onMouseLeave={onHover ? () => onHover(null) : undefined}
-      className={cn("group space-y-2", isActive && "ring-1 ring-ring")}
+      className={cn("group space-y-2", isActive && "ring-1 ring-border")}
     >
       <div className="flex items-center gap-2 py-1">
         <span
