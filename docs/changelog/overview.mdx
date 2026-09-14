@@ -9,6 +9,24 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-09-14
+
+#### Changed
+
+- **User Testing: new studies open on Insights, not an empty Findings** — a study with no tester sessions now lands on the Insights tab instead of Findings. Findings summarises what testers did, so on a brand-new study it rendered as an empty frame that read like a broken page. Studies that have sessions still land on Findings. An explicit `?tab=` link always wins over the landing tab, so bookmarks and shared links are unaffected.
+
+- **User Testing: Insights page says "study", not "scenario"** — the empty state, the tab navigation, the analysis-freshness popover, and the re-run prompt on the recommendations rail all now use the product's current name. The freshness popover is shared with Swarm, where it now says "run" (describing one wave's run, which is what it has always been reporting).
+
+- **User Testing: Settings is one column of wide cards** — the Settings tab now reads top to bottom in a single column capped at 960 px, matching every other settings surface in the app. The two-column layout from wide screens is gone; section order is unchanged for anyone who was on a laptop.
+
+- **User Testing: "What to try" checklist copy** — the tester's task popover heading now matches the button that opens it ("What to try", not "Optional things to try"). The "Try any, in any order" sentence is removed, and the trigger's accessible name no longer says "optional". The footnote "This checklist is only for you" stays. The list still gates nothing and reports no completion back to the study creator.
+
+- **User Testing: no playground starter chips on the hosted study page** — the "What can this server do?", "What tools can I use?", and "Give me example prompts to try" chips no longer appear above the composer on the hosted study page (both the tester's share link and the creator's "Open preview"). Those chips are a playground affordance for someone who just connected a server; on a study the "What to try" list already tells testers where to start. The Playground and Chat tab are unchanged.
+
+#### Added
+
+- **Scroll fade on the User Testing session transcript** — scrolling a tester's chat transcript now dissolves the top and bottom edges instead of cutting off at a hard line. The fade appears only when there is content to scroll toward and uses a CSS mask rather than a background-coloured overlay, so it works in both light and dark themes without knowing the background colour.
+
 ### 2026-09-11
 
 #### Added
