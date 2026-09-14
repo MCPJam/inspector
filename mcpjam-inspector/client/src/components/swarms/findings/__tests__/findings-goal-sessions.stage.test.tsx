@@ -171,6 +171,48 @@ describe("stage narrowing on a scenario goal", () => {
     expect(queryAllByTestId("findings-goal-session")).toHaveLength(1);
   });
 
+  it("settles when the query re-allocates its answer every render", async () => {
+    // A double built with `mockImplementation` hands back a FRESH object each
+    // call, which is exactly what the real query does not do. The effect that
+    // stores pages keys on that result, so without a bail-out it goes
+    // set state → render → new object → set state until the worker dies —
+    // which is how this surfaced: an `ERR_IPC_CHANNEL_CLOSED` on CI with no
+    // failing assertion, not a red test.
+    let calls = 0;
+    mockUseGoalOutcomeDrilldown.mockImplementation(() => {
+      calls += 1;
+      return {
+        drilldown: {
+          sessions: [
+            { _id: "sess-a", firstMessagePreview: "a", lastActivityAt: 1 },
+          ],
+          total: 1,
+          nextBefore: null,
+        },
+        isLoading: false,
+      };
+    });
+
+    const { findAllByTestId } = render(
+      <FindingsGoalSessions
+        scope={{
+          kind: "scenario",
+          scenarioId: "scn-1",
+          filters: PERSONA_FILTERS,
+        }}
+        goalId="cluster-export"
+        expectedCount={1}
+        stage={{ chainStage: "discovery", state: "failed" }}
+        onOpenSession={vi.fn()}
+      />,
+    );
+    expect(await findAllByTestId("findings-goal-session")).toHaveLength(1);
+
+    // A handful of renders is normal; a runaway is not. The number is a
+    // ceiling, not a target — it only has to be far below "forever".
+    expect(calls).toBeLessThan(15);
+  });
+
   it("never sends a stage chip on a swarm goal", () => {
     // A swarm goal pages by run id and its backend reader takes no chips, so a
     // stage chip there would be silently ignored rather than narrowing.

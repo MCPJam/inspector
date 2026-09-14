@@ -56,6 +56,26 @@ export type FindingsStageNarrowing = {
   state: "passed" | "failed";
 };
 
+/**
+ * Is this the same page, by everything the list renders?
+ *
+ * Compares the fields shown rather than object identity: the query hands back
+ * a stable reference for unchanged data, but nothing in the type says so, and
+ * a caller that re-allocates must not be able to spin the effect below.
+ */
+function samePage(
+  a: ReadonlyArray<{ _id: string; firstMessagePreview?: string }> | undefined,
+  b: ReadonlyArray<{ _id: string; firstMessagePreview?: string }>,
+): boolean {
+  if (a === b) return true;
+  if (!a || a.length !== b.length) return false;
+  return a.every(
+    (row, i) =>
+      row._id === b[i]!._id &&
+      row.firstMessagePreview === b[i]!.firstMessagePreview,
+  );
+}
+
 /** `undefined` (the first page) and a real cursor must not collide. */
 function cursorKey(cursor: number | null | undefined): string {
   return cursor == null ? "first" : String(cursor);
@@ -149,12 +169,20 @@ export function FindingsGoalSessions({
 
   useEffect(() => {
     if (!drilldown) return;
-    // REPLACES this page. The previous answer for this cursor is gone, which
-    // is the whole point.
-    setPagesByCursor((prev) => ({
-      ...prev,
-      [cursorKey(before)]: drilldown.sessions,
-    }));
+    setPagesByCursor((prev) => {
+      const key = cursorKey(before);
+      // BAILS OUT when the page is unchanged, and that is load-bearing rather
+      // than an optimisation. This effect keys on the query result, and a
+      // result that is equal but freshly allocated on every render — which is
+      // what a `mockImplementation` test double does — would otherwise go
+      // set state → render → new object → set state forever. The append-only
+      // version had this property by accident, because it returned `prev`
+      // whenever it found no unseen ids.
+      if (samePage(prev[key], drilldown.sessions)) return prev;
+      // Otherwise REPLACE. The previous answer for this cursor is gone, which
+      // is the whole point.
+      return { ...prev, [key]: drilldown.sessions };
+    });
   }, [drilldown, before]);
 
   const rows = useMemo(() => {
