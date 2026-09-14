@@ -48,14 +48,14 @@ Every case opens in this form, however it was authored — in the app, through t
 
 One list, one Add menu. Each row says what it checks, who wrote it, and what a miss does:
 
-- **Route** — the first row under Selection. It answers "which tool should handle it?" and carries that answer's strictness: *Reach the tool* allows extra calls, *Exact route* requires the exact order with no extras. The route is always a Gate.
+- **Route** — the first row under Selection. It answers "which tool should handle it?" and carries that answer's strictness: *Reach the tool* allows extra calls, *Exact route* requires the exact order with no extras. The route is always Required.
 - **Step N** — a check written as a step (what the CLI and the SDK produce). It is graded in place, at its position in the run, and is labelled by that position: a step-level "no tool errors" reads **No tool errors so far**, because it only sees the transcript up to that point. Editing one rewrites that step; it never becomes a case-level check.
 - **This case** — a check you added here. It is graded once, over the finished transcript.
 - **Suite** — a default the suite applies to every case. Read-only here, with a link to the suite settings.
 
-A row's **role** says what a miss does: **Gate** fails the trial, **Warn** highlights the miss without failing it, **Report** only records it. The control appears when your deployment supports check policy; otherwise the role still shows, read-only.
+A row's **role** says what a miss does: **Required** fails the trial, **Advisory** shows the miss without failing it. The control appears when your deployment supports check policy; otherwise the role still shows, read-only.
 
-Because a failing gate halts the run, a check written as a step can leave later checks unrun. The trial column marks those **Skipped**.
+Because a failing required check halts the run, a check written as a step can leave later checks unrun. The trial column marks those **Skipped**.
 
 **The route question**
 
@@ -92,7 +92,7 @@ A case can hold steps this form has no section for — a second prompt, or a pin
 
 The trial opens on its **Scorecard**: the same scorers the left column lists, in the same order, each with what happened to it on this trial. A row shows its result, its provenance, its role, and — where there is one — the reason, which for a step is the message the runner recorded.
 
-The summary line counts **gates only**: "2 of 2 gates passed · 1 warn". A Warn miss is shown on its row and never counted as a failure, because it did not fail the trial. A scorer with no result reads **Not measured** rather than passing by default. The verdict word itself stays in the header above.
+The summary line counts **required rows only**: "2 of 2 required passed · 1 advisory". An advisory miss is shown on its row and never counted as a failure, because it did not fail the trial. A scorer with no result reads **Not measured** rather than passing by default. The verdict word itself stays in the header above.
 
 The judge's row hosts the judge panel, so labelling a trial works where the judge sits. Under the rows, **Score rows** expands the raw score contract, including any row the backend could not join.
 
@@ -489,9 +489,16 @@ rather than as a pass.
 
 The run header shows a **HOLD** or **SHIP** pill for each client/model pairing in the launch. All pairings that share the same decision are grouped into one pill — a single **HOLD** pill lists every client that did not pass, and a **SHIP** pill lists every client that did. Intermediate states (**Running**, **Grading**, **Inconclusive**) each get their own pill. The **Compare runs** and **Run again** buttons are visible directly in the header.
 
-Below the header, the hero section shows a row per client/model pairing with a pass/fail bar and counts. When a previous launch exists, each pairing row also shows a delta — how many more or fewer cases passed compared to the equivalent pairing in the prior launch. The first launch of a suite shows no deltas.
+Below the header, the hero section shows a row per client/model pairing with a pass/fail bar and counts, plus P50 and P95 latency, average tokens, and average tool calls for that pairing. When a previous launch exists, each pairing row also shows a delta — how many more or fewer cases passed compared to the equivalent pairing in the prior launch. The first launch of a suite shows no deltas.
 
 The **Test cases** section (formerly the matrix) lists every test case with a search box and **Status**, **Client**, and **Model** filters on one row. There is no master pass/fail bar or "RUN RESULTS" eyebrow label in this section.
+
+A **Results / Metrics** toggle above the case list switches what each cell shows:
+
+- **Results** (default) — pass/fail status, a pass-count fraction, and a progress bar broken down by outcome.
+- **Metrics** — P50 and P95 latency, average tokens per iteration, and average tool calls per iteration.
+
+Clicking any populated cell opens a **case drawer** with per-pairing averages (passed count, P50, P95, tokens, calls) and a flat iteration list. Click an iteration row to open its full detail view — scorecard, transcript, tool calls, and trace — without leaving the run page. A **Back** breadcrumb returns to the iteration list.
 
 - **Per-iteration row** with case, model, pass/fail, tokens, cost, duration, and the tool calls that actually happened. Each row also shows a one-line summary of where that trial's user-value chain stopped — for example `broke at Tool response`, `Request satisfied`, or `chain withheld` — so you can scan the table without opening each row.
 - **Expected vs actual** tool calls side-by-side when an iteration fails. For failed iterations, a **Categorized diff** above the raw Expected/Actual grids groups discrepancies into four categories:

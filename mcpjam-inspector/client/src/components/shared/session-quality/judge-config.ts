@@ -31,12 +31,17 @@ export type GoalCompletionJudgeSlot = {
    * its current rubric and judge template, or an organization owner has
    * acknowledged the gap.
    *
+   * `"required"` is the canonical spelling and `"gating"` its legacy one —
+   * one value, two words. Storage said `"gating"` before the rename and says
+   * `"required"` after it, so a reader takes both (`isRequiredRole`) and never
+   * a literal.
+   *
    * Mirrors `goalCompletionConfigFieldsValidator` in the backend's
    * `convex/lib/judgeConfig.ts`. Deliberately absent from
    * `GoalJudgeConfigOverride` below: the backend admits no per-case role, and
    * a per-run override may only lower to `"advisory"`.
    */
-  role?: "advisory" | "gating";
+  role?: "advisory" | "gating" | "required";
   /**
    * Presentation severity. Legal only with `role: "advisory"`. Absent on
    * backends that predate C1, and omitted from defaults so the existing

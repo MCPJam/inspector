@@ -306,11 +306,11 @@ describe("TrialScorecard", () => {
     );
     const row = rowFor("Final message non-empty");
     expect(row).toHaveAttribute("data-state", "failed");
-    expect(row).toHaveAttribute("data-role", "warn");
-    expect(within(row).getByLabelText("Missed · warning")).toBeInTheDocument();
+    expect(row).toHaveAttribute("data-role", "advisory");
+    expect(within(row).getByLabelText("Missed · advisory")).toBeInTheDocument();
     const summary = screen.getByTestId("trial-scorecard-summary").textContent!;
-    expect(summary).toContain("1 of 1 gate passed");
-    expect(summary).toContain("1 warn");
+    expect(summary).toContain("1 of 1 required passed");
+    expect(summary).toContain("1 advisory");
   });
 
   it("never claims a verdict of its own", () => {
@@ -325,7 +325,7 @@ describe("TrialScorecard", () => {
     });
     const summary = screen.getByTestId("trial-scorecard-summary").textContent!;
     expect(summary).not.toMatch(/^Passed|^Failed/);
-    expect(summary).toBe("1 of 1 gate passed");
+    expect(summary).toBe("1 of 1 required passed");
   });
 
   it("keeps the score-row view reachable but out of the way", () => {
@@ -361,34 +361,35 @@ describe("TrialScorecard", () => {
 
 describe("summaryLine", () => {
   const base = {
-    gates: { passed: 0, counted: 0 },
-    warn: 0,
-    report: 0,
+    required: { passed: 0, counted: 0 },
+    advisory: 0,
     errors: 0,
     notMeasured: 0,
     pending: 0,
   };
 
-  it("counts gates and names the rest without promoting it", () => {
+  it("counts required rows and names the rest without promoting it", () => {
     expect(
-      summaryLine({ ...base, gates: { passed: 2, counted: 2 }, warn: 1 }),
-    ).toBe("2 of 2 gates passed · 1 warn");
+      summaryLine({ ...base, required: { passed: 2, counted: 2 }, advisory: 1 }),
+    ).toBe("2 of 2 required passed · 1 advisory");
   });
 
-  it("says a case has no gates rather than reporting 0 of 0", () => {
-    expect(summaryLine({ ...base, warn: 1 })).toBe("No gates ran · 1 warn");
+  it("says a case has no required rows rather than reporting 0 of 0", () => {
+    expect(summaryLine({ ...base, advisory: 1 })).toBe(
+      "No required assertions ran · 1 advisory",
+    );
     expect(summaryLine(base)).toBe("No evaluators ran");
   });
 
   it("names an unevaluable scorer as such, not as a failure", () => {
     expect(
-      summaryLine({ ...base, gates: { passed: 0, counted: 1 }, errors: 1 }),
-    ).toBe("0 of 1 gate passed · 1 could not be evaluated");
+      summaryLine({ ...base, required: { passed: 0, counted: 1 }, errors: 1 }),
+    ).toBe("0 of 1 required passed · 1 could not be evaluated");
   });
 
   it("never uses a pass word for a state that is not a pass", () => {
     expect(PASS_WORDS.test(summaryLine(base))).toBe(false);
-    expect(PASS_WORDS.test(summaryLine({ ...base, warn: 2 }))).toBe(false);
+    expect(PASS_WORDS.test(summaryLine({ ...base, advisory: 2 }))).toBe(false);
   });
 });
 

@@ -18,11 +18,11 @@ const suggestion = (over: Partial<Suggestion> = {}): Suggestion =>
     evidence: "No tool errored in 3 of 3 trials (7 calls)",
     predicate: { type: "noToolErrors" },
     placement: { kind: "wholeRun" },
-    role: "gate",
+    role: "required",
     stability: { held: 3, of: 3, unread: 0 },
     stage: "userValue",
     ...over,
-  }) as Suggestion;
+  } as Suggestion);
 
 const noRead = { pending: 0, failed: 0, capped: 0, total: 3 };
 
@@ -95,17 +95,19 @@ describe("accepting", () => {
     // Requirements change whether future runs fail; that is not a surprise to
     // spring after the click.
     expect(screen.getByTestId("suggestion-add-all-confirm")).toBeTruthy();
-    expect(screen.getByText(/2 requirements and 0 reports/)).toBeTruthy();
+    expect(
+      screen.getByText(/2 requirements and 0 advisory checks/),
+    ).toBeTruthy();
     expect(onAcceptAll).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Add all" }));
     expect(onAcceptAll).toHaveBeenCalled();
   });
 
-  it("does not confirm when everything is a report", async () => {
+  it("does not confirm when everything is advisory", async () => {
     const { onAcceptAll } = renderCard({
       suggestions: [
-        suggestion({ role: "report", consequence: undefined }),
-        suggestion({ key: "k2", role: "report", consequence: undefined }),
+        suggestion({ role: "advisory", consequence: undefined }),
+        suggestion({ key: "k2", role: "advisory", consequence: undefined }),
       ],
     });
     await userEvent
@@ -171,7 +173,7 @@ describe("grouping", () => {
 describe("a batch that did not succeed", () => {
   it("leads with the failure and offers no requirement", () => {
     renderCard({
-      suggestions: [suggestion({ role: "report", consequence: undefined })],
+      suggestions: [suggestion({ role: "advisory", consequence: undefined })],
       diagnosis: { unsuccessful: 2, of: 3, noSignal: false },
     });
     expect(
@@ -255,7 +257,7 @@ describe("always", () => {
 it("Add all excludes already accepted checks from counts and payload", async () => {
   const pending = [
     suggestion({ key: "k2" }),
-    suggestion({ key: "k3", role: "report" }),
+    suggestion({ key: "k3", role: "advisory" }),
   ];
   const { onAcceptAll } = renderCard({
     suggestions: [suggestion(), ...pending],
@@ -263,7 +265,7 @@ it("Add all excludes already accepted checks from counts and payload", async () 
   });
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Add all 2" }));
-  expect(screen.getByText(/1 requirement and 1 report/)).toBeTruthy();
+  expect(screen.getByText(/1 requirement and 1 advisory check/)).toBeTruthy();
   await user.click(screen.getByRole("button", { name: "Add all" }));
   expect(onAcceptAll).toHaveBeenCalledWith(pending);
 });

@@ -276,6 +276,31 @@ describe("ProjectRunsTable", () => {
     expect(chips).toEqual(["SDK", "UI", "API", "CLI"]);
   });
 
+  it("drops a selected chip when platform-post-launch goes off mid-session", async () => {
+    const user = userEvent.setup();
+    setRows([makeRow({ source: "github_check" })]);
+    const onSelectRun = vi.fn();
+    const view = render(
+      <ProjectRunsTable projectId="proj_1" onSelectRun={onSelectRun} />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Filter by platform" }),
+    );
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "GitHub" }));
+    await user.keyboard("{Escape}");
+    expect(latestQueryArgs().origins).toEqual([
+      "github_check",
+      "github_action",
+    ]);
+    // The chip leaves the menu, so the filter it stood for has to go with it.
+    mocks.platformPostLaunchEnabled = false;
+    view.rerender(
+      <ProjectRunsTable projectId="proj_1" onSelectRun={onSelectRun} />,
+    );
+    await waitFor(() => expect(latestQueryArgs().origins).toBeUndefined());
+    expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
+  });
+
   it("maps the GitHub chip onto both stored GitHub origins", async () => {
     const user = userEvent.setup();
     setRows([makeRow({ source: "github_check" })]);
@@ -368,7 +393,8 @@ describe("ProjectRunsTable", () => {
     await user.click(screen.getByLabelText("Filter by suite"));
     await user.click(screen.getByRole("option", { name: "Beta" }));
     expect(inTable().queryByText("Alpha")).toBeNull();
-    expect(screen.getByText("1 of 2 loaded runs")).toBeVisible();
+    // The picked suite is the pool, so the other suite's run is not counted.
+    expect(screen.getByText("1 of 1 loaded runs")).toBeVisible();
     // Then the platform: that one is a query argument, and the backend now
     // answers with the legacy row alone, which the suite filter hides.
     await user.click(
@@ -790,6 +816,23 @@ describe("project run history metrics", () => {
     await user.click(screen.getByRole("button", { name: "Clear filters" }));
     expect(screen.getByText(/2 of 2 loaded runs/)).toBeVisible();
     expect(screen.getByTestId("project-run-history-metrics")).toBeVisible();
+  });
+
+  it("counts loaded runs within the picked suite, not the whole page", async () => {
+    arrangeHistory();
+    const user = userEvent.setup();
+    render(
+      <ProjectRunsTable
+        projectId="proj_1"
+        onSelectRun={vi.fn()}
+        historyMetricsEnabled
+      />,
+    );
+    await screen.findByTestId("project-run-history-metrics");
+    expect(screen.getByText(/2 of 2 loaded runs/)).toBeVisible();
+    await user.click(screen.getByLabelText("Filter by suite"));
+    await user.click(await screen.findByRole("option", { name: "SDK suite" }));
+    expect(screen.getByText(/1 of 1 loaded runs/)).toBeVisible();
   });
 
   it("names a GitHub check's server after its suite, not the throwaway row", async () => {
