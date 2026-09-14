@@ -81,7 +81,7 @@ describe("MultiHostPicker", () => {
   });
 
   it("renders a 'Compare' affordance in the trigger when not actively comparing (single-host or multi-host with <=1 selected)", () => {
-    // The navbar `HostOverlayBar` already shows the lead host name +
+    // Connect's `HostCanvasSelector` already shows the lead host name +
     // cycle controls. Repeating the name here would just duplicate it,
     // so the playground trigger collapses to a `Compare` affordance
     // until the user actually has >1 host selected.

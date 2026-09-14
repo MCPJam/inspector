@@ -1692,7 +1692,7 @@ export function PlaygroundMain({
       createPlaygroundHost({
         projectId: seedProjectId,
         name: "MCPJam",
-        // Pin a cheap default model — see HostOverlayBar's seed for why a
+        // Pin a cheap default model — see ClientSelectionSync's seed for why a
         // modelless default host breaks synthetic/swarm runs.
         input: emptyHostConfigInputV2({
           modelId: DEFAULT_SEEDED_HOST_MODEL_ID,

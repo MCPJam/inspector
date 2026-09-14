@@ -4118,6 +4118,16 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
           },
         },
         body.hosts,
+      ).then((attachments) =>
+        attachments.map((attachment) => ({
+          ...attachment,
+          // An attachment that named no `servers` still has to run the servers
+          // THIS run resolved. Left undefined, the backend composes the host's
+          // own required set instead — so `hosts: [{host}]` would author a
+          // suite bound to different servers than the identical call without
+          // `hosts`, and a later rerun of it would connect the wrong set.
+          selectedServerIds: attachment.selectedServerIds ?? serverIds,
+        })),
       )
     : undefined;
   if (hostAttachments?.length === 1 && !body.namedHostId) {
