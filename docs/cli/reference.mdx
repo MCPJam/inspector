@@ -1320,10 +1320,10 @@ runs never started" as a clean launch.
 
 #### `--file`: upload and run a suite file
 
-`eval run --file` reads the versioned suite file (`schemaVersion: "1"`),
-authenticates, then validates. A contract-invalid file exits **2** after the
-auth request — it does not start a run. `eval validate` on the same bytes
-still exits 1: that command is a verdict on the file; this one is not.
+`eval run --file` reads the versioned suite file (`schemaVersion: "1"` or
+`"2"`), authenticates, then validates. A contract-invalid file exits **2**
+after the auth request — it does not start a run. `eval validate` on the same
+bytes still exits 1: that command is a verdict on the file; this one is not.
 
 The file's `suite.id` is the declared suite identity. The first run creates a
 file-owned suite stamped with that id; later runs of the same id in the same
