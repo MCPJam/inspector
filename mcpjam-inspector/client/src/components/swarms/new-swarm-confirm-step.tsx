@@ -102,9 +102,15 @@ type SelectedPersona =
   | { kind: "proposed"; key: string }
   | { kind: "reused"; id: string };
 
+/**
+ * One existing journey's goal, as the editor edits it: the stored text, never
+ * `journeyLabel`. The panel binds a field to this AND diffs against it to
+ * decide what to write, so a display label here (a name, or a goal truncated
+ * for a card) is what the user's edit would be saved as (UTSC-36).
+ */
 type ReusedGoal = {
   journeyId: string;
-  label: string;
+  goal: string;
 };
 
 type ReusedResolved = {
@@ -153,7 +159,7 @@ export function diffReusedDraft(
     // user cannot act on from here. It is not a pending edit either: there is
     // nothing this panel could save, so closing loses nothing.
     if (next === undefined || next.trim().length === 0) continue;
-    if (next === goal.label) continue;
+    if (next === goal.goal) continue;
     goalEdits.push({ journeyId: goal.journeyId, goal: next });
   }
 
@@ -575,7 +581,7 @@ function ReusedPersonaJourneyLoader({
       })),
       goals: journeys.map((journey) => ({
         journeyId: journey._id,
-        label: journeyLabel(journey),
+        goal: journey.goal,
       })),
       graded: journeys.some(
         (journey) =>
@@ -726,7 +732,7 @@ export function NewSwarmConfirmStep({
           previous.goals.every(
             (goal, index) =>
               goal.journeyId === data.goals[index]?.journeyId &&
-              goal.label === data.goals[index]?.label
+              goal.goal === data.goals[index]?.goal
           );
         if (
           previous &&
@@ -870,7 +876,7 @@ export function NewSwarmConfirmStep({
             role: persona.role,
             notes: persona.notes ?? "",
             goals: Object.fromEntries(
-              goals.map((goal) => [goal.journeyId, goal.label])
+              goals.map((goal) => [goal.journeyId, goal.goal])
             ),
           };
         const next = {
@@ -1120,7 +1126,7 @@ export function NewSwarmConfirmStep({
                           reusedResolved[persona._id]?.goals ?? [];
                         const draft = reusedDrafts[persona._id];
                         const goalText = (goal: ReusedGoal) =>
-                          draft?.goals[goal.journeyId] ?? goal.label;
+                          draft?.goals[goal.journeyId] ?? goal.goal;
                         return (
                           <PersonaDetailPanel
                             seed={persona._id}

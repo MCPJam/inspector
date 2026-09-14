@@ -731,7 +731,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(within(detail).getByText(/use cases & context/i)).toBeVisible();
     // Every field is a control now (BB-122) — the goal and the context read
     // back as values, not as text nodes.
-    expect(within(detail).getByDisplayValue("Reconcile payouts")).toBeVisible();
+    expect(within(detail).getByLabelText("Goal")).toHaveValue("Reconcile");
     expect(
       within(detail).getByDisplayValue(/closes the books monthly/i),
     ).toBeVisible();
@@ -751,7 +751,7 @@ describe("SwarmsTab — New swarm create flow", () => {
       {
         _id: "j-existing",
         name: "Reconcile payouts",
-        goal: "Reconcile",
+        goal: "Reconcile every payout against the ledger and flag mismatches",
         hostIds: ["host-1"],
         environmentIds: ["env-1"],
         config: { sessionsPerTarget: 1, maxTurns: 6 },
@@ -764,9 +764,20 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.click(screen.getByTestId("new-swarm-persona-compact"));
     const detail = await screen.findByTestId("new-swarm-persona-detail");
 
+    // The field carried the journey's card label — its name, or a goal cut to
+    // 48 characters — so editing a named journey wrote text derived from the
+    // name into `goal` and the panel still showed the unchanged name: the edit
+    // read as lost while the real goal was quietly replaced (UTSC-36).
+    const goalField = within(detail).getByLabelText("Goal");
+    expect(goalField).toHaveValue(
+      "Reconcile every payout against the ledger and flag mismatches",
+    );
+
     const save = within(detail).getByTestId("new-swarm-persona-save");
-    fireEvent.change(within(detail).getByDisplayValue("Reconcile payouts"), {
-      target: { value: "Reconcile payouts weekly" },
+    fireEvent.change(goalField, {
+      target: {
+        value: "Reconcile every payout against the ledger and open a ticket",
+      },
     });
     expect(navigateMock).not.toHaveBeenCalledWith("/swarms?persona=p-1");
 
@@ -777,7 +788,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     });
     expect(updateJourneyMock.mock.calls[0][0]).toMatchObject({
       journeyRefId: "j-existing",
-      goal: "Reconcile payouts weekly",
+      goal: "Reconcile every payout against the ledger and open a ticket",
     });
     // The persona row itself did not change, so it is left alone.
     expect(updatePersonaMock).not.toHaveBeenCalled();
@@ -2474,7 +2485,7 @@ describe("SwarmsTab — a reused persona whose save fails", () => {
     updateJourneyMock.mockRejectedValue(new Error("goal rejected"));
     const detail = await openReusedPersona();
 
-    fireEvent.change(within(detail).getByDisplayValue("Reconcile payouts"), {
+    fireEvent.change(within(detail).getByLabelText("Goal"), {
       target: { value: "Reconcile payouts weekly" },
     });
     fireEvent.click(within(detail).getByTestId("new-swarm-persona-save"));
@@ -2485,9 +2496,9 @@ describe("SwarmsTab — a reused persona whose save fails", () => {
       );
     });
     expect(screen.getByTestId("new-swarm-persona-detail")).toBeInTheDocument();
-    expect(
-      within(detail).getByDisplayValue("Reconcile payouts weekly"),
-    ).toBeInTheDocument();
+    expect(within(detail).getByLabelText("Goal")).toHaveValue(
+      "Reconcile payouts weekly",
+    );
   });
 
   /**
