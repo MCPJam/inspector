@@ -155,7 +155,7 @@ export function HostCanvasSelector({
 
   const logoFor = (name: string) => resolveHostLogoByName(name, themeMode);
 
-  if (isLoading || !active) {
+  if (isLoading) {
     return (
       <div className="flex items-center gap-1.5">
         <div className="h-9 w-32 animate-pulse rounded-xl border border-border/60 bg-card/80" />
@@ -163,6 +163,12 @@ export function HostCanvasSelector({
       </div>
     );
   }
+  // Only a load in flight earns the skeleton above. No active host is a
+  // SETTLED answer — no clients yet, or an `activeHostId` pointing at a
+  // deleted one — and pulsing at the reader forever is a worse lie than
+  // showing nothing. `activeHostId` is nullable since the Servers view
+  // started passing its previewed id straight through.
+  if (!active) return null;
 
   return (
     <div

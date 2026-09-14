@@ -2105,6 +2105,7 @@ export function SuiteIterationsView({
                   {projectId ? (
                     <EvaluateRunContent
                       projectId={projectId}
+                      suiteName={suite.name}
                       run={selectedRunDetails}
                       iterations={caseGroupsForSelectedRun}
                       allIterations={allIterations}
