@@ -143,6 +143,42 @@ describe("openapi.json refuses the bodies the eval routes refuse", () => {
   });
 
   /**
+   * The vocabulary-2 case bodies (`x-mcpjam-eval-vocabulary: 2`), where the
+   * legacy floor is `legacyIterations` with `runs` as its legacy spelling —
+   * and, on the other side of the boundary, the vocabulary-1 bodies, which
+   * are NOT widened: the vocabulary-2 spellings are unknown keys there.
+   */
+  describe("case bodies — vocabulary 2 beside vocabulary 1", () => {
+    const V2 = [
+      ["EvalCaseCreateRequestV2", { ...SUITE_CASE }],
+      ["EvalCaseUpdateRequestV2", {}],
+    ] as const;
+
+    it.each(V2)(
+      "%s accepts exactly one spelling of the floor",
+      (name, base) => {
+        const accepts = validator(schemas[name]);
+        expect(accepts({ ...base, legacyIterations: 1 })).toBe(true);
+        expect(accepts({ ...base, runs: 1 })).toBe(true);
+        expect(accepts({ ...base })).toBe(true);
+        expect(accepts({ ...base, legacyIterations: 1, runs: 1 })).toBe(false);
+        // Vacated: nothing under vocabulary 2 answers to `iterations` yet.
+        expect(accepts({ ...base, iterations: 1 })).toBe(false);
+      },
+    );
+
+    it.each([
+      ["EvalCaseCreateRequest", { ...SUITE_CASE }],
+      ["EvalCaseUpdateRequest", {}],
+    ] as const)("%s refuses the vocabulary-2 spellings", (name, base) => {
+      const accepts = validator(schemas[name]);
+      expect(accepts({ ...base, iterations: 1 })).toBe(true);
+      expect(accepts({ ...base, legacyIterations: 1 })).toBe(false);
+      expect(accepts({ ...base, runs: 1 })).toBe(false);
+    });
+  });
+
+  /**
    * Every published `passCriteria`, not just the first: the four are separate
    * objects in the file, and the point of checking all of them is that a fix
    * applied to one is not a fix applied to the surface a caller is using.

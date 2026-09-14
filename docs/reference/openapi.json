@@ -4563,10 +4563,16 @@
     "/projects/{projectId}/eval-suites/{suiteId}/cases": {
       "get": {
         "operationId": "listEvalCases",
+        "x-mcpjam-eval-vocabulary": {
+          "2": {"response": "EvalCasePageV2"}
+        },
         "tags": ["Eval runs"],
         "summary": "List a suite's eval cases",
         "description": "Every case in the suite, in the public steps-first shape.",
         "parameters": [
+          {
+            "$ref": "#/components/parameters/evalVocabularyHeader"
+          },
           {
             "$ref": "#/components/parameters/projectId"
           },
@@ -4607,10 +4613,16 @@
       },
       "post": {
         "operationId": "createEvalCase",
+        "x-mcpjam-eval-vocabulary": {
+          "2": {"requestBody": "EvalCaseCreateRequestV2", "response": "EvalCaseV2"}
+        },
         "tags": ["Eval runs"],
         "summary": "Create an eval case",
         "description": "Adds one case to the suite. Both `title` and a non-empty `steps` array are required — `steps` is optional on the shared case shape so PATCH can be partial, but a case persisted without executable steps could never run. When `models` is omitted the suite's configured model is used.",
         "parameters": [
+          {
+            "$ref": "#/components/parameters/evalVocabularyHeader"
+          },
           {
             "$ref": "#/components/parameters/projectId"
           },
@@ -4693,10 +4705,16 @@
     "/projects/{projectId}/eval-suites/{suiteId}/cases/batch": {
       "post": {
         "operationId": "createEvalCases",
+        "x-mcpjam-eval-vocabulary": {
+          "2": {"requestBody": "EvalCasesBatchCreateRequestV2"}
+        },
         "tags": ["Eval runs"],
         "summary": "Create several eval cases",
         "description": "Adds up to 100 cases to the suite in one call — the bulk form of the single create, and the way to import a suite or convert a repo's test files without a round trip per case. Every entry needs a `title` and a non-empty `steps` array. Cases are validated together and reported individually: a `failed` entry does not roll back its committed siblings, so the response is `201` even when some entries were refused — read `failed` rather than branching on the status alone. Send an `Idempotency-Key` header to make a retry land on the same rows.",
         "parameters": [
+          {
+            "$ref": "#/components/parameters/evalVocabularyHeader"
+          },
           {
             "$ref": "#/components/parameters/projectId"
           },
@@ -4812,10 +4830,16 @@
     "/projects/{projectId}/eval-suites/{suiteId}/cases/generate": {
       "post": {
         "operationId": "generateEvalCases",
+        "x-mcpjam-eval-vocabulary": {
+          "2": {"response": "EvalCaseGeneratedV2"}
+        },
         "tags": ["Eval runs"],
         "summary": "Generate eval cases from the suite's tools",
         "description": "Discovers the suite's server tools over a live MCP connection, generates cases against them, and persists them — the only edit route that connects to a server, and the only one that SPENDS ORG CREDITS. Synchronous: connect, generate, persist, disconnect, respond.\n\nAn environment-based suite generates against that environment's closed server set, so the cases match the tools its runs will actually see.\n\nPass `x-mcpjam-idempotency-key` to make a retry safe: drafts are recorded backend-side BEFORE any case is persisted, so a replay reuses them instead of spending credits again, and each case is persisted under a derived per-item key so the loop is resumable.",
         "parameters": [
+          {
+            "$ref": "#/components/parameters/evalVocabularyHeader"
+          },
           {
             "$ref": "#/components/parameters/projectId"
           },
@@ -4886,10 +4910,16 @@
     "/projects/{projectId}/eval-suites/{suiteId}/cases/{caseId}": {
       "get": {
         "operationId": "getEvalCase",
+        "x-mcpjam-eval-vocabulary": {
+          "2": {"response": "EvalCaseV2"}
+        },
         "tags": ["Eval runs"],
         "summary": "Get one eval case",
         "description": "A case that belongs to this suite and project. A case in another suite is a 404, not a 403.",
         "parameters": [
+          {
+            "$ref": "#/components/parameters/evalVocabularyHeader"
+          },
           {
             "$ref": "#/components/parameters/projectId"
           },
@@ -4939,10 +4969,16 @@
       },
       "patch": {
         "operationId": "updateEvalCase",
+        "x-mcpjam-eval-vocabulary": {
+          "2": {"requestBody": "EvalCaseUpdateRequestV2", "response": "EvalCaseV2"}
+        },
         "tags": ["Eval runs"],
         "summary": "Update an eval case",
         "description": "Partial update — omitted fields are left as they are. Supplying `steps` REPLACES the case's definition rather than merging into it. `matchOptions` and `checks` accept `null` to clear the case-level override and fall back to the suite's.",
         "parameters": [
+          {
+            "$ref": "#/components/parameters/evalVocabularyHeader"
+          },
           {
             "$ref": "#/components/parameters/projectId"
           },
@@ -14609,6 +14645,467 @@
           }
         ],
         "description": "An SDK assertion reported through UVC. Discovery assertions require complete raw tool declarations; missing evidence is an evaluator error. Observation kinds, including noDeprecatedToolExposed, require role advisory. Structural schema; runtime also validates policy and unique required annotation keys."
+      },
+      "EvalCaseV2": {
+        "type": "object",
+        "required": ["id", "title", "steps", "legacyIterations", "isNegative", "models"],
+        "description": "`EvalCase` as projected under `x-mcpjam-eval-vocabulary: 2`. Identical to `EvalCase` except that the legacy per-case floor is `legacyIterations` rather than `iterations`.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "declaredId": {
+            "type": "string",
+            "description": "The case's effective declared id. Absent on cases authored before declared identity existed."
+          },
+          "title": {
+            "type": "string"
+          },
+          "steps": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/EvalTestStep"
+            },
+            "description": "Ordered test steps. A `prompt` step is a model turn; a single model-free `toolCall` step is a render-check; `assert` steps hold the expectations."
+          },
+          "expectedOutput": {
+            "type": "string"
+          },
+          "legacyIterations": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "description": "The legacy per-case count, which the legacy resolver reads as a FLOOR (`max(legacyIterations, suite.minimumIterations)`). Stored as `runs`. Vocabulary 1 spells this field `iterations`; under `x-mcpjam-eval-vocabulary: 2` that key is reserved for the exact configured count, so the floor answers to this name (legacy spelling `runs`). NOT the same field as the verdict-policy-2 exact count."
+          },
+          "repetitions": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Trials this case runs under verdict policy 2, overriding the suite default. Absent means the case inherits it. NOT a second spelling of `iterations`: that one is the legacy count, which the legacy resolver reads as a FLOOR (`max(iterations, suite.minimumIterations)`) and which a policy-2 case still reports for compatibility. This one is exact."
+          },
+          "passThreshold": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Fraction of this case's trials that must pass, overriding the suite default. Absent means the case inherits it. Never derived from the suite's `minimumAccuracy`, which is a PERCENT under a different resolver."
+          },
+          "isNegative": {
+            "type": "boolean",
+            "description": "When true, the case passes if NO tools are called."
+          },
+          "scenario": {
+            "type": "string"
+          },
+          "intent": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+            "description": "Optional authored analytics grouping label. Must be already trimmed; absent means unlabelled."
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["capability", "regression"],
+            "description": "Authored case kind for the simple editor. Absent means the editor derives it from matchOptions."
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["model"],
+              "properties": {
+                "model": {
+                  "type": "string"
+                },
+                "provider": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "matchOptions": {
+            "type": "object",
+            "description": "Absent when the case sets none — omitted from the response rather than sent as `null`."
+          },
+          "checks": {
+            "type": "object",
+            "description": "Absent when the case sets none — omitted from the response rather than sent as `null`.",
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": ["inherit", "replace", "extend"]
+              },
+              "list": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/EvalAssertion"
+                }
+              }
+            }
+          },
+          "import": {
+            "$ref": "#/components/schemas/EvalCaseImportClaim"
+          },
+          "source": {
+            "$ref": "#/components/schemas/EvalCaseSource"
+          },
+          "createdAt": {
+            "type": ["number", "null"]
+          },
+          "updatedAt": {
+            "type": ["number", "null"]
+          },
+          "suppressedSuiteStandardCheckIds": {
+            "$ref": "#/components/schemas/SuppressedSuiteStandardCheckIds",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "EvalCaseCreateRequestV2": {
+        "type": "object",
+        "required": ["title", "steps"],
+        "description": "Create one case. `title` and a non-empty `steps` array are both required — a case persisted without executable steps could never run. Vocabulary 2 (`x-mcpjam-eval-vocabulary: 2`): the legacy floor is `legacyIterations` (legacy spelling `runs`); sending both is a `400`. Every other field is as in `EvalCaseCreateRequest`.",
+        "properties": {
+          "declaredSuiteId": {
+            "type": "string",
+            "maxLength": 128,
+            "description": "The suite file's own `suite.id`, when THIS request is a suite-file sync.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. Naming the suite's own declared id is how the file writing itself is allowed through — the platform permits the write only when the id matches, so naming any other id refuses exactly as loudly as naming none. Omit it for ordinary edits.\n\nPREFER THE `declaredSuiteId` QUERY PARAMETER on this route. This body field still works here, but these request bodies are strict on every Inspector that predates the CI-owned lock, so a body field is a `400` against an older deployment while an unknown query parameter is simply ignored. The MCPJam SDK and CLI send the query parameter."
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,128}$",
+            "description": "Stable declared id for the case — the id it answers to in a suite file, an import or a CLI argument. Minted for you when omitted, and unique within the suite. Distinct from the `id` on the response, which is the case's platform row id."
+          },
+          "steps": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/EvalTestStep"
+            },
+            "description": "REPLACES the case's test definition wholesale when provided."
+          },
+          "expectedOutput": {
+            "type": "string"
+          },
+          "legacyIterations": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "description": "The legacy per-case count, which the legacy resolver reads as a FLOOR (`max(legacyIterations, suite.minimumIterations)`). Stored as `runs`. Vocabulary 1 spells this field `iterations`; under `x-mcpjam-eval-vocabulary: 2` that key is reserved for the exact configured count, so the floor answers to this name (legacy spelling `runs`). NOT the same field as the verdict-policy-2 exact count."
+          },
+          "runs": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "deprecated": true,
+            "description": "Legacy spelling of `legacyIterations`. Send one or the other, never both."
+          },
+          "repetitions": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "description": "Per-case repetitions; omitted cases inherit the suite default. VERDICT POLICY 2 ONLY — on a legacy suite this is a VALIDATION_ERROR naming the upgrade, because the legacy resolver takes the trial count from `iterations` and the suite's `minimumIterations` and would never read this. Capped at 10, the same hosted ceiling as `iterations`; the suite-file contract's larger `MAX_REPETITIONS` is what a file may DECLARE, not what a hosted run accepts."
+          },
+          "passThreshold": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Per-case pass threshold fraction. VERDICT POLICY 2 ONLY — on a legacy suite this is a VALIDATION_ERROR naming the upgrade, for the same reason as `repetitions`."
+          },
+          "isNegative": {
+            "type": "boolean"
+          },
+          "scenario": {
+            "type": "string"
+          },
+          "intent": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+            "description": "Optional authored analytics grouping label. Must be already trimmed."
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["capability", "regression"],
+            "description": "Authored case kind for the simple editor. Absent means the editor derives it from matchOptions."
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["model"],
+              "properties": {
+                "model": {
+                  "type": "string"
+                },
+                "provider": {
+                  "type": "string",
+                  "description": "Derived from a `provider/model` id when omitted."
+                }
+              }
+            }
+          },
+          "matchOptions": {
+            "type": ["object", "null"],
+            "description": "`null` clears the case override and inherits the suite's."
+          },
+          "checks": {
+            "type": ["object", "null"],
+            "description": "`null` clears the case override.",
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": ["inherit", "replace", "extend"]
+              },
+              "list": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/EvalAssertion"
+                }
+              }
+            }
+          },
+          "import": {
+            "$ref": "#/components/schemas/EvalCaseImportClaim"
+          },
+          "source": {
+            "$ref": "#/components/schemas/EvalCaseSource"
+          },
+          "suppressedSuiteStandardCheckIds": {
+            "$ref": "#/components/schemas/SuppressedSuiteStandardCheckIds",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "not": {
+              "required": ["legacyIterations", "runs"]
+            }
+          }
+        ]
+      },
+      "EvalCaseUpdateRequestV2": {
+        "type": "object",
+        "description": "Partial update. Every field is optional; omitted fields are left as they are. `steps` REPLACES the definition rather than merging into it. Vocabulary 2 (`x-mcpjam-eval-vocabulary: 2`): the legacy floor is `legacyIterations` (legacy spelling `runs`); sending both is a `400`. A PATCH that names neither leaves the stored floor exactly as it was.",
+        "properties": {
+          "declaredSuiteId": {
+            "type": "string",
+            "maxLength": 128,
+            "description": "The suite file's own `suite.id`, when THIS request is a suite-file sync.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. Naming the suite's own declared id is how the file writing itself is allowed through — the platform permits the write only when the id matches, so naming any other id refuses exactly as loudly as naming none. Omit it for ordinary edits.\n\nPREFER THE `declaredSuiteId` QUERY PARAMETER on this route. This body field still works here, but these request bodies are strict on every Inspector that predates the CI-owned lock, so a body field is a `400` against an older deployment while an unknown query parameter is simply ignored. The MCPJam SDK and CLI send the query parameter."
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "steps": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/EvalTestStep"
+            },
+            "description": "REPLACES the case's test definition wholesale when provided."
+          },
+          "expectedOutput": {
+            "type": "string"
+          },
+          "legacyIterations": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "description": "The legacy per-case count, which the legacy resolver reads as a FLOOR (`max(legacyIterations, suite.minimumIterations)`). Stored as `runs`. Vocabulary 1 spells this field `iterations`; under `x-mcpjam-eval-vocabulary: 2` that key is reserved for the exact configured count, so the floor answers to this name (legacy spelling `runs`). NOT the same field as the verdict-policy-2 exact count."
+          },
+          "runs": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "deprecated": true,
+            "description": "Legacy spelling of `legacyIterations`. Send one or the other, never both."
+          },
+          "repetitions": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "description": "Per-case repetitions; omitted cases inherit the suite default. VERDICT POLICY 2 ONLY — on a legacy suite this is a VALIDATION_ERROR naming the upgrade, because the legacy resolver takes the trial count from `iterations` and the suite's `minimumIterations` and would never read this. Capped at 10, the same hosted ceiling as `iterations`; the suite-file contract's larger `MAX_REPETITIONS` is what a file may DECLARE, not what a hosted run accepts."
+          },
+          "passThreshold": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Per-case pass threshold fraction. VERDICT POLICY 2 ONLY — on a legacy suite this is a VALIDATION_ERROR naming the upgrade, for the same reason as `repetitions`."
+          },
+          "isNegative": {
+            "type": "boolean"
+          },
+          "scenario": {
+            "type": "string"
+          },
+          "intent": {
+            "type": ["string", "null"],
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+            "description": "Optional authored analytics grouping label. Must be already trimmed; omitted leaves the stored value unchanged and null clears it."
+          },
+          "kind": {
+            "type": ["string", "null"],
+            "enum": ["capability", "regression", null],
+            "description": "Authored case kind. Omitted leaves the stored value unchanged; null clears it."
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["model"],
+              "properties": {
+                "model": {
+                  "type": "string"
+                },
+                "provider": {
+                  "type": "string",
+                  "description": "Derived from a `provider/model` id when omitted."
+                }
+              }
+            }
+          },
+          "matchOptions": {
+            "type": ["object", "null"],
+            "description": "`null` clears the case override and inherits the suite's."
+          },
+          "checks": {
+            "type": ["object", "null"],
+            "description": "`null` clears the case override.",
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": ["inherit", "replace", "extend"]
+              },
+              "list": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/EvalAssertion"
+                }
+              }
+            }
+          },
+          "import": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EvalCaseImportClaim"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The converter's claim for this case, or `null` to remove one. Omitted leaves the stored claim unchanged; `null` removes it. The two are different requests, and a PATCH that conflated them would erase provenance on every unrelated edit."
+          },
+          "suppressedSuiteStandardCheckIds": {
+            "$ref": "#/components/schemas/SuppressedSuiteStandardCheckIds",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "not": {
+              "required": ["legacyIterations", "runs"]
+            }
+          }
+        ]
+      },
+      "EvalCasesBatchCreateRequestV2": {
+        "type": "object",
+        "required": ["cases"],
+        "description": "Author several cases in one call. Each entry takes the same fields as a single create. The 100-case cap is deliberately smaller than a suite file's 500-case limit, so a maximal file uploads in several calls. Vocabulary 2: each item is an `EvalCaseCreateRequestV2`.",
+        "properties": {
+          "declaredSuiteId": {
+            "type": "string",
+            "maxLength": 128,
+            "description": "The suite file's own `suite.id`, when THIS request is a suite-file sync.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. Naming the suite's own declared id is how the file writing itself is allowed through — the platform permits the write only when the id matches, so naming any other id refuses exactly as loudly as naming none. Omit it for ordinary edits.\n\nPREFER THE `declaredSuiteId` QUERY PARAMETER on this route. This body field still works here, but these request bodies are strict on every Inspector that predates the CI-owned lock, so a body field is a `400` against an older deployment while an unknown query parameter is simply ignored. The MCPJam SDK and CLI send the query parameter."
+          },
+          "cases": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/components/schemas/EvalCaseCreateRequestV2"
+            }
+          },
+          "duplicatePolicy": {
+            "type": "string",
+            "enum": ["block", "warn", "create_anyway"],
+            "default": "block",
+            "description": "What to do with a case whose definition already matches one in the suite. An unrecognized value coerces to `block` and reports the coercion in the response's `duplicatePolicy` rather than failing the call."
+          },
+          "overrideReason": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Required by `warn` and `create_anyway`. Recorded on the case's revision."
+          }
+        },
+        "additionalProperties": false
+      },
+      "EvalCasePageV2": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EvalCaseV2"
+            }
+          },
+          "nextCursor": {
+            "type": ["string", "null"]
+          }
+        }
+      },
+      "EvalCaseGeneratedV2": {
+        "type": "object",
+        "required": ["generationModel", "created", "counts"],
+        "properties": {
+          "generationModel": {
+            "type": "string"
+          },
+          "created": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EvalCaseV2"
+            }
+          },
+          "counts": {
+            "type": "object",
+            "properties": {
+              "normal": {
+                "type": "integer"
+              },
+              "negative": {
+                "type": "integer"
+              }
+            }
+          },
+          "skipped": {
+            "type": "array",
+            "description": "Drafts that were generated but failed to persist. Surfaced rather than silently dropped.",
+            "items": {
+              "type": "object"
+            }
+          }
+        }
       },
       "EvalCase": {
         "type": "object",

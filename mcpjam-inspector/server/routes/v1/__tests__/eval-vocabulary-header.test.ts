@@ -2,12 +2,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 
 /**
- * The `x-mcpjam-eval-vocabulary` header on the eval routes — the plumbing
- * only. No field is renamed here: this pins that the header is READ (a bad
- * value is a uniform 400 across the eval surface), that a well-formed value
- * changes nothing yet (vocabulary 2 answers byte-for-byte as vocabulary 1
- * until a later step adds the projections), and that routes outside the eval
- * surface ignore it entirely.
+ * The `x-mcpjam-eval-vocabulary` header on the eval routes — the plumbing.
+ * This pins that the header is READ (a bad value is a uniform 400 across the
+ * eval surface), that vocabulary 2 differs from vocabulary 1 in exactly the
+ * keys the vocabulary renames and nothing else, and that routes outside the
+ * eval surface ignore it entirely. What each renamed field DOES is pinned
+ * next door in `eval-case-vocabulary-2.test.ts`.
  */
 
 const { validateGuestTokenMock, convexQueryMock, convexMutationMock } =
@@ -113,12 +113,22 @@ describe("x-mcpjam-eval-vocabulary on the eval routes", () => {
     );
   });
 
-  it("answers vocabulary 2 exactly as vocabulary 1 while nothing varies yet", async () => {
+  it("answers vocabulary 2 as vocabulary 1 with exactly the renamed keys", async () => {
+    // The projection is a rename in place, never a reshaping: the two bodies
+    // differ in the keys the vocabulary renames and in nothing else. The
+    // per-field behaviour is pinned in `eval-case-vocabulary-2.test.ts`; this
+    // pins that nothing ELSE drifted between the two vocabularies.
     const one = await request("GET", CASE_PATH);
     const two = await request("GET", CASE_PATH, { vocabulary: "2" });
     expect(one.status).toBe(200);
     expect(two.status).toBe(200);
-    expect(await two.text()).toBe(await one.text());
+    const RENAMED: Record<string, string> = { iterations: "legacyIterations" };
+    const expected = Object.fromEntries(
+      Object.entries((await one.json()) as Record<string, unknown>).map(
+        ([key, value]) => [RENAMED[key] ?? key, value],
+      ),
+    );
+    expect(await two.json()).toEqual(expected);
   });
 
   it("accepts an explicit 1 and a blank value as the default", async () => {

@@ -153,7 +153,19 @@ import {
   type EvalStepReplay,
 } from "@/shared/eval-step-replay";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
-import { evalVocabularyMiddleware } from "../../utils/eval-vocabulary.js";
+import {
+  addBothSpellingsIssues,
+  evalVocabularyMiddleware,
+  readEvalVocabulary,
+  varyByEvalVocabulary,
+} from "../../utils/eval-vocabulary.js";
+import {
+  caseBodyShapeV2,
+  floorFieldName,
+  foldCaseBodyV2ToV1,
+  projectCaseDto,
+  refineCaseBodyV2,
+} from "./eval-case-vocabulary-2.js";
 import {
   measureTraceBytes,
   recordEvalIterationRead,
@@ -454,15 +466,7 @@ function refineInlineTest(
   test: Record<string, unknown>,
   ctx: z.RefinementCtx,
 ): void {
-  for (const [publicName, legacyName] of INLINE_TEST_ALIASES) {
-    if (test[publicName] !== undefined && test[legacyName] !== undefined) {
-      ctx.addIssue({
-        code: "custom",
-        path: [publicName],
-        message: `Send ${publicName} or ${legacyName}, not both — they are two spellings of one field.`,
-      });
-    }
-  }
+  addBothSpellingsIssues(test, ctx, INLINE_TEST_ALIASES);
   for (const name of Object.keys(inlineTestUnsupportedShape)) {
     if (test[name] !== undefined) {
       ctx.addIssue({
@@ -2682,6 +2686,8 @@ function assertCasePolicyFieldsSupported(
   suite: SuiteDoc | null,
   body: { repetitions?: number; passThreshold?: number },
   label = "",
+  /** What the caller's vocabulary calls the legacy floor, for the message. */
+  floorField = "iterations",
 ): void {
   if (isEvalVerdictPolicyV2(suite?.verdictPolicyVersion)) return;
   for (const [field, meaning] of V2_ONLY_CASE_FIELDS) {
@@ -2689,7 +2695,7 @@ function assertCasePolicyFieldsSupported(
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      `${label}${field} sets ${meaning}, which only a suite on verdict policy 2 reads — this suite is on the legacy policy, where the trial count comes from iterations and the suite's minimumIterations. Upgrade the suite first (PATCH the suite with settings.repetitions and settings.passThreshold), or drop ${field}.`,
+      `${label}${field} sets ${meaning}, which only a suite on verdict policy 2 reads — this suite is on the legacy policy, where the trial count comes from ${floorField} and the suite's minimumIterations. Upgrade the suite first (PATCH the suite with settings.repetitions and settings.passThreshold), or drop ${field}.`,
     );
   }
 }
@@ -2835,8 +2841,15 @@ function fileSyncArg(
   return trimmed.length > 0 ? { fileSync: { declaredSuiteId: trimmed } } : {};
 }
 
-const createCaseSchema = z.strictObject({
-  ...publicCaseBodyShape,
+/**
+ * The vocabulary-2 case body: the same fields, with the legacy floor spelled
+ * `legacyIterations` (alias `runs`) instead of `iterations`. Built from the
+ * vocabulary-1 shape, never re-declared — see `eval-case-vocabulary-2.ts`.
+ */
+const publicCaseBodyShapeV2 = caseBodyShapeV2(publicCaseBodyShape);
+
+/** What a CREATE adds to the case body, in either vocabulary. */
+const createCaseExtras = {
   /**
    * The case's DECLARED identity. Callers mint it (`mintCaseId` from
    * `@mcpjam/sdk/contract`) so the id a suite file commits is the id the
@@ -2856,9 +2869,10 @@ const createCaseSchema = z.strictObject({
   /** The converter's claim for this case. See {@link publicCaseImportSchema}. */
   import: publicCaseImportSchema.optional(),
   source: caseSourceSchema.optional(),
-});
-const updateCaseSchema = z.strictObject({
-  ...publicCaseBodyShape,
+} as const;
+
+/** What a PATCH adds to the case body, in either vocabulary. */
+const updateCaseExtras = {
   ...fileSyncBodyShape,
   /**
    * The converter's CLAIM about this case, or `null` to remove one.
@@ -2868,6 +2882,15 @@ const updateCaseSchema = z.strictObject({
    * provenance on every unrelated edit.
    */
   import: z.union([publicCaseImportSchema, z.null()]).optional(),
+} as const;
+
+const createCaseSchema = z.strictObject({
+  ...publicCaseBodyShape,
+  ...createCaseExtras,
+});
+const updateCaseSchema = z.strictObject({
+  ...publicCaseBodyShape,
+  ...updateCaseExtras,
 });
 
 /**
@@ -2885,25 +2908,113 @@ const batchCaseSchema = createCaseSchema;
  */
 const createCaseRequestSchema = createCaseSchema.extend(fileSyncBodyShape);
 
-const createCasesBatchSchema = z.strictObject({
-  ...fileSyncBodyShape,
-  cases: z
-    .array(batchCaseSchema)
-    .min(1, "cases must contain at least one case.")
-    .max(
-      MAX_CASES_PER_BATCH,
-      `cases accepts at most ${MAX_CASES_PER_BATCH} entries per call; split larger writes into chunks.`,
-    ),
-  /**
-   * `block` (default) refuses a case whose definition already exists in the
-   * suite. Left as a plain string so an unrecognized value COERCES to `block`
-   * and reports the coercion, exactly as the platform does — validating it to
-   * an enum here would turn a typo into a rejected batch and hide the
-   * platform's own audit field.
-   */
-  duplicatePolicy: z.string().optional(),
-  overrideReason: z.string().optional(),
+/** The batch envelope around one item schema, so both vocabularies share it. */
+function casesBatchSchema<Item extends z.ZodTypeAny>(item: Item) {
+  return z.strictObject({
+    ...fileSyncBodyShape,
+    cases: z
+      .array(item)
+      .min(1, "cases must contain at least one case.")
+      .max(
+        MAX_CASES_PER_BATCH,
+        `cases accepts at most ${MAX_CASES_PER_BATCH} entries per call; split larger writes into chunks.`,
+      ),
+    /**
+     * `block` (default) refuses a case whose definition already exists in the
+     * suite. Left as a plain string so an unrecognized value COERCES to `block`
+     * and reports the coercion, exactly as the platform does — validating it to
+     * an enum here would turn a typo into a rejected batch and hide the
+     * platform's own audit field.
+     */
+    duplicatePolicy: z.string().optional(),
+    overrideReason: z.string().optional(),
+  });
+}
+
+const createCasesBatchSchema = casesBatchSchema(batchCaseSchema);
+
+/**
+ * The vocabulary-2 twins. Same extras, the vocabulary-2 body, plus the
+ * both-spellings refusal — and nothing else, so the only way the two
+ * vocabularies can differ is the spelling table they are built from.
+ */
+const createCaseSchemaV2 = z.strictObject({
+  ...publicCaseBodyShapeV2,
+  ...createCaseExtras,
 });
+const updateCaseSchemaV2 = z
+  .strictObject({
+    ...publicCaseBodyShapeV2,
+    ...updateCaseExtras,
+  })
+  .superRefine(refineCaseBodyV2);
+const createCaseRequestSchemaV2 = createCaseSchemaV2
+  .extend(fileSyncBodyShape)
+  .superRefine(refineCaseBodyV2);
+const createCasesBatchSchemaV2 = casesBatchSchema(
+  createCaseSchemaV2.superRefine(refineCaseBodyV2),
+);
+
+/**
+ * Parse a case write in the caller's vocabulary and hand back VOCABULARY 1's
+ * shape, so everything downstream — the policy guard, `buildCaseMutationArgs`,
+ * the Convex call — has exactly one body shape to read. The fold is
+ * presence-based and forwards nothing the body did not name.
+ *
+ * The casts name what the fold guarantees: a vocabulary-2 body with its floor
+ * folded back under `iterations` IS the vocabulary-1 body, and the compiler
+ * cannot see that across the generic.
+ */
+function parseCreateCaseBody(
+  c: Context,
+  raw: unknown,
+): z.infer<typeof createCaseRequestSchema> {
+  if (readEvalVocabulary(c) === 1) {
+    return parseWithSchema(createCaseRequestSchema, raw);
+  }
+  return foldCaseBodyV2ToV1(
+    parseWithSchema(createCaseRequestSchemaV2, raw),
+  ) as z.infer<typeof createCaseRequestSchema>;
+}
+
+function parseUpdateCaseBody(
+  c: Context,
+  raw: unknown,
+): z.infer<typeof updateCaseSchema> {
+  if (readEvalVocabulary(c) === 1) {
+    return parseWithSchema(updateCaseSchema, raw);
+  }
+  return foldCaseBodyV2ToV1(
+    parseWithSchema(updateCaseSchemaV2, raw),
+  ) as z.infer<typeof updateCaseSchema>;
+}
+
+function parseCreateCasesBatchBody(
+  c: Context,
+  raw: unknown,
+): z.infer<typeof createCasesBatchSchema> {
+  if (readEvalVocabulary(c) === 1) {
+    return parseWithSchema(createCasesBatchSchema, raw);
+  }
+  const parsed = parseWithSchema(createCasesBatchSchemaV2, raw);
+  return {
+    ...parsed,
+    cases: parsed.cases.map(foldCaseBodyV2ToV1),
+  } as z.infer<typeof createCasesBatchSchema>;
+}
+
+/**
+ * One case, projected into the caller's vocabulary and marked as varying by
+ * it. Every route that answers with a case DTO goes through here.
+ */
+function caseResource(c: Context, doc: CaseDoc, status = 200) {
+  varyByEvalVocabulary(c);
+  return v1Resource(
+    c,
+    projectCaseDto(toCaseDto(doc), readEvalVocabulary(c)),
+    status,
+  );
+}
 
 /**
  * Exported for the settings-parity test
@@ -8168,7 +8279,12 @@ evals.get("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
       notFoundMessage: "Eval suite not found",
     });
   }
-  return v1PageJson(c, (cases ?? []).map(toCaseDto));
+  varyByEvalVocabulary(c);
+  const vocabulary = readEvalVocabulary(c);
+  return v1PageJson(
+    c,
+    (cases ?? []).map((doc) => projectCaseDto(toCaseDto(doc), vocabulary)),
+  );
 });
 
 /** Load a case and assert it belongs to the given suite + project. */
@@ -8205,7 +8321,7 @@ evals.get(
     const caseId = evalIdParam(c, "caseId", "Eval case");
     const convex = createConvexReadClient(await getConvexBearerForRequest(c));
     const testCase = await loadCaseInScope(convex, projectId, suiteId, caseId);
-    return v1Resource(c, toCaseDto(testCase));
+    return caseResource(c, testCase);
   },
 );
 
@@ -8213,10 +8329,7 @@ evals.get(
 evals.post("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
   const projectId = c.req.param("projectId");
   const suiteId = evalIdParam(c, "suiteId", "Eval suite");
-  const body = parseWithSchema(
-    createCaseRequestSchema,
-    await readJsonObjectBody(c),
-  );
+  const body = parseCreateCaseBody(c, await readJsonObjectBody(c));
   const title = assertCreatableCase(body);
   const token = await getConvexBearerForRequest(c);
   const readClient = createConvexReadClient(token);
@@ -8232,7 +8345,12 @@ evals.post("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
     });
   }
   requireProjectMatch(suite, projectId, "Eval suite");
-  assertCasePolicyFieldsSupported(suite, body);
+  assertCasePolicyFieldsSupported(
+    suite,
+    body,
+    "",
+    floorFieldName(readEvalVocabulary(c)),
+  );
 
   const defaultModels =
     body.models === undefined
@@ -8273,7 +8391,7 @@ evals.post("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
     suiteId,
     String(committed.testCaseId),
   );
-  return v1Resource(c, toCaseDto(created), 201);
+  return caseResource(c, created, 201);
 });
 
 // POST /v1/projects/:projectId/eval-suites/:suiteId/cases/batch
@@ -8288,10 +8406,7 @@ evals.post(
   async (c) => {
     const projectId = c.req.param("projectId");
     const suiteId = evalIdParam(c, "suiteId", "Eval suite");
-    const body = parseWithSchema(
-      createCasesBatchSchema,
-      await readJsonObjectBody(c),
-    );
+    const body = parseCreateCasesBatchBody(c, await readJsonObjectBody(c));
 
     // Every case is checked before the suite is even loaded: a batch with one
     // unusable body is a caller mistake about the whole request, and reporting
@@ -8318,8 +8433,14 @@ evals.post(
     // Checked for EVERY case before any of them is authored, like
     // `assertCreatableCase` above: rejecting case 42 after 41 siblings landed
     // leaves the caller reconciling a partial write it cannot retry cleanly.
+    const floorField = floorFieldName(readEvalVocabulary(c));
     body.cases.forEach((testCase, index) =>
-      assertCasePolicyFieldsSupported(suite, testCase, `cases[${index}]: `),
+      assertCasePolicyFieldsSupported(
+        suite,
+        testCase,
+        `cases[${index}]: `,
+        floorField,
+      ),
     );
 
     // Resolved at most ONCE for the whole batch, and only when some case
@@ -8424,7 +8545,7 @@ evals.patch(
     const projectId = c.req.param("projectId");
     const suiteId = evalIdParam(c, "suiteId", "Eval suite");
     const caseId = evalIdParam(c, "caseId", "Eval case");
-    const body = parseWithSchema(updateCaseSchema, await readJsonObjectBody(c));
+    const body = parseUpdateCaseBody(c, await readJsonObjectBody(c));
     const token = await getConvexBearerForRequest(c);
     const existing = await loadCaseInScope(
       createConvexReadClient(token),
@@ -8442,6 +8563,8 @@ evals.patch(
       assertCasePolicyFieldsSupported(
         await readSuiteInProject(token, projectId, suiteId),
         body,
+        "",
+        floorFieldName(readEvalVocabulary(c)),
       );
     }
     const args = buildCaseMutationArgs(body, {
@@ -8477,7 +8600,7 @@ evals.patch(
         caseId,
       );
     }
-    return v1Resource(c, toCaseDto(updated));
+    return caseResource(c, updated);
   },
 );
 
@@ -8520,6 +8643,9 @@ evals.post(
   async (c) => {
     const projectId = c.req.param("projectId");
     const suiteId = evalIdParam(c, "suiteId", "Eval suite");
+    // The generated cases are projected into the caller's vocabulary below.
+    const vocabulary = readEvalVocabulary(c);
+    varyByEvalVocabulary(c);
     const body = parseWithSchema(
       generateCasesSchema,
       await readJsonObjectBody(c),
@@ -8745,7 +8871,11 @@ evals.post(
     }
 
     // Persist the generated drafts as cases under the suite.
-    const created: ReturnType<typeof toCaseDto>[] = [];
+    // Projected into the caller's vocabulary, so the element type is the
+    // projection's, not the DTO's.
+    const created: ReturnType<
+      typeof projectCaseDto<ReturnType<typeof toCaseDto>>
+    >[] = [];
     const createdCaseIds: string[] = [];
     const skipped: Array<{ title: string; error: string }> = [];
     let normal = 0;
@@ -8914,7 +9044,7 @@ evals.post(
         const draft = draftAt(entry.index);
         if (!draft) return;
         reported.add(entry.index);
-        created.push(toCaseDto(docs[position]));
+        created.push(projectCaseDto(toCaseDto(docs[position]), vocabulary));
         createdCaseIds.push(String(entry.testCaseId));
         if (draft.isNegative) negative += 1;
         else normal += 1;
