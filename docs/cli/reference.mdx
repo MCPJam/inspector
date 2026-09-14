@@ -1335,6 +1335,16 @@ conversion refuses rather than approximates. A file count above **10**
 (`repetitions` in a `schemaVersion: "1"` file, `iterations` in `"2"`) is
 refused by name (`REPETITIONS_CAP`) and is not clamped.
 
+**Which vocabulary the sync speaks is the deployment's call.** Before writing
+anything, the CLI reads `GET /capabilities` once. A deployment that advertises
+`vocabulary.version: 2` gets every request with `x-mcpjam-eval-vocabulary: 2`
+and case bodies spelled canonically — `iterations` (the exact count),
+`legacyIterations` (the legacy floor, the same number) and `assertions` —
+instead of `repetitions` / `iterations` / `checks`. A deployment without the
+capability block, or without the capabilities route at all, is spoken to in
+vocabulary 1, byte-for-byte as before. Nothing in the file changes either way:
+the dialect of the file and the vocabulary of the wire are independent.
+
 Cases are synced in batches of at most 100 (`create_eval_cases`). Every
 declared case is created or updated, including `disabled: true` rows. A case
 the file **no longer declares** is deleted from the hosted suite before
