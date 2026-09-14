@@ -35,11 +35,7 @@ import type {
 
 /** `testIteration.result`'s real vocabulary. There is no evaluator-error member. */
 export type FixtureIterationResult =
-  | "pending"
-  | "passed"
-  | "failed"
-  | "cancelled"
-  | "timed_out";
+  "pending" | "passed" | "failed" | "cancelled" | "timed_out";
 
 export type FixtureIteration = {
   caseRef: string;
@@ -109,9 +105,7 @@ export type LegacySummary = {
 };
 
 export type LegacyProducerName =
-  | "hostedFinalization"
-  | "sdkIngestion"
-  | "localFallback";
+  "hostedFinalization" | "sdkIngestion" | "localFallback";
 
 export type HistoricalSummaryRow = {
   __label: string;
@@ -131,6 +125,19 @@ export type EditRow = {
     | { ok: false; refusal: string };
 };
 
+/**
+ * An edit the planner must THROW on, rather than refuse.
+ *
+ * A refusal is "this policy cannot express that operation" and a caller renders
+ * it; a throw is "that edit is malformed", which is a programming error.
+ */
+export type RejectedEditRow = {
+  __label: string;
+  __why: string;
+  policy: PolicySourceRef;
+  edit: Record<string, unknown>;
+};
+
 export type GradingPolicyFixtures = {
   __readme: string;
   normalization: NormalizationRow[];
@@ -141,6 +148,7 @@ export type GradingPolicyFixtures = {
   runs: Record<string, FixtureIteration[]>;
   historicalSummaries: HistoricalSummaryRow[];
   edits: EditRow[];
+  rejectedEdits: RejectedEditRow[];
 };
 
 export const gradingPolicyFixtures =

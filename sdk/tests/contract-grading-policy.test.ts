@@ -25,6 +25,7 @@ import {
   resolveGradingPolicyFromHostedSuite,
   resolveGradingPolicyFromRunReporting,
   resolveGradingPolicyFromSuiteFile,
+  type EvalGradingPolicyEdit,
   type EvalPassCriterion,
   type ResolvedEvalGradingPolicy,
 } from "../src/contract/grading-policy.js";
@@ -65,6 +66,7 @@ describe("grading policy — the corpus is loadable and complete", () => {
     expect(fixtures.scope.length).toBeGreaterThan(0);
     expect(fixtures.historicalSummaries.length).toBeGreaterThan(0);
     expect(fixtures.edits.length).toBeGreaterThan(0);
+    expect(fixtures.rejectedEdits.length).toBeGreaterThan(0);
   });
 
   it("every historical-summary row names a run the corpus carries", () => {
@@ -81,6 +83,7 @@ describe("grading policy — the corpus is loadable and complete", () => {
       ...fixtures.scope,
       ...fixtures.historicalSummaries,
       ...fixtures.edits,
+      ...fixtures.rejectedEdits,
     ];
     for (const row of labelled) {
       expect(typeof row.__label).toBe("string");
@@ -449,6 +452,33 @@ describe("grading policy — writing an edit back", () => {
       expect([...plan.changed]).toEqual(row.expected.changed);
     });
   }
+
+  for (const row of fixtures.rejectedEdits) {
+    it(`refuses a malformed edit: ${row.__label}`, () => {
+      const policy = resolveFrom(row.policy);
+      expect(() =>
+        planEvalGradingPolicyEdit(
+          policy,
+          stripAnnotations(row.edit) as EvalGradingPolicyEdit
+        )
+      ).toThrow(TypeError);
+    });
+  }
+
+  it("a malformed edit throws rather than refusing", () => {
+    // The two outcomes are different answers. A refusal is renderable: "this
+    // suite cannot express that operation". A percent where a fraction belongs
+    // is a programming error, and returning ok:false for it would invite a
+    // caller to show a user a message about their suite.
+    const policy = resolveGradingPolicyFromHostedSuite({
+      defaultPassCriteria: { minimumPassRate: 90 },
+    });
+    expect(() =>
+      planEvalGradingPolicyEdit(policy, {
+        passThreshold: 90,
+      })
+    ).toThrow(/FRACTION in \[0,1\]/);
+  });
 
   it("a threshold edit NEVER writes the pair that migrates a suite", () => {
     // `applyVerdictPolicySettings` reads `repetitions` + `passThreshold` on a

@@ -606,7 +606,8 @@ export function resolveGradingPolicyFromHostedSuite(
   suite: HostedSuiteGradingStorage
 ): ResolvedEvalGradingPolicy {
   const perCase = suite.verdictPolicyVersion === 2;
-  if (perCase && suite.verdictPolicyDefaults === undefined) {
+  const defaults = suite.verdictPolicyDefaults;
+  if (perCase && defaults === undefined) {
     throw new TypeError(
       "This suite is marked verdict policy 2 but carries no v2 defaults " +
         "(repetitions, passThreshold), so its grading policy cannot be read. " +
@@ -615,8 +616,7 @@ export function resolveGradingPolicyFromHostedSuite(
     );
   }
   const cases = suite.cases ?? [];
-  if (perCase) {
-    const defaults = suite.verdictPolicyDefaults!;
+  if (defaults !== undefined && perCase) {
     return {
       passCriterion: { scope: "perCase", threshold: defaults.passThreshold },
       iterationRule: {
@@ -915,6 +915,8 @@ export function planEvalGradingPolicyEdit(
     };
   }
 
+  assertPlannableEdit(edit);
+
   const settings: EvalGradingPolicySettingsPatch = {};
   const changed: (keyof EvalGradingPolicyEdit)[] = [];
 
@@ -946,11 +948,11 @@ export function planEvalGradingPolicyEdit(
           "case may override. Set the default with settings.repetitions.",
       };
     }
-    const next =
-      edit.minimumIterations === null
-        ? null
-        : clampMinimumIterations(edit.minimumIterations);
-    if (next !== policy.iterationRule.minimumIterations) {
+    // No clamp here: `assertPlannableEdit` has already refused anything outside
+    // the platform's range, so the value compared IS the value written. The
+    // READ side still clamps, because storage can hold a floor written before
+    // the route bounded the field.
+    if (edit.minimumIterations !== policy.iterationRule.minimumIterations) {
       settings.minimumIterations = edit.minimumIterations;
       changed.push("minimumIterations");
     }
@@ -991,6 +993,56 @@ export function planEvalGradingPolicyEdit(
   }
 
   return { ok: true, settings, changed };
+}
+
+/**
+ * The edit, as a schema — the same bounds the PATCH route enforces.
+ *
+ * `EvalGradingPolicyEdit` is a TypeScript type and TypeScript is not present at
+ * runtime, so a JavaScript caller (or a value parsed out of JSON, a CLI flag, an
+ * MCP argument) can hand this function anything. Without a bound, a
+ * `passThreshold` of `90` — a percent where a fraction belongs — plans
+ * `minimumAccuracy: 9000` on a suite-wide policy and reports `ok: true`, and a
+ * `minimumIterations` of `42` plans a floor the route refuses. Both are exactly
+ * the "successful plan the API then rejects" this module exists to prevent.
+ *
+ * The numbers are the route's own (`updateSuiteSchema` in
+ * `server/routes/v1/evals.ts`), not new product limits: `minimumAccuracy` is a
+ * percent the caller never types (the adapter converts), so the bound is on the
+ * FRACTION the caller does type.
+ */
+const evalGradingPolicyEditSchema = z
+  .object({
+    passThreshold: evalFractionSchema.optional(),
+    iterations: z.number().int().min(1).max(MAX_REPETITIONS).optional(),
+    minimumIterations: z
+      .union([z.number().int().min(1).max(MAX_MINIMUM_ITERATIONS), z.null()])
+      .optional(),
+    validity: evalSuiteFileValiditySchema.optional(),
+  })
+  .strict();
+
+/**
+ * Refuse a malformed edit before any field is planned.
+ *
+ * A THROW rather than an `ok: false` result, and the distinction is deliberate:
+ * {@link EvalGradingPolicyRefusal} means "this policy cannot express that
+ * operation", which is a legitimate answer a caller renders to a user. An
+ * out-of-range number is not an operation this policy cannot express — it is a
+ * malformed input, and it gets the same treatment
+ * {@link resolveGradingPolicyFromHostedSuite} gives malformed storage.
+ */
+function assertPlannableEdit(edit: EvalGradingPolicyEdit): void {
+  const parsed = evalGradingPolicyEditSchema.safeParse(edit);
+  if (parsed.success) return;
+  const issues = parsed.error.issues
+    .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
+    .join("; ")
+    .concat(
+      `. passThreshold is a FRACTION in [0,1] — a suite-wide percent is ` +
+        `converted by this adapter and never passed in.`
+    );
+  throw new TypeError(`This grading-policy edit cannot be written. ${issues}`);
 }
 
 /**

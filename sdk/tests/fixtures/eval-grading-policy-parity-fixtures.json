@@ -1,5 +1,5 @@
 {
-  "__readme": "Shared parity fixtures for the ONE grading policy: the canonical resolved model in sdk/src/contract/grading-policy.ts, the normalization adapters that read it out of every contract that has expressed one, and the write adapter that turns an edit against it back into the PATCH settings the hosted API already accepts. Loaded by sdk/tests/contract-grading-policy.test.ts through sdk/tests/support/eval-grading-policy-fixtures.ts. It is written to be copied VERBATIM into mcpjam-backend as the G0b mirror corpus, exactly as eval-verdict-policy-parity-fixtures.json and score-contract-parity-fixtures.json already are: the backend cannot import @mcpjam/sdk into convex/ default-runtime code, so a shared fixture file is the only common ground truth. Copy it byte for byte; do not re-author it. LOAD RULE: strip EVERY key whose name starts with '__' before handing a row to a validator; they are fixture annotations (__label, __why) and every object in this contract is closed, so a payload still carrying them would be rejected for the wrong reason - turning an accept row into a false failure and, worse, a reject row into a false success. WHAT THIS CORPUS IS FOR. minimumAccuracy and passThreshold are NOT one number in two units: they differ in scope as well as units, so dividing a percent by 100 moves the bar for every suite with more than one case. The `scope` cohort is the proof (ten cases, nine always passing, one always failing: 90% suite-wide passes, 0.9 per-case fails), and every other cohort exists to stop some normalization from quietly picking one side of a divergence. THERE IS NO SINGLE LEGACY PRODUCER. Three shipped ones disagree in ways that decide runs: convex/testSuites.ts run finalization measures ITERATIONS and rates an empty run 1; convex/sdkEvals.ts computeEvalRunSummaryFromIterations measures CASES (variant-collapsed, absent cases dropped) and rates an empty run 0; sdk/src/eval-run-reporter.ts buildLocalFallbackResult measures the results it was handed and also rates an empty run 0. The `historicalSummaries` cohort pins all three against the same runs so that unifying the vocabulary cannot unify the arithmetic. COHORTS. `normalization`: an input contract plus the resolved policy it must produce; `input.source` is 'suiteFile', 'hostedSuite' or 'runReporting' and selects the adapter. `reject`: inputs that must be refused - `kind` is 'hostedSuite' (the adapter throws) or 'policy' (evalGradingPolicySchema refuses). `iterationResolution`: a rule, the per-case and per-run arguments, and the count resolveEvalGradingIterations must return. `thresholdConversion`: the only sanctioned fraction/percent conversion, pinned in both directions so IEEE-754 noise (0.07 * 100 = 7.000000000000001) never reaches the wire. `scope`: one run described as iteration rows, and what each criterion concludes about it. `historicalSummaries`: the same runs (by key into `runs`) under each of the three legacy producers, with the exact summary each must keep producing. `edits`: a policy (resolved from `policy`, the same shape as a normalization input), an edit, and the write plan planEvalGradingPolicyEdit must return. ITERATION ROWS use testIteration.result's real vocabulary - pending, passed, failed, cancelled, timed_out - and nothing else. There is no evaluator-error result: a required scorer that errored lands as result: failed, and `evaluatorError: true` is a separate annotation that only the per-case contract's validity phase reads. That asymmetry is the point of the eight_evaluator_errors rows. THE THREE PROPERTIES THE `edits` COHORT EXISTS FOR. (1) The scope survives: a threshold edit writes minimumAccuracy on a suite-wide policy and passThreshold on a per-case one, and never the repetitions+passThreshold pair that applyVerdictPolicySettings reads as an upgrade. (2) An unchanged edit writes NOTHING: suite configRevision is a digest over the stored policy objects, so a read-edit-write round trip that re-sent them would rotate every suite's revision and invalidate its parity comparisons. (3) A refusal never degrades into a partial write: an edit carrying one unrepresentable field is refused whole, so a caller can never believe it set a count it did not set. NOT PINNED HERE: the per-case aggregation arithmetic and the inconclusive outcomes it produces, which eval-verdict-policy-parity-fixtures.json already owns. This corpus names per-case outcomes only where it contrasts them with a suite-wide one.",
+  "__readme": "Shared parity fixtures for the ONE grading policy: the canonical resolved model in sdk/src/contract/grading-policy.ts, the normalization adapters that read it out of every contract that has expressed one, and the write adapter that turns an edit against it back into the PATCH settings the hosted API already accepts. Loaded by sdk/tests/contract-grading-policy.test.ts through sdk/tests/support/eval-grading-policy-fixtures.ts. It is written to be copied VERBATIM into mcpjam-backend as the G0b mirror corpus, exactly as eval-verdict-policy-parity-fixtures.json and score-contract-parity-fixtures.json already are: the backend cannot import @mcpjam/sdk into convex/ default-runtime code, so a shared fixture file is the only common ground truth. Copy it byte for byte; do not re-author it. LOAD RULE: strip EVERY key whose name starts with '__' before handing a row to a validator; they are fixture annotations (__label, __why) and every object in this contract is closed, so a payload still carrying them would be rejected for the wrong reason - turning an accept row into a false failure and, worse, a reject row into a false success. WHAT THIS CORPUS IS FOR. minimumAccuracy and passThreshold are NOT one number in two units: they differ in scope as well as units, so dividing a percent by 100 moves the bar for every suite with more than one case. The `scope` cohort is the proof (ten cases, nine always passing, one always failing: 90% suite-wide passes, 0.9 per-case fails), and every other cohort exists to stop some normalization from quietly picking one side of a divergence. THERE IS NO SINGLE LEGACY PRODUCER. Three shipped ones disagree in ways that decide runs: convex/testSuites.ts run finalization measures ITERATIONS and rates an empty run 1; convex/sdkEvals.ts computeEvalRunSummaryFromIterations measures CASES (variant-collapsed, absent cases dropped) and rates an empty run 0; sdk/src/eval-run-reporter.ts buildLocalFallbackResult measures the results it was handed and also rates an empty run 0. The `historicalSummaries` cohort pins all three against the same runs so that unifying the vocabulary cannot unify the arithmetic. COHORTS. `normalization`: an input contract plus the resolved policy it must produce; `input.source` is 'suiteFile', 'hostedSuite' or 'runReporting' and selects the adapter. `reject`: inputs that must be refused - `kind` is 'hostedSuite' (the adapter throws) or 'policy' (evalGradingPolicySchema refuses). `iterationResolution`: a rule, the per-case and per-run arguments, and the count resolveEvalGradingIterations must return. `thresholdConversion`: the only sanctioned fraction/percent conversion, pinned in both directions so IEEE-754 noise (0.07 * 100 = 7.000000000000001) never reaches the wire. `scope`: one run described as iteration rows, and what each criterion concludes about it. `historicalSummaries`: the same runs (by key into `runs`) under each of the three legacy producers, with the exact summary each must keep producing. `edits`: a policy (resolved from `policy`, the same shape as a normalization input), an edit, and the write plan planEvalGradingPolicyEdit must return. `rejectedEdits`: a policy and an edit the planner must THROW on. That is a different outcome from an ok:false refusal, and the split is deliberate: a refusal means this policy cannot express that operation, which a caller renders to a user, while a throw means the edit itself is malformed - an out-of-range number, a percent where a fraction belongs, an unknown field. EvalGradingPolicyEdit is a TypeScript type and TypeScript is not present at runtime, so a JavaScript caller, a CLI flag or an MCP argument can hand the planner anything; without the bound, passThreshold 90 plans minimumAccuracy 9000 on a suite-wide policy and reports success. ITERATION ROWS use testIteration.result's real vocabulary - pending, passed, failed, cancelled, timed_out - and nothing else. There is no evaluator-error result: a required scorer that errored lands as result: failed, and `evaluatorError: true` is a separate annotation that only the per-case contract's validity phase reads. That asymmetry is the point of the eight_evaluator_errors rows. THE THREE PROPERTIES THE `edits` COHORT EXISTS FOR. (1) The scope survives: a threshold edit writes minimumAccuracy on a suite-wide policy and passThreshold on a per-case one, and never the repetitions+passThreshold pair that applyVerdictPolicySettings reads as an upgrade. (2) An unchanged edit writes NOTHING: suite configRevision is a digest over the stored policy objects, so a read-edit-write round trip that re-sent them would rotate every suite's revision and invalidate its parity comparisons. (3) A refusal never degrades into a partial write: an edit carrying one unrepresentable field is refused whole, so a caller can never believe it set a count it did not set. NOT PINNED HERE: the per-case aggregation arithmetic and the inconclusive outcomes it produces, which eval-verdict-policy-parity-fixtures.json already owns. This corpus names per-case outcomes only where it contrasts them with a suite-wide one.",
   "normalization": [
     {
       "__label": "suite file, omitted validity members",
@@ -3729,16 +3729,16 @@
       }
     },
     {
-      "__label": "suite-wide: a floor edit that clamps to the stored value writes nothing",
-      "__why": "42 clamps to 10 and 3 is stored, so this IS a change; 30 against a stored 10 would not be. This row pins that the comparison happens after the clamp, so a caller cannot rotate a revision by sending a larger unreachable number.",
+      "__label": "suite-wide: a floor edit matching the CLAMPED stored value writes nothing",
+      "__why": "Storage holds 42, which the platform clamps to 10, so the floor in effect is 10 and an edit to 10 changes nothing. The comparison is against the resolved (clamped) value, not the raw column, so a suite whose stored floor predates the route's bound does not rotate its revision on a no-op edit.",
       "policy": {
         "source": "hostedSuite",
         "value": {
-          "minIterations": 10
+          "minIterations": 42
         }
       },
       "edit": {
-        "minimumIterations": 42
+        "minimumIterations": 10
       },
       "expected": {
         "ok": true,
@@ -3987,6 +3987,218 @@
         "ok": true,
         "settings": {},
         "changed": []
+      }
+    }
+  ],
+  "rejectedEdits": [
+    {
+      "__label": "a percent where a fraction belongs, suite-wide",
+      "__why": "passThreshold is ALWAYS a fraction on this API; the adapter converts to the stored percent. Accepting 90 would plan minimumAccuracy: 9000, which the route rejects - a successful plan the API then refuses.",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "defaultPassCriteria": {
+            "minimumPassRate": 90
+          },
+          "minIterations": 3
+        }
+      },
+      "edit": {
+        "passThreshold": 90
+      }
+    },
+    {
+      "__label": "a percent where a fraction belongs, per-case",
+      "__why": "The same input on the other scope plans passThreshold: 90, out of the route's [0,1].",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "verdictPolicyVersion": 2,
+          "verdictPolicyDefaults": {
+            "repetitions": 5,
+            "passThreshold": 0.8
+          }
+        }
+      },
+      "edit": {
+        "passThreshold": 90
+      }
+    },
+    {
+      "__label": "a negative threshold",
+      "__why": "Below the fraction range.",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "verdictPolicyVersion": 2,
+          "verdictPolicyDefaults": {
+            "repetitions": 5,
+            "passThreshold": 0.8
+          }
+        }
+      },
+      "edit": {
+        "passThreshold": -0.1
+      }
+    },
+    {
+      "__label": "a floor above the platform range",
+      "__why": "The route bounds minimumIterations to 1..10. Silently clamping 42 to 10 would report an edit as applied that was not the edit asked for, so it is refused instead.",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "defaultPassCriteria": {
+            "minimumPassRate": 90
+          },
+          "minIterations": 3
+        }
+      },
+      "edit": {
+        "minimumIterations": 42
+      }
+    },
+    {
+      "__label": "a floor below the platform range",
+      "__why": "0 is not 'no floor' - null is. The route refuses 0 and so does the planner.",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "defaultPassCriteria": {
+            "minimumPassRate": 90
+          },
+          "minIterations": 3
+        }
+      },
+      "edit": {
+        "minimumIterations": 0
+      }
+    },
+    {
+      "__label": "a fractional floor",
+      "__why": "The floor is an integer count of iterations.",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "defaultPassCriteria": {
+            "minimumPassRate": 90
+          },
+          "minIterations": 3
+        }
+      },
+      "edit": {
+        "minimumIterations": 2.5
+      }
+    },
+    {
+      "__label": "a default count above the portable maximum",
+      "__why": "MAX_REPETITIONS bounds the count in the suite file, the route and the contract alike.",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "verdictPolicyVersion": 2,
+          "verdictPolicyDefaults": {
+            "repetitions": 5,
+            "passThreshold": 0.8
+          }
+        }
+      },
+      "edit": {
+        "iterations": 999
+      }
+    },
+    {
+      "__label": "a default count of zero",
+      "__why": "A case that runs zero times is not a configuration.",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "verdictPolicyVersion": 2,
+          "verdictPolicyDefaults": {
+            "repetitions": 5,
+            "passThreshold": 0.8
+          }
+        }
+      },
+      "edit": {
+        "iterations": 0
+      }
+    },
+    {
+      "__label": "a fractional default count",
+      "__why": "The count is an integer.",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "verdictPolicyVersion": 2,
+          "verdictPolicyDefaults": {
+            "repetitions": 5,
+            "passThreshold": 0.8
+          }
+        }
+      },
+      "edit": {
+        "iterations": 2.5
+      }
+    },
+    {
+      "__label": "a validity rate out of range",
+      "__why": "minCompletionRate is a fraction like every other rate in this contract.",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "verdictPolicyVersion": 2,
+          "verdictPolicyDefaults": {
+            "repetitions": 5,
+            "passThreshold": 0.8,
+            "validity": {
+              "minCompletionRate": 0.9
+            }
+          }
+        }
+      },
+      "edit": {
+        "validity": {
+          "minCompletionRate": 80
+        }
+      }
+    },
+    {
+      "__label": "a validity eligible-count of zero",
+      "__why": "An explicit floor of 0 would be 'no coverage requirement', which omission does NOT mean and the schema does not allow.",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "verdictPolicyVersion": 2,
+          "verdictPolicyDefaults": {
+            "repetitions": 5,
+            "passThreshold": 0.8,
+            "validity": {
+              "minCompletionRate": 0.9
+            }
+          }
+        }
+      },
+      "edit": {
+        "validity": {
+          "minEligibleTrials": 0
+        }
+      }
+    },
+    {
+      "__label": "an unknown edit field",
+      "__why": "The edit shape is strict: a misspelled field silently doing nothing is how a caller believes it set something it did not.",
+      "policy": {
+        "source": "hostedSuite",
+        "value": {
+          "verdictPolicyVersion": 2,
+          "verdictPolicyDefaults": {
+            "repetitions": 5,
+            "passThreshold": 0.8
+          }
+        }
+      },
+      "edit": {
+        "passThresholds": 0.9
       }
     }
   ]
