@@ -193,26 +193,31 @@ describe("SwarmsRoute member-only gate", () => {
     expect(mockSwarmsTab).not.toHaveBeenCalled();
   });
 
-  it("renders SwarmsTab for an anonymous Convex guest (personal-org owner)", () => {
+  it("gives an anonymous Convex guest the preview, not the tab", () => {
+    // REVERSED by REEV-6, and this is the case the whole gate exists for.
     // Anonymous guests own a personal-org project and pass backend
-    // requireProjectRole('member') via userId. The email-based members list
-    // can't resolve them — skip the invitee-guest notice, don't spin/deny.
+    // requireProjectRole('member') via userId, so every authorization check
+    // waves them through and Convex `isAuthenticated` is true for them. WorkOS
+    // identity is the only signal that tells them apart, and without it they
+    // reached the real tab and fired its member-only queries.
+    //
+    // They still skip the INVITEE-guest notice below: that is a different
+    // population, a signed-in person holding project role `guest`, who needs
+    // to be told to ask an admin rather than to make an account.
     mockUseAuth.mockReturnValue({ user: null, isLoading: false });
     mockViewerRole.role = undefined;
     mockViewerRole.isLoading = false;
 
     renderRoute(<SwarmsRoute />);
 
-    expect(screen.getByText("Swarms Tab")).toBeInTheDocument();
+    expect(
+      screen.getByText("See how your server holds up under a crowd"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Swarms Tab")).not.toBeInTheDocument();
     expect(
       screen.queryByText("Swarms is available to project members"),
     ).not.toBeInTheDocument();
-    expect(mockSwarmsTab).toHaveBeenCalledWith({
-      projectId: "project-1",
-      isAuthenticated: true,
-      swarmId: null,
-      createFlow: false,
-    });
+    expect(mockSwarmsTab).not.toHaveBeenCalled();
   });
 
   it("renders SwarmsTab for a project member", () => {
@@ -254,10 +259,32 @@ describe("SwarmsRoute member-only gate", () => {
     expect(mockSwarmsTab).not.toHaveBeenCalled();
   });
 
-  it("keeps existing behavior (renders SwarmsTab) for an unauthenticated local user", () => {
+  it("gates a signed-out local user too", () => {
+    // Also reversed. Local was exempt on the reasoning that it has no WorkOS
+    // to sign up through, which was simply wrong: local signs in through the
+    // same WorkOS and resolves the same plan. The exemption sent a signed-out
+    // local user into the real tab to fail at the backend instead, which is a
+    // worse answer than the preview. (Sophie, in review: "can we really not
+    // gate features on the local app?")
     mockRouteContext.isAuthenticated = false;
     mockRouteContext.convexProjectId = null;
     mockUseAuth.mockReturnValue({ user: null, isLoading: false });
+
+    renderRoute(<SwarmsRoute />);
+
+    expect(
+      screen.getByText("See how your server holds up under a crowd"),
+    ).toBeInTheDocument();
+    expect(mockSwarmsTab).not.toHaveBeenCalled();
+  });
+
+  it("still gives a signed-in local user the real tab", () => {
+    mockRouteContext.isAuthenticated = false;
+    mockRouteContext.convexProjectId = null;
+    mockUseAuth.mockReturnValue({
+      user: { email: "local@example.com" },
+      isLoading: false,
+    });
 
     renderRoute(<SwarmsRoute />);
 
