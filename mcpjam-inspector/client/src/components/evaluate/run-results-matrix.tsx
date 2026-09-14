@@ -2,11 +2,9 @@ import type {
   EvalRunDecisionChain,
   EvalRunDecisionDiagnostic,
 } from "@mcpjam/sdk/contract";
-import { toTrialCardViews } from "./stage-trial-model";
-import { TrialChainPanel } from "./trial-chain-panel";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { isTerminalEvalRunStatus } from "@/lib/evals/eval-decision-summary-store";
-import { ArrowUpRight, ChevronRight, Search } from "lucide-react";
+import { Search } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import {
@@ -16,9 +14,9 @@ import {
 import {
   Sheet,
   SheetContent,
+  SheetDescription,
   SheetHeader,
   SheetTitle,
-  SheetDescription,
 } from "@mcpjam/design-system/sheet";
 import { cn } from "@mcpjam/design-system/cn";
 import { resolveHostLogoByName } from "@/lib/host-logo";
@@ -26,6 +24,7 @@ import { runClientLogo } from "../evals/helpers";
 import { usePreferencesStoreWithDefaults } from "@/stores/preferences/preferences-provider";
 import {
   formatCostOrDash,
+  formatRelativeTime,
   iterationLatencyP50,
   iterationLatencyP95,
 } from "../evals/helpers";
@@ -58,12 +57,35 @@ const outcomeLabel = (result: string) =>
     cancelled: "Cancelled",
     timed_out: "Timed out",
   })[result] ?? "Unknown";
-const outcomeTone = (result: string) =>
+const outcomeTextTone = (result: string) =>
   result === "passed"
-    ? "bg-success/15 text-foreground border-success/40"
+    ? "text-success"
     : result === "failed" || result === "timed_out"
-      ? "bg-destructive/10 text-foreground border-destructive/40"
-      : "bg-muted/40 text-foreground border-border";
+      ? "text-destructive"
+      : result === "pending"
+        ? "text-pending"
+        : "text-muted-foreground";
+
+const outcomeDotTone = (result: string) =>
+  result === "passed"
+    ? "bg-success"
+    : result === "failed" || result === "timed_out"
+      ? "bg-destructive"
+      : result === "pending"
+        ? "bg-pending"
+        : "bg-muted-foreground";
+
+const compactMetric = (value: number) =>
+  value >= 1000
+    ? `${(value / 1000).toFixed(1).replace(/\.0$/, "")}k`
+    : Number.isInteger(value)
+      ? value.toLocaleString()
+      : value.toFixed(1);
+
+const average = (values: readonly number[]) =>
+  values.length
+    ? values.reduce((sum, value) => sum + value, 0) / values.length
+    : null;
 
 type MatrixView = "results" | "metrics";
 
@@ -141,12 +163,16 @@ function CellResults({ items }: { items: EvalIteration[] }) {
 }
 
 function CellMetricValues({ items }: { items: EvalIteration[] }) {
-  const tokens = items.filter((item) => item.tokensUsed != null);
-  const calls = items.filter((item) => item.actualToolCalls != null);
-  const compact = (n: number) =>
-    n >= 1000
-      ? `${(n / 1000).toFixed(1).replace(/\.0$/, "")}k`
-      : n.toLocaleString();
+  const tokenAverage = average(
+    items.flatMap((item) =>
+      typeof item.tokensUsed === "number" ? [item.tokensUsed] : [],
+    ),
+  );
+  const callAverage = average(
+    items.flatMap((item) =>
+      item.actualToolCalls ? [item.actualToolCalls.length] : [],
+    ),
+  );
   const metricLabel =
     "text-[11px] font-semibold uppercase leading-[14px] tracking-[0.04em] text-muted-foreground";
   const metric = "flex min-w-0 flex-1 flex-col gap-0.5";
@@ -168,24 +194,13 @@ function CellMetricValues({ items }: { items: EvalIteration[] }) {
       <span className={cn(metric, divider, "px-2")}>
         <span className={metricLabel}>Tokens</span>
         <span className="text-base font-semibold leading-5">
-          {tokens.length
-            ? compact(
-                tokens.reduce((sum, item) => sum + (item.tokensUsed ?? 0), 0),
-              )
-            : "—"}
+          {tokenAverage === null ? "—" : compactMetric(tokenAverage)}
         </span>
       </span>
       <span className={cn(metric, "pl-2")}>
         <span className={metricLabel}>Calls</span>
         <span className="text-base font-semibold leading-5">
-          {calls.length
-            ? compact(
-                calls.reduce(
-                  (sum, item) => sum + (item.actualToolCalls?.length ?? 0),
-                  0,
-                ),
-              )
-            : "—"}
+          {callAverage === null ? "—" : compactMetric(callAverage)}
         </span>
       </span>
     </span>
@@ -197,8 +212,6 @@ export function RunResultsMatrix({
   runs = [],
   iterations,
   hostNamesById = new Map(),
-  diagnostics = [],
-  chains,
   onOpenIteration,
   modelIds,
   toolbarExtra,
@@ -522,55 +535,51 @@ export function RunResultsMatrix({
           if (!open) setSelection(null);
         }}
       >
-        <SheetContent className="w-full gap-0 sm:max-w-4xl">
+        <SheetContent className="w-full gap-0 sm:max-w-[960px]">
           {selectedRow && selectedTarget && (
             <>
-              <SheetHeader className="border-b border-border px-6 py-5 pr-12">
-                <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-                  Case report
-                </div>
+              <SheetHeader className="px-6 py-5 pr-12">
                 <SheetTitle className="break-words text-xl">
                   {selectedRow.title}
                 </SheetTitle>
-                <SheetDescription>
-                  Inspect iteration results and follow the recorded stages to
-                  their evidence.
+                <SheetDescription className="sr-only">
+                  Test case averages and recorded iterations.
                 </SheetDescription>
               </SheetHeader>
               <div className="flex-1 overflow-y-auto p-6">
                 <div
-                  className="mb-4 flex flex-wrap items-center gap-2"
+                  className="mb-2 flex flex-wrap items-center justify-between gap-3"
                   aria-label="Viewing client and model"
                 >
-                  <span className="mr-1 text-xs text-muted-foreground">
-                    Viewing client
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
+                    Test case averages
                   </span>
-                  {data.targets.map((target) => (
-                    <Button
-                      key={target.key}
-                      size="sm"
-                      className="h-auto rounded-full whitespace-normal px-3 py-1.5 text-left"
-                      variant={
-                        target.key === selectedTarget.key
-                          ? "secondary"
-                          : "outline"
-                      }
-                      aria-pressed={target.key === selectedTarget.key}
-                      onClick={() =>
-                        setSelection({
-                          caseKey: selectedRow.key,
-                          targetKey: target.key,
-                        })
-                      }
-                    >
-                      {target.client} · {target.model}
-                    </Button>
-                  ))}
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {data.targets.map((target) => (
+                      <Button
+                        key={target.key}
+                        size="sm"
+                        className="h-7 rounded-full px-2.5 text-xs"
+                        variant={
+                          target.key === selectedTarget.key
+                            ? "secondary"
+                            : "outline"
+                        }
+                        aria-pressed={target.key === selectedTarget.key}
+                        onClick={() =>
+                          setSelection({
+                            caseKey: selectedRow.key,
+                            targetKey: target.key,
+                          })
+                        }
+                      >
+                        {target.client} · {target.model}
+                      </Button>
+                    ))}
+                  </div>
                 </div>
                 <CaseIterations
                   target={selectedTarget}
-                  diagnostics={diagnostics}
-                  chains={chains}
                   caseKey={selectedRow.key}
                   onOpenIteration={onOpenIteration}
                 />
@@ -586,14 +595,10 @@ export function RunResultsMatrix({
 function CaseIterations({
   target,
   caseKey,
-  diagnostics,
-  chains,
   onOpenIteration,
 }: {
   target: RunResultsMatrixData["targets"][number];
   caseKey: string;
-  diagnostics: readonly EvalRunDecisionDiagnostic[];
-  chains?: ReadonlyMap<string, EvalRunDecisionChain>;
   onOpenIteration?: (target: {
     testCaseId: string;
     iterationId: string;
@@ -601,6 +606,16 @@ function CaseIterations({
 }) {
   const items = target.cells.get(caseKey) ?? [];
   const counts = resultCounts(items);
+  const tokenAverage = average(
+    items.flatMap((item) =>
+      typeof item.tokensUsed === "number" ? [item.tokensUsed] : [],
+    ),
+  );
+  const callAverage = average(
+    items.flatMap((item) =>
+      item.actualToolCalls ? [item.actualToolCalls.length] : [],
+    ),
+  );
   const sorted = items
     .map((item, index) => ({ item, index }))
     .sort((a, b) => {
@@ -612,135 +627,130 @@ function CaseIterations({
             : 2;
       return rank(a.item) - rank(b.item) || a.index - b.index;
     });
+  const passTone = counts.pending
+    ? "text-pending"
+    : counts.passed === items.length
+      ? "text-success"
+      : counts.cancelled === items.length
+        ? "text-muted-foreground"
+        : "text-destructive";
+  const metricLabel =
+    "text-[11px] font-semibold uppercase leading-[14px] tracking-[0.06em] text-muted-foreground";
   return (
     <>
-      <div className="mb-5 flex flex-wrap items-center justify-between gap-4 rounded-lg border border-foreground/30 px-4 py-3">
-        <div>
-          <span className="font-mono text-2xl font-semibold tracking-tight">
+      <div className="mb-4 flex w-full rounded-xl border border-border px-5 py-4">
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
+          <span className={metricLabel}>Passed</span>
+          <span
+            className={cn(
+              "text-[28px] font-bold leading-8 tracking-[-0.03em] tabular-nums",
+              passTone,
+            )}
+          >
             {counts.passed}/{items.length}
           </span>
-          <span className="ml-2 text-sm text-muted-foreground">
-            iterations passed
-          </span>
         </div>
-        <span className="text-xs text-muted-foreground">
-          p95 {formatRunCaseLatencyMs(iterationLatencyP95(items))}
-        </span>
+        <DrawerAverage label="P50">
+          {formatRunCaseLatencyMs(iterationLatencyP50(items))}
+        </DrawerAverage>
+        <DrawerAverage label="P95">
+          {formatRunCaseLatencyMs(iterationLatencyP95(items))}
+        </DrawerAverage>
+        <DrawerAverage label="Tokens">
+          {tokenAverage === null ? "—" : compactMetric(tokenAverage)}
+        </DrawerAverage>
+        <DrawerAverage label="Calls">
+          {callAverage === null ? "—" : compactMetric(callAverage)}
+        </DrawerAverage>
       </div>
       <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-        Iterations · failures first
+        Iterations
       </div>
       <div className="overflow-x-auto rounded-lg border border-border">
-        <div className="min-w-[580px]">
+        <div className="min-w-[760px]">
           <div
-            className="grid grid-cols-[16px_36px_90px_minmax(110px,1fr)_60px_72px_40px] items-center gap-3 bg-muted/50 px-4 py-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground"
+            className="grid grid-cols-[minmax(130px,1fr)_minmax(180px,1fr)_120px_120px_110px_70px] items-center gap-2 bg-muted px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.04em] text-muted-foreground"
             aria-hidden="true"
           >
-            <span />
-            <span>Iter</span>
+            <span>Iteration</span>
+            <span>Client / Model</span>
             <span>Result</span>
-            <span>User Value Chain</span>
             <span>Latency</span>
             <span>Tokens</span>
             <span>Calls</span>
           </div>
-          {sorted.map(({ item, index }) => (
-            <details
-              key={item._id}
-              className="group border-t border-border"
-              open={sorted[0]?.item._id === item._id}
-            >
-              <summary className="grid cursor-pointer list-none grid-cols-[16px_36px_90px_minmax(110px,1fr)_60px_72px_40px] items-center gap-3 px-4 py-3 text-xs hover:bg-muted/30 group-open:bg-muted/40 [&::-webkit-details-marker]:hidden">
-                <ChevronRight className="size-3.5 text-muted-foreground group-open:rotate-90" />
-                <span className="font-mono text-muted-foreground">
-                  #{item.iterationNumber ?? index + 1}
+          {sorted.map(({ item, index }) => {
+            const result = computeIterationResult(item);
+            const row = (
+              <>
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <span
+                    aria-hidden="true"
+                    className={cn(
+                      "size-1.5 shrink-0 rounded-full",
+                      outcomeDotTone(result),
+                    )}
+                  />
+                  <span className="text-[13px] font-medium text-card-foreground">
+                    #{item.iterationNumber ?? index + 1}
+                  </span>
+                  <span className="truncate text-xs text-muted-foreground">
+                    {formatRelativeTime(
+                      item.createdAt ?? item.startedAt ?? item.updatedAt,
+                    )}
+                  </span>
+                </span>
+                <span className="flex min-w-0 flex-col gap-px">
+                  <span className="truncate text-[13px] font-medium text-card-foreground">
+                    {target.client}
+                  </span>
+                  <span className="truncate text-xs text-muted-foreground">
+                    {target.model}
+                  </span>
                 </span>
                 <span
-                  className={cn(
-                    "w-fit rounded border px-2 py-0.5",
-                    outcomeTone(computeIterationResult(item)),
-                  )}
+                  className={cn("text-xs font-medium", outcomeTextTone(result))}
                 >
-                  {outcomeLabel(computeIterationResult(item))}
+                  {outcomeLabel(result)}
                 </span>
-                <IterationStageStrip
-                  chain={
-                    diagnostics.find(
-                      (diagnostic) => diagnostic.iterationId === item._id,
-                    )?.chain ?? chains?.get(item._id)
-                  }
-                />
-                <span className="tabular-nums text-muted-foreground">
+                <span className="text-xs text-muted-foreground tabular-nums">
                   {formatRunCaseLatencyMs(iterationLatencyP95([item]))}
                 </span>
-                <span className="tabular-nums text-muted-foreground">
+                <span className="text-xs text-muted-foreground tabular-nums">
                   {typeof item.tokensUsed === "number"
-                    ? item.tokensUsed.toLocaleString()
+                    ? compactMetric(item.tokensUsed)
                     : "—"}
                 </span>
-                <span className="text-muted-foreground">
+                <span className="text-xs text-muted-foreground tabular-nums">
                   {item.actualToolCalls?.length ?? "—"}
                 </span>
-              </summary>
-              <div className="space-y-4 border-t border-border bg-muted/20 p-4 text-xs leading-relaxed">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="font-semibold">Iteration details</span>
-                  {onOpenIteration && item.testCaseId && (
-                    <Button
-                      variant="default"
-                      size="sm"
-                      onClick={() =>
-                        onOpenIteration({
-                          testCaseId: item.testCaseId!,
-                          iterationId: item._id,
-                        })
-                      }
-                    >
-                      Open details <ArrowUpRight className="size-3.5" />
-                    </Button>
-                  )}
-                </div>
-                <TrialChainPanel
-                  layout="report"
-                  chain={
-                    diagnostics.find(
-                      (diagnostic) => diagnostic.iterationId === item._id,
-                    )?.chain ?? chains?.get(item._id)
-                  }
-                  nextAction={
-                    diagnostics.find(
-                      (diagnostic) => diagnostic.iterationId === item._id,
-                    )?.nextAction
-                  }
-                  resetKey={item._id}
-                />
-                {item.error && (
-                  <p className="break-words rounded-md border border-destructive/30 bg-destructive/5 p-3">
-                    {item.error}
-                  </p>
-                )}
-                <div>
-                  <span className="font-medium">Prompt</span>
-                  <p className="mt-1 whitespace-pre-wrap text-muted-foreground">
-                    {item.testCaseSnapshot?.query || "No prompt recorded."}
-                  </p>
-                </div>
-                <div>
-                  <span className="font-medium">Observed tool calls</span>
-                  <p className="mt-1 break-words font-mono text-muted-foreground">
-                    {item.actualToolCalls
-                      ?.map((call) => call.toolName)
-                      .join(" → ") || "No tool calls recorded."}
-                  </p>
-                </div>
+              </>
+            );
+            return onOpenIteration && item.testCaseId ? (
+              <button
+                key={item._id}
+                type="button"
+                className="grid w-full grid-cols-[minmax(130px,1fr)_minmax(180px,1fr)_120px_120px_110px_70px] items-center gap-2 border-t border-border px-3 py-2.5 text-left hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                aria-label={`Open iteration ${item.iterationNumber ?? index + 1} details`}
+                onClick={() =>
+                  onOpenIteration({
+                    testCaseId: item.testCaseId!,
+                    iterationId: item._id,
+                  })
+                }
+              >
+                {row}
+              </button>
+            ) : (
+              <div
+                key={item._id}
+                className="grid grid-cols-[minmax(130px,1fr)_minmax(180px,1fr)_120px_120px_110px_70px] items-center gap-2 border-t border-border px-3 py-2.5"
+              >
+                {row}
               </div>
-            </details>
-          ))}
+            );
+          })}
         </div>
-        <p className="border-t border-border bg-muted/30 px-4 py-2 text-[10px] text-muted-foreground">
-          Failures first · showing {items.length} recorded iterations · select a
-          stage to inspect evidence
-        </p>
       </div>
       {!items.length && (
         <p className="py-6 text-sm text-muted-foreground">
@@ -751,35 +761,21 @@ function CaseIterations({
   );
 }
 
-function IterationStageStrip({
-  chain,
+function DrawerAverage({
+  label,
+  children,
 }: {
-  chain?: EvalRunDecisionChain | null;
+  label: string;
+  children: ReactNode;
 }) {
-  if (!chain || chain.status !== "verified") {
-    return (
-      <span className="text-[10px] text-muted-foreground">
-        {chain?.status === "unverified" ? "Chain withheld" : "Not recorded"}
-      </span>
-    );
-  }
   return (
-    <span className="flex gap-1" aria-label="Recorded stages">
-      {toTrialCardViews(chain.stages).map((card) => (
-        <span
-          key={card.stage}
-          title={`${card.ordinal} ${card.label}: ${card.chip.label}`}
-          aria-label={`${card.label}: ${card.chip.label}`}
-          className={cn(
-            "h-2.5 min-w-0 flex-1 rounded-sm border",
-            card.chip.kind === "passed"
-              ? "border-success/40 bg-success/60"
-              : card.chip.kind === "failed"
-                ? "border-destructive bg-destructive/20"
-                : "border-dashed border-muted-foreground/40 bg-muted/30",
-          )}
-        />
-      ))}
-    </span>
+    <div className="flex min-w-0 flex-1 flex-col gap-1">
+      <span className="text-[11px] font-semibold uppercase leading-[14px] tracking-[0.06em] text-muted-foreground">
+        {label}
+      </span>
+      <span className="text-[28px] font-bold leading-8 tracking-[-0.03em] text-card-foreground tabular-nums">
+        {children}
+      </span>
+    </div>
   );
 }

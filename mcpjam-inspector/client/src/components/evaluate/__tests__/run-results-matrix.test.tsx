@@ -215,7 +215,7 @@ describe("run results matrix", () => {
     expect(cell.queryByRole("img")).toBeNull();
     expect(cell.getByText("P50")).toBeVisible();
     expect(cell.getByText("P95")).toBeVisible();
-    expect(cell.getByText("2k")).toBeVisible();
+    expect(cell.getByText("1k")).toBeVisible();
     expect(cell.queryByText("Cost")).toBeNull();
     expect(cell.getByText("Calls")).toBeVisible();
     expect(screen.getByRole("radio", { name: "Metrics" })).toBeChecked();
@@ -365,9 +365,15 @@ describe("run results matrix", () => {
       }),
     );
     const drawer = within(screen.getByRole("dialog"));
+    expect(drawer.getByRole("heading", { name: "Refund order" })).toBeVisible();
+    expect(drawer.getByText("Test case averages")).toBeVisible();
+    expect(drawer.getByText("Iterations")).toBeVisible();
+    expect(drawer.getByText("Client / Model")).toBeVisible();
     await user.click(drawer.getByRole("button", { name: "Cursor · gpt" }));
-    expect(drawer.getByText("Missing reason argument")).toBeVisible();
-    await user.click(drawer.getByRole("button", { name: "Open details" }));
+    expect(drawer.getByText("Failed")).toBeVisible();
+    await user.click(
+      drawer.getByRole("button", { name: "Open iteration 1 details" }),
+    );
     expect(open).toHaveBeenCalledWith({
       testCaseId: "refund",
       iterationId: "fail",
