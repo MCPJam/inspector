@@ -176,7 +176,7 @@ See [Eval reporting — Tool execution and `passed`](/sdk/reference/eval-reporti
 
 Predicates express richer pass/fail criteria than tool-call matching — without an LLM judge. Each predicate is a pure function of the iteration transcript, so it produces the same verdict every time, which makes it safe to use as a CI release gate.
 
-Predicates are authored in the corpus JSON (the Inspector's per-case **Checks** editor writes the same shape) and threaded through the runner automatically; there is no predicate field to set on individual uploaded results. A case passes iff every **gating** predicate passes — an advisory one is recorded and never fails the case, and neither does one that could not be scored. An absent or empty list means no predicate gate.
+Predicates are authored in the corpus JSON (the Inspector's per-case **Checks** editor writes the same shape) and threaded through the runner automatically; there is no predicate field to set on individual uploaded results. A case passes iff every **required** predicate passes (`"gating"` is the legacy spelling of that role and is still accepted) — an **advisory** one is recorded and never fails the case, including when it could not be scored. A required check that could not be scored does hold the gate shut. An absent or empty list means no predicate gate.
 
 The built-in predicate types. **Measures** is the link of the [user-value chain](/sdk/concepts/user-value-chain) the check is filed at — Connection is measured by the runner; Discovery combines runner evidence with optional catalog assertions:
 

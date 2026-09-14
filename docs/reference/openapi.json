@@ -19555,8 +19555,8 @@
           },
           "idSource": {
             "type": "string",
-            "description": "`generated` ids are positional and UNSTABLE across config edits; only `explicit` ids may be referenced by a gate policy or tracked across runs.",
-            "enum": ["explicit", "generated"]
+            "description": "`generated` ids are positional and UNSTABLE across config edits; only `explicit` ids may be referenced by a gate policy or tracked across runs. `platform` marks a scorer the platform owns rather than the suite author \u2014 the hosted judge \u2014 whose id is stable but not author-editable.",
+            "enum": ["explicit", "generated", "platform"]
           },
           "scorerVersion": {
             "type": "string"

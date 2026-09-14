@@ -34,13 +34,20 @@ export type EvalVocabulary = 1 | 2;
  * Parse the header. `null` means the value was present and unrecognised — the
  * caller turns that into a `VALIDATION_ERROR`, rather than guessing a
  * vocabulary for a client that asked for one we do not have.
+ *
+ * Only an ABSENT header defaults to 1. An explicitly empty one is refused
+ * along with every other unrecognised value: accepting it would make blank a
+ * third, undocumented spelling of "1", so a client whose header value came out
+ * empty by accident would silently receive the legacy projection instead of
+ * the validation error this negotiation promises. The refusal is the whole
+ * point of the header — a vocabulary mismatch has to be loud.
  */
 export function parseEvalVocabulary(
   raw: string | undefined,
 ): EvalVocabulary | null {
   if (raw === undefined) return 1;
   const value = raw.trim();
-  if (value === "" || value === "1") return 1;
+  if (value === "1") return 1;
   if (value === "2") return 2;
   return null;
 }
@@ -177,6 +184,34 @@ export function normalizeCheckRolesForVocabulary<T>(
     return rest as T;
   });
   return changed ? out : checks;
+}
+
+/**
+ * The same rule over a `{ mode, list }` check override.
+ *
+ * The inline-test authoring paths (`POST /runs`, `POST /suites` with `tests`)
+ * carry their checks in this envelope rather than as a bare array, and they
+ * reach the same storage as the case routes. Without this they were the one
+ * ingress where a vocabulary-1 request could smuggle `required` past the
+ * refusal every other ingress enforces.
+ *
+ * `undefined` and `null` pass through untouched: on a case write `null` is the
+ * explicit clear sentinel and must not become an empty envelope.
+ */
+export function normalizeCheckRolesInOverrideForVocabulary<T>(
+  override: T,
+  vocabulary: EvalVocabulary,
+  path: string,
+): T {
+  if (!override || typeof override !== "object") return override;
+  const list = (override as { list?: unknown }).list;
+  if (!Array.isArray(list)) return override;
+  const next = normalizeCheckRolesForVocabulary(
+    list,
+    vocabulary,
+    `${path}.list`,
+  );
+  return next === list ? override : ({ ...override, list: next } as T);
 }
 
 /**

@@ -22,7 +22,7 @@ const suggestion = (over: Partial<Suggestion> = {}): Suggestion =>
     stability: { held: 3, of: 3, unread: 0 },
     stage: "userValue",
     ...over,
-  }) as Suggestion;
+  } as Suggestion);
 
 const noRead = { pending: 0, failed: 0, capped: 0, total: 3 };
 
@@ -95,7 +95,9 @@ describe("accepting", () => {
     // Requirements change whether future runs fail; that is not a surprise to
     // spring after the click.
     expect(screen.getByTestId("suggestion-add-all-confirm")).toBeTruthy();
-    expect(screen.getByText(/2 requirements and 0 reports/)).toBeTruthy();
+    expect(
+      screen.getByText(/2 requirements and 0 advisory checks/),
+    ).toBeTruthy();
     expect(onAcceptAll).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Add all" }));
     expect(onAcceptAll).toHaveBeenCalled();
@@ -263,7 +265,7 @@ it("Add all excludes already accepted checks from counts and payload", async () 
   });
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Add all 2" }));
-  expect(screen.getByText(/1 requirement and 1 report/)).toBeTruthy();
+  expect(screen.getByText(/1 requirement and 1 advisory check/)).toBeTruthy();
   await user.click(screen.getByRole("button", { name: "Add all" }));
   expect(onAcceptAll).toHaveBeenCalledWith(pending);
 });
