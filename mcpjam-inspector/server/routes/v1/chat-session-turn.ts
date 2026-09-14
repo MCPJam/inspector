@@ -109,6 +109,8 @@ import {
 } from "../../services/environments/runtime.js";
 import type { RuntimeSkill } from "../../utils/harness/runtime-skills.js";
 import { logger } from "../../utils/logger.js";
+import { markRuntimeSecretsDelivered } from "../../utils/harness/runtime-secrets.js";
+import { resolveBrowserSecrets } from "../../utils/secrets/browser-secrets.js";
 import { listCloudRuntimeSkills } from "../../utils/computers/cloud-skill-tools.js";
 import {
   buildLiveEffectiveCapabilities,
@@ -1442,6 +1444,14 @@ async function handleTurn(c: Context): Promise<Response> {
         toolMode: pins.toolMode,
       });
       effectiveBrowserPolicy = resolved.effectivePolicy;
+      // Secrets the browser may type; they reach browser commands only, never
+      // the box.
+      const browserSecrets = await resolveBrowserSecrets({
+        bearer: authHeader,
+        projectId,
+        ...(pins.environmentId ? { environmentId: pins.environmentId } : {}),
+        chatSessionId: runtimeChatSessionId,
+      });
       const context: BuiltInToolContext = {
         authHeader,
         projectId,
@@ -1466,6 +1476,24 @@ async function handleTurn(c: Context): Promise<Response> {
         onToolSuppressed: (item) => {
           browserReason = item.reason;
         },
+        browserCorrelation: {
+          chatSessionId: runtimeChatSessionId,
+          turnId: leaseTurnId,
+        },
+        ...(browserSecrets.length > 0
+          ? {
+              browserSecrets,
+              onBrowserSecretDelivered: () => {
+                void markRuntimeSecretsDelivered(authHeader, {
+                  projectId,
+                  ...(pins.environmentId
+                    ? { environmentId: pins.environmentId }
+                    : {}),
+                  secretCount: browserSecrets.length,
+                });
+              },
+            }
+          : {}),
       };
       const eligible = resolveHostTools(
         { builtInToolIds: ["browser"] },

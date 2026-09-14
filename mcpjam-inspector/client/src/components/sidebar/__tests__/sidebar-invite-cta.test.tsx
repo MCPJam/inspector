@@ -13,9 +13,8 @@ const mockFeatureFlags: Record<string, boolean | undefined> = {};
 // The guest invite CTA only exists on hosted deployments — a local/self-hosted
 // install has no WorkOS to sign up through — so these tests run hosted.
 vi.mock("@/lib/config", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/config")>(
-    "@/lib/config"
-  );
+  const actual =
+    await vi.importActual<typeof import("@/lib/config")>("@/lib/config");
   return { ...actual, HOSTED_MODE: true };
 });
 
@@ -69,6 +68,12 @@ vi.mock("@/components/sidebar/nav-main", () => ({
   NavMain: () => <div data-testid="nav-main" />,
 }));
 
+vi.mock("@/components/sidebar/sidebar-credits", () => ({
+  SidebarCredits: () => (
+    <button data-testid="sidebar-see-credits">See credits</button>
+  ),
+}));
+
 vi.mock("@/components/sidebar/sidebar-user", () => ({
   SidebarUser: () => <div data-testid="sidebar-user" />,
 }));
@@ -77,8 +82,8 @@ vi.mock("@/components/sidebar/sidebar-context-switcher", () => ({
   SidebarContextSwitcher: () => <div data-testid="context-switcher" />,
 }));
 
-vi.mock("@/components/project/ShareProjectDialog", () => ({
-  ShareProjectDialog: (props: unknown) => mockShareProjectDialog(props),
+vi.mock("@/components/organization/InviteTeamMembersDialog", () => ({
+  InviteTeamMembersDialog: (props: unknown) => mockShareProjectDialog(props),
 }));
 
 vi.mock("@/components/auth/InviteTeamSignUpDialog", () => ({
@@ -163,7 +168,7 @@ function makeProject(id: string, name: string) {
 }
 
 function renderSidebar(
-  overrides: Partial<React.ComponentProps<typeof MCPSidebar>> = {}
+  overrides: Partial<React.ComponentProps<typeof MCPSidebar>> = {},
 ) {
   return render(
     <MCPSidebar
@@ -178,7 +183,7 @@ function renderSidebar(
       onDeleteProject={vi.fn()}
       onProjectShared={vi.fn()}
       {...overrides}
-    />
+    />,
   );
 }
 
@@ -200,16 +205,15 @@ describe("sidebar invite CTA", () => {
       },
     });
     mockShareProjectDialog.mockImplementation(
-      ({ isOpen, projectName }: { isOpen: boolean; projectName: string }) =>
-        isOpen ? (
-          <div data-testid="share-project-dialog">
-            Share dialog for {projectName}
-          </div>
-        ) : null
+      ({ organizationId }: { organizationId: string }) => (
+        <div data-testid="share-project-dialog">
+          Invite dialog for {organizationId}
+        </div>
+      ),
     );
     mockInviteSignUpDialog.mockImplementation(
       ({ isOpen }: { isOpen: boolean }) =>
-        isOpen ? <div data-testid="invite-signup-nudge" /> : null
+        isOpen ? <div data-testid="invite-signup-nudge" /> : null,
     );
     // The pending-invite marker is module state in sessionStorage — a leftover
     // would auto-open the share dialog in an unrelated test.
@@ -228,12 +232,12 @@ describe("sidebar invite CTA", () => {
     renderSidebar();
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Invite team members" })
+      screen.getByRole("button", { name: "Invite team members" }),
     );
 
     expect(screen.getByTestId("invite-signup-nudge")).toBeInTheDocument();
     expect(
-      screen.queryByTestId("share-project-dialog")
+      screen.queryByTestId("share-project-dialog"),
     ).not.toBeInTheDocument();
   });
 
@@ -250,7 +254,7 @@ describe("sidebar invite CTA", () => {
     renderSidebar();
 
     expect(
-      screen.queryByRole("button", { name: "Invite team members" })
+      screen.queryByRole("button", { name: "Invite team members" }),
     ).not.toBeInTheDocument();
   });
 
@@ -262,7 +266,7 @@ describe("sidebar invite CTA", () => {
     renderSidebar();
 
     expect(screen.getByTestId("share-project-dialog")).toHaveTextContent(
-      "Share dialog for Acme"
+      "Invite dialog for org-1",
     );
   });
 
@@ -279,7 +283,7 @@ describe("sidebar invite CTA", () => {
     renderSidebar();
 
     expect(
-      screen.queryByTestId("share-project-dialog")
+      screen.queryByTestId("share-project-dialog"),
     ).not.toBeInTheDocument();
     // …and the marker is still there for when sign-in completes, not consumed
     // by a render that could not act on it.
@@ -290,14 +294,14 @@ describe("sidebar invite CTA", () => {
     renderSidebar();
 
     expect(
-      screen.getByRole("button", { name: "Invite team members" })
+      screen.getByRole("button", { name: "Invite team members" }),
     ).toBeInTheDocument();
     expect(screen.getByText("Invite team members")).toHaveClass(
-      "group-data-[collapsible=icon]:hidden"
+      "group-data-[collapsible=icon]:hidden",
     );
   });
 
-  it("orders the signed-in footer invite CTA, See credits, then the profile menu", () => {
+  it("orders the signed-in footer See credits, invite CTA, then the profile menu", () => {
     renderSidebar();
 
     const inviteButton = screen.getByRole("button", {
@@ -307,12 +311,12 @@ describe("sidebar invite CTA", () => {
     const sidebarUser = screen.getByTestId("sidebar-user");
 
     expect(
-      inviteButton.compareDocumentPosition(seeCredits) &
-        Node.DOCUMENT_POSITION_FOLLOWING
+      seeCredits.compareDocumentPosition(inviteButton) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(
-      seeCredits.compareDocumentPosition(sidebarUser) &
-        Node.DOCUMENT_POSITION_FOLLOWING
+      inviteButton.compareDocumentPosition(sidebarUser) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
   });
 
@@ -337,16 +341,16 @@ describe("sidebar invite CTA", () => {
     renderSidebar();
 
     expect(
-      screen.queryByRole("button", { name: "Support" })
+      screen.queryByRole("button", { name: "Support" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Settings" })
+      screen.queryByRole("button", { name: "Settings" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "API Keys" })
+      screen.queryByRole("button", { name: "API Keys" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /Notifications/ })
+      screen.queryByRole("button", { name: /Notifications/ }),
     ).not.toBeInTheDocument();
   });
 
@@ -363,22 +367,22 @@ describe("sidebar invite CTA", () => {
 
     expect(screen.getByRole("button", { name: "Support" })).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Settings" })
+      screen.getByRole("button", { name: "Settings" }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "API Keys" })
+      screen.queryByRole("button", { name: "API Keys" }),
     ).not.toBeInTheDocument();
   });
 
-  it("opens the share dialog for the active project", () => {
+  it("opens the team invite dialog for the active organization", () => {
     renderSidebar();
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Invite team members" })
+      screen.getByRole("button", { name: "Invite team members" }),
     );
 
     expect(screen.getByTestId("share-project-dialog")).toHaveTextContent(
-      "Share dialog for Acme"
+      "Invite dialog for org-1",
     );
   });
 
@@ -392,15 +396,16 @@ describe("sidebar invite CTA", () => {
           "project-b": makeProject("project-b", "Beta"),
         }}
         activeProjectId="project-b"
+        activeOrganizationId="org-1"
         onSwitchProject={vi.fn()}
         onCreateProject={vi.fn(async () => "project-created")}
         onDeleteProject={vi.fn()}
         onProjectShared={vi.fn()}
-      />
+      />,
     );
 
     expect(
-      screen.getByRole("button", { name: "Invite team members" })
+      screen.getByRole("button", { name: "Invite team members" }),
     ).toBeInTheDocument();
   });
 });
@@ -443,5 +448,4 @@ describe("MCPSidebar — one left margin down the rail", () => {
     // slide under its hit target.
     expect(button?.className).toContain("pr-10");
   });
-
 });

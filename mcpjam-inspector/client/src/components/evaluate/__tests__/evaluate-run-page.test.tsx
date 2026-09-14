@@ -48,18 +48,18 @@ describe("EvaluateRunPage", () => {
       </EvaluateRunPage>,
     );
 
-    expect(screen.getByTestId("evaluate-run-page")).toHaveTextContent(
-      "#1 Results",
-    );
+    expect(screen.getByTestId("evaluate-run-page")).toHaveTextContent("Run #1");
     expect(screen.getByText("run body")).toBeTruthy();
     expect(screen.queryByText("All runs")).toBeNull();
     expect(screen.queryByText("latest + trends per client")).toBeNull();
     const header = screen.getByTestId("evaluate-run-header");
+    expect(within(header).getByRole("heading", { name: "Run #1" })).toHaveClass(
+      "text-2xl",
+      "font-bold",
+      "tracking-tight",
+    );
     expect(
-      within(header).getByRole("heading", { name: "#1 Results" }),
-    ).toHaveClass("text-2xl", "font-bold", "tracking-tight");
-    expect(
-      within(header).getByRole("heading", { name: "#1 Results" }),
+      within(header).getByRole("heading", { name: "Run #1" }),
     ).not.toHaveClass("font-mono");
     expect(within(header).queryByText("Report for")).toBeNull();
     expect(
@@ -80,11 +80,15 @@ describe("EvaluateRunPage", () => {
     expect(pill).toHaveAttribute("data-decision", "hold");
     expect(within(header).queryByText(/\d+ of \d+/)).toBeNull();
     expect(pill).toHaveClass("h-8", "rounded-full");
-    expect(pill).toHaveClass("border-warning/30", "bg-warning/10", "text-warning");
-    expect(pill).not.toHaveClass("border-destructive/30", "text-destructive");
-    expect(within(pill).getByTestId("run-header-pairing-decision")).toHaveTextContent(
-      "HOLD",
+    expect(pill).toHaveClass(
+      "border-warning/30",
+      "bg-warning/10",
+      "text-warning",
     );
+    expect(pill).not.toHaveClass("border-destructive/30", "text-destructive");
+    expect(
+      within(pill).getByTestId("run-header-pairing-decision"),
+    ).toHaveTextContent("HOLD");
     const mark = within(pill).getByLabelText("Claude · Client default");
     expect(mark).toHaveClass("bg-background", "rounded-full");
     expect(mark.querySelector("img")).toHaveAttribute("alt", "");
@@ -116,9 +120,9 @@ describe("EvaluateRunPage", () => {
       const header = screen.getByTestId("evaluate-run-header");
       const pill = within(header).getByTestId("run-header-decision-pill");
       expect(pill).toHaveClass("h-8", "rounded-full");
-      expect(within(pill).getByTestId("run-header-pairing-decision")).toHaveTextContent(
-        label,
-      );
+      expect(
+        within(pill).getByTestId("run-header-pairing-decision"),
+      ).toHaveTextContent(label);
       const mark = within(pill).getByLabelText("Claude · Client default");
       expect(mark).toBeVisible();
       expect(mark).toHaveClass("bg-background");
@@ -158,9 +162,7 @@ describe("EvaluateRunPage", () => {
         body
       </EvaluateRunPage>,
     );
-    expect(
-      screen.getByRole("heading", { name: "#1 Results" }),
-    ).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Run #1" })).toBeVisible();
     expect(screen.queryByText(/client\/model pairing/)).toBeNull();
     const pairings = screen.getByTestId("run-header-pairings");
     const pills = within(pairings).getAllByTestId("run-header-decision-pill");
@@ -169,7 +171,11 @@ describe("EvaluateRunPage", () => {
     expect(pills[1]).toHaveAttribute("data-decision", "ship");
     expect(pills[0]).toHaveClass("h-8", "rounded-full");
     expect(pills[1]).toHaveClass("h-8", "rounded-full");
-    expect(pills[0]).toHaveClass("border-warning/30", "bg-warning/10", "text-warning");
+    expect(pills[0]).toHaveClass(
+      "border-warning/30",
+      "bg-warning/10",
+      "text-warning",
+    );
     expect(pills[0]).not.toHaveClass("text-destructive");
     expect(pills[1]).toHaveClass("border-success/30", "bg-success/10");
     expect(
@@ -423,13 +429,19 @@ describe("pairingDecision", () => {
       tone: "hold",
     });
     expect(
-      pairingDecision(makeRun({ _id: "c", status: "timed_out", result: "pending" })),
+      pairingDecision(
+        makeRun({ _id: "c", status: "timed_out", result: "pending" }),
+      ),
     ).toEqual({ word: "Hold", tone: "hold" });
     expect(
-      pairingDecision(makeRun({ _id: "d", status: "running", result: "pending" })),
+      pairingDecision(
+        makeRun({ _id: "d", status: "running", result: "pending" }),
+      ),
     ).toEqual({ word: "Running", tone: "pending" });
     expect(
-      pairingDecision(makeRun({ _id: "e", status: "grading", result: "pending" })),
+      pairingDecision(
+        makeRun({ _id: "e", status: "grading", result: "pending" }),
+      ),
     ).toEqual({ word: "Grading", tone: "pending" });
     expect(
       pairingDecision(
@@ -441,8 +453,98 @@ describe("pairingDecision", () => {
 
 it("navigates directly to the comparison page when Compare runs is clicked", async () => {
   const onOpenComparison = vi.fn();
-  render(<EvaluateRunPage run={makeRun({ _id: "current" })} otherRuns={[makeRun({ _id: "other" })]} hostNamesById={new Map()} defaultCompareRunId="other" onCompareWithRun={vi.fn()} onOpenComparison={onOpenComparison}><p>Run details</p></EvaluateRunPage>);
-  await userEvent.setup().click(screen.getByRole("button", { name: "Compare runs" }));
+  render(
+    <EvaluateRunPage
+      run={makeRun({ _id: "current" })}
+      otherRuns={[makeRun({ _id: "other" })]}
+      hostNamesById={new Map()}
+      defaultCompareRunId="other"
+      onCompareWithRun={vi.fn()}
+      onOpenComparison={onOpenComparison}
+    >
+      <p>Run details</p>
+    </EvaluateRunPage>,
+  );
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Compare runs" }));
   expect(onOpenComparison).toHaveBeenCalledTimes(1);
   expect(screen.queryByTestId("evaluate-run-compare")).toBeNull();
+});
+
+describe("run heading and scope", () => {
+  const iteration = (
+    _id: string,
+    suiteRunId: string,
+    testCaseId: string,
+  ): EvalIteration =>
+    ({
+      _id,
+      suiteRunId,
+      testCaseId,
+      result: "passed",
+      status: "completed",
+    }) as unknown as EvalIteration;
+
+  it("names the suite in the heading when the suite is in scope", () => {
+    render(
+      <EvaluateRunPage
+        run={makeRun({ _id: "current" })}
+        suiteName="Excalidraw"
+        hostNamesById={hostNamesById}
+        otherRuns={[]}
+        defaultCompareRunId={null}
+        onCompareWithRun={vi.fn()}
+      >
+        <p>body</p>
+      </EvaluateRunPage>,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "Run #1 of Excalidraw" }),
+    ).toBeVisible();
+  });
+
+  it("counts cases, iterations, and pairings from this page's runs only", () => {
+    render(
+      <EvaluateRunPage
+        run={makeRun({ _id: "current" })}
+        hostNamesById={hostNamesById}
+        otherRuns={[]}
+        defaultCompareRunId={null}
+        onCompareWithRun={vi.fn()}
+        iterations={[
+          iteration("i1", "current", "case-a"),
+          iteration("i2", "current", "case-a"),
+          iteration("i3", "current", "case-b"),
+          // Another run of the same suite. Its rows describe a different
+          // population and must not inflate this page's counts.
+          iteration("i4", "someone-else", "case-c"),
+        ]}
+      >
+        <p>body</p>
+      </EvaluateRunPage>,
+    );
+
+    expect(screen.getByTestId("evaluate-run-scope")).toHaveTextContent(
+      "2 cases · 3 iterations · 1 client-model combo",
+    );
+  });
+
+  it("says nothing about scope before any iteration has arrived", () => {
+    render(
+      <EvaluateRunPage
+        run={makeRun({ _id: "current" })}
+        hostNamesById={hostNamesById}
+        otherRuns={[]}
+        defaultCompareRunId={null}
+        onCompareWithRun={vi.fn()}
+        iterations={[]}
+      >
+        <p>body</p>
+      </EvaluateRunPage>,
+    );
+
+    expect(screen.queryByTestId("evaluate-run-scope")).toBeNull();
+  });
 });

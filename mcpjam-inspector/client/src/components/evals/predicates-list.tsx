@@ -115,7 +115,7 @@ export function PredicatesList({
   if (predicates.length === 0) return null;
   // Advisory (Warn/Report) rows are reported, never decisive: the runner's
   // own verdict skips them, so counting their failures here would paint a
-  // red "2 / 3 checks passed" badge on a trial the runner passed.
+  // red "2 / 3 assertions passed" badge on an iteration the runner passed.
   const gating = predicates.filter(
     (r) => checkRole(r.predicate) !== "advisory"
   );
@@ -152,12 +152,12 @@ export function PredicatesList({
   return (
     <div
       role="region"
-      aria-label="Checks"
+      aria-label="Assertions"
       className="space-y-2 rounded-md border border-border/40 bg-muted/10 p-3"
     >
       <div className="flex items-center justify-between">
         <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-          Checks
+          Assertions
         </div>
         <div
           className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold ${
@@ -170,13 +170,13 @@ export function PredicatesList({
             <XCircle className="h-3 w-3 shrink-0" aria-hidden />
           )}
           {allPassed
-            ? `${gating.length} / ${gating.length} checks passed`
-            : `${passed} / ${gating.length} checks passed`}
+            ? `${gating.length} / ${gating.length} assertions passed`
+            : `${passed} / ${gating.length} assertions passed`}
         </div>
       </div>
 
-      {renderGroup("Whole-run checks", caseLevel, "case")}
-      {renderGroup("Step checks", stepScoped, "step")}
+      {renderGroup("Whole-run assertions", caseLevel, "case")}
+      {renderGroup("Step assertions", stepScoped, "step")}
     </div>
   );
 }

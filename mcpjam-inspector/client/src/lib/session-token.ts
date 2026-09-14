@@ -492,6 +492,7 @@ const HOSTED_AUTH_PATH_PATTERNS = [
   // resource beneath it are a transcript and a row, read elsewhere with their
   // own auth, and a pattern that swallowed them would be the blanket prefix
   // this list exists to avoid. The eval-chain test pins all three.
+  /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/backtest$/,
   /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations$/,
   // What changed since the previous run. Same grant, same reason as the reads
   // above, and anchored the same way: `compare` is one segment and nothing

@@ -202,17 +202,19 @@ describe("buildCaseScorecard — roles", () => {
         ],
       },
     });
+    // The middle and last rows differ only by `severity`, which no longer
+    // names a tier: both read Advisory.
     expect(rows.filter((r) => r.provenance === "case").map((r) => r.role)).toEqual([
-      "gate",
-      "warn",
-      "report",
+      "required",
+      "advisory",
+      "advisory",
     ]);
   });
 
-  it("keeps the route a gate, because an advisory route is not a route", () => {
+  it("keeps the route required, because an advisory route is not a route", () => {
     // `deriveExpectedToolCalls` skips an advisory `toolCalledWith`, so it never
-    // becomes a matcher expectation. Showing a Warn control here would offer a
-    // setting that silently un-routes the case.
+    // becomes a matcher expectation. Showing an Advisory control here would
+    // offer a setting that silently un-routes the case.
     const card = buildCaseScorecard({
       ...base,
       toolsChoice: "tools",
@@ -221,7 +223,7 @@ describe("buildCaseScorecard — roles", () => {
         assert("a1", { type: "toolCalledWith", toolName: "get_me", args: { args: {} } } as Predicate),
       ],
     });
-    expect(card.route.role).toBe("gate");
+    expect(card.route.role).toBe("required");
     expect(card.route.roleLock).toBe("route");
   });
 
@@ -243,11 +245,11 @@ describe("buildCaseScorecard — roles", () => {
     const step = card.groups
       .flatMap((g) => g.rows)
       .find((row) => row.provenance === "step");
-    expect(step?.role).toBe("warn");
+    expect(step?.role).toBe("advisory");
     expect(step?.stage).toBe(PREDICATE_STAGE.toolCalledWith);
   });
 
-  it("gives a widget assertion a gate it cannot author, because it has no policy field", () => {
+  it("gives a widget assertion a required role it cannot author, because it has no policy field", () => {
     const card = buildCaseScorecard({
       ...base,
       steps: [
@@ -256,7 +258,7 @@ describe("buildCaseScorecard — roles", () => {
       ],
     });
     const row = card.groups.flatMap((g) => g.rows).find((r) => r.widgetAssertion);
-    expect(row?.role).toBe("gate");
+    expect(row?.role).toBe("required");
     expect(row?.roleLock).toBe("widget");
   });
 });
@@ -275,7 +277,7 @@ describe("buildCaseScorecard — the route question", () => {
       steps: [prompt("p1", "hi"), assert("a1", { type: "noToolErrors" } as Predicate)],
     });
     expect(card.route.route?.kind).toBe("checks");
-    expect(card.route.label).toBe("Any route — graded by the scorers below");
+    expect(card.route.label).toBe("Any route — graded by the evaluators below");
     expect(card.unsetBlockReason).toBeNull();
   });
 

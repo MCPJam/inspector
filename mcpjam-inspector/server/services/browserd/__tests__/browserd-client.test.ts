@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { BrowserdClient, BrowserdClientError } from "../browserd-client";
-import type { BrowserCommand } from "../protocol";
+import {
+  BROWSERD_PROTOCOL_VERSION,
+  type BrowserCommand,
+} from "../protocol";
 
 function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -41,6 +44,8 @@ function makeClient(response: Response, over: { baseUrl?: string } = {}) {
 
 describe("BrowserdClient.sendCommand", () => {
   it("maps 200 to ok, authenticates, and sends {command, expectedBootId}", async () => {
+    // The command now carries the wire this build speaks. @see the stamp test
+    // below for why it is added here rather than by each caller.
     const { client, calls } = makeClient(
       json(200, {
         status: "ok",
@@ -60,9 +65,71 @@ describe("BrowserdClient.sendCommand", () => {
       "Bearer boot-bearer",
     );
     expect(JSON.parse(init.body as string)).toEqual({
-      command: CMD,
+      command: { protocolVersion: BROWSERD_PROTOCOL_VERSION, ...CMD },
       expectedBootId: "boot-1",
     });
+  });
+
+  it("stamps every command with the wire this build speaks", async () => {
+    // Stamped by the CLIENT, once, rather than by each of the dozen callers:
+    // every command it sends speaks this build's wire by definition, and a
+    // caller that had to remember would forget on the one path that mattered.
+    const { client, calls } = makeClient(
+      json(200, { status: "ok", result: { ok: true }, bootId: "b" }),
+    );
+    await client.sendCommand(CMD);
+    expect(
+      (JSON.parse(calls[0]!.init.body as string) as { command: unknown })
+        .command,
+    ).toMatchObject({ protocolVersion: BROWSERD_PROTOCOL_VERSION });
+  });
+
+  it("lets a caller that already stamped one keep its own version", async () => {
+    // An explicit value wins. Nothing sends one today; a test that boots an
+    // old daemon deliberately would.
+    const { client, calls } = makeClient(
+      json(200, { status: "ok", result: { ok: true }, bootId: "b" }),
+    );
+    await client.sendCommand({ ...CMD, protocolVersion: 1 });
+    expect(
+      (JSON.parse(calls[0]!.init.body as string) as { command: unknown })
+        .command,
+    ).toMatchObject({ protocolVersion: 1 });
+  });
+
+  it("stamps anyway when a caller passes an explicit `undefined`", async () => {
+    // The hazard hiding inside the affordance above. Under a leading-default
+    // spread, `protocolVersion: undefined` overwrote the stamp; serialization
+    // then DROPPED the key, and the daemon — which gates on the field being
+    // present — waved the command through with no mismatch check at all. A
+    // caller cannot opt out of the wire it speaks by omission.
+    const { client, calls } = makeClient(
+      json(200, { status: "ok", result: { ok: true }, bootId: "b" }),
+    );
+    await client.sendCommand({ ...CMD, protocolVersion: undefined });
+    const body = JSON.parse(calls[0]!.init.body as string) as {
+      command: Record<string, unknown>;
+    };
+    expect(body.command).toMatchObject({
+      protocolVersion: BROWSERD_PROTOCOL_VERSION,
+    });
+    expect(Object.hasOwn(body.command, "protocolVersion")).toBe(true);
+  });
+
+  it("maps a 409 protocol_mismatch to its own outcome, not to `expired`", async () => {
+    // Both are 409 and both mean "this did not run", but the recoveries are
+    // opposite: `expired` is retryable on the same daemon, where a wire
+    // mismatch refuses every retry until the daemon is replaced. Flattening
+    // them makes the caller loop.
+    expect(
+      await makeClient(
+        json(409, {
+          error: "protocol_mismatch",
+          protocolVersion: 7,
+          bootId: "b",
+        }),
+      ).client.sendCommand(CMD),
+    ).toEqual({ status: "protocol_mismatch", running: 7, bootId: "b" });
   });
 
   it("maps 429 → busy, 503 → at_capacity", async () => {

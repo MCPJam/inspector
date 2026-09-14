@@ -2,17 +2,17 @@ import { expect, it } from "vitest";
 import { renderWithProviders, screen, userEvent } from "@/test";
 import { RoleChip } from "../scorer-role-control";
 
-it("explains all check roles on keyboard focus", async () => {
-  renderWithProviders(<RoleChip role="gate" />);
+it("explains both assertion roles on keyboard focus", async () => {
+  renderWithProviders(<RoleChip role="required" />);
   await userEvent.setup().tab();
   const help = await screen.findByRole("tooltip");
   expect(help).toHaveTextContent(
-    "Gate: If this check fails, the iteration fails.",
+    "Required: If this assertion fails, the iteration fails.",
   );
   expect(help).toHaveTextContent(
-    "Warn: If this check fails, a warning is shown without failing the iteration.",
+    "Advisory: Shown on the result. Never fails the iteration.",
   );
-  expect(help).toHaveTextContent(
-    "Report: Records the result for reference without changing the iteration verdict.",
-  );
+  // The legend names what happens to the test, not what the system does, so
+  // the mechanism words must not come back into it.
+  expect(help).not.toHaveTextContent(/\bWarn\b|\bReport\b|\bGate\b/);
 });

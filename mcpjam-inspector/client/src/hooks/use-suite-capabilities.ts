@@ -149,7 +149,11 @@ export type SuiteCapabilities = {
    * closed as "unknown predicate type" on every trial. Absent ⇒ offer only
    * the kinds that predate this field.
    */
-  scorers?: { checkPolicy?: boolean; predicateKinds?: string[] };
+  scorers?: {
+    checkPolicy?: boolean;
+    predicateKinds?: string[];
+    suppressedSuiteStandardCheckIds?: boolean;
+  };
   /**
    * Stored quality-gate capabilities. Absent on a backend that predates B2 —
    * the Quality gate rows then disable rather than inventing a write path.

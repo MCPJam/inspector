@@ -3,6 +3,7 @@ import { createWebTestApp, expectJson } from "./helpers/test-app.js";
 import { resolveUserByExternalId } from "../../../services/identity.js";
 import {
   createWorkosKeyBinding,
+  lookupWorkosKeyBinding,
   removeWorkosKeyBinding,
   WorkosKeyBindingError,
 } from "../../../services/workos-key-bindings.js";
@@ -26,6 +27,9 @@ vi.mock("../../../services/workos-key-bindings.js", async (importOriginal) => {
   const actual = await importOriginal<object>();
   return {
     ...actual,
+    lookupWorkosKeyBinding: vi
+      .fn()
+      .mockResolvedValue({ mcpjamOrganizationId: "org-1" }),
     createWorkosKeyBinding: vi.fn().mockResolvedValue(undefined),
     removeWorkosKeyBinding: vi.fn().mockResolvedValue(undefined),
   };
@@ -35,7 +39,9 @@ vi.mock("../../../services/identity.js", async (importOriginal) => {
   const actual = await importOriginal<object>();
   return {
     ...actual,
-    resolveUserByExternalId: vi.fn().mockResolvedValue({ _id: "mcpjam_user_1" }),
+    resolveUserByExternalId: vi
+      .fn()
+      .mockResolvedValue({ _id: "mcpjam_user_1" }),
   };
 });
 
@@ -100,7 +106,10 @@ function stubWorkOS(pages: Array<{ data: unknown[]; after?: string | null }>) {
   return { fetchMock, deleted };
 }
 
-async function deleteKey(app: ReturnType<typeof createWebTestApp>["app"], id: string) {
+async function deleteKey(
+  app: ReturnType<typeof createWebTestApp>["app"],
+  id: string,
+) {
   return app.request(`/api/web/api-keys/${id}`, {
     method: "DELETE",
     headers: { Authorization: "Bearer session-jwt" },
@@ -129,7 +138,9 @@ describe("web routes — API key revoke ownership", () => {
       { data: [keyRecord("api_key_other"), keyRecord(OWNED_KEY_ID)] },
     ]);
 
-    const { status, data } = await expectJson(await deleteKey(app, OWNED_KEY_ID));
+    const { status, data } = await expectJson(
+      await deleteKey(app, OWNED_KEY_ID),
+    );
 
     expect(status).toBe(200);
     expect(data).toEqual({ ok: true });
@@ -158,7 +169,9 @@ describe("web routes — API key revoke ownership", () => {
       { data: [keyRecord(OWNED_KEY_ID)] },
     ]);
 
-    const { status, data } = await expectJson(await deleteKey(app, OWNED_KEY_ID));
+    const { status, data } = await expectJson(
+      await deleteKey(app, OWNED_KEY_ID),
+    );
 
     expect(status).toBe(200);
     expect(data).toEqual({ ok: true });
@@ -324,9 +337,8 @@ describe("web routes — API key mint readiness", () => {
   });
 
   it("403s when the caller has no membership row in the requested org", async () => {
-    const { ApiKeyReadinessError } = await import(
-      "../../../services/organizations.js"
-    );
+    const { ApiKeyReadinessError } =
+      await import("../../../services/organizations.js");
     mockResolveApiKeyReadiness.mockRejectedValue(
       new ApiKeyReadinessError(403, "Not a member of this organization"),
     );
@@ -338,9 +350,8 @@ describe("web routes — API key mint readiness", () => {
   });
 
   it("404s when the requested org doesn't exist", async () => {
-    const { ApiKeyReadinessError } = await import(
-      "../../../services/organizations.js"
-    );
+    const { ApiKeyReadinessError } =
+      await import("../../../services/organizations.js");
     mockResolveApiKeyReadiness.mockRejectedValue(
       new ApiKeyReadinessError(404, "Organization not found"),
     );
@@ -388,9 +399,8 @@ describe("web routes — API key mint readiness", () => {
   });
 
   it("400s when the readiness check reports malformed ids", async () => {
-    const { ApiKeyReadinessError } = await import(
-      "../../../services/organizations.js"
-    );
+    const { ApiKeyReadinessError } =
+      await import("../../../services/organizations.js");
     mockResolveApiKeyReadiness.mockRejectedValue(
       new ApiKeyReadinessError(400, "Invalid organization or user id"),
     );
@@ -412,6 +422,9 @@ describe("web routes — API key listing is not scoped by session org", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
+    vi.mocked(lookupWorkosKeyBinding)
+      .mockReset()
+      .mockResolvedValue({ mcpjamOrganizationId: "org-1" });
   });
 
   it("lists all of the user's keys without an organization_id filter", async () => {
@@ -473,5 +486,235 @@ describe("web routes — API key listing is not scoped by session org", () => {
       "api_key_page_2",
     ]);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("labels keys with their bound org, and leaves a key unlabeled when its lookup fails", async () => {
+    vi.mocked(lookupWorkosKeyBinding)
+      .mockResolvedValueOnce({ mcpjamOrganizationId: "org-a" })
+      .mockRejectedValueOnce(
+        new Error(
+          "Binding lookup route not found at https://convex.internal/x — is the backend bindings route deployed?",
+        ),
+      );
+    stubWorkOS([{ data: [keyRecord("api_key_1"), keyRecord("api_key_2")] }]);
+
+    const response = await app.request("/api/web/api-keys", {
+      method: "GET",
+      headers: { Authorization: "Bearer session-jwt" },
+    });
+    const { status, data } = await expectJson(response);
+
+    expect(status).toBe(200);
+    expect(
+      data.items.map(
+        (k: { organizationId: string | null }) => k.organizationId,
+      ),
+    ).toEqual(["org-a", null]);
+    // The internal URL from the lookup error must never reach the client.
+    expect(JSON.stringify(data)).not.toContain("convex.internal");
+  });
+
+  it("never lets binding lookups fan out past the concurrency bound", async () => {
+    let inFlight = 0;
+    let peak = 0;
+    vi.mocked(lookupWorkosKeyBinding).mockImplementation(async () => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      inFlight -= 1;
+      return { mcpjamOrganizationId: "org-a" };
+    });
+    stubWorkOS([
+      { data: Array.from({ length: 40 }, (_, i) => keyRecord(`api_key_${i}`)) },
+    ]);
+
+    const { status, data } = await expectJson(
+      await app.request("/api/web/api-keys", {
+        method: "GET",
+        headers: { Authorization: "Bearer session-jwt" },
+      }),
+    );
+
+    expect(status).toBe(200);
+    expect(data.items).toHaveLength(40);
+    expect(peak).toBeLessThanOrEqual(8);
+    expect(peak).toBeGreaterThan(1);
+  });
+});
+
+describe("organization API key inventory", () => {
+  const { app } = createWebTestApp();
+  beforeEach(() => {
+    vi.stubEnv("WORKOS_API_KEY", "sk_test_admin");
+    vi.stubEnv("CONVEX_HTTP_URL", "https://backend.test");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-test");
+    mockResolveApiKeyReadiness.mockReset().mockResolvedValue({
+      ready: true,
+      workosOrganizationId: "org_workos_1",
+    });
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+    vi.mocked(lookupWorkosKeyBinding)
+      .mockReset()
+      .mockResolvedValue({ mcpjamOrganizationId: "org-1" });
+  });
+
+  it("400s a blank organization id before touching the backend", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const response = await app.request("/api/web/api-keys/organization/%20", {
+      headers: { Authorization: "Bearer session-jwt" },
+    });
+    expect(response.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("403s a non-member from the membership floor, even if the backend would answer", async () => {
+    const { ApiKeyReadinessError } =
+      await import("../../../services/organizations.js");
+    mockResolveApiKeyReadiness.mockRejectedValue(
+      new ApiKeyReadinessError(403, "Not a member of this organization"),
+    );
+    const fetchMock = vi.fn().mockResolvedValue(workosJson({ items: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+    const response = await app.request("/api/web/api-keys/organization/org-1", {
+      headers: { Authorization: "Bearer session-jwt" },
+    });
+    expect(response.status).toBe(403);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("walks owners' WorkOS key lists with bounded concurrency", async () => {
+    let inFlight = 0;
+    let peak = 0;
+    const owners = Array.from({ length: 12 }, (_, i) => `workos-${i}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (String(url).includes("organization-api-keys"))
+          return workosJson({
+            items: owners.map((externalId, i) => ({
+              workosApiKeyId: `key-${i}`,
+              owner: {
+                id: `owner-${i}`,
+                name: `Owner ${i}`,
+                email: `${externalId}@test.local`,
+                externalId,
+              },
+            })),
+          });
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 2));
+        inFlight -= 1;
+        const match = /users\/(workos-\d+)\//.exec(String(url));
+        const i = Number(match?.[1].replace("workos-", ""));
+        return workosJson({ data: [{ id: `key-${i}`, name: `Key ${i}` }] });
+      }),
+    );
+    const response = await app.request("/api/web/api-keys/organization/org-1", {
+      headers: { Authorization: "Bearer session-jwt" },
+    });
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.items).toHaveLength(12);
+    expect(peak).toBeLessThanOrEqual(4);
+    expect(peak).toBeGreaterThan(1);
+  });
+
+  it("drops a key the backend returned whose own binding points at another org", async () => {
+    vi.mocked(lookupWorkosKeyBinding).mockImplementation(async (id) => ({
+      mcpjamOrganizationId: id === "key-a" ? "org-1" : "org-other",
+    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (String(url).includes("organization-api-keys"))
+          return workosJson({
+            items: ["key-a", "key-b"].map((workosApiKeyId) => ({
+              workosApiKeyId,
+              owner: {
+                id: "owner-a",
+                name: "Alex",
+                email: "alex@test.local",
+                externalId: "workos-a",
+              },
+            })),
+          });
+        return workosJson({
+          data: [
+            { id: "key-a", name: "CI" },
+            { id: "key-b", name: "Leaked" },
+          ],
+        });
+      }),
+    );
+    const response = await app.request("/api/web/api-keys/organization/org-1", {
+      headers: { Authorization: "Bearer session-jwt" },
+    });
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.items.map((k: { id: string }) => k.id)).toEqual(["key-a"]);
+  });
+
+  it("rejects non-admins before reading anyone's WorkOS keys", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(workosJson({}, 403));
+    vi.stubGlobal("fetch", fetchMock);
+    const response = await app.request("/api/web/api-keys/organization/org-1", {
+      headers: { Authorization: "Bearer session-jwt" },
+    });
+    expect(response.status).toBe(403);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0][0])).toContain(
+      "actorUserId=mcpjam_user_1",
+    );
+  });
+
+  it("returns only bound keys and safe owner metadata, never secret values", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (String(url).includes("organization-api-keys"))
+          return workosJson({
+            items: [
+              {
+                workosApiKeyId: "key-a",
+                owner: {
+                  id: "owner-a",
+                  name: "Alex",
+                  email: "alex@test.local",
+                  externalId: "workos-a",
+                },
+              },
+            ],
+          });
+        return workosJson({
+          data: [
+            {
+              id: "key-a",
+              name: "CI",
+              obfuscated_value: "sk_…123",
+              value: "SECRET",
+            },
+            { id: "other-org-key", name: "Private" },
+          ],
+        });
+      }),
+    );
+    const response = await app.request("/api/web/api-keys/organization/org-1", {
+      headers: { Authorization: "Bearer session-jwt" },
+    });
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.items).toHaveLength(1);
+    expect(body.items[0]).toMatchObject({
+      id: "key-a",
+      organizationId: "org-1",
+      owner: { name: "Alex", email: "alex@test.local" },
+    });
+    expect(body.items[0]).not.toHaveProperty("value");
+    expect(body.items[0].owner).not.toHaveProperty("externalId");
   });
 });

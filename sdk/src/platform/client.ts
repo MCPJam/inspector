@@ -1,6 +1,20 @@
-import type { PlatformSessionBrowserBodies, PlatformSessionBrowserResults } from "./types.js";
-import type { PlatformSessionBrowserInput, PlatformSessionBrowserOperation, PlatformSessionBrowserOpened, PlatformBrowserToolPolicy } from "./types.js";
+import type {
+  EvalBacktestDraft,
+  EvalBacktestContinuation,
+  EvalBacktestReport,
+} from "../contract/eval-backtest.js";
+import type {
+  PlatformSessionBrowserBodies,
+  PlatformSessionBrowserResults,
+} from "./types.js";
+import type {
+  PlatformSessionBrowserInput,
+  PlatformSessionBrowserOperation,
+  PlatformSessionBrowserOpened,
+  PlatformBrowserToolPolicy,
+} from "./types.js";
 import { PlatformApiError } from "./errors.js";
+import { readSdkVersion } from "../sdk-version.js";
 import type {
   PlatformScenarioSummary,
   PlatformScenarioDetail,
@@ -168,7 +182,19 @@ export interface PlatformApiClientOptions {
   fetch?: typeof fetch;
   /** Per-request timeout. */
   timeoutMs?: number;
-  /** Optional User-Agent; ignored by browsers (forbidden header). */
+  /**
+   * A token naming the calling PROGRAM, prefixed onto this client's own
+   * `mcpjam-sdk/<version>` rather than replacing it — see
+   * {@link DEFAULT_PLATFORM_USER_AGENT}. Omit it and the SDK still identifies
+   * itself outside a browser.
+   *
+   * In a browser (a global `window` and `document`) neither the suffix nor the
+   * default is added, and a value given here is sent as-is. Browsers disagree
+   * on the header: Chromium silently drops a script-set `User-Agent`, but
+   * Firefox sends it, because the Fetch spec no longer forbids it. A page
+   * usually bundles the SDK from source, where the version is `unknown`, so a
+   * default there would only log browser users as `mcpjam-sdk/unknown`.
+   */
   userAgent?: string;
   /**
    * Extra headers sent on every request — for a deployment that sits behind an
@@ -182,6 +208,28 @@ export interface PlatformApiClientOptions {
    * credential or the dedupe key through this door, whatever it passes.
    */
   extraHeaders?: Record<string, string>;
+  /**
+   * Which eval vocabulary this client speaks — the spelling of the eval
+   * authoring fields on every request and response
+   * (`docs/evals-vocabulary-consolidation.md`, "The wire").
+   *
+   * `1` (the default, and what an omitted option means) is byte-for-byte the
+   * documented contract: `checks`, `repetitions`, the legacy floor `iterations`.
+   * `2` sends `x-mcpjam-eval-vocabulary: 2` on EVERY request, under which a
+   * case spells its rules `assertions`, its exact count `iterations` and the
+   * legacy floor `legacyIterations`, and the eval responses come back in the
+   * same spelling ({@link PlatformEvalCaseV2}, {@link PlatformEvalSuiteDetailV2}).
+   *
+   * OPT IN, never inferred: a deployment that predates the negotiation ignores
+   * the header and answers in vocabulary 1, which a caller expecting 2 would
+   * then misread. Read `getProjectCapabilities().vocabulary` first and send `2`
+   * only when the deployment advertises it. The eval methods keep their
+   * vocabulary-1 result types; a caller that opted in narrows.
+   *
+   * Applied after `extraHeaders`, like every header this client owns: an edge
+   * credential must not be able to change which vocabulary a body is read in.
+   */
+  evalVocabulary?: 1 | 2;
   /**
    * WHAT THIS PROCESS IS, declared on every eval-run launch this client makes.
    *
@@ -242,6 +290,9 @@ export interface PlatformCiMetadataOption {
   job?: string;
   runUrl?: string;
   runId?: string;
+  repositoryUrl?: string;
+  prUrl?: string;
+  branchUrl?: string;
   /** Accepted in the run row's own spelling too, when a caller has it. */
   pipelineId?: string;
   jobId?: string;
@@ -260,6 +311,14 @@ export const RUN_LAUNCH_HEADERS = {
   launcher: "x-mcpjam-launcher",
   ci: "x-mcpjam-ci",
 } as const;
+
+/**
+ * The eval-vocabulary negotiation header, mirrored from the server's
+ * `routes/v1/eval-vocabulary.ts`. Sent only when the client was constructed
+ * with `evalVocabulary: 2`; absent means vocabulary 1, and a server that
+ * predates the negotiation ignores it — see {@link PlatformApiClientOptions.evalVocabulary}.
+ */
+export const EVAL_VOCABULARY_HEADER = "x-mcpjam-eval-vocabulary";
 
 /**
  * The API boundary's own caps, mirrored here.
@@ -354,6 +413,9 @@ function buildLaunchHeaders(
       "job",
       "jobId",
       "runUrl",
+      "repositoryUrl",
+      "prUrl",
+      "branchUrl",
       "runId",
       "pipelineId",
     ] as const) {
@@ -490,6 +552,43 @@ function stripTrailingSlashes(url: string): string {
   return url.slice(0, end);
 }
 
+/**
+ * What this client calls itself when the caller says nothing.
+ *
+ * It used to say nothing at all, which is why the question "who is on the SDK,
+ * and on which version?" has no answer in the request logs: the header was set
+ * only when a caller supplied one, and most callers do not. That absence is not
+ * a gap in the telemetry — Axiom carries every request — it is a field nobody
+ * populated, and the cost of it is that decisions about this surface get argued
+ * from reasoning rather than settled from data.
+ *
+ * A caller's own token is PREFIXED rather than replaced, so `mcpjam-cli/5.7.1
+ * mcpjam-sdk/8.7.1` says both which program is calling and which SDK it links.
+ * Losing the second was the whole problem; losing the first would trade one
+ * blind spot for another.
+ *
+ * NOT an identity claim, and nothing may treat it as one. A user-agent is
+ * caller-supplied text, this repository already removed UA-derived attribution
+ * once for exactly that reason, and re-introducing it as a log field is only
+ * safe while it stays a log field.
+ */
+export const DEFAULT_PLATFORM_USER_AGENT = `mcpjam-sdk/${readSdkVersion()}`;
+
+/**
+ * Whether this client is running in a browser page, where the default
+ * user-agent must not be sent (see {@link PlatformApiClientOptions.userAgent}).
+ *
+ * Keyed on `window` AND `document`, never on `navigator`: Node 21+, Deno, Bun
+ * and Cloudflare Workers all define `navigator` (in Workers its `userAgent` is
+ * `"Cloudflare-Workers"`), and none of them has a `document`. Requiring both
+ * also keeps Deno 1.x, which defined `window` but no `document`, on the
+ * server side.
+ */
+function isBrowserPage(): boolean {
+  const scope = globalThis as { window?: unknown; document?: unknown };
+  return scope.window !== undefined && scope.document !== undefined;
+}
+
 export class PlatformApiClient {
   private readonly baseUrl: string;
   private readonly getAuth: () => string | Promise<string>;
@@ -506,8 +605,17 @@ export class PlatformApiClient {
    * them.
    */
   private readonly launchHeaders?: Record<string, string>;
+  /** The vocabulary every request declares; `1` sends no header. */
+  private readonly evalVocabulary: 1 | 2;
+  /**
+   * The options this client was built from, kept so {@link withEvalVocabulary}
+   * can derive a sibling that differs in exactly one thing. Never mutated.
+   */
+  private readonly constructorOptions: PlatformApiClientOptions;
 
   constructor(options: PlatformApiClientOptions) {
+    this.constructorOptions = options;
+    this.evalVocabulary = options.evalVocabulary ?? 1;
     this.baseUrl = stripTrailingSlashes(
       options.baseUrl ?? DEFAULT_PLATFORM_API_BASE_URL
     );
@@ -517,7 +625,11 @@ export class PlatformApiClient {
     // client instance, which throws "Illegal invocation" in Workers/browsers.
     this.fetchFn = options.fetch ?? fetch.bind(globalThis);
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    this.userAgent = options.userAgent;
+    this.userAgent = isBrowserPage()
+      ? options.userAgent
+      : options.userAgent
+      ? `${options.userAgent} ${DEFAULT_PLATFORM_USER_AGENT}`
+      : DEFAULT_PLATFORM_USER_AGENT;
     this.launchHeaders = buildLaunchHeaders(options);
     // Lower-cased at construction so `request` cannot end up with two spellings
     // of one header — HTTP names are case-insensitive, but a plain object's
@@ -530,6 +642,24 @@ export class PlatformApiClient {
           ])
         )
       : undefined;
+  }
+
+  /**
+   * A client identical to this one except for the vocabulary it speaks.
+   *
+   * The negotiation is per deployment, and a caller only learns which
+   * vocabulary a deployment understands by asking it (`getProjectCapabilities`)
+   * — with a client it already holds. This is the step from "asked" to
+   * "speaks": same credential, same base URL, same launch declaration, one
+   * header more. The original client is untouched; the CLI keeps it for the
+   * operations that still speak vocabulary 1.
+   */
+  withEvalVocabulary(vocabulary: 1 | 2): PlatformApiClient {
+    if (vocabulary === this.evalVocabulary) return this;
+    return new PlatformApiClient({
+      ...this.constructorOptions,
+      evalVocabulary: vocabulary,
+    });
   }
 
   /** Coding-agent browser entry point; command outcomes are returned in-band. */
@@ -2500,6 +2630,35 @@ export class PlatformApiClient {
         params.projectId
       )}/eval-runs/${encodeURIComponent(params.runId)}/insights`,
       { body: params.force ? { force: true } : {} },
+      options
+    );
+  }
+
+  /**
+   * Preview deterministic evaluators using stored evidence, without model calls
+   * or verdict writes. Resume a bounded result with its continuation and the
+   * unchanged draft. Starting a new preview has a separate one-minute cooldown.
+   */
+  backtestEvalRun(
+    params: {
+      projectId: string;
+      runId: string;
+      draft: EvalBacktestDraft;
+      continuation?: EvalBacktestContinuation;
+    },
+    options?: RequestOptions
+  ): Promise<EvalBacktestReport> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(params.runId)}/backtest`,
+      {
+        body: {
+          ...params.draft,
+          ...(params.continuation ? { continuation: params.continuation } : {}),
+        },
+      },
       options
     );
   }
@@ -5107,6 +5266,18 @@ export class PlatformApiClient {
     }
     if (this.userAgent) {
       headers["user-agent"] = this.userAgent;
+    }
+    // On EVERY request, not only the eval ones: the server negotiates the
+    // header app-wide and refuses an unknown value everywhere, so a client
+    // that speaks 2 says so uniformly rather than per route. Vocabulary 1 is
+    // the absence of the header, byte-for-byte today's contract, which is
+    // why `1` sends nothing rather than "1".
+    if (this.evalVocabulary === 2) {
+      headers[EVAL_VOCABULARY_HEADER] = "2";
+    } else {
+      // Owned in both directions: an edge credential that injected the
+      // header would make a vocabulary-1 body mean something else.
+      delete headers[EVAL_VOCABULARY_HEADER];
     }
     // After `extraHeaders`, like every other header this client owns: an edge
     // authenticator's credential must not be able to relabel a run's origin.
