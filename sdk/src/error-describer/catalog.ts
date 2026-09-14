@@ -140,11 +140,8 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   "sdk/not_yet_supported_in_stateless": "mcpjam",
   "sdk/paginated_tool_header_discovery_unsupported": "mcpjam",
 
-  // --- The server's OAuth surface, as MCP requires it --------------------
-  // A 401 without a Bearer challenge, or a Bearer challenge on a 403, is the
-  // MCP server (or what fronts it) breaking the authorization discovery
-  // contract. Nothing the user configures on our side changes that answer.
-  "oauth/no_bearer_challenge": "user_server",
+  // A missing challenge alone does not establish who must act.
+  "oauth/no_bearer_challenge": "ambiguous",
   "oauth/non_compliant_challenge": "user_server",
 
   // --- Not settled by the evidence ----------------------------------------
@@ -153,8 +150,7 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   // credential MCPJam holds pass `credentialOwner: "mcpjam"` and it becomes
   // ours; a BYO refresh stays ambiguous.
   "auth/authorization_server_unreachable": "ambiguous",
-  // A 403 with an HTML body and no challenge is a proxy, firewall or
-  // allowlist — in front of the server, and possibly reacting to our address.
+  // HTML is evidence of the response format, not of which hop authored it.
   "auth/proxy_rejected": "ambiguous",
   // Either peer can drop a connection or run out of time.
   "jsonrpc/connection_closed": "ambiguous",
@@ -545,7 +541,7 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
   "auth/insufficient_scope": entry(
     "auth/insufficient_scope",
     "Insufficient scope (403)",
-    "The server accepted the credential but the grant does not cover this operation.",
+    "The server reported insufficient_scope: the grant does not cover this operation.",
     [
       "The authorization did not request the scopes the server now requires.",
       "The server added a scope requirement after the grant was issued.",
@@ -558,7 +554,7 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
   "auth/authorization_server_unreachable": entry(
     "auth/authorization_server_unreachable",
     "Authorization server unreachable",
-    "The stored token could not be refreshed because the authorization server did not answer.",
+    "The stored token could not be refreshed because the authorization server was unreachable or did not return a usable response.",
     [
       "The authorization server is down or slow.",
       "The refresh request could not leave the network it was made from.",
@@ -572,8 +568,8 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
   ),
   "auth/proxy_rejected": entry(
     "auth/proxy_rejected",
-    "Rejected by a proxy or firewall (403)",
-    "Something in front of the server answered 403 with an HTML page and no authentication challenge.",
+    "HTML access rejection (403)",
+    "The response was HTTP 403 with an HTML content type and no authentication challenge; a proxy or firewall may be involved.",
     [
       "An IP allowlist or WAF blocks the address the request came from.",
       "A corporate proxy or SSO portal intercepted the request.",
@@ -589,13 +585,13 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
   "oauth/no_bearer_challenge": entry(
     "oauth/no_bearer_challenge",
     "401 without a Bearer challenge",
-    "The server answered 401 without a `WWW-Authenticate: Bearer` challenge, so a client cannot discover how to authorize.",
+    "The response was HTTP 401 without a Bearer challenge. This response did not explain how to authorize.",
     [
-      "The server (or a proxy in front of it) omits the `WWW-Authenticate` header MCP requires on a 401.",
+      "The server or an intermediary omitted a Bearer challenge.",
       "The server expects a static API key and does not implement OAuth.",
     ],
     [
-      "If the server uses OAuth, make it answer 401 with `WWW-Authenticate: Bearer resource_metadata=\"…\"` (RFC 9728).",
+      "Check OAuth discovery, including the well-known metadata fallback supported by newer MCP versions.",
       "If the server expects an API key, configure it as a header on the server instead of OAuth.",
     ],
     "no-bearer-challenge",
@@ -603,14 +599,14 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
   "oauth/non_compliant_challenge": entry(
     "oauth/non_compliant_challenge",
     "Bearer challenge on the wrong status",
-    "The server answered 403 with a Bearer challenge; MCP requires a 401 for a missing or invalid credential.",
+    "The response reported invalid_token with HTTP 403; MCP requires HTTP 401 for an invalid or expired token.",
     [
       "The server maps every authorization failure to 403.",
       "A gateway rewrites the server's 401 to 403.",
     ],
     [
-      "Re-authorize the server; the challenge itself was usable.",
-      "Report the status code to the server author — clients that follow the spec will not retry on 403.",
+      "Re-authorize the server to replace the rejected token.",
+      "Report the status mismatch to the server author; invalid-token recovery expects HTTP 401.",
     ],
     "non-compliant-challenge",
     "warning",

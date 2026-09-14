@@ -22,13 +22,15 @@
 import {
   classifyNegotiationFailureClass,
   describeError,
+  isNormalizedError,
+  redactForTelemetry,
   unwrapEraNegotiationCause,
   type BearerChallengeSummary,
   type NormalizedError,
 } from "@mcpjam/sdk";
 import type { StageSetupPhaseSignal, StageSetupSignals } from "@mcpjam/sdk/contract";
 import { MAX_EVIDENCE_REASONS } from "@mcpjam/sdk/contract";
-import type { ConnectionAuthContext } from "../connection-failure-context.js";
+import type { WebRouteError } from "../../routes/web/errors.js";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import { HOSTED_MODE } from "../../config.js";
 import { createPinnedFetch } from "../../utils/pinned-fetch.js";
@@ -51,60 +53,18 @@ export type SetupTargetObservation = {
   endedAt: number;
 };
 
-/**
- * What the producer knew about a server when its connect failed. All of it
- * optional: a manager built outside `createAuthorizedManager` (tests, the
- * replay helpers) enrols nothing, and the classifier then reads exactly as
- * it did before this context existed.
- */
 export type SetupFailureContext = {
-  /** How the server is named to the user; falls back to the server id. */
   serverLabel?: string;
-  auth?: ConnectionAuthContext;
   challenge?: BearerChallengeSummary;
 };
 
-export type SetupRefreshOutcome =
-  "token_rejected" | "authorization_server_unreachable";
-
-/**
- * A failed connect or tools/list, explained.
- *
- * `line` is the one sentence a reader gets — on the stage row, in the run
- * error, in the API and the CLI. It is built from structured fields only
- * (status, the catalog slug, the parsed challenge, the server's display
- * name), never by interpolating a header or the raw transport message, so it
- * is safe to persist as-is. `normalized` is the catalog block for surfaces
- * that render an ErrorCard.
- */
 export type SetupFailureDetail = {
-  slug: string;
   attribution: SetupAttribution;
   line: string;
-  status?: number;
-  code?: string;
-  refresh?: SetupRefreshOutcome;
-  challenge?: BearerChallengeSummary;
   normalized: NormalizedError;
 };
 
-/** The audit copy of a detail: everything but the catalog block. */
-export type SetupFailureRecord = {
-  serverId: string;
-  phase: SetupPhase;
-  slug: string;
-  attribution: SetupAttribution;
-  line: string;
-  status?: number;
-  code?: string;
-  refresh?: SetupRefreshOutcome;
-  challenge?: BearerChallengeSummary;
-};
-
-/** Hard cap on a persisted reason line. */
 export const MAX_SETUP_FAILURE_LINE_CHARS = 240;
-/** Version of the classifier that produced the audit record. */
-export const SETUP_FAILURE_CLASSIFIER_VERSION = 2;
 
 const TRANSPORT_LOCAL_MCP_CODES = new Set([-32000, -32001]);
 const OURS_NODE_CODES = new Set([
@@ -126,13 +86,7 @@ const THEIRS_NODE_CODES = new Set([
 
 const MAX_CULPRIT_SPAN_IDS = 5;
 const CANARY_TIMEOUT_MS = 5_000;
-/**
- * Raised from 2 KiB when the record started carrying per-server failure
- * lines. The shed below drops those FIRST, so the span ids the stage rows
- * reference are the last thing to go.
- */
 const SETUP_SIGNALS_METADATA_CAP_BYTES = 4_096;
-const MAX_AUDIT_FAILURES = 5;
 
 function slimPhaseSignal(
   signal: StageSetupPhaseSignal | undefined
@@ -163,31 +117,33 @@ export const SETUP_AUDIT_METADATA_KEY = "stageSetupAudit";
 export type SetupAuditRecord = {
   signals: StageSetupSignals;
   egressCanary: unknown;
-  /** Per-server failure explanations, bounded; the first thing shed. */
-  failures?: SetupFailureRecord[];
-  /** Which classifier wrote this record; absent means the pre-detail one. */
-  classifier?: number;
   truncated?: true;
 };
 
 /**
- * Hard-cap the producer-owned audit blob. Over the cap, drop span ids so
- * the serialized payload shrinks; `truncated: true` marks the shed.
+ * Bound the producer-owned audit blob. Over the cap, drop reasons before
+ * span ids; `truncated: true` marks the shed.
  */
 export function capSetupAuditMetadata(
   raw: SetupAuditRecord,
   capBytes: number = SETUP_SIGNALS_METADATA_CAP_BYTES
 ): SetupAuditRecord {
-  const serialized = JSON.stringify(raw);
-  if (serialized.length <= capBytes) return raw;
-  // Tier 1: keep the signals whole (span ids and reason lines are what the
-  // stage rows reference) and drop the per-server explanations.
-  if (raw.failures !== undefined) {
-    const { failures: _failures, ...withoutFailures } = raw;
-    if (JSON.stringify(withoutFailures).length <= capBytes) {
-      return { ...withoutFailures, truncated: true };
-    }
-  }
+  const fits = (record: SetupAuditRecord) =>
+    Buffer.byteLength(JSON.stringify(record), "utf8") <= capBytes;
+  if (fits(raw)) return raw;
+  // Reasons are already on the stage rows. Shed their audit copy before refs.
+  const withoutReasons: SetupAuditRecord = {
+    ...raw,
+    signals: Object.fromEntries(
+      Object.entries(raw.signals).map(([phase, signal]) => {
+        if (!signal) return [phase, signal];
+        const { reasons: _reasons, ...rest } = signal;
+        return [phase, rest];
+      }),
+    ),
+    truncated: true,
+  };
+  if (fits(withoutReasons)) return withoutReasons;
   // Tier 2: the pre-detail shed — outcome, attribution, canary, duration.
   const signals = raw.signals;
   return {
@@ -200,7 +156,6 @@ export function capSetupAuditMetadata(
         : {}),
     },
     egressCanary: raw.egressCanary,
-    ...(raw.classifier !== undefined ? { classifier: raw.classifier } : {}),
     truncated: true,
   };
 }
@@ -266,255 +221,91 @@ function isCancellation(error: unknown, cause: unknown): boolean {
   );
 }
 
-function detailsOf(error: unknown): Record<string, unknown> | undefined {
-  if (!error || typeof error !== "object") return undefined;
-  const details = (error as { details?: unknown }).details;
-  return details && typeof details === "object"
-    ? (details as Record<string, unknown>)
-    : undefined;
-}
-
-/**
- * A `WebRouteError` (or anything shaped like one), matched structurally so a
- * copy that crossed a module boundary still counts: numeric `status`, string
- * `code`. Every one of these on the setup path is thrown by OUR code before
- * or instead of contacting the server — the hosted refresh handler, the
- * tokenless-discover 401, the XAA mint — so none of them may ever be read as
- * the MCP server failing, whatever status they carry.
- */
-function isControlPlaneError(error: unknown): boolean {
-  if (!error || typeof error !== "object") return false;
-  const candidate = error as {
-    status?: unknown;
-    code?: unknown;
-    name?: unknown;
-  };
-  return (
-    typeof candidate.status === "number" &&
-    typeof candidate.code === "string" &&
-    (candidate.name === "WebRouteError" ||
-      candidate.name === "EvalSetupPhaseError" ||
-      detailsOf(error) !== undefined)
-  );
-}
-
-/**
- * What a hosted token refresh said, read off the typed details the refresh
- * handler attaches (`hosted-oauth-refresh.ts`). The 502 "Could not reach the
- * authorization server" from the local fallback carries no flag, so its
- * message is matched too — it is OUR sentence, not a server's.
- */
-export function refreshOutcomeFromError(
-  error: unknown,
-): SetupRefreshOutcome | undefined {
-  let current: unknown = error;
-  for (let depth = 0; depth < 5 && current; depth += 1) {
-    const details = detailsOf(current);
-    if (details?.authorizationServerUnreachable === true) {
-      return "authorization_server_unreachable";
-    }
-    if (details?.refreshTokenInvalid === true) return "token_rejected";
+/** Inspect only explicit provenance, including through negotiation/cause wrappers. */
+function credentialFailure(error: unknown): WebRouteError | undefined {
+  let current = error;
+  const seen = new Set<unknown>();
+  for (let depth = 0; depth < 5 && current && !seen.has(current); depth += 1) {
+    seen.add(current);
+    if (typeof current !== "object") break;
+    const candidate = current as WebRouteError;
     if (
-      /^Could not reach the authorization server\b/.test(
-        collectMessage(current),
+      ["oauth_refresh", "xaa_mint", "authorization_required"].includes(
+        candidate.setupFailureSource ?? "",
       )
     ) {
-      return "authorization_server_unreachable";
+      return candidate;
     }
-    current =
-      current && typeof current === "object"
-        ? (current as { cause?: unknown }).cause
-        : undefined;
+    const unwrapped = unwrapEraNegotiationCause(current);
+    current = unwrapped !== current ? unwrapped : candidate.cause;
   }
   return undefined;
 }
 
-function httpStatusOf(cause: unknown): number | undefined {
-  return (
-    numericField(cause, "statusCode") ??
-    numericField(cause, "status") ??
-    (typeof numericField(cause, "code") === "number" &&
-    (numericField(cause, "code") as number) >= 100 &&
-    (numericField(cause, "code") as number) <= 599
-      ? numericField(cause, "code")
-      : undefined)
-  );
-}
-
-function clipLine(line: string): string {
-  const collapsed = line.replace(/\s+/g, " ").trim();
-  return collapsed.length > MAX_SETUP_FAILURE_LINE_CHARS
-    ? `${collapsed.slice(0, MAX_SETUP_FAILURE_LINE_CHARS - 1)}…`
-    : collapsed;
-}
-
-/**
- * The one line a reader gets. Built from fields, never from the transport
- * message — except for the two cases whose message is already OUR authored
- * sentence (XAA connect failures, the tokenless-discover 401).
- */
-function setupFailureLine(args: {
-  label: string;
-  slug: string;
-  status?: number;
-  refresh?: SetupRefreshOutcome;
-  oauthRequired: boolean;
-  xaaMessage?: string;
-  auth?: ConnectionAuthContext;
-  challenge?: BearerChallengeSummary;
-  normalized: NormalizedError;
-}): string {
-  const { label, slug, challenge, auth } = args;
-  const quoted = `"${label}"`;
-  if (args.refresh === "authorization_server_unreachable") {
-    return `MCPJam could not reach the authorization server to refresh the stored token for ${quoted}; the MCP server was not contacted.`;
-  }
-  if (
-    args.refresh === "token_rejected" ||
-    slug === "auth/oauth_refresh_failed"
-  ) {
-    return `The stored authorization for ${quoted} has expired or been revoked. Reconnect it in the server settings.`;
-  }
-  if (args.xaaMessage) return args.xaaMessage;
-  if (args.oauthRequired) {
-    return `${quoted} requires authorization and none is stored. Complete the OAuth flow, then re-run.`;
-  }
-  const reported = challenge?.error ? `, ${challenge.error}` : "";
-  switch (slug) {
-    case "oauth/no_bearer_challenge":
-      return `${quoted} answered 401 without a Bearer challenge; MCP requires one, so its OAuth setup cannot be discovered. Run Doctor on this server.`;
-    case "auth/insufficient_scope":
-      return `${quoted} needs additional scopes${
-        challenge?.scopes?.length ? ` (${challenge.scopes.join(" ")})` : ""
-      }. Re-authorize with the required scopes.`;
-    case "oauth/non_compliant_challenge":
-      return `${quoted} answered 403 with a Bearer challenge where MCP requires 401. Re-authorize; report the status to the server author.`;
-    case "auth/proxy_rejected":
-      return `A proxy or firewall in front of ${quoted} rejected the request (HTTP 403). Check IP allowlists.`;
-    case "auth/http_401":
-      if (auth?.method === "bearer" || auth?.method === "none") {
-        return `${quoted} rejected the configured Authorization header (HTTP 401${reported}).`;
-      }
-      if (auth && !auth.credentialSent) {
-        return `${quoted} requires authorization (HTTP 401${reported}) and none is stored. Complete the OAuth flow, then re-run.`;
-      }
-      return `${quoted} rejected the stored token (HTTP 401${reported}). Re-authorize the server.`;
-    case "auth/http_403":
-      return `${quoted} refused the credential (HTTP 403${reported}).`;
-    default: {
-      const statusNote =
-        args.status !== undefined && !/\b\d{3}\b/.test(args.normalized.oneLine)
-          ? ` (HTTP ${args.status})`
-          : "";
-      return `${quoted}: ${args.normalized.oneLine}${statusNote}`;
-    }
-  }
-}
-
-/**
- * Explain a connect / tools-list failure: attribution for the chain, a
- * catalog slug and block for cards, one line for people.
- *
- * Attribution is decided here, not read off the catalog origin: the catalog
- * answers "who must act", D6 answers "did we reach their host", and
- * `ECONNREFUSED` answers those two questions differently. The table:
- *
- *   - a control-plane error (refresh handler, XAA mint, tokenless-discover
- *     401) ⇒ ours, whatever status it carries — the server was never the
- *     thing that failed;
- *   - otherwise the transport classification (`classifySetupAttribution`),
- *     with two challenge-informed corrections on a 401/403 that would have
- *     been `ours`: a 401 with NO Bearer challenge from a server configured
- *     for OAuth discovery, and a 403 that is an HTML page with no challenge,
- *     become `unknown` — we cannot show the server refused a valid
- *     credential, and we also cannot call the failure ours.
- */
 export function describeSetupFailure(
   error: unknown,
   ctx?: SetupFailureContext & { serverId?: string },
 ): SetupFailureDetail {
+  const credential = credentialFailure(error);
   const cause = unwrapEraNegotiationCause(error);
-  const refresh = refreshOutcomeFromError(error);
-  const controlPlane = isControlPlaneError(error) || isControlPlaneError(cause);
-  const details = detailsOf(error) ?? detailsOf(cause);
-  const oauthRequired =
-    details?.oauthRequired === true && details?.refreshTokenInvalid !== true;
-  const xaaMessage =
-    typeof details?.reason === "string" && controlPlane
-      ? collectMessage(error)
+  const refresh =
+    credential?.setupFailureSource === "oauth_refresh"
+      ? credential.details?.authorizationServerUnreachable === true
+        ? { outcome: "authorization_server_unreachable" as const }
+        : credential.details?.refreshTokenInvalid === true
+        ? { outcome: "token_rejected" as const }
+        : undefined
       : undefined;
-  const status = httpStatusOf(cause) ?? httpStatusOf(error);
-  // A server configured with a static header, or none, is not expected to
-  // challenge: its 401 without `WWW-Authenticate` is a wrong header, not a
-  // discovery gap, so the challenge is withheld from the describer for it.
-  const expectsOAuth =
-    ctx?.auth === undefined ||
-    ctx.auth.method === "oauth" ||
-    ctx.auth.method === "discover";
-  const challenge =
-    ctx?.challenge &&
-    (expectsOAuth || status !== 401 || ctx.challenge.scheme !== "none")
-      ? ctx.challenge
-      : undefined;
-  const normalized = describeError(cause, {
-    surface: "mcpServer",
-    // Always the user's for the capture decision: a customer's revoked token
-    // or an authorization server they operate must never page us.
-    credentialOwner: "user",
-    ...(challenge ? { challenge } : {}),
-    ...(refresh ? { refresh: { outcome: refresh } } : {}),
-  });
-  const slug = oauthRequired ? "auth/http_401" : normalized.slug;
-
-  let attribution: SetupAttribution;
-  if (controlPlane || refresh !== undefined) {
-    attribution = "ours";
-  } else {
-    attribution = classifySetupAttribution(error);
-    if (attribution === "ours" && challenge && status !== undefined) {
-      if (status === 401 && challenge.scheme === "none" && expectsOAuth) {
-        attribution = "unknown";
-      } else if (
-        status === 403 &&
-        challenge.scheme === "none" &&
-        challenge.bodyKind === "html"
-      ) {
-        attribution = "unknown";
-      }
-    }
-  }
-
-  const code =
-    typeof normalized.rawCode === "string" ? normalized.rawCode : undefined;
-  const line = clipLine(
-    setupFailureLine({
-      label: ctx?.serverLabel ?? ctx?.serverId ?? "the server",
-      slug,
-      status,
-      refresh,
-      oauthRequired,
-      xaaMessage,
-      auth: ctx?.auth,
-      challenge: ctx?.challenge,
-      normalized,
-    }),
+  const existing = [error, credential, cause].find(
+    (value) =>
+      value &&
+      typeof value === "object" &&
+      isNormalizedError((value as WebRouteError).normalized),
   );
+  const normalized = existing
+    ? (existing as WebRouteError).normalized!
+    : describeError(credential ?? cause, {
+        surface: "mcpServer",
+        credentialOwner: "user",
+        ...(credential ? {} : { challenge: ctx?.challenge }),
+        ...(refresh ? { refresh } : {}),
+      });
+  let attribution = classifySetupAttribution(error);
+  if (
+    !credential &&
+    attribution === "ours" &&
+    (normalized.slug === "oauth/no_bearer_challenge" ||
+      normalized.slug === "auth/proxy_rejected")
+  ) {
+    attribution = "unknown";
+  }
+  // Preserve producer-authored credential messages when the catalog has no
+  // more specific diagnosis. All other copy comes from the shared describer.
+  const explanation =
+    credential && !refresh
+      ? normalized.rawMessage || normalized.oneLine
+      : normalized.oneLine;
+  const line = String(
+    redactForTelemetry(
+      `"${ctx?.serverLabel ?? ctx?.serverId ?? "the server"}": ${explanation}`,
+    ),
+  )
+    .replace(/\s+/g, " ")
+    .trim();
   return {
-    slug,
     attribution,
-    line,
-    ...(status !== undefined ? { status } : {}),
-    ...(code !== undefined ? { code } : {}),
-    ...(refresh ? { refresh } : {}),
-    ...(ctx?.challenge ? { challenge: ctx.challenge } : {}),
     normalized,
+    line:
+      line.length > MAX_SETUP_FAILURE_LINE_CHARS
+        ? `${line.slice(0, MAX_SETUP_FAILURE_LINE_CHARS - 1)}…`
+        : line,
   };
 }
 
 /**
  * Classify a connect / tools-list failure for D6 attribution.
  *
- *   ours   — our own cancellation, a control-plane error (refresh handler,
+ *   ours   — our own cancellation, a tagged credential error (refresh handler,
  *            XAA mint, tokenless-discover 401 — whatever status it carries),
  *            DNS (`EgressResolutionError` / ENOTFOUND), blocked egress,
  *            401/403 (suite-credential config), MCP −32000/−32001
@@ -524,7 +315,7 @@ export function describeSetupFailure(
  * Reuses hosted-egress-guard error types and the era-negotiation unwrap so a
  * wrapped transport failure is classified on the real cause. The
  * challenge-informed corrections live in `describeSetupFailure`, which is
- * what the observer calls; this function alone reads exactly as it did.
+ * what the observer calls; untagged errors retain their existing classification.
  */
 export function classifySetupAttribution(error: unknown): SetupAttribution {
   const cause = unwrapEraNegotiationCause(error);
@@ -533,16 +324,7 @@ export function classifySetupAttribution(error: unknown): SetupAttribution {
   // the target server.
   if (isCancellation(error, cause)) return "ours";
 
-  // A control-plane failure never reached the target. Ahead of the status
-  // arms because the refresh handler's 503 "authorization server
-  // unreachable" would otherwise read as their 5xx.
-  if (
-    isControlPlaneError(error) ||
-    isControlPlaneError(cause) ||
-    refreshOutcomeFromError(error) !== undefined
-  ) {
-    return "ours";
-  }
+  if (credentialFailure(error)) return "ours";
 
   if (cause instanceof EgressResolutionError) return "ours";
   if (cause instanceof BlockedEgressTargetError) return "ours";
@@ -741,6 +523,7 @@ export type RunSetupObserver = {
     init: {
       outcome: "ok" | "failed";
       error?: unknown;
+      challenge?: BearerChallengeSummary;
       startedAt: number;
       endedAt: number;
     }
@@ -750,6 +533,7 @@ export type RunSetupObserver = {
     init: {
       outcome: "ok" | "failed";
       error?: unknown;
+      challenge?: BearerChallengeSummary;
       startedAt: number;
       endedAt: number;
     }
@@ -771,8 +555,6 @@ export type RunSetupObserver = {
     serverId: string,
     phase: SetupPhase,
   ) => SetupFailureDetail | undefined;
-  /** Every recorded failure, audit-shaped and bounded. */
-  buildFailureRecords: () => SetupFailureRecord[];
 };
 
 export type CreateRunSetupObserverOptions = {
@@ -813,6 +595,7 @@ export function createRunSetupObserver(
     init: {
       outcome: "ok" | "failed";
       error?: unknown;
+      challenge?: BearerChallengeSummary;
       startedAt: number;
       endedAt: number;
     }
@@ -822,6 +605,7 @@ export function createRunSetupObserver(
         ? describeSetupFailure(init.error, {
             serverId,
             ...(options.context?.(serverId) ?? {}),
+            ...(init.challenge ? { challenge: init.challenge } : {}),
           })
         : undefined;
     into.set(serverId, {
@@ -879,23 +663,6 @@ export function createRunSetupObserver(
     };
   };
 
-  const failureRecords = (): SetupFailureRecord[] => {
-    const records: SetupFailureRecord[] = [];
-    for (const [phase, map] of [
-      ["connection", connects],
-      ["discovery", lists],
-    ] as const) {
-      for (const serverId of expected) {
-        const row = map.get(serverId);
-        if (!row?.detail) continue;
-        const { normalized: _normalized, ...rest } = row.detail;
-        records.push({ serverId, phase, ...rest });
-        if (records.length >= MAX_AUDIT_FAILURES) return records;
-      }
-    }
-    return records;
-  };
-
   return {
     recordConnect: (serverId, init) => record(connects, serverId, init),
     recordToolsList: (serverId, init) => record(lists, serverId, init),
@@ -903,7 +670,6 @@ export function createRunSetupObserver(
     buildSignals,
     failureDetail: (serverId, phase) =>
       (phase === "connection" ? connects : lists).get(serverId)?.detail,
-    buildFailureRecords: failureRecords,
     buildSyntheticSpans: (runStartedAt) =>
       buildSyntheticSetupSpans({
         expected,
@@ -914,7 +680,6 @@ export function createRunSetupObserver(
     buildAuditMetadata: () => {
       const signals = buildSignals();
       if (!signals) return undefined;
-      const failures = failureRecords();
       return {
         [SETUP_AUDIT_METADATA_KEY]: capSetupAuditMetadata(
           {
@@ -927,11 +692,6 @@ export function createRunSetupObserver(
                     ok: canaryResult,
                     at: (options.now ?? Date.now)(),
                   },
-            // Only a record with something to explain names its classifier,
-            // so a clean run's audit stays byte-identical to the pre-detail one.
-            ...(failures.length > 0
-              ? { failures, classifier: SETUP_FAILURE_CLASSIFIER_VERSION }
-              : {}),
           },
           SETUP_SIGNALS_METADATA_CAP_BYTES
         ),

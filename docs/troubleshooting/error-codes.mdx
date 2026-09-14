@@ -427,7 +427,7 @@ The OAuth `.well-known` discovery endpoint could not be fetched.
 
 `auth/insufficient_scope`
 
-The server accepted the credential but the grant does not cover this operation.
+The server reported `insufficient_scope`: the grant does not cover this operation.
 
 **Likely causes**
 - The authorization did not request the scopes the server now requires.
@@ -440,7 +440,7 @@ The server accepted the credential but the grant does not cover this operation.
 
 `auth/authorization_server_unreachable`
 
-The stored token could not be refreshed because the authorization server did not answer.
+The stored token could not be refreshed because the authorization server was unreachable or did not return a usable response.
 
 **Likely causes**
 - The authorization server is down or slow.
@@ -454,7 +454,7 @@ The stored token could not be refreshed because the authorization server did not
 
 `auth/proxy_rejected`
 
-Something in front of the server answered 403 with an HTML page and no authentication challenge.
+The response was HTTP 403 with an HTML content type and no authentication challenge. A proxy or firewall may be involved, but the response format alone does not establish its source.
 
 **Likely causes**
 - An IP allowlist or WAF blocks the address the request came from.
@@ -468,29 +468,29 @@ Something in front of the server answered 403 with an HTML page and no authentic
 
 `oauth/no_bearer_challenge`
 
-The server answered 401 without a `WWW-Authenticate: Bearer` challenge, so a client cannot discover how to authorize.
+The response was HTTP 401 without a Bearer challenge. It did not explain how to authorize; this does not establish whether well-known metadata discovery is available.
 
 **Likely causes**
-- The server (or a proxy in front of it) omits the `WWW-Authenticate` header MCP requires on a 401.
+- The server or an intermediary omitted a Bearer challenge.
 - The server expects a static API key and does not implement OAuth.
 
 **Next steps**
-- If the server uses OAuth, make it answer 401 with `WWW-Authenticate: Bearer resource_metadata="…"` (RFC 9728).
+- Check OAuth discovery, including the well-known metadata fallback supported by newer MCP versions.
 - If the server expects an API key, configure it as a header on the server instead of OAuth.
 
 ### Non-compliant challenge
 
 `oauth/non_compliant_challenge`
 
-The server answered 403 with a Bearer challenge; MCP requires a 401 for a missing or invalid credential.
+The response reported `invalid_token` with HTTP 403; MCP requires HTTP 401 for an invalid or expired token. A bare Bearer challenge on a 403 is not enough to diagnose this mismatch.
 
 **Likely causes**
 - The server maps every authorization failure to 403.
 - A gateway rewrites the server's 401 to 403.
 
 **Next steps**
-- Re-authorize the server; the challenge itself was usable.
-- Report the status code to the server author — clients that follow the spec will not retry on 403.
+- Re-authorize the server to replace the rejected token.
+- Report the status mismatch to the server author; invalid-token recovery expects HTTP 401.
 
 ## Inspector-specific
 

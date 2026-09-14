@@ -416,192 +416,117 @@ describe("createRunSetupObserver canary + spans", () => {
   });
 });
 
-describe("describeSetupFailure — the reason a person reads, and who it blames", () => {
-  const webRouteError = (
+describe("describeSetupFailure", () => {
+  const credentialError = (
     status: number,
-    message: string,
-    details?: Record<string, unknown>,
-  ) => {
-    const error = new Error(message) as Error & {
-      status: number;
-      code: string;
-      details?: Record<string, unknown>;
-    };
-    error.name = "WebRouteError";
-    error.status = status;
-    error.code = "X";
-    if (details) error.details = details;
-    return error;
-  };
+    source: "oauth_refresh" | "xaa_mint" | "authorization_required",
+    details = {},
+  ) =>
+    Object.assign(httpError(status), { setupFailureSource: source, details });
 
-  it("never blames the server for a control-plane refresh failure — the 503 regression", () => {
-    const unreachable = webRouteError(503, "authorization_server_unreachable", {
+  it("uses explicit provenance, not route-error shape or authored-looking messages", () => {
+    const tagged = credentialError(503, "oauth_refresh", {
       authorizationServerUnreachable: true,
-      serverId: "s1",
     });
-    // The bare classifier used to read this 5xx as theirs.
-    expect(classifySetupAttribution(unreachable)).toBe("ours");
-    const detail = describeSetupFailure(unreachable, { serverLabel: "Linear" });
-    expect(detail.attribution).toBe("ours");
-    expect(detail.refresh).toBe("authorization_server_unreachable");
-    expect(detail.slug).toBe("auth/authorization_server_unreachable");
-    expect(detail.line).toBe(
-      'MCPJam could not reach the authorization server to refresh the stored token for "Linear"; the MCP server was not contacted.',
-    );
-    // The local fallback's 502 carries no flag, only OUR sentence.
+    expect(classifySetupAttribution(tagged)).toBe("ours");
     expect(
-      classifySetupAttribution(
-        webRouteError(
-          502,
-          "Could not reach the authorization server at https://as.example: ECONNREFUSED",
-        ),
-      ),
+      describeSetupFailure(tagged, { serverLabel: "Linear" }),
+    ).toMatchObject({
+      attribution: "ours",
+      normalized: { slug: "auth/authorization_server_unreachable" },
+    });
+    for (const error of [
+      Object.assign(httpError(503), {
+        name: "WebRouteError",
+        code: "X",
+        details: {},
+      }),
+      Object.assign(new Error("Could not reach the authorization server"), {
+        status: 502,
+      }),
+    ]) {
+      expect(classifySetupAttribution(error)).toBe("theirs");
+    }
+    expect(
+      classifySetupAttribution(new Error("wrapped", { cause: tagged })),
+    ).toBe("ours");
+    expect(
+      classifySetupAttribution({
+        code: "ERA_NEGOTIATION_FAILED",
+        data: { cause: tagged },
+      }),
     ).toBe("ours");
   });
 
-  it("names a revoked refresh token and a tokenless discover 401 as the user's to fix", () => {
-    const revoked = describeSetupFailure(
-      webRouteError(
-        401,
-        "The stored refresh token was rejected. Please reconnect.",
-        {
-          oauthRequired: true,
-          refreshTokenInvalid: true,
-        },
-      ),
-      { serverLabel: "Linear" },
+  it("preserves an existing normalized error and tagged authorization messages", async () => {
+    const { describeError } = await import("@mcpjam/sdk");
+    const normalized = describeError(
+      new Error("The enterprise handshake needs to be repeated."),
     );
-    expect(revoked).toMatchObject({
-      attribution: "ours",
-      refresh: "token_rejected",
-      slug: "auth/oauth_refresh_failed",
-      line: 'The stored authorization for "Linear" has expired or been revoked. Reconnect it in the server settings.',
+    const error = Object.assign(credentialError(502, "xaa_mint"), {
+      normalized,
     });
-    const tokenless = describeSetupFailure(
-      webRouteError(401, 'Server "Linear" requires authorization.', {
-        oauthRequired: true,
-      }),
-      { serverLabel: "Linear" },
-    );
-    expect(tokenless).toMatchObject({
-      attribution: "ours",
-      slug: "auth/http_401",
-      line: '"Linear" requires authorization and none is stored. Complete the OAuth flow, then re-run.',
-    });
+    const detail = describeSetupFailure(error, { serverLabel: "Linear" });
+    expect(detail.normalized).toBe(normalized);
+    expect(detail.line).toContain("enterprise handshake");
+    expect(detail.attribution).toBe("ours");
+    expect(
+      describeSetupFailure(credentialError(401, "authorization_required"), {
+        challenge: { scheme: "none" },
+      }).attribution,
+    ).toBe("ours");
   });
 
-  it("reads the challenge: no Bearer challenge on a 401 is unknown, invalid_token is ours", () => {
-    const noChallenge = describeSetupFailure(httpError(401), {
-      serverLabel: "Linear",
-      auth: { method: "discover", credentialSent: true, refreshable: true },
-      challenge: { scheme: "none" },
-    });
-    expect(noChallenge).toMatchObject({
+  it("uses shared challenge diagnoses and conservative attribution", () => {
+    expect(
+      describeSetupFailure(httpError(401), { challenge: { scheme: "none" } }),
+    ).toMatchObject({
       attribution: "unknown",
-      slug: "oauth/no_bearer_challenge",
-      status: 401,
+      normalized: { slug: "oauth/no_bearer_challenge" },
     });
-    expect(noChallenge.line).toContain(
-      "answered 401 without a Bearer challenge",
-    );
-    // A server configured with a static header that 401s is still a config
-    // problem — no challenge is expected from it.
     expect(
       describeSetupFailure(httpError(401), {
-        serverLabel: "Linear",
-        auth: { method: "bearer", credentialSent: true, refreshable: false },
-        challenge: { scheme: "none" },
-      }),
-    ).toMatchObject({
-      attribution: "ours",
-      line: '"Linear" rejected the configured Authorization header (HTTP 401).',
-    });
-    const rejected = describeSetupFailure(httpError(401), {
-      serverLabel: "Linear",
-      auth: { method: "oauth", credentialSent: true, refreshable: true },
-      challenge: { scheme: "bearer", error: "invalid_token" },
-    });
-    expect(rejected).toMatchObject({
-      attribution: "ours",
-      slug: "auth/http_401",
-      line: '"Linear" rejected the stored token (HTTP 401, invalid_token). Re-authorize the server.',
-    });
-  });
-
-  it("reads scopes, a non-compliant 403 challenge, and an HTML 403", () => {
+        challenge: { scheme: "bearer", error: "invalid_token" },
+      }).line,
+    ).toContain("invalid_token");
     expect(
       describeSetupFailure(httpError(403), {
-        serverLabel: "Linear",
         challenge: {
           scheme: "bearer",
           error: "insufficient_scope",
-          scopes: ["a", "b"],
+          scopes: ["read"],
         },
-      }),
-    ).toMatchObject({
-      attribution: "ours",
-      slug: "auth/insufficient_scope",
-      line: '"Linear" needs additional scopes (a b). Re-authorize with the required scopes.',
-    });
+      }).line,
+    ).toContain("Required scopes: read");
     expect(
       describeSetupFailure(httpError(403), {
-        serverLabel: "Linear",
-        challenge: { scheme: "bearer" },
-      }),
-    ).toMatchObject({
-      attribution: "ours",
-      slug: "oauth/non_compliant_challenge",
-    });
-    expect(
-      describeSetupFailure(httpError(403), {
-        serverLabel: "Linear",
         challenge: { scheme: "none", bodyKind: "html" },
       }),
-    ).toMatchObject({ attribution: "unknown", slug: "auth/proxy_rejected" });
-  });
-
-  it("explains a transport failure from the catalog without changing its attribution", () => {
-    const refused = describeSetupFailure(
-      nodeError("ECONNREFUSED", "connect ECONNREFUSED 203.0.113.10:443"),
-      {
-        serverLabel: "Linear",
-      },
-    );
-    expect(refused.attribution).toBe("theirs");
-    expect(refused.line.startsWith('"Linear": ')).toBe(true);
-    expect(refused.line.length).toBeLessThanOrEqual(240);
-    // No context at all: still a line, keyed on the server id.
-    expect(
-      describeSetupFailure(httpError(500), { serverId: "srv-1" }).line,
-    ).toContain('"srv-1"');
-  });
-
-  it("never carries a raw header or a token into the line", () => {
-    const leaky = new Error(
-      'HTTP 401: WWW-Authenticate: Bearer resource_metadata="https://x/.well-known", Authorization: Bearer sk-live-secret',
-    );
-    (leaky as Error & { statusCode: number }).statusCode = 401;
-    const detail = describeSetupFailure(leaky, {
-      serverLabel: "Linear",
-      challenge: { scheme: "bearer", resourceMetadataHost: "x" },
+    ).toMatchObject({
+      attribution: "unknown",
+      normalized: { slug: "auth/proxy_rejected" },
     });
-    expect(detail.line).not.toContain("sk-live-secret");
-    expect(detail.line).not.toContain("WWW-Authenticate");
-    expect(JSON.stringify(detail.challenge)).not.toContain("well-known");
+  });
+
+  it("redacts and bounds reasons including server labels", () => {
+    const detail = describeSetupFailure(
+      new Error("Authorization: Bearer secret-token"),
+      { serverLabel: "Bearer label-secret" },
+    );
+    expect(detail.line).not.toContain("secret-token");
+    expect(detail.line).not.toContain("label-secret");
+    expect(
+      describeSetupFailure(httpError(500), { serverLabel: "x".repeat(500) })
+        .line.length,
+    ).toBeLessThanOrEqual(240);
   });
 });
 
-describe("createRunSetupObserver — reasons, records and the audit shed", () => {
-  it("folds each failing server's line into the signal and records it in the audit", () => {
+describe("reason folding and audit limits", () => {
+  it("keeps reasons on signals without another persisted failure schema", () => {
     const observer = createRunSetupObserver({
       expectedServerIds: ["a", "b"],
       context: (serverId) => ({ serverLabel: serverId.toUpperCase() }),
-    });
-    observer.recordConnect("a", {
-      outcome: "failed",
-      error: httpError(401),
-      startedAt: 0,
-      endedAt: 1,
     });
     observer.recordConnect("b", {
       outcome: "failed",
@@ -609,63 +534,41 @@ describe("createRunSetupObserver — reasons, records and the audit shed", () =>
       startedAt: 0,
       endedAt: 1,
     });
-    const signals = observer.buildSignals();
-    // Mixed bag: ours wins the fold, and its line comes first.
-    expect(signals?.connection).toMatchObject({
+    observer.recordConnect("a", {
       outcome: "failed",
-      attribution: "ours",
+      error: httpError(401),
+      startedAt: 0,
+      endedAt: 1,
     });
-    expect(signals?.connection?.reasons).toHaveLength(2);
-    expect(signals?.connection?.reasons?.[0]).toContain('"A"');
-    expect(observer.failureDetail("a", "connection")?.slug).toBe(
-      "auth/http_401",
-    );
-    expect(observer.failureDetail("a", "discovery")).toBeUndefined();
-    const records = observer.buildFailureRecords();
-    expect(records.map((r) => [r.serverId, r.phase, r.attribution])).toEqual([
-      ["a", "connection", "ours"],
-      ["b", "connection", "theirs"],
-    ]);
-    expect(records[0]).not.toHaveProperty("normalized");
+    expect(observer.buildSignals()?.connection?.reasons?.[0]).toContain('"A"');
+    expect(observer.buildSignals()?.connection?.reasons).toHaveLength(2);
     const audit = observer.buildAuditMetadata()?.[
       SETUP_AUDIT_METADATA_KEY
     ] as SetupAuditRecord;
-    expect(audit.failures).toHaveLength(2);
-    expect(audit.classifier).toBe(2);
-    expect(audit.truncated).toBeUndefined();
+    expect(Object.keys(audit).sort()).toEqual(["egressCanary", "signals"]);
+    expect(audit.signals.connection?.reasons).toEqual(
+      observer.buildSignals()?.connection?.reasons,
+    );
   });
 
-  it("sheds the failure records before it sheds span ids", () => {
-    const signals = {
-      connection: {
-        outcome: "failed" as const,
-        attribution: "ours" as const,
-        spanIds: ["run-connect-a"],
-        reasons: ["short"],
+  it("sheds Unicode reasons before span ids using serialized bytes", () => {
+    const raw: SetupAuditRecord = {
+      signals: {
+        connection: {
+          outcome: "failed",
+          attribution: "ours",
+          spanIds: ["run-connect-a"],
+          reasons: ["界".repeat(240)],
+        },
       },
+      egressCanary: { ran: false },
     };
-    const failures = [
-      {
-        serverId: "a",
-        phase: "connection" as const,
-        slug: "auth/http_401",
-        attribution: "ours" as const,
-        line: "x".repeat(200),
-      },
-    ];
-    const tierOne = capSetupAuditMetadata(
-      { signals, egressCanary: { ran: false }, failures, classifier: 2 },
-      260,
-    );
-    expect(tierOne.failures).toBeUndefined();
-    expect(tierOne.signals.connection?.spanIds).toEqual(["run-connect-a"]);
-    expect(tierOne.truncated).toBe(true);
-    const tierTwo = capSetupAuditMetadata(
-      { signals, egressCanary: { ran: false }, failures, classifier: 2 },
-      60,
-    );
-    expect(tierTwo.signals.connection?.spanIds).toBeUndefined();
-    expect(tierTwo.classifier).toBe(2);
-    expect(tierTwo.truncated).toBe(true);
+    expect(JSON.stringify(raw).length).toBeLessThan(500);
+    const capped = capSetupAuditMetadata(raw, 500);
+    expect(capped.signals.connection?.reasons).toBeUndefined();
+    expect(capped.signals.connection?.spanIds).toEqual(["run-connect-a"]);
+    expect(capped.truncated).toBe(true);
+    expect(Buffer.byteLength(JSON.stringify(capped))).toBeLessThanOrEqual(500);
+    expect(raw.signals.connection?.reasons).toHaveLength(1);
   });
 });

@@ -13,6 +13,7 @@
  * Never throws. Always returns a `NormalizedError`.
  */
 
+import { unwrapEraNegotiationCause } from "../mcp-client-manager/errors.js";
 import { redactForTelemetry } from "../telemetry-redaction.js";
 import {
   MCP_ERROR_CODES,
@@ -370,7 +371,7 @@ function captureCause(error: unknown): NormalizedError["cause"] {
   if (!cause || typeof cause !== "object") return undefined;
   const name =
     typeof (cause as { name?: unknown }).name === "string"
-      ? ((cause as { name: string }).name)
+      ? (cause as { name: string }).name
       : "Error";
   const message =
     typeof (cause as { message?: unknown }).message === "string"
@@ -595,9 +596,8 @@ export type DescribeContext = {
    * The parsed `WWW-Authenticate` challenge of the response that failed,
    * when the caller captured one. Only a caller at the fetch boundary can
    * know it — the transport error carries the status and the body text but
-   * never the header — and it settles what a bare status cannot: a 401 with
-   * no Bearer challenge is the server breaking the discovery contract, a 403
-   * naming `insufficient_scope` is a grant that is too narrow.
+   * never the header. This records what the response said without assuming
+   * that an absent header makes well-known discovery unavailable.
    */
   challenge?: BearerChallengeSummary;
   /**
@@ -616,10 +616,26 @@ export type DescribeContext = {
  * in the HTTP range (StreamableHTTPError).
  */
 function httpStatusOf(error: unknown): number | undefined {
-  const field = getHttpStatus(error);
-  if (field !== undefined) return field;
-  const code = getNumericCode(error);
-  return code !== undefined && code >= 100 && code <= 599 ? code : undefined;
+  const seen = new Set<unknown>();
+  let current = error;
+  for (
+    let depth = 0;
+    depth < 5 && current && typeof current === "object" && !seen.has(current);
+    depth++
+  ) {
+    seen.add(current);
+    const field = getHttpStatus(current);
+    if (field !== undefined) return field;
+    const code = getNumericCode(current);
+    if (code !== undefined && code >= 100 && code <= 599) return code;
+    if ((current as { name?: string }).name === "UnauthorizedError") return 401;
+    const unwrapped = unwrapEraNegotiationCause(current);
+    current =
+      unwrapped !== current
+        ? unwrapped
+        : (current as { cause?: unknown }).cause;
+  }
+  return undefined;
 }
 
 /**
@@ -644,20 +660,24 @@ function contextSlug(
   const challenge = context.challenge;
   if (!challenge) return undefined;
   const status = httpStatusOf(error);
-  if (status === 401 && challenge.scheme === "none") {
+  if (status === 401 && challenge.scheme !== "bearer") {
     return "oauth/no_bearer_challenge";
   }
+  if (status === 401) return "auth/http_401";
   if (status === 403) {
     if (
-      challenge.error === "insufficient_scope" ||
-      (challenge.scheme === "bearer" && (challenge.scopes?.length ?? 0) > 0)
+      challenge.scheme === "bearer" &&
+      challenge.error === "insufficient_scope"
     ) {
       return "auth/insufficient_scope";
     }
-    if (challenge.scheme === "bearer") return "oauth/non_compliant_challenge";
+    if (challenge.scheme === "bearer" && challenge.error === "invalid_token") {
+      return "oauth/non_compliant_challenge";
+    }
     if (challenge.scheme === "none" && challenge.bodyKind === "html") {
       return "auth/proxy_rejected";
     }
+    return "auth/http_403";
   }
   return undefined;
 }
@@ -672,13 +692,28 @@ function annotateWithChallenge(
   slug: string,
   context: DescribeContext | undefined
 ): ErrorCatalogEntry {
+  if (
+    slug === "auth/insufficient_scope" &&
+    context?.challenge?.scopes?.length
+  ) {
+    return {
+      ...entry,
+      oneLine: truncateOneLine(
+        redactString(
+          `${entry.oneLine} Required scopes: ${context.challenge.scopes.join(
+            " "
+          )}.`
+        )
+      ),
+    };
+  }
   const error = context?.challenge?.error;
   if (!error) return entry;
   if (slug !== "auth/http_401" && slug !== "auth/http_403") return entry;
   return {
     ...entry,
     oneLine: truncateOneLine(
-      `${entry.oneLine} The server reported \`${error}\`.`
+      redactString(`${entry.oneLine} The server reported \`${error}\`.`)
     ),
   };
 }
@@ -754,7 +789,8 @@ export function describeError(
     const fromContext = contextSlug(error, context);
     const resolved = fromContext ? { slug: fromContext } : resolveSlug(error);
     const slug = retargetQuotaForSurface(resolved.slug, context);
-    const rawCode = resolved.rawCode ?? httpStatusOf(error);
+    const rawCode =
+      resolved.rawCode ?? (fromContext ? httpStatusOf(error) : undefined);
     const entry = applyOriginContext(
       annotateWithChallenge(
         maybePromoteRawMessage(lookupCatalog(slug), slug, rawMessage),

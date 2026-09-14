@@ -18,14 +18,8 @@ import type {
   XaaEnterprisePolicy,
 } from "@mcpjam/sdk";
 import { HOSTED_MODE, WEB_CALL_TIMEOUT_MS } from "../../config.js";
+import { observeConnectionFetch } from "../../services/connection-failure-context.js";
 import { hostedMcpBaseFetch } from "../../utils/hosted-mcp-base-fetch.js";
-import {
-  attachConnectionAuthContext,
-  attachConnectionChallenges,
-  createChallengeStore,
-  recordConnectionChallenge,
-  type ConnectionAuthContext,
-} from "../../services/connection-failure-context.js";
 import { HOSTED_TASK_BATCH_MAX as HOSTED_TASK_BATCH_MAX_SHARED } from "../../../shared/hosted-tasks.js";
 import {
   attachHostedRpcLogs,
@@ -1315,11 +1309,6 @@ export async function createAuthorizedManager(
   }
 
   const oauthServerUrls: Record<string, string> = {};
-  // What each connect will be able to say about itself if it fails: the
-  // method, whether a credential went out, and whether a refresh path exists.
-  // Attached to the manager below; read by the evals setup observer.
-  const setupAuthContexts = new Map<string, ConnectionAuthContext>();
-  const authChallenges = createChallengeStore();
   const batch = await authorizeBatch(
     caller,
     bearerToken,
@@ -1900,7 +1889,7 @@ export async function createAuthorizedManager(
               serverName: serverNamesById?.[serverId] ?? null,
               serverUrl: auth.serverConfig.url,
             },
-          );
+          ).withSetupFailureSource("authorization_required");
         };
       }
 
@@ -1965,17 +1954,6 @@ export async function createAuthorizedManager(
           ? withXaaExtensionCapability(clientCapabilities)
           : clientCapabilities;
 
-      setupAuthContexts.set(serverId, {
-        method: effectiveAuth,
-        credentialSent:
-          !!connectToken ||
-          Object.keys(authForConfig.serverConfig.headers ?? {}).some(
-            (key) => key.toLowerCase() === "authorization",
-          ),
-        refreshable: connectOnUnauthorized !== undefined,
-        ...(auth.serverConfig.url ? { serverUrl: auth.serverConfig.url } : {}),
-      });
-
       return [
         serverId,
         toHttpConfig(
@@ -1997,7 +1975,20 @@ export async function createAuthorizedManager(
     throw error;
   });
 
-  const manager = new MCPClientManager(Object.fromEntries(configEntries), {
+  // Each server owns its capture even when two configs use the same URL.
+  // Install before construction: the manager starts connecting eagerly.
+  const observedConfigs = Object.fromEntries(
+    configEntries.map(([id, config]) => [
+      id,
+      {
+        ...config,
+        baseFetch: observeConnectionFetch(
+          config.baseFetch ?? hostedMcpBaseFetch(),
+        ),
+      },
+    ]),
+  );
+  const manager = new MCPClientManager(observedConfigs, {
     defaultTimeout: timeoutMs,
     rpcLogger: options?.rpcLogger,
     httpLogger: options?.httpLogger,
@@ -2008,13 +1999,7 @@ export async function createAuthorizedManager(
     // DEFAULT rather than a per-server field, so it also covers servers
     // attached later and cannot be dropped by a future `toHttpConfig` branch;
     // a deliberate per-server `baseFetch` still wins over it.
-    baseFetch: hostedMcpBaseFetch({
-      // Every 401/403 the transport sees, parsed. This is the only place the
-      // `WWW-Authenticate` header is observable; the connect error that
-      // eventually surfaces carries the status and the body, not the header.
-      onAuthChallenge: (event) =>
-        recordConnectionChallenge(authChallenges, event.url, event.challenge),
-    }),
+    baseFetch: hostedMcpBaseFetch(),
     ...(options?.advertiseSkillsExtension
       ? { defaultCapabilities: withSkillsExtensionCapability({}) }
       : {}),
@@ -2024,10 +2009,6 @@ export async function createAuthorizedManager(
       ? { elicitationTimeoutExtensionMs: options.elicitationTimeoutExtensionMs }
       : {}),
   });
-  attachConnectionChallenges(manager, authChallenges);
-  for (const [serverId, context] of setupAuthContexts) {
-    attachConnectionAuthContext(manager, serverId, context);
-  }
   if (pluginLeaseReleases.length > 0) {
     // Every ephemeral-manager teardown path (withManager, web-chat-turn
     // cleanup, manual-connection callers) funnels through

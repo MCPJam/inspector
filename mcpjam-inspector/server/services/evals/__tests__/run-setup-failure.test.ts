@@ -57,6 +57,7 @@ vi.mock("../../../utils/pinned-fetch", () => ({
   createPinnedFetch: () => pinnedFetchMock,
 }));
 
+import { observeConnectionFetch } from "../../connection-failure-context.js";
 import { runEvalSuiteWithAiSdk } from "../../evals-runner";
 
 describe("run-level connect failure — D6 non-vacuity", () => {
@@ -68,6 +69,7 @@ describe("run-level connect failure — D6 non-vacuity", () => {
   const mcpClientManager = {
     getToolsForAiSdk: vi.fn(),
     listTools: vi.fn(),
+    getServerConfig: vi.fn(),
     getConnectionStatus: vi.fn(),
     listServers: vi.fn(),
     getAllToolsMetadata: vi.fn().mockReturnValue({}),
@@ -76,6 +78,7 @@ describe("run-level connect failure — D6 non-vacuity", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mcpClientManager.getServerConfig.mockReturnValue(undefined);
     process.env.CONVEX_HTTP_URL = "https://example.convex.site";
     convexClient.mutation.mockResolvedValue({ iterationId: "iter-1" });
     convexClient.action.mockResolvedValue(undefined);
@@ -188,9 +191,18 @@ describe("run-level connect failure — D6 non-vacuity", () => {
     );
   });
 
-  const runOnce = async (rejection: Error) => {
+  const runOnce = async (rejection: Error, response?: Response) => {
     mcpClientManager.getConnectionStatus.mockReturnValue("disconnected");
-    mcpClientManager.getToolsForAiSdk.mockRejectedValue(rejection);
+    if (response) {
+      const fetch = observeConnectionFetch(vi.fn(async () => response));
+      mcpClientManager.getServerConfig.mockReturnValue({ baseFetch: fetch });
+      mcpClientManager.getToolsForAiSdk.mockImplementation(async () => {
+        await fetch("https://example.test/mcp");
+        throw rejection;
+      });
+    } else {
+      mcpClientManager.getToolsForAiSdk.mockRejectedValue(rejection);
+    }
     let detailsCalls = 0;
     convexClient.query.mockImplementation(async (ref: string) => {
       if (ref === "testSuites:getTestSuiteRunDetails") {
@@ -249,6 +261,30 @@ describe("run-level connect failure — D6 non-vacuity", () => {
     return { run, recorder };
   };
 
+  it("carries the actual request challenge through the row and normalized error", async () => {
+    const rejected = Object.assign(new Error("HTTP 403"), { status: 403 });
+    const { run, recorder } = await runOnce(
+      rejected,
+      new Response("denied", {
+        status: 403,
+        headers: {
+          "www-authenticate":
+            'Bearer realm="default", Bearer error="insufficient_scope", scope="read"',
+        },
+      }),
+    );
+    const error = await run.catch((error) => error);
+    expect(error.cause).toBe(rejected);
+    expect(error.normalized.slug).toBe("auth/insufficient_scope");
+    expect(error.message).toContain("Required scopes: read");
+    const finish = recorder.finishIteration.mock.calls[0]![0];
+    expect(finish.metadata.stageResults[0].evidence.predicateReasons).toEqual([
+      `"srv-1": ${error.normalized.oneLine}`,
+    ]);
+    expect(finish.errorDetails).toBeUndefined();
+    expect(pinnedFetchMock).not.toHaveBeenCalled();
+  });
+
   const controlPlaneError = (
     status: number,
     message: string,
@@ -259,6 +295,7 @@ describe("run-level connect failure — D6 non-vacuity", () => {
       code: string;
       details: Record<string, unknown>;
     };
+    Object.assign(error, { setupFailureSource: "oauth_refresh" });
     error.name = "WebRouteError";
     error.status = status;
     error.code = "UNAUTHORIZED";
@@ -266,7 +303,7 @@ describe("run-level connect failure — D6 non-vacuity", () => {
     return error;
   };
 
-  it("carries the reason for a revoked stored token onto the row, the error, and errorDetails", async () => {
+  it("carries the reason for a revoked stored token onto the row and error without duplicated failure records", async () => {
     const { run, recorder } = await runOnce(
       controlPlaneError(
         401,
@@ -280,7 +317,7 @@ describe("run-level connect failure — D6 non-vacuity", () => {
     );
     // The clause callers key on stays; the reason follows it.
     await expect(run).rejects.toThrow(
-      'is not connected: The stored authorization for "srv-1" has expired or been revoked.',
+      'is not connected: "srv-1": An expired OAuth access token could not be refreshed.',
     );
     // Ours ⇒ no canary is fired for it.
     expect(pinnedFetchMock).not.toHaveBeenCalled();
@@ -306,25 +343,14 @@ describe("run-level connect failure — D6 non-vacuity", () => {
       reason: "setupAborted",
       evidence: {
         predicateReasons: [
-          'The stored authorization for "srv-1" has expired or been revoked. Reconnect it in the server settings.',
+          '"srv-1": An expired OAuth access token could not be refreshed.',
         ],
       },
     });
-    expect(finish.error).toContain("has expired or been revoked");
-    const details = JSON.parse(finish.errorDetails ?? "{}") as {
-      setup?: { failures?: Array<Record<string, unknown>> };
-    };
-    expect(details.setup?.failures?.[0]).toMatchObject({
-      serverId: "srv-1",
-      phase: "connection",
-      slug: "auth/oauth_refresh_failed",
-      attribution: "ours",
-      refresh: "token_rejected",
-    });
-    expect(finish.metadata?.stageSetupAudit?.classifier).toBe(2);
-    expect(finish.metadata?.stageSetupAudit?.failures?.[0]).not.toHaveProperty(
-      "normalized",
-    );
+    expect(finish.error).toContain("could not be refreshed");
+    expect(finish.errorDetails).toBeUndefined();
+    expect(finish.metadata?.stageSetupAudit?.classifier).toBeUndefined();
+    expect(finish.metadata?.stageSetupAudit?.failures).toBeUndefined();
   });
 
   it("attributes a refresh that could not reach the authorization server to us, not the server", async () => {
@@ -334,9 +360,7 @@ describe("run-level connect failure — D6 non-vacuity", () => {
         serverId: "srv-1",
       }),
     );
-    await expect(run).rejects.toThrow(
-      "MCPJam could not reach the authorization server",
-    );
+    await expect(run).rejects.toThrow("authorization server was unreachable");
     // A 5xx from OUR refresh path must not fire the canary or earn connectFailed.
     expect(pinnedFetchMock).not.toHaveBeenCalled();
     const finish = recorder.finishIteration.mock.calls[0]![0] as {

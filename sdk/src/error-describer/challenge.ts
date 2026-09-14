@@ -13,19 +13,20 @@
  * Browser-safe; the parser it rests on is already served on `/browser`.
  */
 
+import { redactForTelemetry } from "../telemetry-redaction.js";
 import { parseBearerChallenges } from "../oauth/state-machines/shared/challenges.js";
 
 export type BearerChallengeSummary = {
   /**
    * `bearer` when any challenge in the header is a Bearer challenge, `other`
    * when the header names only non-Bearer schemes, `none` when there was no
-   * `WWW-Authenticate` header at all. A 401 with `none` is the case MCP
-   * forbids: the client cannot discover how to authorize.
+   * `WWW-Authenticate` header at all. This does not determine whether
+   * well-known metadata discovery is available.
    */
   scheme: "bearer" | "other" | "none";
-  /** RFC 6750 `error` param of the first Bearer challenge, e.g. `invalid_token`. */
+  /** RFC 6750 `error` param of the selected Bearer challenge, e.g. `invalid_token`. */
   error?: string;
-  /** Space-separated `scope` param of the first Bearer challenge, split. */
+  /** Space-separated `scope` param of the selected Bearer challenge, split. */
   scopes?: string[];
   /**
    * Host of the RFC 9728 `resource_metadata` pointer, when the challenge
@@ -34,8 +35,8 @@ export type BearerChallengeSummary = {
    */
   resourceMetadataHost?: string;
   /**
-   * What the response body looked like, when the caller saw it. A 403 with an
-   * HTML body and no challenge is a proxy or firewall, not the MCP server.
+   * Body format suggested by Content-Type. HTML may come from the server
+   * itself or an intermediary; this field does not establish which.
    */
   bodyKind?: "html" | "json" | "text" | "empty";
 };
@@ -44,6 +45,7 @@ export type BearerChallengeSummary = {
 const MAX_FIELD_CHARS = 120;
 
 function clip(value: string): string {
+  value = String(redactForTelemetry(value));
   return value.length > MAX_FIELD_CHARS
     ? value.slice(0, MAX_FIELD_CHARS)
     : value;
@@ -69,7 +71,13 @@ export function summarizeBearerChallenge(
     if (challenges.length === 0) {
       return { scheme: "other", ...(bodyKind ? { bodyKind } : {}) };
     }
-    const first = challenges[0] ?? {};
+    // A realm-only challenge must not hide a later actionable challenge.
+    const first =
+      challenges.find((entry) => entry.error === "insufficient_scope") ??
+      challenges.find((entry) => entry.error) ??
+      challenges.find((entry) => entry.scope || entry.resource_metadata) ??
+      challenges[0] ??
+      {};
     const summary: BearerChallengeSummary = { scheme: "bearer" };
     if (typeof first.error === "string" && first.error.trim()) {
       summary.error = clip(first.error.trim().toLowerCase());
@@ -118,7 +126,6 @@ export function bodyKindFromContentType(
   const type = (contentType ?? "").toLowerCase();
   if (type.includes("html")) return "html";
   if (type.includes("json")) return "json";
-  if (type.trim() === "")
-    return contentLength === undefined ? undefined : "empty";
+  if (type.trim() === "") return undefined;
   return "text";
 }

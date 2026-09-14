@@ -73,13 +73,14 @@ describe("summarizeBearerChallenge", () => {
 });
 
 describe("describeError with a challenge / refresh context", () => {
-  it("names a 401 without a Bearer challenge as the server's discovery gap", () => {
+  it("describes a missing challenge without claiming discovery is impossible", () => {
     const out = describeError(httpError(401), {
       challenge: { scheme: "none" },
       surface: "mcpServer",
     });
     expect(out.slug).toBe("oauth/no_bearer_challenge");
-    expect(out.origin).toBe("user_server");
+    expect(out.origin).toBe("ambiguous");
+    expect(out.oneLine).not.toContain("cannot discover");
     expect(out.rawCode).toBe(401);
   });
 
@@ -95,9 +96,11 @@ describe("describeError with a challenge / refresh context", () => {
     expect(out.origin).toBe("user_config");
   });
 
-  it("flags a Bearer challenge on a 403 as non-compliant, and an HTML 403 as a proxy", () => {
+  it("flags an explicit invalid-token status mismatch and describes an HTML 403", () => {
     expect(
-      describeError(httpError(403), { challenge: { scheme: "bearer" } }).slug
+      describeError(httpError(403), {
+        challenge: { scheme: "bearer", error: "invalid_token" },
+      }).slug
     ).toBe("oauth/non_compliant_challenge");
     expect(
       describeError(httpError(403), {
@@ -157,4 +160,59 @@ describe("describeError with a challenge / refresh context", () => {
     expect(describeError(httpError(403)).slug).toBe("auth/http_403");
     expect(describeError(httpError(503)).slug).toBe("internal/unknown");
   });
+});
+
+describe("challenge selection and conservative diagnoses", () => {
+  it("does not let a realm-only challenge hide insufficient_scope in either order", () => {
+    for (const header of [
+      'Bearer realm="general", Bearer error="insufficient_scope", scope="read"',
+      'Bearer error="insufficient_scope", scope="read", Bearer realm="general"',
+    ]) {
+      const challenge = summarizeBearerChallenge(header);
+      expect(describeError(httpError(403), { challenge })).toMatchObject({
+        slug: "auth/insufficient_scope",
+      });
+      expect(challenge.scopes).toEqual(["read"]);
+    }
+  });
+  it("does not infer invalid tokens or insufficient scope from a bare 403 challenge", () => {
+    for (const challenge of [
+      { scheme: "bearer" as const },
+      { scheme: "bearer" as const, scopes: ["read"] },
+    ]) {
+      expect(describeError(httpError(403), { challenge }).slug).toBe(
+        "auth/http_403"
+      );
+    }
+    const html = describeError(httpError(403), {
+      challenge: { scheme: "none", bodyKind: "html" },
+    });
+    expect(html.oneLine).toContain("may be involved");
+    expect(html.origin).toBe("ambiguous");
+  });
+  it("redacts header-derived fields and caller-supplied challenge annotations", () => {
+    const challenge = summarizeBearerChallenge(
+      'Bearer error="Bearer secret-token"'
+    );
+    expect(JSON.stringify(challenge)).not.toContain("secret-token");
+    expect(
+      describeError(httpError(401), {
+        challenge: { scheme: "bearer", error: "Bearer secret-token" },
+      }).oneLine
+    ).not.toContain("secret-token");
+  });
+});
+
+it("uses structured status through cause wrappers and remains bounded on cycles", () => {
+  const wrapped = new Error("Connect failed", { cause: httpError(403) });
+  expect(
+    describeError(wrapped, {
+      challenge: { scheme: "bearer", error: "insufficient_scope" },
+    })
+  ).toMatchObject({ slug: "auth/insufficient_scope", rawCode: 403 });
+  const cycle = new Error("unknown");
+  cycle.cause = cycle;
+  expect(describeError(cycle, { challenge: { scheme: "none" } }).slug).toBe(
+    "internal/unknown"
+  );
 });

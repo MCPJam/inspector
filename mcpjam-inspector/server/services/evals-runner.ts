@@ -192,9 +192,8 @@ import {
   type RunSetupObserver,
   type SetupPhase,
   type SetupFailureDetail,
-  type SetupFailureRecord,
 } from "./evals/run-setup-signals.js";
-import { connectionContextFor } from "./connection-failure-context.js";
+import { connectionChallengeFor } from "./connection-failure-context.js";
 import {
   dispatchEvalIterationFinalize,
   finalizeWithBrowserArtifacts,
@@ -1074,17 +1073,6 @@ function throwSetupPhaseError(args: {
     args.serverId,
     args.environment,
   );
-  const failure = args.detail
-    ? {
-        slug: args.detail.slug,
-        attribution: args.detail.attribution,
-        ...(args.detail.status !== undefined
-          ? { status: args.detail.status }
-          : {}),
-        ...(args.detail.code !== undefined ? { code: args.detail.code } : {}),
-        ...(args.detail.refresh ? { refresh: args.detail.refresh } : {}),
-      }
-    : undefined;
   if (isMissingRuntimeServerError(args.error) || args.phase === "connection") {
     // The "is not connected" clause stays: callers and tests key on it. The
     // reason follows it, so the run error, every setup_failed row's `error`,
@@ -1100,9 +1088,10 @@ function throwSetupPhaseError(args: {
       details: {
         serverId: args.serverId,
         serverName: serverLabel,
-        ...(args.detail ? { cause: args.detail.line, failure } : {}),
+        ...(args.detail ? { cause: args.detail.line } : {}),
       },
     });
+    setupError.cause = args.error;
     if (args.detail) setupError.normalized = args.detail.normalized;
     throw setupError;
   }
@@ -1121,9 +1110,9 @@ function throwSetupPhaseError(args: {
       serverId: args.serverId,
       serverName: serverLabel,
       cause,
-      ...(failure ? { failure } : {}),
     },
   });
+  listError.cause = args.error;
   if (args.detail) listError.normalized = args.detail.normalized;
   throw listError;
 }
@@ -1206,6 +1195,10 @@ async function getEvalToolsForAiSdkOrThrow(args: {
           observer?.recordConnect(serverId, {
             outcome: "failed",
             error,
+            challenge: connectionChallengeFor(
+              args.mcpClientManager.getServerConfig?.(serverId)?.baseFetch,
+              error,
+            ),
             startedAt,
             endedAt,
           });
@@ -1220,6 +1213,10 @@ async function getEvalToolsForAiSdkOrThrow(args: {
         observer?.recordToolsList(serverId, {
           outcome: "failed",
           error,
+          challenge: connectionChallengeFor(
+            args.mcpClientManager.getServerConfig?.(serverId)?.baseFetch,
+            error,
+          ),
           startedAt: splitAt(endedAt),
           endedAt,
         });
@@ -1310,7 +1307,7 @@ export function resolveConfiguredServerIds(args: {
 
     const normalizedServerId = availableServerIdsSet.has(trimmedServerRef)
       ? trimmedServerRef
-      : (availableServerIdByLowercase.get(trimmedServerRef.toLowerCase()) ??
+      : availableServerIdByLowercase.get(trimmedServerRef.toLowerCase()) ??
         (() => {
           const projectServerId = projectServerIdByName.get(
             trimmedServerRef.toLowerCase(),
@@ -1338,7 +1335,7 @@ export function resolveConfiguredServerIds(args: {
 
           return undefined;
         })() ??
-        trimmedServerRef);
+        trimmedServerRef;
 
     if (seen.has(normalizedServerId)) {
       continue;
@@ -1645,8 +1642,6 @@ async function persistSetupFailedIteration(args: {
   iterationId: string | undefined;
   runStartedAt: number;
   errorMessage: string;
-  /** Structured explanation of the setup failure, JSON, for the web UI. */
-  errorDetails?: string;
   iterationMetadataBase: IterationMetadataBase;
   /**
    * The authored case's stage inputs (`buildStageAuthoredCase`).
@@ -1677,7 +1672,6 @@ async function persistSetupFailedIteration(args: {
     status: "setup_failed" as const,
     startedAt: args.runStartedAt,
     error: args.errorMessage,
-    ...(args.errorDetails ? { errorDetails: args.errorDetails } : {}),
     resultSource: "reported" as const,
     metadata: {
       ...args.iterationMetadataBase,
@@ -1702,35 +1696,6 @@ async function persistSetupFailedIteration(args: {
 }
 
 /**
- * The `errorDetails` JSON for a setup-failed row: the observer's failure
- * records, without the catalog block. Bounded well under the backend's
- * 4000-char message cap so the web UI's JSON viewer never sees a truncated
- * document; when the records do not fit, only their lines are kept.
- */
-const MAX_SETUP_ERROR_DETAILS_CHARS = 3_500;
-function setupFailureErrorDetails(
-  failures: SetupFailureRecord[],
-): string | undefined {
-  if (failures.length === 0) return undefined;
-  const full = JSON.stringify({ setup: { failures } });
-  if (full.length <= MAX_SETUP_ERROR_DETAILS_CHARS) return full;
-  const slim = JSON.stringify({
-    setup: {
-      failures: failures.map(
-        ({ serverId, phase, slug, attribution, line }) => ({
-          serverId,
-          phase,
-          slug,
-          attribution,
-          line,
-        }),
-      ),
-    },
-  });
-  return slim.length <= MAX_SETUP_ERROR_DETAILS_CHARS ? slim : undefined;
-}
-
-/**
  * Un-strand a run that died at run-level connect / tools-list.
  *
  * Pre-created iterations sit `pending` and `blockTerminal` would otherwise
@@ -1752,9 +1717,6 @@ async function persistRunSetupFailure(args: {
   const setupSignals = args.observer.buildSignals();
   const setupSpans = args.observer.buildSyntheticSpans(args.runStartedAt);
   const setupAudit = args.observer.buildAuditMetadata();
-  const errorDetails = setupFailureErrorDetails(
-    args.observer.buildFailureRecords(),
-  );
 
   const listPending = async (): Promise<Array<
     Record<string, unknown>
@@ -1784,19 +1746,19 @@ async function persistRunSetupFailure(args: {
           typeof row._id === "string"
             ? row._id
             : typeof row.iterationId === "string"
-              ? row.iterationId
-              : undefined;
+            ? row.iterationId
+            : undefined;
         const test = args.tests.find(
           (candidate) =>
             candidate.testCaseId && candidate.testCaseId === row.testCaseId,
         );
         const snapshot = row.testCaseSnapshot as
-          { query?: string; expectedToolCalls?: unknown[] } | undefined;
+          | { query?: string; expectedToolCalls?: unknown[] }
+          | undefined;
         await persistSetupFailedIteration({
           iterationId,
           runStartedAt: args.runStartedAt,
           errorMessage: args.errorMessage,
-          ...(errorDetails ? { errorDetails } : {}),
           iterationMetadataBase: {},
           ...(test
             ? {
@@ -2916,12 +2878,12 @@ export const runEvalSuiteWithAiSdk = async ({
   const recorder =
     runId === null
       ? null
-      : (providedRecorder ??
+      : providedRecorder ??
         createSuiteRunRecorder({
           convexClient,
           suiteId,
           runId,
-        }));
+        });
 
   const summary = {
     total: 0,
@@ -2958,12 +2920,9 @@ export const runEvalSuiteWithAiSdk = async ({
   const setupObserver = createRunSetupObserver({
     expectedServerIds: serverIds,
     convexHttpUrl,
-    // What the authorized manager learned before and during the connect —
-    // absent for managers built elsewhere, in which case the failure is
-    // explained from the error alone.
+    // Labels only; challenge evidence belongs to the failing operation.
     context: (serverId) => ({
       serverLabel: getServerLabelForEvalError(serverId, config.environment),
-      ...(connectionContextFor(mcpClientManager, serverId) ?? {}),
     }),
   });
   let resolvedToolPolicyWarnings: string[] | undefined;
@@ -3573,7 +3532,7 @@ const runLocalIteration = async ({
   const toolPolicyGate = resolveEnforcementGate({
     ...(toolPolicy ? { toolPolicy } : {}),
     ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
-    ...((testCaseId ?? test.testCaseId)
+    ...(testCaseId ?? test.testCaseId
       ? { testCaseId: testCaseId ?? test.testCaseId }
       : {}),
     runIndex,
@@ -4813,7 +4772,7 @@ const runHostedIterationWithBrowser = async (
   const toolPolicyGate = resolveEnforcementGate({
     ...(toolPolicy ? { toolPolicy } : {}),
     ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
-    ...((testCaseId ?? test.testCaseId)
+    ...(testCaseId ?? test.testCaseId
       ? { testCaseId: testCaseId ?? test.testCaseId }
       : {}),
     runIndex,

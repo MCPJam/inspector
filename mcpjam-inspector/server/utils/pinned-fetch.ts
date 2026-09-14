@@ -28,11 +28,6 @@
  */
 
 import {
-  bodyKindFromContentType,
-  summarizeBearerChallenge,
-  type BearerChallengeSummary,
-} from "@mcpjam/sdk";
-import {
   createPinnedStreamingFetch,
   executeOAuthProxy,
   isLoopbackOAuthUrl,
@@ -494,49 +489,6 @@ export function createPinnedFetch(
 }
 
 /**
- * A 401/403 the transport saw, reduced to what may be recorded: the parsed
- * challenge, never the header. Fired from the fetch boundary because the
- * transport error the caller eventually catches carries the status and the
- * body text but not the `WWW-Authenticate` header.
- */
-export type AuthChallengeEvent = {
-  url: string;
-  status: number;
-  challenge: BearerChallengeSummary;
-};
-
-function observeAuthChallenge(
-  response: Response,
-  url: string,
-  onAuthChallenge: ((event: AuthChallengeEvent) => void) | undefined,
-): void {
-  if (!onAuthChallenge) return;
-  if (response.status !== 401 && response.status !== 403) return;
-  try {
-    const lengthHeader = response.headers.get("content-length");
-    const contentLength =
-      lengthHeader !== null && /^\d+$/.test(lengthHeader)
-        ? Number(lengthHeader)
-        : undefined;
-    onAuthChallenge({
-      url,
-      status: response.status,
-      challenge: summarizeBearerChallenge(
-        response.headers.get("www-authenticate"),
-        {
-          bodyKind: bodyKindFromContentType(
-            response.headers.get("content-type"),
-            contentLength,
-          ),
-        },
-      ),
-    });
-  } catch {
-    // An observer must never turn a response into a failure.
-  }
-}
-
-/**
  * The streaming sibling of {@link createPinnedFetch}.
  *
  * `createPinnedFetch` is built on `executeOAuthProxy`, which BUFFERS the whole
@@ -553,8 +505,7 @@ function observeAuthChallenge(
  * cannot know about — the inspector's error taxonomy, which decides `terminal`
  * vs `retryable` and must not let an SSRF refusal be mistaken for a timeout.
  *
- * OUTSIDE HOSTED MODE THE GUARD IS A NO-OP by default — bare `fetch`, with
- * only the challenge observer wrapped around it. Locally, reaching
+ * OUTSIDE HOSTED MODE THIS IS A NO-OP by default. Locally, reaching
  * `http://127.0.0.1:3000/mcp` is the entire product; the guard is an egress
  * decision that only exists on our nodes.
  */
@@ -562,11 +513,6 @@ export function createStreamingPinnedFetch(
   options: PinnedFetchOptions & {
     /** Defaults to `HOSTED_MODE`; pass explicitly in tests. */
     hosted?: boolean;
-    /**
-     * Told about every 401/403 response, hosted or not. The observer gets the
-     * parsed challenge; it never sees the header or the body.
-     */
-    onAuthChallenge?: (event: AuthChallengeEvent) => void;
     /** Bounds DNS, connect and headers across the whole redirect chain. */
     chainTimeoutMs?: number;
     /** Kills a body stream that has stalled. SSE-safe; a total deadline is not. */
@@ -580,22 +526,9 @@ export function createStreamingPinnedFetch(
   } = {}
 ): typeof fetch {
   const hosted = options.hosted ?? HOSTED_MODE;
-  const requestUrl = (input: RequestInfo | URL): string =>
-    typeof input === "string"
-      ? input
-      : input instanceof URL
-        ? input.toString()
-        : input.url;
   if (!hosted) {
-    return (async (input: RequestInfo | URL, init?: RequestInit) => {
-      const response = await fetch(input, init);
-      observeAuthChallenge(
-        response,
-        requestUrl(input),
-        options.onAuthChallenge,
-      );
-      return response;
-    }) as typeof fetch;
+    return ((...args: Parameters<typeof fetch>) =>
+      fetch(...args)) as typeof fetch;
   }
 
   const streamingFetch = createPinnedStreamingFetch({
@@ -608,11 +541,14 @@ export function createStreamingPinnedFetch(
   });
 
   return (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = requestUrl(input);
+    const url =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
     try {
-      const response = await streamingFetch(input as never, init as never);
-      observeAuthChallenge(response, url, options.onAuthChallenge);
-      return response;
+      return await streamingFetch(input as never, init as never);
     } catch (error) {
       throw classifyPinnedTransportError(error, url);
     }
