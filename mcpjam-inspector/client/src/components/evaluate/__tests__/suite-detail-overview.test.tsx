@@ -186,6 +186,7 @@ describe("SuiteDetailOverview", () => {
       "Result",
       "Rate",
       "Platform",
+      "Commit",
       "When",
       "Latency",
       "Tokens",
@@ -200,7 +201,7 @@ describe("SuiteDetailOverview", () => {
       .getByTestId("suite-run-row-one")
       .querySelectorAll("td");
     expect(cells[0]).toHaveTextContent("#1");
-    expect(cells[5].querySelector("time")).toHaveAttribute(
+    expect(cells[6].querySelector("time")).toHaveAttribute(
       "dateTime",
       new Date(1000).toISOString(),
     );

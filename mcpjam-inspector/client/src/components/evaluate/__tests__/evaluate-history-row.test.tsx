@@ -30,7 +30,7 @@ const row = (overrides: Partial<ProjectRunRow> = {}): ProjectRunRow => ({
 });
 
 describe("Evaluate history rows", () => {
-  it("keeps distinct branch and PR chips for runs sharing a commit", () => {
+  it("shows only the commit for runs sharing a commit across branches and PRs", () => {
     const git = {
       repositoryUrl: "https://github.com/example/repo",
       commitSha: "abc1234",
@@ -59,15 +59,10 @@ describe("Evaluate history rows", () => {
         </tbody>
       </table>,
     );
-    expect(screen.getAllByRole("link", { name: "abc1234" })).toHaveLength(3);
-    expect(screen.getByRole("link", { name: "second" })).toHaveAttribute(
-      "href",
-      "https://github.com/example/repo/tree/second",
-    );
-    expect(screen.getByRole("link", { name: "#2" })).toHaveAttribute(
-      "href",
-      "https://github.com/example/repo/pull/2",
-    );
+    expect(screen.getAllByRole("link", { name: "abc1234" })).toHaveLength(1);
+    expect(screen.queryByRole("link", { name: "second" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "#2" })).toBeNull();
+    expect(screen.getByText("UI")).toHaveClass("text-muted-foreground");
   });
 
   it("does not infer a result from the pass percentage", () => {
@@ -132,6 +127,7 @@ describe("Evaluate history rows", () => {
       "Result",
       "Rate",
       "Platform",
+      "Commit",
       "When",
       "Latency",
       "Tokens",
@@ -144,8 +140,8 @@ describe("Evaluate history rows", () => {
     const cells = screen
       .getByRole("button", { name: "Open run #3" })
       .querySelectorAll("td");
-    expect(cells[8]).toHaveTextContent("—");
     expect(cells[9]).toHaveTextContent("—");
+    expect(cells[10]).toHaveTextContent("—");
   });
 
   it("withholds aggregate metrics until every member of a launch has loaded", () => {
@@ -170,7 +166,7 @@ describe("Evaluate history rows", () => {
     );
     const cells = screen.getByRole("row").querySelectorAll("td");
     expect(cells[3]).toHaveTextContent("—");
-    expect(cells[7]).toHaveTextContent("—");
     expect(cells[8]).toHaveTextContent("—");
+    expect(cells[9]).toHaveTextContent("—");
   });
 });

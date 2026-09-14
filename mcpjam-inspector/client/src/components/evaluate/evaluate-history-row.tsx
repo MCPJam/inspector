@@ -9,13 +9,11 @@ import { runClientIdentity } from "../evals/helpers";
 import { resolveRunOrigin } from "@/lib/evals/run-origin";
 import { RunClientsCell } from "../evals/run-clients-cell";
 import {
-  RunBranchCell,
   RunCommitCell,
-  RunPlatformBadge,
-  RunPullRequestCell,
   readRunGitMetadata,
   type RunGitMetadataValue,
 } from "../evals/run-git-metadata";
+import { RunSourceBadge } from "../evals/run-source-badge";
 import { projectRunRollup } from "../evals/project-run-suite-groups";
 import { runEffectiveOutcome } from "../evals/project-runs-table";
 import type { ProjectRunRow } from "../evals/project-runs-table";
@@ -40,6 +38,7 @@ export function EvaluateHistoryHeader({
           "Result",
           "Rate",
           "Platform",
+          "Commit",
           "When",
           "Latency",
           "Tokens",
@@ -128,10 +127,6 @@ export function EvaluateHistoryRow({
             git?.repository,
             git?.commitSha,
             git?.commitUrl,
-            git?.branch,
-            git?.branchUrl,
-            git?.pullRequestNumber,
-            git?.pullRequestUrl,
           ]),
           { row, git },
         ] as const;
@@ -219,24 +214,15 @@ export function EvaluateHistoryRow({
       </TableCell>
       <TableCell>
         <div className="flex flex-wrap items-center gap-2">
-          {/* Each chip is guarded on the value it renders, never on the
-              presence of CI metadata: `RunCommitCell` and its siblings print a
-              dash when they have nothing, which reads as a column here rather
-              than as "no commit". The branch and PR earn their place because
-              this table's toolbar filters on them. */}
+          {platforms.map(({ row }) => (
+            <RunSourceBadge key={row._id} run={row} neutral />
+          ))}
+        </div>
+      </TableCell>
+      <TableCell>
+        <div className="flex flex-wrap items-center gap-2">
           {platforms.map(({ row, git }) => (
-            <span key={row._id} className="inline-flex items-center gap-2">
-              <RunPlatformBadge run={row} />
-              {git?.commitSha && git?.commitUrl ? (
-                <RunCommitCell git={git} />
-              ) : null}
-              {git?.pullRequestNumber && git?.pullRequestUrl ? (
-                <RunPullRequestCell git={git} />
-              ) : null}
-              {git?.branch && git?.branchUrl ? (
-                <RunBranchCell git={git} />
-              ) : null}
-            </span>
+            <RunCommitCell key={row._id} git={git} />
           ))}
         </div>
       </TableCell>
