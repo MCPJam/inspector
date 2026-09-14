@@ -286,8 +286,8 @@ Getting these wrong produces numbers that look authoritative and mean nothing.
 
 1. **Read `measurementUnit` before quoting any count.** Under verdict policy
    v2 the counts are `caseVariant` — one case under one provider/model
-   execution variant, with repetitions as TRIALS inside it. On a legacy run
-   they are `trial`. A 3-case suite with 5 repetitions is legitimately "3"
+   execution variant, with its configured iterations as TRIALS inside it. On a legacy run
+   they are `trial`. A 3-case suite with 5 iterations is legitimately "3"
    under one unit and "15" under the other, so a count quoted without its unit
    is not a fact.
 2. **A zero denominator is NOT MEASURED, never `0`.** Stage analytics stores
