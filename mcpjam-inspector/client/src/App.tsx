@@ -3386,6 +3386,10 @@ export default function App() {
   const pendingDashboardOAuthMessage = pendingDashboardOAuth
     ? `Finishing OAuth sign-in for ${pendingDashboardOAuth.serverName}...`
     : undefined;
+  const isReturningFirstRunOAuth =
+    initialFirstRunServerChoiceState?.status === "started" &&
+    pendingDashboardOAuth?.serverName ===
+      initialFirstRunServerChoiceState.attemptedServerName;
   const hasAnyFirstRunBlockingProjectServers = Object.keys(projectServers).some(
     (serverName) => serverName !== EXCALIDRAW_SERVER_NAME,
   );
@@ -3502,12 +3506,40 @@ export default function App() {
     });
     void handleConnect(pendingFirstRunConnection, {
       suppressErrorToast: true,
+      suppressSuccessToast: true,
     });
   }, [
     firstRunConnectionState.status,
     handleConnect,
     isFirstRunProjectReady,
     pendingFirstRunConnection,
+  ]);
+
+  useEffect(() => {
+    if (
+      !isReturningFirstRunOAuth ||
+      !pendingDashboardOAuth ||
+      firstRunConnectionState.status !== "idle"
+    ) {
+      return;
+    }
+
+    // OAuth leaves the app, so the in-memory connection state is lost even
+    // though the first-run attempt and OAuth callback marker both survive.
+    // Re-arm the normal observer so callback success reaches the connected
+    // handoff and callback failure reaches the editable recovery form.
+    setFirstRunConnectionState({
+      status: "connecting",
+      serverName: pendingDashboardOAuth.serverName,
+      serverKind:
+        pendingDashboardOAuth.serverName === EXCALIDRAW_SERVER_NAME
+          ? "demo"
+          : "personal",
+    });
+  }, [
+    firstRunConnectionState.status,
+    isReturningFirstRunOAuth,
+    pendingDashboardOAuth,
   ]);
 
   useEffect(() => {
@@ -3571,6 +3603,7 @@ export default function App() {
     if (
       !shouldRepairFirstRunStartedState ||
       !areServersHydrated ||
+      isReturningFirstRunOAuth ||
       isFirstRunConnectionActive
     ) {
       return;
@@ -3608,6 +3641,7 @@ export default function App() {
     areServersHydrated,
     initialFirstRunServerChoiceState,
     isFirstRunConnectionActive,
+    isReturningFirstRunOAuth,
     projectServers,
     shouldRepairFirstRunStartedState,
   ]);

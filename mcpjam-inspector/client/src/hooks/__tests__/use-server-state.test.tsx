@@ -2554,6 +2554,30 @@ describe("useServerState OAuth callback failures", () => {
     expect(toastError).not.toHaveBeenCalled();
   });
 
+  it("suppresses a success toast when an inline surface owns the result", async () => {
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch);
+
+    await act(async () => {
+      await result.current.handleConnect(
+        {
+          name: "new-server",
+          type: "http",
+          url: "https://example.com/mcp",
+        },
+        { suppressSuccessToast: true }
+      );
+    });
+
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "CONNECT_SUCCESS",
+        name: "new-server",
+      })
+    );
+    expect(toastSuccess).not.toHaveBeenCalledWith("Connected successfully!");
+  });
+
   it("blocks connect while the active project is still provisioning", async () => {
     const dispatch = vi.fn();
     const { result } = renderUseServerState(dispatch, createAppState(), {

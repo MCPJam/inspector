@@ -101,8 +101,6 @@ import {
   mergeProjectConnectionHeaders,
 } from "@/lib/client-config";
 import { resolveEffectiveClientCapabilities } from "@/lib/effective-client";
-import { EXCALIDRAW_SERVER_NAME } from "@/lib/excalidraw-quick-connect";
-import { readOnboardingState } from "@/lib/onboarding-state";
 import {
   type HostConfigDtoV2,
   type McpProtocolVersion,
@@ -120,15 +118,6 @@ import type { ConnectionDefaults } from "@/shared/connection-defaults";
 export interface HostedServerWriteTarget {
   projectId: string;
   serverId: string;
-}
-
-/** Skip noisy connect toast while first-run App Builder onboarding is in progress. */
-function shouldSuppressExcalidrawConnectToastForOnboarding(
-  serverName: string
-): boolean {
-  if (serverName !== EXCALIDRAW_SERVER_NAME) return false;
-  const status = readOnboardingState()?.status;
-  return status === "seen";
 }
 
 function extractRequestHeaders(
@@ -3290,13 +3279,19 @@ export function useServerState({
   const handleConnect = useCallback(
     async (
       formData: ServerFormData,
-      options?: { suppressErrorToast?: boolean }
+      options?: {
+        suppressErrorToast?: boolean;
+        suppressSuccessToast?: boolean;
+      }
     ) => {
       const showConnectionError = (
         message: string,
         data?: Parameters<typeof toast.error>[1]
       ) => {
         if (!options?.suppressErrorToast) toast.error(message, data);
+      };
+      const showConnectionSuccess = (message: string) => {
+        if (!options?.suppressSuccessToast) toast.success(message);
       };
       // Snapshot the client BEFORE the first await, not when the toast is
       // built. This connect resolves its protocol pin from whichever client is
@@ -3519,7 +3514,7 @@ export function useServerState({
             });
             // An Auto server may have connected without credentials — don't
             // claim OAuth happened when it didn't.
-            toast.success(
+            showConnectionSuccess(
               formData.authMethod === "auto"
                 ? "Connected successfully!"
                 : "Connected successfully with OAuth!"
@@ -3720,7 +3715,7 @@ export function useServerState({
                   oauthTrace: oauthResult.oauthTrace,
                   oauthFlowProfile: serverEntryForSave.oauthFlowProfile,
                 });
-                toast.success("Connected successfully with OAuth!");
+                showConnectionSuccess("Connected successfully with OAuth!");
                 storeInitInfo(formData.name, connectionResult.initInfo).catch(
                   (err) =>
                     logger.warn("Failed to fetch init info", {
@@ -3796,11 +3791,7 @@ export function useServerState({
           // no localStorage write needed. The resolver returns env in the
           // resolved config on subsequent connects.
           logger.info("Connection successful", { serverName: formData.name });
-          if (
-            !shouldSuppressExcalidrawConnectToastForOnboarding(formData.name)
-          ) {
-            toast.success("Connected successfully!");
-          }
+          showConnectionSuccess("Connected successfully!");
           storeInitInfo(formData.name, result.initInfo).catch((err) =>
             logger.warn("Failed to fetch init info", {
               serverName: formData.name,

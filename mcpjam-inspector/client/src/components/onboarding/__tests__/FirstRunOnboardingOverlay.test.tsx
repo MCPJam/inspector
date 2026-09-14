@@ -86,14 +86,14 @@ describe("FirstRunOnboardingOverlay", () => {
     cleanup();
     renderOverlay({ status: "idle" }, true);
     expect(
-      screen.getByRole("heading", { name: "Point MCPJam at a server" }),
+      screen.getByRole("heading", { name: "Connect to your MCP server" }),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("heading", { name: "Welcome to MCPJam" }),
     ).not.toBeInTheDocument();
   });
 
-  it("advances from the welcome card with Continue", () => {
+  it("advances from the welcome card with Get started", () => {
     renderOverlay();
 
     expect(document.querySelector('[data-slot="dialog-overlay"]')).toHaveClass(
@@ -104,7 +104,7 @@ describe("FirstRunOnboardingOverlay", () => {
       "dark:bg-none",
       "duration-500",
     );
-    const continueButton = screen.getByRole("button", { name: "Continue" });
+    const continueButton = screen.getByRole("button", { name: "Get started" });
     expect(continueButton).toHaveClass("justify-self-start");
     expect(continueButton).not.toHaveClass(
       "focus-visible:!border-0",
@@ -113,7 +113,7 @@ describe("FirstRunOnboardingOverlay", () => {
 
     fireEvent.click(continueButton);
     expect(
-      screen.getByRole("heading", { name: "Point MCPJam at a server" }),
+      screen.getByRole("heading", { name: "Connect to your MCP server" }),
     ).toBeInTheDocument();
     expect(document.querySelector('[data-slot="dialog-overlay"]')).toHaveClass(
       "backdrop-blur-sm",
@@ -124,7 +124,7 @@ describe("FirstRunOnboardingOverlay", () => {
     renderOverlay();
     fireEvent.keyDown(window, { key: "Enter" });
     expect(
-      screen.getByRole("heading", { name: "Point MCPJam at a server" }),
+      screen.getByRole("heading", { name: "Connect to your MCP server" }),
     ).toBeInTheDocument();
   });
 
@@ -143,7 +143,7 @@ describe("FirstRunOnboardingOverlay", () => {
 
     act(() => vi.advanceTimersByTime(1));
     expect(
-      screen.getByRole("heading", { name: "Point MCPJam at a server" }),
+      screen.getByRole("heading", { name: "Connect to your MCP server" }),
     ).toBeInTheDocument();
 
     cleanup();
@@ -164,7 +164,7 @@ describe("FirstRunOnboardingOverlay", () => {
       onSkip,
       rerenderWithConnectionState,
     } = renderOverlay();
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
 
     fireEvent.change(screen.getByLabelText("Server URL or command"), {
       target: { value: "https://mcp.example.com/mcp" },
@@ -272,7 +272,7 @@ describe("FirstRunOnboardingOverlay", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(onCancelConnection).toHaveBeenCalledOnce();
     expect(
-      screen.getByRole("heading", { name: "Point MCPJam at a server" }),
+      screen.getByRole("heading", { name: "Connect to your MCP server" }),
     ).toBeInTheDocument();
 
     rerenderWithConnectionState({
@@ -362,20 +362,20 @@ describe("FirstRunOnboardingOverlay", () => {
 
     expect(
       screen.getByText(
-        /From your first prompt to a continuous gate on every release/i,
+        /Test and evaluate your MCP server for every user, across every major AI client/i,
       ),
     ).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
 
     expect(
       screen.getByText(
-        /lets you call its tools, inspect traces, and see how different clients handle it/i,
+        /Add your MCP server to get started, or start testing with our demo server/i,
       ),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("No setup · nothing to install"),
-    ).toBeInTheDocument();
+      screen.queryByText("No setup · nothing to install"),
+    ).not.toBeInTheDocument();
   });
 
   it("only offers credential modes that the onboarding form can submit", () => {
@@ -399,7 +399,7 @@ describe("FirstRunOnboardingOverlay", () => {
 
   it("requires a server URL or command before opening the details sheet", () => {
     renderOverlay();
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
 
     expect(screen.getByRole("alert")).toHaveTextContent(

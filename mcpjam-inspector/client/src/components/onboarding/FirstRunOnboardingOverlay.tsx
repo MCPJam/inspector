@@ -261,9 +261,8 @@ export function FirstRunOnboardingOverlay({
                   aria-hidden
                 />
                 <DialogDescription className="mt-4 max-w-[42ch] text-[14.5px] leading-[1.5] text-muted-foreground">
-                  From your first prompt to a continuous gate on every release,
-                  MCPJam shows what breaks across every AI client, and how to
-                  fix it.
+                  Test and evaluate your MCP server for every user, across every
+                  major AI client.
                 </DialogDescription>
               </DialogHeader>
               <Button
@@ -272,7 +271,7 @@ export function FirstRunOnboardingOverlay({
                 className="mt-7 h-auto justify-self-start p-0 text-[12.5px] font-semibold text-foreground underline decoration-foreground/35 underline-offset-4 hover:text-foreground hover:decoration-foreground"
                 onClick={continueToChoice}
               >
-                Continue
+                Get started
               </Button>
               {!prefersReducedMotion ? (
                 <div
@@ -297,12 +296,11 @@ export function FirstRunOnboardingOverlay({
             <>
               <DialogHeader className="gap-0 text-left">
                 <DialogTitle className="pb-0 text-[17px] leading-6 font-bold tracking-[-0.02em] text-card-foreground">
-                  Point MCPJam at a server
+                  Connect to your MCP server
                 </DialogTitle>
                 <DialogDescription className="mt-1 text-[12.5px] leading-[1.55] text-muted-foreground">
-                  MCPJam connects to your MCP server and lets you call its
-                  tools, inspect traces, and see how different clients handle
-                  it.
+                  Add your MCP server to get started, or start testing with our
+                  demo server.
                 </DialogDescription>
               </DialogHeader>
 
@@ -361,9 +359,6 @@ export function FirstRunOnboardingOverlay({
                 >
                   Try the Excalidraw demo server
                 </Button>
-                <p className="mt-1.5 text-center text-[10.5px] text-muted-foreground">
-                  No setup · nothing to install
-                </p>
               </div>
               <Button
                 type="button"

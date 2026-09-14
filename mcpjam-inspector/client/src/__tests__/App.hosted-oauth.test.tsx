@@ -135,6 +135,7 @@ const {
     setActiveOrganizationId: vi.fn(),
     clearConvexActiveProjectSelection: vi.fn(),
     clearLocalFallbackProjectSelection: vi.fn(),
+    pendingDashboardOAuth: null,
     isCloudSyncActive: false,
   });
 
@@ -3400,11 +3401,11 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await screen.findByRole("heading", {
-      name: "Point MCPJam at a server",
+      name: "Connect to your MCP server",
     });
     await waitFor(() => {
       expect(
-        screen.getByRole("heading", { name: "Point MCPJam at a server" }),
+        screen.getByRole("heading", { name: "Connect to your MCP server" }),
       ).toBeInTheDocument();
     });
     expect(
@@ -3670,7 +3671,7 @@ describe("App hosted OAuth callback handling", () => {
       ).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
     fireEvent.change(screen.getByLabelText("Server URL or command"), {
       target: { value: "https://mcp.example.com/mcp" },
     });
@@ -3691,7 +3692,7 @@ describe("App hosted OAuth callback handling", () => {
         useOAuth: true,
         authMethod: "auto",
       }),
-      { suppressErrorToast: true },
+      { suppressErrorToast: true, suppressSuccessToast: true },
     );
     expect(
       JSON.parse(
@@ -3733,7 +3734,7 @@ describe("App hosted OAuth callback handling", () => {
 
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to MCPJam" });
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
     fireEvent.change(screen.getByLabelText("Server URL or command"), {
       target: { value: 'node server.js --config "My Files/config.json" ""' },
     });
@@ -3746,7 +3747,7 @@ describe("App hosted OAuth callback handling", () => {
           command: "node",
           args: ["server.js", "--config", "My Files/config.json", ""],
         }),
-        { suppressErrorToast: true },
+        { suppressErrorToast: true, suppressSuccessToast: true },
       );
     });
   });
@@ -3777,7 +3778,7 @@ describe("App hosted OAuth callback handling", () => {
       ).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
     fireEvent.click(
       screen.getByRole("button", { name: /Try the Excalidraw demo/ }),
     );
@@ -3797,7 +3798,7 @@ describe("App hosted OAuth callback handling", () => {
         type: "http",
         url: "https://mcp.excalidraw.com/mcp",
       }),
-      { suppressErrorToast: true },
+      { suppressErrorToast: true, suppressSuccessToast: true },
     );
 
     appState.appState.servers = {
@@ -3866,7 +3867,7 @@ describe("App hosted OAuth callback handling", () => {
 
     const view = render(<App />);
     await screen.findByRole("heading", { name: "Welcome to MCPJam" });
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
     fireEvent.change(screen.getByLabelText("Server URL or command"), {
       target: { value: "https://personal.example/mcp" },
     });
@@ -3913,7 +3914,7 @@ describe("App hosted OAuth callback handling", () => {
 
     const view = render(<App />);
     await screen.findByRole("heading", { name: "Welcome to MCPJam" });
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
     fireEvent.change(screen.getByLabelText("Server URL or command"), {
       target: { value: "https://personal.example/mcp" },
     });
@@ -3959,7 +3960,7 @@ describe("App hosted OAuth callback handling", () => {
 
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to MCPJam" });
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
     fireEvent.click(
       screen.getByRole("button", { name: /Try the Excalidraw demo/ }),
     );
@@ -3973,7 +3974,7 @@ describe("App hosted OAuth callback handling", () => {
       "Excalidraw (App)",
     );
     expect(
-      screen.getByRole("heading", { name: "Point MCPJam at a server" }),
+      screen.getByRole("heading", { name: "Connect to your MCP server" }),
     ).toBeInTheDocument();
     expect(
       JSON.parse(
@@ -4004,7 +4005,7 @@ describe("App hosted OAuth callback handling", () => {
       ).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
     fireEvent.click(
       screen.getByRole("button", { name: /Try the Excalidraw demo/ }),
     );
@@ -4030,7 +4031,7 @@ describe("App hosted OAuth callback handling", () => {
           name: "Excalidraw (App)",
           url: "https://mcp.excalidraw.com/mcp",
         }),
-        { suppressErrorToast: true },
+        { suppressErrorToast: true, suppressSuccessToast: true },
       );
       expect(
         screen.getByRole("heading", {
@@ -4060,7 +4061,7 @@ describe("App hosted OAuth callback handling", () => {
         screen.getByRole("heading", { name: "Welcome to MCPJam" }),
       ).toBeInTheDocument();
     });
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
     fireEvent.click(
       screen.getByRole("button", { name: /Try the Excalidraw demo/ }),
     );
@@ -4080,7 +4081,7 @@ describe("App hosted OAuth callback handling", () => {
     await waitFor(() => {
       expect(appState.handleConnect).toHaveBeenCalledWith(
         expect.objectContaining({ name: "Excalidraw (App)" }),
-        { suppressErrorToast: true },
+        { suppressErrorToast: true, suppressSuccessToast: true },
       );
     });
   });
@@ -4104,7 +4105,7 @@ describe("App hosted OAuth callback handling", () => {
       ).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
     fireEvent.click(screen.getByRole("button", { name: "Set up later" }));
 
     await waitFor(() => {
@@ -4227,6 +4228,114 @@ describe("App hosted OAuth callback handling", () => {
       ).toEqual(expect.objectContaining({ status: "completed" }));
     });
     expect(screen.getByTestId("home-tab")).toBeInTheDocument();
+  });
+
+  it("restores the connected handoff after a first-run OAuth callback", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    localStorage.setItem(
+      "mcp-first-run-server-choice-state",
+      JSON.stringify({
+        status: "started",
+        startedAt: Date.now() - 1_000,
+        shownAt: Date.now() - 1_000,
+        attemptedServerName: "OAuth server",
+      }),
+    );
+    window.history.replaceState({}, "", "/home");
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+    const server = {
+      name: "OAuth server",
+      connectionStatus: "connected" as const,
+      enabled: true,
+      retryCount: 0,
+      lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+      config: {
+        transportType: "http" as const,
+        url: "https://oauth.example/mcp",
+      },
+    };
+    const appState = createAppStateMock();
+    appState.appState.servers = { "OAuth server": server };
+    appState.projectServers = { "OAuth server": server };
+    appState.pendingDashboardOAuth = {
+      serverName: "OAuth server",
+      serverUrl: "https://oauth.example/mcp",
+      startedAt: Date.now() - 1_000,
+    };
+    mockUseAppState.mockReturnValue(appState);
+    mockListTools.mockResolvedValueOnce({ tools: [{ name: "search" }] });
+
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Connected to OAuth server" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("1 tool ready to use.")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Open Playground" }),
+    ).toBeInTheDocument();
+    expect(
+      JSON.parse(
+        localStorage.getItem("mcp-first-run-server-choice-state") ?? "{}",
+      ),
+    ).toEqual(expect.objectContaining({ status: "completed" }));
+  });
+
+  it("restores the editable failure form after a denied first-run OAuth callback", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    localStorage.setItem(
+      "mcp-first-run-server-choice-state",
+      JSON.stringify({
+        status: "started",
+        startedAt: Date.now() - 1_000,
+        shownAt: Date.now() - 1_000,
+        attemptedServerName: "OAuth server",
+      }),
+    );
+    window.history.replaceState({}, "", "/home");
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+    const server = {
+      name: "OAuth server",
+      connectionStatus: "failed" as const,
+      enabled: true,
+      retryCount: 0,
+      lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+      lastError: "OAuth access was denied",
+      config: {
+        transportType: "http" as const,
+        url: "https://oauth.example/mcp",
+      },
+    };
+    const appState = createAppStateMock();
+    appState.appState.servers = { "OAuth server": server };
+    appState.projectServers = { "OAuth server": server };
+    appState.pendingDashboardOAuth = {
+      serverName: "OAuth server",
+      serverUrl: "https://oauth.example/mcp",
+      startedAt: Date.now() - 1_000,
+    };
+    mockUseAppState.mockReturnValue(appState);
+
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Set up your server" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Failed to connect to MCP server",
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "View technical details" }),
+    );
+    expect(screen.getByText("OAuth access was denied")).toBeInTheDocument();
   });
 
   it("does not auto-route to Playground when any saved server already exists", async () => {
