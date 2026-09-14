@@ -558,7 +558,7 @@ export function CheckRow({
           ) : null}
           {legacyScenarioGate ? (
             <p className="text-[11px] text-muted-foreground">
-              Scenario check — use Move to Steps to edit inline in the flow.
+              Scenario {noun} — use Move to Steps to edit inline in the flow.
             </p>
           ) : null}
         </div>
