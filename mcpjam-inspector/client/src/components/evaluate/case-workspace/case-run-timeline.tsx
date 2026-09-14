@@ -7,6 +7,8 @@ import {
   SheetDescription,
 } from "@mcpjam/design-system/sheet";
 import {
+  average,
+  compactMetric,
   formatRunId,
   formatRelativeTime,
   iterationLatencyP50,
@@ -25,16 +27,6 @@ const duration = (it: EvalIteration) =>
   it.startedAt != null && it.updatedAt != null
     ? Math.max(0, it.updatedAt - it.startedAt)
     : null;
-const average = (values: number[]) =>
-  values.length
-    ? values.reduce((sum, value) => sum + value, 0) / values.length
-    : null;
-const compactMetric = (value: number) =>
-  value >= 1000
-    ? `${(value / 1000).toFixed(1).replace(/\.0$/, "")}k`
-    : Number.isInteger(value)
-      ? value.toLocaleString()
-      : value.toFixed(1);
 const age = (ts: number) => {
   const minutes = Math.max(0, Math.floor((Date.now() - ts) / 60000));
   return minutes < 1

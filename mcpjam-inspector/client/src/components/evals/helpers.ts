@@ -1422,6 +1422,32 @@ export function formatCostOrDash(value: number | null | undefined): string {
 }
 
 /**
+ * Mean of the values that WERE measured, or `null` when none were. Callers
+ * decide which iterations count as measured before handing them over — a
+ * missing reading is not a zero.
+ */
+export function average(values: readonly number[]): number | null {
+  return values.length
+    ? values.reduce((sum, value) => sum + value, 0) / values.length
+    : null;
+}
+
+/**
+ * Compact metric numbers for the run matrix and case workspace tiles:
+ * `1240` → `1.2k`, `2000` → `2k`, `18` → `18`, `1.75` → `1.8`.
+ *
+ * Lowercase `k` on purpose (the matrix toggle's design), which is why this
+ * is not `Intl.NumberFormat`'s compact notation.
+ */
+export function compactMetric(value: number): string {
+  return value >= 1000
+    ? `${(value / 1000).toFixed(1).replace(/\.0$/, "")}k`
+    : Number.isInteger(value)
+      ? value.toLocaleString()
+      : value.toFixed(1);
+}
+
+/**
  * Why this row has no cost, phrased for the person reading it.
  *
  * Returns `null` when a cost IS present and needs no explanation — except for

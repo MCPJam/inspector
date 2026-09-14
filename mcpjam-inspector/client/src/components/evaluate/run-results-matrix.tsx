@@ -20,14 +20,17 @@ import {
 } from "@mcpjam/design-system/sheet";
 import { cn } from "@mcpjam/design-system/cn";
 import { resolveHostLogoByName } from "@/lib/host-logo";
-import { formatRunId, runClientLogo } from "../evals/helpers";
-import { usePreferencesStoreWithDefaults } from "@/stores/preferences/preferences-provider";
 import {
+  average,
+  compactMetric,
   formatCostOrDash,
   formatRelativeTime,
+  formatRunId,
   iterationLatencyP50,
   iterationLatencyP95,
+  runClientLogo,
 } from "../evals/helpers";
+import { usePreferencesStoreWithDefaults } from "@/stores/preferences/preferences-provider";
 import { formatRunCaseLatencyMs } from "../evals/run-case-groups";
 import { computeIterationResult } from "../evals/pass-criteria";
 import type { EvalIteration, EvalSuiteRun } from "../evals/types";
@@ -77,18 +80,6 @@ const outcomeDotTone = (result: string) =>
       : result === "pending"
         ? "bg-pending"
         : "bg-muted-foreground";
-
-const compactMetric = (value: number) =>
-  value >= 1000
-    ? `${(value / 1000).toFixed(1).replace(/\.0$/, "")}k`
-    : Number.isInteger(value)
-      ? value.toLocaleString()
-      : value.toFixed(1);
-
-const average = (values: readonly number[]) =>
-  values.length
-    ? values.reduce((sum, value) => sum + value, 0) / values.length
-    : null;
 
 type MatrixView = "results" | "metrics";
 
@@ -231,10 +222,6 @@ export function RunResultsMatrix({
   diagnostics?: readonly EvalRunDecisionDiagnostic[];
   chains?: ReadonlyMap<string, EvalRunDecisionChain>;
   suiteName?: string;
-  onOpenIteration?: (target: {
-    testCaseId: string;
-    iterationId: string;
-  }) => void;
   toolbarExtra?: ReactNode;
   extraFiltersActive?: boolean;
   onClearExtraFilters?: () => void;

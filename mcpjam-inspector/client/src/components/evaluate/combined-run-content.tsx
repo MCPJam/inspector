@@ -48,7 +48,6 @@ export function CombinedRunContent({
   allIterations,
   previousRunId,
   decisionSummaryEnabled,
-  onOpenIteration,
 }: Parameters<typeof SingleRunContent>[0] & { runs: EvalSuiteRun[] }) {
   const history = useProjectRunHistory(
     projectId ?? "",
@@ -192,7 +191,6 @@ export function CombinedRunContent({
               hostNamesById={hostNamesById}
               diagnostics={diagnostics}
               chains={chains}
-              onOpenIteration={onOpenIteration}
               modelIds={model === ALL_EVAL_FILTER_VALUES ? undefined : [model]}
               toolbarExtra={<PairingFilters {...pairingFilterProps} />}
               extraFiltersActive={isFiltered}

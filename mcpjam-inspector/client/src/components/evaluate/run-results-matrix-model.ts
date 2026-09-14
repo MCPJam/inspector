@@ -85,12 +85,9 @@ export function buildRunResultsMatrix({
     for (const test of targetIterations.length === 0
       ? targetRun.configSnapshot?.tests ?? []
       : []) {
-      const recorded = targetIterations.find(
-        (item) => item.testCaseSnapshot?.title === test.title,
-      );
-      const key =
-        test.testCaseId ??
-        (recorded ? matrixCaseKey(recorded) : `title:${test.title}`);
+      // No recorded iteration to key against: the loop above only runs when
+      // this target has none.
+      const key = test.testCaseId ?? `title:${test.title}`;
       if (!cases.has(key))
         cases.set(key, { key, title: test.title, testCaseId: test.testCaseId });
       const snapshotModels = snapshotTestModels(test).map(

@@ -578,7 +578,6 @@ export function SingleRunContent({
               : iterations
           }
           hostNamesById={hostNamesById}
-          onOpenIteration={onOpenIteration}
         />
       </div>
 
