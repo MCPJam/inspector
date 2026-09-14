@@ -265,3 +265,31 @@ describe("eval decision summary", () => {
     );
   });
 });
+
+describe("eval decision summary — setup failure reasons", () => {
+  it("prints the runner's connection reason for a setup-aborted chain", () => {
+    const line =
+      'The stored authorization for "Linear" has expired or been revoked. Reconnect it in the server settings.';
+    const text = render({
+      result: "failed",
+      firstFailedStage: undefined,
+      failureCategory: "setup",
+      stageResults: [
+        {
+          stage: "connection",
+          state: "notMeasured",
+          reason: "setupAborted",
+          evidence: { spanIds: ["run-connect-s1"], predicateReasons: [line] },
+        },
+        { stage: "discovery", state: "notReached", reason: "earlierStageFailed" },
+        { stage: "selection", state: "notReached", reason: "earlierStageFailed" },
+        { stage: "call", state: "notReached", reason: "earlierStageFailed" },
+        { stage: "response", state: "notReached", reason: "earlierStageFailed" },
+        { stage: "userValue", state: "notReached", reason: "earlierStageFailed" },
+      ],
+    });
+    // The same evidence slot judge reasons use, so the same line renders it.
+    expect(text).toContain(`reasons ${line}`);
+    expect(text).toContain("span ids run-connect-s1");
+  });
+});
