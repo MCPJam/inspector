@@ -1,8 +1,11 @@
+import type { UserValueStage } from "@mcpjam/sdk/contract";
 import type { SharedChatThread } from "@/hooks/useSharedChatThreads";
-import { chainPresentation } from "@/components/shared/user-value-chain/user-value-chain-types";
 
 export type UsageFilterPreset =
-  "all" | "needs_review" | "low_ratings" | "no_feedback";
+  | "all"
+  | "needs_review"
+  | "low_ratings"
+  | "no_feedback";
 
 /**
  * Hand-mirrored from `convex/lib/usageInsights/filters.ts`
@@ -60,32 +63,21 @@ export function criterionChipValue(
  * all three from `eligible` — offering them would open a list longer than the
  * count that offered it.
  */
-export const STAGE_PASSED = "passed";
-export const STAGE_FAILED = "failed";
-
 export type StageChipState = "passed" | "failed";
 
-/** Build a stage chip value. Mirrors `stageChipValue` on the server. */
-export function stageChipValue(stage: string, state: StageChipState): string {
-  return `${stage}:${state}`;
-}
-
 /**
- * Split a stage chip value into `(stage, state)`.
+ * Build a stage chip value. Mirrors `stageChipValue` on the server.
  *
- * Mirrors `parseStageChipValue` in `convex/lib/usageInsights/filters.ts`. The
- * two must agree exactly, or a server-filtered page and a client-filtered list
- * would disagree about what the reader selected.
+ * Build only. A stage chip is minted for ONE server round trip and is never
+ * put into a `UsageFilterState`, so there is no client-side matcher to keep in
+ * step — `convex/lib/usageInsights/filters.ts` is the only thing that reads
+ * one back, and it is tested there.
  */
-export function parseStageChipValue(
-  value: string,
-): { stage: string; state: StageChipState } | null {
-  const idx = value.lastIndexOf(":");
-  if (idx <= 0) return null;
-  const stage = value.slice(0, idx);
-  const state = value.slice(idx + 1);
-  if (state !== STAGE_PASSED && state !== STAGE_FAILED) return null;
-  return { stage, state };
+export function stageChipValue(
+  stage: UserValueStage,
+  state: StageChipState,
+): string {
+  return `${stage}:${state}`;
 }
 
 /**
@@ -352,23 +344,10 @@ export function threadMatchesChip(
       if (result === undefined) return false;
       return result.passed === (parsed.verdict === CRITERION_PASS);
     }
-    case "stage": {
-      const parsed = parseStageChipValue(chip.value);
-      if (!parsed) return false;
-      // Only a CURRENT chain carries verdicts. `chainPresentation` is already
-      // the client's reading of that lifecycle and its "current" is exactly the
-      // server's `counted` bucket, so this reuses it rather than growing a
-      // second copy of the gate. The trap it closes is the stale chain:
-      // `markStagePending` preserves the previous generation's rows, so a
-      // stale one looks fully populated and would match on a naive lookup
-      // while the funnel counts none of it.
-      if (chainPresentation(thread.stageDerivation) !== "current") return false;
-      const row = thread.stageDerivation?.stageResults?.find(
-        (r) => r.stage === parsed.stage,
-      );
-      // `notMeasured` / `notApplicable` / `notReached` are not "not failed".
-      return row?.state === parsed.state;
-    }
+    // No `stage` case on purpose. Stage chips go to the server and come back
+    // as a page; they never reach a `UsageFilterState`, so a client matcher
+    // here would be unreachable code encoding a subtle staleness rule that
+    // nobody could see break.
     default:
       return false;
   }
@@ -389,13 +368,6 @@ function chipGroupKey(chip: UsageFilterChip): string {
   if (chip.key === "criterion") {
     const parsed = parseCriterionChipValue(chip.value);
     return parsed ? `criterion:${parsed.criterionId}` : "criterion:__invalid__";
-  }
-  // Stage chips group PER STAGE, for the criterion reasoning above. Under one
-  // shared `stage` key they would all OR, turning "failed at discovery AND at
-  // response" into "either" — a wider cohort than the reader selected.
-  if (chip.key === "stage") {
-    const parsed = parseStageChipValue(chip.value);
-    return parsed ? `stage:${parsed.stage}` : "stage:__invalid__";
   }
   return chip.key;
 }

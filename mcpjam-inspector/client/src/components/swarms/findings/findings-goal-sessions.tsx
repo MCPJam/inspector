@@ -5,10 +5,13 @@
  * Renders the list only (no card). The parent mounts this under
  * "What happened" so the sessions sit with the evidence they explain.
  *
- * Remount on the goal id (parent keys this) so paging state never leaks
- * across goals.
+ * Remount on the goal AND the stage narrowing (the parent keys this) so paging
+ * state never leaks across either. Leaking across stages is the failure this
+ * list exists to prevent: the rows would be the previous stage's, under a
+ * header counting this one's.
  */
 
+import type { UserValueStage } from "@mcpjam/sdk/contract";
 import { useEffect, useMemo, useState } from "react";
 import {
   stageChipValue,
@@ -40,8 +43,16 @@ export type FindingsSessionScope =
  * in place rather than showing an empty one.
  */
 export type FindingsStageNarrowing = {
-  /** The CHAIN's stage id (`userValue`), not the panel's (`value`). */
-  chainStage: string;
+  /**
+   * The CHAIN's stage id, typed so it cannot be the panel's.
+   *
+   * These two vocabularies differ in exactly one member — the chain says
+   * `userValue` where the panel says `value` — and a caller handing over
+   * `selectedStage` instead of `CHAIN_STAGE_BY_JOURNEY[selectedStage]` used to
+   * compile clean and build `"value:failed"`, which matches no row on the
+   * server: an empty list under a header reading "Failed".
+   */
+  chainStage: UserValueStage;
   state: "passed" | "failed";
 };
 

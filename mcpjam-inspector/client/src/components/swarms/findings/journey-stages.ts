@@ -10,7 +10,12 @@
 import type { UserValueStage } from "@mcpjam/sdk/contract";
 
 export type JourneyStageId =
-  "connection" | "discovery" | "selection" | "call" | "response" | "value";
+  | "connection"
+  | "discovery"
+  | "selection"
+  | "call"
+  | "response"
+  | "value";
 
 export interface JourneyStage {
   id: JourneyStageId;
@@ -21,7 +26,7 @@ export interface JourneyStage {
   question: string;
 }
 
-export const JOURNEY_STAGES: readonly JourneyStage[] = [
+export const JOURNEY_STAGES = [
   {
     id: "connection",
     num: "01",
@@ -58,7 +63,34 @@ export const JOURNEY_STAGES: readonly JourneyStage[] = [
     title: "User value",
     question: "Did the configured system complete the original task?",
   },
-] as const;
+] as const satisfies readonly JourneyStage[];
+
+/**
+ * Compile-time proof every panel stage has a ROW here.
+ *
+ * The array used to be annotated `readonly JourneyStage[]`, which widened the
+ * `as const` away: a seventh stage added to `JourneyStageId` and to both maps
+ * but forgotten HERE typechecked clean, and then `journeyStageTitle` read
+ * `.title` off `undefined` at runtime — the exact throw the map guard below
+ * exists to prevent, through the one list it did not cover.
+ */
+type UnlistedJourneyStage = Exclude<
+  JourneyStageId,
+  (typeof JOURNEY_STAGES)[number]["id"]
+>;
+const JOURNEY_STAGES_ARE_EXHAUSTIVE: UnlistedJourneyStage extends never
+  ? true
+  : UnlistedJourneyStage = true;
+void JOURNEY_STAGES_ARE_EXHAUSTIVE;
+
+/**
+ * Keyed by id, so a title lookup cannot miss. Built from the array above and
+ * total by the assertion on it, which is what retires the `!` this function
+ * used to need on a `findIndex` that could return -1.
+ */
+const JOURNEY_STAGE_BY_ID = Object.fromEntries(
+  JOURNEY_STAGES.map((stage) => [stage.id, stage]),
+) as Record<JourneyStageId, JourneyStage>;
 
 /**
  * The panel's stage ids to the measured chain's, and back.
@@ -112,5 +144,5 @@ export function journeyStageIndex(id: JourneyStageId): number {
 }
 
 export function journeyStageTitle(id: JourneyStageId): string {
-  return JOURNEY_STAGES[journeyStageIndex(id)]!.title;
+  return JOURNEY_STAGE_BY_ID[id].title;
 }

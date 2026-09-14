@@ -171,9 +171,11 @@ export function mapGoalStageFunnel(
   const stages = noStages();
   for (const tally of funnel.stages) {
     const id = STAGE_ID[tally.stage];
-    // A stage id the client does not know is skipped rather than crashing the
-    // tab: this type is a hand-kept mirror, so a backend that grows a stage
-    // reaches here before the mirror does.
+    // NOT dead code, though the build now proves the map total over
+    // `UserValueStage`. That proof is about the SDK this client was built
+    // against; `tally.stage` arrives from a deployed backend, which can be
+    // ahead of it. A stage the running build has never heard of is skipped
+    // rather than crashing the tab, and no type check can cover that gap.
     if (!id) continue;
     stages[id] = {
       state: stageStateFromTally(tally),

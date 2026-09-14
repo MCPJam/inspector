@@ -8,7 +8,6 @@
  */
 
 import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { FindingsGoalInspect } from "../findings-goal-inspect";
@@ -37,7 +36,11 @@ function goal(states: Partial<Record<JourneyStageId, StageState>>) {
           : [
               {
                 tone: state,
-                observation: `${stage.title} row`,
+                // DELIBERATELY not stage-specific. The evidence row above
+                // the session list is keyed on this text, so a per-stage
+                // string would remount the subtree on its own and no test
+                // here could tell `sessionsKey` from that ancestor.
+                observation: "A row",
                 meta: "2 graded",
               },
             ],
@@ -126,9 +129,12 @@ describe("which sessions a selected stage narrows to", () => {
 
   it("shows only the new stage's sessions after switching, never both", async () => {
     // The list ACCUMULATES pages in state, so switching stages has to remount
-    // it. Asserting on element identity was not enough: the panel remounts the
-    // subtree for other reasons too, so that test passed with the key reverted.
-    // This asserts the consequence a reader would actually see.
+    // it, and `sessionsKey` is what forces that. The fixture gives every stage
+    // the SAME observation text on purpose: the evidence row wrapping the list
+    // is keyed on that text, so a per-stage string would remount the subtree by
+    // itself and this test would pass with `sessionsKey` deleted. With one
+    // shared string, reverting the key leaves the previous stage's session in
+    // the document and this fails.
     mockUseGoalOutcomeDrilldown.mockImplementation((args: unknown) => {
       const { filters } = args as { filters?: UsageFilterState };
       const value = filters?.chips.find((c) => "key" in c && c.key === "stage");

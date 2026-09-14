@@ -7,6 +7,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -73,9 +74,16 @@ export function FindingsGoalInspect({
    * passes. A stage with no verdict is about nothing — narrowing there would
    * empty a list whose own copy says the stage was never graded, so it stays
    * `null` and the goal's whole list remains.
+   *
+   * Scenario scope only, because only the scenario reader takes chips: a swarm
+   * goal pages by run id and the backend ignores filters entirely. Computing a
+   * narrowing there would build a chip nobody sends AND churn `sessionsKey`
+   * per stage, so clicking through the six tabs on Swarms would flash
+   * "Loading sessions…" and repaint the identical unnarrowed rows — which a
+   * reader takes as "these are the 2 sessions", when it is all 5.
    */
   const stageNarrowing: FindingsStageNarrowing | null =
-    stageModel.state === "none"
+    stageModel.state === "none" || sessionScope?.kind !== "scenario"
       ? null
       : {
           chainStage: CHAIN_STAGE_BY_JOURNEY[selectedStage],
@@ -85,14 +93,57 @@ export function FindingsGoalInspect({
   // narrowing or one stage's sessions would be appended to the previous
   // stage's.
   //
-  // Today it would remount anyway: the evidence row wrapping it is keyed on
-  // the observation TEXT, which differs per stage. Mutation-testing this key
-  // proved it redundant — removing it changes no test. It stays because that
-  // ancestor key is prose, and a guarantee resting on two stages never
-  // phrasing themselves identically is not one worth keeping. The behaviour
-  // itself is covered by `findings-goal-inspect.stage.test.tsx`, which asserts
-  // the visible consequence rather than this mechanism.
+  // The evidence row wrapping it is keyed on the observation TEXT, so in
+  // practice two stages that phrase themselves differently remount anyway.
+  // That is prose, not a guarantee, which is why this key exists — and
+  // `findings-goal-inspect.stage.test.tsx` pins it by giving every stage the
+  // same observation string, so the ancestor key cannot do the work and
+  // deleting this line fails that test.
   const sessionsKey = `${goal.runId}:${stageNarrowing ? `${stageNarrowing.chainStage}:${stageNarrowing.state}` : "all"}`;
+  /**
+   * The stage's session list, wrapped and keyed ONCE for both mount sites.
+   *
+   * Keyed because the list accumulates pages in state: without it one stage's
+   * sessions are appended to the previous stage's. Only one of the two sites
+   * used to carry that key; the other was relying on its ancestor evidence row
+   * being keyed on the observation TEXT, which is prose and stops being true
+   * the moment two stages phrase themselves the same way.
+   *
+   * Bounded because `useGoalOutcomeDrilldown` throws, and the nearest boundary
+   * above this is the app root — a backend that does not know the `stage` chip
+   * would take the whole inspector to "Something went wrong", and the reader
+   * does not even have to click a stage to get there. The key does double duty:
+   * a boundary that has caught stays in its fallback for the life of the
+   * element, so an unkeyed one would swallow the list for every LATER stage.
+   */
+  const stageSessions =
+    sessionScope && onOpenSession ? (
+      <ErrorBoundary
+        key={sessionsKey}
+        name="findings-goal-sessions"
+        fallback={
+          // NOT `null`. The reader is looking at a stage row that names a
+          // number of sessions, and a list that vanished without saying so
+          // reads as "none" — a different claim. `isExpectedError` is left
+          // unset on purpose: what this catches is a rollback, and a rollback
+          // should page someone.
+          <p
+            className="mt-2 text-xs text-muted-foreground"
+            data-testid="findings-goal-sessions-error"
+          >
+            Could not load this stage&rsquo;s sessions.
+          </p>
+        }
+      >
+        <FindingsGoalSessions
+          scope={sessionScope}
+          goalId={goal.runId}
+          expectedCount={goal.sessions}
+          stage={stageNarrowing}
+          onOpenSession={onOpenSession}
+        />
+      </ErrorBoundary>
+    ) : null;
   const evidencePanelId = `findings-stage-evidence-${goal.runId}`;
   const canListSessions = Boolean(sessionScope && onOpenSession);
   const [openEvidence, setOpenEvidence] = useState(canListSessions ? 0 : -1);
@@ -281,14 +332,7 @@ export function FindingsGoalInspect({
                       sessionScope &&
                       onOpenSession &&
                       (sessionsAreExpandable ? expanded : i === 0) ? (
-                        <FindingsGoalSessions
-                          key={sessionsKey}
-                          scope={sessionScope}
-                          goalId={goal.runId}
-                          expectedCount={goal.sessions}
-                          stage={stageNarrowing}
-                          onOpenSession={onOpenSession}
-                        />
+                        stageSessions
                       ) : null}
                     </div>
                   );
@@ -325,14 +369,7 @@ export function FindingsGoalInspect({
                       </button>
                     ) : null}
                     {(sessionsAreExpandable ? openEvidence === 0 : true) ? (
-                      <FindingsGoalSessions
-                        key={sessionsKey}
-                        scope={sessionScope}
-                        goalId={goal.runId}
-                        expectedCount={goal.sessions}
-                        stage={stageNarrowing}
-                        onOpenSession={onOpenSession}
-                      />
+                      stageSessions
                     ) : null}
                   </>
                 ) : null}
