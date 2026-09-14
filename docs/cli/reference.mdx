@@ -1153,7 +1153,7 @@ Create a runnable eval suite from authored test cases (does not run it).
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
-| `--file <path>` | No | Path to a **create-API JSON** body (or `-` for stdin). A versioned suite file (`schemaVersion: "1"`) belongs on `eval run --file` |
+| `--file <path>` | No | Path to a **create-API JSON** body (or `-` for stdin). A versioned suite file (`schemaVersion: "1"` or `"2"`) belongs on `eval run --file` |
 | `--json <json>` | No | Inline suite definition JSON (or `@file`, or `-` for stdin) |
 | `--name <name>` | No | Suite name (overrides the file) |
 | `--model <model>` | No | Suite-level default model (overrides the file) |
@@ -1320,10 +1320,10 @@ runs never started" as a clean launch.
 
 #### `--file`: upload and run a suite file
 
-`eval run --file` reads the versioned suite file (`schemaVersion: "1"`),
-authenticates, then validates. A contract-invalid file exits **2** after the
-auth request — it does not start a run. `eval validate` on the same bytes
-still exits 1: that command is a verdict on the file; this one is not.
+`eval run --file` reads the versioned suite file (`schemaVersion: "1"` or
+`"2"`), authenticates, then validates. A contract-invalid file exits **2**
+after the auth request — it does not start a run. `eval validate` on the same
+bytes still exits 1: that command is a verdict on the file; this one is not.
 
 The file's `suite.id` is the declared suite identity. The first run creates a
 file-owned suite stamped with that id; later runs of the same id in the same
@@ -1331,8 +1331,9 @@ project update that suite rather than creating a second one. A UI-authored
 suite has no declared id, so no file can claim it. Resolve is never by name.
 
 File `passThreshold` is a fraction; the hosted suite grades on a percent. The
-conversion refuses rather than approximates. File `repetitions` above **10**
-are refused by name (`REPETITIONS_CAP`) and are not clamped.
+conversion refuses rather than approximates. The configured iteration count
+(`repetitions` in dialect 1, `iterations` in dialect 2) above **10** is
+refused by name (`REPETITIONS_CAP`) and is not clamped.
 
 Cases are synced in batches of at most 100 (`create_eval_cases`). Every
 declared case is created or updated, including `disabled: true` rows. A case
@@ -1354,8 +1355,10 @@ refusal). Hosted platform-authored suites do not currently have a backend
 tool-policy field or enforcement path, so the CLI does not upload a suite that
 would claim those guarantees. When supported by an eval runner, `toolPolicy`
 is enforced at execution time with denied tools kept visible but blocked;
-server annotations are advisory and **UNTRUSTED**. File `defaults.repetitions` is
-inherited per case and is not uploaded as a suite `minIterations` floor.
+server annotations are advisory and **UNTRUSTED**. The file's configured
+iteration count (`defaults.repetitions` in dialect 1, `defaults.iterations`
+in dialect 2) is inherited per case and is not uploaded as a suite
+`minIterations` floor.
 Authored `defaults.systemPrompt` and `defaults.temperature` are uploaded as
 execution defaults; omitted fields stay omitted so the platform applies its
 own defaults. `target.hosts` and `target.environment` are attached before
@@ -1891,8 +1894,8 @@ Show an eval suite's full settings.
 ### `cloud eval validate`
 
 Validate a local eval **suite file** — the versioned declarative document that
-describes a suite, its defaults and its cases (`schemaVersion: "1"`, YAML
-canonical, JSON accepted, conventionally `.mcpjam/evals/*.yaml`).
+describes a suite, its defaults and its cases (`schemaVersion: "1"` or `"2"`,
+YAML canonical, JSON accepted, conventionally `.mcpjam/evals/*.yaml`).
 
 Offline by default: without `--project` this command builds no API client, reads
 no API key and never touches the network. Passing `--project` is the only thing
@@ -1950,6 +1953,13 @@ the same bytes produce byte-identical output.
 An unreadable or missing path is a usage error and goes to stderr in the CLI's
 standard error envelope rather than as findings — nothing was read, so there is
 nothing to report about.
+
+**Suite file dialects.** Two dialects are accepted. Dialect `"1"` spells the
+configured run count `repetitions` and the case's rules `checks` (with
+`assertions` as a deprecated alias). Dialect `"2"` spells them `iterations`
+and `assertions` respectively; the dialect-1 spellings are unknown keys in
+dialect 2. `eval export` always writes dialect 1. A wrong-dialect key produces
+a finding that names the other dialect's spelling and offers both fixes.
 
 **What "valid" does not mean, without `--project`.** The offline check judges
 the file against the suite-file contract. It does **not** re-resolve tool names,
@@ -2011,7 +2021,7 @@ reach the project, or list a server's tools is a command error on stderr.
 
 ### `cloud eval export`
 
-Write a hosted eval suite to a local suite file.
+Write a hosted eval suite to a local suite file (always dialect 1, `schemaVersion: "1"`).
 
 | Flag | Required | Description |
 |------|----------|-------------|
