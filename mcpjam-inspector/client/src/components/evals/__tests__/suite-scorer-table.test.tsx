@@ -120,7 +120,7 @@ describe("SuiteScorerTable", () => {
         revisionNumber: 1,
       },
     });
-    // The role control sits on the row; a rule with no fields opens nothing.
+    // The role control sits on the row; an assertion with no fields opens nothing.
     expect(
       screen.queryByRole("button", { name: "No tool returns an error" }),
     ).toBeNull();

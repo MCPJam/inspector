@@ -120,7 +120,7 @@ describe("suite scope", () => {
     expect(within(latencyRow).getByText(/1,234/)).toBeInTheDocument();
     // On, so no second preset row for the same family.
     expect(row(container, `preset:${latency.id}`)).toBeNull();
-    // Still editable: the title opens the rule's own fields.
+    // Still editable: the title opens the assertion's own fields.
     await user.click(
       within(latencyRow).getByRole("button", { name: latency.label }),
     );
@@ -157,7 +157,7 @@ describe("case scope", () => {
     const inherited = row(container, "predicate:0");
     expect(inherited).toHaveAttribute("data-scorer-source", "suite");
     expect(within(inherited).getByText("From suite")).toBeInTheDocument();
-    // No title button: an inherited rule opens no editor here.
+    // No title button: an inherited assertion opens no editor here.
     expect(within(inherited).queryByRole("button")).toBeNull();
     expect(within(inherited).getByText(/1,234/)).toBeInTheDocument();
     const own = row(container, "predicate:1");

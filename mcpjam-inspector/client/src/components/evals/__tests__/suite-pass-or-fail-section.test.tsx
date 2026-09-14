@@ -83,7 +83,7 @@ describe("SuitePassOrFailSection", () => {
 
   it("says 'No evaluator' for an unconfigured response stage", () => {
     const { container } = renderSection();
-    // The stage lists its standard checks as off rows, none of them an evaluator.
+    // The stage lists its standard assertions as off rows, none of them on.
     const rows = Array.from(
       container.querySelectorAll(
         '[data-stage-group="response"] [data-scorer-row]',

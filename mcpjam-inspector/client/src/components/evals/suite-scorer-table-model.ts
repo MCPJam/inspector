@@ -433,9 +433,10 @@ function hasAuthoredThreshold(predicate: Predicate): boolean {
 }
 
 /**
- * What the runner measures at a stage without any authored rule: named as a
- * check ("Successful connection"), because that is how it reads beside the
- * rules, but never a box — it is on for every trial and cannot be turned off.
+ * What the runner measures at a stage without any authored assertion: named
+ * like one ("Successful connection"), because that is how it reads beside the
+ * assertions, but never a box — it is on for every iteration and cannot be
+ * turned off.
  */
 export const RUNNER_MEASUREMENT_LABELS: Record<UserValueStage, string> = {
   connection: "Successful connection",

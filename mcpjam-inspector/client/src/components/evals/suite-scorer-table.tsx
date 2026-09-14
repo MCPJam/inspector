@@ -1,13 +1,13 @@
 /**
- * Scorers as one checklist, stage by stage, in user-value-chain order.
+ * Evaluators as one checklist, stage by stage, in user-value-chain order.
  *
  * Configuration only. There is no Last run or Trend — those are a later
  * slice that needs run data this page does not have.
  *
- * ONE LIST, TWO PAGES. The suite settings page and a case's checks page
+ * ONE LIST, TWO PAGES. The suite settings page and a case's assertions page
  * render this same component. Each stage is a heading over rows of
  * "box · name · one line of detail"; a row's title opens its editor
- * (role, and the rule's own fields) in place, so the resting page reads
+ * (role, and the assertion's own fields) in place, so the resting page reads
  * like a checklist rather than a grid. The `scope` prop says which list a
  * click writes to:
  *
@@ -571,7 +571,7 @@ function ScorerRow({
     row.judgeSlot === "goalCompletion" &&
     scope === "suite";
   // The title discloses an editor only when there is something in it: the
-  // judge's threshold, or a rule's own fields. A rule that is nothing but
+  // judge's threshold, or an assertion's own fields. One that is nothing but
   // its kind ("No tool returns an error") has its role inline and its
   // removal on the box, so it opens nothing.
   const opensEditor =
@@ -595,9 +595,9 @@ function ScorerRow({
       : null;
 
   // One line under the title, holding only what the title does not already
-  // say: the number a rule turns on. Match and judge titles name their own
-  // kind; a family title names its check, so its criterion is repeated only
-  // when it carries a threshold ("under 5,000 ms"). A bare rule's title is
+  // say: the number an assertion turns on. Match and judge titles name their
+  // own kind; a family title names its assertion, so its criterion is repeated
+  // only when it carries a threshold ("under 5,000 ms"). A bare assertion's title is
   // its criterion, so its kind is the one thing left to add.
   let detail: string | null = null;
   if (row.kind === "observed") {
@@ -747,7 +747,7 @@ function predicateHasFields(predicate: Predicate): boolean {
 }
 
 /**
- * The judge's threshold. Every other number a scorer turns on is edited in
+ * The judge's threshold. Every other number an evaluator turns on is edited in
  * its own `CheckRow` body, opened from the row's title.
  */
 function JudgeThresholdInput({
@@ -797,7 +797,7 @@ function RoleCell({
   judgeDisabledReason: string | undefined;
   /** The suite page edits the judge's role; a case only reads it. */
   judgeEditable: boolean;
-  /** This page owns the rule; an inherited one reads its role. */
+  /** This page owns the assertion; an inherited one reads its role. */
   editable: boolean;
   onPredicateChange: (index: number, next: Predicate) => void;
   onJudgeRoleChange: (role: ScorerUiRole) => void;
