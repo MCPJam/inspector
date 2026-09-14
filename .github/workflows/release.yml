@@ -317,6 +317,8 @@ jobs:
         run: node scripts/check-local-harness-release.mjs --version "$INSPECTOR_VERSION"
 
       - name: Version packages with Changesets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx changeset version
 
       - name: Refresh root lockfile

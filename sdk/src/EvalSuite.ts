@@ -1,3 +1,4 @@
+import { composeAbortSignals } from "./compose-abort-signals.js";
 import { formatRunSummaryTable } from "./eval-summary.js";
 import type { EvalSelectionManifest } from "./eval-selection.js";
 import { canonicalJson, sha256Hex } from "./contract/canonical.js";
@@ -285,22 +286,23 @@ export class EvalSuite {
         "runTimeoutMs must be a positive timer-sized integer"
       );
     this.running = true;
-    const controller = new AbortController();
-    const timer =
-      options.runTimeoutMs === undefined
-        ? undefined
-        : setTimeout(
-            () => controller.abort(new Error("Suite deadline exceeded")),
-            options.runTimeoutMs
-          );
-    const reporting = options.mcpjam ?? this.mcpjamConfig;
-    const signals = [
-      controller.signal,
-      options.signal,
-      reporting?.transport?.signal,
-    ].filter((signal): signal is AbortSignal => !!signal);
-    const signal = AbortSignal.any(signals);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let dispose: (() => void) | undefined;
     try {
+      const controller = new AbortController();
+      if (options.runTimeoutMs !== undefined)
+        timer = setTimeout(
+          () => controller.abort(new Error("Suite deadline exceeded")),
+          options.runTimeoutMs
+        );
+      const reporting = options.mcpjam ?? this.mcpjamConfig;
+      const composed = composeAbortSignals(
+        [controller.signal, options.signal].filter(
+          (signal): signal is AbortSignal => !!signal
+        )
+      );
+      dispose = composed.dispose;
+      const signal = composed.signal;
       return await this.runInternal(executor, {
         ...options,
         signal,
@@ -310,6 +312,7 @@ export class EvalSuite {
       });
     } finally {
       if (timer !== undefined) clearTimeout(timer);
+      dispose?.();
       this.running = false;
     }
   }
