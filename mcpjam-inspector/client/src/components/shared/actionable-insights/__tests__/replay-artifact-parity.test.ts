@@ -171,12 +171,27 @@ describe("the replay artifact validator", () => {
 });
 
 /**
- * The producer half of the contract, run only when the paired backend
- * checkout is beside this one. It is a real `findings:replay` invocation, so
+ * The producer half of the contract: a real `findings:replay` invocation, so
  * a drift in the producer's shape fails HERE rather than in a preview.
+ *
+ * OPT-IN, via `npm run test:replay-artifact-parity`. It shells out to a
+ * sibling checkout, and a broken `node_modules` over there is an environment
+ * gap, not a parity failure — failing the whole Inspector suite for it would
+ * be noise. The validator tests above always run, and the byte-level mirror
+ * is `npm run check:findings-wire-parity`, which fails rather than skips when
+ * it cannot compare.
  */
 const BACKEND = resolve(REPO_ROOT, "..", "mcpjam-backend");
-const backendPresent = existsSync(join(BACKEND, "scripts/findingsReplay.ts"));
+const parityRequested = process.env.RUN_FINDINGS_REPLAY_PARITY === "1";
+const backendPresent =
+  parityRequested && existsSync(join(BACKEND, "scripts/findingsReplay.ts"));
+
+if (parityRequested && !backendPresent) {
+  // Asked for, and cannot be done: say so loudly rather than passing quietly.
+  throw new Error(
+    `RUN_FINDINGS_REPLAY_PARITY=1 but no backend checkout at ${BACKEND}`,
+  );
+}
 
 describe.runIf(backendPresent)("the producer's real output", () => {
   it("parses what `npm run findings:replay` actually writes", () => {

@@ -63,6 +63,20 @@ export type UnifiedFindingsState = {
 const BACKEND_MISSING_NOTE =
   "This Inspector has the unified-findings experiment, but the connected backend does not serve it. Deploy the paired backend branch (and set UNIFIED_FINDINGS_EXPERIMENT=1) to build findings for this run.";
 
+/**
+ * Why the enrich button can be dead while the backend serves the experiment.
+ *
+ * `useInsight`'s `classifyInsightError` folds a daily-limit rejection into
+ * `unavailable: true` with no message — its own comment marks that branch
+ * DEAD, because the backend raises `billing_limit_reached` / `Limit
+ * "insightsPerDay"` and never the string it matches. Repairing that hook is
+ * out of this experiment's scope (it is document-keyed and shared with the
+ * legacy surface), but leaving the reader with a disabled button and no
+ * explanation is not. This names the likely cause without asserting it.
+ */
+const GENERATION_UNAVAILABLE_NOTE =
+  "The AI explanation cannot be requested for this run right now. The shared generation controller reports it unavailable without distinguishing a workspace insights-limit rejection from a genuine outage, so check the workspace's daily insights limit first. The observations below are unaffected.";
+
 const WRITES_DISABLED_NOTE =
   "The connected backend serves the experiment but its write gate is off (UNIFIED_FINDINGS_EXPERIMENT is not set to 1), so findings cannot be built here. Anything already built still reads.";
 
@@ -100,6 +114,24 @@ export function useUnifiedFindings(args: {
   /** The controller's error as it stood at the click, so a request that fails
    *  without ever going pending still hands authority back. */
   const enrichErrorAtRequest = useRef<string | null>(null);
+  /**
+   * Monotonic build token, because the run id alone has an ABA hole.
+   *
+   * Select run A, then B, then A again: a callback from the FIRST A request
+   * still matches `boundRunIdRef`, so it would clear the second A request's
+   * pending flag or overwrite its error. The token only ever moves forward,
+   * so a stale callback can never match a live one.
+   */
+  const buildToken = useRef(0);
+  /**
+   * Whether an enrichment was requested for THIS run, in this session.
+   *
+   * The generation controller is shared with the legacy panel, so its
+   * `failedGeneration` is true for a run whose LEGACY analysis failed long
+   * before this section existed. Announcing "the AI explanation failed" for
+   * that is a misattribution — nobody asked this section for one.
+   */
+  const [enrichAttempted, setEnrichAttempted] = useState(false);
 
   const buildMutation = useMutation(BUILD_FINDINGS_MUTATION as never);
   const experiment = unifiedFindingsOf(args.envelope);
@@ -119,6 +151,7 @@ export function useUnifiedFindings(args: {
   /** The bound run, readable synchronously from an async callback. */
   const boundRunIdRef = useRef<string | null>(runId);
   if (boundRunId !== runId) {
+    buildToken.current += 1;
     boundRunIdRef.current = runId;
     setBoundRunId(runId);
     setMode("deterministic");
@@ -127,6 +160,7 @@ export function useUnifiedFindings(args: {
     buildInFlight.current = false;
     enrichInFlight.current = false;
     setEnrichRequested(false);
+    setEnrichAttempted(false);
   }
 
   useEffect(() => {
@@ -147,6 +181,9 @@ export function useUnifiedFindings(args: {
     // The run this request belongs to. A rejection that settles after the
     // reader has moved on must not write its error onto another run.
     const requestedFor = args.suiteRunId;
+    const token = (buildToken.current += 1);
+    const stale = () =>
+      boundRunIdRef.current !== requestedFor || buildToken.current !== token;
     // A second click while one is in flight must not become a second job. The
     // backend refuses it anyway (the claim is the real guard); this only keeps
     // the UI from asking.
@@ -163,11 +200,11 @@ export function useUnifiedFindings(args: {
       ...(experiment?.snapshot ? { force: true } : {}),
     })
       .catch((error: unknown) => {
-        if (boundRunIdRef.current !== requestedFor) return;
+        if (stale()) return;
         setBuildError(error instanceof Error ? error.message : String(error));
       })
       .finally(() => {
-        if (boundRunIdRef.current !== requestedFor) return;
+        if (stale()) return;
         buildInFlight.current = false;
         setBuildRequested(false);
       });
@@ -183,6 +220,7 @@ export function useUnifiedFindings(args: {
     enrichInFlight.current = true;
     enrichErrorAtRequest.current = args.generation.error;
     setEnrichRequested(true);
+    setEnrichAttempted(true);
     // The existing controller, in the experiment's mode. `force: true` because
     // a run that already has a legacy serverQuality result would otherwise be
     // refused as "already completed" — the metering and the job-id guard are
@@ -212,9 +250,14 @@ export function useUnifiedFindings(args: {
       ? null
       : experiment === null
         ? BACKEND_MISSING_NOTE
-        : experiment.writesEnabled
-          ? null
-          : WRITES_DISABLED_NOTE;
+        : !experiment.writesEnabled
+          ? WRITES_DISABLED_NOTE
+          : // The backend serves the experiment, yet the borrowed controller
+            // says no. Without this the button is simply dead and the reader
+            // is told nothing at all.
+            args.generation.unavailable
+            ? GENERATION_UNAVAILABLE_NOTE
+            : null;
 
   return {
     envelope: args.envelope,
@@ -241,10 +284,20 @@ export function useUnifiedFindings(args: {
         !args.generation.unavailable &&
         args.generation.canRequest,
       pending: enrichRequested || args.generation.pending,
-      error: args.generation.failedGeneration
-        ? (args.generation.error ??
-          "The AI explanation did not complete. The observations below are unaffected.")
-        : args.generation.error,
+      // Only this section's OWN attempt is reported here. The generation
+      // controller is shared with the legacy panel, so `failedGeneration` is
+      // already true for a run whose legacy analysis failed before this
+      // section existed — announcing that as "the AI explanation failed"
+      // would pin someone else's failure on this snapshot. A reload loses
+      // the attempt flag, and that is the honest outcome: from the client
+      // the two failures are indistinguishable, so this says nothing rather
+      // than guessing which one it was.
+      error: enrichAttempted
+        ? args.generation.failedGeneration
+          ? (args.generation.error ??
+            "The AI explanation did not complete. The observations below are unaffected.")
+          : args.generation.error
+        : null,
       onRun: onEnrich,
     },
     backendUnavailableNote,

@@ -137,16 +137,23 @@ describe("enrich", () => {
   });
 
   it("reports a generation failure without disturbing the build state", () => {
-    const { result } = renderHook(() =>
-      useUnifiedFindings({
-        suiteRunId: "run_1",
-        envelope: ENVELOPE,
-        generation: generation({
-          failedGeneration: true,
-          error: "provider returned 503",
+    // The request has to come from THIS section first. A controller that was
+    // already failed on mount is reporting someone else's operation, which
+    // the suite below covers separately.
+    const { result, rerender } = renderHook(
+      (props: { failed: boolean }) =>
+        useUnifiedFindings({
+          suiteRunId: "run_1",
+          envelope: ENVELOPE,
+          generation: generation({
+            failedGeneration: props.failed,
+            error: props.failed ? "provider returned 503" : null,
+          }),
         }),
-      }),
+      { initialProps: { failed: false } },
     );
+    act(() => result.current.enrich.onRun());
+    rerender({ failed: true });
     expect(result.current.enrich.error).toContain("503");
     expect(result.current.build.error).toBeNull();
   });
@@ -365,5 +372,108 @@ describe("state is scoped to ONE run", () => {
     expect(result.current.mode).toBe("ai");
     rerender({ suiteRunId: "run_B" });
     expect(result.current.mode).toBe("deterministic");
+  });
+});
+
+describe("the borrowed controller's state is not this section's to claim", () => {
+  it("stays silent about a legacy analysis failure nobody asked it for", () => {
+    const { result } = renderHook(() =>
+      useUnifiedFindings({
+        suiteRunId: "run_1",
+        envelope: ENVELOPE,
+        // A run whose LEGACY serverQuality failed long before this section
+        // existed. The controller is shared, so it reports that failure.
+        generation: generation({
+          failedGeneration: true,
+          error: "the legacy analysis failed",
+        }),
+      }),
+    );
+    expect(result.current.enrich.error).toBeNull();
+  });
+
+  it("reports the failure once this section actually asked", () => {
+    const { result, rerender } = renderHook(
+      (props: { failed: boolean }) =>
+        useUnifiedFindings({
+          suiteRunId: "run_1",
+          envelope: ENVELOPE,
+          generation: generation({
+            failedGeneration: props.failed,
+            error: props.failed ? "the explanation failed" : null,
+          }),
+        }),
+      { initialProps: { failed: false } },
+    );
+    act(() => result.current.enrich.onRun());
+    rerender({ failed: true });
+    expect(result.current.enrich.error).toBe("the explanation failed");
+  });
+
+  it("explains a dead button instead of leaving the reader guessing", () => {
+    const { result } = renderHook(() =>
+      useUnifiedFindings({
+        suiteRunId: "run_1",
+        envelope: ENVELOPE,
+        // What a daily-insights-limit rejection actually looks like through
+        // `classifyInsightError`: unavailable, with no message.
+        generation: generation({ unavailable: true, error: null }),
+      }),
+    );
+    expect(result.current.enrich.available).toBe(false);
+    expect(result.current.backendUnavailableNote).toContain("insights-limit");
+  });
+
+  it("says nothing extra when the controller is healthy", () => {
+    const { result } = renderHook(() =>
+      useUnifiedFindings({
+        suiteRunId: "run_1",
+        envelope: ENVELOPE,
+        generation: generation(),
+      }),
+    );
+    expect(result.current.backendUnavailableNote).toBeNull();
+  });
+});
+
+describe("a stale build callback cannot reach a live request", () => {
+  it("ignores the first run A request after A → B → A", async () => {
+    const settlers: Array<(error: Error) => void> = [];
+    mutation.fn.mockImplementation(
+      () =>
+        new Promise<{ jobId: string }>((_resolve, reject) => {
+          settlers.push(reject);
+        }),
+    );
+    const { result, rerender } = renderHook(
+      (props: { suiteRunId: string }) =>
+        useUnifiedFindings({
+          suiteRunId: props.suiteRunId,
+          envelope: ENVELOPE,
+          generation: generation(),
+        }),
+      { initialProps: { suiteRunId: "run_A" } },
+    );
+
+    // First request on A, then away to B, then back to A and request again.
+    act(() => result.current.build.onRun());
+    rerender({ suiteRunId: "run_B" });
+    rerender({ suiteRunId: "run_A" });
+    act(() => result.current.build.onRun());
+    expect(result.current.build.pending).toBe(true);
+
+    // The FIRST request now fails. Its run id still matches — this is the ABA
+    // case a run-id check alone cannot see — so only the token rejects it.
+    await act(async () => {
+      settlers[0]?.(new Error("the first request failed"));
+    });
+    expect(result.current.build.error).toBeNull();
+    expect(result.current.build.pending).toBe(true);
+
+    // The live request still owns the state.
+    await act(async () => {
+      settlers[1]?.(new Error("the live request failed"));
+    });
+    expect(result.current.build.error).toContain("the live request failed");
   });
 });

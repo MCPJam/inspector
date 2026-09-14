@@ -391,6 +391,9 @@ missing evidence is the thing to fix first, and §9.3 names it.
 5. Optional: §5 + §8 steps 2–4 on a **dev** deployment.
 6. `npm run check:findings-wire-parity -w @mcpjam/inspector -- --backend ../mcpjam-backend-findings`
    if you want the cross-repo contract confirmed on your machine.
+7. `npm run test:replay-artifact-parity -w @mcpjam/inspector` with the backend
+   checkout beside this one, to confirm the replay artifact's producer and
+   parser still agree. It is opt-in because it shells out to that checkout.
 
 ---
 
@@ -411,6 +414,11 @@ this branch.
 | `replay-artifact.ts` cited a parity test that was never written | The file it named now exists, covering the validator and parsing the producer's real `findings:replay` output when the paired backend checkout is present.                                                                                                                                                             |
 | The SDK union was mis-formatted                                 | A genuine `prettier/prettier` ESLint error in `sdk/src/platform/types.ts`, left behind by the hand-repair of the prettier-2 damage.                                                                                                                                                                                    |
 | The mirror script accepted a mistyped flag                      | `--backed` was ignored and the comparison silently ran against the default checkout — the same "reports a pass about something nobody asked for" failure the script exists to prevent. Unknown arguments and a value-less `--backend` now exit non-zero.                                                               |
+
+| Enrichment failures were attributed to this section that were not its own | `enrich.error` came straight from the borrowed controller's `failedGeneration`, which is already true for a run whose **legacy** analysis failed before this section existed — so opening a deterministic snapshot announced "The AI explanation failed" with nothing having been requested. It now reports only this section's own attempt. |
+| A dead enrich button explained nothing | `useInsight`'s `classifyInsightError` folds a daily-insights-limit rejection into `unavailable: true` with no message — a branch its own comment marks DEAD, because the backend raises `billing_limit_reached` and never the string it matches. Repairing that shared hook is out of scope; leaving the reader with a disabled button and no reason was not. The note names the likely cause without asserting it. |
+| The build's run-id guard had an ABA hole | Select run A, then B, then A again, and a callback from the _first_ A request still matched the run id and could clear the second request's pending flag or overwrite its error. A monotonic token settles it. |
+| The new parity test shelled out during the normal suite | It invoked the backend's `findings:replay` whenever a sibling checkout existed, so a broken `node_modules` over there would fail the Inspector suite — an environment gap, not a parity failure. It is opt-in via `npm run test:replay-artifact-parity`, and throws rather than skipping if asked to run without the checkout. |
 
 Two findings were **not** taken as written, with reasons:
 
