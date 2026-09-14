@@ -1,0 +1,26 @@
+/* The app's own stylesheet, imported wholesale. The preview must look like
+   the product, not like an approximation of it — so it takes the same
+   Tailwind build and the same design-system tokens rather than a local
+   subset that would be free to drift. */
+@import "tailwindcss";
+@import "@mcpjam/design-system/index.css";
+
+@source "../../src/components/shared/actionable-insights/**/*.tsx";
+@source "./**/*.tsx";
+@source "../../../../design-system/src/**/*.tsx";
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  html,
+  body,
+  #root {
+    min-height: 100%;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}
