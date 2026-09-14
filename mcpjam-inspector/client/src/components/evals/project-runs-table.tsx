@@ -34,6 +34,7 @@ import {
 } from "./project-run-suite-groups";
 import { useHostList } from "@/hooks/useClients";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
+import { usePlatformPostLaunchEnabled } from "@/hooks/usePlatformPostLaunchEnabled";
 import {
   RunHistoryTable,
   RunHistorySummary,
@@ -73,8 +74,8 @@ import {
   apiKeyTail,
   originsForFilters,
   runAgentName,
-  RUN_ORIGIN_FILTERS,
   resolveRunOrigin,
+  visibleRunOriginFilters,
 } from "@/lib/evals/run-origin";
 import type { EvalSuiteRun } from "./types";
 import {
@@ -296,6 +297,11 @@ export function ProjectRunsTable({
   // must not disappear when another row is hidden.
   const history = useProjectRunHistory(projectId, rows, historyMetricsEnabled);
   const projectEnvironmentsEnabled = useProjectEnvironmentsEnabled();
+  const platformPostLaunchEnabled = usePlatformPostLaunchEnabled();
+  const platformFilters = useMemo(
+    () => visibleRunOriginFilters(platformPostLaunchEnabled),
+    [platformPostLaunchEnabled],
+  );
   const { hosts } = useHostList({
     isAuthenticated: historyMetricsEnabled,
     projectId,
@@ -667,7 +673,7 @@ export function ProjectRunsTable({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                {RUN_ORIGIN_FILTERS.map((filter) => (
+                {platformFilters.map((filter) => (
                   <DropdownMenuCheckboxItem
                     key={filter.value}
                     checked={sourceFilter.has(filter.value)}
