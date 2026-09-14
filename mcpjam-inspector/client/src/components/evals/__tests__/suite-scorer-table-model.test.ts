@@ -26,6 +26,10 @@ import {
   withPredicateRole,
   type ScorerUiRole,
 } from "../suite-scorer-table-model";
+import {
+  STANDARD_ASSERTION_CHECKS,
+  listEffectiveRules,
+} from "../standard-checks-model";
 
 function samplePredicate(kind: string): Predicate {
   const base = { type: kind } as Record<string, unknown>;
@@ -130,10 +134,11 @@ describe("buildScorerTable groups", () => {
       predicates: [],
     });
     const userValue = groups.find((group) => group.stage === "userValue");
-    expect(userValue?.rows.map((row) => row.judgeSlot)).toEqual([
-      "goalCompletion",
-      "groundedness",
-    ]);
+    expect(
+      userValue?.rows
+        .filter((row) => row.kind === "judge")
+        .map((row) => row.judgeSlot),
+    ).toEqual(["goalCompletion", "groundedness"]);
     expect(
       userValue?.rows.find((row) => row.judgeSlot === "groundedness")
         ?.thresholdKind,
@@ -155,14 +160,113 @@ describe("buildScorerTable groups", () => {
     });
     for (const stage of ["connection", "discovery"] as const) {
       const group = groups.find((entry) => entry.stage === stage);
-      expect(group?.rows).toEqual([
+      // First, ahead of any standard check the stage lists as off.
+      expect(group?.rows[0]).toEqual(
         expect.objectContaining({
           kind: "observed",
           muted: true,
+          enabled: true,
           name: "Observed by the runner",
         }),
-      ]);
+      );
+      expect(
+        group?.rows.slice(1).every((row) => row.kind === "preset"),
+        stage,
+      ).toBe(true);
     }
+  });
+
+  it("lists every standard check nothing authors as an off preset row, once", () => {
+    const { groups } = buildScorerTable({
+      model: groupGradersByStage({ predicates: [] }),
+      predicates: [],
+    });
+    const presets = groups.flatMap((group) =>
+      group.rows.filter((row) => row.kind === "preset"),
+    );
+    expect(presets.map((row) => row.family?.id).sort()).toEqual(
+      STANDARD_ASSERTION_CHECKS.map((check) => check.id).sort(),
+    );
+    for (const row of presets) {
+      expect(row.enabled).toBe(false);
+      expect(row.role).toBe("warn");
+      const stage = groups.find((group) => group.rows.includes(row))?.stage;
+      expect(stage).toBe(
+        STANDARD_ASSERTION_CHECKS.find((check) => check.id === row.family?.id)
+          ?.stage,
+      );
+    }
+    // Listing can be switched off for a surface that only wants what is on.
+    const bare = buildScorerTable({
+      model: groupGradersByStage({ predicates: [] }),
+      predicates: [],
+      listPresets: false,
+    });
+    expect(
+      bare.groups.flatMap((group) =>
+        group.rows.filter((row) => row.kind === "preset"),
+      ),
+    ).toEqual([]);
+  });
+
+  it("drops the preset row once any rule of its kind is listed, suppressed or not", () => {
+    const latency = STANDARD_ASSERTION_CHECKS.find(
+      (check) => check.id === "response.performance",
+    )!;
+    const suite: Predicate[] = [{ type: "toolLatencyUnder", ms: 1234 }];
+    const rules = listEffectiveRules(suite, {
+      suppressedSuiteStandardCheckIds: [latency.id],
+    });
+    const { groups, cards } = buildScorerTable({
+      model: groupGradersByStage({ predicates: suite }),
+      activeModel: groupGradersByStage({ predicates: [] }),
+      predicates: suite,
+      rules,
+    });
+    const response = groups.find((group) => group.stage === "response")!;
+    const listed = response.rows.filter((row) => row.family?.id === latency.id);
+    expect(listed).toEqual([
+      expect.objectContaining({
+        kind: "predicate",
+        source: "suite",
+        suppressed: true,
+        enabled: false,
+        muted: true,
+        family: expect.objectContaining({ id: latency.id, suiteRules: 1 }),
+      }),
+    ]);
+    // A suppressed rule is listed, not counted: the card reads as ungraded.
+    expect(cards.find((card) => card.stage === "response")?.chip.label).toBe(
+      "No evaluator",
+    );
+  });
+
+  it("reads a case's judge-skipped flag into the judge row and the card", () => {
+    const build = (judgeEnabled?: boolean) =>
+      buildScorerTable({
+        model: groupGradersByStage({ predicates: [] }),
+        predicates: [],
+        judgeConfig: { goalCompletion: { autoRun: true } },
+        judgeEnabled,
+      });
+    const judgeRow = (view: ReturnType<typeof build>) =>
+      view.groups
+        .find((group) => group.stage === "userValue")
+        ?.rows.find((row) => row.judgeSlot === "goalCompletion");
+    const card = (view: ReturnType<typeof build>) =>
+      view.cards.find((card) => card.stage === "userValue")?.chip.label;
+    expect(judgeRow(build())?.enabled).toBe(true);
+    expect(card(build())).toBe("Judge automatic");
+    expect(judgeRow(build(false))?.enabled).toBe(false);
+    expect(card(build(false))).toBe("Judge off");
+    // A case cannot switch on a judge the suite turned off.
+    const off = buildScorerTable({
+      model: groupGradersByStage({ predicates: [] }),
+      predicates: [],
+      judgeConfig: { goalCompletion: { enabled: false } },
+      judgeEnabled: true,
+    });
+    expect(judgeRow(off)?.enabled).toBe(false);
   });
 });
 

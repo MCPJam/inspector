@@ -123,7 +123,7 @@ export const ROUTE_OWNED_KINDS: ReadonlySet<PredicateKind> =
   new Set<PredicateKind>(["toolCalledWith"]);
 
 /**
- * What the case page's "+ Add scorer" library may offer.
+ * What the case page's "+ Add assertion" library may offer.
  *
  * Excludes the route's own kind (offering it twice would let a reader author a
  * route the route row then contradicts) and the opt-in kinds, which are
@@ -483,7 +483,9 @@ export function stepScope(
 function rowTooltip(kindLabel: string, role: ScorerUiRole, inline: boolean) {
   const parts = [kindLabel, ROLE_LEGEND[role].meaning];
   if (inline) {
-    parts.push("Graded where it sits in the run, not over the whole iteration.");
+    parts.push(
+      "Graded where it sits in the run, not over the whole iteration.",
+    );
   }
   return parts.join(" ");
 }

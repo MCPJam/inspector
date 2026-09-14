@@ -83,7 +83,25 @@ describe("SuitePassOrFailSection", () => {
 
   it("says 'No evaluator' for an unconfigured response stage", () => {
     const { container } = renderSection();
-    expect(emptyCopy(container, "response")).toBe("No evaluator");
+    // The card carries the claim. The table under it lists the stage's
+    // standard checks as off rows, none of them an evaluator.
+    expect(
+      container.querySelector('[data-testid="stage-chain-card-response"]')
+        ?.textContent,
+    ).toContain("No evaluator");
+    const rows = Array.from(
+      container.querySelectorAll(
+        '[data-stage-group="response"] tr[data-scorer-row]',
+      ),
+    );
+    expect(rows.length).toBeGreaterThan(0);
+    expect(
+      rows.every(
+        (row) =>
+          row.getAttribute("data-scorer-row") === "preset" &&
+          row.getAttribute("data-scorer-enabled") === "false",
+      ),
+    ).toBe(true);
   });
 
   it("never tells a reader connection or discovery is ungraded", () => {

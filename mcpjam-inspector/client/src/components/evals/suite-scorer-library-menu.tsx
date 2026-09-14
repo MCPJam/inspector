@@ -43,7 +43,7 @@ export function SuiteScorerLibraryMenu({
    */
   authorableKinds?: readonly Predicate["type"][];
   /**
-   * What the button says. The suite table's "Add scorer" is the default; the
+   * What the button says. The suite table's "Add assertion" is the default; the
    * spine says "Add a check after this", because there the menu answers WHERE
    * as well as what, and a generic label would lose the position.
    */

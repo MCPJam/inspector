@@ -1,17 +1,31 @@
+/**
+ * A case's checks: the suite's scorer table, in case scope.
+ *
+ * The same `SuiteScorerTable` the suite settings page renders, so a person
+ * reads one numbered 01–06 layout on both pages. Here the suite's rules are
+ * inherited — read-only, switchable off by standard-check family — and the
+ * case's own rules are edited in place. The judge row is the case's
+ * judge-skipped flag. Match options and the judge cards are the suite's and
+ * stay on its page.
+ */
+
 import { Button } from "@mcpjam/design-system/button";
 import type { CasePredicates, Predicate } from "@/shared/eval-matching";
 import type { SuiteCapabilities } from "@/hooks/use-suite-capabilities";
-import { SuiteStageChecks } from "@/components/evals/suite-stage-checks";
+import { SuiteScorerTable } from "@/components/evals/suite-scorer-table";
 import {
-  toggleCaseStandardCheck,
-  type StandardCheckDraft,
-} from "@/components/evals/standard-checks-model";
+  JUDGE_HINT,
+  PASS_OR_FAIL_HINT,
+} from "@/components/evals/suite-pass-or-fail-section";
+import type { StandardCheckDraft } from "@/components/evals/standard-checks-model";
+import type { EvalJudgeConfig } from "@/components/evals/types";
 
 export function CaseChecksPage({
   title,
   predicates,
   suppressedSuiteStandardCheckIds,
   suitePredicates,
+  suiteJudgeConfig,
   onChecksChange,
   capabilities,
   judgeSkipped,
@@ -25,6 +39,8 @@ export function CaseChecksPage({
   predicates?: CasePredicates;
   suppressedSuiteStandardCheckIds?: string[];
   suitePredicates: Predicate[];
+  /** Read only here: the judge row shows the suite's threshold and role. */
+  suiteJudgeConfig?: EvalJudgeConfig;
   onChecksChange: (next: StandardCheckDraft) => void;
   capabilities?: SuiteCapabilities | null;
   judgeSkipped: boolean;
@@ -44,7 +60,8 @@ export function CaseChecksPage({
               User Value Chain Assertions
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Overrides for {title}
+              Overrides for {title}. Step assertions are configured in the case
+              flow.
             </p>
           </div>
           <div className="flex gap-2">
@@ -56,18 +73,19 @@ export function CaseChecksPage({
             </Button>
           </div>
         </div>
-        <SuiteStageChecks
-          suitePredicates={suitePredicates}
-          caseDraft={draft}
+        <SuiteScorerTable
+          scope={{
+            kind: "case",
+            suitePredicates,
+            draft,
+            onDraftChange: onChecksChange,
+            judgeSkipped,
+            onJudgeSkippedChange,
+          }}
+          judgeConfig={suiteJudgeConfig}
           capabilities={capabilities}
-          onToggle={(check, enabled) =>
-            onChecksChange(
-              toggleCaseStandardCheck(suitePredicates, draft, check, enabled),
-            )
-          }
-          judgeSkipped={judgeSkipped}
-          onJudgeSkippedChange={onJudgeSkippedChange}
-          onEditRules={onBack}
+          passOrFailHint={PASS_OR_FAIL_HINT}
+          judgeHint={JUDGE_HINT}
         />
         {onConfigureSuite ? (
           <Button variant="outline" size="sm" onClick={onConfigureSuite}>
