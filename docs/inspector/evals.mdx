@@ -493,7 +493,7 @@ Below the header, the hero section shows a row per client/model pairing with a p
 
 The **Test cases** section (formerly the matrix) lists every test case with a search box and **Status**, **Client**, and **Model** filters on one row. There is no master pass/fail bar or "RUN RESULTS" eyebrow label in this section.
 
-- **Per-iteration row** with case, model, pass/fail, tokens, cost, duration, and the tool calls that actually happened. Each row also shows a one-line summary of where that trial's user-value chain stopped — for example `broke at Tool response`, `Request satisfied`, or `chain withheld` — so you can scan the table without opening each row.
+- **Per-iteration row** with case, model, pass/fail, tokens, cost, duration, and the tool calls that actually happened. Each row also shows a one-line summary of where that iteration's user-value chain stopped — for example `broke at Tool response`, `Request satisfied`, or `chain withheld` — so you can scan the table without opening each row.
 - **Expected vs actual** tool calls side-by-side when an iteration fails. For failed iterations, a **Categorized diff** above the raw Expected/Actual grids groups discrepancies into four categories:
   - **Missing** — expected tool calls that were never made
   - **Extra** — actual calls that weren't expected (reported but non-fatal by default)
