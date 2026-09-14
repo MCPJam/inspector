@@ -59,12 +59,12 @@ jobs:
           fi
 
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           registry-url: "https://registry.npmjs.org"
@@ -82,7 +82,7 @@ jobs:
       # BOTH are required — neither alone covers what `verify` did.
       - name: Require green CI for candidate SHA
         if: ${{ !fromJSON(inputs.skip_verify) }}
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             // Fetch without branch/status filters — GitHub's search index can
@@ -141,7 +141,7 @@ jobs:
       # run has smoked.
       - name: Require green staging smoke for candidate SHA
         if: ${{ !fromJSON(inputs.skip_verify) }}
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const workflowId = "deploy-staging.yml";
@@ -328,7 +328,7 @@ jobs:
         run: git diff --binary > release.patch
 
       - name: Upload release plan artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-plan
           path: |
@@ -433,17 +433,17 @@ jobs:
       # one that already happened.
       - name: Checkout code
         if: ${{ success() && needs.preflight.outputs.build_harness_pack == 'true' }}
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Node
         if: ${{ success() && needs.preflight.outputs.build_harness_pack == 'true' }}
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: Download local harness runtime packs
         if: ${{ success() && needs.preflight.outputs.build_harness_pack == 'true' }}
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: local-harness-pack-*
           path: .release-assets/runtime
@@ -477,12 +477,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # Without the patch this builds the PRE-bump versions, and the tarballs
       # would disagree with what changeset publish then tries to publish.
       - name: Download release patch
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-plan
           path: .release-plan
@@ -491,7 +491,7 @@ jobs:
         run: git apply --binary .release-plan/release.patch
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           registry-url: "https://registry.npmjs.org"
@@ -564,7 +564,7 @@ jobs:
       # via prepublishOnly; theirs are carried anyway so the publish job can
       # assert it has a complete, already-smoked package set.
       - name: Upload built package dists
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: npm-dists
           path: |
@@ -604,10 +604,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Download release patch
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-plan
           path: .release-plan
@@ -616,7 +616,7 @@ jobs:
         run: git apply --binary .release-plan/release.patch
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           registry-url: "https://registry.npmjs.org"
@@ -626,7 +626,7 @@ jobs:
         run: npm ci --legacy-peer-deps
 
       - name: Download built package dists
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: npm-dists
           path: .
@@ -719,7 +719,7 @@ jobs:
     environment: backend-production
     steps:
       - name: Dispatch and wait for backend production deployment
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           BACKEND_REPO: ${{ vars.MCPJAM_BACKEND_REPO || 'MCPJam/mcpjam-backend' }}
         with:
@@ -861,13 +861,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           token: ${{ secrets.RELEASE_PUSH_TOKEN }}
 
       - name: Download release patch
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-plan
           path: .release-plan
@@ -877,7 +877,7 @@ jobs:
 
       - name: Setup Node.js for catalog parity heads-up
         if: fromJSON(needs.preflight.outputs.publish_sdk)
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -935,14 +935,14 @@ jobs:
 
       - name: Download macOS artifacts
         if: ${{ fromJSON(needs.preflight.outputs.build_inspector_artifacts) }}
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: inspector-macos-${{ needs.preflight.outputs.inspector_version }}
           path: .release-assets/macos
 
       - name: Download Windows artifacts
         if: ${{ fromJSON(needs.preflight.outputs.build_inspector_artifacts) }}
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: inspector-windows-${{ needs.preflight.outputs.inspector_version }}
           path: .release-assets/windows
@@ -951,7 +951,7 @@ jobs:
       # sha256 — this is where the installer downloads from.
       - name: Download local harness runtime packs
         if: ${{ fromJSON(needs.preflight.outputs.build_harness_pack) }}
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: local-harness-pack-*
           path: .release-assets/runtime
@@ -964,7 +964,7 @@ jobs:
       # exactly what this release must never leave reachable.
       - name: Create GitHub release (draft)
         if: needs.preflight.outputs.release_tag != ''
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.preflight.outputs.release_tag }}
           name: Release ${{ needs.preflight.outputs.release_tag }}
@@ -1009,7 +1009,7 @@ jobs:
       # rather than creating a second one.
       - name: Publish the GitHub release
         if: needs.preflight.outputs.release_tag != ''
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.preflight.outputs.release_tag }}
           draft: false
