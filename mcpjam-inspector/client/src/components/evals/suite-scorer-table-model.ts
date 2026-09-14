@@ -177,25 +177,33 @@ export function withGoalCompletionRole(
 export type ScorerLibraryCategoryId =
   "discovery" | "selection" | "call" | "userValue" | "budget" | "response";
 
-export const SCORER_LIBRARY_CATEGORY_LABELS: Record<
-  ScorerLibraryCategoryId,
-  string
-> = {
+/**
+ * `as const satisfies` rather than a `Record<_, string>` annotation: the
+ * exhaustiveness check is the same, but the literal value types survive, which
+ * is what lets the Add drawer derive a real union of section headings from
+ * these instead of widening to `string`.
+ */
+export const SCORER_LIBRARY_CATEGORY_LABELS = {
   discovery: "Discovery",
   selection: "Selection",
   call: "Tool call",
   userValue: "User value",
   budget: "Budgets",
   response: "Response",
-};
+} as const satisfies Record<ScorerLibraryCategoryId, string>;
 
-const LIBRARY_CATEGORY_ORDER: readonly ScorerLibraryCategoryId[] = [
+/**
+ * Chain order, then the budget group: the same six-stage order the run page
+ * reports in, so a reader picks an assertion from the heading its evidence
+ * will appear under.
+ */
+export const LIBRARY_CATEGORY_ORDER: readonly ScorerLibraryCategoryId[] = [
   "discovery",
   "selection",
   "call",
+  "response",
   "userValue",
   "budget",
-  "response",
 ];
 
 /**

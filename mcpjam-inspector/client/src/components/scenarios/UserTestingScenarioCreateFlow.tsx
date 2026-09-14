@@ -119,6 +119,20 @@ export function pickDefaultCreateClient(
  * `null` (not `false`) while the host list is still loading, or when the
  * picked client is not in it: an unknown answer must not render as a problem.
  */
+export function composedSetupHasServers(args: {
+  serverAttachmentId: string | null;
+  hostId: string | null | undefined;
+  hosts: readonly HostListItem[];
+  hostsLoading: boolean;
+}): boolean | null {
+  if (args.serverAttachmentId) return true;
+  if (!args.hostId) return null;
+  if (args.hostsLoading) return null;
+  const host = args.hosts.find((h) => h.hostId === args.hostId);
+  if (!host) return null;
+  return (host.serverCount ?? 0) > 0;
+}
+
 /**
  * Whether a failed publish is "that study name is taken".
  *
@@ -136,20 +150,6 @@ export function isStudyNameTakenError(error: unknown): boolean {
   if (!data || typeof data !== "object") return false;
   const shape = data as { code?: unknown; field?: unknown };
   return shape.code === "CONFLICT" && shape.field === "name";
-}
-
-export function composedSetupHasServers(args: {
-  serverAttachmentId: string | null;
-  hostId: string | null | undefined;
-  hosts: readonly HostListItem[];
-  hostsLoading: boolean;
-}): boolean | null {
-  if (args.serverAttachmentId) return true;
-  if (!args.hostId) return null;
-  if (args.hostsLoading) return null;
-  const host = args.hosts.find((h) => h.hostId === args.hostId);
-  if (!host) return null;
-  return (host.serverCount ?? 0) > 0;
 }
 
 /**
@@ -608,6 +608,12 @@ export function UserTestingScenarioCreateFlow({
       if (isStudyNameTakenError(err)) {
         setNameTaken(effectiveName);
         setStep("study");
+        // Put the refused name IN the field. An empty field publishes under the
+        // placeholder, and quoting that name back at a blank input leaves
+        // nothing to correct — pressing Create again would send the same name
+        // and fail the same way. Where the field already held it this only
+        // trims, which is what was submitted anyway.
+        setName(effectiveName);
         userEditedNameRef.current = true;
         savingRef.current = false;
         setIsSaving(false);

@@ -121,6 +121,30 @@ import { buildCellTrendSeries, useCrossHostData } from "../use-cross-host-data";
 import { renderHook } from "@testing-library/react";
 
 describe("useCrossHostData", () => {
+  it("includes a backfilled run in a style/model column without a host address", () => {
+    const run = {
+      ...makeRun("legacy"),
+      client: {
+        name: "Claude",
+        hostStyle: "claude",
+        source: "suite_default" as const,
+      },
+      effectiveModelId: "haiku",
+      modelSource: "case" as const,
+    };
+    const { result } = renderHook(() =>
+      useCrossHostData(makeSuite(), [makeCase("c1")], [run], [makeIteration("i1", { suiteRunId: "legacy", testCaseId: "c1", result: "passed" })]),
+    );
+    expect(result.current.hostColumns).toEqual([
+      expect.objectContaining({
+        hostId: "style:claude",
+        hostName: "Claude",
+        modelKey: "haiku",
+        namedHostId: undefined,
+      }),
+    ]);
+    expect(result.current.matrix.get("c1")?.get("style:claude::haiku")?.passCount).toBe(1);
+  });
   it("returns empty state when no host attachments and no iterations", () => {
     const { result } = renderHook(() =>
       useCrossHostData(makeSuite(), [], [], []),
@@ -253,6 +277,7 @@ describe("useCrossHostData", () => {
     expect(result.current.hostColumns).toEqual([
       {
         hostId: "h_env",
+        namedHostId: "h_env",
         columnKey: "h_env::client-default",
         modelKey: "client-default",
         modelLabel: null,
@@ -338,7 +363,7 @@ describe("useCrossHostData", () => {
     expect(result.current.hasAnyData).toBe(false);
   });
 
-  it("excludes iterations from runs with no namedHostId", () => {
+  it("retains pre-descriptor runs in a neutral style column", () => {
     const suite = makeSuite([{ namedHostId: "h1", hostName: "Claude" }]);
     const cases = [makeCase("c1")];
     const legacyRun = makeRun("r_legacy"); // no namedHostId
@@ -350,7 +375,13 @@ describe("useCrossHostData", () => {
     const { result } = renderHook(() =>
       useCrossHostData(suite, cases, [legacyRun], [iter]),
     );
-    expect(result.current.hasAnyData).toBe(false);
+    expect(result.current.hasAnyData).toBe(true);
+    expect(result.current.hostColumns).toContainEqual(
+      expect.objectContaining({
+        hostId: "style:unknown",
+        hostName: "Suite default",
+      }),
+    );
   });
 
   it("handles empty cell when a (case, host) pair has no iterations", () => {

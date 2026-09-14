@@ -673,7 +673,7 @@ it("adds an action from Add after the selected prompt", async () => {
   render(<StatefulSpine steps={[]} onStepsChange={onStepsChange} />);
   await user.click(screen.getByRole("button", { name: "Add" }));
   expect(screen.getByText("Actions")).toBeVisible();
-  expect(screen.getByText("Assertions · Tool selection")).toBeVisible();
+  expect(screen.getByText("Assertions · Selection")).toBeVisible();
   const choice = screen.getByTestId("add-step-item-toolCall");
   expect(choice.querySelector("svg")).not.toBeNull();
   await user.click(choice);
