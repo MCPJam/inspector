@@ -233,7 +233,7 @@ export function AddStepPicker({
             }
             onKeyDown={handleSearchKeyDown}
             placeholder="Filter…"
-            aria-label="Filter steps and checks"
+            aria-label="Filter steps and assertions"
             className="h-7 border-none bg-transparent px-2 text-xs shadow-none focus-visible:ring-0"
           />
         </div>
@@ -294,7 +294,7 @@ export function AddStepPicker({
                 className="flex w-full items-center gap-1 rounded-sm px-2 py-1.5 text-left text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground"
               >
                 <ChevronRight className="h-3.5 w-3.5" aria-hidden />
-                More checks ({hiddenSecondaryCount})
+                More assertions ({hiddenSecondaryCount})
               </button>
             ) : null}
           </div>

@@ -253,8 +253,8 @@ export function groupGradersByStage(input: {
  * THREE ANSWERS, and the distinction is the point. `connection`, `discovery`
  * and `call` have no authorable grader on this page at all — the runner
  * measures them on every trial whether or not anyone configured anything — so
- * "no grader" would read as a gap the reader should close. The other three are
- * genuinely unconfigured.
+ * "No evaluator" would read as a gap the reader should close. The other three
+ * are genuinely unconfigured.
  *
  * Neither answer is `STAGE_STATE_LABELS.notMeasured`. That phrase describes a
  * RUN: a stage no trial reached, or one the analyzer could not decide. Settings
@@ -270,15 +270,15 @@ export const STAGE_EMPTY_COPY: Record<UserValueStage, string> = {
     "Observed by the runner — decided by the client and server connection settings",
   discovery:
     "Observed by the runner; add assertions to check the advertised catalog",
-  selection: "No grader",
+  selection: "No evaluator",
   call: "Observed by the runner — nothing to configure",
-  response: "No grader",
-  userValue: "No grader",
+  response: "No evaluator",
+  userValue: "No evaluator",
 };
 
 /** True when this stage's empty state is a gap rather than a runner concern. */
 export function stageEmptyIsGap(stage: UserValueStage): boolean {
-  return STAGE_EMPTY_COPY[stage] === "No grader";
+  return STAGE_EMPTY_COPY[stage] === "No evaluator";
 }
 
 /**

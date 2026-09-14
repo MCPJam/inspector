@@ -233,7 +233,7 @@ describe("stage and category copy", () => {
     );
     expect(card).toHaveTextContent("Failure category: not reported");
     expect(card).toHaveTextContent(
-      "This trial's stage chain did not validate",
+      "This iteration's stage chain did not validate",
     );
   });
 

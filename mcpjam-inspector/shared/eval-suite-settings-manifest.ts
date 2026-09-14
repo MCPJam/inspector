@@ -84,7 +84,7 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   },
   {
     key: "passOrFail",
-    label: "Scorers and judges",
+    label: "Evaluators",
     // A PRESENTATION grouping, not a setting. It has no stored field of its
     // own: it arranges settings.matchOptions, settings.checks and
     // settings.judge under the chain stage each one measures, and every one of
@@ -99,7 +99,7 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   },
   {
     key: "checks",
-    label: "Scorers",
+    label: "Assertions",
     api: "settings.checks",
   },
   {
@@ -132,7 +132,7 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   },
   {
     key: "repetitions",
-    label: "Repetitions",
+    label: "Iterations",
     api: "settings.repetitions",
   },
   {
@@ -167,7 +167,7 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   },
   {
     key: "qualityGateNoGatingScoreErrors",
-    label: "Any gating scorer errored",
+    label: "Any gating evaluator errored",
     api: "settings.qualityGate.noGatingScoreErrors",
   },
   {

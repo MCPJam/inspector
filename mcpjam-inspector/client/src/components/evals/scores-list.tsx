@@ -114,14 +114,14 @@ function isGating(joined: JoinedScore): boolean {
 }
 
 /**
- * Does this row belong in a "N / M gating scores passed" count?
+ * Does this row belong in a "N / M gating evaluators passed" count?
  *
  * Deliberately NOT `isGating`, and the difference is the whole point of two
  * predicates:
  *
  *   - an UNJOINABLE row counts, even though it renders in its own section — it
  *     fails closed everywhere else, and leaving it out would read
- *     "2 / 2 checks passed" beside a failed iteration;
+ *     "2 / 2 assertions passed" beside a failed iteration;
  *   - a joined gating row that came back `not_applicable` does NOT count, even
  *     though it renders under "Gating" — exclusion from every denominator is
  *     exactly what distinguishes it from `skipped`.
@@ -308,12 +308,12 @@ export function ScoresList({
   // reports a regression that did not happen. It renders neutral instead.
   const summary: { tone: keyof typeof SUMMARY_TONE; label: string } =
     integrityInvalid
-      ? { tone: "failed", label: "score evidence did not verify" }
+      ? { tone: "failed", label: "evaluator evidence did not verify" }
       : counted.length === 0
-        ? { tone: "none", label: "no gating scores" }
+        ? { tone: "none", label: "no gating evaluators" }
         : {
             tone: countedFailures === 0 ? "passed" : "failed",
-            label: `${counted.length - countedFailures} / ${counted.length} gating scores passed`,
+            label: `${counted.length - countedFailures} / ${counted.length} gating evaluators passed`,
           };
   const tone = SUMMARY_TONE[summary.tone];
   const SummaryIcon = tone.icon;
@@ -321,12 +321,12 @@ export function ScoresList({
   return (
     <div
       role="region"
-      aria-label="Scores"
+      aria-label="Evaluator results"
       className="space-y-2 rounded-md border border-border/40 bg-muted/10 p-3"
     >
       <div className="flex items-center justify-between">
         <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-          Scores{hidingJudges ? " · judge hidden" : ""}
+          Evaluator results{hidingJudges ? " · judge hidden" : ""}
         </div>
         <div
           className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold ${tone.className}`}
@@ -402,7 +402,7 @@ function ScoreGroup({
               data-testid="score-row-hidden"
               className="rounded border border-border/40 bg-background/40 p-2 text-[11px] text-muted-foreground"
             >
-              Judge score hidden until you label this trial
+              Judge score hidden until you label this iteration
             </li>
           ) : (
             <ScoreRow key={`${keyPrefix}-${index}`} row={row} />

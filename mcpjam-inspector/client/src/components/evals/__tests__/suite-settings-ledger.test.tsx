@@ -188,7 +188,7 @@ describe("suite settings ledger", () => {
     // that actually run, and the judge, rubric and matcher editors are on the
     // page again rather than asserted absent.
     const { container } = renderSettingsSheet({ suite: v2Suite });
-    expect(screen.getByRole("heading", { name: "Scorers" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Assertions" })).toBeTruthy();
     expect(container.querySelectorAll("[data-stage-group]")).toHaveLength(6);
     expect(
       screen.queryByRole("tablist", { name: "User value chain" }),

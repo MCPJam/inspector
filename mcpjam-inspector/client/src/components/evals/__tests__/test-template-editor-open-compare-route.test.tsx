@@ -1096,7 +1096,7 @@ describe("TestTemplateEditor run view from route", () => {
     };
     renderGoldenCase({ observeFirst: true, suiteIterations: [trial] });
     fireEvent.click((await screen.findAllByTestId("case-run-row"))[0]);
-    fireEvent.click(await screen.findByText("Suggested checks"));
+    fireEvent.click(await screen.findByText("Suggested assertions"));
     const text = await screen
       .findByText("Require that no tool is called")
       .catch(() => {

@@ -121,11 +121,11 @@ function statusTone(status: EvalStepStatus | undefined): StatusTone {
   return "unknown";
 }
 
-/** How this mount names its checks. See `describeAssert`. */
+/** How this mount names its assertions. See `describeAssert`. */
 export type StepPresentation = "legacy" | "scorecard";
 
 /**
- * A check whose miss the runner records but does not act on.
+ * An assertion whose miss the runner records but does not act on.
  *
  * Widget assertions carry no policy field at all, so they are never advisory.
  */
@@ -178,10 +178,10 @@ function describeTarget(t: {
  *
  * `"legacy"` prints the wire discriminator (`toolCalledAtLeastOnce: get_me`),
  * which is what every Steps tab has shown to date and what the rest of the
- * product stopped saying some time ago — the authoring form, the checks list
+ * product stopped saying some time ago — the authoring form, the assertions list
  * and the scorecard all speak `formatCriterion` / `labelForInlineAssert`.
  *
- * `"scorecard"` uses those same helpers, and it says WHERE the check runs: a
+ * `"scorecard"` uses those same helpers, and it says WHERE the assertion runs: a
  * step's `noToolErrors` sees the transcript up to its own position, so it reads
  * "No tool errors so far" while the whole-run one reads "No tool errors". Same
  * predicate, different claim, and the label is the only place a reader learns
@@ -263,12 +263,12 @@ export function StepReplayView({
   );
   const intsByStep = bucketBy(interactionSteps);
 
-  // Tally the authored assertions (the "checks") and how many passed, derived
+  // Tally the authored assertions and how many passed, derived
   // from the same per-step status the rows below render — so the header and the
   // rows can never disagree.
   //
-  // In `"scorecard"` mode advisory checks are excluded from the tally: an
-  // advisory miss does not fail the trial, so counting it here would report a
+  // In `"scorecard"` mode advisory assertions are excluded from the tally: an
+  // advisory miss does not fail the iteration, so counting it here would report a
   // failure the verdict does not agree with. They are counted separately and
   // named as warnings.
   const assertSteps = steps.filter(isAssertStep);
@@ -451,7 +451,7 @@ function verdictMeta(verdict: StepVerdict | null): {
 
 /**
  * Overall deterministic verdict for the iteration, sitting atop the step list —
- * the answer to "did it pass, and how many checks held" before you scan the
+ * the answer to "did it pass, and how many assertions held" before you scan the
  * per-step rows below. The advisory LLM judge verdict is pinned separately above
  * the tab row by the caller, so it is intentionally not repeated here.
  */
@@ -486,7 +486,8 @@ function StepsVerdictHeader({
 
       {checkTotal > 0 ? (
         <span className="text-xs text-muted-foreground">
-          {checksPassed} of {checkTotal} check{checkTotal === 1 ? "" : "s"} passed
+          {checksPassed} of {checkTotal} assertion
+          {checkTotal === 1 ? "" : "s"} passed
           {checksFailed > 0 ? (
             <span className="text-destructive">
               {" "}

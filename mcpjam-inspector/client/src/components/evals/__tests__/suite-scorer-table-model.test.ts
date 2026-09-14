@@ -237,7 +237,7 @@ describe("buildScorerTable groups", () => {
     ]);
     // A suppressed rule is listed, not counted: the card reads as ungraded.
     expect(cards.find((card) => card.stage === "response")?.chip.label).toBe(
-      "No grader",
+      "No evaluator",
     );
   });
 

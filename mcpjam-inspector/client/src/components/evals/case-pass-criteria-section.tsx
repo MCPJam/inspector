@@ -116,7 +116,7 @@ export function CasePassCriteriaPopover({
         >
           {isOverridden
             ? "Pass criteria — overrides active"
-            : "Pass criteria — validators and checks"}
+            : "Pass criteria — validators and assertions"}
         </TooltipContent>
       </Tooltip>
       <PopoverContent
@@ -127,8 +127,8 @@ export function CasePassCriteriaPopover({
         <div className="space-y-1">
           <p className="text-sm font-medium text-foreground">Pass criteria</p>
           <p className="text-[11px] leading-snug text-muted-foreground">
-            Override validators and checks for this case. Inherited values come
-            from the suite defaults.
+            Override validators and assertions for this case. Inherited values
+            come from the suite defaults.
           </p>
           {isOverridden ? (
             <p
