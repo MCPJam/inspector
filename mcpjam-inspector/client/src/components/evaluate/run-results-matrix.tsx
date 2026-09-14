@@ -18,6 +18,7 @@ import {
 } from "@mcpjam/design-system/sheet";
 import { cn } from "@mcpjam/design-system/cn";
 import { resolveHostLogoByName } from "@/lib/host-logo";
+import { runClientLogo } from "../evals/helpers";
 import { usePreferencesStoreWithDefaults } from "@/stores/preferences/preferences-provider";
 import {
   formatCostOrDash,
@@ -289,10 +290,8 @@ export function RunResultsMatrix({
     >
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
         <h3 className="text-lg font-semibold tracking-tight">
-          Test cases{" "}
-          <span className="ml-1 font-mono text-sm font-normal text-muted-foreground">
-            {data.rows.length}
-          </span>
+          <span className="tabular-nums">{data.rows.length}</span>{" "}
+          {data.rows.length === 1 ? "Test case" : "Test cases"}
         </h3>
         <div
           className="flex flex-wrap items-center gap-2"
@@ -370,7 +369,9 @@ export function RunResultsMatrix({
                 >
                   <div className="flex items-center gap-2 font-semibold text-foreground">
                     <img
-                      src={resolveHostLogoByName(target.client, theme)}
+                      src={
+                        runClientLogo(target.run, theme) ??
+                        resolveHostLogoByName(target.client, theme)}
                       alt=""
                       className="size-5 object-contain"
                     />

@@ -17,7 +17,7 @@ import {
   displayRunServerNames,
   isEphemeralCheckServerName,
 } from "./github-check-server-name";
-import { getEffectiveSuiteServers } from "./helpers";
+import { getEffectiveSuiteServers, runClientIdentity } from "./helpers";
 import { MetricStrip } from "./metric-strip";
 import {
   buildSuiteMetricStripData,
@@ -110,6 +110,8 @@ export const PROJECT_RUNS_PAGE_SIZE = 50;
  * reach for one.
  */
 export interface ProjectRunRow {
+  client?: EvalSuiteRun["client"] | null;
+  namedHostId?: string | null;
   name?: string;
   tags?: string[];
   runMetadata?: Record<string, string | number | boolean>;
@@ -437,9 +439,8 @@ export function ProjectRunsTable({
     );
     const clientOptions = [
       ...new Set(
-        [...historyRows.values()].flatMap((row) =>
-          row.client ? [row.client] : [],
-        ),
+        rows.map((row) => historyRows.get(row._id)?.client ??
+          runClientIdentity({ client: row.client, namedHostId: row.namedHostId ?? undefined }, hostNamesById).name),
       ),
     ].sort();
     const serverOptions = [...new Set([...runServers.values()].flat())].sort();
@@ -471,7 +472,11 @@ export function ProjectRunsTable({
     const matching = sourceAndSuiteRows.filter(
       (row) =>
         (clientFilter === ALL_EVAL_FILTER_VALUES ||
-          historyRows.get(row._id)?.client === clientFilter) &&
+          (historyRows.get(row._id)?.client ??
+            runClientIdentity(
+              { client: row.client, namedHostId: row.namedHostId ?? undefined },
+              hostNamesById,
+            ).name) === clientFilter) &&
         (serverFilter === ALL_EVAL_FILTER_VALUES ||
           runServers.get(row._id)?.includes(serverFilter)) &&
         (repositoryFilter === ALL_EVAL_FILTER_VALUES ||
@@ -1250,7 +1255,16 @@ function ProjectRunTableRow({
       </TableCell>
       {historyMetricsEnabled ? (
         <TableCell className="text-xs">
-          <RunClientsCell rows={historyRow ? [historyRow] : []} />
+          <RunClientsCell rows={historyRow ? [historyRow] : [
+                    {
+                      client: runClientIdentity({
+                        client: row.client,
+                        namedHostId: row.namedHostId ?? undefined,
+                      }).name,
+                      hostStyle: row.client?.hostStyle,
+                      models: row.client?.modelId ? [row.client.modelId] : [],
+                    },
+                  ]} />
         </TableCell>
       ) : (
         <TableCell>

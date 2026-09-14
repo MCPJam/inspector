@@ -53,6 +53,38 @@ const names = new Map([
 ]);
 
 describe("run results matrix", () => {
+  it("uses persisted models only to seed queued columns, never phantom completed columns", () => {
+    const current = run("legacy", {
+      namedHostId: undefined,
+      effectiveModelId: undefined,
+      client: { name: "Claude", hostStyle: "claude", source: "suite_default" },
+      configSnapshot: {
+        environment: { servers: [] },
+        tests: [
+          {
+            title: "Refund order",
+            models: [{ model: "sonnet", provider: "anthropic" }],
+          } as any,
+        ],
+      },
+    });
+    const args = {
+      run: current,
+      runs: [],
+      iterations: [iteration("i", "legacy")],
+      hostNamesById: names,
+    };
+    const completed = buildRunResultsMatrix(args);
+    expect(
+      completed.targets.map((target) => [target.client, target.modelId]),
+    ).toEqual([["Claude", "sonnet"]]);
+    const queued = buildRunResultsMatrix({
+      ...args,
+      run: { ...current, status: "pending" },
+      iterations: [],
+    });
+    expect(queued.targets.map((target) => target.modelId)).toEqual(["sonnet"]);
+  });
   it("scopes columns to one launch and keeps multiple models on one client separate", () => {
     const current = run("one");
     const sibling = run("two", { effectiveModelId: "opus" });
@@ -180,12 +212,15 @@ describe("run results matrix", () => {
     expect(cell.getByText("2K")).toBeVisible();
     expect(cell.queryByText("Cost")).toBeNull();
     expect(cell.getByText("Tool calls")).toBeVisible();
-    expect(screen.getByText("Test case")).toBeVisible();
-    const title = screen.getByRole("heading", { name: /Test cases/ });
+    expect(
+      screen.getByRole("columnheader", { name: "Test case" }),
+    ).toBeVisible();
+    // One row, so the heading counts in the singular rather than "1 Test cases".
+    const title = screen.getByRole("heading", { name: "1 Test case" });
     expect(title).toBeVisible();
-    expect(title.compareDocumentPosition(screen.getByTestId("run-results-toolbar"))).toBe(
-      Node.DOCUMENT_POSITION_FOLLOWING,
-    );
+    expect(
+      title.compareDocumentPosition(screen.getByTestId("run-results-toolbar")),
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(screen.queryByText("Run results")).toBeNull();
     expect(
       screen.queryByText(
@@ -200,9 +235,7 @@ describe("run results matrix", () => {
     expect(
       screen.queryByText(/Showing recorded iterations from this run/),
     ).toBeNull();
-    expect(
-      screen.queryByRole("button", { name: "Clear filters" }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
     const toolbar = screen.getByTestId("run-results-toolbar");
     const search = within(toolbar).getByRole("textbox", {
       name: "Find a test case",
@@ -302,9 +335,7 @@ describe("run results matrix", () => {
       />,
     );
     expect(screen.getAllByRole("columnheader")).toHaveLength(3);
-    expect(
-      screen.queryByRole("button", { name: "Clear filters" }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
     await user.type(
       screen.getByRole("textbox", { name: "Find a test case" }),
       "not present",
@@ -371,9 +402,7 @@ describe("run results matrix", () => {
     expect(
       screen.getByRole("combobox", { name: "Filter by status" }),
     ).toHaveTextContent("Status");
-    expect(
-      screen.queryByRole("button", { name: "Clear filters" }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
     expect(
       screen.getByRole("button", {
         name: "Inspect Refund order on Claude · sonnet",

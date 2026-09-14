@@ -588,6 +588,14 @@ const createEvalRunSchema = RunEvalsRequestSchema.omit({
     // Inline tests are optional on the public surface: a bare `suiteId`
     // rerun is the simplest possible call.
     tests: z.array(publicInlineTestSchema).max(MAX_V1_TESTS).default([]),
+    hosts: z
+      .array(
+        z.object({
+          host: z.string().min(1),
+          servers: z.array(z.string().min(1)).optional(),
+        }),
+      )
+      .optional(),
     // Optional on reruns: when omitted with a `suiteId`, the route derives
     // the suite's saved server selection (the set the run snapshot will
     // reference) via `testSuites:getSuiteRunServerSelection`, so the
@@ -608,6 +616,10 @@ const createEvalRunSchema = RunEvalsRequestSchema.omit({
   .strict()
   .refine((body) => body.suiteId || (body.tests?.length ?? 0) > 0, {
     message: "Provide suiteId (rerun) and/or inline tests",
+  })
+  .refine((body) => !body.hosts || !body.suiteId, {
+    message:
+      "hosts is only supported when creating an inline suite; update an existing suite's hosts first.",
   })
   // An environment is only launchable through a suite that has it ATTACHED
   // (`suite.environmentIds`), and the backend rejects an unattached one. Without
@@ -1715,13 +1727,29 @@ function toRunDto(run: RunDoc) {
       : {}),
     notes: run.notes ?? null,
     environment: toRunEnvironmentDto(run),
+    ...(run.client
+      ? {
+          client: {
+            id: run.client.namedHostId ?? null,
+            name: run.client.name,
+            source: run.client.source,
+            ...(run.client.hostStyle !== undefined
+              ? { hostStyle: run.client.hostStyle }
+              : {}),
+            ...(run.client.modelId !== undefined
+              ? { modelId: run.client.modelId }
+              : {}),
+          },
+        }
+      : {}),
     ...(typeof run.runGroupId === "string"
       ? { runGroupId: run.runGroupId }
       : {}),
     ...(typeof run.effectiveModelId === "string"
       ? { effectiveModelId: run.effectiveModelId }
       : {}),
-    ...(run.modelSource === "client_default" || run.modelSource === "override"
+    ...(run.modelSource === "client_default" || run.modelSource === "override" ||
+    run.modelSource === "case"
       ? { modelSource: run.modelSource }
       : {}),
     // Which engine the run actually executed on: `"emulated"` (the inspector's
@@ -3538,7 +3566,7 @@ async function resolveHostAttachments(
   projectId: string,
   suite: SuiteDoc,
   hosts: Array<{ host: string; servers?: string[] }>,
-): Promise<Array<Record<string, unknown>>> {
+): Promise<Array<{ namedHostId: string; selectedServerIds?: string[] }>> {
   if (hosts.length === 0) return [];
   requireProjectIdShape(projectId);
   let hostList: any[];
@@ -3587,7 +3615,7 @@ async function resolveHostAttachments(
         `Host "${trimmed}" not found in this project.`,
       );
     }
-    const attachment: Record<string, unknown> = {
+    const attachment: { namedHostId: string; selectedServerIds?: string[] } = {
       namedHostId: String(resolved.hostId),
     };
     if (servers !== undefined) {
@@ -3668,6 +3696,10 @@ async function launchEvalRun(params: {
    * protocol pins, timeouts and advertised capabilities entirely.
    */
   hostConfig?: Record<string, unknown>;
+  hostAttachments?: Array<{
+    namedHostId: string;
+    selectedServerIds?: string[];
+  }>;
   /**
    * The DECLARED launcher and CI envelope, read off this request's headers.
    *
@@ -3762,6 +3794,9 @@ async function launchEvalRun(params: {
       // Project the public `steps`-based inline tests onto the internal
       // run-schema test shape the pipeline still consumes.
       tests: body.tests.map(publicInlineTestToRunTest),
+      ...(params.hostAttachments
+        ? { hostAttachments: params.hostAttachments }
+        : {}),
       serverIds,
       serverNames,
       // The SELECTED id, which may have been auto-derived from a
@@ -4069,6 +4104,39 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
         : {}),
     });
 
+  // Resolve all inline attachments before authoring, including server picks.
+  const hostAttachments = body.hosts?.length
+    ? await resolveHostAttachments(
+        createConvexReadClient(convexAuthToken),
+        projectId,
+        {
+          environment: {
+            serverBindings: serverIds.map((id, index) => ({
+              projectServerId: id,
+              serverName: serverNames?.[index] ?? id,
+            })),
+          },
+        },
+        body.hosts,
+      )
+    : undefined;
+  if (hostAttachments?.length === 1 && !body.namedHostId) {
+    body.namedHostId = hostAttachments[0].namedHostId;
+  }
+  if (
+    hostAttachments?.length &&
+    body.namedHostId &&
+    !hostAttachments.some(
+      (attachment) => attachment.namedHostId === body.namedHostId,
+    )
+  ) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "namedHostId must be one of the inline suite's hosts.",
+    );
+  }
+
   // The host this run executes under. The group route gets one per target from
   // its dry run; this single-run path has no dry run, so it loads its own.
   // `loadSuiteHostConfig` is never hostless — a suite with no attachment and no
@@ -4110,6 +4178,7 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
       projectId,
       convexAuthToken,
       hostConfig: runHostConfig,
+      hostAttachments,
       launchContext: readLaunchContext(c),
       body,
       suiteRerun,

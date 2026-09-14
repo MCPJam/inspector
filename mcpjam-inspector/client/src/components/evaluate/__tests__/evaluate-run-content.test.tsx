@@ -116,8 +116,8 @@ vi.mock("posthog-js/react", () => ({
     flag === "description-experiments-enabled"
       ? descriptionExperimentFlag.current
       : flag === "evaluate-failure-groups-enabled"
-      ? failureGroupsFlag.current
-      : flagEnabled.current,
+        ? failureGroupsFlag.current
+        : flagEnabled.current,
 }));
 vi.mock("@/hooks/use-suite-failure-groups", () => ({
   useSuiteFailureGroups: (args: { enabled?: boolean; suiteId?: string }) => {
@@ -318,9 +318,12 @@ describe("EvaluateRunContent", () => {
     expect(within(pairings).getAllByTestId("run-verdict-pairing")).toHaveLength(
       1,
     );
-    expect(within(pairings).getByText("1 passed")).toBeVisible();
-    expect(within(pairings).getByText("1 failed")).toBeVisible();
-    expect(within(pairings).getByTestId("result-count-bar")).toBeVisible();
+    const row = within(pairings).getByTestId("run-verdict-pairing");
+    expect(within(row).getByText("Passed")).toBeVisible();
+    expect(within(row).getByText("Failed")).toBeVisible();
+    expect(
+      within(row).getByTestId("run-verdict-pairing-rate"),
+    ).toHaveTextContent("50%");
     expect(within(pairings).queryByText("1 of 2")).toBeNull();
     expect(
       pairings.compareDocumentPosition(
@@ -336,10 +339,12 @@ describe("EvaluateRunContent", () => {
     ).toHaveClass("text-sm", "font-semibold");
     expect(screen.queryByTestId("run-grading-peek")).toBeNull();
     expect(screen.queryByTestId("run-verdict-caveats")).toBeNull();
-    expect(within(pairings).getByTestId("result-count-bar")).toHaveAttribute(
-      "role",
-      "img",
-    );
+    // Latency, tokens, and tool calls belong to the pairing that recorded
+    // them, not to a page-level strip that averages every client together.
+    expect(screen.queryByTestId("run-verdict-stats")).toBeNull();
+    for (const label of ["P50", "P95", "Tokens", "Calls"]) {
+      expect(within(row).getByText(label)).toBeVisible();
+    }
   });
 
   it("pairs hero deltas to a fallback previous launch when previousRunId is omitted", () => {
@@ -384,7 +389,16 @@ describe("EvaluateRunContent", () => {
       allIterations: previousRows,
     });
 
-    expect(screen.getByTestId("run-verdict-stat-delta")).toHaveTextContent("+1");
+    // Two failures last time, one pass and one failure now: the row's headline
+    // rate moves, and Passed carries the count it moved by.
+    expect(screen.getByTestId("run-verdict-pairing-rate")).toHaveTextContent(
+      "+50%",
+    );
+    expect(
+      screen
+        .getAllByTestId("run-verdict-stat-delta")
+        .map((delta) => delta.textContent),
+    ).toContain("+1");
   });
 
   it("says nothing about a verdict while the read is in flight", () => {
