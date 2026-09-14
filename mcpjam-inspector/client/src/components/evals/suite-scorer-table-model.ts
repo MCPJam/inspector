@@ -189,13 +189,18 @@ export const SCORER_LIBRARY_CATEGORY_LABELS: Record<
   response: "Response",
 };
 
-const LIBRARY_CATEGORY_ORDER: readonly ScorerLibraryCategoryId[] = [
+/**
+ * Chain order, then the budget group: the same six-stage order the run page
+ * reports in, so a reader picks an assertion from the heading its evidence
+ * will appear under.
+ */
+export const LIBRARY_CATEGORY_ORDER: readonly ScorerLibraryCategoryId[] = [
   "discovery",
   "selection",
   "call",
+  "response",
   "userValue",
   "budget",
-  "response",
 ];
 
 /**

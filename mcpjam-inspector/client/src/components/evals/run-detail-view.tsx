@@ -16,7 +16,7 @@ import {
 } from "@mcpjam/design-system/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { ActionableFindings } from "@/components/shared/actionable-insights/actionable-findings";
-import { formatRunId } from "./helpers";
+import { formatRunId, runClientIdentity, runClientLogo } from "./helpers";
 import {
   buildOpenAiSubmissionReport,
   renderOpenAiSubmissionReport,
@@ -800,11 +800,9 @@ export function RunDetailView({
   const badgeMetricLabel = source === "sdk" ? "Pass Rate" : "Accuracy";
 
   const runClient = useMemo(() => {
-    const hostId = selectedRunDetails.namedHostId;
-    if (!hostId) return null;
-    const displayName = hostNamesById?.get(hostId) ?? formatRunId(hostId);
-    return { hostId, displayName };
-  }, [selectedRunDetails.namedHostId, hostNamesById]);
+    const identity = runClientIdentity(selectedRunDetails, hostNamesById);
+    return { hostId: identity.namedHostId, displayName: identity.name, logoSrc: runClientLogo(selectedRunDetails) };
+  }, [selectedRunDetails, hostNamesById]);
 
   const accuracyHero = showAccuracyHero ? (
     <RunAccuracyHeroBand

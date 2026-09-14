@@ -187,11 +187,24 @@ export type ImportEligibility = {
   issues: ImportEligibilityIssue[];
 };
 
+/** Mirrors backend convex/lib/runClientDescriptor.ts. */
+export type RunClientDescriptor = {
+  namedHostId?: string;
+  hostConfigId?: string;
+  name: string;
+  hostStyle?: string;
+  modelId?: string;
+  source: "environment" | "attached_host" | "suite_default" | "sdk";
+  backfilled?: true;
+};
+
 export type EvalSuiteConfigTest = {
   title: string;
   query: string;
-  provider: string;
-  model: string;
+  /** Persisted cases use models; singular fields support older snapshots. */
+  models?: Array<{ model: string; provider: string }>;
+  provider?: string;
+  model?: string;
   runs: number;
   expectedToolCalls: Array<{
     toolName: string;
@@ -1050,7 +1063,8 @@ export type EvalSuiteRun = {
    */
   effectiveModelId?: string;
   /** `"client_default"` inherited the host model; `"override"` used env.modelId. */
-  modelSource?: "client_default" | "override";
+  client?: RunClientDescriptor;
+  modelSource?: "client_default" | "override" | "case";
   _creationTime?: number;
   runInsightsJobId?: number;
   runInsightsStatus?: "pending" | "completed" | "failed";

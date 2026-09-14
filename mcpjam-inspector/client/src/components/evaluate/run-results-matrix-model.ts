@@ -1,6 +1,9 @@
 import { compactModelIdTail } from "@/lib/environment-label";
 import { computeIterationResult } from "../evals/pass-criteria";
-import { iterationLatencyP95, sumIterationCost } from "../evals/helpers";
+import { iterationLatencyP95, sumIterationCost,
+  runClientIdentity,
+  snapshotTestModels,
+} from "../evals/helpers";
 import type { EvalIteration, EvalSuiteRun } from "../evals/types";
 
 export function launchRuns(run: EvalSuiteRun, runs: readonly EvalSuiteRun[]) {
@@ -79,7 +82,9 @@ export function buildRunResultsMatrix({
     }
     // A queued run already knows its cases from the launch snapshot, even
     // before the recorder has created its iteration rows.
-    for (const test of targetRun.configSnapshot?.tests ?? []) {
+    for (const test of targetIterations.length === 0
+      ? targetRun.configSnapshot?.tests ?? []
+      : []) {
       const recorded = targetIterations.find(
         (item) => item.testCaseSnapshot?.title === test.title,
       );
@@ -88,19 +93,22 @@ export function buildRunResultsMatrix({
         (recorded ? matrixCaseKey(recorded) : `title:${test.title}`);
       if (!cases.has(key))
         cases.set(key, { key, title: test.title, testCaseId: test.testCaseId });
-      const model =
-        targetRun.effectiveModelId ?? test.model ?? "Client default";
-      if (!models.has(model)) models.set(model, []);
+      const snapshotModels = snapshotTestModels(test).map(
+        (entry) => entry.model,
+      );
+      for (const model of targetRun.effectiveModelId ? [targetRun.effectiveModelId]
+        : snapshotModels.length
+        ? snapshotModels
+        : ["Client default"]) {
+        if (!models.has(model)) models.set(model, []);
+    }
     }
     if (!models.size)
       models.set(targetRun.effectiveModelId ?? "Client default", []);
     return [...models].map(([model, items]) => ({
       key: JSON.stringify([targetRun._id, model]),
       run: targetRun,
-      client: targetRun.namedHostId
-        ? hostNamesById.get(targetRun.namedHostId) ??
-          `Client …${targetRun.namedHostId.slice(-6)}`
-        : "Suite client",
+      client: runClientIdentity(targetRun, hostNamesById).name,
       modelId: model,
       model: compactModelIdTail(model),
       iterations: items,

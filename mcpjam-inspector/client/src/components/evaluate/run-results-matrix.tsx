@@ -18,6 +18,7 @@ import {
 } from "@mcpjam/design-system/sheet";
 import { cn } from "@mcpjam/design-system/cn";
 import { resolveHostLogoByName } from "@/lib/host-logo";
+import { runClientLogo } from "../evals/helpers";
 import { usePreferencesStoreWithDefaults } from "@/stores/preferences/preferences-provider";
 import {
   formatCostOrDash,
@@ -368,7 +369,9 @@ export function RunResultsMatrix({
                 >
                   <div className="flex items-center gap-2 font-semibold text-foreground">
                     <img
-                      src={resolveHostLogoByName(target.client, theme)}
+                      src={
+                        runClientLogo(target.run, theme) ??
+                        resolveHostLogoByName(target.client, theme)}
                       alt=""
                       className="size-5 object-contain"
                     />
