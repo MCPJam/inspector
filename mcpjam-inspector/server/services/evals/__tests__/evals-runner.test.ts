@@ -291,7 +291,9 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     await expect(
       runEvalSuiteWithAiSdk(buildQuickRunConfig() as any)
     ).rejects.toThrow(
-      'Could not start eval because "Asana" is not connected. Reconnect the server and try again.'
+      // The clause callers key on; the reason that now follows it is the
+      // setup observer's and is pinned in run-setup-failure.test.ts.
+      'Could not start eval because "Asana" is not connected'
     );
   });
 
@@ -534,7 +536,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     await expect(
       runEvalSuiteWithAiSdk(buildQuickRunConfig() as any)
     ).rejects.toThrow(
-      'Could not start eval because "Asana" failed to list tools. Reconnect the server and try again.'
+      'Could not start eval because "Asana" failed to list tools'
     );
   });
 
@@ -557,7 +559,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         recorder,
       } as any)
     ).rejects.toThrow(
-      'Could not start eval because "Asana" failed to list tools. Reconnect the server and try again.'
+      'Could not start eval because "Asana" failed to list tools'
     );
 
     expect(recorder.finalize).toHaveBeenCalledWith({

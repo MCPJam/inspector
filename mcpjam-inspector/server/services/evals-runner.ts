@@ -191,7 +191,10 @@ import {
   createRunSetupObserver,
   type RunSetupObserver,
   type SetupPhase,
+  type SetupFailureDetail,
+  type SetupFailureRecord,
 } from "./evals/run-setup-signals.js";
+import { connectionContextFor } from "./connection-failure-context.js";
 import {
   dispatchEvalIterationFinalize,
   finalizeWithBrowserArtifacts,
@@ -1064,31 +1067,65 @@ function throwSetupPhaseError(args: {
   phase: SetupPhase;
   error: unknown;
   environment: RunEvalSuiteOptions["config"]["environment"] | undefined;
+  /** The observer's explanation, when it recorded one for this failure. */
+  detail?: SetupFailureDetail;
 }): never {
   const serverLabel = getServerLabelForEvalError(
     args.serverId,
     args.environment,
   );
+  const failure = args.detail
+    ? {
+        slug: args.detail.slug,
+        attribution: args.detail.attribution,
+        ...(args.detail.status !== undefined
+          ? { status: args.detail.status }
+          : {}),
+        ...(args.detail.code !== undefined ? { code: args.detail.code } : {}),
+        ...(args.detail.refresh ? { refresh: args.detail.refresh } : {}),
+      }
+    : undefined;
   if (isMissingRuntimeServerError(args.error) || args.phase === "connection") {
-    throw new EvalSetupPhaseError({
+    // The "is not connected" clause stays: callers and tests key on it. The
+    // reason follows it, so the run error, every setup_failed row's `error`,
+    // the API and the CLI all carry the explanation.
+    const setupError = new EvalSetupPhaseError({
       status: 409,
       code: ErrorCode.SERVER_UNREACHABLE,
-      message: `Could not start eval because "${serverLabel}" is not connected. Reconnect the server and try again.`,
+      message: args.detail
+        ? `Could not start eval because "${serverLabel}" is not connected: ${args.detail.line}`
+        : `Could not start eval because "${serverLabel}" is not connected. Reconnect the server and try again.`,
       serverId: args.serverId,
       phase: args.phase,
-      details: { serverId: args.serverId, serverName: serverLabel },
+      details: {
+        serverId: args.serverId,
+        serverName: serverLabel,
+        ...(args.detail ? { cause: args.detail.line, failure } : {}),
+      },
     });
+    if (args.detail) setupError.normalized = args.detail.normalized;
+    throw setupError;
   }
   const cause =
-    args.error instanceof Error ? args.error.message : String(args.error);
-  throw new EvalSetupPhaseError({
+    args.detail?.line ??
+    (args.error instanceof Error ? args.error.message : String(args.error));
+  const listError = new EvalSetupPhaseError({
     status: 502,
     code: ErrorCode.SERVER_UNREACHABLE,
-    message: `Could not start eval because "${serverLabel}" failed to list tools. Reconnect the server and try again.`,
+    message: args.detail
+      ? `Could not start eval because "${serverLabel}" failed to list tools: ${args.detail.line}`
+      : `Could not start eval because "${serverLabel}" failed to list tools. Reconnect the server and try again.`,
     serverId: args.serverId,
     phase: args.phase,
-    details: { serverId: args.serverId, serverName: serverLabel, cause },
+    details: {
+      serverId: args.serverId,
+      serverName: serverLabel,
+      cause,
+      ...(failure ? { failure } : {}),
+    },
   });
+  if (args.detail) listError.normalized = args.detail.normalized;
+  throw listError;
 }
 
 async function getEvalToolsForAiSdkOrThrow(args: {
@@ -1209,6 +1246,7 @@ async function getEvalToolsForAiSdkOrThrow(args: {
       phase: chosen.phase,
       error: chosen.error,
       environment: args.environment,
+      detail: observer?.failureDetail(chosen.serverId, chosen.phase),
     });
   }
 
@@ -1607,6 +1645,8 @@ async function persistSetupFailedIteration(args: {
   iterationId: string | undefined;
   runStartedAt: number;
   errorMessage: string;
+  /** Structured explanation of the setup failure, JSON, for the web UI. */
+  errorDetails?: string;
   iterationMetadataBase: IterationMetadataBase;
   /**
    * The authored case's stage inputs (`buildStageAuthoredCase`).
@@ -1637,6 +1677,7 @@ async function persistSetupFailedIteration(args: {
     status: "setup_failed" as const,
     startedAt: args.runStartedAt,
     error: args.errorMessage,
+    ...(args.errorDetails ? { errorDetails: args.errorDetails } : {}),
     resultSource: "reported" as const,
     metadata: {
       ...args.iterationMetadataBase,
@@ -1661,6 +1702,35 @@ async function persistSetupFailedIteration(args: {
 }
 
 /**
+ * The `errorDetails` JSON for a setup-failed row: the observer's failure
+ * records, without the catalog block. Bounded well under the backend's
+ * 4000-char message cap so the web UI's JSON viewer never sees a truncated
+ * document; when the records do not fit, only their lines are kept.
+ */
+const MAX_SETUP_ERROR_DETAILS_CHARS = 3_500;
+function setupFailureErrorDetails(
+  failures: SetupFailureRecord[],
+): string | undefined {
+  if (failures.length === 0) return undefined;
+  const full = JSON.stringify({ setup: { failures } });
+  if (full.length <= MAX_SETUP_ERROR_DETAILS_CHARS) return full;
+  const slim = JSON.stringify({
+    setup: {
+      failures: failures.map(
+        ({ serverId, phase, slug, attribution, line }) => ({
+          serverId,
+          phase,
+          slug,
+          attribution,
+          line,
+        }),
+      ),
+    },
+  });
+  return slim.length <= MAX_SETUP_ERROR_DETAILS_CHARS ? slim : undefined;
+}
+
+/**
  * Un-strand a run that died at run-level connect / tools-list.
  *
  * Pre-created iterations sit `pending` and `blockTerminal` would otherwise
@@ -1682,6 +1752,9 @@ async function persistRunSetupFailure(args: {
   const setupSignals = args.observer.buildSignals();
   const setupSpans = args.observer.buildSyntheticSpans(args.runStartedAt);
   const setupAudit = args.observer.buildAuditMetadata();
+  const errorDetails = setupFailureErrorDetails(
+    args.observer.buildFailureRecords(),
+  );
 
   const listPending = async (): Promise<Array<
     Record<string, unknown>
@@ -1723,6 +1796,7 @@ async function persistRunSetupFailure(args: {
           iterationId,
           runStartedAt: args.runStartedAt,
           errorMessage: args.errorMessage,
+          ...(errorDetails ? { errorDetails } : {}),
           iterationMetadataBase: {},
           ...(test
             ? {
@@ -2884,6 +2958,13 @@ export const runEvalSuiteWithAiSdk = async ({
   const setupObserver = createRunSetupObserver({
     expectedServerIds: serverIds,
     convexHttpUrl,
+    // What the authorized manager learned before and during the connect —
+    // absent for managers built elsewhere, in which case the failure is
+    // explained from the error alone.
+    context: (serverId) => ({
+      serverLabel: getServerLabelForEvalError(serverId, config.environment),
+      ...(connectionContextFor(mcpClientManager, serverId) ?? {}),
+    }),
   });
   let resolvedToolPolicyWarnings: string[] | undefined;
 

@@ -34,7 +34,10 @@
 
 import { isBlockedEgressHost } from "./hosted-egress-guard.js";
 import { HOSTED_MODE } from "../config.js";
-import { createStreamingPinnedFetch } from "./pinned-fetch.js";
+import {
+  createStreamingPinnedFetch,
+  type AuthChallengeEvent,
+} from "./pinned-fetch.js";
 import { resolvePlatformMcpUrl } from "./platform-mcp-url.js";
 
 /**
@@ -66,12 +69,18 @@ const MCP_MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
  * attached later through `connectToServer`, and a per-server `baseFetch` still
  * wins where one is set deliberately (the conformance runners set their own).
  */
-export function hostedMcpBaseFetch(): typeof fetch {
+export function hostedMcpBaseFetch(options?: {
+  /** See `createStreamingPinnedFetch`: every 401/403, parsed, never raw. */
+  onAuthChallenge?: (event: AuthChallengeEvent) => void;
+}): typeof fetch {
   return createStreamingPinnedFetch({
     targetLabel: "MCP server",
     chainTimeoutMs: MCP_CHAIN_TIMEOUT_MS,
     bodyIdleTimeoutMs: MCP_BODY_IDLE_TIMEOUT_MS,
     maxResponseBytes: MCP_MAX_RESPONSE_BYTES,
+    ...(options?.onAuthChallenge
+      ? { onAuthChallenge: options.onAuthChallenge }
+      : {}),
   });
 }
 

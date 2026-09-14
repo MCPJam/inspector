@@ -24,6 +24,7 @@ import {
   type ErrorOrigin,
 } from "./catalog.js";
 import { extractNodeErrno } from "./node-errno.js";
+import type { BearerChallengeSummary } from "./challenge.js";
 
 export type NormalizedError = ErrorCatalogEntry & {
   /**
@@ -565,6 +566,7 @@ const CREDENTIAL_OWNED_SLUGS: ReadonlySet<string> = new Set([
   "auth/http_403",
   "auth/missing_bearer",
   "auth/oauth_refresh_failed",
+  "auth/authorization_server_unreachable",
   "oauth/invalid_client",
   "oauth/invalid_grant",
   "provider/auth_error",
@@ -589,7 +591,97 @@ export type DescribeContext = {
    * talking to an MCP server should say so.
    */
   surface?: "provider" | "mcpServer";
+  /**
+   * The parsed `WWW-Authenticate` challenge of the response that failed,
+   * when the caller captured one. Only a caller at the fetch boundary can
+   * know it — the transport error carries the status and the body text but
+   * never the header — and it settles what a bare status cannot: a 401 with
+   * no Bearer challenge is the server breaking the discovery contract, a 403
+   * naming `insufficient_scope` is a grant that is too narrow.
+   */
+  challenge?: BearerChallengeSummary;
+  /**
+   * The outcome of a token refresh the caller attempted before giving up.
+   * `authorization_server_unreachable` is the refresh that never got an
+   * answer; `token_rejected` is the one the authorization server refused.
+   */
+  refresh?: {
+    outcome: "token_rejected" | "authorization_server_unreachable";
+  };
 };
+
+/**
+ * The HTTP status a connection error carries, wherever it carries it:
+ * `statusCode` (MCPAuthError), `status` (WebRouteError), or a numeric `code`
+ * in the HTTP range (StreamableHTTPError).
+ */
+function httpStatusOf(error: unknown): number | undefined {
+  const field = getHttpStatus(error);
+  if (field !== undefined) return field;
+  const code = getNumericCode(error);
+  return code !== undefined && code >= 100 && code <= 599 ? code : undefined;
+}
+
+/**
+ * A slug the CONTEXT settles before the error is even looked at.
+ *
+ * Runs ahead of `resolveSlug` because the resolver's evidence — class name,
+ * status, message — reads the same for "our stored token was rejected" and
+ * "the server never told us how to authorize". Only the challenge and the
+ * refresh outcome tell those apart, and only the caller has them.
+ */
+function contextSlug(
+  error: unknown,
+  context: DescribeContext | undefined
+): string | undefined {
+  if (!context) return undefined;
+  if (context.refresh?.outcome === "authorization_server_unreachable") {
+    return "auth/authorization_server_unreachable";
+  }
+  if (context.refresh?.outcome === "token_rejected") {
+    return "auth/oauth_refresh_failed";
+  }
+  const challenge = context.challenge;
+  if (!challenge) return undefined;
+  const status = httpStatusOf(error);
+  if (status === 401 && challenge.scheme === "none") {
+    return "oauth/no_bearer_challenge";
+  }
+  if (status === 403) {
+    if (
+      challenge.error === "insufficient_scope" ||
+      (challenge.scheme === "bearer" && (challenge.scopes?.length ?? 0) > 0)
+    ) {
+      return "auth/insufficient_scope";
+    }
+    if (challenge.scheme === "bearer") return "oauth/non_compliant_challenge";
+    if (challenge.scheme === "none" && challenge.bodyKind === "html") {
+      return "auth/proxy_rejected";
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Fold what the challenge said into the one-line for the two generic auth
+ * slugs, so "Unauthorized (401)" reads "… (the server reported invalid_token)"
+ * when the header said so. Catalog copy is otherwise untouched.
+ */
+function annotateWithChallenge(
+  entry: ErrorCatalogEntry,
+  slug: string,
+  context: DescribeContext | undefined
+): ErrorCatalogEntry {
+  const error = context?.challenge?.error;
+  if (!error) return entry;
+  if (slug !== "auth/http_401" && slug !== "auth/http_403") return entry;
+  return {
+    ...entry,
+    oneLine: truncateOneLine(
+      `${entry.oneLine} The server reported \`${error}\`.`
+    ),
+  };
+}
 
 /**
  * Read an origin off a normalized error, defaulting a missing value to
@@ -659,11 +751,16 @@ export function describeError(
   // Crash-safe: every branch is wrapped so the describer never throws.
   try {
     const rawMessage = redactString(getErrorMessage(error));
-    const resolved = resolveSlug(error);
+    const fromContext = contextSlug(error, context);
+    const resolved = fromContext ? { slug: fromContext } : resolveSlug(error);
     const slug = retargetQuotaForSurface(resolved.slug, context);
-    const rawCode = resolved.rawCode;
+    const rawCode = resolved.rawCode ?? httpStatusOf(error);
     const entry = applyOriginContext(
-      maybePromoteRawMessage(lookupCatalog(slug), slug, rawMessage),
+      annotateWithChallenge(
+        maybePromoteRawMessage(lookupCatalog(slug), slug, rawMessage),
+        slug,
+        context
+      ),
       slug,
       context,
     );

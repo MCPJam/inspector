@@ -527,6 +527,16 @@ export type StageSetupPhaseSignal = {
   /** Culprit synthetic-span ids (`run-connect-<id>` / `run-toolslist-<id>`). */
   spanIds?: string[];
   /**
+   * What the producer can say about a FAILED phase, in one line a person can
+   * act on — "rejected the stored token (invalid_token)", "MCPJam could not
+   * reach its authorization server". Producer-summarised and already
+   * redacted: never a raw header, never a token. Copied into the row's
+   * `predicateReasons` (the refs type's one free-text slot, the same way
+   * judge reasons travel) under the usual caps. Inert to the row's STATE:
+   * attribution and the canary decide that, this only explains it.
+   */
+  reasons?: string[];
+  /**
    * How long this setup PHASE took, in milliseconds — its wall-clock envelope.
    *
    * A RUN-LEVEL fact that happens to be copied onto every iteration so the
@@ -813,7 +823,14 @@ function nonTransportLocalToolSpans(e: StageEvidence): StageSpanLike[] {
 }
 
 function signalEvidence(signal: StageSetupPhaseSignal): StageEvidenceRefs {
-  return signal.spanIds?.length ? { spanIds: signal.spanIds.slice(0, 5) } : {};
+  return {
+    ...(signal.spanIds?.length ? { spanIds: signal.spanIds.slice(0, 5) } : {}),
+    // Only a failed phase has anything to explain; an `ok` signal carrying
+    // reasons is a producer bug, not evidence, and is not copied.
+    ...(signal.outcome === "failed"
+      ? (boundedJudgeReasons(signal.reasons) ?? {})
+      : {}),
+  };
 }
 
 function deriveConnection(e: StageEvidence): StageResultRow {

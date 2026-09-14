@@ -188,6 +188,169 @@ describe("run-level connect failure — D6 non-vacuity", () => {
     );
   });
 
+  const runOnce = async (rejection: Error) => {
+    mcpClientManager.getConnectionStatus.mockReturnValue("disconnected");
+    mcpClientManager.getToolsForAiSdk.mockRejectedValue(rejection);
+    let detailsCalls = 0;
+    convexClient.query.mockImplementation(async (ref: string) => {
+      if (ref === "testSuites:getTestSuiteRunDetails") {
+        detailsCalls += 1;
+        if (detailsCalls <= 1) {
+          return {
+            iterations: [
+              {
+                _id: "iter-pending",
+                status: "pending",
+                testCaseId: "case-1",
+                testCaseSnapshot: { query: "Hello", expectedToolCalls: [] },
+              },
+            ],
+          };
+        }
+        return { iterations: [] };
+      }
+      return { status: "running" };
+    });
+    const recorder = {
+      runId: "run-1",
+      suiteId: "suite-1",
+      startIteration: vi.fn(),
+      finishIteration: vi.fn(),
+      finalize: vi.fn(),
+    };
+    const run = runEvalSuiteWithAiSdk({
+      suiteId: "suite-1",
+      runId: "run-1",
+      recorder,
+      config: {
+        tests: [
+          {
+            title: "Case",
+            query: "Hello",
+            runs: 1,
+            model: "gpt-4-turbo",
+            provider: "openai",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-1",
+          },
+        ],
+        environment: { servers: ["srv-1"] },
+      },
+      modelApiKeys: { openai: "sk-test" },
+      convexClient: convexClient as any,
+      convexHttpUrl: "https://example.convex.site",
+      convexAuthToken: "token",
+      mcpClientManager: mcpClientManager as any,
+      testCaseId: "case-1",
+    } as any);
+    return { run, recorder };
+  };
+
+  const controlPlaneError = (
+    status: number,
+    message: string,
+    details: Record<string, unknown>,
+  ) => {
+    const error = new Error(message) as Error & {
+      status: number;
+      code: string;
+      details: Record<string, unknown>;
+    };
+    error.name = "WebRouteError";
+    error.status = status;
+    error.code = "UNAUTHORIZED";
+    error.details = details;
+    return error;
+  };
+
+  it("carries the reason for a revoked stored token onto the row, the error, and errorDetails", async () => {
+    const { run, recorder } = await runOnce(
+      controlPlaneError(
+        401,
+        "The stored refresh token was rejected. Please reconnect.",
+        {
+          oauthRequired: true,
+          refreshTokenInvalid: true,
+          serverId: "srv-1",
+        },
+      ),
+    );
+    // The clause callers key on stays; the reason follows it.
+    await expect(run).rejects.toThrow(
+      'is not connected: The stored authorization for "srv-1" has expired or been revoked.',
+    );
+    // Ours ⇒ no canary is fired for it.
+    expect(pinnedFetchMock).not.toHaveBeenCalled();
+    const finish = recorder.finishIteration.mock.calls[0]![0] as {
+      error?: string;
+      errorDetails?: string;
+      metadata?: {
+        stageResults?: Array<{
+          stage: string;
+          state: string;
+          reason?: string;
+          evidence?: { predicateReasons?: string[] };
+        }>;
+        stageSetupAudit?: {
+          failures?: Array<Record<string, unknown>>;
+          classifier?: number;
+        };
+      };
+    };
+    expect(finish.metadata?.stageResults?.[0]).toMatchObject({
+      stage: "connection",
+      state: "notMeasured",
+      reason: "setupAborted",
+      evidence: {
+        predicateReasons: [
+          'The stored authorization for "srv-1" has expired or been revoked. Reconnect it in the server settings.',
+        ],
+      },
+    });
+    expect(finish.error).toContain("has expired or been revoked");
+    const details = JSON.parse(finish.errorDetails ?? "{}") as {
+      setup?: { failures?: Array<Record<string, unknown>> };
+    };
+    expect(details.setup?.failures?.[0]).toMatchObject({
+      serverId: "srv-1",
+      phase: "connection",
+      slug: "auth/oauth_refresh_failed",
+      attribution: "ours",
+      refresh: "token_rejected",
+    });
+    expect(finish.metadata?.stageSetupAudit?.classifier).toBe(2);
+    expect(finish.metadata?.stageSetupAudit?.failures?.[0]).not.toHaveProperty(
+      "normalized",
+    );
+  });
+
+  it("attributes a refresh that could not reach the authorization server to us, not the server", async () => {
+    const { run, recorder } = await runOnce(
+      controlPlaneError(503, "authorization_server_unreachable", {
+        authorizationServerUnreachable: true,
+        serverId: "srv-1",
+      }),
+    );
+    await expect(run).rejects.toThrow(
+      "MCPJam could not reach the authorization server",
+    );
+    // A 5xx from OUR refresh path must not fire the canary or earn connectFailed.
+    expect(pinnedFetchMock).not.toHaveBeenCalled();
+    const finish = recorder.finishIteration.mock.calls[0]![0] as {
+      metadata?: {
+        stageResults?: Array<{ stage: string; state: string; reason?: string }>;
+      };
+    };
+    expect(finish.metadata?.stageResults?.[0]).toMatchObject({
+      stage: "connection",
+      state: "notMeasured",
+      reason: "setupAborted",
+    });
+  });
+
   it("does not guess a connectFailed when the canary itself fails", async () => {
     mcpClientManager.getConnectionStatus.mockReturnValue("disconnected");
     const refused = new Error("connect ECONNREFUSED 203.0.113.10:443");

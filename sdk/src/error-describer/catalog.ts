@@ -100,6 +100,8 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   "auth/http_401": "user_config",
   "auth/http_403": "user_config",
   "auth/missing_bearer": "user_config",
+  // The credential is fine as far as the wire shows; the grant is too narrow.
+  "auth/insufficient_scope": "user_config",
   // Default only. A refresh failure on a credential MCPJam itself holds is
   // ours — callers pass `credentialOwner: "mcpjam"` to say so.
   "auth/oauth_refresh_failed": "user_config",
@@ -138,7 +140,22 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   "sdk/not_yet_supported_in_stateless": "mcpjam",
   "sdk/paginated_tool_header_discovery_unsupported": "mcpjam",
 
+  // --- The server's OAuth surface, as MCP requires it --------------------
+  // A 401 without a Bearer challenge, or a Bearer challenge on a 403, is the
+  // MCP server (or what fronts it) breaking the authorization discovery
+  // contract. Nothing the user configures on our side changes that answer.
+  "oauth/no_bearer_challenge": "user_server",
+  "oauth/non_compliant_challenge": "user_server",
+
   // --- Not settled by the evidence ----------------------------------------
+  // A refresh that could not reach the authorization server: the AS may be
+  // down, or the credential owner's egress may be. Callers that refresh a
+  // credential MCPJam holds pass `credentialOwner: "mcpjam"` and it becomes
+  // ours; a BYO refresh stays ambiguous.
+  "auth/authorization_server_unreachable": "ambiguous",
+  // A 403 with an HTML body and no challenge is a proxy, firewall or
+  // allowlist — in front of the server, and possibly reacting to our address.
+  "auth/proxy_rejected": "ambiguous",
   // Either peer can drop a connection or run out of time.
   "jsonrpc/connection_closed": "ambiguous",
   "jsonrpc/request_timeout": "ambiguous",
@@ -525,7 +542,79 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     "missing-bearer",
   ),
 
+  "auth/insufficient_scope": entry(
+    "auth/insufficient_scope",
+    "Insufficient scope (403)",
+    "The server accepted the credential but the grant does not cover this operation.",
+    [
+      "The authorization did not request the scopes the server now requires.",
+      "The server added a scope requirement after the grant was issued.",
+    ],
+    [
+      "Re-authorize and grant the scopes the server names in its challenge.",
+    ],
+    "insufficient-scope",
+  ),
+  "auth/authorization_server_unreachable": entry(
+    "auth/authorization_server_unreachable",
+    "Authorization server unreachable",
+    "The stored token could not be refreshed because the authorization server did not answer.",
+    [
+      "The authorization server is down or slow.",
+      "The refresh request could not leave the network it was made from.",
+    ],
+    [
+      "Retry in a minute; if it persists, check the authorization server's status.",
+      "Reconnect the server to obtain a fresh token once the authorization server is reachable.",
+    ],
+    "authorization-server-unreachable",
+    "warning",
+  ),
+  "auth/proxy_rejected": entry(
+    "auth/proxy_rejected",
+    "Rejected by a proxy or firewall (403)",
+    "Something in front of the server answered 403 with an HTML page and no authentication challenge.",
+    [
+      "An IP allowlist or WAF blocks the address the request came from.",
+      "A corporate proxy or SSO portal intercepted the request.",
+    ],
+    [
+      "Allow MCPJam's egress addresses, or the address you connect from, on the server's firewall.",
+      "Open the server URL in a browser from the same network to see what answers.",
+    ],
+    "proxy-rejected",
+  ),
+
   // --- OAuth ---
+  "oauth/no_bearer_challenge": entry(
+    "oauth/no_bearer_challenge",
+    "401 without a Bearer challenge",
+    "The server answered 401 without a `WWW-Authenticate: Bearer` challenge, so a client cannot discover how to authorize.",
+    [
+      "The server (or a proxy in front of it) omits the `WWW-Authenticate` header MCP requires on a 401.",
+      "The server expects a static API key and does not implement OAuth.",
+    ],
+    [
+      "If the server uses OAuth, make it answer 401 with `WWW-Authenticate: Bearer resource_metadata=\"…\"` (RFC 9728).",
+      "If the server expects an API key, configure it as a header on the server instead of OAuth.",
+    ],
+    "no-bearer-challenge",
+  ),
+  "oauth/non_compliant_challenge": entry(
+    "oauth/non_compliant_challenge",
+    "Bearer challenge on the wrong status",
+    "The server answered 403 with a Bearer challenge; MCP requires a 401 for a missing or invalid credential.",
+    [
+      "The server maps every authorization failure to 403.",
+      "A gateway rewrites the server's 401 to 403.",
+    ],
+    [
+      "Re-authorize the server; the challenge itself was usable.",
+      "Report the status code to the server author — clients that follow the spec will not retry on 403.",
+    ],
+    "non-compliant-challenge",
+    "warning",
+  ),
   "oauth/invalid_grant": entry(
     "oauth/invalid_grant",
     "OAuth: invalid grant",
