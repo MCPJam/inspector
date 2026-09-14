@@ -256,6 +256,7 @@ describe("CaseRunTimeline", () => {
       </CaseRunTimeline>,
     );
     const badge = screen.getByTestId("case-run-status");
+    expect(badge.previousElementSibling?.tagName).toBe("H2");
     expect(badge).toHaveTextContent("Running");
     expect(badge).toHaveClass("bg-warning/30");
     expect(badge.parentElement).toContainElement(

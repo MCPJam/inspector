@@ -431,6 +431,7 @@ export function CaseRunTimeline({
         >
           <SheetHeader className="shrink-0 border-b border-border pr-12">
             <div className="flex flex-wrap items-center gap-2">
+              <SheetTitle>{runLabel(selected)}</SheetTitle>
               <span
                 data-testid="case-run-status"
                 className={cn(
@@ -446,7 +447,6 @@ export function CaseRunTimeline({
               >
                 {verdict}
               </span>
-              <SheetTitle>{runLabel(selected)}</SheetTitle>
             </div>
             <SheetDescription>
               {selected
