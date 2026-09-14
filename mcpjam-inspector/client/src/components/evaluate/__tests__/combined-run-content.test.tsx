@@ -169,25 +169,27 @@ describe("combined run report", () => {
     expect(within(shipPill).getAllByLabelText(/ · /)).toHaveLength(3);
     const pairingRows = within(hero).getAllByTestId("run-verdict-pairing");
     expect(pairingRows).toHaveLength(3);
+    const rateOf = (row: HTMLElement) =>
+      within(row).getByTestId("run-verdict-pairing-rate").textContent;
     expect(pairingRows[0]).toHaveTextContent("Cursor");
-    expect(pairingRows[0]).toHaveTextContent("1 passed");
-    expect(pairingRows[0]).toHaveTextContent("0 failed");
-    expect(within(pairingRows[0]).getByTestId("result-count-bar")).toBeVisible();
-    expect(pairingRows[1]).toHaveTextContent("0 passed");
-    expect(pairingRows[1]).toHaveTextContent("1 failed");
+    expect(rateOf(pairingRows[0])).toBe("100%");
+    expect(rateOf(pairingRows[1])).toBe("0%");
     expect(pairingRows[2]).toHaveTextContent("ChatGPT");
-    expect(pairingRows[2]).toHaveTextContent("0 passed");
-    expect(pairingRows[2]).toHaveTextContent("1 failed");
+    expect(rateOf(pairingRows[2])).toBe("0%");
+    for (const row of pairingRows) {
+      expect(within(row).getByText("Passed")).toBeVisible();
+      expect(within(row).getByText("Failed")).toBeVisible();
+    }
     expect(within(hero).queryByText("1 of 3")).toBeNull();
     expect(within(hero).queryByText(/ of /)).toBeNull();
+    // Each row carries its own measurements; there is no rolled-up strip that
+    // would report one latency for three different clients.
+    expect(within(hero).queryByTestId("run-verdict-stats")).toBeNull();
     expect(
-      within(hero).getByTestId("run-verdict-stats").textContent,
-    ).not.toMatch(/Passed/i);
-    expect(
-      pairingRows[0].compareDocumentPosition(
-        within(hero).getByTestId("run-verdict-stats"),
-      ),
-    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+      within(pairingRows[0])
+        .getAllByTestId("run-verdict-pairing-stat")
+        .map((stat) => stat.textContent),
+    ).toEqual(expect.arrayContaining([expect.stringContaining("P50")]));
     expect(screen.getAllByRole("columnheader")).toHaveLength(4);
     expect(screen.getByRole("heading", { name: /Test cases/ })).toBeVisible();
     expect(screen.queryByText("Run results")).toBeNull();
@@ -220,8 +222,9 @@ describe("combined run report", () => {
       screen.getByRole("option", { name: "gpt-5.1", exact: true }),
     );
     const filteredPairing = within(hero).getByTestId("run-verdict-pairing");
-    expect(filteredPairing).toHaveTextContent("0 passed");
-    expect(filteredPairing).toHaveTextContent("1 failed");
+    expect(
+      within(filteredPairing).getByTestId("run-verdict-pairing-rate"),
+    ).toHaveTextContent("0%");
     expect(
       screen
         .getAllByTestId("run-header-pairing-decision")
@@ -311,17 +314,32 @@ describe("combined run report", () => {
     );
     const hero = screen.getByTestId("run-verdict-hero");
     const pairingRows = within(hero).getAllByTestId("run-verdict-pairing");
-    expect(within(pairingRows[0]).queryByTestId("run-verdict-stat-delta")).toBeNull();
+    const rateDeltaOf = (row: HTMLElement) =>
+      within(within(row).getByTestId("run-verdict-pairing-rate")).queryByTestId(
+        "run-verdict-stat-delta",
+      );
+    // A pairing that held its rate stays silent rather than printing an equals.
+    expect(rateDeltaOf(pairingRows[0])).toBeNull();
     expect(within(pairingRows[0]).queryByText("=")).toBeNull();
-    const pairingDeltas = pairingRows.flatMap((row) =>
-      within(row).queryAllByTestId("run-verdict-stat-delta"),
-    );
-    expect(pairingDeltas.map((node) => node.textContent)).toEqual([
-      "−1",
-      "−1",
-    ]);
-    expect(pairingDeltas[0]).toHaveClass("text-destructive");
-    expect(pairingDeltas[1]).toHaveClass("text-destructive");
+    // Each regressed pairing reports its own rate drop and the count behind it.
+    for (const row of [pairingRows[1], pairingRows[2]]) {
+      const rate = rateDeltaOf(row);
+      expect(rate).toHaveTextContent("−100%");
+      expect(rate).toHaveClass("text-destructive");
+      expect(
+        within(row)
+          .getAllByTestId("run-verdict-stat-delta")
+          .map((delta) => delta.textContent),
+      ).toContain("−1");
+    }
+    // Latency and tokens are compared per pairing, so the row whose pass count
+    // did not move still reports how much slower it got.
+    expect(
+      within(pairingRows[0])
+        .getAllByTestId("run-verdict-stat-delta")
+        .map((delta) => delta.textContent),
+    ).toEqual(["+1.5s", "+1.5s", "+900"]);
+    // Never one rolled-up figure standing in for three different pairings.
     expect(within(hero).queryByLabelText("−2 vs previous run")).toBeNull();
   });
 
