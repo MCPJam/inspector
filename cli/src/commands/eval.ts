@@ -26,6 +26,7 @@ import {
   proposeEvalDescriptionRewriteOperation,
   startEvalDescriptionExperimentOperation,
   listEvalSuiteStageAnalyticsOperation,
+  backtestEvalRunOperation,
   requestEvalRunJudgeOperation,
   listEvalGithubReposOperation,
   connectEvalGithubRepoOperation,
@@ -4535,6 +4536,56 @@ export function registerEvalCommands(program: Command): void {
 
   addProjectOption(
     evals
+      .command("backtest")
+      .description(
+        "Preview assertion changes on stored evidence without changing results"
+      )
+      .requiredOption("--run <id>", "Terminal eval run ID")
+      .requiredOption(
+        "--json <draft>",
+        "Draft JSON (or @file, or -); assertions has mode and list"
+      )
+      .option(
+        "--continuation <json>",
+        "Continuation object from the previous preview response"
+      )
+  ).action(
+    async (
+      options: PlatformOptions & {
+        project?: string;
+        run: string;
+        json: string;
+        continuation?: string;
+      },
+      command
+    ) => {
+      const draft = new JsonInputContext().parseJsonInputRecord(
+        options.json,
+        "--json"
+      );
+      const input = validateOpInput(
+        backtestEvalRunOperation,
+        {
+          runId: options.run,
+          project: options.project,
+          draft,
+          ...(options.continuation
+            ? {
+                continuation: new JsonInputContext().parseJsonInputRecord(
+                  options.continuation,
+                  "--continuation"
+                ),
+              }
+            : {}),
+        },
+        { projectOptional: true }
+      );
+      await executeOp(backtestEvalRunOperation, input, options, command);
+    }
+  );
+
+  addProjectOption(
+    evals
       .command("judge")
       .description(
         "Grade a finished eval run with LLM as Judge (SPENDS your model budget)"
@@ -5271,7 +5322,6 @@ export function registerEvalCommands(program: Command): void {
           return;
         }
 
-
         // JSON without --out: structured screenshot URLs, no image bytes.
         if (isJson) {
           writeResult({ ...base, items: shots });
@@ -5406,9 +5456,7 @@ export function registerEvalCommands(program: Command): void {
           writeResult({ ...base, videoUrl, ...metaFields });
           return;
         }
-        process.stdout.write(
-          `${videoUrl}${summary ? `\n${summary}\n` : "\n"}`
-        );
+        process.stdout.write(`${videoUrl}${summary ? `\n${summary}\n` : "\n"}`);
       }
     );
 

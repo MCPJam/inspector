@@ -3153,6 +3153,17 @@ describe("file-owned case bodies and idempotency", () => {
     assert.equal(loaded.ok, true);
     if (!loaded.ok) return;
     const testCase = loaded.resolved.enabledCases[0];
+    assert.deepEqual(
+      fileCaseToUpdateBody({
+        ...testCase,
+        suppressedSuiteStandardCheckIds: ["response.errors"],
+      }).suppressedSuiteStandardCheckIds,
+      ["response.errors"],
+    );
+    assert.deepEqual(
+      fileCaseToUpdateBody(testCase, ["response.errors"]).suppressedSuiteStandardCheckIds,
+      [],
+    );
     const created = fileCaseToCreateBody(testCase);
     assert.equal("isNegative" in created, false);
     assert.equal("checks" in created, false);

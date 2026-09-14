@@ -1,3 +1,4 @@
+import { filterSuppressedSuiteAssertions } from "@mcpjam/sdk/contract";
 /**
  * Project a HOSTED eval suite onto a suite file — or refuse.
  *
@@ -881,7 +882,20 @@ export function buildSuiteFileFromPlatform(
         ? {}
         : { model: evalCase.models[0].model }),
       steps: evalCase.steps,
-      ...(assertions && assertions.length > 0 ? { assertions } : {}),
+      ...(assertions && assertions.length > 0
+        ? {
+            assertions: filterSuppressedSuiteAssertions(
+              assertions,
+              evalCase.suppressedSuiteStandardCheckIds,
+            ),
+          }
+        : {}),
+      ...(evalCase.suppressedSuiteStandardCheckIds?.length
+        ? {
+            suppressedSuiteStandardCheckIds:
+              evalCase.suppressedSuiteStandardCheckIds,
+          }
+        : {}),
     })),
   };
 

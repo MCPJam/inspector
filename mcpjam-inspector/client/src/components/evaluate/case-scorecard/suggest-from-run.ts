@@ -30,7 +30,10 @@ import {
 import type { CasePredicates } from "@/shared/eval-matching";
 import { withPredicateRole } from "@/components/evals/suite-scorer-table-model";
 import type { ScorerUiRole } from "@/components/evals/suite-scorer-table-model";
-import type { UserValueStage } from "@mcpjam/sdk/contract";
+import {
+  measurementUnitLabel,
+  type UserValueStage,
+} from "@mcpjam/sdk/contract";
 import {
   isSimpleCaseShape,
   readSimpleCase,
@@ -375,7 +378,7 @@ export function suggestScorers(input: SuggestInput): SuggestOutput {
           purpose: "Require this tool on future runs",
           label: `Tool was called at least once · ${toolName}`,
           consequence: `Future runs where step ${ordinal} does not call ${toolName} will fail this case.`,
-          evidence: `${toolName} was called in step ${ordinal} in ${held.held} of ${of} ${plural(of, "trial", "trials")}`,
+          evidence: `${toolName} was called in step ${ordinal} in ${held.held} of ${of} ${measurementUnitLabel("trial", of)}`,
           predicate,
           scope: { kind: "turn", promptIndex: turn },
           placement: {
@@ -420,7 +423,7 @@ export function suggestScorers(input: SuggestInput): SuggestOutput {
         label: "No tool errors",
         consequence:
           "Future runs where a tool returns an error will fail this case.",
-        evidence: `No tool errored in ${held.held} of ${of} ${plural(of, "trial", "trials")} (${calls} ${plural(calls, "call", "calls")})`,
+        evidence: `No tool errored in ${held.held} of ${of} ${measurementUnitLabel("trial", of)} (${calls} ${plural(calls, "call", "calls")})`,
         predicate,
         placement: { kind: "wholeRun" },
         role: "gate",
@@ -453,7 +456,7 @@ export function suggestScorers(input: SuggestInput): SuggestOutput {
         purpose: "Verify the view renders",
         label: `View rendered · ${toolName}`,
         consequence: `Future runs where ${toolName}'s view does not render will fail this case.`,
-        evidence: `${toolName} rendered in ${held.held} of ${of} ${plural(of, "trial", "trials")}`,
+        evidence: `${toolName} rendered in ${held.held} of ${of} ${measurementUnitLabel("trial", of)}`,
         predicate,
         placement: { kind: "wholeRun" },
         role: "gate",

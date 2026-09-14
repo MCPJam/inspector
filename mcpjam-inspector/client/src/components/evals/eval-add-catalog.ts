@@ -48,7 +48,7 @@ export const ADD_SECTIONS = [
   "Assertions · Answer and outcome",
   "Assertions · View",
   "Limits · Time and usage",
-  "Observations · Advisory checks",
+  "Observations · Advisory assertions",
 ] as const;
 export type AddSection = (typeof ADD_SECTIONS)[number];
 export type EvalAddChoice =
@@ -66,6 +66,12 @@ export type EvalAddEntry = {
   choice: EvalAddChoice;
 };
 const predicateMeta: Record<PredicateKind, [AddSection, LucideIcon]> = {
+  toolDescriptionsPresent: [ADD_SECTIONS[2], FileJson],
+  toolAnnotationsPresent: [ADD_SECTIONS[2], FileJson],
+  toolNamesUnique: [ADD_SECTIONS[2], FileJson],
+  toolInputSchemasWellFormed: [ADD_SECTIONS[2], FileJson],
+  toolOutputSchemasPresent: [ADD_SECTIONS[2], FileJson],
+  noDeprecatedToolExposed: [ADD_SECTIONS[6], Archive],
   toolCalledWith: [ADD_SECTIONS[1], Wrench],
   toolCalledAtLeastOnce: [ADD_SECTIONS[1], CheckCheck],
   toolNeverCalled: [ADD_SECTIONS[1], Ban],
@@ -78,6 +84,7 @@ const predicateMeta: Record<PredicateKind, [AddSection, LucideIcon]> = {
   toolResultContains: [ADD_SECTIONS[2], TextSearch],
   toolResultMatchesSchema: [ADD_SECTIONS[2], FileJson],
   responseContains: [ADD_SECTIONS[3], MessageSquareText],
+  responseCloseTo: [ADD_SECTIONS[3], MessageSquareText],
   responseMatches: [ADD_SECTIONS[3], Regex],
   finalAssistantMessageNonEmpty: [ADD_SECTIONS[3], CheckCheck],
   widgetRendered: [ADD_SECTIONS[4], LayoutPanelTop],
@@ -108,15 +115,17 @@ export const EVAL_ADD_CATALOG: EvalAddEntry[] = [
       ["interact", "Interact", MousePointerClick],
       ["toolCall", "Call tool", Wrench],
     ] as const
-  ).map(([stepKind, label, Icon]): EvalAddEntry => ({
-    key: stepKind,
-    label,
-    Icon,
-    section: "Actions",
-    scope: "inline",
-    advisory: false,
-    choice: { kind: "step", stepKind },
-  })),
+  ).map(
+    ([stepKind, label, Icon]): EvalAddEntry => ({
+      key: stepKind,
+      label,
+      Icon,
+      section: "Actions",
+      scope: "inline",
+      advisory: false,
+      choice: { kind: "step", stepKind },
+    }),
+  ),
   ...(Object.keys(PREDICATE_KIND_LABELS) as PredicateKind[]).map(
     (predicateKind): EvalAddEntry => ({
       key: `check:${predicateKind}`,

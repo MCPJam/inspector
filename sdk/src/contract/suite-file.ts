@@ -1,3 +1,4 @@
+import { suppressedSuiteStandardCheckIdsSchema } from "./standard-checks.js";
 /**
  * The versioned eval **suite file** — one declarative document describing a
  * suite, its defaults, and its cases.
@@ -456,6 +457,8 @@ export const evalSuiteFileCaseSchema = z
      * than a check.
      */
     checks: z.array(predicateSchema).max(MAX_CASE_ASSERTIONS).optional(),
+    suppressedSuiteStandardCheckIds:
+      suppressedSuiteStandardCheckIdsSchema.optional(),
     /** @deprecated Use {@link EvalSuiteFileCase.checks}, which means exactly this. */
     assertions: z.array(predicateSchema).max(MAX_CASE_ASSERTIONS).optional(),
     /** Reference output for judge scorers. */

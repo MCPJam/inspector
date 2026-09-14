@@ -23,7 +23,10 @@ import {
   countModelInvocations,
 } from "./evals/agent-activity.js";
 import { parseBrowserToolPolicy } from "./evals/browser-tool-policy.js";
-import { collectToolAnnotations } from "./evals/transcript-evidence";
+import {
+  collectToolAnnotations,
+  collectToolDeclarations,
+} from "./evals/transcript-evidence";
 import { browserApprovalDeliveryFor } from "./evals/browser-tool-policy.js";
 import { evalBoxFilesystemIsReachable } from "./evals/eval-box-access";
 import { needsEphemeralEvalSandbox } from "./evals/needs-ephemeral-sandbox";
@@ -4190,6 +4193,7 @@ const runLocalIteration = async ({
     );
     // Single verdict boundary — matcher + case predicates + ordering + all gates.
     const { evaluation, passed, predicateResults } = buildEvalIterationVerdict({
+      ...collectToolDeclarations(mcpClientManager, selectedServers),
       promptTurns,
       toolsCalledByPrompt: toolsCalledByPromptWithWidgets,
       isNegativeTest: test.isNegativeTest,
@@ -5719,6 +5723,7 @@ const runHostedIterationWithBrowser = async (
     selectedServers,
   );
   const { evaluation, passed, predicateResults } = buildEvalIterationVerdict({
+    ...collectToolDeclarations(mcpClientManager, selectedServers),
     promptTurns,
     toolsCalledByPrompt: toolsCalledByPromptWithWidgets,
     isNegativeTest: test.isNegativeTest,

@@ -222,7 +222,7 @@ function joinNames(names: readonly string[]): string {
 /**
  * Which of the five frozen variables the report actually recorded — the
  * contract's `DESCRIPTION_EXPERIMENT_FROZEN_FIELDS`, in its order, with the
- * judge config read as "grader". A scalar is present only when both arms
+ * judge config read as "judge". A scalar is present only when both arms
  * agree on it and the builder had it; an absent one is "not recorded",
  * never "frozen".
  */
@@ -233,7 +233,7 @@ export function frozenFieldsLabel(frozen: FrozenForCaveat): string {
   (frozen.engine ? recorded : missing).push("engine");
   (frozen.hostConfigId ? recorded : missing).push("host");
   (frozen.toolSnapshotHash ? recorded : missing).push("catalog");
-  (frozen.judgeConfigHash ? recorded : missing).push("grader");
+  (frozen.judgeConfigHash ? recorded : missing).push("judge");
   const frozenPart =
     recorded.length > 0 ? ` with frozen ${joinNames(recorded)}` : "";
   const missingPart =
@@ -252,7 +252,7 @@ export function evidenceCaveat(
 ): string {
   const unverified = "The upstream server's state was not verified.";
   if (label === "controlled") {
-    return `Every eligible trial had a fresh computer and the two arms matched on every frozen variable. ${unverified}`;
+    return `Every eligible iteration had a fresh computer and the two arms matched on every frozen variable. ${unverified}`;
   }
   const differed = frozen ? frozenDifferencesLabel(frozen) : null;
   if (differed) {
@@ -263,6 +263,6 @@ export function evidenceCaveat(
   }
   const fields = frozen
     ? frozenFieldsLabel(frozen)
-    : "; model, engine, host, catalog, and grader not recorded";
+    : "; model, engine, host, catalog, and judge not recorded";
   return `The two arms ran in the same window${fields}. ${unverified}`;
 }

@@ -243,7 +243,7 @@ describe("TrialScorecard", () => {
       "notMeasured",
     );
     expect(screen.getByTestId("trial-scorecard-summary").textContent).toBe(
-      "No scorers ran",
+      "No evaluators ran",
     );
   });
 
@@ -377,7 +377,7 @@ describe("summaryLine", () => {
 
   it("says a case has no gates rather than reporting 0 of 0", () => {
     expect(summaryLine({ ...base, warn: 1 })).toBe("No gates ran · 1 warn");
-    expect(summaryLine(base)).toBe("No scorers ran");
+    expect(summaryLine(base)).toBe("No evaluators ran");
   });
 
   it("names an unevaluable scorer as such, not as a failure", () => {
@@ -451,5 +451,95 @@ describe("blind review hides the judge row's own output", () => {
     // Only the judge row withholds; a deterministic check has no verdict to
     // leak and hiding it would just make the trial unreadable.
     expect(withheld.length).toBeLessThanOrEqual(1);
+  });
+});
+
+describe("blind review keeps the chain and masks one card", () => {
+  const stages = (userValue: Record<string, unknown>) =>
+    [
+      { stage: "connection", state: "passed", reason: "observed" },
+      { stage: "discovery", state: "passed", reason: "observed" },
+      { stage: "selection", state: "failed", reason: "missingToolCall" },
+      { stage: "call", state: "passed", reason: "observed" },
+      { stage: "response", state: "passed", reason: "observed" },
+      { stage: "userValue", ...userValue },
+    ] as never[];
+  const judgeDecided = {
+    status: "verified",
+    firstFailedStage: "selection",
+    stages: stages({
+      state: "failed",
+      reason: "judgeFailed",
+      evidence: { judgeReasons: ["Private judge rationale"] },
+    }),
+  } as never;
+  const assertionDecided = {
+    status: "verified",
+    firstFailedStage: "selection",
+    stages: stages({ state: "passed", reason: "observed" }),
+  } as never;
+  const judgeCase = {
+    status: "completed",
+    passed: false,
+    score: 0.2,
+    reason: "Private judge rationale",
+  } as never;
+
+  it("renders the rail, masks User value, and still withholds the judge row", () => {
+    renderCard({ chain: judgeDecided, judgeHidden: true, judgeCase });
+    const card = screen.getByTestId("trial-scorecard");
+    expect(within(card).getByTestId("trial-chain-panel")).toBeTruthy();
+    expect(within(card).getByTestId("trial-stage-masked")).toHaveAttribute(
+      "data-stage",
+      "userValue",
+    );
+    expect(
+      screen.getByRole("button", { name: /06 User value/ }),
+    ).toHaveAccessibleName(/hidden until you label/);
+    expect(screen.getByTestId("judge-result-withheld")).toBeTruthy();
+    expect(screen.queryByText("Private judge rationale")).toBeNull();
+    expect(screen.queryByTestId("user-value-pass-evidence")).toBeNull();
+    // The other five stages are the runner's, and stay readable.
+    expect(
+      screen.getByRole("button", { name: /03 Selection/ }),
+    ).not.toHaveAccessibleName(/hidden until/);
+  });
+
+  it("does not put the masked stage's state on its group heading", () => {
+    renderCard({ chain: judgeDecided, judgeHidden: true, judgeCase });
+    const userValue = document.querySelector('[data-stage-group="userValue"]');
+    expect(userValue).not.toBeNull();
+    expect(
+      userValue!.querySelector('[data-testid="scorecard-group-state"]'),
+    ).toBeNull();
+    // Selection's own failure is the runner's, and stays on its heading.
+    const selection = document.querySelector('[data-stage-group="selection"]');
+    expect(
+      selection?.querySelector('[data-testid="scorecard-group-state"]')
+        ?.textContent,
+    ).toBe("failed");
+  });
+
+  it("masks nothing when an assertion decided User value", () => {
+    renderCard({ chain: assertionDecided, judgeHidden: true, judgeCase });
+    expect(screen.getByTestId("trial-chain-panel")).toBeTruthy();
+    expect(screen.queryByTestId("trial-stage-masked")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: /06 User value/ }),
+    ).not.toHaveAccessibleName(/hidden until/);
+    // User value is still the open card, so the judge row is on screen and
+    // its own output is still withheld: the row is the judge's even when the
+    // chain was not.
+    expect(screen.getByTestId("trial-stage-detail-card")).toHaveAttribute(
+      "data-stage",
+      "userValue",
+    );
+    expect(screen.getByTestId("judge-result-withheld")).toBeTruthy();
+  });
+
+  it("drops the mask once the reviewer has revealed", () => {
+    renderCard({ chain: judgeDecided, judgeHidden: false, judgeCase });
+    expect(screen.queryByTestId("trial-stage-masked")).toBeNull();
+    expect(screen.queryByTestId("judge-result-withheld")).toBeNull();
   });
 });

@@ -586,3 +586,23 @@ describe("suiteFilePointer", () => {
     );
   });
 });
+
+it("round-trips case family suppression without inventing defaults", () => {
+  const base = payload(data.accept[0]) as EvalSuiteFile;
+  const authored = {
+    ...base,
+    cases: base.cases.map((entry, index) =>
+      index
+        ? entry
+        : { ...entry, suppressedSuiteStandardCheckIds: ["response.errors"] }
+    ),
+  };
+  const loaded = loadOrThrow(asText(authored));
+  expect(
+    loaded.resolved.enabledCases[0].suppressedSuiteStandardCheckIds
+  ).toEqual(["response.errors"]);
+  const reloaded = loadOrThrow(serializeEvalSuiteFile(loaded.authored));
+  expect(reloaded.authored.cases[0].suppressedSuiteStandardCheckIds).toEqual([
+    "response.errors",
+  ]);
+});

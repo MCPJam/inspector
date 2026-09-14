@@ -1200,6 +1200,15 @@ function EvaluateTabContent({
   const suiteBreadcrumbLabel = selectedSuite
     ? stripTimestampSuffix(selectedSuite.name || "") || "Untitled suite"
     : null;
+  // Breadcrumb for a run: number it like the run list does ("Run #6") when the
+  // run row is loaded, so the crumb and the page heading agree.
+  const runBreadcrumbNumber =
+    route.type === "run-detail"
+      ? (runsForSelectedSuite.find((run) => run._id === route.runId)
+          ?.runNumber ?? null)
+      : null;
+  const runBreadcrumbLabel =
+    runBreadcrumbNumber != null ? `Run #${runBreadcrumbNumber}` : "Run";
   const isNestedDetail =
     route.type === "test-edit" ||
     route.type === "test-detail" ||
@@ -1215,7 +1224,7 @@ function EvaluateTabContent({
       : route.type === "suite-edit"
         ? "Settings"
         : route.type === "run-detail"
-          ? "Run"
+          ? runBreadcrumbLabel
           : null;
 
   const renderPlaygroundBreadcrumb = () => {

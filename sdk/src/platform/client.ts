@@ -1,5 +1,18 @@
-import type { PlatformSessionBrowserBodies, PlatformSessionBrowserResults } from "./types.js";
-import type { PlatformSessionBrowserInput, PlatformSessionBrowserOperation, PlatformSessionBrowserOpened, PlatformBrowserToolPolicy } from "./types.js";
+import type {
+  EvalBacktestDraft,
+  EvalBacktestContinuation,
+  EvalBacktestReport,
+} from "../contract/eval-backtest.js";
+import type {
+  PlatformSessionBrowserBodies,
+  PlatformSessionBrowserResults,
+} from "./types.js";
+import type {
+  PlatformSessionBrowserInput,
+  PlatformSessionBrowserOperation,
+  PlatformSessionBrowserOpened,
+  PlatformBrowserToolPolicy,
+} from "./types.js";
 import { PlatformApiError } from "./errors.js";
 import { readSdkVersion } from "../sdk-version.js";
 import type {
@@ -255,6 +268,9 @@ export interface PlatformCiMetadataOption {
   job?: string;
   runUrl?: string;
   runId?: string;
+  repositoryUrl?: string;
+  prUrl?: string;
+  branchUrl?: string;
   /** Accepted in the run row's own spelling too, when a caller has it. */
   pipelineId?: string;
   jobId?: string;
@@ -367,6 +383,9 @@ function buildLaunchHeaders(
       "job",
       "jobId",
       "runUrl",
+      "repositoryUrl",
+      "prUrl",
+      "branchUrl",
       "runId",
       "pipelineId",
     ] as const) {
@@ -570,8 +589,8 @@ export class PlatformApiClient {
     this.userAgent = isBrowserPage()
       ? options.userAgent
       : options.userAgent
-        ? `${options.userAgent} ${DEFAULT_PLATFORM_USER_AGENT}`
-        : DEFAULT_PLATFORM_USER_AGENT;
+      ? `${options.userAgent} ${DEFAULT_PLATFORM_USER_AGENT}`
+      : DEFAULT_PLATFORM_USER_AGENT;
     this.launchHeaders = buildLaunchHeaders(options);
     // Lower-cased at construction so `request` cannot end up with two spellings
     // of one header — HTTP names are case-insensitive, but a plain object's
@@ -2554,6 +2573,35 @@ export class PlatformApiClient {
         params.projectId
       )}/eval-runs/${encodeURIComponent(params.runId)}/insights`,
       { body: params.force ? { force: true } : {} },
+      options
+    );
+  }
+
+  /**
+   * Preview deterministic evaluators using stored evidence, without model calls
+   * or verdict writes. Resume a bounded result with its continuation and the
+   * unchanged draft. Starting a new preview has a separate one-minute cooldown.
+   */
+  backtestEvalRun(
+    params: {
+      projectId: string;
+      runId: string;
+      draft: EvalBacktestDraft;
+      continuation?: EvalBacktestContinuation;
+    },
+    options?: RequestOptions
+  ): Promise<EvalBacktestReport> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(params.runId)}/backtest`,
+      {
+        body: {
+          ...params.draft,
+          ...(params.continuation ? { continuation: params.continuation } : {}),
+        },
+      },
       options
     );
   }

@@ -104,18 +104,21 @@ export function scenarioTasksEqual(
 }
 
 /**
- * The count on the tester's control: what is LEFT, not how many there are.
+ * The count on the tester's control: what is still UNCHECKED, not how many
+ * there are.
  *
  * A tester reads this to decide whether to keep going, and "3 of 5" makes them
- * do the subtraction. `Done` rather than `0 left` because zero-of-anything
- * reads as an error state.
+ * do the subtraction. "Unchecked" rather than "left" because "2 left" on a
+ * header button reads as a usage limit or a credit balance; a checkbox word
+ * cannot. `All checked` rather than `0 unchecked` because zero-of-anything
+ * reads as an error state, and it pairs with the counting form.
  */
 export function scenarioTasksRemainingLabel(
   total: number,
   completed: number,
 ): string {
   const remaining = Math.max(0, total - completed);
-  return remaining === 0 ? "Done" : `${remaining} left`;
+  return remaining === 0 ? "All checked" : `${remaining} unchecked`;
 }
 
 export function scenarioTaskCheckStorageKey(scenarioId: string): string {

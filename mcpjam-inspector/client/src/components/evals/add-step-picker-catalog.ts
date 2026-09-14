@@ -59,8 +59,8 @@ export const PICKER_GROUP_ORDER: readonly PickerGroupId[] = [
 
 export const PICKER_GROUP_LABELS: Record<PickerGroupId, string> = {
   drive: "Actions",
-  transcriptEssentials: "Checks",
-  transcriptMore: "More conversation checks",
+  transcriptEssentials: "Assertions",
+  transcriptMore: "More conversation assertions",
   viewLifecycle: "Did the view load",
   viewContent: "What's on screen",
   health: "Run health",
@@ -120,6 +120,14 @@ export const PICKER_CATALOG: readonly PickerCatalogEntry[] = [
       "structuredContent",
     ],
     choice: { kind: "check", predicateKind: "toolCalledWith" },
+  },
+  {
+    key: "check:responseCloseTo",
+    group: "transcriptEssentials",
+    tier: "secondary",
+    label: PREDICATE_KIND_LABELS.responseCloseTo,
+    keywords: ["distance", "reference", "levenshtein"],
+    choice: { kind: "check", predicateKind: "responseCloseTo" },
   },
   {
     key: "check:responseContains",
@@ -247,7 +255,7 @@ export const PICKER_CATALOG: readonly PickerCatalogEntry[] = [
     group: "health",
     tier: "secondary",
     label: labelForInlineAssert("noEndingQuestion"),
-    hint: "Reports; never fails a trial",
+    hint: "Reports; never fails an iteration",
     keywords: ["question", "clarify", "ask", "answer", "ending"],
     choice: { kind: "check", predicateKind: "noEndingQuestion" },
   },

@@ -359,6 +359,13 @@ Others never pause even when it is on: read-only lookups of your own project, th
 
 Two things sit just outside those lists. An **unattended run** (an eval, a swarm) has nobody to ask, so its browser tools follow the `toolPolicy` it declared up front instead of pausing. And **loading a skill that an MCP server provided** is always tagged as third-party content and always bound to the manifest digest you were shown — but whether it pauses follows the switch.
 
+**Message history**
+Press **Up** in the composer to recall your last sent message. Press **Up** again to step further back through your previous messages, and **Down** to walk forward. Past the newest entry, **Down** returns the draft you had started before the walk began.
+
+The history is the conversation itself — the user messages already on screen — so it cannot drift from what you see, and a session reopened from the Sessions rail brings its history along automatically. A fresh thread starts with empty history.
+
+Arrow keys only reach history at the edge of the draft: inside a multi-line message they move the caret as usual. Modifier keys (`Shift`, `Alt`, `Ctrl`, `Cmd`) are never intercepted — `Shift+Up` still selects text.
+
 **Voice input**
 Click the mic button (right side of the input) to record your voice. The audio is transcribed using Whisper and the resulting text is appended to whatever you've already typed in the composer. Recording stops automatically after 3 minutes. The mic is disabled when your daily voice budget is exhausted; a warning appears in the composer when the remaining budget is low. While a recording is in progress, pressing Enter does not submit the draft — use the stop button (arrow-up) to finish recording first, or the ✕ button to cancel without transcribing.
 

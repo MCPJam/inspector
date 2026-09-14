@@ -49,17 +49,17 @@ describe("EvaluateRunPage", () => {
     );
 
     expect(screen.getByTestId("evaluate-run-page")).toHaveTextContent(
-      "#1 Results",
+      "Run #1 Results",
     );
     expect(screen.getByText("run body")).toBeTruthy();
     expect(screen.queryByText("All runs")).toBeNull();
     expect(screen.queryByText("latest + trends per client")).toBeNull();
     const header = screen.getByTestId("evaluate-run-header");
     expect(
-      within(header).getByRole("heading", { name: "#1 Results" }),
+      within(header).getByRole("heading", { name: "Run #1 Results" }),
     ).toHaveClass("text-2xl", "font-bold", "tracking-tight");
     expect(
-      within(header).getByRole("heading", { name: "#1 Results" }),
+      within(header).getByRole("heading", { name: "Run #1 Results" }),
     ).not.toHaveClass("font-mono");
     expect(within(header).queryByText("Report for")).toBeNull();
     expect(
@@ -159,7 +159,7 @@ describe("EvaluateRunPage", () => {
       </EvaluateRunPage>,
     );
     expect(
-      screen.getByRole("heading", { name: "#1 Results" }),
+      screen.getByRole("heading", { name: "Run #1 Results" }),
     ).toBeVisible();
     expect(screen.queryByText(/client\/model pairing/)).toBeNull();
     const pairings = screen.getByTestId("run-header-pairings");

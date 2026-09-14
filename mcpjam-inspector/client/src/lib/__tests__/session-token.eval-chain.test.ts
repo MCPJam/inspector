@@ -63,6 +63,7 @@ describe("authFetch bearer on the eval chain routes", () => {
     // stage rows. MOVED here from the negative list below — it was correctly
     // pinned as unreachable until a reader needed it, and the entry it now
     // requires is the one that would otherwise 401 as "could not be loaded".
+    "/api/v1/projects/proj_1/eval-runs/run_1/backtest",
     "/api/v1/projects/proj_1/eval-runs/run_1/iterations",
     // What changed since the previous run.
     "/api/v1/projects/proj_1/eval-runs/run_1/compare",
@@ -109,6 +110,7 @@ describe("authFetch bearer on the eval chain routes", () => {
     // trace is a transcript and steps are authored results; both are read by
     // other paths with their own auth, and a pattern that swallowed them
     // would be the blanket prefix these tests exist to catch.
+    "/api/v1/projects/proj_1/eval-runs/run_1/backtest/other",
     "/api/v1/projects/proj_1/eval-runs/run_1/iterations/iter_1/trace",
     "/api/v1/projects/proj_1/eval-runs/run_1/iterations/iter_1",
     "/api/v1/projects/proj_1/eval-runs/run_1/steps",

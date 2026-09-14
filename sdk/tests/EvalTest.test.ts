@@ -305,7 +305,9 @@ describe("EvalTest", () => {
           id: "c_case_5",
           name: "invalid-config",
         } as any);
-      }).toThrow("Invalid config: must provide 'test' function");
+      }).toThrow(
+        "Invalid config: must provide 'execute' (or the legacy 'test') function"
+      );
     });
 
     it.each([

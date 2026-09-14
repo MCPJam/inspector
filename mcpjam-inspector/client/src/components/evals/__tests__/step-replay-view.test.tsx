@@ -202,7 +202,7 @@ describe("StepReplayView", () => {
       const header = screen.getByTestId("steps-verdict-header");
       expect(within(header).getByText("Passed")).toBeInTheDocument();
       // Two assert steps (a1, a2) are the "checks".
-      expect(within(header).getByText(/2 of 2 checks passed/)).toBeInTheDocument();
+      expect(within(header).getByText(/2 of 2 assertions passed/)).toBeInTheDocument();
     });
 
     it("shows Failed and the failed-check count", () => {
@@ -220,7 +220,7 @@ describe("StepReplayView", () => {
       );
       const header = screen.getByTestId("steps-verdict-header");
       expect(within(header).getByText("Failed")).toBeInTheDocument();
-      expect(within(header).getByText(/1 of 2 checks passed/)).toBeInTheDocument();
+      expect(within(header).getByText(/1 of 2 assertions passed/)).toBeInTheDocument();
       expect(within(header).getByText(/1 failed/)).toBeInTheDocument();
     });
   });
@@ -311,7 +311,7 @@ describe("StepReplayView — scorecard presentation", () => {
       />,
     );
     const header = screen.getByTestId("steps-verdict-header");
-    expect(header.textContent).toContain("1 of 1 check passed");
+    expect(header.textContent).toContain("1 of 1 assertion passed");
     expect(header.textContent).toContain("· 1 warn");
     expect(header.textContent).not.toContain("failed");
   });
@@ -361,7 +361,7 @@ describe("StepReplayView — scorecard presentation", () => {
     );
     expect(
       screen.getByTestId("steps-verdict-header").textContent,
-    ).toContain("1 of 2 checks passed");
+    ).toContain("1 of 2 assertions passed");
   });
 });
 

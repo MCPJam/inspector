@@ -1369,9 +1369,9 @@ export function costUnavailableReason(
     case "harness_mixed_models":
       return "Harness runs mix models within a turn; their cost arrives with billed attribution.";
     case "no_tokens":
-      return "This trial reported no token usage.";
+      return "This iteration reported no token usage.";
     default:
-      return "No cost was recorded for this trial.";
+      return "No cost was recorded for this iteration.";
   }
 }
 

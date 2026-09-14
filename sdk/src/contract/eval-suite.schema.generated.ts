@@ -25,7 +25,7 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
   $id: "https://mcpjam.com/schemas/eval-suite/v1.json",
   title: "MCPJam eval suite file (schemaVersion 1)",
   description:
-    "Structural contract for an MCPJam eval suite file. Generated from the zod source in @mcpjam/sdk (src/contract/suite-file.ts). Describes what is ACCEPTED (zod io:input), so a file this schema accepts is one the SDK validator also accepts structurally. The zod validator remains the authoritative superset: it additionally enforces cross-field rules (unique case ids, unique step ids within a case, a per-case import block requiring top-level provenance, a per-case import note being required when the claimed status is exact, and an OBSERVATION check — noEndingQuestion, noRepeatedIdenticalCall, noDeprecatedToolCalled, toolErrorNamesInput, fullPageHasContinuation — being refused unless it carries role: \"advisory\", because a heuristic must not decide a release) and serialized-size caps on tool-call arguments and on toolResultMatchesSchema's authored schema, none of which JSON Schema can express. The authored intent label's already-trimmed invariant is encoded as a boundary pattern in the schema. Objects the suite file and the step union declare are closed (additionalProperties: false). A tool call's own `arguments` object and the reused predicate union stay open in both validators: their keys are owned by the server's input schema and by a separate contract module respectively.",
+    "Structural contract for an MCPJam eval suite file. Generated from the zod source in @mcpjam/sdk (src/contract/suite-file.ts). Describes what is ACCEPTED (zod io:input), so a file this schema accepts is one the SDK validator also accepts structurally. The zod validator remains the authoritative superset: it additionally enforces cross-field rules (unique case ids, unique step ids within a case, a per-case import block requiring top-level provenance, a per-case import note being required when the claimed status is exact, and an OBSERVATION check — noDeprecatedToolExposed, noEndingQuestion, noRepeatedIdenticalCall, noDeprecatedToolCalled, toolErrorNamesInput, fullPageHasContinuation — being refused unless it carries role: \"advisory\", because a heuristic must not decide a release) and serialized-size caps on tool-call arguments and on toolResultMatchesSchema's authored schema, none of which JSON Schema can express. The authored intent label's already-trimmed invariant is encoded as a boundary pattern in the schema. Objects the suite file and the step union declare are closed (additionalProperties: false). A tool call's own `arguments` object and the reused predicate union stay open in both validators: their keys are owned by the server's input schema and by a separate contract module respectively.",
   type: "object",
   properties: {
     schemaVersion: { type: "string", const: "1" },
@@ -615,6 +615,112 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   properties: {
                                     type: {
                                       type: "string",
+                                      const: "toolDescriptionsPresent",
+                                    },
+                                    minLength: {
+                                      type: "integer",
+                                      exclusiveMinimum: 0,
+                                      maximum: 9007199254740991,
+                                    },
+                                    role: {
+                                      type: "string",
+                                      enum: ["gating", "advisory"],
+                                    },
+                                    severity: { type: "string", const: "warn" },
+                                  },
+                                  required: ["type"],
+                                },
+                                {
+                                  type: "object",
+                                  properties: {
+                                    type: {
+                                      type: "string",
+                                      const: "toolAnnotationsPresent",
+                                    },
+                                    require: {
+                                      maxItems: 2,
+                                      type: "array",
+                                      items: {
+                                        type: "string",
+                                        enum: [
+                                          "readOnlyHint",
+                                          "destructiveHint",
+                                        ],
+                                      },
+                                    },
+                                    role: {
+                                      type: "string",
+                                      enum: ["gating", "advisory"],
+                                    },
+                                    severity: { type: "string", const: "warn" },
+                                  },
+                                  required: ["type"],
+                                },
+                                {
+                                  type: "object",
+                                  properties: {
+                                    type: {
+                                      type: "string",
+                                      const: "toolNamesUnique",
+                                    },
+                                    role: {
+                                      type: "string",
+                                      enum: ["gating", "advisory"],
+                                    },
+                                    severity: { type: "string", const: "warn" },
+                                  },
+                                  required: ["type"],
+                                },
+                                {
+                                  type: "object",
+                                  properties: {
+                                    type: {
+                                      type: "string",
+                                      const: "noDeprecatedToolExposed",
+                                    },
+                                    role: {
+                                      type: "string",
+                                      enum: ["gating", "advisory"],
+                                    },
+                                    severity: { type: "string", const: "warn" },
+                                  },
+                                  required: ["type"],
+                                },
+                                {
+                                  type: "object",
+                                  properties: {
+                                    type: {
+                                      type: "string",
+                                      const: "toolInputSchemasWellFormed",
+                                    },
+                                    role: {
+                                      type: "string",
+                                      enum: ["gating", "advisory"],
+                                    },
+                                    severity: { type: "string", const: "warn" },
+                                  },
+                                  required: ["type"],
+                                },
+                                {
+                                  type: "object",
+                                  properties: {
+                                    type: {
+                                      type: "string",
+                                      const: "toolOutputSchemasPresent",
+                                    },
+                                    role: {
+                                      type: "string",
+                                      enum: ["gating", "advisory"],
+                                    },
+                                    severity: { type: "string", const: "warn" },
+                                  },
+                                  required: ["type"],
+                                },
+                                {
+                                  type: "object",
+                                  properties: {
+                                    type: {
+                                      type: "string",
                                       const: "toolCalledWith",
                                     },
                                     toolName: { type: "string", minLength: 1 },
@@ -712,6 +818,37 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                     severity: { type: "string", const: "warn" },
                                   },
                                   required: ["type", "toolName"],
+                                },
+                                {
+                                  type: "object",
+                                  properties: {
+                                    type: {
+                                      type: "string",
+                                      const: "responseCloseTo",
+                                    },
+                                    reference: {
+                                      type: "string",
+                                      minLength: 1,
+                                      maxLength: 100000,
+                                    },
+                                    maxDistance: {
+                                      type: "number",
+                                      minimum: 0,
+                                      maximum: 1,
+                                    },
+                                    caseSensitive: { type: "boolean" },
+                                    normalizeWhitespace: { type: "boolean" },
+                                    role: {
+                                      type: "string",
+                                      enum: ["gating", "advisory"],
+                                    },
+                                    severity: { type: "string", const: "warn" },
+                                  },
+                                  required: [
+                                    "type",
+                                    "reference",
+                                    "maxDistance",
+                                  ],
                                 },
                                 {
                                   type: "object",
@@ -1129,6 +1266,76 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                 {
                   type: "object",
                   properties: {
+                    type: { type: "string", const: "toolDescriptionsPresent" },
+                    minLength: {
+                      type: "integer",
+                      exclusiveMinimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    role: { type: "string", enum: ["gating", "advisory"] },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type"],
+                },
+                {
+                  type: "object",
+                  properties: {
+                    type: { type: "string", const: "toolAnnotationsPresent" },
+                    require: {
+                      maxItems: 2,
+                      type: "array",
+                      items: {
+                        type: "string",
+                        enum: ["readOnlyHint", "destructiveHint"],
+                      },
+                    },
+                    role: { type: "string", enum: ["gating", "advisory"] },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type"],
+                },
+                {
+                  type: "object",
+                  properties: {
+                    type: { type: "string", const: "toolNamesUnique" },
+                    role: { type: "string", enum: ["gating", "advisory"] },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type"],
+                },
+                {
+                  type: "object",
+                  properties: {
+                    type: { type: "string", const: "noDeprecatedToolExposed" },
+                    role: { type: "string", enum: ["gating", "advisory"] },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type"],
+                },
+                {
+                  type: "object",
+                  properties: {
+                    type: {
+                      type: "string",
+                      const: "toolInputSchemasWellFormed",
+                    },
+                    role: { type: "string", enum: ["gating", "advisory"] },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type"],
+                },
+                {
+                  type: "object",
+                  properties: {
+                    type: { type: "string", const: "toolOutputSchemasPresent" },
+                    role: { type: "string", enum: ["gating", "advisory"] },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type"],
+                },
+                {
+                  type: "object",
+                  properties: {
                     type: { type: "string", const: "toolCalledWith" },
                     toolName: { type: "string", minLength: 1 },
                     args: {
@@ -1198,6 +1405,23 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                     severity: { type: "string", const: "warn" },
                   },
                   required: ["type", "toolName"],
+                },
+                {
+                  type: "object",
+                  properties: {
+                    type: { type: "string", const: "responseCloseTo" },
+                    reference: {
+                      type: "string",
+                      minLength: 1,
+                      maxLength: 100000,
+                    },
+                    maxDistance: { type: "number", minimum: 0, maximum: 1 },
+                    caseSensitive: { type: "boolean" },
+                    normalizeWhitespace: { type: "boolean" },
+                    role: { type: "string", enum: ["gating", "advisory"] },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type", "reference", "maxDistance"],
                 },
                 {
                   type: "object",
@@ -1453,11 +1677,105 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
               ],
             },
           },
+          suppressedSuiteStandardCheckIds: {
+            maxItems: 64,
+            type: "array",
+            items: {
+              type: "string",
+              enum: [
+                "discovery.description",
+                "discovery.annotations",
+                "discovery.collisions",
+                "discovery.deprecated",
+                "call.schema",
+                "response.schema",
+                "selection.hops",
+                "call.parameters",
+                "call.repeated",
+                "response.performance",
+                "response.size",
+                "response.errors",
+                "response.recovery",
+                "response.pagination",
+                "userValue.turns",
+              ],
+            },
+          },
           assertions: {
             maxItems: 50,
             type: "array",
             items: {
               oneOf: [
+                {
+                  type: "object",
+                  properties: {
+                    type: { type: "string", const: "toolDescriptionsPresent" },
+                    minLength: {
+                      type: "integer",
+                      exclusiveMinimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    role: { type: "string", enum: ["gating", "advisory"] },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type"],
+                },
+                {
+                  type: "object",
+                  properties: {
+                    type: { type: "string", const: "toolAnnotationsPresent" },
+                    require: {
+                      maxItems: 2,
+                      type: "array",
+                      items: {
+                        type: "string",
+                        enum: ["readOnlyHint", "destructiveHint"],
+                      },
+                    },
+                    role: { type: "string", enum: ["gating", "advisory"] },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type"],
+                },
+                {
+                  type: "object",
+                  properties: {
+                    type: { type: "string", const: "toolNamesUnique" },
+                    role: { type: "string", enum: ["gating", "advisory"] },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type"],
+                },
+                {
+                  type: "object",
+                  properties: {
+                    type: { type: "string", const: "noDeprecatedToolExposed" },
+                    role: { type: "string", enum: ["gating", "advisory"] },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type"],
+                },
+                {
+                  type: "object",
+                  properties: {
+                    type: {
+                      type: "string",
+                      const: "toolInputSchemasWellFormed",
+                    },
+                    role: { type: "string", enum: ["gating", "advisory"] },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type"],
+                },
+                {
+                  type: "object",
+                  properties: {
+                    type: { type: "string", const: "toolOutputSchemasPresent" },
+                    role: { type: "string", enum: ["gating", "advisory"] },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type"],
+                },
                 {
                   type: "object",
                   properties: {
@@ -1530,6 +1848,23 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                     severity: { type: "string", const: "warn" },
                   },
                   required: ["type", "toolName"],
+                },
+                {
+                  type: "object",
+                  properties: {
+                    type: { type: "string", const: "responseCloseTo" },
+                    reference: {
+                      type: "string",
+                      minLength: 1,
+                      maxLength: 100000,
+                    },
+                    maxDistance: { type: "number", minimum: 0, maximum: 1 },
+                    caseSensitive: { type: "boolean" },
+                    normalizeWhitespace: { type: "boolean" },
+                    role: { type: "string", enum: ["gating", "advisory"] },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type", "reference", "maxDistance"],
                 },
                 {
                   type: "object",
