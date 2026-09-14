@@ -322,7 +322,7 @@ describe("UserTestingScenarioDetail", () => {
     expect(screen.getByTestId("stub-scenario-findings")).toBeInTheDocument();
     expect(screen.queryByTestId("stub-usage-insights")).not.toBeInTheDocument();
     expect(screen.queryByTestId("stub-usage-sessions")).not.toBeInTheDocument();
-    const nav = screen.getByRole("navigation", { name: "Scenario view" });
+    const nav = screen.getByRole("navigation", { name: "Study view" });
     // `stub-share-empty` is the Insights empty state and no longer renders
     // on the landing tab.
     expect(
@@ -336,8 +336,49 @@ describe("UserTestingScenarioDetail", () => {
     ).not.toBeInTheDocument();
     expect(screen.getByTestId("user-testing-edit-button")).toBeInTheDocument();
     // Edit is a header action + route, not a view-mode tab.
-    const tabNav = screen.getByRole("navigation", { name: "Scenario view" });
+    const tabNav = screen.getByRole("navigation", { name: "Study view" });
     expect(within(tabNav).queryByRole("button", { name: "Edit" })).toBeNull();
+  });
+
+  it("opens a study nobody has tested on Insights, not an empty Findings", () => {
+    // Findings summarises what testers did. On a study with nobody through the
+    // link it renders as an empty frame that reads like a broken page, which
+    // is the first thing anyone sees after creating one.
+    renderDetail({}, { sessionCount: 0 });
+
+    expect(screen.getByTestId("stub-usage-insights")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("stub-scenario-findings"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("opens on Findings as soon as the study has a session", () => {
+    renderDetail({}, { sessionCount: 1 });
+
+    expect(screen.getByTestId("stub-scenario-findings")).toBeInTheDocument();
+    expect(screen.queryByTestId("stub-usage-insights")).not.toBeInTheDocument();
+  });
+
+  it("names Findings in the URL on an empty study, so the tab still works", () => {
+    // The regression this guards: Findings is not the fallback here, so a link
+    // that omitted `?tab=` would parse straight back to Insights and the tab
+    // would look unclickable.
+    renderDetail({}, { sessionCount: 0 });
+
+    fireEvent.click(screen.getByRole("button", { name: "Findings" }));
+
+    expect(navigateMock).toHaveBeenCalledWith(
+      "/user-testing/cb-1?tab=findings",
+      { replace: true },
+    );
+  });
+
+  it("honours an explicit Findings link on an empty study", () => {
+    locationState.search = "?tab=findings";
+    renderDetail({}, { sessionCount: 0 });
+
+    expect(screen.getByTestId("stub-scenario-findings")).toBeInTheDocument();
+    expect(screen.queryByTestId("stub-usage-insights")).not.toBeInTheDocument();
   });
 
   it("keeps the page up when the landing tab's query throws", () => {
@@ -357,7 +398,7 @@ describe("UserTestingScenarioDetail", () => {
       screen.queryByTestId("stub-scenario-findings"),
     ).not.toBeInTheDocument();
     expect(screen.getByTestId("stub-share-empty")).toBeInTheDocument();
-    const nav = screen.getByRole("navigation", { name: "Scenario view" });
+    const nav = screen.getByRole("navigation", { name: "Study view" });
     expect(
       within(nav).getByRole("button", { name: "Insights" }),
     ).toBeInTheDocument();
@@ -1157,16 +1198,20 @@ describe("UserTestingScenarioDetail — settings layout", () => {
     expect(previewPaneMock).not.toHaveBeenCalled();
   });
 
-  it("lays Settings out in two columns that fill the pane", () => {
+  it("lays Settings out in one wide column, not two", () => {
     const { container } = renderEdit();
 
     expect(screen.getByTestId("user-testing-edit-tab")).toBeInTheDocument();
-    // Reported as "too much white space": the 560px column this replaces sat
-    // pinned to the left of a pane twice its width. Two columns from `xl`,
-    // capped so an ultra-wide monitor does not stretch the measure.
+    // One column, read top to bottom like every other settings surface. Two
+    // columns gave no answer to "what do I look at after Description", and on
+    // a study whose sections differ in height it left one side ragged.
+    expect(container.querySelector('[class*="grid-cols-2"]')).toBeNull();
+    // Still WIDE, though. The two-column layout answered a real report ("too
+    // much white space" against a 560px column pinned to the left of a pane
+    // twice its width), and a narrow single column would bring it straight
+    // back. Capped so an ultra-wide monitor does not stretch the measure.
     expect(container.querySelector('[class*="w-[560px]"]')).toBeNull();
-    expect(container.querySelector('[class*="xl:grid-cols-2"]')).not.toBeNull();
-    expect(container.querySelector('[class*="max-w-[1400px]"]')).not.toBeNull();
+    expect(container.querySelector('[class*="max-w-[960px]"]')).not.toBeNull();
     // A resizable split is what the single column replaced, and it is not
     // coming back. Asserted against the MOCK's own test id, not
     // `[data-panel-group]`: the group is stubbed in this file, so the real
@@ -1175,6 +1220,28 @@ describe("UserTestingScenarioDetail — settings layout", () => {
     expect(
       screen.queryByTestId("stub-resizable-group"),
     ).not.toBeInTheDocument();
+  });
+
+  it("reads the study first, then the rules it runs under", () => {
+    // Collapsing two columns into one makes reading ORDER a real decision for
+    // the first time. This is the old column order read down — and already
+    // what every screen below `xl` was showing — so nothing moves for anyone
+    // who was on a laptop.
+    const { container } = renderEdit();
+
+    const order = [
+      "user-testing-description-section",
+      "user-testing-tasks-section",
+      "scenario-grading-section",
+      "user-testing-delete",
+    ].map((id) =>
+      Array.prototype.indexOf.call(
+        container.querySelectorAll("[data-testid]"),
+        container.querySelector(`[data-testid="${id}"]`),
+      ),
+    );
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+    expect(order.every((index) => index >= 0)).toBe(true);
   });
 
   it("keeps every settings section on the page after the split", () => {

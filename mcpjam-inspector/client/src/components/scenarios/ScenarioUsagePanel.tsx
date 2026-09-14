@@ -292,6 +292,12 @@ export function ScenarioUsagePanel({
                       ? { projectId: scenario.projectId, canPromote }
                       : undefined
                   }
+                  // Reported here: scrolling a tester's transcript felt like
+                  // something was missing, because a hard edge cuts a message
+                  // mid-line and says nothing about whether that was the end.
+                  // Opt-in, so the four other surfaces this detail serves are
+                  // unchanged until their owners ask for the same.
+                  fadeTranscriptEdges
                 />
               ) : (
                 <div className="flex h-full items-center justify-center px-6">
