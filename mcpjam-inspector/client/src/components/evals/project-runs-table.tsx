@@ -55,7 +55,7 @@ import {
   DropdownMenuContent,
   DropdownMenuCheckboxItem,
 } from "@mcpjam/design-system/dropdown-menu";
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { usePaginatedQuery, useQuery } from "convex/react";
 import { ChevronDown, GitBranch, Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -310,6 +310,24 @@ export function ProjectRunsTable({
     () => visibleRunOriginFilters(platformPostLaunchEnabled),
     [platformPostLaunchEnabled],
   );
+  // A chip that disappears takes its filter with it. `platform-post-launch`
+  // can go off mid-session — PostHog re-reads flags, and an unresolved read is
+  // off — which would otherwise leave the table filtered by a chip no longer
+  // in the menu, unreachable except through Clear filters.
+  useEffect(() => {
+    const visible = new Set(platformFilters.map((filter) => filter.value));
+    const hidden = [...sourceFilter].filter((value) => !visible.has(value));
+    if (hidden.length === 0) return;
+    if (hidden.includes("github")) {
+      setRepositoryFilter(ALL_EVAL_FILTER_VALUES);
+      setBranchFilter(ALL_EVAL_FILTER_VALUES);
+      setCommitFilter("");
+    }
+    setSourceFilter(
+      (previous) =>
+        new Set([...previous].filter((value) => visible.has(value))),
+    );
+  }, [platformFilters, sourceFilter]);
   const { hosts } = useHostList({
     isAuthenticated: historyMetricsEnabled,
     projectId,

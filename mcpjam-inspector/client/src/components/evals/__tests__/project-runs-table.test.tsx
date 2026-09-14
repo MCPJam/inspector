@@ -276,6 +276,31 @@ describe("ProjectRunsTable", () => {
     expect(chips).toEqual(["SDK", "UI", "API", "CLI"]);
   });
 
+  it("drops a selected chip when platform-post-launch goes off mid-session", async () => {
+    const user = userEvent.setup();
+    setRows([makeRow({ source: "github_check" })]);
+    const onSelectRun = vi.fn();
+    const view = render(
+      <ProjectRunsTable projectId="proj_1" onSelectRun={onSelectRun} />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Filter by platform" }),
+    );
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "GitHub" }));
+    await user.keyboard("{Escape}");
+    expect(latestQueryArgs().origins).toEqual([
+      "github_check",
+      "github_action",
+    ]);
+    // The chip leaves the menu, so the filter it stood for has to go with it.
+    mocks.platformPostLaunchEnabled = false;
+    view.rerender(
+      <ProjectRunsTable projectId="proj_1" onSelectRun={onSelectRun} />,
+    );
+    await waitFor(() => expect(latestQueryArgs().origins).toBeUndefined());
+    expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
+  });
+
   it("maps the GitHub chip onto both stored GitHub origins", async () => {
     const user = userEvent.setup();
     setRows([makeRow({ source: "github_check" })]);
