@@ -836,9 +836,10 @@ export type EvalRunFileKnobs = {
   environment?: string[];
   host?: string[];
   allTargets?: boolean;
-  repetitions?: number;
-  /** Deprecated alias for repetitions. */
+  /** The configured count for this run only. */
   iterations?: number;
+  /** Legacy spelling of `iterations`. */
+  repetitions?: number;
   case?: string[];
   excludeSkills?: boolean;
   refreshSnapshot?: boolean;
@@ -863,7 +864,7 @@ export const MAX_APPROVAL_REASON_LENGTH = 500;
 
 /**
  * File-run idempotency covers the bytes AND every knob that changes what
- * launches. Same file + `--repetitions 1` vs `--repetitions 10` must not
+ * launches. Same file + `--iterations 1` vs `--iterations 10` must not
  * collapse onto one run.
  */
 export function deriveFileRunIdempotencyKey(params: {
@@ -886,7 +887,9 @@ export function deriveFileRunIdempotencyKey(params: {
       (params.fileEnvironment ? [params.fileEnvironment] : null),
     hosts: params.knobs.host ?? null,
     allTargets: params.knobs.allTargets === true,
-    repetitions: params.knobs.repetitions ?? params.knobs.iterations ?? null,
+    // The digest KEY keeps its original spelling: it is an idempotency payload,
+    // and renaming it would re-key every file run ever launched.
+    repetitions: params.knobs.iterations ?? params.knobs.repetitions ?? null,
     cases: params.knobs.case ?? null,
     excludeSkills: params.knobs.excludeSkills === true,
     refreshSnapshot: params.knobs.refreshSnapshot === true,
@@ -1184,8 +1187,8 @@ export async function executeEvalRunFromFile(
         ? { hosts: fileHosts }
         : {}),
       ...(knobs.allTargets ? { allAttached: true } : {}),
-      ...(knobs.repetitions !== undefined || knobs.iterations !== undefined
-        ? { repetitions: knobs.repetitions ?? knobs.iterations }
+      ...(knobs.iterations !== undefined || knobs.repetitions !== undefined
+        ? { iterations: knobs.iterations ?? knobs.repetitions }
         : {}),
       cases: runCases,
       ...(knobs.excludeSkills ? { excludeSkills: true } : {}),

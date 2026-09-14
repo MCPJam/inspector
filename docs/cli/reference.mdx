@@ -1201,8 +1201,8 @@ This six-code contract is new and deliberately **different** from `eval gate`'s 
 | `--client <id-or-name...>` | No | Attached client(s) to run, so the run is stamped with that client's config. Several values start one **paid run each**. |
 | `--host <id-or-name...>` | No | **Deprecated** alias for `--client`. Passing both is an error. Not the host-compat catalog id `mcpjam compat --host` / `mcpjam tools --host` take — see [Two different `--host` flags](#two-different---host-flags). |
 | `--all-targets` | No | Run **every** attached environment (or, if none, every attached host) — one **paid run per target** |
-| `--repetitions <n>` | No | Run each case this many times (1-10), for this run only |
-| `--iterations <n>` | No | **Deprecated** alias for `--repetitions`. Passing both is an error. |
+| `--iterations <n>` | No | Run each case this many times (1-10), for this run only |
+| `--repetitions <n>` | No | **Legacy** spelling of `--iterations`. Passing both is an error. |
 | `--case <id-or-title...>` | No | Run only these cases instead of the whole suite |
 | `--exclude-skills` | No | Run the "without skills" A/B arm: nothing is pinned, and the run is labelled as excluded |
 | `--refresh-snapshot` | No | **Persists a new host-config snapshot on the suite** (see below). Single-target runs only. |
@@ -1331,8 +1331,9 @@ project update that suite rather than creating a second one. A UI-authored
 suite has no declared id, so no file can claim it. Resolve is never by name.
 
 File `passThreshold` is a fraction; the hosted suite grades on a percent. The
-conversion refuses rather than approximates. File `repetitions` above **10**
-are refused by name (`REPETITIONS_CAP`) and are not clamped.
+conversion refuses rather than approximates. A file count above **10**
+(`repetitions` in a `schemaVersion: "1"` file, `iterations` in `"2"`) is
+refused by name (`REPETITIONS_CAP`) and is not clamped.
 
 Cases are synced in batches of at most 100 (`create_eval_cases`). Every
 declared case is created or updated, including `disabled: true` rows. A case
@@ -1354,7 +1355,8 @@ refusal). Hosted platform-authored suites do not currently have a backend
 tool-policy field or enforcement path, so the CLI does not upload a suite that
 would claim those guarantees. When supported by an eval runner, `toolPolicy`
 is enforced at execution time with denied tools kept visible but blocked;
-server annotations are advisory and **UNTRUSTED**. File `defaults.repetitions` is
+server annotations are advisory and **UNTRUSTED**. The file's default count
+(`defaults.repetitions`, or `defaults.iterations` in `schemaVersion: "2"`) is
 inherited per case and is not uploaded as a suite `minIterations` floor.
 Authored `defaults.systemPrompt` and `defaults.temperature` are uploaded as
 execution defaults; omitted fields stay omitted so the platform applies its
@@ -1369,7 +1371,7 @@ synchronization is unaffected and always runs.
 
 Without `--idempotency-key`, the CLI derives one from the file's SHA-256,
 declared suite id, project, target, and every run-affecting knob
-(`--repetitions`, `--case`, `--min-pass-rate`, `--exclude-skills`,
+(`--iterations`, `--case`, `--min-pass-rate`, `--exclude-skills`,
 `--match-options`, `--environment` / `--host` / `--server` / `--all-targets`,
 `--refresh-snapshot`, compose flags, and the normalized
 `--allow-approximated` set with its `--approval-reason`). Repeating the same
@@ -2019,9 +2021,14 @@ Write a hosted eval suite to a local suite file.
 | `--project <id-or-name>` | No | Project the suite belongs to (defaults to the most recently updated project) |
 | `--out <path>` | No | Where to write (default `.mcpjam/evals/<suite-id>.yaml`) |
 | `--force` | No | Replace an existing file at the output path |
+| `--schema-version <1\|2>` | No | Suite-file dialect to write. `1` (the default) spells the count `repetitions` and the rules `checks`; `2` spells them `iterations` and `assertions`. Both dialects load. |
 
 The default path uses the suite's **id**, not its display name: an id is stable
 and path-safe, so a rename does not leave a second file behind.
+
+The dialect is the author's choice and is never inferred: a file has no
+handshake with whatever will read it later, so `eval export` keeps writing
+`schemaVersion: "1"` until you ask for `2`.
 
 **Fail-closed.** A suite file cannot express everything a hosted suite can, and
 this command refuses rather than writing a file that describes a different test
@@ -2257,8 +2264,8 @@ Run a single case as a persisted, fully-queryable run — inspect it with `eval 
 | `--compose-server-group <id>` | No | Standalone server group to pin on the composed stack |
 | `--compose-skill <id...>` | No | Project-shared skill IDs to pin on the composed stack |
 | `--compose-secret <id...>` | No | Project secret IDs the composed stack grants to its runs (`secrets list` shows them) |
-| `--repetitions <n>` | No | Run the case this many times (1-10) |
-| `--iterations <n>` | No | **Deprecated** alias for `--repetitions`. Passing both is an error. |
+| `--iterations <n>` | No | Run the case this many times (1-10) |
+| `--repetitions <n>` | No | **Legacy** spelling of `--iterations`. Passing both is an error. |
 | `--idempotency-key <key>` | No | Retry-safety key: repeating the call returns the run it already started |
 
 Every `--compose-*` flag behaves exactly as it does for `eval run` — see
