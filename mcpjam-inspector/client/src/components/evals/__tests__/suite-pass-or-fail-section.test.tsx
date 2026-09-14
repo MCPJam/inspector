@@ -91,7 +91,7 @@ describe("SuitePassOrFailSection", () => {
     for (const stage of ["connection", "discovery"]) {
       const copy = emptyCopy(container, stage) ?? "";
       expect(copy, stage).toContain("Observed by the runner");
-      expect(copy.toLowerCase(), stage).not.toContain("no grader");
+      expect(copy.toLowerCase(), stage).not.toContain("no evaluator");
       // The run-state word. Settings has observed nothing, so claiming a
       // measurement did not happen states something nobody looked at.
       expect(copy.toLowerCase(), stage).not.toContain("not measured");

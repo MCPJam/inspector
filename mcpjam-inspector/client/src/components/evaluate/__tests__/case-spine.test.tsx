@@ -132,7 +132,7 @@ describe("the first-run form", () => {
     expect(screen.getByRole("button", { name: "Add" })).toBeInTheDocument();
     // The vocabulary a newcomer has not earned yet.
     const text = screen.getByTestId("case-spine").textContent ?? "";
-    expect(text).not.toMatch(/Scorers|Gate|Warn|Report|Judge · /);
+    expect(text).not.toMatch(/Evaluators|Scorers|Gate|Warn|Report|Judge · /);
     expect(screen.getByTestId("spine-actions")).toBeInTheDocument();
     expect(screen.queryByTestId("spine-after-the-run")).toBeNull();
   });

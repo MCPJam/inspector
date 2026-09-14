@@ -1,7 +1,7 @@
 import { SuiteStageChecks } from "./suite-stage-checks";
 import { toggleSuiteStandardCheck } from "./standard-checks-model";
 /**
- * "Scorers and judges", organized by the stage each grader measures.
+ * "Evaluators", organized by the stage each one measures.
  *
  * THE PROBLEM THIS SOLVES. The settings sheet used to list Tool calls, Default
  * checks and LLM as Judge as three unrelated rows, in the order the fields

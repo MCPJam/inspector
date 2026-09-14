@@ -253,8 +253,8 @@ export function groupGradersByStage(input: {
  * THREE ANSWERS, and the distinction is the point. `connection`, `discovery`
  * and `call` have no authorable grader on this page at all — the runner
  * measures them on every trial whether or not anyone configured anything — so
- * "no grader" would read as a gap the reader should close. The other three are
- * genuinely unconfigured.
+ * "No evaluator" would read as a gap the reader should close. The other three
+ * are genuinely unconfigured.
  *
  * Neither answer is `STAGE_STATE_LABELS.notMeasured`. That phrase describes a
  * RUN: a stage no trial reached, or one the analyzer could not decide. Settings
