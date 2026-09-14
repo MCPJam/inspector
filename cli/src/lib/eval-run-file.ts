@@ -109,8 +109,12 @@ export function fileCaseToCreateBody(
     ...(testCase.kind !== undefined ? { kind: testCase.kind } : {}),
     steps: testCase.steps,
     ...(testCase.suppressedSuiteStandardCheckIds !== undefined ? { suppressedSuiteStandardCheckIds: testCase.suppressedSuiteStandardCheckIds } : {}),
-    iterations: testCase.repetitions,
-    repetitions: testCase.repetitions,
+    // Both wire keys carry the file's ONE configured count. The v1 API reads
+    // `iterations` as the legacy floor and `repetitions` as the exact count;
+    // the resolved file has only the canonical `iterations`, so the exporter
+    // spells it both ways until the wire speaks the same vocabulary.
+    iterations: testCase.iterations,
+    repetitions: testCase.iterations,
     passThreshold: testCase.passThreshold,
     ...(testCase.expectedOutput !== undefined
       ? { expectedOutput: testCase.expectedOutput }
@@ -146,8 +150,12 @@ export function fileCaseToUpdateBody(
     kind: testCase.kind ?? null,
     steps: testCase.steps,
     ...(testCase.suppressedSuiteStandardCheckIds !== undefined || previousSuppression?.length ? { suppressedSuiteStandardCheckIds: testCase.suppressedSuiteStandardCheckIds ?? [] } : {}),
-    iterations: testCase.repetitions,
-    repetitions: testCase.repetitions,
+    // Both wire keys carry the file's ONE configured count. The v1 API reads
+    // `iterations` as the legacy floor and `repetitions` as the exact count;
+    // the resolved file has only the canonical `iterations`, so the exporter
+    // spells it both ways until the wire speaks the same vocabulary.
+    iterations: testCase.iterations,
+    repetitions: testCase.iterations,
     passThreshold: testCase.passThreshold,
     expectedOutput: testCase.expectedOutput ?? "",
     isNegative: testCase.isNegativeTest,
@@ -200,15 +208,15 @@ function refuseUnsupportedHostedSemantics(loaded: {
 
 function refuseRepetitions(loaded: {
   resolved: {
-    defaults: { repetitions: number };
+    defaults: { iterations: number };
     cases: ResolvedEvalSuiteFileCase[];
   };
 }): void {
-  const suiteReps = loaded.resolved.defaults.repetitions;
+  const suiteReps = loaded.resolved.defaults.iterations;
   if (suiteReps > HOSTED_ITERATIONS_CAP) {
     throw cliError(
       "REPETITIONS_CAP",
-      `Hosted runs accept at most ${HOSTED_ITERATIONS_CAP} iterations; the file's repetitions (${suiteReps}) exceed that cap. Reduce repetitions to ${HOSTED_ITERATIONS_CAP} or fewer — the value is not clamped.`,
+      `Hosted runs accept at most ${HOSTED_ITERATIONS_CAP} iterations; the file's configured iterations (${suiteReps}) exceed that cap. Reduce them to ${HOSTED_ITERATIONS_CAP} or fewer — the value is not clamped.`,
       SUITE_FILE_RUN_INVALID_EXIT_CODE
     );
   }
@@ -216,10 +224,10 @@ function refuseRepetitions(loaded: {
   // applies to parked rows too — otherwise a later enable would host 11+
   // iterations the file already named.
   for (const testCase of loaded.resolved.cases) {
-    if (testCase.repetitions > HOSTED_ITERATIONS_CAP) {
+    if (testCase.iterations > HOSTED_ITERATIONS_CAP) {
       throw cliError(
         "REPETITIONS_CAP",
-        `Hosted runs accept at most ${HOSTED_ITERATIONS_CAP} iterations; case "${testCase.id}" sets repetitions ${testCase.repetitions}. Reduce repetitions to ${HOSTED_ITERATIONS_CAP} or fewer — the value is not clamped.`,
+        `Hosted runs accept at most ${HOSTED_ITERATIONS_CAP} iterations; case "${testCase.id}" configures ${testCase.iterations} iterations. Reduce them to ${HOSTED_ITERATIONS_CAP} or fewer — the value is not clamped.`,
         SUITE_FILE_RUN_INVALID_EXIT_CODE
       );
     }
@@ -1040,7 +1048,7 @@ export async function executeEvalRunFromFile(
         ...(authored.provenance ? { provenance: authored.provenance } : {}),
         verdictPolicyVersion: 2,
         verdictPolicyDefaults: {
-          repetitions: loaded.resolved.defaults.repetitions,
+          repetitions: loaded.resolved.defaults.iterations,
           passThreshold: loaded.resolved.defaults.passThreshold,
           // The AUTHORED shape, never the resolved one. `resolved.validity`
           // carries a `coverage` union that exists only in memory — the route's

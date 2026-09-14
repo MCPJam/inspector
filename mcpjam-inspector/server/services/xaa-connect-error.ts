@@ -124,6 +124,7 @@ export function toXaaConnectFailure(
       ? { xaaReauthRequired: true }
       : {}),
   });
+  framed.withSetupFailureSource("xaa_mint");
   framed.cause = error;
   return framed;
 }
