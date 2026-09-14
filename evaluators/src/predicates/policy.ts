@@ -19,9 +19,18 @@
 export const CHECK_POLICY_KEYS = ["role", "severity"] as const;
 
 /**
- * The EFFECTIVE role — what a reader acts on. Deliberately the storage
- * spelling, so a comparison here cannot silently disagree with a stored rule.
- * {@link AuthoredCheckRole} is the wider set an author may WRITE.
+ * The EFFECTIVE role a CHECK resolves to — what a reader acts on.
+ *
+ * Spelled with the legacy word on purpose, and narrowly: this is the type
+ * `checkRole` returns, and its two members are compared against by client code
+ * that also renders `ROLE_LEGEND`, which is where the word "Required" comes
+ * from. Widening it to the canonical spelling here would rename an internal
+ * resolved value without renaming anything a reader sees, for no gain.
+ *
+ * {@link AuthoredCheckRole} is the wider set an author may WRITE. The backend
+ * narrows its own effective types to the canonical pair, because there the
+ * resolved value IS compared against literals on gate-deciding paths and the
+ * compiler finding those was the point.
  */
 export type CheckRole = "gating" | "advisory";
 /** What an author may spell, including the canonical `"required"`. */

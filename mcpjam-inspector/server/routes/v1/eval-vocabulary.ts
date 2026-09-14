@@ -35,7 +35,9 @@ export type EvalVocabulary = 1 | 2;
  * caller turns that into a `VALIDATION_ERROR`, rather than guessing a
  * vocabulary for a client that asked for one we do not have.
  */
-export function parseEvalVocabulary(raw: string | undefined): EvalVocabulary | null {
+export function parseEvalVocabulary(
+  raw: string | undefined,
+): EvalVocabulary | null {
   if (raw === undefined) return 1;
   const value = raw.trim();
   if (value === "" || value === "1") return 1;

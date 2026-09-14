@@ -72,7 +72,7 @@ export function capabilityAcceptsCanonicalRole(capabilities: unknown): boolean {
  */
 export function roleForDeployment(
   role: ScorerRole,
-  capabilities: unknown,
+  capabilities: unknown
 ): ScorerRole {
   if (role !== "required") return role;
   return capabilityAcceptsCanonicalRole(capabilities) ? "required" : "gating";
@@ -81,7 +81,7 @@ export function roleForDeployment(
 /** {@link roleForDeployment} over a definition list, uncopied when nothing moves. */
 export function definitionsForDeployment<T extends { role: ScorerRole }>(
   definitions: readonly T[],
-  capabilities: unknown,
+  capabilities: unknown
 ): readonly T[] {
   if (capabilityAcceptsCanonicalRole(capabilities)) return definitions;
   let changed = false;
