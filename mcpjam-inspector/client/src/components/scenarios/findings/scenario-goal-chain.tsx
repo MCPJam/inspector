@@ -19,15 +19,22 @@
  *
  * Any throw reports `null`, and `null` leaves the chain unmeasured, which is
  * what the tab already shows today. That is a real fallback, not a swallowed
- * error: the boundary still reports to telemetry, because the two shapes
- * `isConvexQueryUnavailable` forgives do NOT cover this one. A backend that
- * lost the `clusterId` argument is a rollback, and it should page someone.
+ * error: this boundary passes NO `isExpectedError`, so it reports every throw
+ * unconditionally — including the shapes that predicate would forgive. A
+ * backend that lost an argument is a rollback, and it should page someone.
+ *
+ * Do not reach for `isExpectedError={isConvexQueryUnavailable}` to quieten
+ * this during a dark-ship window. It would not match: an argument-validation
+ * rejection is neither string that predicate looks for, and the next move —
+ * widening the predicate — is the one `StageFunnelPanels` warns against by
+ * name.
  */
 
 import { useEffect } from "react";
 import { useQuery } from "convex/react";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import type { ChatSessionStageFunnel } from "@/components/shared/user-value-chain/user-value-chain-types";
+import type { SessionSentiment } from "@/hooks/scenario-usage-filters";
 import {
   mapGoalStageFunnel,
   type ScenarioGoalStages,
@@ -45,7 +52,19 @@ import {
  */
 export type ScenarioGoalChainAnswerFor = {
   goalId: string;
-  sentiment: string | undefined;
+  /**
+   * Typed to the union, not `string`.
+   *
+   * "No persona" is spelled three ways in this flow — truthiness at the query
+   * spread, nullish at the boundary key, strict equality at the tab's guard.
+   * They agree on `undefined` and disagree on `""`: an empty string would
+   * query the whole cluster, stamp the answer with it, pass the guard, and
+   * paint whole-population evidence under a one-persona heading. That is the
+   * bug this file exists to prevent, arriving through the guard built to
+   * prevent it. The union makes it unrepresentable rather than merely
+   * unreachable.
+   */
+  sentiment: SessionSentiment | undefined;
 };
 
 export type ScenarioGoalChainHandler = (
@@ -71,14 +90,15 @@ export function ScenarioGoalChain({
    * number about everyone who tried the goal between two numbers about one
    * persona — "2 sessions" above, "failed in 3 of 6 graded" in the middle.
    */
-  sentiment?: string;
+  sentiment?: SessionSentiment;
   onResolved: ScenarioGoalChainHandler;
 }) {
   return (
-    // KEYED by the goal. A boundary that has caught stays in its fallback for
-    // the life of the element, so an unkeyed one would swallow the chain for
-    // every LATER goal too: one transient failure and the rest of the study
-    // reads as unmeasured until the whole tab remounts.
+    // KEYED by the goal AND the persona. A boundary that has caught stays in
+    // its fallback for the life of the element, so an unkeyed one would
+    // swallow the chain for every later goal — and, since this diff, for every
+    // later persona on the same goal: one transient failure and the rest of
+    // the study reads as unmeasured until the whole tab remounts.
     <ErrorBoundary
       key={`${scenarioId}:${goalId}:${sentiment ?? "all"}`}
       name="scenario-goal-stage-chain"
@@ -103,7 +123,7 @@ function ScenarioGoalChainQuery({
 }: {
   scenarioId: string;
   goalId: string;
-  sentiment?: string;
+  sentiment?: SessionSentiment;
   onResolved: ScenarioGoalChainHandler;
 }) {
   // Named rather than generated: the inspector holds no Convex codegen, so

@@ -142,9 +142,10 @@ export function ScenarioFindingsTab({
   // an answer about a goal the reader has since closed — or about a persona
   // they have since switched away from — cannot paint the new one.
   const [chain, setChain] = useState<
-    (ScenarioGoalChainAnswerFor & {
-      stages: ScenarioGoalStages | null;
-    }) | null
+    | (ScenarioGoalChainAnswerFor & {
+        stages: ScenarioGoalStages | null;
+      })
+    | null
   >(null);
   const handleChain = useCallback<ScenarioGoalChainHandler>(
     (about, stages) => setChain({ ...about, stages }),
