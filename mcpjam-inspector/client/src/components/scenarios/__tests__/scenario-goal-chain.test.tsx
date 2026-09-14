@@ -196,9 +196,10 @@ describe("ScenarioGoalChain", () => {
       { scenarioId: "scn-1", clusterId: "cluster-export" },
     );
     expect(onResolved).toHaveBeenCalledTimes(1);
-    const [goalId, stages] = onResolved.mock.calls[0]!;
-    // Named with the goal it is about, so a stale answer is recognisable.
-    expect(goalId).toBe("cluster-export");
+    const [about, stages] = onResolved.mock.calls[0]!;
+    // Named with the population it is about, so a stale answer is
+    // recognisable — no persona is selected here, so there is no sentiment.
+    expect(about).toEqual({ goalId: "cluster-export", sentiment: undefined });
     expect(stages?.stages.discovery.state).toBe("fail");
     expect(stages?.defaultStage).toBe("discovery");
   });
@@ -233,7 +234,10 @@ describe("ScenarioGoalChain", () => {
       />,
     );
 
-    expect(onResolved).toHaveBeenCalledWith("cluster-export", null);
+    expect(onResolved).toHaveBeenCalledWith(
+      { goalId: "cluster-export", sentiment: undefined },
+      null,
+    );
   });
 
   it("falls back to unmeasured on a throw, and still reports the throw", () => {
@@ -255,7 +259,10 @@ describe("ScenarioGoalChain", () => {
       />,
     );
 
-    expect(onResolved).toHaveBeenCalledWith("cluster-export", null);
+    expect(onResolved).toHaveBeenCalledWith(
+      { goalId: "cluster-export", sentiment: undefined },
+      null,
+    );
     // Not swallowed. This is the assertion that separates a real fallback from
     // a silenced alarm.
     expect(mockReportBoundaryError).toHaveBeenCalled();
@@ -591,22 +598,33 @@ describe("the chain is scoped to the persona, not just the goal", () => {
     );
   });
 
+  /** Two personas, both of whom tried the same goal. */
+  function twoPersonaDrilldown() {
+    return {
+      ...drilldownFixture(),
+      sessions: [
+        ...drilldownFixture().sessions,
+        {
+          _id: "sess-9",
+          sentiment: "satisfied" as const,
+          themeClusterId: "cluster-export",
+          themeClusterLabel: "Export the board",
+          outcome: "completed" as const,
+        },
+      ],
+      total: 3,
+    };
+  }
+
+  const sentimentsAsked = () =>
+    mockUseQuery.mock.calls
+      .map(([, args]) => args as { sentiment?: string } | undefined)
+      .filter((a) => a && "sentiment" in a)
+      .map((a) => a!.sentiment);
+
   it("re-asks when the reader switches persona", async () => {
     mockUseGoalOutcomeDrilldown.mockReturnValue({
-      drilldown: {
-        ...drilldownFixture(),
-        sessions: [
-          ...drilldownFixture().sessions,
-          {
-            _id: "sess-9",
-            sentiment: "satisfied" as const,
-            themeClusterId: "cluster-export",
-            themeClusterLabel: "Export the board",
-            outcome: "completed" as const,
-          },
-        ],
-        total: 3,
-      },
+      drilldown: twoPersonaDrilldown(),
       isLoading: false,
     });
     mockUseQuery.mockReturnValue(null);
@@ -614,15 +632,63 @@ describe("the chain is scoped to the persona, not just the goal", () => {
     render(<ScenarioFindingsTab scenarioId="scn-1" />);
     await userEvent.click(await screen.findByTestId("findings-goal-row"));
 
-    const sentiments = () =>
-      mockUseQuery.mock.calls
-        .map(([, args]) => args as { sentiment?: string } | undefined)
-        .filter((a) => a && "sentiment" in a)
-        .map((a) => a!.sentiment);
+    // Before the switch, only the first persona has been asked about. This
+    // half used to be the whole test, and it passes without ever switching —
+    // which is why the switch below is the part that matters.
+    expect(sentimentsAsked()).toContain("frustrated");
+    expect(sentimentsAsked()).not.toContain("satisfied");
 
-    expect(sentiments()).toContain("frustrated");
+    // Switching persona closes the open goal, so the reader reopens it.
+    const tabs = await screen.findAllByTestId("findings-persona-tab");
+    await userEvent.click(tabs[1]!);
+    await userEvent.click(await screen.findByTestId("findings-goal-row"));
+
     // The same cluster under a different persona is a DIFFERENT population,
-    // so it must not reuse the answer given for the first one.
-    expect(sentiments()).not.toContain("satisfied");
+    // so it must be asked about separately rather than reusing the first
+    // persona's answer.
+    expect(sentimentsAsked()).toContain("satisfied");
+  });
+
+  it("never paints one persona with another persona's chain", async () => {
+    mockUseGoalOutcomeDrilldown.mockReturnValue({
+      drilldown: twoPersonaDrilldown(),
+      isLoading: false,
+    });
+    // Built ONCE, outside the implementation, for the reason the goal-axis
+    // twin of this test gives: the chain effect keys on result identity and a
+    // funnel minted per render would report forever.
+    const frustratedFunnel = funnelOf(
+      { connection: { passed: 2 }, discovery: { failed: 2 } },
+      { counted: 2, total: 2, firstFailedStage: { discovery: 2 } },
+    );
+    // The first persona has an answer. The second is still loading, which is
+    // the window a stale chain would show through.
+    mockUseQuery.mockImplementation((_name: unknown, args: unknown) =>
+      (args as { sentiment?: string }).sentiment === "frustrated"
+        ? frustratedFunnel
+        : undefined,
+    );
+
+    render(<ScenarioFindingsTab scenarioId="scn-1" />);
+    await userEvent.click(await screen.findByTestId("findings-goal-row"));
+    await waitFor(() =>
+      expect(screen.getByTestId("findings-stage-discovery")).toHaveAttribute(
+        "data-state",
+        "fail",
+      ),
+    );
+
+    const tabs = await screen.findAllByTestId("findings-persona-tab");
+    await userEvent.click(tabs[1]!);
+    await userEvent.click(await screen.findByTestId("findings-goal-row"));
+
+    // Nobody has measured this goal for the satisfied persona yet. Showing the
+    // frustrated persona's failure here would put a diagnosis on a population
+    // it was never about — under a card headed with the other one's count.
+    expect(screen.getByTestId("findings-stage-discovery")).toHaveAttribute(
+      "data-state",
+      "none",
+    );
+    expect(screen.getByTestId("findings-empty-stage")).toBeInTheDocument();
   });
 });

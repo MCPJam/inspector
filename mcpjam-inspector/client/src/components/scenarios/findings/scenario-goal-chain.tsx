@@ -34,14 +34,22 @@ import {
 } from "./scenario-findings-stages";
 
 /**
- * Answers name the goal they are ABOUT, not just the answer.
+ * Answers name the POPULATION they are about, not just the answer.
  *
- * The tab reuses one probe across goals, so an answer that did not name its
- * goal could not be told apart from the previously expanded one — and a stale
- * chain would paint the goal you just opened with the last goal's failures.
+ * The tab reuses one probe across goals AND personas, so an answer that did
+ * not say what it described could not be told apart from the last one — and a
+ * stale chain would paint the goal you just opened with the previous goal's
+ * failures. The sentiment is in here for the same reason the goal is: the same
+ * cluster read under two personas is two different populations, so an answer
+ * for one of them is not an answer for the other.
  */
+export type ScenarioGoalChainAnswerFor = {
+  goalId: string;
+  sentiment: string | undefined;
+};
+
 export type ScenarioGoalChainHandler = (
-  goalId: string,
+  about: ScenarioGoalChainAnswerFor,
   stages: ScenarioGoalStages | null,
 ) => void;
 
@@ -75,7 +83,7 @@ export function ScenarioGoalChain({
       key={`${scenarioId}:${goalId}:${sentiment ?? "all"}`}
       name="scenario-goal-stage-chain"
       fallback={null}
-      onError={() => onResolved(goalId, null)}
+      onError={() => onResolved({ goalId, sentiment }, null)}
     >
       <ScenarioGoalChainQuery
         scenarioId={scenarioId}
@@ -123,8 +131,8 @@ function ScenarioGoalChainQuery({
     // reader is already looking at. `null` is the backend saying it cannot
     // answer for this goal, which IS an answer and must be passed on.
     if (funnel === undefined) return;
-    onResolved(goalId, mapGoalStageFunnel(funnel));
-  }, [funnel, goalId, onResolved]);
+    onResolved({ goalId, sentiment }, mapGoalStageFunnel(funnel));
+  }, [funnel, goalId, sentiment, onResolved]);
 
   return null;
 }
