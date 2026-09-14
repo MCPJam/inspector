@@ -161,10 +161,15 @@ import {
 } from "../../utils/eval-vocabulary.js";
 import {
   caseBodyShapeV2,
-  floorFieldName,
+  countFieldNames,
   foldCaseBodyV2ToV1,
+  foldSuiteSettingsV2ToV1,
   projectCaseDto,
+  projectSuiteDetailDto,
   refineCaseBodyV2,
+  refineSuiteSettingsV2,
+  suiteSettingsShapeV2,
+  type CountFieldNames,
 } from "./eval-case-vocabulary-2.js";
 import {
   measureTraceBytes,
@@ -2686,16 +2691,19 @@ function assertCasePolicyFieldsSupported(
   suite: SuiteDoc | null,
   body: { repetitions?: number; passThreshold?: number },
   label = "",
-  /** What the caller's vocabulary calls the legacy floor, for the message. */
-  floorField = "iterations",
+  /** What the caller's vocabulary calls the count fields, for the message. */
+  names: CountFieldNames = countFieldNames(1),
 ): void {
   if (isEvalVerdictPolicyV2(suite?.verdictPolicyVersion)) return;
   for (const [field, meaning] of V2_ONLY_CASE_FIELDS) {
     if (body[field] === undefined) continue;
+    // The body is vocabulary 1's shape whatever the caller sent; the message
+    // names the field the way the caller spelled it.
+    const spelled = field === "repetitions" ? names.exactCount : field;
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      `${label}${field} sets ${meaning}, which only a suite on verdict policy 2 reads — this suite is on the legacy policy, where the trial count comes from ${floorField} and the suite's minimumIterations. Upgrade the suite first (PATCH the suite with settings.repetitions and settings.passThreshold), or drop ${field}.`,
+      `${label}${spelled} sets ${meaning}, which only a suite on verdict policy 2 reads — this suite is on the legacy policy, where the trial count comes from ${names.floor} and the suite's minimumIterations. Upgrade the suite first (PATCH the suite with ${names.settingsExactCount} and settings.passThreshold), or drop ${spelled}.`,
     );
   }
 }
@@ -2972,9 +2980,9 @@ function parseCreateCaseBody(
   if (readEvalVocabulary(c) === 1) {
     return parseWithSchema(createCaseRequestSchema, raw);
   }
-  return foldCaseBodyV2ToV1(
-    parseWithSchema(createCaseRequestSchemaV2, raw),
-  ) as z.infer<typeof createCaseRequestSchema>;
+  return foldCaseBodyV2ToV1(parseWithSchema(createCaseRequestSchemaV2, raw), {
+    forCreate: true,
+  }) as z.infer<typeof createCaseRequestSchema>;
 }
 
 function parseUpdateCaseBody(
@@ -2984,9 +2992,9 @@ function parseUpdateCaseBody(
   if (readEvalVocabulary(c) === 1) {
     return parseWithSchema(updateCaseSchema, raw);
   }
-  return foldCaseBodyV2ToV1(
-    parseWithSchema(updateCaseSchemaV2, raw),
-  ) as z.infer<typeof updateCaseSchema>;
+  return foldCaseBodyV2ToV1(parseWithSchema(updateCaseSchemaV2, raw), {
+    forCreate: false,
+  }) as z.infer<typeof updateCaseSchema>;
 }
 
 function parseCreateCasesBatchBody(
@@ -2999,7 +3007,9 @@ function parseCreateCasesBatchBody(
   const parsed = parseWithSchema(createCasesBatchSchemaV2, raw);
   return {
     ...parsed,
-    cases: parsed.cases.map(foldCaseBodyV2ToV1),
+    cases: parsed.cases.map((item) =>
+      foldCaseBodyV2ToV1(item, { forCreate: true }),
+    ),
   } as z.infer<typeof createCasesBatchSchema>;
 }
 
@@ -3017,12 +3027,163 @@ function caseResource(c: Context, doc: CaseDoc, status = 200) {
 }
 
 /**
+ * The vocabulary-1 `settings` object of a suite PATCH, as a shape so the
+ * vocabulary-2 twin can be built from it (see `eval-case-vocabulary-2.ts`).
+ */
+const suiteSettingsShape = {
+  minimumAccuracy: z.number().min(0).max(100).optional(),
+  // Suite-level FLOOR on per-case iterations: every case runs at least
+  // this many times (`max(case.iterations, minimumIterations)`). `null`
+  // clears it — the platform's `minIterations` has exactly that contract,
+  // so the public field does not invent a second way to say "no floor".
+  minimumIterations: z
+    .union([z.number().int().min(1).max(10), z.null()])
+    .optional(),
+  matchOptions: publicMatchOptionsSchema.nullable().optional(),
+  checks: z.array(publicCheckSchema).nullable().optional(),
+  judge: z
+    .object({
+      enabled: z.boolean().optional(),
+      model: z.string().min(1).optional(),
+      // The flag the grader actually gates on. Without it a suite can be
+      // `enabled` forever and never grade a run.
+      autoRun: z.boolean().optional(),
+      threshold: z.number().min(0).max(1).optional(),
+      /**
+       * Presentation severity on the goal-completion slot. Legal only
+       * with an advisory role; the platform refuses it beside gating.
+       */
+      severity: z.literal("warn").optional(),
+      /**
+       * Reserved C1 slot. Accepted here only so a write is an explicit
+       * 400 rather than a silent strip — groundedness is not authorable
+       * while execution is unwired.
+       */
+      groundedness: z.unknown().optional(),
+      // The suite's own grading criteria, handed to the judge alongside
+      // each case's expected output. `null` CLEARS them; an empty array is
+      // refused because a rubric that asks nothing is not the absence of
+      // one — it still changes what the judge was asked. The limits mirror
+      // the platform's own so a rejection arrives before the write rather
+      // than taking the settings beside it down with it.
+      rubric: z
+        .union([
+          z.object({
+            criteria: z
+              .array(
+                z.object({
+                  id: z
+                    .string()
+                    .regex(
+                      /^[A-Za-z0-9_-]{1,64}$/,
+                      "criterion id must be 1-64 characters of letters, digits, hyphen or underscore",
+                    ),
+                  label: z.string().trim().min(1).max(200),
+                  description: z.string().max(1000).optional(),
+                  required: z.boolean().optional(),
+                }),
+              )
+              .min(1)
+              .max(25),
+          }),
+          z.null(),
+        ])
+        .optional(),
+    })
+    .superRefine((judge, ctx) => {
+      if (judge.groundedness !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["groundedness"],
+          message:
+            "settings.judge.groundedness cannot be written while groundedness execution is not wired.",
+        });
+      }
+    })
+    .optional(),
+  // ── The v2 verdict policy ────────────────────────────────────────────
+  //
+  // Same shapes the suite FILE declares them in (`syncFileOwnedSuiteSchema`
+  // above, and `evalSuiteFileValiditySchema` in the contract), because they
+  // describe the same stored object. A caller that read a suite file and a
+  // caller that read this API must be able to send each other's values.
+  //
+  // FRACTIONS, not percents. `passThreshold: 0.8` is eighty percent, and
+  // the legacy `minimumAccuracy: 80` is the same number in the other unit
+  // — which is exactly why the two cannot be sent together (see the
+  // refinement below). Nothing on this path divides by 100.
+  repetitions: z.number().int().min(1).max(100).optional(),
+  passThreshold: z.number().min(0).max(1).optional(),
+  validity: z
+    .object({
+      minEligibleTrials: z.number().int().min(1).optional(),
+      minCompletionRate: z.number().min(0).max(1).optional(),
+      maxEvaluatorErrorRate: z.number().min(0).max(1).optional(),
+    })
+    .strict()
+    .optional(),
+  // Live quality-gate policy. `null` CLEARS it. Comparative conditions
+  // require a baseline; `previous_completed` is reserved until a later
+  // capability advertises it. See the top-level refine for the required
+  // revision precondition and reason.
+  qualityGate: z.union([suiteGatePolicySchema, z.null()]).optional(),
+} as const;
+
+/**
+ * The two policies are alternatives, not layers. A body carrying both a
+ * percent and a fraction is a caller who believes one of them will be ignored,
+ * and whichever one we picked would be wrong for half of them. Runs on
+ * vocabulary 1's shape; the vocabulary-2 schema folds before calling it.
+ */
+function legacyVersusV2Refine(
+  settings: {
+    minimumAccuracy?: number;
+    repetitions?: number;
+    passThreshold?: number;
+    validity?: unknown;
+  },
+  ctx: z.RefinementCtx,
+): void {
+  // The two policies are alternatives, not layers. A body carrying both a
+  // percent and a fraction is a caller who believes one of them will be
+  // ignored, and whichever one we picked would be wrong for half of them.
+  const v2Fields = [
+    settings.repetitions,
+    settings.passThreshold,
+    settings.validity,
+  ];
+  if (
+    settings.minimumAccuracy !== undefined &&
+    v2Fields.some((value) => value !== undefined)
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["minimumAccuracy"],
+      message:
+        "settings.minimumAccuracy is the legacy policy; send passThreshold instead.",
+    });
+  }
+}
+
+const suiteSettingsSchema = z
+  .object(suiteSettingsShape)
+  .superRefine(legacyVersusV2Refine);
+
+/** Vocabulary 2: `defaultAssertions` and `iterations`, folded before the policy refine. */
+const suiteSettingsSchemaV2 = z
+  .object(suiteSettingsShapeV2(suiteSettingsShape))
+  .superRefine((settings, ctx) => {
+    refineSuiteSettingsV2(settings, ctx);
+    legacyVersusV2Refine(foldSuiteSettingsV2ToV1(settings), ctx);
+  });
+
+/**
  * Exported for the settings-parity test
  * (`__tests__/eval-suite-settings-parity.test.ts`), which asserts that every
  * settings-sheet row the shared manifest marks `api:` is genuinely accepted
  * here. Nothing else should import it — the route is the only writer.
  */
-export const updateSuiteSchema = z.strictObject({
+const updateSuiteShape = {
   ...fileSyncBodyShape,
   name: z.string().min(1).optional(),
   description: z.string().optional(),
@@ -3071,127 +3232,7 @@ export const updateSuiteSchema = z.strictObject({
       }),
     )
     .optional(),
-  settings: z
-    .object({
-      minimumAccuracy: z.number().min(0).max(100).optional(),
-      // Suite-level FLOOR on per-case iterations: every case runs at least
-      // this many times (`max(case.iterations, minimumIterations)`). `null`
-      // clears it — the platform's `minIterations` has exactly that contract,
-      // so the public field does not invent a second way to say "no floor".
-      minimumIterations: z
-        .union([z.number().int().min(1).max(10), z.null()])
-        .optional(),
-      matchOptions: publicMatchOptionsSchema.nullable().optional(),
-      checks: z.array(publicCheckSchema).nullable().optional(),
-      judge: z
-        .object({
-          enabled: z.boolean().optional(),
-          model: z.string().min(1).optional(),
-          // The flag the grader actually gates on. Without it a suite can be
-          // `enabled` forever and never grade a run.
-          autoRun: z.boolean().optional(),
-          threshold: z.number().min(0).max(1).optional(),
-          /**
-           * Presentation severity on the goal-completion slot. Legal only
-           * with an advisory role; the platform refuses it beside gating.
-           */
-          severity: z.literal("warn").optional(),
-          /**
-           * Reserved C1 slot. Accepted here only so a write is an explicit
-           * 400 rather than a silent strip — groundedness is not authorable
-           * while execution is unwired.
-           */
-          groundedness: z.unknown().optional(),
-          // The suite's own grading criteria, handed to the judge alongside
-          // each case's expected output. `null` CLEARS them; an empty array is
-          // refused because a rubric that asks nothing is not the absence of
-          // one — it still changes what the judge was asked. The limits mirror
-          // the platform's own so a rejection arrives before the write rather
-          // than taking the settings beside it down with it.
-          rubric: z
-            .union([
-              z.object({
-                criteria: z
-                  .array(
-                    z.object({
-                      id: z
-                        .string()
-                        .regex(
-                          /^[A-Za-z0-9_-]{1,64}$/,
-                          "criterion id must be 1-64 characters of letters, digits, hyphen or underscore",
-                        ),
-                      label: z.string().trim().min(1).max(200),
-                      description: z.string().max(1000).optional(),
-                      required: z.boolean().optional(),
-                    }),
-                  )
-                  .min(1)
-                  .max(25),
-              }),
-              z.null(),
-            ])
-            .optional(),
-        })
-        .superRefine((judge, ctx) => {
-          if (judge.groundedness !== undefined) {
-            ctx.addIssue({
-              code: z.ZodIssueCode.custom,
-              path: ["groundedness"],
-              message:
-                "settings.judge.groundedness cannot be written while groundedness execution is not wired.",
-            });
-          }
-        })
-        .optional(),
-      // ── The v2 verdict policy ────────────────────────────────────────────
-      //
-      // Same shapes the suite FILE declares them in (`syncFileOwnedSuiteSchema`
-      // above, and `evalSuiteFileValiditySchema` in the contract), because they
-      // describe the same stored object. A caller that read a suite file and a
-      // caller that read this API must be able to send each other's values.
-      //
-      // FRACTIONS, not percents. `passThreshold: 0.8` is eighty percent, and
-      // the legacy `minimumAccuracy: 80` is the same number in the other unit
-      // — which is exactly why the two cannot be sent together (see the
-      // refinement below). Nothing on this path divides by 100.
-      repetitions: z.number().int().min(1).max(100).optional(),
-      passThreshold: z.number().min(0).max(1).optional(),
-      validity: z
-        .object({
-          minEligibleTrials: z.number().int().min(1).optional(),
-          minCompletionRate: z.number().min(0).max(1).optional(),
-          maxEvaluatorErrorRate: z.number().min(0).max(1).optional(),
-        })
-        .strict()
-        .optional(),
-      // Live quality-gate policy. `null` CLEARS it. Comparative conditions
-      // require a baseline; `previous_completed` is reserved until a later
-      // capability advertises it. See the top-level refine for the required
-      // revision precondition and reason.
-      qualityGate: z.union([suiteGatePolicySchema, z.null()]).optional(),
-    })
-    .superRefine((settings, ctx) => {
-      // The two policies are alternatives, not layers. A body carrying both a
-      // percent and a fraction is a caller who believes one of them will be
-      // ignored, and whichever one we picked would be wrong for half of them.
-      const v2Fields = [
-        settings.repetitions,
-        settings.passThreshold,
-        settings.validity,
-      ];
-      if (
-        settings.minimumAccuracy !== undefined &&
-        v2Fields.some((value) => value !== undefined)
-      ) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["minimumAccuracy"],
-          message:
-            "settings.minimumAccuracy is the legacy policy; send passThreshold instead.",
-        });
-      }
-    })
-    .optional(),
+  settings: suiteSettingsSchema.optional(),
   /**
    * The suite revision this edit was composed against.
    *
@@ -3209,7 +3250,16 @@ export const updateSuiteSchema = z.strictObject({
    * on `applySuiteSettings`. Omitted for every other field.
    */
   revisionNote: z.string().max(500).optional(),
-}).superRefine((body, ctx) => {
+} as const;
+
+function updateSuiteRefine(
+  body: {
+    settings?: { qualityGate?: unknown } | undefined;
+    expectedRevisionNumber?: number;
+    revisionNote?: string;
+  },
+  ctx: z.RefinementCtx,
+): void {
   if (body.settings?.qualityGate === undefined) return;
   if (body.expectedRevisionNumber === undefined) {
     ctx.addIssue({
@@ -3237,7 +3287,49 @@ export const updateSuiteSchema = z.strictObject({
       });
     }
   }
-});
+}
+
+export const updateSuiteSchema = z
+  .strictObject(updateSuiteShape)
+  .superRefine(updateSuiteRefine);
+
+/** The vocabulary-2 twin: the same body with the vocabulary-2 settings object. */
+const updateSuiteSchemaV2 = z
+  .strictObject({ ...updateSuiteShape, settings: suiteSettingsSchemaV2.optional() })
+  .superRefine(updateSuiteRefine);
+
+/**
+ * Parse a suite PATCH in the caller's vocabulary and hand back vocabulary 1's
+ * shape, so the write path below has one settings object to read.
+ */
+function parseUpdateSuiteBody(
+  c: Context,
+  raw: unknown,
+): z.infer<typeof updateSuiteSchema> {
+  if (readEvalVocabulary(c) === 1) {
+    return parseWithSchema(updateSuiteSchema, raw);
+  }
+  const parsed = parseWithSchema(updateSuiteSchemaV2, raw);
+  return {
+    ...parsed,
+    ...(parsed.settings
+      ? { settings: foldSuiteSettingsV2ToV1(parsed.settings) }
+      : {}),
+  } as z.infer<typeof updateSuiteSchema>;
+}
+
+/**
+ * One suite detail, projected into the caller's vocabulary and marked as
+ * varying by it. Every route that answers with a suite detail goes through
+ * here.
+ */
+function suiteResource(
+  c: Context,
+  detail: Awaited<ReturnType<typeof readSuiteDetail>>,
+) {
+  varyByEvalVocabulary(c);
+  return v1Resource(c, projectSuiteDetailDto(detail, readEvalVocabulary(c)));
+}
 
 /**
  * Body for `POST …/eval-runs/:runId/judge`. STRICT: this endpoint spends, so an
@@ -7697,7 +7789,7 @@ evals.get("/projects/:projectId/eval-suites/:suiteId", async (c) => {
   const projectId = c.req.param("projectId");
   const suiteId = evalIdParam(c, "suiteId", "Eval suite");
   const token = await getConvexBearerForRequest(c);
-  return v1Resource(c, await readSuiteDetail(token, projectId, suiteId));
+  return suiteResource(c, await readSuiteDetail(token, projectId, suiteId));
 });
 
 /**
@@ -7724,6 +7816,7 @@ function applyVerdictPolicySettings(
   suite: SuiteDoc,
   settings: NonNullable<z.infer<typeof updateSuiteSchema>["settings"]>,
   updateArgs: Record<string, unknown>,
+  names: CountFieldNames = countFieldNames(1),
 ): void {
   const isV2 = isEvalVerdictPolicyV2(suite.verdictPolicyVersion);
   if (settings.minimumAccuracy !== undefined && isV2) {
@@ -7747,7 +7840,7 @@ function applyVerdictPolicySettings(
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        "Upgrading to verdict policy v2 requires both settings.repetitions and settings.passThreshold.",
+        `Upgrading to verdict policy v2 requires both ${names.settingsExactCount} and settings.passThreshold.`,
       );
     }
     updateArgs.verdictPolicyVersion = EVAL_VERDICT_POLICY_VERSION;
@@ -7784,7 +7877,7 @@ function applyVerdictPolicySettings(
 evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
   const projectId = c.req.param("projectId");
   const suiteId = evalIdParam(c, "suiteId", "Eval suite");
-  const body = parseWithSchema(updateSuiteSchema, await readJsonObjectBody(c));
+  const body = parseUpdateSuiteBody(c, await readJsonObjectBody(c));
   const token = await getConvexBearerForRequest(c);
   const { convexClient } = createConvexClients(token);
 
@@ -7900,7 +7993,12 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
           : {}),
       };
     }
-    applyVerdictPolicySettings(suite!, s, updateArgs);
+    applyVerdictPolicySettings(
+      suite!,
+      s,
+      updateArgs,
+      countFieldNames(readEvalVocabulary(c)),
+    );
   }
 
   // ONE revision group for the whole request.
@@ -8064,7 +8162,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
     }
   }
 
-  return v1Resource(c, await readSuiteDetail(token, projectId, suiteId));
+  return suiteResource(c, await readSuiteDetail(token, projectId, suiteId));
 });
 
 // POST /v1/projects/:projectId/eval-suites/:suiteId/environments
@@ -8259,7 +8357,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId/schedule", async (c) => {
   } catch (error) {
     throw translateConvexWriteError(error);
   }
-  return v1Resource(c, await readSuiteDetail(token, projectId, suiteId));
+  return suiteResource(c, await readSuiteDetail(token, projectId, suiteId));
 });
 
 // GET /v1/projects/:projectId/eval-suites/:suiteId/cases
@@ -8349,7 +8447,7 @@ evals.post("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
     suite,
     body,
     "",
-    floorFieldName(readEvalVocabulary(c)),
+    countFieldNames(readEvalVocabulary(c)),
   );
 
   const defaultModels =
@@ -8433,13 +8531,13 @@ evals.post(
     // Checked for EVERY case before any of them is authored, like
     // `assertCreatableCase` above: rejecting case 42 after 41 siblings landed
     // leaves the caller reconciling a partial write it cannot retry cleanly.
-    const floorField = floorFieldName(readEvalVocabulary(c));
+    const names = countFieldNames(readEvalVocabulary(c));
     body.cases.forEach((testCase, index) =>
       assertCasePolicyFieldsSupported(
         suite,
         testCase,
         `cases[${index}]: `,
-        floorField,
+        names,
       ),
     );
 
@@ -8564,7 +8662,7 @@ evals.patch(
         await readSuiteInProject(token, projectId, suiteId),
         body,
         "",
-        floorFieldName(readEvalVocabulary(c)),
+        countFieldNames(readEvalVocabulary(c)),
       );
     }
     const args = buildCaseMutationArgs(body, {

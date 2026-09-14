@@ -122,7 +122,11 @@ describe("x-mcpjam-eval-vocabulary on the eval routes", () => {
     const two = await request("GET", CASE_PATH, { vocabulary: "2" });
     expect(one.status).toBe(200);
     expect(two.status).toBe(200);
-    const RENAMED: Record<string, string> = { iterations: "legacyIterations" };
+    const RENAMED: Record<string, string> = {
+      iterations: "legacyIterations",
+      repetitions: "iterations",
+      checks: "assertions",
+    };
     const expected = Object.fromEntries(
       Object.entries((await one.json()) as Record<string, unknown>).map(
         ([key, value]) => [RENAMED[key] ?? key, value],

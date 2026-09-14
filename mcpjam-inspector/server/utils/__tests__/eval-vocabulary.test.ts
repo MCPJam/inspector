@@ -122,7 +122,7 @@ describe("the advertised capability", () => {
       assertionKinds: expect.arrayContaining(["noToolErrors"]),
       fields: {
         assertions: ["checks", "predicates"],
-        defaultAssertions: ["defaultPredicates"],
+        defaultAssertions: ["defaultPredicates", "checks"],
         iterations: ["repetitions"],
         legacyIterations: ["runs"],
       },
