@@ -127,7 +127,7 @@ describe("JudgeAnswerRow", () => {
     ).toBeTruthy();
   });
 
-  it("says Gate when the suite earned one", () => {
+  it("says Required when the suite earned one", () => {
     render(
       <JudgeAnswerRow
         state={{
@@ -138,7 +138,7 @@ describe("JudgeAnswerRow", () => {
         }}
       />,
     );
-    expect(screen.getByText("Gate")).toBeTruthy();
+    expect(screen.getByText("Required")).toBeTruthy();
   });
 
   it("distinguishes a near miss from a flat no", () => {

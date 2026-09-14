@@ -92,6 +92,7 @@ import {
 } from "./eval-result-mapping.js";
 import { resolveServerReplayConfigs } from "./server-replay-configs.js";
 import { buildHostSnapshotMetadata } from "./host-config/internal.js";
+import { canonicalizeCheckRole } from "./predicates/policy.js";
 
 function snapshotEvaluator<T extends AnyEvaluator>(evaluator: T): T {
   return {
@@ -805,8 +806,12 @@ export class EvalTest {
       ...inherited
         .filter(isAssertion)
         .map((value) => ({ rule: value.rule as Predicate, id: value.id })),
+      // `config.predicates` is raw author input — unlike an `assertion()`
+      // rule, which canonicalized at construction — and it is uploaded
+      // verbatim as `effectiveAssertions[].rule` on every iteration. So the
+      // storage spelling settles here, before anything reads or ships it.
       ...(this.config.predicates ?? []).map((rule) => ({
-        rule,
+        rule: canonicalizeCheckRole(rule),
         id: undefined,
       })),
       ...own

@@ -27,6 +27,7 @@ import type {
   PlatformEvalRun,
 } from "./platform/types.js";
 import type { StructuredRunVerdict } from "./structured-reporting.js";
+import { isRequiredRole } from "./predicates/policy.js";
 
 /** Whether a run's score evidence verified at ingest. */
 export type ScoreIntegrity = "valid" | "invalid";
@@ -941,7 +942,7 @@ export function evaluateGates(
       const errored = scores.filter(
         (score) =>
           score.status === "error" &&
-          byHash.get(score.definitionHash)?.role === "gating"
+          isRequiredRole(byHash.get(score.definitionHash)?.role)
       );
       verdicts.push({
         gate,
