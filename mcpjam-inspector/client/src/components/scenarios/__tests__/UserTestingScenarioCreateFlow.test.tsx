@@ -1401,6 +1401,25 @@ describe("UserTestingScenarioCreateFlow — a name the project already uses", ()
     );
   });
 
+  it("puts the refused fallback name into the field so it can be edited", async () => {
+    // The field may be empty: the study is then published under the
+    // placeholder, and a refusal that quotes a name the field does not hold
+    // leaves nothing to correct. Pressing Create again would resubmit the same
+    // name and fail the same way, which is a dead end, not a correction.
+    const onCreateScenario = nameTaken();
+    renderFlow(onCreateScenario);
+
+    fireEvent.change(screen.getByTestId("user-testing-create-name"), {
+      target: { value: "" },
+    });
+    createStudy();
+
+    await screen.findByTestId("user-testing-create-name-taken");
+    const refused = onCreateScenario.mock.calls[0][0].name as string;
+    expect(refused).toBeTruthy();
+    expect(screen.getByTestId("user-testing-create-name")).toHaveValue(refused);
+  });
+
   it("leaves any other failure in the toast, verbatim", async () => {
     // "You need admin" is a different problem than "that name is taken", and
     // it is not the name field's to explain.
