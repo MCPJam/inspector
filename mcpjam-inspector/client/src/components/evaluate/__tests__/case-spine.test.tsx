@@ -127,7 +127,7 @@ describe("the first-run form", () => {
       "spine",
     );
     expect(screen.getByLabelText("What does the user ask?")).toBeTruthy();
-    expect(screen.getByText("Expected Outcome")).toBeTruthy();
+    expect(screen.getByText("Expected Outcome")).toHaveClass("text-primary");
     expect(screen.queryByText("Run test")).toBeNull();
     expect(
       screen.getByRole("button", { name: "Add assertion or action" }),
@@ -144,7 +144,7 @@ describe("the first-run form", () => {
     render(
       <StatefulSpine
         expectedOutput="Shows my email"
-        defaultChecks={<button>Show default assertions</button>}
+        defaultChecks={<button>Show default evaluators</button>}
       />,
     );
     const prompt = screen.getByLabelText("What does the user ask?");
@@ -153,7 +153,7 @@ describe("the first-run form", () => {
     const add = screen.getByRole("button", { name: "Add assertion or action" });
     expect(add).toHaveClass("w-full");
     expect(
-      screen.getByRole("button", { name: "Show default assertions" })
+      screen.getByRole("button", { name: "Show default evaluators" })
         .parentElement,
     ).toHaveClass("justify-end");
     await user.click(add);

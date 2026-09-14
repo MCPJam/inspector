@@ -626,7 +626,7 @@ export function CaseSpine({
       >
         <div className="flex items-center gap-2">
           <Label
-            className="text-lg font-semibold text-info"
+            className="text-lg font-semibold text-primary"
             htmlFor="spine-expected-outcome"
           >
             <Target className="size-4" aria-hidden="true" />

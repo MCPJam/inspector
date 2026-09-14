@@ -496,11 +496,25 @@ export function RunResultsMatrix({
               >
                 <th
                   scope="row"
-                  className="sticky left-0 z-10 bg-card p-4 align-top font-medium"
+                  className={cn(
+                    "sticky left-0 z-10 bg-card p-0 align-top font-medium",
+                    onEditCase && row.testCaseId && "hover:bg-muted/50",
+                  )}
                 >
-                  <span className="block break-words text-[13px] leading-5">
-                    {row.title}
-                  </span>
+                  {onEditCase && row.testCaseId ? (
+                    <button
+                      type="button"
+                      className="block min-h-16 w-full break-words p-4 text-left text-[13px] leading-5 text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                      aria-label={`Open test case: ${row.title}`}
+                      onClick={() => onEditCase(row.testCaseId!)}
+                    >
+                      {row.title}
+                    </button>
+                  ) : (
+                    <span className="block break-words p-4 text-[13px] leading-5">
+                      {row.title}
+                    </span>
+                  )}
                 </th>
                 {data.targets.map((target) => {
                   const items = target.cells.get(row.key) ?? [];

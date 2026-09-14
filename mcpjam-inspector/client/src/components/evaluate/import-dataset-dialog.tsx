@@ -72,7 +72,7 @@ export function ImportDatasetDialog({
       return;
     }
     if (candidate.size > MAX_MARKDOWN_BYTES) {
-      setError("Split the file into documents of at most 100 KiB.");
+      setError("Split the file into documents of at most 100 KB.");
       return;
     }
     setFile(candidate);
@@ -181,12 +181,12 @@ export function ImportDatasetDialog({
               if (phase === "idle") selectFile(event.dataTransfer.files);
             }}
           >
-            Drop one Markdown file here or click to select. Up to 100 KiB.
+            Drop one Markdown file here or click to select. Up to 100 KB.
           </button>
           {file && (
             <div className="flex items-center justify-between gap-2 text-sm">
               <span>
-                {file.name} · {(file.size / 1024).toFixed(1)} KiB
+                {file.name} · {(file.size / 1024).toFixed(1)} KB
               </span>
               <Button
                 variant="ghost"

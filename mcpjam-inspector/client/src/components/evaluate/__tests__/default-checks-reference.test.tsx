@@ -13,7 +13,7 @@ describe("Default checks navigation and page", () => {
     const navigate = vi.fn();
     render(<DefaultChecksReference onOverride={navigate} />);
     await user.click(
-      screen.getByRole("button", { name: "Show default assertions" }),
+      screen.getByRole("button", { name: "Show default evaluators" }),
     );
     expect(navigate).toHaveBeenCalledOnce();
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
@@ -48,7 +48,7 @@ describe("Default checks navigation and page", () => {
       screen.getByRole("heading", { name: "User Value Chain Assertions" }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByText("Show default assertions"),
+      screen.queryByText("Show default evaluators"),
     ).not.toBeInTheDocument();
     expect(container.querySelectorAll("[data-stage-group]").length).toBe(6);
     // Runner-measured stages are rows without an On box: nothing to author.

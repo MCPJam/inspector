@@ -61,6 +61,58 @@ const names = new Map([
 ]);
 
 describe("run results matrix", () => {
+  it("opens the test case from the left column in Results and Metrics", async () => {
+    const user = userEvent.setup();
+    const onEditCase = vi.fn();
+    render(
+      <RunResultsMatrix
+        run={run("one")}
+        iterations={[iteration("pass", "one")]}
+        hostNamesById={names}
+        onEditCase={onEditCase}
+      />,
+    );
+    const caseButton = screen.getByRole("button", { name: "Open test case: Refund order" });
+    expect(caseButton).toHaveClass("min-h-16", "text-foreground");
+    expect(caseButton).not.toHaveClass("hover:underline", "hover:bg-muted/30");
+    expect(caseButton.closest("th")).toHaveClass("hover:bg-muted/50");
+    await user.click(caseButton);
+    expect(onEditCase).toHaveBeenLastCalledWith("refund");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await user.click(screen.getByRole("radio", { name: "Metrics" }));
+    screen
+      .getByRole("button", { name: "Open test case: Refund order" })
+      .focus();
+    await user.keyboard("{Enter}");
+    expect(onEditCase).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("keeps case names as text when navigation or a saved case ID is missing", () => {
+    const props = {
+      run: run("one"),
+      iterations: [iteration("pass", "one")],
+      hostNamesById: names,
+    };
+    const { rerender } = render(<RunResultsMatrix {...props} />);
+    expect(
+      screen.queryByRole("button", { name: /Open test case:/ }),
+    ).toBeNull();
+    rerender(
+      <RunResultsMatrix
+        {...props}
+        iterations={[iteration("pass", "one", { testCaseId: undefined })]}
+        onEditCase={vi.fn()}
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: /Open test case:/ }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("rowheader", { name: "Refund order" }),
+    ).toBeVisible();
+  });
+
   it("renders result fractions with the larger dark design treatment", () => {
     render(
       <RunResultsMatrix
