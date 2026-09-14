@@ -505,9 +505,28 @@ The **Test cases** section (formerly the matrix) lists every test case with a se
 - **Suggested fixes** — after a run completes, a **Suggested fixes** panel ranks tool-quality and workflow issues by impact. Each issue has a **Copy** button that copies a ready-to-use fix prompt (tool description + input schema) for a coding agent; **Copy top N** copies the top issues combined.
 - **Predicate Gate** — when `successPredicates` are configured on a case, an expandable Predicate Gate section in the iteration detail lists each predicate with a PASS/FAIL verdict, a one-line summary, and the evaluator's reason. Hidden when no predicates are configured.
 
-#### Comparing two runs
+#### Compare runs
 
-Select any two completed runs and click **Compare**. The diff view shows per-case status changes: **Passed**, **Still failing**, **Regressed** (pass→fail), **Fixed** (fail→pass), **New**, **Removed**, and **Changed** (config differed). Summary metrics show deltas for tokens, cost, and duration.
+Click **Compare runs** in the run header to open the Compare runs page. It shows every run in the suite grouped into **lanes** — one section per client × model pairing. Runs backed by a named environment key on that environment rather than the client and model separately, so revisions of the same environment stay in one lane instead of splitting every time the environment is edited.
+
+Each row in a lane shows:
+
+| Column | What it shows |
+|--------|---------------|
+| **Date** | When the run started. |
+| **Run** | The run number, linked to the run detail page. |
+| **Platform** | Platform badge and commit metadata when available. |
+| **Result** | A pill: Passed, Failed, Inconclusive, Running, Completed, Cancelled, or Timed out. |
+| **Pass** | Pass percentage from the run's stamped summary, with a passed/total detail. |
+| **P50 / P95** | Median and 95th-percentile latency across all trials in the run. |
+| **Tokens** | Total tokens used across all trials. |
+| **Δ columns** | Movement against the previous complete run of the same lane. Red means worse; green means better. A row with no honest baseline shows `—`. |
+
+**What a row withholds:** a run that is still executing, in the `grading` state (trials finished but the gating judge has not), incomplete (not all trials loaded), or `inconclusive` shows its stamped pass rate at most — no derived metrics and no deltas. `inconclusive` runs are never used as a baseline.
+
+**Deltas are lane-scoped.** Each row is compared against the previous *complete* run of its own lane, never against a run from a different lane that happened to run at the same time. This means a fan-out launch that runs multiple models in parallel does not report a model difference as a regression.
+
+**The header strip** counts settled lanes against the suite's pass threshold and names how many are still running. A lane is settled when its most recent run in the current launch has reached a terminal state.
 
 ### Case view
 
