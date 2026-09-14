@@ -374,6 +374,7 @@ export function ProjectRunsTable({
     metricData,
     passRateChanges,
     loadedRunCount,
+    scopedRowCount,
   } = useMemo(() => {
     const hostNamesById = new Map(
       hosts.map((host) => [host.hostId, host.name]),
@@ -549,8 +550,21 @@ export function ProjectRunsTable({
       historyMetricsEnabled ? completeRuns : rows,
       comparisonRows,
     );
+    // Scoped to the picked suite: with one suite selected, counting launches
+    // from the others reads as a miscount rather than as pagination headroom.
+    const scopedIds = new Set(
+      rows.flatMap((row) =>
+        suiteFilter === ALL_SUITES || row.suiteId === suiteFilter
+          ? [row._id]
+          : [],
+      ),
+    );
     const loadedRunCount = allSuiteGroups.reduce(
-      (sum, suite) => sum + suite.launches.length,
+      (sum, suite) =>
+        sum +
+        suite.launches.filter((launch) =>
+          launch.runs.some((row) => scopedIds.has(row._id)),
+        ).length,
       0,
     );
     return {
@@ -567,6 +581,7 @@ export function ProjectRunsTable({
       metricData,
       passRateChanges,
       loadedRunCount,
+      scopedRowCount: scopedIds.size,
     };
   }, [
     rows,
@@ -578,6 +593,7 @@ export function ProjectRunsTable({
     projectEnvironmentsEnabled,
     historyMetricsEnabled,
     sourceFilter,
+    suiteFilter,
     clientFilter,
     serverFilter,
     repositoryFilter,
@@ -916,7 +932,8 @@ export function ProjectRunsTable({
         */}
         {hasClientSideFilter && canLoadMore && (
           <p className="px-[18px] pb-3 text-[11px] text-muted-foreground">
-            Filtering the {historyMetricsEnabled ? loadedRunCount : rows.length}{" "}
+            Filtering the{" "}
+            {historyMetricsEnabled ? loadedRunCount : scopedRowCount}{" "}
             most recent runs loaded so far. Load more below to widen the search.
           </p>
         )}
@@ -1033,7 +1050,7 @@ export function ProjectRunsTable({
               : `${
                   historyMetricsEnabled ? launches.length : filtered.length
                 } of ${
-                  historyMetricsEnabled ? loadedRunCount : rows.length
+                  historyMetricsEnabled ? loadedRunCount : scopedRowCount
                 } loaded runs`}
             {status !== "Exhausted" ? " · more available" : ""}
           </span>

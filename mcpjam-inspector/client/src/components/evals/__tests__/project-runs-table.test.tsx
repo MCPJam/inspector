@@ -368,7 +368,8 @@ describe("ProjectRunsTable", () => {
     await user.click(screen.getByLabelText("Filter by suite"));
     await user.click(screen.getByRole("option", { name: "Beta" }));
     expect(inTable().queryByText("Alpha")).toBeNull();
-    expect(screen.getByText("1 of 2 loaded runs")).toBeVisible();
+    // The picked suite is the pool, so the other suite's run is not counted.
+    expect(screen.getByText("1 of 1 loaded runs")).toBeVisible();
     // Then the platform: that one is a query argument, and the backend now
     // answers with the legacy row alone, which the suite filter hides.
     await user.click(
@@ -790,6 +791,23 @@ describe("project run history metrics", () => {
     await user.click(screen.getByRole("button", { name: "Clear filters" }));
     expect(screen.getByText(/2 of 2 loaded runs/)).toBeVisible();
     expect(screen.getByTestId("project-run-history-metrics")).toBeVisible();
+  });
+
+  it("counts loaded runs within the picked suite, not the whole page", async () => {
+    arrangeHistory();
+    const user = userEvent.setup();
+    render(
+      <ProjectRunsTable
+        projectId="proj_1"
+        onSelectRun={vi.fn()}
+        historyMetricsEnabled
+      />,
+    );
+    await screen.findByTestId("project-run-history-metrics");
+    expect(screen.getByText(/2 of 2 loaded runs/)).toBeVisible();
+    await user.click(screen.getByLabelText("Filter by suite"));
+    await user.click(await screen.findByRole("option", { name: "SDK suite" }));
+    expect(screen.getByText(/1 of 1 loaded runs/)).toBeVisible();
   });
 
   it("names a GitHub check's server after its suite, not the throwaway row", async () => {
