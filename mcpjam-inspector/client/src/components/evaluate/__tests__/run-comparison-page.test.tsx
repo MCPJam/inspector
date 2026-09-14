@@ -155,6 +155,30 @@ it("opens the run a row names", async () => {
   expect(onOpenRun).toHaveBeenCalledWith("a6");
 });
 
+it("counts a single-run lane in the singular", () => {
+  // The first launch of any client/model lands here, so "1 runs" is the common
+  // case rather than the edge one.
+  const only = makeRun({
+    _id: "solo",
+    namedHostId: "hostA",
+    effectiveModelId: "m-a",
+  });
+  render(
+    <RunComparisonPage
+      currentRun={only}
+      runs={[only]}
+      iterations={trials("solo", 10)}
+      suiteName="Checkout suite"
+      hostNamesById={hostNamesById}
+      passThreshold={0.8}
+      onBack={vi.fn()}
+      onOpenRun={vi.fn()}
+    />,
+  );
+  expect(screen.getByText("1 run")).toBeVisible();
+  expect(screen.queryByText("1 runs")).toBeNull();
+});
+
 it("collapses a lane to its header", async () => {
   const user = userEvent.setup();
   renderPage();

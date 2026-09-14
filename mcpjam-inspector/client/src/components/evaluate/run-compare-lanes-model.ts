@@ -35,7 +35,13 @@ import {
  * what each run did, it does not re-decide whether the suite ships.
  */
 export type RunCompareStatus =
-  "running" | "passed" | "failed" | "inconclusive" | "cancelled" | "timed_out";
+  | "running"
+  | "passed"
+  | "failed"
+  | "inconclusive"
+  | "completed"
+  | "cancelled"
+  | "timed_out";
 
 /** One metric, already formatted, beside its lane-scoped movement. */
 export type RunCompareCell = {
@@ -163,8 +169,40 @@ function runCompareStatus(run: EvalSuiteRun): RunCompareStatus {
   if (result === "passed" || result === "failed" || result === "inconclusive")
     return result;
   if (result === "timed_out" || run.status === "timed_out") return "timed_out";
+  if (result === "cancelled" || run.status === "cancelled") return "cancelled";
   if (run.status === "failed") return "failed";
-  return "cancelled";
+  // Settled, terminal, and carrying no verdict at all — `result` is `null` on
+  // every run that predates the field. Reporting those as "Cancelled" is a
+  // false statement about runs that finished fine, and they are precisely the
+  // history a trend table exists to show.
+  return "completed";
+}
+
+/**
+ * The platform reached a pass/fail answer for this run.
+ *
+ * A DENY-list, not an allow-list of `passed`/`failed`, and that is the whole
+ * point: `result` is absent on every run older than the field, so allow-listing
+ * the two decided values would drop all of that history out of `lanesMeeting`
+ * while `lanesSettled` still counted it — a lane that cleared the bar reported
+ * as one that did not.
+ *
+ * What it excludes:
+ *   - `inconclusive` — the backend declined to decide. Its counts are the
+ *     evidence it judged insufficient, and a threshold is a pass/fail
+ *     question, so scoring it either way is exactly what `inconclusive` exists
+ *     to prevent.
+ *   - `cancelled` / `timed_out` — the summary is partial. Work a run never
+ *     finished can neither clear a bar nor miss it.
+ */
+function isDecided(run: EvalSuiteRun): boolean {
+  if (!isSettled(run)) return false;
+  const status = runCompareStatus(run);
+  return (
+    status !== "inconclusive" &&
+    status !== "cancelled" &&
+    status !== "timed_out"
+  );
 }
 
 /** `0`–`100`, rounded once so the cell and its delta cannot disagree. */
@@ -375,7 +413,12 @@ export function buildRunCompareLanes({
     const inLaunch = rows.filter((row) => row.inCurrentLaunch);
     const currentRow =
       inLaunch.find((row) => row.isCurrentRun) ?? inLaunch[0] ?? null;
-    const summary = currentRow?.settled ? currentRow.run.summary : undefined;
+    // `lanesSettled` stays on settlement (below); only the pass/fail JUDGEMENT
+    // needs a decided run.
+    const summary =
+      currentRow && isDecided(currentRow.run)
+        ? currentRow.run.summary
+        : undefined;
 
     lanes.push({
       key,

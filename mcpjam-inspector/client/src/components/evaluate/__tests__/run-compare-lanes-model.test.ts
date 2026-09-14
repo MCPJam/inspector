@@ -399,6 +399,68 @@ describe("buildRunCompareLanes", () => {
     ]);
   });
 
+  it("judges the threshold on a decided run, not merely a settled one", () => {
+    // Every one of these is settled with a summary that clears 0.8 on its raw
+    // counts, and not one of them is a pass the platform actually decided.
+    const lane = (id: string, host: string, extra: Partial<EvalSuiteRun>) =>
+      makeRun({
+        _id: id,
+        runNumber: 1,
+        namedHostId: host,
+        runGroupId: "launch",
+        summary: { total: 10, passed: 9, failed: 1, passRate: 90 },
+        ...extra,
+      });
+    const undecided = lane("A", "hostA", { result: "inconclusive" });
+    const stopped = lane("B", "hostB", {
+      status: "cancelled",
+      result: "cancelled",
+    });
+    const expired = lane("C", "hostC", { result: "timed_out" });
+    const real = lane("D", "hostD", { result: "passed" });
+
+    const result = build(
+      [undecided, stopped, expired, real],
+      [
+        ...trials("A", 10),
+        ...trials("B", 10),
+        ...trials("C", 10),
+        ...trials("D", 10),
+      ],
+      { currentRun: undecided, passThreshold: 0.8 },
+    );
+
+    // Settled counts all four; only the decided one can meet the bar.
+    expect(result.header.lanesSettled).toBe(4);
+    expect(result.header.lanesMeeting).toBe(1);
+    expect(laneFor(result, "host:hostA::").meetsThreshold).toBeNull();
+    expect(laneFor(result, "host:hostB::").meetsThreshold).toBeNull();
+    expect(laneFor(result, "host:hostC::").meetsThreshold).toBeNull();
+    expect(laneFor(result, "host:hostD::").meetsThreshold).toBe(true);
+  });
+
+  it("still judges a historical run that carries no result at all", () => {
+    // `result` is null on every run older than the field. Requiring an explicit
+    // `passed` would drop all of that history out of `lanesMeeting` while
+    // `lanesSettled` still counted it — and would label it "Cancelled".
+    const legacy = makeRun({
+      _id: "L",
+      runNumber: 1,
+      namedHostId: "H",
+      status: "completed",
+      result: undefined,
+      summary: { total: 10, passed: 9, failed: 1, passRate: 90 },
+    });
+    const result = build([legacy], trials("L", 10), {
+      currentRun: legacy,
+      passThreshold: 0.8,
+    });
+
+    expect(result.lanes[0].rows[0].status).toBe("completed");
+    expect(result.lanes[0].meetsThreshold).toBe(true);
+    expect(result.header).toMatchObject({ lanesSettled: 1, lanesMeeting: 1 });
+  });
+
   it("formats each delta's text and tone from the movement's own polarity", () => {
     // More passes is progress; more milliseconds and more tokens are not.
     const first = makeRun({

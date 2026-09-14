@@ -52,6 +52,9 @@ const RESULT_PILL: Record<
   },
   timed_out: { label: "Timed out", className: "bg-warning/50 text-foreground" },
   running: { label: "Running", className: "bg-warning/50 text-foreground" },
+  // Finished, but nothing judged it — a run older than the `result` field.
+  // Neutral rather than dimmed: it ran, it just carries no verdict.
+  completed: { label: "Completed", className: "bg-muted text-foreground" },
   cancelled: {
     label: "Cancelled",
     className: "bg-muted text-muted-foreground",
@@ -214,7 +217,7 @@ function LaneSection({
             </Button>
           </CollapsibleTrigger>
           <span className="text-xs text-muted-foreground">
-            {lane.rows.length} runs
+            {lane.rows.length} {lane.rows.length === 1 ? "run" : "runs"}
           </span>
         </div>
         <CollapsibleContent>
