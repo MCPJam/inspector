@@ -1628,7 +1628,14 @@ export type PlatformEvalSuiteGroundednessJudge = {
   severity?: "warn";
 };
 
-export interface PlatformEvalSuiteSettings {
+/**
+ * Everything a suite's settings say in the SAME words under both eval
+ * vocabularies. The two fields whose NAME depends on the vocabulary — the
+ * suite-default rules and the policy-2 default count — live on
+ * {@link PlatformEvalSuiteSettings} (vocabulary 1) and
+ * {@link PlatformEvalSuiteSettingsV2} (vocabulary 2).
+ */
+export interface PlatformEvalSuiteSettingsBase {
   /**
    * The LEGACY suite-wide floor, as a percentage in [0, 100].
    *
@@ -1648,7 +1655,6 @@ export interface PlatformEvalSuiteSettings {
    */
   minimumIterations?: number | null;
   matchOptions: PublicMatchOptions | null;
-  checks: PublicCheck[];
   /**
    * LLM-as-judge configuration, RESOLVED — every field is layered over the
    * platform defaults, so this is what a run on this suite would actually
@@ -1678,12 +1684,6 @@ export interface PlatformEvalSuiteSettings {
    */
   verdictPolicyVersion?: 2;
   /**
-   * Suite defaults a case inherits under policy 2. Present only with
-   * `verdictPolicyVersion: 2`, and only as a whole: `repetitions` without
-   * `passThreshold` cannot answer what a case is graded against.
-   */
-  verdictPolicyDefaults?: PlatformEvalVerdictPolicyDefaults;
-  /**
    * Which policy decides this suite's runs, said in one word.
    *
    * The same fact `verdictPolicyVersion`'s presence carries, without the
@@ -1703,10 +1703,34 @@ export interface PlatformEvalSuiteSettings {
   qualityGate?: SuiteGatePolicyV1 | null;
 }
 
-/** Suite-level defaults under verdict policy 2. Fractions, never percents. */
-export interface PlatformEvalVerdictPolicyDefaults {
-  /** Trials per case unless the case overrides `repetitions`. */
-  repetitions: number;
+/** A suite's settings as vocabulary 1 (no header) spells them. */
+export interface PlatformEvalSuiteSettings extends PlatformEvalSuiteSettingsBase {
+  checks: PublicCheck[];
+  /**
+   * Suite defaults a case inherits under policy 2. Present only with
+   * `verdictPolicyVersion: 2`, and only as a whole: `repetitions` without
+   * `passThreshold` cannot answer what a case is graded against.
+   */
+  verdictPolicyDefaults?: PlatformEvalVerdictPolicyDefaults;
+}
+
+/**
+ * A suite's settings as vocabulary 2 (`x-mcpjam-eval-vocabulary: 2`) spells
+ * them: the suite-default rules are `defaultAssertions` and the policy-2
+ * default count is `iterations`. Same facts, canonical words.
+ */
+export interface PlatformEvalSuiteSettingsV2
+  extends PlatformEvalSuiteSettingsBase {
+  defaultAssertions: PublicCheck[];
+  /** As {@link PlatformEvalSuiteSettings.verdictPolicyDefaults}, spelled canonically. */
+  verdictPolicyDefaults?: PlatformEvalVerdictPolicyDefaultsV2;
+}
+
+/**
+ * The parts of the policy-2 suite defaults both vocabularies spell alike.
+ * Fractions, never percents.
+ */
+export interface PlatformEvalVerdictPolicyDefaultsBase {
   /** Fraction of a case's trials that must pass, in [0, 1]. */
   passThreshold: number;
   /**
@@ -1723,6 +1747,20 @@ export interface PlatformEvalVerdictPolicyDefaults {
     minCompletionRate?: number;
     maxEvaluatorErrorRate?: number;
   };
+}
+
+/** Suite-level defaults under verdict policy 2, as vocabulary 1 spells them. */
+export interface PlatformEvalVerdictPolicyDefaults
+  extends PlatformEvalVerdictPolicyDefaultsBase {
+  /** Trials per case unless the case overrides `repetitions`. */
+  repetitions: number;
+}
+
+/** Suite-level defaults under verdict policy 2, as vocabulary 2 spells them. */
+export interface PlatformEvalVerdictPolicyDefaultsV2
+  extends PlatformEvalVerdictPolicyDefaultsBase {
+  /** Iterations per case unless the case overrides `iterations`. */
+  iterations: number;
 }
 
 /** The sandbox image a suite's eval runs boot from. */
@@ -1777,7 +1815,12 @@ export interface PlatformEvalSuiteSchedule {
  * shape — the route layer maps this to/from the internal Convex suite. Tolerant
  * reader: unknown fields pass through.
  */
-export interface PlatformEvalSuiteDetail {
+/**
+ * A suite's detail minus its settings — the one member whose SHAPE depends on
+ * the eval vocabulary the request spoke. See {@link PlatformEvalSuiteDetail}
+ * and {@link PlatformEvalSuiteDetailV2}.
+ */
+export interface PlatformEvalSuiteDetailBase {
   id: string;
   /**
    * The suite's declared file identity (`suite.id` in a suite file). Present
@@ -1835,7 +1878,6 @@ export interface PlatformEvalSuiteDetail {
   } | null;
   /** Host attachments (multi-host). */
   hosts: PlatformEvalSuiteHost[];
-  settings: PlatformEvalSuiteSettings;
   schedule: PlatformEvalSuiteSchedule;
   /**
    * How many committed edits this suite has had, or `null` on a deployment
@@ -1850,6 +1892,19 @@ export interface PlatformEvalSuiteDetail {
   revisionNumber?: number | null;
   createdAt: number | null;
   updatedAt: number | null;
+}
+
+/** A suite's detail as vocabulary 1 (no header) returns it. */
+export interface PlatformEvalSuiteDetail extends PlatformEvalSuiteDetailBase {
+  settings: PlatformEvalSuiteSettings;
+}
+
+/**
+ * A suite's detail as vocabulary 2 returns it — what a client constructed with
+ * `evalVocabulary: 2` reads back from `getEvalSuite` and the suite writes.
+ */
+export interface PlatformEvalSuiteDetailV2 extends PlatformEvalSuiteDetailBase {
+  settings: PlatformEvalSuiteSettingsV2;
 }
 
 /**
@@ -1932,7 +1987,13 @@ export interface PlatformEvalStep {
  * (prompt / toolCall / interact / assert). Public-model shape; the route maps
  * to/from the internal case.
  */
-export interface PlatformEvalCase {
+/**
+ * Everything a case says in the SAME words under both eval vocabularies. The
+ * three fields whose name depends on the vocabulary — the legacy floor, the
+ * exact count and the rule override — live on {@link PlatformEvalCase}
+ * (vocabulary 1) and {@link PlatformEvalCaseV2} (vocabulary 2).
+ */
+export interface PlatformEvalCaseBase {
   id: string;
   /**
    * The case's effective DECLARED id — what it answers to in a suite file, an
@@ -1949,18 +2010,6 @@ export interface PlatformEvalCase {
   /** Ordered test steps that define the case. */
   steps: PlatformEvalStep[];
   expectedOutput?: string;
-  /** Iterations to run per eval run (← internal runs). */
-  iterations: number;
-  /**
-   * Trials this case runs under verdict policy 2, overriding the suite
-   * default. Absent means the case inherits it.
-   *
-   * NOT a second spelling of `iterations`: that one is the legacy count, which
-   * the legacy resolver reads as a FLOOR (`max(iterations, minimumIterations)`)
-   * and which a policy-2 case still reports for compatibility. This one is
-   * exact.
-   */
-  repetitions?: number;
   /**
    * Fraction of this case's trials that must pass, in [0, 1], overriding the
    * suite default. Absent means the case inherits it.
@@ -1974,7 +2023,6 @@ export interface PlatformEvalCase {
   /** Execution models (plural — preserves compare behavior). */
   models: PlatformEvalCaseModel[];
   matchOptions?: PublicMatchOptions;
-  checks?: PublicCheckOverride;
   suppressedSuiteStandardCheckIds?: string[];
   /**
    * The converter's CLAIM about this case, when it was imported rather than
@@ -1987,6 +2035,49 @@ export interface PlatformEvalCase {
   source?: CaseSource;
   createdAt: number | null;
   updatedAt: number | null;
+}
+
+/** A case as vocabulary 1 (no header) returns it. */
+export interface PlatformEvalCase extends PlatformEvalCaseBase {
+  /** Iterations to run per eval run (← internal runs). */
+  iterations: number;
+  /**
+   * Trials this case runs under verdict policy 2, overriding the suite
+   * default. Absent means the case inherits it.
+   *
+   * NOT a second spelling of `iterations`: that one is the legacy count, which
+   * the legacy resolver reads as a FLOOR (`max(iterations, minimumIterations)`)
+   * and which a policy-2 case still reports for compatibility. This one is
+   * exact.
+   */
+  repetitions?: number;
+  checks?: PublicCheckOverride;
+}
+
+/**
+ * A case as vocabulary 2 (`x-mcpjam-eval-vocabulary: 2`) returns it — the
+ * canonical spellings from `docs/evals-vocabulary-consolidation.md`.
+ *
+ * The three renamed fields are the same three facts as on
+ * {@link PlatformEvalCase}: `legacyIterations` is vocabulary 1's `iterations`
+ * (the legacy floor, stored as `runs`), `iterations` is vocabulary 1's
+ * `repetitions` (the exact policy-2 count), `assertions` is `checks`.
+ */
+export interface PlatformEvalCaseV2 extends PlatformEvalCaseBase {
+  /**
+   * The legacy per-case count, which the legacy resolver reads as a FLOOR
+   * (`max(legacyIterations, minimumIterations)`). Always reported, as
+   * vocabulary 1's `iterations` is.
+   */
+  legacyIterations: number;
+  /**
+   * The exact number of iterations this case runs under verdict policy 2,
+   * overriding the suite default. Absent means the case inherits it. Not a
+   * spelling of `legacyIterations`: an exact count and a floor are two fields.
+   */
+  iterations?: number;
+  /** The case's rule override; vocabulary 1's `checks`. */
+  assertions?: PublicCheckOverride;
 }
 
 /**
