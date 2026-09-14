@@ -1198,16 +1198,20 @@ describe("UserTestingScenarioDetail — settings layout", () => {
     expect(previewPaneMock).not.toHaveBeenCalled();
   });
 
-  it("lays Settings out in two columns that fill the pane", () => {
+  it("lays Settings out in one wide column, not two", () => {
     const { container } = renderEdit();
 
     expect(screen.getByTestId("user-testing-edit-tab")).toBeInTheDocument();
-    // Reported as "too much white space": the 560px column this replaces sat
-    // pinned to the left of a pane twice its width. Two columns from `xl`,
-    // capped so an ultra-wide monitor does not stretch the measure.
+    // One column, read top to bottom like every other settings surface. Two
+    // columns gave no answer to "what do I look at after Description", and on
+    // a study whose sections differ in height it left one side ragged.
+    expect(container.querySelector('[class*="grid-cols-2"]')).toBeNull();
+    // Still WIDE, though. The two-column layout answered a real report ("too
+    // much white space" against a 560px column pinned to the left of a pane
+    // twice its width), and a narrow single column would bring it straight
+    // back. Capped so an ultra-wide monitor does not stretch the measure.
     expect(container.querySelector('[class*="w-[560px]"]')).toBeNull();
-    expect(container.querySelector('[class*="xl:grid-cols-2"]')).not.toBeNull();
-    expect(container.querySelector('[class*="max-w-[1400px]"]')).not.toBeNull();
+    expect(container.querySelector('[class*="max-w-[960px]"]')).not.toBeNull();
     // A resizable split is what the single column replaced, and it is not
     // coming back. Asserted against the MOCK's own test id, not
     // `[data-panel-group]`: the group is stubbed in this file, so the real
@@ -1216,6 +1220,28 @@ describe("UserTestingScenarioDetail — settings layout", () => {
     expect(
       screen.queryByTestId("stub-resizable-group"),
     ).not.toBeInTheDocument();
+  });
+
+  it("reads the study first, then the rules it runs under", () => {
+    // Collapsing two columns into one makes reading ORDER a real decision for
+    // the first time. This is the old column order read down — and already
+    // what every screen below `xl` was showing — so nothing moves for anyone
+    // who was on a laptop.
+    const { container } = renderEdit();
+
+    const order = [
+      "user-testing-description-section",
+      "user-testing-tasks-section",
+      "scenario-grading-section",
+      "user-testing-delete",
+    ].map((id) =>
+      Array.prototype.indexOf.call(
+        container.querySelectorAll("[data-testid]"),
+        container.querySelector(`[data-testid="${id}"]`),
+      ),
+    );
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+    expect(order.every((index) => index >= 0)).toBe(true);
   });
 
   it("keeps every settings section on the page after the split", () => {

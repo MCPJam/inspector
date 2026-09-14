@@ -115,8 +115,9 @@ const TAB_OPTIONS: ReadonlyArray<{
 ];
 
 /**
- * One settings card. Two columns of them need a visible edge each — without
- * one, sections side by side read as a single column with odd gaps.
+ * One settings card. Stacked in a single column, the edge is what keeps a run
+ * of sections from reading as one undifferentiated form — it is the only thing
+ * saying where "Ratings" stops and "Grading" starts.
  */
 const SETTINGS_CARD =
   "space-y-4 rounded-xl border border-border bg-card p-5 shadow-sm";
@@ -636,28 +637,34 @@ export function UserTestingScenarioDetail({
           className="relative min-h-0 flex-1 overflow-hidden"
           data-testid="user-testing-edit-tab"
         >
-          {/* TWO COLUMNS of cards on a wide screen, one below `xl`.
-              Reported: "too much white space… make better use of the full
-              screen". This was a 560px column pinned to the left edge of a
-              pane twice that wide — a readable measure, but the rest of the
-              screen was empty, and reaching the task list meant scrolling past
-              every switch.
+          {/* ONE COLUMN of wide cards, centred.
 
-              The split is by WHAT A SECTION IS, not by what fits: the left
-              column is the study itself (what it says, where it runs, what it
-              asks people to try), the right is the rules it runs under (who
-              may open it, what gets rated, what gets graded). Each column
-              keeps a readable measure; neither stretches on an ultra-wide
-              monitor, because the whole grid is capped and centred.
+              This was two columns from `xl`, which answered an older report
+              ("too much white space") by filling the pane. Settings reads top
+              to bottom now, the way every other settings surface in the app
+              does: two columns made the reading order ambiguous — a second
+              column starting level with the first gives no answer to "what do
+              I look at after Description", and on a study whose sections
+              differ in height it left one side ragged.
 
-              Cards, not bare headings: side by side, sections with no
-              boundary read as one long column that happens to have gaps. */}
+              The cards stay WIDE (this cap, not a reading measure): the
+              complaint the two-column layout was built for is real, and a
+              single column at 560px would bring it straight back.
+
+              Section ORDER is the old column order read down — the study
+              itself (what it says, where it runs, what it asks people to try),
+              then the rules it runs under (who may open it, what gets rated,
+              what gets graded). That is already what every screen below `xl`
+              has been showing, so nothing moves for anyone on a laptop.
+
+              Cards, not bare headings: a run of sections with no boundary
+              reads as one long form that happens to have gaps. */}
           <div className="h-full overflow-y-auto px-6 py-6 sm:px-8">
-            <div className="mx-auto w-full max-w-[1400px] space-y-6">
+            <div className="mx-auto w-full max-w-[960px] space-y-6">
               <h1 className="text-xl font-semibold tracking-tight text-foreground">
                 Settings
               </h1>
-              <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-2">
+              <div className="space-y-6">
                 <div className="min-w-0 space-y-6">
                   {/* Off the header row as of BB-202: a field that grows next to
                   the title crowds the tabs. Still the only editor for it. */}
@@ -758,7 +765,9 @@ export function UserTestingScenarioDetail({
                   </div>
                 </div>
 
-                {/* The rules it runs under. */}
+                {/* The rules it runs under. Its own wrapper, not merged into
+                    the one above: the grouping is still real, it is just read
+                    in sequence now rather than side by side. */}
                 <div className="min-w-0 space-y-6">
                   <section className={SETTINGS_CARD}>
                     <h2 className={SETTINGS_CARD_TITLE}>Sharing permissions</h2>
@@ -785,9 +794,9 @@ export function UserTestingScenarioDetail({
                 </div>
               </div>
 
-              {/* Full width, under both columns and visibly apart from them:
-                  the one control here that cannot be undone should not sit in
-                  a column where a mis-aimed click lives next to a switch. */}
+              {/* Last, and visibly apart from the cards above it: the one
+                  control here that cannot be undone should not sit in a run of
+                  sections where a mis-aimed click lives next to a switch. */}
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/25 bg-destructive/5 px-5 py-4">
                 <div className="min-w-0">
                   <p className="text-sm font-medium text-foreground">
