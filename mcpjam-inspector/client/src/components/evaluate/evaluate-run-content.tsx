@@ -561,6 +561,7 @@ export function SingleRunContent({
 
       <div className="border-t border-border/40">
         <RunResultsMatrix
+          onEditCase={onEditCase}
           key={run._id}
           run={run}
           suiteName={suiteName}

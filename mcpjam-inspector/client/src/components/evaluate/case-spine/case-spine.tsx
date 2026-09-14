@@ -492,7 +492,7 @@ export function CaseSpine({
             {readOnly ? null : (
               <EvalAddDrawer
                 className="w-full"
-                triggerLabel="Add"
+                triggerLabel="Add assertion or action"
                 authorableKinds={authorableKinds}
                 onOutcomeFocus={() => {
                   outcomeRef.current?.scrollIntoView?.({ block: "center" });

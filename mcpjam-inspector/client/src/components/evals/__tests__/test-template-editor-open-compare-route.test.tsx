@@ -1152,6 +1152,15 @@ describe("TestTemplateEditor run view from route", () => {
       screen.queryByTestId("case-pass-criteria-toggle"),
     ).not.toBeInTheDocument();
     expect(screen.getAllByTestId("spine-action-row").length).toBeGreaterThan(0);
+    const defaultChecks = screen.getByRole("button", {
+      name: "Show default assertions",
+    });
+    expect(screen.getByTestId("case-spine")).not.toContainElement(
+      defaultChecks,
+    );
+    expect(defaultChecks.parentElement).toContainElement(
+      screen.getByRole("button", { name: "Setup Run" }),
+    );
   });
 
   it("shows a step-authored case in the workspace and leaves its flag alone", async () => {

@@ -2125,7 +2125,10 @@ export function SuiteIterationsView({
                         })
                       }
                       {...(onEditTestCase && !editingDisabled
-                        ? { onEditCase: onEditTestCase }
+                        ? {
+                            onEditCase: (testCaseId: string) =>
+                              navigation.toTestEdit(suite._id, testCaseId),
+                          }
                         : {})}
                       fallbackBody={runDetailView}
                     />

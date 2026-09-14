@@ -204,7 +204,10 @@ function CellMetricValues({ items }: { items: EvalIteration[] }) {
           {tokenAverage === null ? "—" : compactMetric(tokenAverage)}
         </span>
       </span>
-      <span className={cn(metric, "pl-2")} title="Average tool calls per iteration">
+      <span
+        className={cn(metric, "pl-2")}
+        title="Average tool calls per iteration"
+      >
         <span className={metricLabel}>Calls</span>
         <span
           className="text-base font-semibold leading-5"
@@ -233,6 +236,7 @@ export function RunResultsMatrix({
   toolbarExtra,
   extraFiltersActive = false,
   onClearExtraFilters,
+  onEditCase,
 }: {
   modelIds?: readonly string[];
   run: EvalSuiteRun;
@@ -245,6 +249,7 @@ export function RunResultsMatrix({
   toolbarExtra?: ReactNode;
   extraFiltersActive?: boolean;
   onClearExtraFilters?: () => void;
+  onEditCase?: (testCaseId: string) => void;
 }) {
   const theme = usePreferencesStoreWithDefaults((state) => state.themeMode);
   const data = useMemo(() => {
@@ -631,6 +636,18 @@ export function RunResultsMatrix({
                     caseKey={selectedRow.key}
                     onSelectIteration={setSelectedIterationId}
                   />
+                  {onEditCase && selectedRow.testCaseId && (
+                    <div className="mt-4 flex justify-end">
+                      <Button
+                        onClick={() => {
+                          setSelection(null);
+                          onEditCase(selectedRow.testCaseId!);
+                        }}
+                      >
+                        Edit test case
+                      </Button>
+                    </div>
+                  )}
                 </div>
               </>
             ))}

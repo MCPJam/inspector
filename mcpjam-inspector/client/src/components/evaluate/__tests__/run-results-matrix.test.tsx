@@ -61,6 +61,31 @@ const names = new Map([
 ]);
 
 describe("run results matrix", () => {
+  it("opens the saved case editor and closes the iterations drawer", async () => {
+    const onEditCase = vi.fn();
+    render(
+      <RunResultsMatrix
+        run={run("one")}
+        iterations={[iteration("pass", "one")]}
+        hostNamesById={names}
+        onEditCase={onEditCase}
+      />,
+    );
+    const user = userEvent.setup();
+    await user.click(
+      screen.getByRole("button", {
+        name: "Inspect Refund order on Claude · sonnet",
+      }),
+    );
+    await user.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Edit test case",
+      }),
+    );
+    expect(onEditCase).toHaveBeenCalledWith("refund");
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
   it("shows only the empty state when switching to a pairing without iterations", async () => {
     const user = userEvent.setup();
     render(
