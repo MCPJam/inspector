@@ -118,7 +118,7 @@ function CellResults({ items }: { items: EvalIteration[] }) {
           </span>
         </span>
         <span
-          className="shrink-0 text-lg font-semibold leading-6 text-foreground"
+          className="shrink-0 text-lg font-semibold leading-6 text-card-foreground"
           aria-label={`${counts.passed} of ${items.length} iterations passed`}
         >
           {counts.passed}/{items.length}
@@ -458,8 +458,11 @@ export function RunResultsMatrix({
                     {target.model}
                   </div>
                   <div className="mt-3 flex items-baseline gap-1">
-                    <span className="text-lg font-semibold tabular-nums text-foreground">
-                      {target.counts.passed}/{target.iterations.length}
+                    <span className="text-lg font-semibold tabular-nums">
+                      {target.counts.passed}
+                      <span className="text-muted-foreground">
+                        /{target.iterations.length}
+                      </span>
                     </span>
                     <span className="text-[10px] text-muted-foreground">
                       iters passed
