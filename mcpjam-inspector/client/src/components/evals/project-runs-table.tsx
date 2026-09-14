@@ -152,6 +152,21 @@ export interface ProjectRunRow {
 
 const ALL_SUITES = "__all__";
 
+/**
+ * The run's OWN verdict when it recorded one, else its lifecycle status.
+ *
+ * Status is the fallback, not just a running/pending check: a run that died
+ * before finalize is `status: "failed"` while `result` still reads
+ * `"pending"`, and reporting that as "Pending" describes a run as in-progress
+ * when it is over and it lost. The converse matters just as much — a
+ * cancelled, timed-out or inconclusive run records that in `result` while
+ * `status` stays `"completed"`, so a reader that consults only `status`
+ * reports a decided run as having no result.
+ */
+export function runEffectiveOutcome(row: ProjectRunRow): string {
+  return row.result && row.result !== "pending" ? row.result : row.status;
+}
+
 function statusMeta(row: ProjectRunRow): {
   label: string;
   className: string;
@@ -159,12 +174,7 @@ function statusMeta(row: ProjectRunRow): {
   if (row.status === "running" || row.status === "pending") {
     return { label: "Running", className: "bg-warning/50 text-foreground" };
   }
-  // Status is the fallback, not just a running/pending check: a run that died
-  // before finalize is `status: "failed"` while `result` still reads
-  // `"pending"`, and reporting that as "Pending" describes a run as
-  // in-progress when it is over and it lost.
-  const effective =
-    row.result && row.result !== "pending" ? row.result : row.status;
+  const effective = runEffectiveOutcome(row);
   switch (effective) {
     case "passed":
       return { label: "Passed", className: "bg-success/50 text-foreground" };
@@ -226,13 +236,11 @@ export function ProjectRunsTable({
   decisionSummaryEnabled = false,
   embedded = false,
   historyMetricsEnabled = false,
-  metricBars = false,
   evaluateLayout = false,
   emptyState,
 }: {
   projectId: string;
   historyMetricsEnabled?: boolean;
-  metricBars?: boolean;
   /** Ding Dong's flat launch table; legacy eval screens keep their grouping. */
   evaluateLayout?: boolean;
   /** Use the parent page scroll when shown below the suite cards. */
@@ -389,6 +397,7 @@ export function ProjectRunsTable({
   // defeated their own memoization.
   const {
     historyRows,
+    hostNamesById,
     clientOptions,
     serverOptions,
     repositoryOptions,
@@ -605,6 +614,7 @@ export function ProjectRunsTable({
     );
     return {
       historyRows,
+      hostNamesById,
       clientOptions,
       serverOptions,
       repositoryOptions,
@@ -970,8 +980,6 @@ export function ProjectRunsTable({
               )}
               {metricData && (
                 <MetricStrip
-                  bars={metricBars}
-                  showCost={!metricBars || metricData.latest.costUsd != null}
                   data={metricData}
                   surface="embedded"
                   context="history"
@@ -1094,6 +1102,7 @@ export function ProjectRunsTable({
                       rows={launch.runs}
                       details={history.details}
                       historyRows={historyRows}
+                      hostNamesById={hostNamesById}
                       showSuite
                       onOpen={
                         representative.suiteName !== null

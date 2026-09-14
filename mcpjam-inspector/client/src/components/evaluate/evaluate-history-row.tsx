@@ -5,15 +5,19 @@ import {
   TableRow,
 } from "@mcpjam/design-system/table";
 import { cn } from "@/lib/utils";
-import { compactMetric, runClientIdentity } from "../evals/helpers";
+import { runClientIdentity } from "../evals/helpers";
 import { resolveRunOrigin } from "@/lib/evals/run-origin";
 import { RunClientsCell } from "../evals/run-clients-cell";
 import {
+  RunBranchCell,
   RunCommitCell,
   RunPlatformBadge,
+  RunPullRequestCell,
   readRunGitMetadata,
+  type RunGitMetadataValue,
 } from "../evals/run-git-metadata";
 import { projectRunRollup } from "../evals/project-run-suite-groups";
+import { runEffectiveOutcome } from "../evals/project-runs-table";
 import type { ProjectRunRow } from "../evals/project-runs-table";
 import type { ProjectRunHistoryDetail } from "../evals/use-project-run-history";
 import {
@@ -50,18 +54,41 @@ export function EvaluateHistoryHeader({
   );
 }
 
-/** Stored outcomes only: a percentage is not enough to infer a run's verdict. */
+/**
+ * Stored outcomes only: a percentage is not enough to infer a run's verdict.
+ *
+ * Read through `runEffectiveOutcome`, the same rule the single-run rows use,
+ * so a run that recorded `cancelled`, `timed_out` or `inconclusive` in its
+ * `result` is reported as decided rather than as having no result at all.
+ */
 export function historyResult(rows: readonly ProjectRunRow[]): string {
-  if (rows.some((row) => row.status === "running" || row.status === "pending"))
+  if (rows.length === 0) return "No result";
+  const outcomes = rows.map(runEffectiveOutcome);
+  if (outcomes.some((it) => it === "running" || it === "pending"))
     return "Running";
-  if (rows.some((row) => row.status === "grading")) return "Grading";
-  if (rows.some((row) => row.result === "failed" || row.status === "failed"))
-    return "Failed";
-  if (rows.some((row) => row.status === "timed_out")) return "Timed out";
-  if (rows.some((row) => row.status === "cancelled")) return "Cancelled";
-  if (rows.length > 0 && rows.every((row) => row.result === "passed"))
-    return "Passed";
+  if (outcomes.some((it) => it === "grading")) return "Grading";
+  if (outcomes.some((it) => it === "failed")) return "Failed";
+  if (outcomes.some((it) => it === "timed_out")) return "Timed out";
+  if (outcomes.some((it) => it === "cancelled")) return "Cancelled";
+  // A real verdict, and NOT a failure: the run could not be measured well
+  // enough to decide. Named rather than folded into either side.
+  if (outcomes.some((it) => it === "inconclusive")) return "Inconclusive";
+  if (outcomes.every((it) => it === "passed")) return "Passed";
   return "No result";
+}
+
+/** One glyph for every absent measurement in the row. */
+const MISSING = "—";
+
+function metricCell(
+  value: number | null | undefined,
+  kind: "number" | "duration",
+): string {
+  return value == null ? MISSING : formatRunHistoryMetric(value, kind);
+}
+
+function historyTimestamp(value: number): number | null {
+  return Number.isFinite(value) && value > 0 ? value : null;
 }
 
 /** One row per launch, preserving fan-out client/model pairs and loaded-data gaps. */
@@ -69,6 +96,7 @@ export function EvaluateHistoryRow({
   rows,
   details,
   historyRows,
+  hostNamesById,
   showSuite = false,
   onOpen,
   testId,
@@ -76,6 +104,8 @@ export function EvaluateHistoryRow({
   rows: ProjectRunRow[];
   details: Map<string, ProjectRunHistoryDetail>;
   historyRows: Map<string, SuiteRunHistoryRow>;
+  /** Current names for named hosts, so a renamed host is not shown stale. */
+  hostNamesById?: ReadonlyMap<string, string | null>;
   showSuite?: boolean;
   onOpen?: () => void;
   testId?: string;
@@ -86,7 +116,9 @@ export function EvaluateHistoryRow({
   if (!representative) return null;
   const rollup = projectRunRollup(rows, details);
   const result = historyResult(rows);
-  const platforms = [
+  // Parsed once per row and carried: the dedup key and the chips below read
+  // the same value rather than re-parsing the CI metadata.
+  const platforms: { row: ProjectRunRow; git: RunGitMetadataValue | null }[] = [
     ...new Map(
       rows.map((row) => {
         const git = readRunGitMetadata(row.ciMetadata);
@@ -96,34 +128,12 @@ export function EvaluateHistoryRow({
             git?.repository,
             git?.commitSha,
           ]),
-          row,
-        ];
+          { row, git },
+        ] as const;
       }),
     ).values(),
   ];
-  const measuredCalls = rows
-    .flatMap((row) => details.get(row._id)?.iterations ?? [])
-    .flatMap((iteration) =>
-      iteration.actualToolCalls != null
-        ? [iteration.actualToolCalls.length]
-        : [],
-    );
-  const calls =
-    rollup && measuredCalls.length
-      ? measuredCalls.reduce((sum, count) => sum + count, 0)
-      : null;
-  const measuredTokens = rows
-    .flatMap((row) => details.get(row._id)?.iterations ?? [])
-    .flatMap((iteration) =>
-      typeof iteration.tokensUsed === "number" &&
-      Number.isFinite(iteration.tokensUsed)
-        ? [iteration.tokensUsed]
-        : [],
-    );
-  const tokens =
-    rollup && measuredTokens.length
-      ? measuredTokens.reduce((sum, count) => sum + count, 0)
-      : null;
+  const createdAt = historyTimestamp(representative.createdAt);
   return (
     <TableRow
       data-testid={testId}
@@ -157,10 +167,13 @@ export function EvaluateHistoryRow({
           rows={rows.map(
             (row) =>
               historyRows.get(row._id) ?? {
-                client: runClientIdentity({
-                  client: row.client,
-                  namedHostId: row.namedHostId ?? undefined,
-                }).name,
+                client: runClientIdentity(
+                  {
+                    client: row.client,
+                    namedHostId: row.namedHostId ?? undefined,
+                  },
+                  hostNamesById,
+                ).name,
                 hostStyle: row.client?.hostStyle,
                 models: row.client?.modelId ? [row.client.modelId] : [],
               },
@@ -182,45 +195,70 @@ export function EvaluateHistoryRow({
         </span>
       </TableCell>
       <TableCell
-        className="tabular-nums"
+        className="whitespace-nowrap tabular-nums"
         title={
           rollup && rollup.total > 0
             ? `${rollup.passed}/${rollup.total} passed`
             : undefined
         }
       >
-        {rollup?.passRate != null ? `${rollup.passRate}%` : "—"}
+        <span>{rollup?.passRate != null ? `${rollup.passRate}%` : MISSING}</span>
+        {/* Rendered, not just a tooltip: the counts behind the percentage are
+            unreachable on touch and to a screen reader when they live in a
+            `title` alone. */}
+        {rollup && rollup.total > 0 ? (
+          <span className="ml-1 text-[10px] text-muted-foreground">
+            {rollup.passed}/{rollup.total}
+          </span>
+        ) : null}
       </TableCell>
       <TableCell>
         <div className="flex flex-wrap items-center gap-2">
-          {platforms.map((row) => (
+          {/* Each chip is guarded on the value it renders, never on the
+              presence of CI metadata: `RunCommitCell` and its siblings print a
+              dash when they have nothing, which reads as a column here rather
+              than as "no commit". The branch and PR earn their place because
+              this table's toolbar filters on them. */}
+          {platforms.map(({ row, git }) => (
             <span key={row._id} className="inline-flex items-center gap-2">
               <RunPlatformBadge run={row} />
-              {row.ciMetadata && (
-                <RunCommitCell git={readRunGitMetadata(row.ciMetadata)} />
-              )}
+              {git?.commitSha && git?.commitUrl ? (
+                <RunCommitCell git={git} />
+              ) : null}
+              {git?.pullRequestNumber && git?.pullRequestUrl ? (
+                <RunPullRequestCell git={git} />
+              ) : null}
+              {git?.branch && git?.branchUrl ? (
+                <RunBranchCell git={git} />
+              ) : null}
             </span>
           ))}
         </div>
       </TableCell>
       <TableCell className="whitespace-nowrap text-muted-foreground">
-        <time dateTime={new Date(representative.createdAt).toISOString()}>
-          {new Date(representative.createdAt).toLocaleString(undefined, {
-            month: "short",
-            day: "numeric",
-            hour: "numeric",
-            minute: "2-digit",
-          })}
-        </time>
+        {/* An unset or nonsensical timestamp is one missing cell, never a
+            `toISOString()` that throws and unmounts the whole table. */}
+        {createdAt == null ? (
+          MISSING
+        ) : (
+          <time dateTime={new Date(createdAt).toISOString()}>
+            {new Date(createdAt).toLocaleString(undefined, {
+              month: "short",
+              day: "numeric",
+              hour: "numeric",
+              minute: "2-digit",
+            })}
+          </time>
+        )}
       </TableCell>
       <TableCell className="tabular-nums text-muted-foreground">
-        {formatRunHistoryMetric(rollup?.latencyP50 ?? null, "duration")}
+        {metricCell(rollup?.latencyP50, "duration")}
       </TableCell>
       <TableCell className="tabular-nums text-muted-foreground">
-        {tokens != null ? compactMetric(tokens) : "—"}
+        {metricCell(rollup?.totalTokens, "number")}
       </TableCell>
       <TableCell className="tabular-nums text-muted-foreground">
-        {calls != null ? compactMetric(calls) : "—"}
+        {metricCell(rollup?.toolCalls, "number")}
       </TableCell>
     </TableRow>
   );

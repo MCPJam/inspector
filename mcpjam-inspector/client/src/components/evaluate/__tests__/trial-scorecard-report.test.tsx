@@ -28,7 +28,8 @@ describe("Scorecard report", () => {
         <TrialScorecardRow row={check} layout="report" />
       </ul>,
     );
-    expect(screen.getByText("Looks for")).toBeVisible();
+    // Named once, as the heading — not repeated under a "Looks for" term.
+    expect(screen.getAllByText("End-to-end latency ≤ 30s")).toHaveLength(1);
     expect(screen.getByText("Observed")).toBeVisible();
     expect(screen.getByText("10.2s end to end.")).toBeVisible();
     expect(screen.getByText("Why it passed")).toBeVisible();

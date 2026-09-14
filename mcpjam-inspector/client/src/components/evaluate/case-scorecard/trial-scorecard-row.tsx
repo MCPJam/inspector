@@ -150,11 +150,18 @@ export function TrialScorecardRow({
           : "Reason";
     return (
       <li
-        className="space-y-3 border-b border-border/60 py-4 last:border-b-0"
+        className={cn(
+          "space-y-3 border-b border-border/60 py-4 last:border-b-0",
+          // The step rail highlights this row, not only the other way round:
+          // `onSyncStep` fires from here on hover, so the sync has to be
+          // legible in both directions or it reads as broken from one side.
+          active && "-mx-2 rounded-md bg-primary/5 px-2",
+        )}
         data-testid="trial-scorecard-row"
         data-row-key={row.key}
         data-state={withheld ? "notMeasured" : row.result.state}
         data-role={row.role}
+        {...(row.stepId ? { "data-step-id": row.stepId } : {})}
         onMouseEnter={() => row.stepId && onSyncStep?.(row.stepId)}
         onMouseLeave={() => row.stepId && onSyncStep?.(null)}
       >
@@ -165,11 +172,19 @@ export function TrialScorecardRow({
               "shrink-0 rounded px-2 py-1 text-[10px] font-semibold uppercase",
               withheld
                 ? "bg-muted text-muted-foreground"
-                : row.result.state === "passed"
-                  ? "bg-success/15 text-foreground"
-                  : row.result.state === "failed" && row.role === "gate"
-                    ? "bg-destructive/10 text-destructive"
-                    : "bg-muted text-muted-foreground",
+                : cn(
+                    row.result.state === "passed"
+                      ? "bg-success/15"
+                      : row.result.state === "failed" && row.role === "gate"
+                        ? "bg-destructive/10"
+                        : "bg-muted",
+                    // The colour is `state × role`, so it comes from the same
+                    // glyph the row layout wears rather than a second ternary
+                    // that flattens an advisory miss and an evaluator error
+                    // into the neutral grey of "skipped". `resultGlyph` styles
+                    // an icon; this badge is text, so the spinner is dropped.
+                    glyph.cls.replace("animate-spin", "").trim(),
+                  ),
             )}
           >
             {withheld ? "Hidden" : glyph.label}
@@ -184,12 +199,8 @@ export function TrialScorecardRow({
           </p>
         ) : (
           <dl className="grid grid-cols-[6rem_minmax(0,1fr)] gap-x-3 gap-y-2 text-xs leading-relaxed sm:grid-cols-[7rem_minmax(0,1fr)]">
-            <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-              Looks for
-            </dt>
-            <dd className="min-w-0 whitespace-pre-wrap break-words">
-              {row.label}
-            </dd>
+            {/* No "Looks for" term: its only value was `row.label`, which is
+                the heading directly above it. */}
             <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
               Observed
             </dt>

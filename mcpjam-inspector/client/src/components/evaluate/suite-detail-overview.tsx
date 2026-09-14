@@ -548,6 +548,7 @@ export function SuiteDetailOverview({
                         rows={launch.runs}
                         details={details}
                         historyRows={rowMap}
+                        hostNamesById={hostNamesById}
                         onOpen={() => onRunClick(representative._id)}
                       />
                     );
