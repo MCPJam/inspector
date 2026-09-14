@@ -20,11 +20,11 @@ const mount = (readOnly = false, isActive = false) => {
 };
 
 describe("pinned tool field updates", () => {
-  it("uses a neutral outline for the hovered or synced action", () => {
+  it("keeps hover feedback on individual controls instead of the action wrapper", () => {
     mount(false, true);
     const row = screen.getByTestId("spine-action-row");
-    expect(row).toHaveClass("ring-1", "ring-border");
-    expect(row).not.toHaveClass("ring-ring");
+    expect(row).not.toHaveClass("ring-1", "ring-ring", "ring-border");
+    expect(screen.getByRole("button", { name: "Edit step 1" })).toHaveClass("hover:bg-muted/50");
   });
   it("ignores mount-time normalization in a frozen view", () => {
     const onUpdate = mount(true);
