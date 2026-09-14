@@ -237,6 +237,7 @@ export function RunResultsMatrix({
   extraFiltersActive = false,
   onClearExtraFilters,
   onEditCase,
+  onEditEvaluator,
 }: {
   modelIds?: readonly string[];
   run: EvalSuiteRun;
@@ -250,6 +251,7 @@ export function RunResultsMatrix({
   extraFiltersActive?: boolean;
   onClearExtraFilters?: () => void;
   onEditCase?: (testCaseId: string) => void;
+  onEditEvaluator?: (testCaseId: string) => void;
 }) {
   const theme = usePreferencesStoreWithDefaults((state) => state.themeMode);
   const data = useMemo(() => {
@@ -587,6 +589,15 @@ export function RunResultsMatrix({
                 )}
                 chain={chains?.get(selectedIteration._id)}
                 onBack={() => setSelectedIterationId(null)}
+                onEditEvaluator={
+                  onEditEvaluator && selectedRow.testCaseId
+                    ? () => {
+                        setSelection(null);
+                        setSelectedIterationId(null);
+                        onEditEvaluator(selectedRow.testCaseId!);
+                      }
+                    : undefined
+                }
               />
             ) : (
               <>
@@ -822,6 +833,7 @@ function IterationDrawer({
   diagnostic,
   chain,
   onBack,
+  onEditEvaluator,
 }: {
   iteration: EvalIteration;
   iterationNumber: number;
@@ -831,6 +843,7 @@ function IterationDrawer({
   diagnostic?: EvalRunDecisionDiagnostic;
   chain?: EvalRunDecisionChain;
   onBack: () => void;
+  onEditEvaluator?: () => void;
 }) {
   const result = computeIterationResult(iteration);
   const authored = authoredForTrial({
@@ -886,15 +899,24 @@ function IterationDrawer({
           trialVerdictWord={outcomeLabel(result)}
           scorecard={{
             render: (context) => (
-              <TrialScorecard
-                authored={authored}
-                iteration={iteration}
-                steps={authored.steps}
-                chain={decisionChain}
-                envelope={context.envelope}
-                scoresSection={context.scoresSection}
-                judgeHidden={context.judgeHidden}
-              />
+              <>
+                <TrialScorecard
+                  authored={authored}
+                  iteration={iteration}
+                  steps={authored.steps}
+                  chain={decisionChain}
+                  envelope={context.envelope}
+                  scoresSection={context.scoresSection}
+                  judgeHidden={context.judgeHidden}
+                />
+                {onEditEvaluator && (
+                  <div className="mt-4 flex justify-end">
+                    <Button variant="outline" onClick={onEditEvaluator}>
+                      Edit evaluator
+                    </Button>
+                  </div>
+                )}
+              </>
             ),
           }}
         />

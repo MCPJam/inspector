@@ -114,6 +114,7 @@ export function SingleRunContent({
   decisionSummaryEnabled,
   onOpenIteration,
   onEditCase,
+  onEditEvaluator,
   fallbackBody,
 }: {
   projectId: string | null | undefined;
@@ -132,6 +133,7 @@ export function SingleRunContent({
     iterationId: string;
   }) => void;
   onEditCase?: (testCaseId: string) => void;
+  onEditEvaluator?: (testCaseId: string) => void;
   fallbackBody?: ReactNode;
 }) {
   // Terminal only, matching `RunDecisionSummarySection`: a running row has no
@@ -562,6 +564,7 @@ export function SingleRunContent({
       <div className="border-t border-border/40">
         <RunResultsMatrix
           onEditCase={onEditCase}
+          onEditEvaluator={onEditEvaluator}
           key={run._id}
           run={run}
           suiteName={suiteName}

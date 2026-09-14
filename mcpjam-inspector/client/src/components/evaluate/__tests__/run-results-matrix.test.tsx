@@ -61,6 +61,31 @@ const names = new Map([
 ]);
 
 describe("run results matrix", () => {
+  it("opens evaluator settings from the iteration scorecard", async () => {
+    const onEditEvaluator = vi.fn();
+    render(
+      <RunResultsMatrix
+        run={run("one")}
+        iterations={[iteration("pass", "one")]}
+        hostNamesById={names}
+        onEditEvaluator={onEditEvaluator}
+      />,
+    );
+    const user = userEvent.setup();
+    await user.click(
+      screen.getByRole("button", {
+        name: "Inspect Refund order on Claude · sonnet",
+      }),
+    );
+    expect(screen.queryByRole("button", { name: "Edit evaluator" })).toBeNull();
+    await user.click(
+      screen.getByRole("button", { name: "Open iteration 1 details" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Edit evaluator" }));
+    expect(onEditEvaluator).toHaveBeenCalledWith("refund");
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
   it("opens the saved case editor and closes the iterations drawer", async () => {
     const onEditCase = vi.fn();
     render(
