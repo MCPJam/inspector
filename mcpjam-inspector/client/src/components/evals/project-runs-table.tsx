@@ -17,6 +17,7 @@ import {
   displayRunServerNames,
   isEphemeralCheckServerName,
 } from "./github-check-server-name";
+import { getEffectiveSuiteServers } from "./helpers";
 import { MetricStrip } from "./metric-strip";
 import {
   buildSuiteMetricStripData,
@@ -334,9 +335,13 @@ export function ProjectRunsTable({
   const suiteServersById = useMemo(
     () =>
       new Map<string, string[]>(
+        // The suite's EFFECTIVE servers, not the legacy flat list: a suite
+        // that picks its servers through a host or a standalone attachment
+        // leaves `environment.servers` empty, which fell back to the shared
+        // label and left the filter no better off.
         (suiteOverview ?? []).map((entry) => [
           entry.suite._id,
-          entry.suite.environment?.servers ?? [],
+          getEffectiveSuiteServers(entry.suite),
         ]),
       ),
     [suiteOverview],

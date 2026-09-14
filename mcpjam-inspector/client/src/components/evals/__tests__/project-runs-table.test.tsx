@@ -21,7 +21,13 @@ const mocks = vi.hoisted(() => ({
   /** `testSuites:getTestSuitesOverview` — only the suites' servers matter here. */
   suiteOverview: {
     current: undefined as
-      | Array<{ suite: { _id: string; environment: { servers: string[] } } }>
+      | Array<{
+          suite: {
+            _id: string;
+            environment: { servers: string[] };
+            hostAttachments?: Array<{ resolvedServerNames: string[] }>;
+          };
+        }>
       | undefined,
   },
 }));
@@ -779,8 +785,16 @@ describe("project run history metrics", () => {
           }
         : result;
     });
+    // A suite that picks its servers through a host attachment leaves the
+    // legacy flat list empty — the shape that made this read "PR server".
     mocks.suiteOverview.current = [
-      { suite: { _id: "suite_1", environment: { servers: ["bart"] } } },
+      {
+        suite: {
+          _id: "suite_1",
+          environment: { servers: [] },
+          hostAttachments: [{ resolvedServerNames: ["bart"] }],
+        },
+      },
     ];
     const user = userEvent.setup();
     render(
