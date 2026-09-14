@@ -2,45 +2,79 @@
  * Every word a gated visitor reads on Swarms or User Testing (REEV-11).
  *
  * Copy lives here and layout lives in `GatedFeaturePreview.tsx`, so the words
- * can be rewritten without touching a component — this file is the one product
- * edits. The card entries are titles only: the little graphic under each one is
- * static and belongs to the layout, because it is a shape, not a sentence.
+ * can be rewritten without touching a component. This file is the one product
+ * edits.
  *
- * The nudge copy sits here too rather than inside the dialog, so a reader
- * comparing what the preview promises with what the sign-up sheet claims sees
- * both at once. Two files would let them drift.
+ * Two rules this file is held to, both from #coreuxsquad:
  *
- * The two audiences that reach this copy — a signed-out guest and a signed-in
- * user whose plan lacks the feature — read the SAME hero and cards. Only the
- * call to action differs, and that is passed into the component rather than
- * stored here. So nothing in this file may assume the reader lacks an account.
+ *  - **No em dashes, anywhere.** Standing instruction from Vig, on the grounds
+ *    that generated copy is full of them and it is our job to catch it.
+ *  - **Nothing invented.** The Swarms headline is the line from the design
+ *    file. The User Testing headline is Sophie's, replacing wording she
+ *    flagged as making us sound like an observability platform. The sample is
+ *    traced from screenshots of the running product, not designed here.
+ *
+ * The two audiences that reach this copy, a signed-out visitor and a signed-in
+ * one whose plan lacks the feature, read the same body line. Only the way out
+ * differs, and that lives with the component that renders it.
  */
 
-/** The two surfaces a gated visitor can land on. Evaluate is deliberately not
- *  one of them: it is reachable by everyone and has no gated state. */
+/** The two surfaces a gated visitor can land on. */
 export type GatedFeatureId = "swarms" | "user-testing";
 
-export interface GatedFeatureHighlightCard {
-  /** Card heading — what the panel would show on a real project. */
-  readonly title: string;
-  /** The small uppercase line under it: units, scope, or scale. */
-  readonly subtitle: string;
+/** One row of the real Swarms Overview list. */
+export interface SampleRun {
+  readonly name: string;
+  readonly when: string;
+  /** The counts line: sessions, goals, personas, findings. */
+  readonly meta: string;
+  readonly model: string;
 }
 
+/** One tile of the real User Testing session metric strip. */
+export interface SampleTile {
+  readonly label: string;
+  readonly value: string;
+  readonly unit: string;
+}
+
+/**
+ * The single example card.
+ *
+ * Two shapes because the two products genuinely look different: Swarms opens
+ * on a list of runs, a study opens on a metric strip. A shared abstraction
+ * would have to flatten one of them into the other's frame, which is how the
+ * first draft ended up drawing charts that do not exist.
+ */
+export type GatedFeatureSample =
+  | {
+      readonly kind: "runs";
+      readonly title: string;
+      readonly subtitle: string;
+      readonly runs: readonly SampleRun[];
+    }
+  | {
+      readonly kind: "metrics";
+      readonly title: string;
+      readonly subtitle: string;
+      readonly tiles: readonly SampleTile[];
+    };
+
 export interface GatedFeatureCopy {
-  /** Sidebar/tab wording. Note Swarms' own h1 is the singular "Swarm". */
+  /** Sidebar and tab wording. Swarms' own h1 is the singular "Swarm". */
   readonly navLabel: string;
   readonly heroTitle: string;
+  /** Read by BOTH gated screens, so it must make sense with either call to action. */
   readonly heroBody: string;
-  /** Divider label above the example cards. */
-  readonly cardsLabel: string;
-  /** Exactly three — the grid is a three-column layout at every breakpoint
-   *  that fits it, and a fourth would wrap alone onto a second row. */
-  readonly cards: readonly [
-    GatedFeatureHighlightCard,
-    GatedFeatureHighlightCard,
-    GatedFeatureHighlightCard,
-  ];
+  /** Divider label above the sample. */
+  readonly sampleLabel: string;
+  readonly sample: GatedFeatureSample;
+  /**
+   * What the upsell says this plan cannot run. Sophie's wording, and
+   * deliberately not `navLabel`: "run user testing swarms" reads as a thing
+   * you do, where "run Swarms" reads as a tab you open.
+   */
+  readonly upsellNoun: string;
   /** PostHog `location` tag for every event fired from this surface. */
   readonly analyticsLocation: string;
   readonly nudge: {
@@ -51,38 +85,57 @@ export interface GatedFeatureCopy {
 }
 
 /**
- * Shown under the example cards on every gated screen.
+ * Shown under the sample on the signed-out screen.
  *
  * BB-120 removed faked charts from the Swarm empty state because numbers on a
- * page invite the reader to interpret them. These cards bring that risk back
- * deliberately — a visitor with no data needs to see what the feature produces
- * — so the page says out loud that the figures are illustrative. A member never
- * sees these cards or this line; they get the real empty state.
+ * page invite the reader to interpret them. The sample brings that risk back
+ * deliberately, so the page says out loud that the figures are not theirs. A
+ * member never sees the sample at all, and neither does a plan-locked reader,
+ * who already knows what the product is.
  */
 export const SAMPLE_DATA_NOTE =
-  "Sample of what this tab looks like once it has data. Illustrative figures — not your project's, and not exactly this layout.";
+  "A sample of what this tab looks like once it has data. The figures are illustrative, not your project's.";
 
 export const GATED_FEATURE_COPY: Record<GatedFeatureId, GatedFeatureCopy> = {
   swarms: {
     navLabel: "Swarms",
     heroTitle: "See how your server holds up under a crowd",
-    // Extends `FIRST_SWARM_EMPTY_DESCRIPTION` in swarms-empty-hero.tsx — same
-    // claim, with the clients named, because a visitor who has never run one
-    // does not yet know what "the clients your users actually use" means.
+    // Vig, #coreuxsquad, Sep 9: the headline from the design file, which had
+    // gone missing from the tab. Not written here.
     heroBody:
-      "A swarm is dozens of synthetic users with different goals, run against your MCP server across Claude, ChatGPT, Cursor and more. You get a scorecard, not a log.",
-    cardsLabel: "What a swarm looks like",
-    cards: [
-      { title: "Goal completion", subtitle: "40 personas · 7 waves" },
-      { title: "Where it breaks, by client", subtitle: "Goal × host" },
-      { title: "One persona's session", subtitle: "Steps + latency" },
-    ],
+      "No recruiting, no scheduling, no setup. Agents find what breaks in every client.",
+    sampleLabel: "What a swarm looks like",
+    sample: {
+      kind: "runs",
+      title: "Every run, and what it found",
+      subtitle: "Swarm overview",
+      // Traced from the real Overview list. The staging rows behind these were
+      // mostly failed runs (2 of 14 sessions, 6 of 30); the shape is theirs and
+      // the numbers are a run that worked, because the first swarm a visitor
+      // ever sees should not be a broken one. FINDINGS stay high on purpose:
+      // they are the deliverable, not the damage.
+      runs: [
+        {
+          name: "Checkout flow · Sep 8",
+          when: "1d ago",
+          meta: "14/14 sessions · 14 goals · 3 personas · 4 findings",
+          model: "gpt-5-nano",
+        },
+        {
+          name: "deal seekers in e commerce",
+          when: "Sep 4",
+          meta: "30/30 sessions · 15 goals · 3 personas · 6 findings",
+          model: "gpt-5-nano",
+        },
+      ],
+    },
+    upsellNoun: "user testing swarms",
     analyticsLocation: "swarms_guest_preview",
     nudge: {
       title: "Create a free account to run swarms",
       body: "Swarms run on our infrastructure and spend real model credits, so they need an account behind them.",
       bullets: [
-        "Run your first swarm on us — no card needed",
+        "Run your first swarm on us, no card needed",
         "Keep every run, persona and scorecard in a project",
         "Invite teammates to read the results",
       ],
@@ -90,15 +143,26 @@ export const GATED_FEATURE_COPY: Record<GatedFeatureId, GatedFeatureCopy> = {
   },
   "user-testing": {
     navLabel: "User Testing",
-    heroTitle: "Watch real people use your server",
+    // Sophie, in thread: the previous line made us sound like an o11y platform.
+    heroTitle: "Share your server with QA teams for user testing",
     heroBody:
-      "Share one link. Testers chat with your server in a hosted sandbox; you get every session, where they got stuck, and what they said about it.",
-    cardsLabel: "What a study looks like",
-    cards: [
-      { title: "Testers", subtitle: "1 link · 12 sessions" },
-      { title: "Where they got stuck", subtitle: "Session funnel" },
-      { title: "What they said", subtitle: "Exit question" },
-    ],
+      "A study starts with a link you send. Testers open it, use your server inside the client they already know, and every session is recorded here.",
+    sampleLabel: "What a study looks like",
+    sample: {
+      kind: "metrics",
+      title: "Every session, measured",
+      subtitle: "User testing sessions",
+      // The strip a real study opens with. The study behind the staging
+      // figures had one session at 32.4s p50 across 3 calls, which is a study
+      // nobody used yet; these are a study that ran.
+      tiles: [
+        { label: "Tool errors", value: "0%", unit: "0 of 47 calls" },
+        { label: "Latency p50", value: "4.2s", unit: "per session" },
+        { label: "Tool calls", value: "6", unit: "per session" },
+        { label: "Tokens", value: "24.6k", unit: "per session" },
+      ],
+    },
+    upsellNoun: "user testing studies",
     analyticsLocation: "user_testing_guest_preview",
     nudge: {
       title: "Create a free account to run a study",

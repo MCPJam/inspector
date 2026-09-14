@@ -60,11 +60,32 @@ describe("useIsHostedGuest", () => {
     expect(result.current).toBe(false);
   });
 
-  // A local install has no WorkOS to sign up through, so there is nothing to
-  // gate and nowhere to send them.
-  it("is false on a local install, even with no user and mid-load", () => {
+  // REVERSED deliberately. The first version exempted local installs on the
+  // reasoning that there is no WorkOS to sign up through. Local signs in
+  // through the same WorkOS and resolves the same plan, so a signed-out local
+  // user is a guest exactly as on hosted. The exemption sent them to the real
+  // tab to fail at the backend instead, which is a worse answer than the
+  // preview. (Sophie: "can we really not gate features on the local app?")
+  it("gates a local install on the same terms as hosted", () => {
+    hostedMode.value = false;
+    mockUseAuth.mockReturnValue({ user: null, isLoading: false });
+    const { result } = renderHook(() => useIsHostedGuest());
+    expect(result.current).toBe(true);
+  });
+
+  it("still holds on a local install while WorkOS resolves", () => {
     hostedMode.value = false;
     mockUseAuth.mockReturnValue({ user: null, isLoading: true });
+    const { result } = renderHook(() => useIsHostedGuest());
+    expect(result.current).toBeUndefined();
+  });
+
+  it("is false for a signed-in local user", () => {
+    hostedMode.value = false;
+    mockUseAuth.mockReturnValue({
+      user: { email: "someone@example.com" },
+      isLoading: false,
+    });
     const { result } = renderHook(() => useIsHostedGuest());
     expect(result.current).toBe(false);
   });

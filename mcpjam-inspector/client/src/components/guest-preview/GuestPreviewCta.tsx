@@ -41,8 +41,13 @@ export function GuestPreviewCta({ feature }: { feature: GatedFeatureId }) {
   return (
     <>
       <div className="flex flex-wrap items-center justify-center gap-2">
+        {/* "Create account", not "Create free account" (Vig, in review): the
+            two buttons here mirror the pair already in the top nav for a
+            signed-out visitor, and matching their labels means the page reads
+            as one offer rather than two competing ones. "Free to start" is
+            said underneath instead. */}
         <Button type="button" onClick={() => setNudgeOpen(true)}>
-          Create free account
+          Create account
         </Button>
         <Button type="button" variant="outline" onClick={handleSignIn}>
           Sign in

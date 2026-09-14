@@ -30,14 +30,23 @@ export interface BillingUpsellGateProps {
    * `page` (default) owns the whole tab body: full height, centered, in its
    * own bordered card, headed by the feature name.
    *
-   * `inline` is the same decision rendered as a slot — no page-height wrapper,
-   * no card, no heading. It exists for the gated Swarms/User Testing preview
-   * (REEV-6), where the screen already has a title and a hero above this and a
-   * second bordered box under a second heading would read as two competing
-   * answers to "why can't I use this?". Same copy, same entitlement logic,
-   * same `billing_upsell_gate_viewed` event, so the funnel does not split.
+   * `inline` is the REEV-6 gated screen. It is not just the page variant with
+   * the chrome removed: it leads with the plan the reader is on, then says in
+   * ONE sentence what to do about it, and the sentence changes on whether they
+   * can pay. Sophie's note in review was that the three-sentence page copy
+   * buries both facts, and that offering an Upgrade button to someone who
+   * cannot manage billing is a dead end.
+   *
+   * Same entitlement inputs and the same `billing_upsell_gate_viewed` event,
+   * so the funnel does not split across the two shapes.
    */
   variant?: "page" | "inline";
+  /**
+   * What this plan cannot run, phrased as an activity: "user testing swarms",
+   * not "Swarms". Only read by `inline`; the page variant keeps naming the
+   * feature, which is what its heading is for.
+   */
+  inlineNoun?: string;
 }
 
 export function BillingUpsellGate({
@@ -47,6 +56,7 @@ export function BillingUpsellGate({
   canManageBilling,
   onNavigateToBilling,
   variant = "page",
+  inlineNoun,
 }: BillingUpsellGateProps) {
   const viewedRef = useRef(false);
   const featureName = formatBillingFeatureName(feature);
@@ -97,12 +107,45 @@ export function BillingUpsellGate({
   );
 
   if (variant === "inline") {
+    const noun = inlineNoun ?? featureName.toLowerCase();
+    // Sophie's two sentences, verbatim in shape. The second is not a softer
+    // version of the first: a reader who cannot manage billing has a different
+    // next step, and giving them a button that goes nowhere is worse than
+    // telling them who to ask.
+    const line = canManageBilling
+      ? `${featureName} isn't in your plan. Upgrade to ${formatPlanName(upgradePlan ?? "team")} to run ${noun}.`
+      : `${featureName} isn't in your plan. Ask your admin to upgrade to ${formatPlanName(upgradePlan ?? "team")} to run ${noun}.`;
+
     return (
       <div
-        className="max-w-md space-y-2 text-center"
+        className="flex max-w-md flex-col items-center text-center"
         data-testid="billing-upsell-gate"
       >
-        {body}
+        {/* The plan first. "Which plan am I on" is the question a reader asks
+            before "what does it cost to fix that", and the page variant leaves
+            it to a clause halfway down a paragraph. */}
+        <span
+          className="mb-3 inline-flex items-center gap-2 rounded-full border border-border bg-muted/40 px-3 py-1 text-xs text-muted-foreground"
+          data-testid="billing-upsell-plan"
+        >
+          <span
+            aria-hidden
+            className="size-1.5 rounded-full bg-muted-foreground"
+          />
+          Your plan: <b className="font-semibold text-foreground">{currentLabel}</b>
+        </span>
+        <h2 className="text-balance text-base font-semibold text-foreground">
+          {line}
+        </h2>
+        {canManageBilling ? (
+          <Button type="button" className="mt-4" onClick={onNavigateToBilling}>
+            See plans
+          </Button>
+        ) : (
+          <p className="mt-3 text-xs text-muted-foreground">
+            Your workspace admin can upgrade for everyone.
+          </p>
+        )}
       </div>
     );
   }

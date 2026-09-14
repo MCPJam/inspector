@@ -27,6 +27,12 @@ interface NavMainItem {
   disabledTooltip?: string;
   /** Optional pill shown next to the label, e.g. "New" */
   badge?: string;
+  /**
+   * How loud that pill is. "New" earns the accent; an access marker like
+   * `Log in` or `Upgrade` does not, because it reports a state rather than
+   * asking to be clicked.
+   */
+  badgeVariant?: "default" | "secondary" | "outline";
 }
 
 interface LearnMoreProps {
@@ -132,7 +138,10 @@ export function NavMain({ items, label, onItemClick, learnMore }: NavMainProps) 
         // on one line without widening the sidebar; truncate is a last resort.
         <div className="flex min-w-0 flex-1 items-center gap-1">
           <span className="min-w-0 truncate tracking-tight">{item.title}</span>
-          <Badge className="h-4 shrink-0 px-1 text-[10px] font-medium leading-none">
+          <Badge
+            variant={item.badgeVariant ?? "default"}
+            className="h-4 shrink-0 px-1 text-[10px] font-medium leading-none"
+          >
             {item.badge}
           </Badge>
         </div>

@@ -184,7 +184,7 @@ describe("gated feature routes — hosted", () => {
       renderRoute(<Route />);
 
       expect(
-        screen.getByRole("button", { name: "Create free account" }),
+        screen.getByRole("button", { name: "Create account" }),
       ).toBeInTheDocument();
       expect(
         screen.queryByTestId("billing-upsell-gate"),
@@ -220,26 +220,31 @@ describe("gated feature routes — hosted", () => {
       expect(tabMock).not.toHaveBeenCalled();
     });
 
-    it("gives a signed-in member the real tab, with no example cards", () => {
+    it("gives a signed-in member the real tab, with no sample", () => {
       renderRoute(<Route />);
 
       expect(screen.getByText(tabText)).toBeInTheDocument();
       expect(screen.queryByText(copy.heroTitle)).not.toBeInTheDocument();
-      expect(screen.queryByText(copy.cardsLabel)).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId("gated-feature-sample"),
+      ).not.toBeInTheDocument();
     });
 
-    it("gives a plan-locked member the preview with the upsell, not sign-up", () => {
+    it("gives a plan-locked member the upsell, with no sample and no sign-up", () => {
       mockRouteContext.activeTabBillingLocked = true;
 
       renderRoute(<Route />);
 
-      // Same pitch as the guest sees...
-      expect(screen.getByText(copy.heroTitle)).toBeInTheDocument();
-      expect(screen.getByText(copy.cardsLabel)).toBeInTheDocument();
-      // ...but they already have an account, so the way out is a plan.
+      // The same body copy, because what the feature does is true for both
+      // readers...
+      expect(screen.getByText(copy.heroBody)).toBeInTheDocument();
       expect(screen.getByTestId("billing-upsell-gate")).toBeInTheDocument();
+      // ...but no sample: they have seen the product, they need a plan.
       expect(
-        screen.queryByRole("button", { name: "Create free account" }),
+        screen.queryByTestId("gated-feature-sample"),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: /create (a )?free account/i }),
       ).not.toBeInTheDocument();
       expect(tabMock).not.toHaveBeenCalled();
     });
@@ -253,7 +258,7 @@ describe("gated feature routes — hosted", () => {
       renderRoute(<Route />);
 
       expect(
-        screen.getByRole("button", { name: "Create free account" }),
+        screen.getByRole("button", { name: "Create account" }),
       ).toBeInTheDocument();
       expect(
         screen.queryByTestId("billing-upsell-gate"),

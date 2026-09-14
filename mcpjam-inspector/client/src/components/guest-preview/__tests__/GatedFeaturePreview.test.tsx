@@ -12,118 +12,143 @@ vi.mock("@/components/swarms/swarm-hero-characters", () => ({
 }));
 
 import { track } from "@/lib/analytics";
-import { GatedFeaturePreview } from "../GatedFeaturePreview";
+import {
+  GuestFeaturePreview,
+  PlanLockedFeatureNotice,
+} from "../GatedFeaturePreview";
 import { GATED_FEATURE_COPY, SAMPLE_DATA_NOTE } from "../feature-highlights";
 
-describe("GatedFeaturePreview", () => {
+const FEATURES = ["swarms", "user-testing"] as const;
+
+describe("GuestFeaturePreview", () => {
   beforeEach(() => {
     vi.mocked(track).mockReset();
   });
 
-  it.each(["swarms", "user-testing"] as const)(
-    "renders %s's own hero copy and its three card titles",
-    (feature) => {
-      const copy = GATED_FEATURE_COPY[feature];
-      render(
-        <GatedFeaturePreview feature={feature}>
-          <button type="button">Create free account</button>
-        </GatedFeaturePreview>,
-      );
+  it.each(FEATURES)("renders %s's own hero copy and sample", (feature) => {
+    const copy = GATED_FEATURE_COPY[feature];
+    render(
+      <GuestFeaturePreview feature={feature}>
+        <button type="button">Create account</button>
+      </GuestFeaturePreview>,
+    );
 
-      expect(screen.getByText(copy.heroTitle)).toBeInTheDocument();
-      expect(screen.getByText(copy.heroBody)).toBeInTheDocument();
-      expect(screen.getByText(copy.cardsLabel)).toBeInTheDocument();
-      for (const card of copy.cards) {
-        expect(screen.getByText(card.title)).toBeInTheDocument();
-      }
-    },
-  );
+    expect(screen.getByText(copy.heroTitle)).toBeInTheDocument();
+    expect(screen.getByText(copy.heroBody)).toBeInTheDocument();
+    expect(screen.getByText(copy.sampleLabel)).toBeInTheDocument();
+    expect(screen.getByText(copy.sample.title)).toBeInTheDocument();
+  });
 
-  // The whole point of the shared component: guest and plan-locked read the
-  // same pitch and differ only in the way out, which arrives as children.
+  // Exactly one. The first draft showed three, which crowded the page and
+  // needed two more invented screens to fill.
+  it.each(FEATURES)("shows a single sample card on %s", (feature) => {
+    render(
+      <GuestFeaturePreview feature={feature}>
+        <button type="button">Create account</button>
+      </GuestFeaturePreview>,
+    );
+
+    expect(screen.getAllByTestId("gated-feature-sample")).toHaveLength(1);
+  });
+
+  it("draws the Swarms sample as run rows, not a chart", () => {
+    const sample = GATED_FEATURE_COPY.swarms.sample;
+    if (sample.kind !== "runs") throw new Error("expected runs");
+    render(
+      <GuestFeaturePreview feature="swarms">
+        <button type="button">Create account</button>
+      </GuestFeaturePreview>,
+    );
+
+    const card = screen.getByTestId("gated-feature-sample");
+    for (const run of sample.runs) {
+      expect(within(card).getByText(run.name)).toBeInTheDocument();
+      expect(within(card).getByText(run.meta)).toBeInTheDocument();
+    }
+    // One outcome badge per row, the way Vig asked the row to become. A red
+    // FAILED badge or a status dot would put the preview at odds with the
+    // cleanup that is landing on the real list.
+    expect(within(card).getAllByText("Completed")).toHaveLength(
+      sample.runs.length,
+    );
+  });
+
+  it("draws the User Testing sample as the session metric strip", () => {
+    const sample = GATED_FEATURE_COPY["user-testing"].sample;
+    if (sample.kind !== "metrics") throw new Error("expected metrics");
+    render(
+      <GuestFeaturePreview feature="user-testing">
+        <button type="button">Create account</button>
+      </GuestFeaturePreview>,
+    );
+
+    const card = screen.getByTestId("gated-feature-sample");
+    for (const tile of sample.tiles) {
+      expect(within(card).getByText(tile.label)).toBeInTheDocument();
+      expect(within(card).getByText(tile.value)).toBeInTheDocument();
+    }
+  });
+
   it("renders whatever call to action it is handed, and nothing of its own", () => {
-    const { rerender } = render(
-      <GatedFeaturePreview feature="swarms">
-        <button type="button">Create free account</button>
-      </GatedFeaturePreview>,
+    render(
+      <GuestFeaturePreview feature="swarms">
+        <button type="button">Create account</button>
+      </GuestFeaturePreview>,
     );
-    expect(
-      screen.getByRole("button", { name: "Create free account" }),
-    ).toBeInTheDocument();
 
-    rerender(
-      <GatedFeaturePreview feature="swarms">
-        <button type="button">See plans</button>
-      </GatedFeaturePreview>,
-    );
-    expect(screen.getByRole("button", { name: "See plans" })).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Create free account" }),
+      screen.getByRole("button", { name: "Create account" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /create new (swarm|study)/i }),
     ).not.toBeInTheDocument();
   });
 
-  // A guest has no account and a plan-locked user has no entitlement, so the
-  // real tab's "Create new swarm" / "Create new study" must not be here — a
-  // disabled control reads as broken, a live one that opens a wall as a trick.
-  it.each(["swarms", "user-testing"] as const)(
-    "gives %s a title-only header with no create button",
-    (feature) => {
-      const copy = GATED_FEATURE_COPY[feature];
-      render(
-        <GatedFeaturePreview feature={feature}>
-          <button type="button">Create free account</button>
-        </GatedFeaturePreview>,
-      );
-
-      const heading = screen.getByRole("heading", {
-        level: 1,
-        name: copy.navLabel,
-      });
-      expect(heading).toBeInTheDocument();
-      expect(
-        screen.queryByRole("button", { name: /create new (swarm|study)/i }),
-      ).not.toBeInTheDocument();
-    },
-  );
-
-  // BB-120's objection to faked charts is answered on the page, not in a
-  // reviewer's memory.
-  it("labels the example figures as a sample", () => {
+  it.each(FEATURES)("gives %s a title-only header", (feature) => {
+    const copy = GATED_FEATURE_COPY[feature];
     render(
-      <GatedFeaturePreview feature="user-testing">
-        <button type="button">Create free account</button>
-      </GatedFeaturePreview>,
+      <GuestFeaturePreview feature={feature}>
+        <button type="button">Create account</button>
+      </GuestFeaturePreview>,
+    );
+
+    expect(
+      screen.getByRole("heading", { level: 1, name: copy.navLabel }),
+    ).toBeInTheDocument();
+  });
+
+  it("labels the sample figures as illustrative", () => {
+    render(
+      <GuestFeaturePreview feature="user-testing">
+        <button type="button">Create account</button>
+      </GuestFeaturePreview>,
     );
 
     expect(screen.getByText(SAMPLE_DATA_NOTE)).toBeInTheDocument();
   });
 
-  // Three panels of invented numbers tell a screen-reader user nothing true;
-  // the hero copy above carries the same message in words.
-  it("hides the example cards from assistive tech", () => {
+  it("hides the sample from assistive tech", () => {
     render(
-      <GatedFeaturePreview feature="swarms">
-        <button type="button">Create free account</button>
-      </GatedFeaturePreview>,
+      <GuestFeaturePreview feature="swarms">
+        <button type="button">Create account</button>
+      </GuestFeaturePreview>,
     );
 
-    const card = screen
-      .getByText(GATED_FEATURE_COPY.swarms.cards[0].title)
-      .closest("[aria-hidden]");
-    expect(card).not.toBeNull();
-    expect(within(card as HTMLElement).getByText("88%")).toBeInTheDocument();
+    expect(screen.getByTestId("gated-feature-sample")).toHaveAttribute(
+      "aria-hidden",
+    );
   });
 
   it("reports one impression per mount, not per render", () => {
     const { rerender } = render(
-      <GatedFeaturePreview feature="swarms">
-        <button type="button">Create free account</button>
-      </GatedFeaturePreview>,
+      <GuestFeaturePreview feature="swarms">
+        <button type="button">Create account</button>
+      </GuestFeaturePreview>,
     );
     rerender(
-      <GatedFeaturePreview feature="swarms">
-        <button type="button">Create free account</button>
-      </GatedFeaturePreview>,
+      <GuestFeaturePreview feature="swarms">
+        <button type="button">Create account</button>
+      </GuestFeaturePreview>,
     );
 
     const impressions = vi
@@ -137,17 +162,68 @@ describe("GatedFeaturePreview", () => {
       }),
     );
   });
+});
 
-  it("tags each surface with its own analytics location", () => {
+describe("PlanLockedFeatureNotice", () => {
+  beforeEach(() => {
+    vi.mocked(track).mockReset();
+  });
+
+  // The whole reason this split from the guest preview. A reader who already
+  // has an account does not need a picture of the product; they need to know
+  // what plan they are on and what it costs to fix that.
+  it.each(FEATURES)("shows no sample card on %s", (feature) => {
     render(
-      <GatedFeaturePreview feature="user-testing">
-        <button type="button">Create free account</button>
-      </GatedFeaturePreview>,
+      <PlanLockedFeatureNotice feature={feature}>
+        <div>upsell</div>
+      </PlanLockedFeatureNotice>,
     );
 
-    expect(track).toHaveBeenCalledWith(
+    expect(screen.queryByTestId("gated-feature-sample")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(GATED_FEATURE_COPY[feature].sampleLabel),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders the upsell it is handed, under the same title-only header", () => {
+    render(
+      <PlanLockedFeatureNotice feature="swarms">
+        <div>the upsell</div>
+      </PlanLockedFeatureNotice>,
+    );
+
+    expect(screen.getByText("the upsell")).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Swarms" }),
+    ).toBeInTheDocument();
+  });
+
+  // Same body line as the guest screen: what the feature does is true for both
+  // readers, and only the way out differs.
+  it("keeps the feature's body copy", () => {
+    render(
+      <PlanLockedFeatureNotice feature="swarms">
+        <div>upsell</div>
+      </PlanLockedFeatureNotice>,
+    );
+
+    expect(
+      screen.getByText(GATED_FEATURE_COPY.swarms.heroBody),
+    ).toBeInTheDocument();
+  });
+
+  // The preview impression belongs to the signed-out funnel. A plan-locked
+  // reader is counted by `billing_upsell_gate_viewed`, which the upsell fires.
+  it("does not fire the guest preview impression", () => {
+    render(
+      <PlanLockedFeatureNotice feature="swarms">
+        <div>upsell</div>
+      </PlanLockedFeatureNotice>,
+    );
+
+    expect(track).not.toHaveBeenCalledWith(
       "guest_feature_preview_shown",
-      expect.objectContaining({ location: "user_testing_guest_preview" }),
+      expect.anything(),
     );
   });
 });

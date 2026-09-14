@@ -282,9 +282,15 @@ import {
 } from "@/hooks/useClients";
 import { useSandboxesEnabledState } from "@/hooks/useSandboxesEnabled";
 import { useIsHostedGuest } from "@/hooks/use-hosted-guest";
-import { GatedFeaturePreview } from "@/components/guest-preview/GatedFeaturePreview";
+import {
+  GuestFeaturePreview,
+  PlanLockedFeatureNotice,
+} from "@/components/guest-preview/GatedFeaturePreview";
 import { GuestPreviewCta } from "@/components/guest-preview/GuestPreviewCta";
-import type { GatedFeatureId } from "@/components/guest-preview/feature-highlights";
+import {
+  GATED_FEATURE_COPY,
+  type GatedFeatureId,
+} from "@/components/guest-preview/feature-highlights";
 import { useUnifiedSessionsEnabledState } from "@/hooks/useUnifiedSessionsEnabled";
 import { useEvaluateEnabledState } from "@/hooks/useEvaluateEnabled";
 import {
@@ -646,10 +652,12 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
 
 function ActiveBillingUpsellGate({
   variant,
+  inlineNoun,
 }: {
-  /** `inline` when this renders inside the gated preview shell — see
-   *  `BillingUpsellGate`'s prop docs for why the chrome differs. */
+  /** `inline` when this renders inside the gated preview shell. See
+   *  `BillingUpsellGate`'s prop docs for why the two shapes differ. */
   variant?: "page" | "inline";
+  inlineNoun?: string;
 } = {}) {
   const {
     activeTabBillingFeature,
@@ -662,6 +670,7 @@ function ActiveBillingUpsellGate({
   return (
     <BillingUpsellGate
       variant={variant}
+      inlineNoun={inlineNoun}
       feature={activeTabBillingFeature}
       currentPlan={
         shellBillingStatus?.effectivePlan ?? shellBillingStatus?.plan ?? "free"
@@ -1636,17 +1645,20 @@ function useGatedFeatureGate(feature: GatedFeatureId): ReactElement | null {
 
   if (isHostedGuest) {
     return (
-      <GatedFeaturePreview feature={feature}>
+      <GuestFeaturePreview feature={feature}>
         <GuestPreviewCta feature={feature} />
-      </GatedFeaturePreview>
+      </GuestFeaturePreview>
     );
   }
 
   if (billingUiEnabled && activeTabBillingLocked && activeTabBillingFeature) {
     return (
-      <GatedFeaturePreview feature={feature}>
-        <ActiveBillingUpsellGate variant="inline" />
-      </GatedFeaturePreview>
+      <PlanLockedFeatureNotice feature={feature}>
+        <ActiveBillingUpsellGate
+          variant="inline"
+          inlineNoun={GATED_FEATURE_COPY[feature].upsellNoun}
+        />
+      </PlanLockedFeatureNotice>
     );
   }
 
