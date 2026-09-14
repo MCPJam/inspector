@@ -3437,7 +3437,8 @@ export default function App() {
               command: stdioCommand.command,
               args: stdioCommand.args,
             }),
-        useOAuth: draft.authentication === "oauth",
+        useOAuth:
+          draft.authentication === "auto" || draft.authentication === "oauth",
         authMethod: draft.authentication,
       };
       const validationError = validateServerFormData(formData);
