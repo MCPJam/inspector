@@ -27,9 +27,30 @@ describe("FindingsSummaryCard", () => {
     expect(screen.getByTestId("findings-headline").textContent).toBe(
       "First sentence. Second sentence. Third sentence."
     );
+    // ONE child, whatever element it is. The old form counted <p> elements,
+    // which pinned the summary being an <h2> rather than the sentences being
+    // joined — the thing this test is for.
+    expect(screen.getByTestId("findings-summary").children).toHaveLength(1);
+  });
+
+  it("names the card with the kicker, not with the summary", () => {
+    render(
+      <FindingsSummaryCard
+        sessionCount={3}
+        summary={["First sentence.", "Second sentence.", "Third sentence."]}
+        footnotes={[]}
+      />
+    );
+    // A named <section> is a region landmark: this string is announced on
+    // entering the card and listed in the landmark menu. Labelling it from the
+    // summary meant hearing all three sentences as the label, then again as
+    // the content. A landmark wants a short name.
     expect(
-      screen.getByTestId("findings-summary").querySelectorAll("p")
-    ).toHaveLength(0);
+      screen.getByRole("region", { name: "Finding summary · 3 sessions" })
+    ).toBeInTheDocument();
+    // And no heading, because prose at heading size is still prose — `H`
+    // navigation should not land on the whole summary.
+    expect(screen.queryByRole("heading")).not.toBeInTheDocument();
   });
 
   it("does not leave a gap where an empty sentence was", () => {

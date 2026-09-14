@@ -531,7 +531,7 @@ describe("SwarmFindingsTab", () => {
     // Asserting on the card's text would pass either way, so the check is that
     // the summary block holds nothing but that one heading.
     const summary = screen.getByTestId("findings-summary");
-    expect(summary.querySelectorAll("p")).toHaveLength(0);
+    expect(summary.children).toHaveLength(1);
     expect(summary.textContent).not.toContain("No findings yet");
     expect(screen.getByText(/Choose a persona/i)).toBeInTheDocument();
   });
