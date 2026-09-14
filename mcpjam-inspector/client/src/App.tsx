@@ -88,6 +88,7 @@ import {
 } from "./components/onboarding/FirstRunOnboardingOverlay";
 import type { ServerFormData } from "@/shared/types.js";
 import { validateServerFormData } from "@/lib/server-form-validation";
+import { parseCommandInput } from "@/lib/command-input";
 import { listTools } from "@/lib/apis/mcp-tools-api";
 import { ProfileTab } from "./components/ProfileTab";
 import { BillingUpsellGate } from "./components/billing/BillingUpsellGate";
@@ -3392,18 +3393,15 @@ export default function App() {
       activeProjectId === "none");
   const openFirstRunServerConnection = useCallback(
     (draft: FirstRunServerDraft) => {
-      const stdioCommandParts = draft.urlOrCommand
-        .trim()
-        .split(/\s+/)
-        .filter((part) => part.length > 0);
+      const stdioCommand = parseCommandInput(draft.urlOrCommand.trim());
       const formData: ServerFormData = {
         name: draft.name,
         type: draft.transport,
         ...(draft.transport === "http"
           ? { url: draft.urlOrCommand }
           : {
-              command: stdioCommandParts[0] ?? "",
-              args: stdioCommandParts.slice(1),
+              command: stdioCommand.command,
+              args: stdioCommand.args,
             }),
         useOAuth: draft.authentication === "oauth",
         authMethod: draft.authentication,

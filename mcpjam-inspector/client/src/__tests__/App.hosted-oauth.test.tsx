@@ -3717,7 +3717,7 @@ describe("App hosted OAuth callback handling", () => {
     });
   });
 
-  it("splits a first-run stdio command into its executable and arguments", async () => {
+  it("preserves quoted arguments in a first-run stdio command", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     mockUnseenOnboardingState();
@@ -3733,7 +3733,7 @@ describe("App hosted OAuth callback handling", () => {
     await screen.findByRole("heading", { name: "Welcome to MCPJam" });
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     fireEvent.change(screen.getByLabelText("Server URL or command"), {
-      target: { value: "npx -y some-mcp-server" },
+      target: { value: 'node server.js --config "My Files/config.json" ""' },
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
 
@@ -3741,8 +3741,8 @@ describe("App hosted OAuth callback handling", () => {
       expect(appState.handleConnect).toHaveBeenCalledWith(
         expect.objectContaining({
           type: "stdio",
-          command: "npx",
-          args: ["-y", "some-mcp-server"],
+          command: "node",
+          args: ["server.js", "--config", "My Files/config.json", ""],
         }),
         { suppressErrorToast: true },
       );
