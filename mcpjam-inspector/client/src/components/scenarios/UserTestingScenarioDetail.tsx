@@ -57,6 +57,7 @@ import { ScenarioGradingSection } from "./ScenarioGradingSection";
 import {
   buildUserTestingScenarioEditPath,
   buildUserTestingScenarioPath,
+  defaultUserTestingDetailTab,
   isLegacyUserTestingEditTab,
   parseUserTestingDetailTab,
   type UserTestingDetailTab,
@@ -443,7 +444,14 @@ export function UserTestingScenarioDetail({
   // The URL is the stash for both the tab and the opened session: the gates
   // above remount this route during a cold boot, so state captured on first
   // mount wouldn't survive to the last one.
-  const tab = parseUserTestingDetailTab(location.search);
+  // The landing tab is a function of the study, not a constant: an empty study
+  // opens on Insights, because Findings summarises tester sessions and renders
+  // as an empty frame when there are none. See `defaultUserTestingDetailTab`.
+  // Both reads below take it, and they must take the SAME one — the parser
+  // falls back to it and the builder omits it, so they disagree at the cost of
+  // a tab that cannot be clicked.
+  const landingTab = defaultUserTestingDetailTab(sessionCount);
+  const tab = parseUserTestingDetailTab(location.search, landingTab);
   const searchParams = new URLSearchParams(location.search);
   const sessionParam = searchParams.get("session");
   const sessionDeepLinkThreadId = sessionParam;
@@ -491,6 +499,7 @@ export function UserTestingScenarioDetail({
     navigate(
       buildUserTestingScenarioPath(scenario.scenarioId, {
         tab: next,
+        defaultTab: landingTab,
         session: sessionParam ?? undefined,
         sel: selParam ?? undefined,
         view,

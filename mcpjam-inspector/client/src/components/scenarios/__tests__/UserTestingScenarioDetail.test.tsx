@@ -340,6 +340,47 @@ describe("UserTestingScenarioDetail", () => {
     expect(within(tabNav).queryByRole("button", { name: "Edit" })).toBeNull();
   });
 
+  it("opens a study nobody has tested on Insights, not an empty Findings", () => {
+    // Findings summarises what testers did. On a study with nobody through the
+    // link it renders as an empty frame that reads like a broken page, which
+    // is the first thing anyone sees after creating one.
+    renderDetail({}, { sessionCount: 0 });
+
+    expect(screen.getByTestId("stub-usage-insights")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("stub-scenario-findings"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("opens on Findings as soon as the study has a session", () => {
+    renderDetail({}, { sessionCount: 1 });
+
+    expect(screen.getByTestId("stub-scenario-findings")).toBeInTheDocument();
+    expect(screen.queryByTestId("stub-usage-insights")).not.toBeInTheDocument();
+  });
+
+  it("names Findings in the URL on an empty study, so the tab still works", () => {
+    // The regression this guards: Findings is not the fallback here, so a link
+    // that omitted `?tab=` would parse straight back to Insights and the tab
+    // would look unclickable.
+    renderDetail({}, { sessionCount: 0 });
+
+    fireEvent.click(screen.getByRole("button", { name: "Findings" }));
+
+    expect(navigateMock).toHaveBeenCalledWith(
+      "/user-testing/cb-1?tab=findings",
+      { replace: true },
+    );
+  });
+
+  it("honours an explicit Findings link on an empty study", () => {
+    locationState.search = "?tab=findings";
+    renderDetail({}, { sessionCount: 0 });
+
+    expect(screen.getByTestId("stub-scenario-findings")).toBeInTheDocument();
+    expect(screen.queryByTestId("stub-usage-insights")).not.toBeInTheDocument();
+  });
+
   it("keeps the page up when the landing tab's query throws", () => {
     // Findings reads sessions through Convex, and `useQuery` throws against a
     // backend that cannot answer. Because Findings is now the DEFAULT tab,
