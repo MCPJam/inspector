@@ -356,6 +356,30 @@ describe("eval-route-url", () => {
     ).toBe("/evaluate");
   });
 
+  it("roundtrips the dedicated run comparison page", () => {
+    // The route this asserts is the one EBB-14 was: both halves of the
+    // round-trip have always worked, and the URL still 404'd because the
+    // router never registered the path. `route-elements-coverage.test.ts`
+    // guards that half; this one guards the string.
+    const route = {
+      type: "run-detail" as const,
+      suiteId: "s_1",
+      runId: "r_1",
+      comparison: true,
+    };
+    const path = buildEvaluatePath(route);
+    expect(path).toBe("/evaluate/suite/s_1/runs/r_1/compare");
+    expect(parseEvalRouteFromUrl("/evaluate", path)).toEqual({
+      ...route,
+      iteration: undefined,
+      testCaseId: undefined,
+    });
+    // Without the trailing segment it is the plain run page, not a compare.
+    expect(
+      parseEvalRouteFromUrl("/evaluate", "/evaluate/suite/s_1/runs/r_1"),
+    ).not.toHaveProperty("comparison");
+  });
+
   it("decodes path params", () => {
     expect(
       parseEvalRouteFromUrl("/evals", "/evals/suite/suite%20one/test/case%202")
@@ -366,11 +390,4 @@ describe("eval-route-url", () => {
       iteration: undefined,
     });
   });
-});
-
-it("roundtrips a dedicated run comparison page", () => {
-  const route = { type: "run-detail" as const, suiteId: "suite", runId: "run", comparison: true };
-  const path = buildEvaluatePath(route);
-  expect(path).toBe("/evaluate/suite/suite/runs/run/compare");
-  expect(parseEvalRouteFromUrl("/evaluate", path)).toMatchObject(route);
 });

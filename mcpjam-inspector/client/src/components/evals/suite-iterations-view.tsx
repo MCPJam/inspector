@@ -77,6 +77,7 @@ import { SuiteDashboard } from "./suite-dashboard";
 import { SuiteDetailOverview } from "../evaluate/suite-detail-overview";
 import { launchRuns } from "../evaluate/run-results-matrix-model";
 import { RunComparisonPage } from "../evaluate/run-comparison-page";
+import { resolveSuitePassThreshold } from "../evaluate/run-compare-lanes-model";
 import { EvaluateRunPage } from "../evaluate/evaluate-run-page";
 import { EvaluateRunContent } from "../evaluate/evaluate-run-content";
 import { RunDecisionSummarySection } from "./run-decision-summary-section";
@@ -2038,6 +2039,7 @@ export function SuiteIterationsView({
                 iterations={allIterations}
                 suiteName={suite.name}
                 hostNamesById={hostNamesById}
+                passThreshold={resolveSuitePassThreshold(suite)}
                 onBack={() =>
                   navigation.toRunDetail(suite._id, selectedRunDetails._id)
                 }

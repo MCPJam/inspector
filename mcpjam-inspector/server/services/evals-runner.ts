@@ -191,7 +191,9 @@ import {
   createRunSetupObserver,
   type RunSetupObserver,
   type SetupPhase,
+  type SetupFailureDetail,
 } from "./evals/run-setup-signals.js";
+import { connectionChallengeFor } from "./connection-failure-context.js";
 import {
   dispatchEvalIterationFinalize,
   finalizeWithBrowserArtifacts,
@@ -1064,31 +1066,55 @@ function throwSetupPhaseError(args: {
   phase: SetupPhase;
   error: unknown;
   environment: RunEvalSuiteOptions["config"]["environment"] | undefined;
+  /** The observer's explanation, when it recorded one for this failure. */
+  detail?: SetupFailureDetail;
 }): never {
   const serverLabel = getServerLabelForEvalError(
     args.serverId,
     args.environment,
   );
   if (isMissingRuntimeServerError(args.error) || args.phase === "connection") {
-    throw new EvalSetupPhaseError({
+    // The "is not connected" clause stays: callers and tests key on it. The
+    // reason follows it, so the run error, every setup_failed row's `error`,
+    // the API and the CLI all carry the explanation.
+    const setupError = new EvalSetupPhaseError({
       status: 409,
       code: ErrorCode.SERVER_UNREACHABLE,
-      message: `Could not start eval because "${serverLabel}" is not connected. Reconnect the server and try again.`,
+      message: args.detail
+        ? `Could not start eval because "${serverLabel}" is not connected: ${args.detail.line}`
+        : `Could not start eval because "${serverLabel}" is not connected. Reconnect the server and try again.`,
       serverId: args.serverId,
       phase: args.phase,
-      details: { serverId: args.serverId, serverName: serverLabel },
+      details: {
+        serverId: args.serverId,
+        serverName: serverLabel,
+        ...(args.detail ? { cause: args.detail.line } : {}),
+      },
     });
+    setupError.cause = args.error;
+    if (args.detail) setupError.normalized = args.detail.normalized;
+    throw setupError;
   }
   const cause =
-    args.error instanceof Error ? args.error.message : String(args.error);
-  throw new EvalSetupPhaseError({
+    args.detail?.line ??
+    (args.error instanceof Error ? args.error.message : String(args.error));
+  const listError = new EvalSetupPhaseError({
     status: 502,
     code: ErrorCode.SERVER_UNREACHABLE,
-    message: `Could not start eval because "${serverLabel}" failed to list tools. Reconnect the server and try again.`,
+    message: args.detail
+      ? `Could not start eval because "${serverLabel}" failed to list tools: ${args.detail.line}`
+      : `Could not start eval because "${serverLabel}" failed to list tools. Reconnect the server and try again.`,
     serverId: args.serverId,
     phase: args.phase,
-    details: { serverId: args.serverId, serverName: serverLabel, cause },
+    details: {
+      serverId: args.serverId,
+      serverName: serverLabel,
+      cause,
+    },
   });
+  listError.cause = args.error;
+  if (args.detail) listError.normalized = args.detail.normalized;
+  throw listError;
 }
 
 async function getEvalToolsForAiSdkOrThrow(args: {
@@ -1169,6 +1195,10 @@ async function getEvalToolsForAiSdkOrThrow(args: {
           observer?.recordConnect(serverId, {
             outcome: "failed",
             error,
+            challenge: connectionChallengeFor(
+              args.mcpClientManager.getServerConfig?.(serverId)?.baseFetch,
+              error,
+            ),
             startedAt,
             endedAt,
           });
@@ -1183,6 +1213,10 @@ async function getEvalToolsForAiSdkOrThrow(args: {
         observer?.recordToolsList(serverId, {
           outcome: "failed",
           error,
+          challenge: connectionChallengeFor(
+            args.mcpClientManager.getServerConfig?.(serverId)?.baseFetch,
+            error,
+          ),
           startedAt: splitAt(endedAt),
           endedAt,
         });
@@ -1209,6 +1243,7 @@ async function getEvalToolsForAiSdkOrThrow(args: {
       phase: chosen.phase,
       error: chosen.error,
       environment: args.environment,
+      detail: observer?.failureDetail(chosen.serverId, chosen.phase),
     });
   }
 
@@ -1272,7 +1307,7 @@ export function resolveConfiguredServerIds(args: {
 
     const normalizedServerId = availableServerIdsSet.has(trimmedServerRef)
       ? trimmedServerRef
-      : (availableServerIdByLowercase.get(trimmedServerRef.toLowerCase()) ??
+      : availableServerIdByLowercase.get(trimmedServerRef.toLowerCase()) ??
         (() => {
           const projectServerId = projectServerIdByName.get(
             trimmedServerRef.toLowerCase(),
@@ -1300,7 +1335,7 @@ export function resolveConfiguredServerIds(args: {
 
           return undefined;
         })() ??
-        trimmedServerRef);
+        trimmedServerRef;
 
     if (seen.has(normalizedServerId)) {
       continue;
@@ -1711,14 +1746,15 @@ async function persistRunSetupFailure(args: {
           typeof row._id === "string"
             ? row._id
             : typeof row.iterationId === "string"
-              ? row.iterationId
-              : undefined;
+            ? row.iterationId
+            : undefined;
         const test = args.tests.find(
           (candidate) =>
             candidate.testCaseId && candidate.testCaseId === row.testCaseId,
         );
         const snapshot = row.testCaseSnapshot as
-          { query?: string; expectedToolCalls?: unknown[] } | undefined;
+          | { query?: string; expectedToolCalls?: unknown[] }
+          | undefined;
         await persistSetupFailedIteration({
           iterationId,
           runStartedAt: args.runStartedAt,
@@ -2842,12 +2878,12 @@ export const runEvalSuiteWithAiSdk = async ({
   const recorder =
     runId === null
       ? null
-      : (providedRecorder ??
+      : providedRecorder ??
         createSuiteRunRecorder({
           convexClient,
           suiteId,
           runId,
-        }));
+        });
 
   const summary = {
     total: 0,
@@ -2884,6 +2920,10 @@ export const runEvalSuiteWithAiSdk = async ({
   const setupObserver = createRunSetupObserver({
     expectedServerIds: serverIds,
     convexHttpUrl,
+    // Labels only; challenge evidence belongs to the failing operation.
+    context: (serverId) => ({
+      serverLabel: getServerLabelForEvalError(serverId, config.environment),
+    }),
   });
   let resolvedToolPolicyWarnings: string[] | undefined;
 
@@ -3492,7 +3532,7 @@ const runLocalIteration = async ({
   const toolPolicyGate = resolveEnforcementGate({
     ...(toolPolicy ? { toolPolicy } : {}),
     ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
-    ...((testCaseId ?? test.testCaseId)
+    ...(testCaseId ?? test.testCaseId
       ? { testCaseId: testCaseId ?? test.testCaseId }
       : {}),
     runIndex,
@@ -4732,7 +4772,7 @@ const runHostedIterationWithBrowser = async (
   const toolPolicyGate = resolveEnforcementGate({
     ...(toolPolicy ? { toolPolicy } : {}),
     ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
-    ...((testCaseId ?? test.testCaseId)
+    ...(testCaseId ?? test.testCaseId
       ? { testCaseId: testCaseId ?? test.testCaseId }
       : {}),
     runIndex,
