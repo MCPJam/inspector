@@ -13096,6 +13096,17 @@
         },
         "example": "{\"provider\":\"github_actions\",\"commitSha\":\"a1b2c3d\",\"branch\":\"main\",\"runId\":\"1234.1\",\"job\":\"evals\"}"
       },
+      "evalVocabularyHeader": {
+        "name": "x-mcpjam-eval-vocabulary",
+        "in": "header",
+        "required": false,
+        "description": "Which spelling of the eval authoring fields this request speaks. Absent means `1`, which is byte-for-byte the documented contract: the same request fields, the same refusals, the same response projection. `2` selects the canonical evaluator vocabulary (`assertions` for `checks`, `iterations` for the configured count with `legacyIterations` for the legacy floor) on the eval-suite and eval-run operations that carry this parameter; those operations document their vocabulary-2 shapes under the `x-mcpjam-eval-vocabulary` extension. Any value other than `1` or `2` is a `400 VALIDATION_ERROR` — a vocabulary is never guessed at, because the same key (`iterations`) means a floor under 1 and an exact count under 2. Responses that vary by vocabulary carry `Vary: x-mcpjam-eval-vocabulary`. Read `ProjectCapabilities.vocabulary` to learn what a deployment understands rather than inferring it from a field's presence.",
+        "schema": {
+          "type": "string",
+          "enum": ["1", "2"]
+        },
+        "example": "2"
+      },
       "organizationId": {
         "name": "organizationId",
         "in": "path",
@@ -26536,6 +26547,61 @@
                 "type": "null"
               }
             ]
+          },
+          "vocabulary": {
+            "type": "object",
+            "description": "The eval vocabulary this deployment understands (see the `x-mcpjam-eval-vocabulary` header). Absent on a deployment that predates the negotiation, which then speaks only vocabulary 1. Each `fields` entry lists the LEGACY spellings a vocabulary-2 body may still use for that canonical field; a canonical spelling sent together with one of its legacy spellings is refused. `iterations` is deliberately absent from `legacyIterations`: under vocabulary 2 that key is the exact count, not the floor.",
+            "required": ["version", "evaluatorKinds", "assertionKinds", "fields"],
+            "properties": {
+              "version": {
+                "type": "integer",
+                "enum": [2]
+              },
+              "evaluatorKinds": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": ["assertion", "judge"]
+                }
+              },
+              "assertionKinds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The assertion types a case may author, in the same order and spelling as `EvalCheck.type`."
+              },
+              "fields": {
+                "type": "object",
+                "required": ["assertions", "defaultAssertions", "iterations", "legacyIterations"],
+                "properties": {
+                  "assertions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "defaultAssertions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "iterations": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "legacyIterations": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
           },
           "can": {
             "type": "object",

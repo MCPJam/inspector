@@ -153,6 +153,7 @@ import {
   type EvalStepReplay,
 } from "@/shared/eval-step-replay";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import { evalVocabularyMiddleware } from "../../utils/eval-vocabulary.js";
 import {
   measureTraceBytes,
   recordEvalIterationRead,
@@ -191,6 +192,18 @@ const MODEL_LOOKUP = [
 ];
 
 const evals = new Hono();
+
+// Which eval vocabulary the request speaks (`x-mcpjam-eval-vocabulary`), parsed
+// once here so a malformed value is a uniform 400 across the eval surface
+// before any handler reads it. See `utils/eval-vocabulary.ts`.
+for (const pattern of [
+  "/projects/:projectId/eval-suites",
+  "/projects/:projectId/eval-suites/*",
+  "/projects/:projectId/eval-runs",
+  "/projects/:projectId/eval-runs/*",
+]) {
+  evals.use(pattern, evalVocabularyMiddleware());
+}
 
 // ── Public authoring contract: TestStep[] ↔ internal case fields ──────
 //

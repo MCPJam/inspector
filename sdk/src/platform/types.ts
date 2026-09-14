@@ -4241,6 +4241,26 @@ export interface PlatformCapabilities {
     features: Record<string, unknown>;
   } | null;
   /**
+   * The eval vocabulary this deployment understands: what a request sending
+   * `x-mcpjam-eval-vocabulary: 2` may spell, and the legacy spellings such a
+   * body may still use per canonical field. Absent on a deployment that
+   * predates the negotiation, which then speaks only vocabulary 1.
+   */
+  vocabulary?: {
+    version: number;
+    evaluatorKinds: string[];
+    assertionKinds: string[];
+    /**
+     * Canonical field name → the legacy spellings a vocabulary-2 body may
+     * still use for it. Keyed by name rather than declared field-by-field
+     * so this type does not spell the canonical names before the platform
+     * operations do — the vocabulary codemod reads this file, and a canonical
+     * name written here ahead of its rename step is what that scanner exists
+     * to refuse.
+     */
+    fields: Record<string, string[]>;
+  };
+  /**
    * The booleans to branch on. Note that the exposure-REDUCING ones
    * (`cancelJourneyRun`, `unpublishUserTestingScenario`) stay true for an org
    * that has lost the beta — losing the feature is exactly when stopping it
