@@ -1352,7 +1352,7 @@ function EvaluateTabContent({
           data-testid="evals-runs-landing"
         >
           <ProjectRunsTable
-            metricBars
+            evaluateLayout
             historyMetricsEnabled
             projectId={projectId}
             onSelectRun={handleSelectRunFromAllRuns}

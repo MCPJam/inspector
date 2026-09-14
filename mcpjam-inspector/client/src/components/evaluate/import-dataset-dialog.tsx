@@ -144,10 +144,10 @@ export function ImportDatasetDialog({
             returnFocus.current.focus();
           }
         }}
-        className="max-h-[85vh] overflow-y-auto sm:max-w-2xl"
+        className="max-h-[85vh] gap-6 overflow-y-auto p-6 sm:max-w-2xl"
       >
-        <DialogHeader>
-          <DialogTitle>Import test cases</DialogTitle>
+        <DialogHeader className="gap-3">
+          <DialogTitle className="text-xl font-semibold">Import test cases</DialogTitle>
           <DialogDescription>
             AI turns your Markdown into draft test cases. Review them before
             saving.
@@ -170,7 +170,7 @@ export function ImportDatasetDialog({
           <button
             type="button"
             disabled={phase !== "idle"}
-            className="w-full rounded-lg border border-dashed border-border p-8 text-sm"
+            className="min-h-24 w-full rounded-lg border border-dashed border-border px-6 py-8 text-sm transition-colors hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
             data-testid="import-dataset-dropzone"
             onClick={() => input.current?.click()}
             onDragOver={(event) => event.preventDefault()}

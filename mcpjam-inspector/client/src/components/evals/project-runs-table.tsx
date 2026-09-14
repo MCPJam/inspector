@@ -1,4 +1,5 @@
 import { Skeleton } from "@mcpjam/design-system/skeleton";
+import { EvaluateHistoryHeader, EvaluateHistoryRow } from "../evaluate/evaluate-history-row";
 import { Input } from "@mcpjam/design-system/input";
 import {
   readRunGitMetadata,
@@ -223,11 +224,14 @@ export function ProjectRunsTable({
   embedded = false,
   historyMetricsEnabled = false,
   metricBars = false,
+  evaluateLayout = false,
   emptyState,
 }: {
   projectId: string;
   historyMetricsEnabled?: boolean;
   metricBars?: boolean;
+  /** Ding Dong's flat launch table; legacy eval screens keep their grouping. */
+  evaluateLayout?: boolean;
   /** Use the parent page scroll when shown below the suite cards. */
   embedded?: boolean;
   /**
@@ -715,10 +719,10 @@ export function ProjectRunsTable({
       )}
     >
       <section
-        className={runHistorySurfaceClass}
+        className={evaluateLayout ? "shrink-0" : runHistorySurfaceClass}
         aria-label="Project run history"
       >
-        <div className={runHistoryToolbarClass}>
+        <div className={evaluateLayout ? "flex flex-wrap items-center justify-between gap-3 pb-3" : runHistoryToolbarClass}>
           <div className="flex flex-wrap items-center gap-3">
             {embedded && !historyMetricsEnabled ? (
               <h2 className="text-xs font-semibold text-secondary-foreground">
@@ -726,7 +730,7 @@ export function ProjectRunsTable({
               </h2>
             ) : (
               <h2 className="text-xs font-semibold text-foreground">
-                All Runs
+                {evaluateLayout ? "Runs" : "All Runs"}
               </h2>
             )}
           </div>
@@ -904,7 +908,13 @@ export function ProjectRunsTable({
             />
           </RunHistorySummary>
         )}
-        {historyMetricsEnabled && (rows.length > 0 || isLoadingFirstPage) && (
+        {evaluateLayout && history.errorCount > 0 && (
+          <p className="pb-3 text-xs text-muted-foreground">
+            Metrics unavailable for {history.errorCount} runs.
+            <button type="button" className="ml-2 underline" onClick={history.retry}>Retry metrics</button>
+          </p>
+        )}
+        {!evaluateLayout && historyMetricsEnabled && (rows.length > 0 || isLoadingFirstPage) && (
           <div
             className="@container/history-metrics border-b border-border/50"
             aria-label="Filtered run metrics"
@@ -960,9 +970,9 @@ export function ProjectRunsTable({
             most recent runs loaded so far. Load more below to widen the search.
           </p>
         )}
-        <div className="overflow-x-auto">
+        <div className={cn("overflow-x-auto", evaluateLayout && "rounded-lg border border-border")}>
           <RunHistoryTable aria-label="Project runs">
-            <TableHeader>
+            {evaluateLayout ? <EvaluateHistoryHeader showSuite /> : <TableHeader>
               <TableRow>
                 {historyMetricsEnabled ? (
                   <>
@@ -1006,13 +1016,13 @@ export function ProjectRunsTable({
                   </>
                 )}
               </TableRow>
-            </TableHeader>
+            </TableHeader>}
             <TableBody>
               {isLoadingFirstPage ? (
                 <TableRow>
                   <TableCell
                     colSpan={
-                      (historyMetricsEnabled ? 9 : 7) + (showGitContext ? 3 : 0)
+                      evaluateLayout ? 10 : (historyMetricsEnabled ? 9 : 7) + (showGitContext ? 3 : 0)
                     }
                     className="h-32 text-center text-muted-foreground"
                   >
@@ -1023,7 +1033,7 @@ export function ProjectRunsTable({
                 <TableRow>
                   <TableCell
                     colSpan={
-                      (historyMetricsEnabled ? 9 : 7) + (showGitContext ? 3 : 0)
+                      evaluateLayout ? 10 : (historyMetricsEnabled ? 9 : 7) + (showGitContext ? 3 : 0)
                     }
                     className="h-24 text-center text-sm text-muted-foreground"
                   >
@@ -1034,6 +1044,11 @@ export function ProjectRunsTable({
                       : "No runs match these filters."}
                   </TableCell>
                 </TableRow>
+              ) : evaluateLayout ? (
+                [...launches].reverse().map((launch) => {
+                  const representative = [...launch.runs].sort((a, b) => a.runNumber - b.runNumber || a._id.localeCompare(b._id))[0];
+                  return <EvaluateHistoryRow key={launch.key} rows={launch.runs} details={history.details} historyRows={historyRows} showSuite onOpen={representative.suiteName !== null ? () => onSelectRun({ suiteId: representative.suiteId, runId: representative._id }) : undefined} />;
+                })
               ) : historyMetricsEnabled ? (
                 suiteGroups.map((group) => (
                   <ProjectRunSuiteGroup
