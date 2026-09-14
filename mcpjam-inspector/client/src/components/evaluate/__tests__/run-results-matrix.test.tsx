@@ -53,6 +53,38 @@ const names = new Map([
 ]);
 
 describe("run results matrix", () => {
+  it("uses persisted models only to seed queued columns, never phantom completed columns", () => {
+    const current = run("legacy", {
+      namedHostId: undefined,
+      effectiveModelId: undefined,
+      client: { name: "Claude", hostStyle: "claude", source: "suite_default" },
+      configSnapshot: {
+        environment: { servers: [] },
+        tests: [
+          {
+            title: "Refund order",
+            models: [{ model: "sonnet", provider: "anthropic" }],
+          } as any,
+        ],
+      },
+    });
+    const args = {
+      run: current,
+      runs: [],
+      iterations: [iteration("i", "legacy")],
+      hostNamesById: names,
+    };
+    const completed = buildRunResultsMatrix(args);
+    expect(
+      completed.targets.map((target) => [target.client, target.modelId]),
+    ).toEqual([["Claude", "sonnet"]]);
+    const queued = buildRunResultsMatrix({
+      ...args,
+      run: { ...current, status: "pending" },
+      iterations: [],
+    });
+    expect(queued.targets.map((target) => target.modelId)).toEqual(["sonnet"]);
+  });
   it("scopes columns to one launch and keeps multiple models on one client separate", () => {
     const current = run("one");
     const sibling = run("two", { effectiveModelId: "opus" });
