@@ -104,7 +104,7 @@ describe("grading policy — normalization", () => {
   for (const row of fixtures.normalization) {
     it(row.__label, () => {
       const resolved = resolveFrom(row.input);
-      expect(resolved).toEqual(stripAnnotations(row.expected));
+      expect(resolved).toStrictEqual(stripAnnotations(row.expected));
       // The expected output is not just a shape somebody typed: it has to be a
       // legal policy, so a fixture cannot pin a model the contract refuses.
       expect(evalGradingPolicySchema.safeParse(resolved).success).toBe(true);
@@ -183,7 +183,7 @@ describe("grading policy — normalization", () => {
     // nothing writes nothing.
     for (const policy of [omitted, empty]) {
       const plan = planEvalGradingPolicyEdit(policy, { validity: {} });
-      expect(plan.ok && plan.settings).toEqual({});
+      expect(plan.ok && plan.settings).toStrictEqual({});
     }
   });
 });
@@ -250,7 +250,9 @@ describe("grading policy — iteration resolution", () => {
       minIterations: 3,
       cases: [{ id: "k1", runs: 7 }],
     });
-    expect(suiteWide.caseOverrides).toEqual([{ caseRef: "k1", iterations: 7 }]);
+    expect(suiteWide.caseOverrides).toStrictEqual([
+      { caseRef: "k1", iterations: 7 },
+    ]);
   });
 });
 
@@ -448,7 +450,7 @@ describe("grading policy — writing an edit back", () => {
       }
       expect(plan.ok).toBe(true);
       if (!plan.ok) return;
-      expect(plan.settings).toEqual(row.expected.settings);
+      expect(plan.settings).toStrictEqual(row.expected.settings);
       expect([...plan.changed]).toEqual(row.expected.changed);
     });
   }
@@ -507,7 +509,7 @@ describe("grading policy — writing an edit back", () => {
       verdictPolicyDefaults: { repetitions: 5, passThreshold: 0.8 },
     });
     const plan = planEvalGradingPolicyEdit(policy, { passThreshold: 0.5 });
-    expect(plan.ok && plan.settings).toEqual({ passThreshold: 0.5 });
+    expect(plan.ok && plan.settings).toStrictEqual({ passThreshold: 0.5 });
   });
 
   it("a refused edit carries no settings at all", () => {
@@ -557,7 +559,7 @@ describe("grading policy — writing an edit back", () => {
       const plan = planEvalGradingPolicyEdit(policy, edit);
       expect(plan.ok, JSON.stringify(source)).toBe(true);
       if (!plan.ok) continue;
-      expect(plan.settings, JSON.stringify(source)).toEqual({});
+      expect(plan.settings, JSON.stringify(source)).toStrictEqual({});
       expect([...plan.changed], JSON.stringify(source)).toEqual([]);
     }
   });
