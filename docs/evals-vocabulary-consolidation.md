@@ -543,11 +543,22 @@ vocabulary: {
 ```
 
 Each list is the legacy spellings a vocabulary-2 body may use for that VALUE, keyed by the field that
-carries it — the value twin of `fields`. Its PRESENCE is the signal an SDK runner checks before
-emitting `required`, and it is advertised only from the deploy whose validators actually accept the
-value: a runner that emitted it against an older backend would quarantine every iteration of the run
-as `score_integrity_invalid`, and the dashboard would then look empty rather than broken. A client
-reads this value; it never infers support from a version number or from a field beside it.
+carries it — the value twin of `fields`. Its PRESENCE is the signal, and it is advertised only from
+the deploy whose validators actually accept the value. A client reads this value; it never infers
+support from a version number or from a field beside it.
+
+What an SDK runner does with it depends on the payload, because the two upload paths carry different
+risk. The PRIMARY iteration payload (`/report`, `/runs/iterations`) does not consult it at all: that
+payload embeds each iteration's `evaluationConfig` through `scoreMetadata`, it is what almost every
+run sends, and a backend that does not accept `required` there does not reject the upload — it
+quarantines every iteration as `score_integrity_invalid`, and the dashboard then looks empty rather
+than broken. Negotiating it would mean probing `/capabilities` before the first upload of every run,
+and a run whose probe was slow, cached, or answered by the wrong deployment would be exactly the run
+that got quarantined. So that payload is FROZEN at the legacy spelling, the same promise
+`hashSpelling` makes for the digest; a vocabulary-2 reader still sees `required`, because the read
+projection puts it there. The OPTIONAL case-run evaluations payload (`/runs/evaluations`) is the one
+that negotiates, because it already handshakes with the target for its own reasons and its rows are
+advisory by construction.
 
 ### The suite file
 
