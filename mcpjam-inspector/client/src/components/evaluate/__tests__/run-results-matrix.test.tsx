@@ -9,6 +9,13 @@ import {
 } from "../run-results-matrix-model";
 import type { EvalIteration, EvalSuiteRun } from "../../evals/types";
 
+vi.mock("convex/react", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("convex/react")>()),
+  useAction: () => vi.fn(),
+  useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
+  useQuery: () => undefined,
+}));
+
 function run(id: string, overrides: Partial<EvalSuiteRun> = {}): EvalSuiteRun {
   return {
     _id: id,
@@ -16,6 +23,7 @@ function run(id: string, overrides: Partial<EvalSuiteRun> = {}): EvalSuiteRun {
     runGroupId: "launch",
     namedHostId: "claude",
     effectiveModelId: "sonnet",
+    runNumber: 3,
     status: "completed",
     configSnapshot: { tests: [], environment: { servers: [] } },
     ...overrides,
@@ -325,10 +333,10 @@ describe("run results matrix", () => {
 
   it("filters cases and opens the correct evidence when switching client/model in the drawer", async () => {
     const user = userEvent.setup();
-    const open = vi.fn();
     render(
       <RunResultsMatrix
         run={run("one")}
+        suiteName="excalidraw"
         runs={[run("two", { namedHostId: "cursor", effectiveModelId: "gpt" })]}
         iterations={[
           iteration("pass", "one"),
@@ -338,7 +346,6 @@ describe("run results matrix", () => {
           }),
         ]}
         hostNamesById={names}
-        onOpenIteration={open}
       />,
     );
     expect(screen.getAllByRole("columnheader")).toHaveLength(3);
@@ -374,10 +381,14 @@ describe("run results matrix", () => {
     await user.click(
       drawer.getByRole("button", { name: "Open iteration 1 details" }),
     );
-    expect(open).toHaveBeenCalledWith({
-      testCaseId: "refund",
-      iterationId: "fail",
-    });
+    expect(
+      drawer.getByRole("button", { name: "Back to test case iterations" }),
+    ).toHaveTextContent("Refund order › Run #3");
+    expect(
+      drawer.getByRole("heading", { name: "#1 excalidraw" }),
+    ).toBeVisible();
+    expect(drawer.getByText("Failed")).toBeVisible();
+    expect(drawer.getByRole("button", { name: "Scorecard" })).toBeVisible();
   });
 
   it("keeps Pending while a run is live and hides it once every run is terminal", async () => {

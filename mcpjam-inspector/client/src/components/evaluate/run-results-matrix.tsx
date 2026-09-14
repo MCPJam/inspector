@@ -20,7 +20,7 @@ import {
 } from "@mcpjam/design-system/sheet";
 import { cn } from "@mcpjam/design-system/cn";
 import { resolveHostLogoByName } from "@/lib/host-logo";
-import { runClientLogo } from "../evals/helpers";
+import { formatRunId, runClientLogo } from "../evals/helpers";
 import { usePreferencesStoreWithDefaults } from "@/stores/preferences/preferences-provider";
 import {
   formatCostOrDash,
@@ -41,6 +41,9 @@ import {
   resultCounts,
   type RunResultsMatrixData,
 } from "./run-results-matrix-model";
+import { IterationDetails } from "../evals/iteration-details";
+import { TrialScorecard } from "./case-scorecard/trial-scorecard";
+import { authoredForTrial } from "./case-scorecard/trial-authored";
 
 type StatusFilter = "failed" | "passed" | "pending" | "cancelled";
 const STATUS_LABEL: Record<StatusFilter, string> = {
@@ -212,7 +215,9 @@ export function RunResultsMatrix({
   runs = [],
   iterations,
   hostNamesById = new Map(),
-  onOpenIteration,
+  diagnostics = [],
+  chains,
+  suiteName,
   modelIds,
   toolbarExtra,
   extraFiltersActive = false,
@@ -225,6 +230,7 @@ export function RunResultsMatrix({
   hostNamesById?: ReadonlyMap<string, string | null>;
   diagnostics?: readonly EvalRunDecisionDiagnostic[];
   chains?: ReadonlyMap<string, EvalRunDecisionChain>;
+  suiteName?: string;
   onOpenIteration?: (target: {
     testCaseId: string;
     iterationId: string;
@@ -275,6 +281,9 @@ export function RunResultsMatrix({
     caseKey: string;
     targetKey: string;
   } | null>(null);
+  const [selectedIterationId, setSelectedIterationId] = useState<string | null>(
+    null,
+  );
   const activeStatus =
     status === "pending" && !showPending
       ? ALL_EVAL_FILTER_VALUES
@@ -306,6 +315,12 @@ export function RunResultsMatrix({
   const selectedTarget = data.targets.find(
     (target) => target.key === selection?.targetKey,
   );
+  const selectedItems =
+    selectedRow && selectedTarget
+      ? (selectedTarget.cells.get(selectedRow.key) ?? [])
+      : [];
+  const selectedIteration =
+    selectedItems.find((item) => item._id === selectedIterationId) ?? null;
 
   return (
     <section
@@ -418,7 +433,8 @@ export function RunResultsMatrix({
                     <img
                       src={
                         runClientLogo(target.run, theme) ??
-                        resolveHostLogoByName(target.client, theme)}
+                        resolveHostLogoByName(target.client, theme)
+                      }
                       alt=""
                       className="size-5 object-contain"
                     />
@@ -484,12 +500,13 @@ export function RunResultsMatrix({
                       {items.length ? (
                         <button
                           type="button"
-                          onClick={() =>
+                          onClick={() => {
+                            setSelectedIterationId(null);
                             setSelection({
                               caseKey: row.key,
                               targetKey: target.key,
-                            })
-                          }
+                            });
+                          }}
                           aria-label={`Inspect ${row.title} on ${target.client} · ${target.model}`}
                           className={cn(
                             "flex h-full w-full flex-col px-3 text-left transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
@@ -532,60 +549,84 @@ export function RunResultsMatrix({
       <Sheet
         open={Boolean(selectedRow && selectedTarget)}
         onOpenChange={(open) => {
-          if (!open) setSelection(null);
+          if (!open) {
+            setSelection(null);
+            setSelectedIterationId(null);
+          }
         }}
       >
         <SheetContent className="w-full gap-0 sm:max-w-[960px]">
-          {selectedRow && selectedTarget && (
-            <>
-              <SheetHeader className="px-6 py-5 pr-12">
-                <SheetTitle className="break-words text-xl">
-                  {selectedRow.title}
-                </SheetTitle>
-                <SheetDescription className="sr-only">
-                  Test case averages and recorded iterations.
-                </SheetDescription>
-              </SheetHeader>
-              <div className="flex-1 overflow-y-auto p-6">
-                <div
-                  className="mb-2 flex flex-wrap items-center justify-between gap-3"
-                  aria-label="Viewing client and model"
-                >
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
-                    Test case averages
-                  </span>
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {data.targets.map((target) => (
-                      <Button
-                        key={target.key}
-                        size="sm"
-                        className="h-7 rounded-full px-2.5 text-xs"
-                        variant={
-                          target.key === selectedTarget.key
-                            ? "secondary"
-                            : "outline"
-                        }
-                        aria-pressed={target.key === selectedTarget.key}
-                        onClick={() =>
-                          setSelection({
-                            caseKey: selectedRow.key,
-                            targetKey: target.key,
-                          })
-                        }
-                      >
-                        {target.client} · {target.model}
-                      </Button>
-                    ))}
+          {selectedRow &&
+            selectedTarget &&
+            (selectedIteration ? (
+              <IterationDrawer
+                iteration={selectedIteration}
+                iterationNumber={
+                  selectedIteration.iterationNumber ??
+                  selectedItems.findIndex(
+                    (item) => item._id === selectedIteration._id,
+                  ) + 1
+                }
+                target={selectedTarget}
+                caseTitle={selectedRow.title}
+                suiteName={suiteName}
+                diagnostic={diagnostics.find(
+                  (item) => item.iterationId === selectedIteration._id,
+                )}
+                chain={chains?.get(selectedIteration._id)}
+                onBack={() => setSelectedIterationId(null)}
+              />
+            ) : (
+              <>
+                <SheetHeader className="px-6 py-5 pr-12">
+                  <SheetTitle className="break-words text-xl">
+                    {selectedRow.title}
+                  </SheetTitle>
+                  <SheetDescription className="sr-only">
+                    Test case averages and recorded iterations.
+                  </SheetDescription>
+                </SheetHeader>
+                <div className="flex-1 overflow-y-auto p-6">
+                  <div
+                    className="mb-2 flex flex-wrap items-center justify-between gap-3"
+                    aria-label="Viewing client and model"
+                  >
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
+                      Test case averages
+                    </span>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {data.targets.map((target) => (
+                        <Button
+                          key={target.key}
+                          size="sm"
+                          className="h-7 rounded-full px-2.5 text-xs"
+                          variant={
+                            target.key === selectedTarget.key
+                              ? "secondary"
+                              : "outline"
+                          }
+                          aria-pressed={target.key === selectedTarget.key}
+                          onClick={() => {
+                            setSelectedIterationId(null);
+                            setSelection({
+                              caseKey: selectedRow.key,
+                              targetKey: target.key,
+                            });
+                          }}
+                        >
+                          {target.client} · {target.model}
+                        </Button>
+                      ))}
+                    </div>
                   </div>
+                  <CaseIterations
+                    target={selectedTarget}
+                    caseKey={selectedRow.key}
+                    onSelectIteration={setSelectedIterationId}
+                  />
                 </div>
-                <CaseIterations
-                  target={selectedTarget}
-                  caseKey={selectedRow.key}
-                  onOpenIteration={onOpenIteration}
-                />
-              </div>
-            </>
-          )}
+              </>
+            ))}
         </SheetContent>
       </Sheet>
     </section>
@@ -595,14 +636,11 @@ export function RunResultsMatrix({
 function CaseIterations({
   target,
   caseKey,
-  onOpenIteration,
+  onSelectIteration,
 }: {
   target: RunResultsMatrixData["targets"][number];
   caseKey: string;
-  onOpenIteration?: (target: {
-    testCaseId: string;
-    iterationId: string;
-  }) => void;
+  onSelectIteration: (iterationId: string) => void;
 }) {
   const items = target.cells.get(caseKey) ?? [];
   const counts = resultCounts(items);
@@ -726,28 +764,16 @@ function CaseIterations({
                 </span>
               </>
             );
-            return onOpenIteration && item.testCaseId ? (
+            return (
               <button
                 key={item._id}
                 type="button"
                 className="grid w-full grid-cols-[minmax(130px,1fr)_minmax(180px,1fr)_120px_120px_110px_70px] items-center gap-2 border-t border-border px-3 py-2.5 text-left hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                 aria-label={`Open iteration ${item.iterationNumber ?? index + 1} details`}
-                onClick={() =>
-                  onOpenIteration({
-                    testCaseId: item.testCaseId!,
-                    iterationId: item._id,
-                  })
-                }
+                onClick={() => onSelectIteration(item._id)}
               >
                 {row}
               </button>
-            ) : (
-              <div
-                key={item._id}
-                className="grid grid-cols-[minmax(130px,1fr)_minmax(180px,1fr)_120px_120px_110px_70px] items-center gap-2 border-t border-border px-3 py-2.5"
-              >
-                {row}
-              </div>
             );
           })}
         </div>
@@ -757,6 +783,96 @@ function CaseIterations({
           No recorded iterations for this case on this client and model.
         </p>
       )}
+    </>
+  );
+}
+
+function IterationDrawer({
+  iteration,
+  iterationNumber,
+  target,
+  caseTitle,
+  suiteName,
+  diagnostic,
+  chain,
+  onBack,
+}: {
+  iteration: EvalIteration;
+  iterationNumber: number;
+  target: RunResultsMatrixData["targets"][number];
+  caseTitle: string;
+  suiteName?: string;
+  diagnostic?: EvalRunDecisionDiagnostic;
+  chain?: EvalRunDecisionChain;
+  onBack: () => void;
+}) {
+  const result = computeIterationResult(iteration);
+  const authored = authoredForTrial({
+    trial: { kind: "persisted", iteration, source: "route" },
+    draft: { steps: [], toolsChoice: "unset" },
+    run: target.run,
+    forceSnapshot: true,
+  }).authored;
+  const decisionChain = diagnostic?.chain ?? chain;
+
+  return (
+    <>
+      <SheetHeader className="border-b border-border px-6 py-5 pr-12">
+        <button
+          type="button"
+          className="w-fit text-left text-sm text-muted-foreground hover:text-foreground"
+          onClick={onBack}
+          aria-label="Back to test case iterations"
+        >
+          {caseTitle} <span aria-hidden="true">›</span> Run #
+          {target.run.runNumber}
+        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <SheetTitle className="text-xl">
+            #{iterationNumber} {suiteName ?? target.run.name ?? "Run"}
+          </SheetTitle>
+          <span
+            className={cn(
+              "rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+              result === "passed"
+                ? "border-success/30 bg-success/10 text-success"
+                : result === "failed" || result === "timed_out"
+                  ? "border-destructive/30 bg-destructive/10 text-destructive"
+                  : "border-border bg-muted text-muted-foreground",
+            )}
+          >
+            {outcomeLabel(result)}
+          </span>
+        </div>
+        <SheetDescription>
+          {target.client} · {target.model} ·{" "}
+          {formatRelativeTime(
+            iteration.createdAt ?? iteration.startedAt ?? iteration.updatedAt,
+          )}{" "}
+          · {formatRunId(iteration._id)}
+        </SheetDescription>
+      </SheetHeader>
+      <div className="min-h-0 flex-1 overflow-y-auto p-6">
+        <IterationDetails
+          iteration={iteration}
+          testCase={null}
+          layoutMode="full"
+          trialVerdictWord={outcomeLabel(result)}
+          scorecard={{
+            render: (context) => (
+              <TrialScorecard
+                authored={authored}
+                iteration={iteration}
+                steps={authored.steps}
+                chain={decisionChain}
+                envelope={context.envelope}
+                scoresSection={context.scoresSection}
+                judgeHidden={context.judgeHidden}
+              />
+            ),
+          }}
+        />
+      </div>
     </>
   );
 }

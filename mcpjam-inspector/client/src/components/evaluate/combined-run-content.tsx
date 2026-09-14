@@ -42,6 +42,7 @@ type MemberReport = {
 export function CombinedRunContent({
   runs,
   projectId,
+  suiteName,
   hostNamesById = new Map(),
   siblingRuns = [],
   allIterations,
@@ -185,6 +186,7 @@ export function CombinedRunContent({
           <div className="border-t border-border/40">
             <RunResultsMatrix
               run={selectedRuns[0]}
+              suiteName={suiteName}
               runs={selectedRuns}
               iterations={selectedIterations}
               hostNamesById={hostNamesById}
