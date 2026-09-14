@@ -2036,6 +2036,11 @@ Write a hosted eval suite to a local suite file.
 The default path uses the suite's **id**, not its display name: an id is stable
 and path-safe, so a rename does not leave a second file behind.
 
+Like `eval run --file`, export reads `GET /capabilities` first and fetches the
+cases in the vocabulary the deployment advertises; the file it writes is the
+same either way. `--schema-version` chooses the file's dialect, the deployment
+chooses the wire's vocabulary, and neither decides the other.
+
 The dialect is the author's choice and is never inferred: a file has no
 handshake with whatever will read it later, so `eval export` keeps writing
 `schemaVersion: "1"` until you ask for `2`.
