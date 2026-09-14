@@ -27,6 +27,7 @@ const deferred = () => {
   return { promise, resolve };
 };
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.useRealTimers();
   vi.unstubAllEnvs();
 });
@@ -186,5 +187,69 @@ describe("suite execution boundary regressions", () => {
         ])
       );
     }
+  });
+});
+
+describe("suite signal compatibility", () => {
+  const makeSuite = (execute = async () => {}) => {
+    const suite = new EvalSuite({
+      defaults: { iterations: 1 },
+      mcpjam: { enabled: false },
+    });
+    suite.add(new EvalTest({ id: "one", name: "one", execute }));
+    return suite;
+  };
+  it("works without AbortSignal.any and cleans up fallback listeners", async () => {
+    vi.spyOn(AbortSignal, "any");
+    Object.defineProperty(AbortSignal, "any", {
+      value: undefined,
+      configurable: true,
+      writable: true,
+    });
+    const caller = new AbortController();
+    const remove = vi.spyOn(caller.signal, "removeEventListener");
+    const execute = vi.fn(async () => {});
+    const suite = makeSuite(execute);
+    await suite.run(executor(), { signal: caller.signal });
+    await suite.run(executor(), { signal: caller.signal });
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(remove).toHaveBeenCalledTimes(2);
+  });
+  it("clears timers and unlocks after signal setup fails", async () => {
+    vi.useFakeTimers();
+    const any = vi.spyOn(AbortSignal, "any").mockImplementationOnce(() => {
+      throw new Error("composition failed");
+    });
+    const suite = makeSuite();
+    await expect(
+      suite.run(executor(), {
+        signal: new AbortController().signal,
+        runTimeoutMs: 1000,
+      })
+    ).rejects.toThrow("composition failed");
+    expect(vi.getTimerCount()).toBe(0);
+    any.mockRestore();
+    await suite.run(executor());
+  });
+  it("finishes active and queued cases after reporting is aborted", async () => {
+    const reporting = new AbortController();
+    const started = deferred();
+    const finish = deferred();
+    const suite = makeSuite(async () => {
+      started.resolve();
+      await finish.promise;
+    });
+    const second = vi.fn(async () => {});
+    suite.add(new EvalTest({ id: "two", name: "two", execute: second }));
+    const pending = suite.run(executor(), {
+      mcpjam: { enabled: false, transport: { signal: reporting.signal } },
+    });
+    await started.promise;
+    reporting.abort(new Error("stop uploads"));
+    finish.resolve();
+    const result = await pending;
+    expect(second).toHaveBeenCalledTimes(1);
+    for (const run of result.tests.values())
+      expect(run.iterationDetails[0].status).toBe("completed");
   });
 });
