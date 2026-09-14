@@ -21,7 +21,11 @@
  */
 
 import type { Context } from "hono";
-import type { ScorerRole } from "@mcpjam/sdk/contract";
+import {
+  EVALUATOR_KINDS,
+  PREDICATE_KINDS,
+  type ScorerRole,
+} from "@mcpjam/sdk/contract";
 import { isRequiredRole } from "@mcpjam/sdk/predicates";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 
@@ -306,3 +310,45 @@ export function projectStepRolesForVocabulary<T>(
   });
   return changed ? out : steps;
 }
+
+// ── field spellings ──────────────────────────────────────────────────────────
+
+/**
+ * The legacy spellings a VOCABULARY-2 body may use for each canonical field,
+ * exactly as the contract's "Capability" section pins them.
+ *
+ * `iterations` is absent from `legacyIterations` on purpose: under vocabulary
+ * 1 that key IS the floor, but under vocabulary 2 it is the exact count. One
+ * key means two things across the boundary, which is exactly why the
+ * negotiated vocabulary — never the presence of a field — decides which sense
+ * a body means. These tables are also what the vocabulary-2 request schemas
+ * and their both-spellings refusals are built from, so the capability can
+ * never advertise a spelling the schema does not accept.
+ */
+export const CASE_FIELD_ALIASES_V2 = {
+  assertions: ["checks", "predicates"],
+  iterations: ["repetitions"],
+  legacyIterations: ["runs"],
+} as const;
+
+export const SUITE_SETTINGS_ALIASES_V2 = {
+  defaultAssertions: ["defaultPredicates"],
+  iterations: ["repetitions"],
+} as const;
+
+/**
+ * What this deployment understands, advertised on the project capabilities
+ * read so a client reads the value rather than inferring support from the
+ * presence of a field on an unrelated object.
+ */
+export const EVAL_VOCABULARY_CAPABILITY = {
+  version: 2,
+  evaluatorKinds: EVALUATOR_KINDS,
+  assertionKinds: PREDICATE_KINDS,
+  fields: {
+    assertions: CASE_FIELD_ALIASES_V2.assertions,
+    defaultAssertions: SUITE_SETTINGS_ALIASES_V2.defaultAssertions,
+    iterations: CASE_FIELD_ALIASES_V2.iterations,
+    legacyIterations: CASE_FIELD_ALIASES_V2.legacyIterations,
+  },
+} as const;
