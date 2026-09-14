@@ -438,26 +438,85 @@ function isRetryableProbeStatus(status: number): boolean {
   );
 }
 
+/**
+ * The most hops a metadata request is followed by hand. Discovery documents
+ * are one redirect deep in practice (`/prm` to `/prm/`); this is a loop bound,
+ * not a policy.
+ */
+const MAX_METADATA_REDIRECTS = 5;
+
+/**
+ * Re-decide the stored headers for each destination a redirect names.
+ *
+ * `fetch` with `redirect: "follow"` strips `Authorization`, `Cookie` and
+ * `Proxy-Authorization` across origins — and nothing else. Measured against
+ * two local origins on Node 24: `x-api-key` and `x-session-id` arrive at the
+ * redirect target intact. So a metadata URL on the server's own origin, which
+ * legitimately carries the user's stored headers, can hand them to any host it
+ * redirects to — and the destination guard only sees `response.url`, after the
+ * request has already been made (CodeRabbit on #5000).
+ *
+ * Supplying this makes `performRequest` follow redirects itself: validate each
+ * destination first, then ask for that destination's headers. A hop that
+ * leaves the configured origin gets none of them, by the same rule the initial
+ * request uses.
+ */
+type MetadataRedirectPolicy = (url: string) => Record<string, string>;
+
+function redirectTargetOf(
+  response: Response,
+  currentUrl: string
+): string | null {
+  if (response.status < 300 || response.status > 399) return null;
+  const location = response.headers.get("location");
+  if (!location) return null;
+  try {
+    return new URL(location, currentUrl).toString();
+  } catch {
+    return null;
+  }
+}
+
 async function performRequest(
   fetchFn: typeof fetch,
   attempt: ProbeHttpAttempt,
   timeoutMs: number | undefined,
-  validateLandingUrl?: (url: string) => void
+  validateLandingUrl?: (url: string) => void,
+  headersForRedirect?: MetadataRedirectPolicy
 ): Promise<ParsedHttpResponse> {
   const startedAt = Date.now();
   const { signal, cleanup, didTimeout } = withTimeoutSignal(timeoutMs);
 
   try {
-    const response = await fetchFn(attempt.request.url, {
+    let response = await fetchFn(attempt.request.url, {
       method: attempt.request.method,
       headers: attempt.request.headers,
       body:
         attempt.request.body === undefined
           ? undefined
           : JSON.stringify(attempt.request.body),
-      redirect: "follow",
+      redirect: headersForRedirect ? "manual" : "follow",
       signal,
     });
+
+    if (headersForRedirect) {
+      let currentUrl = attempt.request.url;
+      for (let hop = 0; hop < MAX_METADATA_REDIRECTS; hop++) {
+        const nextUrl = redirectTargetOf(response, currentUrl);
+        if (nextUrl === null) break;
+        // Same order as the initial request: the destination is refused before
+        // it is dialled, and only then does it get told which headers it has
+        // earned.
+        if (validateLandingUrl) validateLandingUrl(nextUrl);
+        response = await fetchFn(nextUrl, {
+          method: "GET",
+          headers: headersForRedirect(nextUrl),
+          redirect: "manual",
+          signal,
+        });
+        currentUrl = nextUrl;
+      }
+    }
 
     // Where the response landed, checked before anything is read from it.
     // Refusing to *use* a body fetched from a blocked host is not enough: this
@@ -682,7 +741,19 @@ async function discoverOAuthDetails(
             landingUrl,
             config.url,
             config.allowPrivateNetwork
-          )
+          ),
+        // Redirects are followed by hand so each destination is asked the same
+        // question the initial URL was: does the user's stored header belong
+        // there? `fetch`'s own following strips only Authorization/Cookie
+        // across origins, so an `X-Api-Key` would ride along otherwise.
+        (redirectUrl) => ({
+          ...storedHeadersForMetadataHost(
+            metadataHeaders,
+            redirectUrl,
+            config.url
+          ),
+          ...normalizeHeaders(init.headers),
+        })
       );
 
       return new Response(
@@ -758,6 +829,12 @@ async function discoverOAuthDetails(
               landingUrl,
               config.url,
               config.allowPrivateNetwork
+            ),
+          (redirectUrl) =>
+            storedHeadersForMetadataHost(
+              metadataHeaders,
+              redirectUrl,
+              config.url
             )
         );
 

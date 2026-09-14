@@ -112,6 +112,126 @@ describe("probeMcpServer metadata-host credentials (#5000)", () => {
     expect(headersFor(seen, metadataUrl)["x-api-key"]).toBeUndefined();
   });
 
+  it("a cross-origin redirect from the server's own metadata URL gets nothing", async () => {
+    // CodeRabbit on #5000. A metadata URL on the server's own origin
+    // legitimately carries the stored headers — and can then 302 anywhere.
+    // `fetch`'s own redirect following strips Authorization, Cookie and
+    // Proxy-Authorization across origins and NOTHING else, so an `X-Api-Key`
+    // rides along (measured against two local origins on Node 24). The probe
+    // follows these by hand and re-asks the same question per destination.
+    const sameOrigin =
+      "https://mcp.example.com/.well-known/oauth-protected-resource/mcp";
+    const elsewhere = "https://collect.attacker.test/prm";
+    const seen: Seen[] = [];
+
+    const fetchFn: typeof fetch = (async (
+      input: RequestInfo | URL,
+      init?: RequestInit
+    ) => {
+      const url = String(input);
+      seen.push({
+        url,
+        headers: { ...((init?.headers as Record<string, string>) ?? {}) },
+      });
+      if (url === SERVER_URL) {
+        return jsonResponse({ error: "unauthorized" }, 401, {
+          "WWW-Authenticate": `Bearer resource_metadata="${sameOrigin}"`,
+        });
+      }
+      if (url === sameOrigin) {
+        return new Response(null, {
+          status: 302,
+          headers: { location: elsewhere },
+        });
+      }
+      return jsonResponse({ resource: SERVER_URL, authorization_servers: [] });
+    }) as typeof fetch;
+
+    await probeMcpServer({ url: SERVER_URL, headers: STORED, fetchFn });
+
+    // The first hop is the server's own origin and keeps them.
+    expect(headersFor(seen, sameOrigin)["x-api-key"]).toBe("vendor-key-value");
+    // The hop the server redirected to does not.
+    const redirected = headersFor(seen, elsewhere);
+    expect(redirected["x-api-key"]).toBeUndefined();
+    expect(redirected["x-session-id"]).toBeUndefined();
+    expect(JSON.stringify(redirected)).not.toContain("vendor-key-value");
+  });
+
+  it("a redirect to a blocked destination is refused before the hop", async () => {
+    // The destination guard has to run on each hop, in the same order it runs
+    // for the initial URL: refuse first, dial second. Otherwise following by
+    // hand would reach a host the guard exists to keep the probe away from.
+    const sameOrigin =
+      "https://mcp.example.com/.well-known/oauth-protected-resource/mcp";
+    const blocked = "http://127.0.0.1:9/prm";
+    const seen: Seen[] = [];
+
+    const fetchFn: typeof fetch = (async (
+      input: RequestInfo | URL,
+      init?: RequestInit
+    ) => {
+      const url = String(input);
+      seen.push({
+        url,
+        headers: { ...((init?.headers as Record<string, string>) ?? {}) },
+      });
+      if (url === SERVER_URL) {
+        return jsonResponse({ error: "unauthorized" }, 401, {
+          "WWW-Authenticate": `Bearer resource_metadata="${sameOrigin}"`,
+        });
+      }
+      if (url === sameOrigin) {
+        return new Response(null, {
+          status: 302,
+          headers: { location: blocked },
+        });
+      }
+      return jsonResponse({ ok: true });
+    }) as typeof fetch;
+
+    await probeMcpServer({ url: SERVER_URL, headers: STORED, fetchFn });
+
+    expect(seen.some((r) => r.url === blocked)).toBe(false);
+  });
+
+  it("a same-origin redirect keeps the headers", async () => {
+    // The control: following by hand must not turn into "strip on any
+    // redirect". `/prm` to `/prm/` is the ordinary case.
+    const first =
+      "https://mcp.example.com/.well-known/oauth-protected-resource/mcp";
+    const second =
+      "https://mcp.example.com/.well-known/oauth-protected-resource/mcp/";
+    const seen: Seen[] = [];
+
+    const fetchFn: typeof fetch = (async (
+      input: RequestInfo | URL,
+      init?: RequestInit
+    ) => {
+      const url = String(input);
+      seen.push({
+        url,
+        headers: { ...((init?.headers as Record<string, string>) ?? {}) },
+      });
+      if (url === SERVER_URL) {
+        return jsonResponse({ error: "unauthorized" }, 401, {
+          "WWW-Authenticate": `Bearer resource_metadata="${first}"`,
+        });
+      }
+      if (url === first) {
+        return new Response(null, {
+          status: 308,
+          headers: { location: second },
+        });
+      }
+      return jsonResponse({ resource: SERVER_URL, authorization_servers: [] });
+    }) as typeof fetch;
+
+    await probeMcpServer({ url: SERVER_URL, headers: STORED, fetchFn });
+
+    expect(headersFor(seen, second)["x-api-key"]).toBe("vendor-key-value");
+  });
+
   it("the recorded attempt shows what was actually sent", async () => {
     const metadataUrl = "https://collect.attacker.test/prm";
     const seen: Seen[] = [];
