@@ -1,5 +1,8 @@
 import { Skeleton } from "@mcpjam/design-system/skeleton";
-import { EvaluateHistoryHeader, EvaluateHistoryRow } from "../evaluate/evaluate-history-row";
+import {
+  EvaluateHistoryHeader,
+  EvaluateHistoryRow,
+} from "../evaluate/evaluate-history-row";
 import { Input } from "@mcpjam/design-system/input";
 import {
   readRunGitMetadata,
@@ -443,8 +446,14 @@ export function ProjectRunsTable({
     );
     const clientOptions = [
       ...new Set(
-        rows.map((row) => historyRows.get(row._id)?.client ??
-          runClientIdentity({ client: row.client, namedHostId: row.namedHostId ?? undefined }, hostNamesById).name),
+        rows.map(
+          (row) =>
+            historyRows.get(row._id)?.client ??
+            runClientIdentity(
+              { client: row.client, namedHostId: row.namedHostId ?? undefined },
+              hostNamesById,
+            ).name,
+        ),
       ),
     ].sort();
     const serverOptions = [...new Set([...runServers.values()].flat())].sort();
@@ -722,7 +731,13 @@ export function ProjectRunsTable({
         className={evaluateLayout ? "shrink-0" : runHistorySurfaceClass}
         aria-label="Project run history"
       >
-        <div className={evaluateLayout ? "flex flex-wrap items-center justify-between gap-3 pb-3" : runHistoryToolbarClass}>
+        <div
+          className={
+            evaluateLayout
+              ? "flex flex-wrap items-center justify-between gap-3 pb-3"
+              : runHistoryToolbarClass
+          }
+        >
           <div className="flex flex-wrap items-center gap-3">
             {embedded && !historyMetricsEnabled ? (
               <h2 className="text-xs font-semibold text-secondary-foreground">
@@ -798,8 +813,8 @@ export function ProjectRunsTable({
                 <span className="min-w-0 flex-1 truncate text-left">
                   {suiteFilter === ALL_SUITES
                     ? "Suite"
-                    : suiteOptions.find(([id]) => id === suiteFilter)?.[1] ??
-                      "Suite"}
+                    : (suiteOptions.find(([id]) => id === suiteFilter)?.[1] ??
+                      "Suite")}
                 </span>
               </SelectTrigger>
               <SelectContent className="max-w-[min(24rem,calc(100vw-2rem))]">
@@ -911,52 +926,60 @@ export function ProjectRunsTable({
         {evaluateLayout && history.errorCount > 0 && (
           <p className="pb-3 text-xs text-muted-foreground">
             Metrics unavailable for {history.errorCount} runs.
-            <button type="button" className="ml-2 underline" onClick={history.retry}>Retry metrics</button>
+            <button
+              type="button"
+              className="ml-2 underline"
+              onClick={history.retry}
+            >
+              Retry metrics
+            </button>
           </p>
         )}
-        {!evaluateLayout && historyMetricsEnabled && (rows.length > 0 || isLoadingFirstPage) && (
-          <div
-            className="@container/history-metrics border-b border-border/50"
-            aria-label="Filtered run metrics"
-          >
-            {history.errorCount > 0 && (
-              <p className="px-5 py-2 text-xs text-muted-foreground">
-                Metrics unavailable for {history.errorCount} runs.
-                <button
-                  type="button"
-                  className="ml-2 underline"
-                  onClick={history.retry}
+        {!evaluateLayout &&
+          historyMetricsEnabled &&
+          (rows.length > 0 || isLoadingFirstPage) && (
+            <div
+              className="@container/history-metrics border-b border-border/50"
+              aria-label="Filtered run metrics"
+            >
+              {history.errorCount > 0 && (
+                <p className="px-5 py-2 text-xs text-muted-foreground">
+                  Metrics unavailable for {history.errorCount} runs.
+                  <button
+                    type="button"
+                    className="ml-2 underline"
+                    onClick={history.retry}
+                  >
+                    Retry metrics
+                  </button>
+                </p>
+              )}
+              {!metricData && (history.loading || isLoadingFirstPage) && (
+                <div
+                  className="grid h-32 grid-cols-5 gap-6 px-5 py-5"
+                  aria-hidden="true"
                 >
-                  Retry metrics
-                </button>
-              </p>
-            )}
-            {!metricData && (history.loading || isLoadingFirstPage) && (
-              <div
-                className="grid h-32 grid-cols-5 gap-6 px-5 py-5"
-                aria-hidden="true"
-              >
-                {[0, 1, 2, 3, 4].map((index) => (
-                  <div key={index} className="space-y-4">
-                    <Skeleton className="h-3 w-16" />
-                    <Skeleton className="h-6 w-20" />
-                    <Skeleton className="h-3 w-full" />
-                  </div>
-                ))}
-              </div>
-            )}
-            {metricData && (
-              <MetricStrip
-                bars={metricBars}
-                showCost={!metricBars || metricData.latest.costUsd != null}
-                data={metricData}
-                surface="embedded"
-                context="history"
-                testId="project-run-history-metrics"
-              />
-            )}
-          </div>
-        )}
+                  {[0, 1, 2, 3, 4].map((index) => (
+                    <div key={index} className="space-y-4">
+                      <Skeleton className="h-3 w-16" />
+                      <Skeleton className="h-6 w-20" />
+                      <Skeleton className="h-3 w-full" />
+                    </div>
+                  ))}
+                </div>
+              )}
+              {metricData && (
+                <MetricStrip
+                  bars={metricBars}
+                  showCost={!metricBars || metricData.latest.costUsd != null}
+                  data={metricData}
+                  surface="embedded"
+                  context="history"
+                  testId="project-run-history-metrics"
+                />
+              )}
+            </div>
+          )}
         {/*
           Only for the filters that run over the loaded page. The platform
           chips are a query argument, so on their own an empty result really
@@ -970,59 +993,71 @@ export function ProjectRunsTable({
             most recent runs loaded so far. Load more below to widen the search.
           </p>
         )}
-        <div className={cn("overflow-x-auto", evaluateLayout && "rounded-lg border border-border")}>
+        <div
+          className={cn(
+            "overflow-x-auto",
+            evaluateLayout && "rounded-lg border border-border",
+          )}
+        >
           <RunHistoryTable aria-label="Project runs">
-            {evaluateLayout ? <EvaluateHistoryHeader showSuite /> : <TableHeader>
-              <TableRow>
-                {historyMetricsEnabled ? (
-                  <>
-                    <TableHead className="min-w-[120px]">Date</TableHead>
-                    <TableHead className="min-w-[140px]">Run</TableHead>
-                  </>
-                ) : (
-                  <TableHead className="min-w-[180px]">Suite / Run</TableHead>
-                )}
-                <TableHead className="min-w-[120px]">
-                  {historyMetricsEnabled ? "Client : model" : "Platform"}
-                </TableHead>
-                {showGitContext && (
-                  <>
-                    <TableHead className="min-w-[100px]">Commit</TableHead>
-                    <TableHead className="min-w-[80px]">PR</TableHead>
-                    <TableHead className="min-w-[160px]">Branch</TableHead>
-                  </>
-                )}
-                <TableHead>
-                  {historyMetricsEnabled ? "Status" : "Verdict"}
-                </TableHead>
-                <TableHead
-                  className={historyMetricsEnabled ? "text-right" : undefined}
-                >
-                  {historyMetricsEnabled ? "Iteration pass" : "Results"}
-                </TableHead>
-                {!historyMetricsEnabled && <TableHead>Date</TableHead>}
-                <TableHead className="text-right">
-                  {historyMetricsEnabled ? "Latency p50" : "Duration"}
-                </TableHead>
-                <TableHead
-                  className={historyMetricsEnabled ? "text-right" : undefined}
-                >
-                  {historyMetricsEnabled ? "Total tokens" : "Run by"}
-                </TableHead>
-                {historyMetricsEnabled && (
-                  <>
-                    <TableHead className="text-right">Tool calls</TableHead>
-                    <TableHead>Platform</TableHead>
-                  </>
-                )}
-              </TableRow>
-            </TableHeader>}
+            {evaluateLayout ? (
+              <EvaluateHistoryHeader showSuite />
+            ) : (
+              <TableHeader>
+                <TableRow>
+                  {historyMetricsEnabled ? (
+                    <>
+                      <TableHead className="min-w-[120px]">Date</TableHead>
+                      <TableHead className="min-w-[140px]">Run</TableHead>
+                    </>
+                  ) : (
+                    <TableHead className="min-w-[180px]">Suite / Run</TableHead>
+                  )}
+                  <TableHead className="min-w-[120px]">
+                    {historyMetricsEnabled ? "Client : model" : "Platform"}
+                  </TableHead>
+                  {showGitContext && (
+                    <>
+                      <TableHead className="min-w-[100px]">Commit</TableHead>
+                      <TableHead className="min-w-[80px]">PR</TableHead>
+                      <TableHead className="min-w-[160px]">Branch</TableHead>
+                    </>
+                  )}
+                  <TableHead>
+                    {historyMetricsEnabled ? "Status" : "Verdict"}
+                  </TableHead>
+                  <TableHead
+                    className={historyMetricsEnabled ? "text-right" : undefined}
+                  >
+                    {historyMetricsEnabled ? "Iteration pass" : "Results"}
+                  </TableHead>
+                  {!historyMetricsEnabled && <TableHead>Date</TableHead>}
+                  <TableHead className="text-right">
+                    {historyMetricsEnabled ? "Latency p50" : "Duration"}
+                  </TableHead>
+                  <TableHead
+                    className={historyMetricsEnabled ? "text-right" : undefined}
+                  >
+                    {historyMetricsEnabled ? "Total tokens" : "Run by"}
+                  </TableHead>
+                  {historyMetricsEnabled && (
+                    <>
+                      <TableHead className="text-right">Tool calls</TableHead>
+                      <TableHead>Platform</TableHead>
+                    </>
+                  )}
+                </TableRow>
+              </TableHeader>
+            )}
             <TableBody>
               {isLoadingFirstPage ? (
                 <TableRow>
                   <TableCell
                     colSpan={
-                      evaluateLayout ? 10 : (historyMetricsEnabled ? 9 : 7) + (showGitContext ? 3 : 0)
+                      evaluateLayout
+                        ? 10
+                        : (historyMetricsEnabled ? 9 : 7) +
+                          (showGitContext ? 3 : 0)
                     }
                     className="h-32 text-center text-muted-foreground"
                   >
@@ -1033,7 +1068,10 @@ export function ProjectRunsTable({
                 <TableRow>
                   <TableCell
                     colSpan={
-                      evaluateLayout ? 10 : (historyMetricsEnabled ? 9 : 7) + (showGitContext ? 3 : 0)
+                      evaluateLayout
+                        ? 10
+                        : (historyMetricsEnabled ? 9 : 7) +
+                          (showGitContext ? 3 : 0)
                     }
                     className="h-24 text-center text-sm text-muted-foreground"
                   >
@@ -1046,8 +1084,28 @@ export function ProjectRunsTable({
                 </TableRow>
               ) : evaluateLayout ? (
                 [...launches].reverse().map((launch) => {
-                  const representative = [...launch.runs].sort((a, b) => a.runNumber - b.runNumber || a._id.localeCompare(b._id))[0];
-                  return <EvaluateHistoryRow key={launch.key} rows={launch.runs} details={history.details} historyRows={historyRows} showSuite onOpen={representative.suiteName !== null ? () => onSelectRun({ suiteId: representative.suiteId, runId: representative._id }) : undefined} />;
+                  const representative = [...launch.runs].sort(
+                    (a, b) =>
+                      a.runNumber - b.runNumber || a._id.localeCompare(b._id),
+                  )[0];
+                  return (
+                    <EvaluateHistoryRow
+                      key={launch.key}
+                      rows={launch.runs}
+                      details={history.details}
+                      historyRows={historyRows}
+                      showSuite
+                      onOpen={
+                        representative.suiteName !== null
+                          ? () =>
+                              onSelectRun({
+                                suiteId: representative.suiteId,
+                                runId: representative._id,
+                              })
+                          : undefined
+                      }
+                    />
+                  );
                 })
               ) : historyMetricsEnabled ? (
                 suiteGroups.map((group) => (
@@ -1252,14 +1310,14 @@ function ProjectRunTableRow({
           <span className="block truncate font-medium">
             {grouped
               ? row.name || `#${row.runNumber}`
-              : row.suiteName ?? (
+              : (row.suiteName ?? (
                   <span
                     className="text-muted-foreground"
                     title="This run's suite no longer exists, so its detail view can't be opened."
                   >
                     Deleted suite
                   </span>
-                )}
+                ))}
           </span>
           <span className="text-[10px] text-muted-foreground" title={row._id}>
             {grouped
@@ -1270,7 +1328,11 @@ function ProjectRunTableRow({
       </TableCell>
       {historyMetricsEnabled ? (
         <TableCell className="text-xs">
-          <RunClientsCell rows={historyRow ? [historyRow] : [
+          <RunClientsCell
+            rows={
+              historyRow
+                ? [historyRow]
+                : [
                     {
                       client: runClientIdentity({
                         client: row.client,
@@ -1279,7 +1341,9 @@ function ProjectRunTableRow({
                       hostStyle: row.client?.hostStyle,
                       models: row.client?.modelId ? [row.client.modelId] : [],
                     },
-                  ]} />
+                  ]
+            }
+          />
         </TableCell>
       ) : (
         <TableCell>

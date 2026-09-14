@@ -147,7 +147,9 @@ export function ImportDatasetDialog({
         className="max-h-[85vh] gap-6 overflow-y-auto p-6 sm:max-w-2xl"
       >
         <DialogHeader className="gap-3">
-          <DialogTitle className="text-xl font-semibold">Import test cases</DialogTitle>
+          <DialogTitle className="text-xl font-semibold">
+            Import test cases
+          </DialogTitle>
           <DialogDescription>
             AI turns your Markdown into draft test cases. Review them before
             saving.

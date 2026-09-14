@@ -1,8 +1,9 @@
-import {
-  groupProjectRuns,
-} from "../evals/project-run-suite-groups";
+import { groupProjectRuns } from "../evals/project-run-suite-groups";
 import type { ProjectRunRow } from "../evals/project-runs-table";
-import { EvaluateHistoryHeader, EvaluateHistoryRow } from "./evaluate-history-row";
+import {
+  EvaluateHistoryHeader,
+  EvaluateHistoryRow,
+} from "./evaluate-history-row";
 import {
   EvalListFilter,
   ALL_EVAL_FILTER_VALUES,
@@ -33,11 +34,14 @@ import {
   Plus,
   ChevronDown,
 } from "lucide-react";
-import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@mcpjam/design-system/dropdown-menu";
-import { Button } from "@mcpjam/design-system/button";
 import {
-  TableBody,
-} from "@mcpjam/design-system/table";
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@mcpjam/design-system/dropdown-menu";
+import { Button } from "@mcpjam/design-system/button";
+import { TableBody } from "@mcpjam/design-system/table";
 import {
   Tooltip,
   TooltipContent,
@@ -58,7 +62,6 @@ import {
   runHistoryFilterOptions,
   suiteRunBlockedReason,
   runTimestamp,
-  formatRunHistoryDate,
 } from "./suite-detail-model";
 import type {
   EvalCase,
@@ -95,7 +98,6 @@ const EMPTY_CASE_ACTIONS = [
     Icon: FileUp,
   },
 ] as const;
-
 
 export function SuiteDetailOverview({
   suite,
@@ -603,10 +605,30 @@ export function SuiteDetailOverview({
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="min-w-44">
-                  {(onDescribeCases ?? onEditCases) && <DropdownMenuItem onSelect={onDescribeCases ?? onEditCases}>Describe</DropdownMenuItem>}
-                  {onGenerateTestCases && <DropdownMenuItem disabled={!canGenerate || isGeneratingTestCases} title={generateTestCasesDisabledReason ?? undefined} onSelect={() => void handleGenerateCases()}>{isGeneratingTestCases ? "Generating…" : "Generate"}</DropdownMenuItem>}
-                  {onImportCases && <DropdownMenuItem onSelect={onImportCases}>Import</DropdownMenuItem>}
-                  {onEditCases && <DropdownMenuItem onSelect={onEditCases}>Add manually</DropdownMenuItem>}
+                  {(onDescribeCases ?? onEditCases) && (
+                    <DropdownMenuItem onSelect={onDescribeCases ?? onEditCases}>
+                      Describe
+                    </DropdownMenuItem>
+                  )}
+                  {onGenerateTestCases && (
+                    <DropdownMenuItem
+                      disabled={!canGenerate || isGeneratingTestCases}
+                      title={generateTestCasesDisabledReason ?? undefined}
+                      onSelect={() => void handleGenerateCases()}
+                    >
+                      {isGeneratingTestCases ? "Generating…" : "Generate"}
+                    </DropdownMenuItem>
+                  )}
+                  {onImportCases && (
+                    <DropdownMenuItem onSelect={onImportCases}>
+                      Import
+                    </DropdownMenuItem>
+                  )}
+                  {onEditCases && (
+                    <DropdownMenuItem onSelect={onEditCases}>
+                      Add manually
+                    </DropdownMenuItem>
+                  )}
                 </DropdownMenuContent>
               </DropdownMenu>
             ) : null}

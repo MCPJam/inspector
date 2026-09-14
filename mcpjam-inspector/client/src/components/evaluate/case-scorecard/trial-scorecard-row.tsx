@@ -139,25 +139,81 @@ export function TrialScorecardRow({
   const active = row.stepId !== undefined && syncedStepId === row.stepId;
 
   if (layout === "report") {
-    const observed = evidence.length ? evidence.join("\n") : value || "No observation recorded.";
-    const whyLabel = row.result.state === "passed" ? "Why it passed" : row.result.state === "failed" ? "Why it failed" : "Reason";
+    const observed = evidence.length
+      ? evidence.join("\n")
+      : value || "No observation recorded.";
+    const whyLabel =
+      row.result.state === "passed"
+        ? "Why it passed"
+        : row.result.state === "failed"
+          ? "Why it failed"
+          : "Reason";
     return (
-      <li className="space-y-3 border-b border-border/60 py-4 last:border-b-0" data-testid="trial-scorecard-row" data-row-key={row.key} data-state={withheld ? "notMeasured" : row.result.state} data-role={row.role}
-        onMouseEnter={() => row.stepId && onSyncStep?.(row.stepId)} onMouseLeave={() => row.stepId && onSyncStep?.(null)}>
+      <li
+        className="space-y-3 border-b border-border/60 py-4 last:border-b-0"
+        data-testid="trial-scorecard-row"
+        data-row-key={row.key}
+        data-state={withheld ? "notMeasured" : row.result.state}
+        data-role={row.role}
+        onMouseEnter={() => row.stepId && onSyncStep?.(row.stepId)}
+        onMouseLeave={() => row.stepId && onSyncStep?.(null)}
+      >
         <div className="flex items-start justify-between gap-3">
           <h4 className="text-sm font-semibold">{row.label}</h4>
-          <span className={cn("shrink-0 rounded px-2 py-1 text-[10px] font-semibold uppercase", withheld ? "bg-muted text-muted-foreground" : row.result.state === "passed" ? "bg-success/15 text-foreground" : row.result.state === "failed" && row.role === "gate" ? "bg-destructive/10 text-destructive" : "bg-muted text-muted-foreground")}>
+          <span
+            className={cn(
+              "shrink-0 rounded px-2 py-1 text-[10px] font-semibold uppercase",
+              withheld
+                ? "bg-muted text-muted-foreground"
+                : row.result.state === "passed"
+                  ? "bg-success/15 text-foreground"
+                  : row.result.state === "failed" && row.role === "gate"
+                    ? "bg-destructive/10 text-destructive"
+                    : "bg-muted text-muted-foreground",
+            )}
+          >
             {withheld ? "Hidden" : glyph.label}
           </span>
         </div>
-        {withheld ? <p className="text-xs text-muted-foreground" data-testid="judge-result-withheld">hidden until you label this iteration</p> : (
+        {withheld ? (
+          <p
+            className="text-xs text-muted-foreground"
+            data-testid="judge-result-withheld"
+          >
+            hidden until you label this iteration
+          </p>
+        ) : (
           <dl className="grid grid-cols-[6rem_minmax(0,1fr)] gap-x-3 gap-y-2 text-xs leading-relaxed sm:grid-cols-[7rem_minmax(0,1fr)]">
-            <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Looks for</dt><dd className="min-w-0 whitespace-pre-wrap break-words">{row.tooltip || row.label}</dd>
-            <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Observed</dt><dd className="min-w-0 whitespace-pre-wrap break-words">{observed}</dd>
-            <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{whyLabel}</dt><dd className="min-w-0 whitespace-pre-wrap break-words" data-testid="trial-scorecard-reason">{reason || "No reason recorded."}</dd>
+            <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Looks for
+            </dt>
+            <dd className="min-w-0 whitespace-pre-wrap break-words">
+              {row.label}
+            </dd>
+            <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Observed
+            </dt>
+            <dd className="min-w-0 whitespace-pre-wrap break-words">
+              {observed}
+            </dd>
+            <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+              {whyLabel}
+            </dt>
+            <dd
+              className="min-w-0 whitespace-pre-wrap break-words"
+              data-testid="trial-scorecard-reason"
+            >
+              {reason || "No reason recorded."}
+            </dd>
           </dl>
         )}
-        {row.evidence?.frozenRole && !withheld && <p className="text-xs text-muted-foreground">Graded as {row.evidence.frozenRole === "gating" ? "Gate" : "advisory"} — this scorer's role has changed since the run.</p>}
+        {row.evidence?.frozenRole && !withheld && (
+          <p className="text-xs text-muted-foreground">
+            Graded as{" "}
+            {row.evidence.frozenRole === "gating" ? "Gate" : "advisory"} — this
+            scorer's role has changed since the run.
+          </p>
+        )}
         {body && <div className="pt-2">{body}</div>}
       </li>
     );
@@ -210,7 +266,10 @@ export function TrialScorecardRow({
             className="shrink-0 text-muted-foreground"
           >
             <ChevronRight
-              className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-90")}
+              className={cn(
+                "h-3.5 w-3.5 transition-transform",
+                open && "rotate-90",
+              )}
             />
           </button>
         ) : null}

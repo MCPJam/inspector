@@ -573,6 +573,46 @@ describe("project run history metrics", () => {
     });
   }
 
+  it("renders Ding Dong as flat runs without the deferred health chart", async () => {
+    arrangeHistory();
+    const onSelectRun = vi.fn();
+    render(
+      <ProjectRunsTable
+        projectId="proj_1"
+        onSelectRun={onSelectRun}
+        historyMetricsEnabled
+        evaluateLayout
+      />,
+    );
+    await waitFor(() => expect(inTable().getByText("50%")).toBeVisible());
+    expect(
+      inTable()
+        .getAllByRole("columnheader")
+        .map((cell) => cell.textContent),
+    ).toEqual([
+      "Run",
+      "Suite",
+      "Client / Model",
+      "Result",
+      "Rate",
+      "Platform",
+      "When",
+      "Latency",
+      "Tokens",
+      "Calls",
+    ]);
+    expect(screen.queryByTestId("project-run-history-metrics")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Collapse suite/ })).toBeNull();
+    const runRows = inTable().getAllByRole("button", { name: /^Open run #/ });
+    expect(runRows).toHaveLength(2);
+    expect(runRows[0]).toHaveTextContent("UI suite");
+    await userEvent.setup().click(runRows[0]);
+    expect(onSelectRun).toHaveBeenCalledWith({
+      suiteId: "suite_1",
+      runId: "new",
+    });
+  });
+
   it("renders the grouped table shell on the first page load", () => {
     setRows([], "LoadingFirstPage");
     render(
