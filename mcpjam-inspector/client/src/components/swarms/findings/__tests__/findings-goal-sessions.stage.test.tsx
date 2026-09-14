@@ -77,16 +77,20 @@ describe("stage narrowing on a scenario goal", () => {
     // All three, not just the stage. Dropping the sentiment would widen the
     // list back across personas; dropping hide-synthetic would let a rehearsal
     // into a list describing real people.
-    expect(args.filters?.chips).toEqual([
-      { kind: "dimension", key: "sentiment", value: "frustrated" },
-      { kind: "dimension", key: "synthetic", value: "hide" },
-      { kind: "dimension", key: "stage", value: "discovery:failed" },
-    ]);
+    expect(args.filters).toEqual({
+      preset: "all",
+      chips: [
+        { kind: "dimension", key: "sentiment", value: "frustrated" },
+        { kind: "dimension", key: "synthetic", value: "hide" },
+        { kind: "dimension", key: "stage", value: "discovery:failed" },
+      ],
+    });
   });
 
-  it("uses the chain's stage id, not the panel's", () => {
-    // The panel calls the last stage `value`; the chain calls it `userValue`,
-    // and the chip has to speak the chain's vocabulary or it matches nothing.
+  it("spells the chip as <chainStage>:<state>", () => {
+    // Only the chip's SHAPE. The chain id arrives as a prop here, so this
+    // cannot prove the panel-to-chain mapping — `findings-goal-inspect` is
+    // where that translation happens and where it is asserted.
     render(
       <FindingsGoalSessions
         scope={{ kind: "scenario", scenarioId: "scn-1" }}
@@ -97,9 +101,10 @@ describe("stage narrowing on a scenario goal", () => {
       />,
     );
 
-    expect(lastArgs().filters?.chips).toEqual([
-      { kind: "dimension", key: "stage", value: "userValue:passed" },
-    ]);
+    expect(lastArgs().filters).toEqual({
+      preset: "all",
+      chips: [{ kind: "dimension", key: "stage", value: "userValue:passed" }],
+    });
   });
 
   it("leaves the goal's filters untouched when no stage is narrowed", () => {

@@ -90,12 +90,19 @@ export function FindingsGoalInspect({
           state: stageModel.state === "ok" ? "passed" : "failed",
         };
   // Everything the list's contents depend on: the goal, the narrowing, and
-  // the SCOPE, which carries the tab's filters. Editing a filter chip rebuilds
-  // the scope, and without it here the retained `before` cursor and the pages
-  // already fetched would outlive the query that produced them — the previous
-  // cohort's rows under a header counting the new one.
+  // the SCOPE, which carries the caller's filters. Without the scope here, a
+  // retained `before` cursor and the pages already fetched outlive the query
+  // that produced them — the previous cohort's rows under a header counting
+  // the new one.
+  //
+  // Not reachable from the User Testing tab as it stands: its filters are a
+  // constant memo, and the one part that does vary (the persona) already
+  // closes the expansion. This is the component's own boundary being correct
+  // rather than a live defect closed, and it costs one interpolation.
   const sessionsKey = `${goal.runId}:${
-    stageNarrowing ? `${stageNarrowing.chainStage}:${stageNarrowing.state}` : "all"
+    stageNarrowing
+      ? `${stageNarrowing.chainStage}:${stageNarrowing.state}`
+      : "all"
   }:${JSON.stringify(sessionScope ?? null)}`;
   /**
    * The stage's session list, wrapped and keyed ONCE for both mount sites.
@@ -329,9 +336,9 @@ export function FindingsGoalInspect({
                       {canShowSessions &&
                       sessionScope &&
                       onOpenSession &&
-                      (sessionsAreExpandable ? expanded : i === 0) ? (
-                        stageSessions
-                      ) : null}
+                      (sessionsAreExpandable ? expanded : i === 0)
+                        ? stageSessions
+                        : null}
                     </div>
                   );
                 })}
@@ -366,9 +373,9 @@ export function FindingsGoalInspect({
                         />
                       </button>
                     ) : null}
-                    {(sessionsAreExpandable ? openEvidence === 0 : true) ? (
-                      stageSessions
-                    ) : null}
+                    {(sessionsAreExpandable ? openEvidence === 0 : true)
+                      ? stageSessions
+                      : null}
                   </>
                 ) : null}
               </div>

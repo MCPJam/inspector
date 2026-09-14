@@ -213,7 +213,9 @@ describe("which sessions a selected stage narrows to", () => {
     const { rerender } = renderInspect(model, "connection");
     await screen.findByText('"connection:passed p1"');
     await userEvent.click(screen.getByRole("button", { name: /Load/ }));
-    expect(await screen.findByText('"connection:passed p2"')).toBeInTheDocument();
+    expect(
+      await screen.findByText('"connection:passed p2"'),
+    ).toBeInTheDocument();
 
     rerender(
       <FindingsGoalInspect
@@ -225,10 +227,14 @@ describe("which sessions a selected stage narrows to", () => {
       />,
     );
 
-    expect(await screen.findByText('"discovery:failed p1"')).toBeInTheDocument();
+    expect(
+      await screen.findByText('"discovery:failed p1"'),
+    ).toBeInTheDocument();
     // The cursor came along for the ride without the key, and page two of the
     // PREVIOUS stage stayed on screen under this stage's header.
-    expect(screen.queryByText('"connection:passed p2"')).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('"connection:passed p2"'),
+    ).not.toBeInTheDocument();
   });
 
   it("does not carry a loaded page across a filter change", async () => {
@@ -270,9 +276,7 @@ describe("which sessions a selected stage narrows to", () => {
       />
     );
 
-    const { rerender } = render(
-      scoped({ preset: "all", chips: [] }),
-    );
+    const { rerender } = render(scoped({ preset: "all", chips: [] }));
     await screen.findByText('"scn-1 p1"');
     await userEvent.click(screen.getByRole("button", { name: /Load/ }));
     expect(await screen.findByText('"scn-1 p2"')).toBeInTheDocument();
