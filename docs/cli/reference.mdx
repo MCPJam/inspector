@@ -1355,8 +1355,10 @@ refusal). Hosted platform-authored suites do not currently have a backend
 tool-policy field or enforcement path, so the CLI does not upload a suite that
 would claim those guarantees. When supported by an eval runner, `toolPolicy`
 is enforced at execution time with denied tools kept visible but blocked;
-server annotations are advisory and **UNTRUSTED**. File `defaults.repetitions` is
-inherited per case and is not uploaded as a suite `minIterations` floor.
+server annotations are advisory and **UNTRUSTED**. The file's configured
+iteration count (`defaults.repetitions` in dialect 1, `defaults.iterations`
+in dialect 2) is inherited per case and is not uploaded as a suite
+`minIterations` floor.
 Authored `defaults.systemPrompt` and `defaults.temperature` are uploaded as
 execution defaults; omitted fields stay omitted so the platform applies its
 own defaults. `target.hosts` and `target.environment` are attached before
