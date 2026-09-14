@@ -239,23 +239,42 @@ unavailable state, and the not-built / AI-failed / older-backend states.
 
 ## 7. Checks
 
-| Check                         | Command                                                                                           | Result                                                     |
-| ----------------------------- | ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| Client typecheck              | `npx tsc --noEmit -p client/tsconfig.typecheck.json`                                              | **pass**                                                   |
-| Preview typecheck             | `npm run typecheck:findings-preview -w @mcpjam/inspector`                                         | **pass**                                                   |
-| SDK typecheck                 | `npm run typecheck -w @mcpjam/sdk`                                                                | **pass**                                                   |
-| SDK build                     | `npm run build -w @mcpjam/sdk`                                                                    | **pass**                                                   |
-| SDK tests                     | `npm run test -w @mcpjam/sdk`                                                                     | **pass** — 8,221                                           |
-| Repo checks                   | `npm run test:checks`                                                                             | **pass**                                                   |
-| Findings components           | `npx vitest run --project client client/src/components/shared/actionable-insights/__tests__/`     | **pass** — 78                                              |
-| Evaluate components           | `npx vitest run --project client client/src/components/evaluate`                                  | **pass** — 1,167 in 93 files                               |
-| Wire parity                   | `npm run check:findings-wire-parity -w @mcpjam/inspector -- --backend ../mcpjam-backend-findings` | **pass**                                                   |
-| `npm run design:check`        |                                                                                                   | **pass**                                                   |
-| `npm run design:lint`         |                                                                                                   | **pass** — 0 errors (109 pre-existing warnings, unchanged) |
-| Preview build, fresh checkout | `npm run findings:preview -- --replay … --build`                                                  | **pass**                                                   |
-| Visual inspection             | headless Chromium, 16 states                                                                      | **done**                                                   |
-| Live run against a deployment |                                                                                                   | **not run**                                                |
-| Real model call count / cost  |                                                                                                   | **none**                                                   |
+| Check                         | Command                                                                                           | Result                                                                                                       |
+| ----------------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Client typecheck              | `npx tsc --noEmit -p client/tsconfig.typecheck.json`                                              | **pass**                                                                                                     |
+| Preview typecheck             | `npm run typecheck:findings-preview -w @mcpjam/inspector`                                         | **pass**                                                                                                     |
+| SDK typecheck                 | `npm run typecheck -w @mcpjam/sdk`                                                                | **pass**                                                                                                     |
+| SDK build                     | `npm run build -w @mcpjam/sdk`                                                                    | **pass**                                                                                                     |
+| SDK tests                     | `npm run test -w @mcpjam/sdk`                                                                     | **pass** — 8,221                                                                                             |
+| Repo checks                   | `npm run test:checks`                                                                             | **pass**                                                                                                     |
+| Findings components           | `npx vitest run --project client client/src/components/shared/actionable-insights/__tests__/`     | **pass** — 78                                                                                                |
+| Evaluate components           | `npx vitest run --project client client/src/components/evaluate`                                  | **pass** — 1,167 in 93 files                                                                                 |
+| OpenAPI ↔ SDK parity          | `npx vitest run --project server server/routes/v1/__tests__/openapi-types-parity.test.ts`         | **pass** — the four additive envelope fields are documented in `docs/reference/openapi.json`                 |
+| Envelope route                | `npx vitest run --project server server/routes/v1/__tests__/insights-envelope.test.ts`            | **pass** — 51                                                                                                |
+| Wire parity                   | `npm run check:findings-wire-parity -w @mcpjam/inspector -- --backend ../mcpjam-backend-findings` | **pass**                                                                                                     |
+| `npm run design:check`        |                                                                                                   | **pass**                                                                                                     |
+| `npm run design:lint`         |                                                                                                   | **pass** — 0 errors (109 pre-existing warnings, unchanged)                                                   |
+| Preview build, fresh checkout | `npm run findings:preview -- --replay … --build`                                                  | **pass**                                                                                                     |
+| Visual inspection             | headless Chromium, 17 states, light + dark + 420px                                                | **done**                                                                                                     |
+| Copy action, in a browser     | clicked in the preview, clipboard read back                                                       | **pass** — real prompt builder, canary absent, evidence fenced, correct heading                              |
+| **Full Inspector suite**      | `npx vitest run` (in `mcpjam-inspector/`)                                                         | **29,740 passed, 137 skipped, 2 failed** — both environmental, both verified passing in isolation; see below |
+| Live run against a deployment |                                                                                                   | **not run**                                                                                                  |
+| Real model call count / cost  |                                                                                                   | **none**                                                                                                     |
+
+**The two suite failures, and why neither is this branch's:**
+
+1. `server/services/browserd/local/__tests__/egress-proxy.test.ts > falls back
+to an HTTP server bound only to ::1` — this sandbox has **no IPv6**. The
+   unhandled error is literal: `listen EAFNOSUPPORT: address family not
+supported ::1`. Nothing in this branch touches browserd or egress code.
+2. `client/src/lib/evals/__tests__/eval-export-compiles.test.ts > cannot be
+made to emit code through a comment` — it invokes `tsc` and takes **37.7 s**
+   on this hardware, past the 30 s default. It **passes in isolation** (4 of
+   4); under a full parallel suite on 4 cores it times out, and the run's
+   `[vitest-worker]: Timeout calling "onTaskUpdate"` is the same contention.
+
+Both were re-run on their own and passed. Please confirm on your machine —
+neither is a claim you should take on trust.
 
 The wire-parity check **fails when it cannot compare**. It needs
 `--backend <path>` (or `MCPJAM_BACKEND_DIR`); with neither it exits non-zero
