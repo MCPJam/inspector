@@ -1,3 +1,4 @@
+import { hostedPredicateScoreDefinition } from "../score-definitions";
 import { it, expect, vi } from "vitest";
 import { backtestIteration, runAssertionBacktest } from "../assertion-backtest";
 import {
@@ -167,4 +168,95 @@ it("evaluates recorded tool expectations without inventing original matcher resu
     comparable: false,
     draft: { status: "scored", passed: true },
   });
+});
+
+it("joins unchanged hosted content-derived identities without renumbering them", () => {
+  const hosted = resolveScoreDefinition(
+    hostedPredicateScoreDefinition({ predicate: oldRule }),
+  );
+  const stored = scoreResultFromPredicateResult(
+    hosted,
+    evaluatePredicates({ toolCalls: [], finalAssistantMessage: "hello" }, [
+      oldRule,
+    ])[0],
+  );
+  const source = {
+    ...row,
+    evaluationConfig: { definitions: [hosted] },
+    results: [stored],
+  };
+  const unchanged = backtestIteration(source, {
+    assertions: { mode: "replace", list: [oldRule] },
+  });
+  expect(unchanged).toHaveLength(1);
+  expect(unchanged[0]).toMatchObject({
+    evaluatorId: hosted.scorerId,
+    change: "unchanged",
+    comparable: true,
+    flipped: false,
+  });
+  const changed = backtestIteration(source, draft);
+  expect(changed.map((item) => item.change).sort()).toEqual([
+    "added",
+    "removed",
+  ]);
+  expect(changed.every((item) => !item.comparable)).toBe(true);
+});
+it("returns a resumable cursor after bounded pages and binds continuation to the draft", async () => {
+  let page = 0;
+  const readPage = vi.fn(async () => ({
+    schemaVersion: 1 as const,
+    runId: "run",
+    suiteId: "suite",
+    sourceHash: "source",
+    reservationId: "reservation",
+    isDone: false,
+    cursor: `cursor-${++page}`,
+    iterations: [{ ...row, iterationId: `iteration-${page}` }],
+  }));
+  const first = await runAssertionBacktest({
+    runId: "run",
+    suiteId: "suite",
+    draft,
+    readPage,
+  });
+  expect(first.continuation).toMatchObject({
+    cursor: "cursor-10",
+    sourceHash: "source",
+    reservationId: "reservation",
+    draftHash: first.draftHash,
+  });
+  const last = vi.fn(async () => ({
+    schemaVersion: 1 as const,
+    runId: "run",
+    suiteId: "suite",
+    sourceHash: "source",
+    reservationId: "reservation",
+    isDone: true,
+    iterations: [{ ...row, iterationId: "last" }],
+  }));
+  await runAssertionBacktest({
+    runId: "run",
+    suiteId: "suite",
+    draft,
+    continuation: first.continuation,
+    readPage: last,
+  });
+  expect(last).toHaveBeenCalledWith({
+    runId: "run",
+    suiteId: "suite",
+    pageSize: 10,
+    cursor: "cursor-10",
+    sourceHash: "source",
+    reservationId: "reservation",
+  });
+  await expect(
+    runAssertionBacktest({
+      runId: "run",
+      suiteId: "suite",
+      draft: { assertions: { mode: "inherit", list: [] } },
+      continuation: first.continuation,
+      readPage: last,
+    }),
+  ).rejects.toThrow("SOURCE_CHANGED");
 });

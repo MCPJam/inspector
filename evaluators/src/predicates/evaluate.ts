@@ -105,7 +105,7 @@ const SENSITIVE_ASSIGNMENT = new RegExp(
   String.raw`\b(authorization|password|passwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret|cookie|credential|private[_-]?key)\b` +
     String.raw`(\s*[:=]\s*)` +
     String.raw`(?:bearer\s+)?["']?[\w.\-+/=]{6,}["']?`,
-  "gi",
+  "gi"
 );
 /** `Bearer <token>` carries its own announcement and needs no separator. */
 const BEARER_TOKEN = /\bbearer\s+["']?[\w.\-+/=]{8,}["']?/gi;
@@ -149,7 +149,7 @@ function brief(value: unknown): string {
 
 function callsTo(
   transcript: IterationTranscript,
-  toolName: string,
+  toolName: string
 ): TranscriptToolCall[] {
   return (transcript.toolCalls ?? []).filter((c) => c.toolName === toolName);
 }
@@ -177,7 +177,7 @@ function resolveFinalMessage(transcript: IterationTranscript): string {
  * reason `noEndingQuestion` is an observation.
  */
 export function finalMessageEndsWithQuestion(
-  message: string | undefined | null,
+  message: string | undefined | null
 ): boolean {
   if (typeof message !== "string") return false;
   const lines = message.split(/\r?\n/);
@@ -207,7 +207,7 @@ function lastNonEmptyLine(message: string): string {
  */
 function renderScope(
   transcript: IterationTranscript,
-  toolName: string | undefined,
+  toolName: string | undefined
 ): RenderObservationSummary[] {
   const all = transcript.renderObservations ?? [];
   return toolName === undefined
@@ -234,7 +234,7 @@ function describeStatuses(scope: RenderObservationSummary[]): string {
 }
 
 function resolveTotalTokens(
-  transcript: IterationTranscript,
+  transcript: IterationTranscript
 ): number | undefined {
   const usage = transcript.usage;
   if (!usage) return undefined;
@@ -322,7 +322,7 @@ function evidenceError(predicate: Predicate, reason: string): PredicateResult {
 /** How completely a channel was captured. Absent capture ⇒ `absent`. */
 function captureState(
   transcript: IterationTranscript,
-  channel: keyof NonNullable<IterationTranscript["capture"]>,
+  channel: keyof NonNullable<IterationTranscript["capture"]>
 ): TranscriptCaptureState {
   return transcript.capture?.[channel] ?? "absent";
 }
@@ -330,7 +330,7 @@ function captureState(
 /** Tool results in scope, narrowed to `toolName` when the predicate sets it. */
 function resultScope(
   transcript: IterationTranscript,
-  toolName: string | undefined,
+  toolName: string | undefined
 ): TranscriptToolResult[] {
   const all = transcript.toolResults ?? [];
   return toolName === undefined
@@ -341,7 +341,7 @@ function resultScope(
 /** Timings in scope, narrowed to `toolName` when the predicate sets it. */
 function timingScope(
   transcript: IterationTranscript,
-  toolName: string | undefined,
+  toolName: string | undefined
 ): TranscriptToolCallTiming[] {
   const all = transcript.toolCallTimings ?? [];
   return toolName === undefined
@@ -383,7 +383,7 @@ function resultText(result: TranscriptToolResult): string {
  * JSON output part and both outrank text that merely looks like JSON.
  */
 function resultPayload(
-  result: TranscriptToolResult,
+  result: TranscriptToolResult
 ): { found: true; value: unknown } | { found: false } {
   if (result.structuredContent !== undefined) {
     return { found: true, value: result.structuredContent };
@@ -402,7 +402,7 @@ function resultPayload(
 /** Calls in scope, narrowed to `toolName` when the predicate sets it. */
 function callScope(
   transcript: IterationTranscript,
-  toolName: string | undefined,
+  toolName: string | undefined
 ): TranscriptToolCall[] {
   const all = transcript.toolCalls ?? [];
   return toolName === undefined
@@ -425,7 +425,7 @@ function callScope(
 function emptyScopeIsScored(
   transcript: IterationTranscript,
   channel: "toolResults" | "toolCallTimings",
-  toolName: string | undefined,
+  toolName: string | undefined
 ): { scored: true } | { scored: false; reason: string } {
   const label = channel === "toolResults" ? "tool result" : "per-call timing";
   if (captureState(transcript, channel) !== "complete") {
@@ -464,7 +464,7 @@ function incompleteScopeReason(
    * mislead: `size.bytes` is measured on the whole part before the cap, and a
    * timing carries no text at all.
    */
-  truncated = 0,
+  truncated = 0
 ): string | undefined {
   if (captureState(transcript, channel) !== "complete") {
     return "the capture is incomplete";
@@ -490,7 +490,7 @@ function coverageNote(measured: number, observed: number): string {
 /** The advertised tool, by name, or `undefined` when it was not advertised. */
 function inventoryEntry(
   transcript: IterationTranscript,
-  toolName: string,
+  toolName: string
 ): TranscriptToolInventoryEntry | undefined {
   return (transcript.toolInventory ?? []).find((t) => t.name === toolName);
 }
@@ -609,9 +609,116 @@ function estimatedTokens(bytes: number): string {
 /** Evaluate a single predicate against the iteration transcript. */
 export function evaluatePredicate(
   transcript: IterationTranscript,
-  predicate: Predicate,
+  predicate: Predicate
 ): PredicateResult {
   switch (predicate.type) {
+    case "toolDescriptionsPresent":
+    case "toolAnnotationsPresent":
+    case "toolNamesUnique":
+    case "noDeprecatedToolExposed":
+    case "toolInputSchemasWellFormed":
+    case "toolOutputSchemasPresent": {
+      if (
+        transcript.capture?.toolDeclarations !== "complete" ||
+        !transcript.toolDeclarations
+      ) {
+        return evidenceError(
+          predicate,
+          "complete raw tool declarations were not captured"
+        );
+      }
+      if (
+        predicate.type === "toolDescriptionsPresent" &&
+        (!Number.isInteger(predicate.minLength ?? 20) ||
+          (predicate.minLength ?? 20) < 1)
+      ) {
+        return evidenceError(predicate, "minLength must be a positive integer");
+      }
+      const declarations = transcript.toolDeclarations;
+      const seen = new Map<string, Set<string>>();
+      const failures: string[] = [];
+      for (const tool of declarations) {
+        let valid = true;
+        switch (predicate.type) {
+          case "toolDescriptionsPresent": {
+            const minimum = predicate.minLength ?? 20;
+            valid =
+              typeof tool.description === "string" &&
+              tool.description.trim().length >= minimum;
+            break;
+          }
+          case "toolAnnotationsPresent":
+            valid =
+              !!tool.annotations &&
+              (predicate.require ?? []).every(
+                (key) => typeof tool.annotations?.[key] === "boolean"
+              );
+            break;
+          case "toolNamesUnique": {
+            const names = seen.get(tool.serverKey) ?? new Set<string>();
+            valid = !names.has(tool.name);
+            names.add(tool.name);
+            seen.set(tool.serverKey, names);
+            break;
+          }
+          case "noDeprecatedToolExposed":
+            valid = !describesItselfAsDeprecated(tool.description);
+            break;
+          case "toolInputSchemasWellFormed": {
+            const schema = tool.inputSchema;
+            if (
+              !schema ||
+              typeof schema !== "object" ||
+              Array.isArray(schema)
+            ) {
+              valid = false;
+              break;
+            }
+            const shape = schema as Record<string, unknown>;
+            const properties = shape.properties;
+            valid =
+              shape.type === "object" &&
+              (properties === undefined ||
+                (!!properties &&
+                  typeof properties === "object" &&
+                  !Array.isArray(properties) &&
+                  Object.values(properties).every(
+                    (value) =>
+                      !!value &&
+                      typeof value === "object" &&
+                      !Array.isArray(value) &&
+                      typeof (value as Record<string, unknown>).description ===
+                        "string" &&
+                      (
+                        (value as Record<string, unknown>).description as string
+                      ).trim().length > 0
+                  )));
+            break;
+          }
+          case "toolOutputSchemasPresent":
+            valid =
+              tool.outputSchema !== undefined && tool.outputSchema !== null;
+            break;
+        }
+        if (!valid) failures.push(`${tool.serverKey}/${tool.name}`);
+      }
+      return failures.length > 0
+        ? fail(
+            predicate,
+            `${failures.length} tool declaration(s) failed ${
+              predicate.type
+            }: ${failures
+              .slice(0, MAX_ITEMS_SHOWN)
+              .map((name) => scrubText(name))
+              .join(", ")}`
+          )
+        : pass(
+            predicate,
+            declarations.length === 0
+              ? "no tools advertised in the complete catalog"
+              : `all ${declarations.length} tool declarations satisfy ${predicate.type}`
+          );
+    }
     case "toolCalledWith": {
       const minCount = predicate.minCount ?? 1;
       // A malformed minCount (0, negative, fractional) would otherwise disable
@@ -620,20 +727,20 @@ export function evaluatePredicate(
         return fail(
           predicate,
           `invalid minCount ${String(
-            predicate.minCount,
-          )}; expected a positive integer ≥ 1`,
+            predicate.minCount
+          )}; expected a positive integer ≥ 1`
         );
       }
       const calls = callsTo(transcript, predicate.toolName);
       const matching = calls.filter((c) =>
-        argMatch(predicate.args, c.arguments ?? {}),
+        argMatch(predicate.args, c.arguments ?? {})
       );
       const mode = predicate.args.argumentMatching ?? "partial";
       if (matching.length >= minCount) {
         return pass(
           predicate,
           `tool "${predicate.toolName}" called with matching args ` +
-            `(${matching.length}/${minCount} required; ${mode} match)`,
+            `(${matching.length}/${minCount} required; ${mode} match)`
         );
       }
       if (calls.length === 0) {
@@ -641,8 +748,8 @@ export function evaluatePredicate(
           predicate,
           `expected tool "${predicate.toolName}" called ≥${minCount}× with ` +
             `${brief(
-              predicate.args.args,
-            )} (${mode} match), but it was never called`,
+              predicate.args.args
+            )} (${mode} match), but it was never called`
         );
       }
       const shown = calls.slice(0, MAX_ITEMS_SHOWN);
@@ -659,7 +766,7 @@ export function evaluatePredicate(
           } ` +
           `call(s) with args [${actualArgs.join(", ")}${more}], ${
             matching.length
-          } matching`,
+          } matching`
       );
     }
 
@@ -668,7 +775,7 @@ export function evaluatePredicate(
       return calls.length > 0
         ? pass(
             predicate,
-            `tool "${predicate.toolName}" called ${calls.length}×`,
+            `tool "${predicate.toolName}" called ${calls.length}×`
           )
         : fail(predicate, `tool "${predicate.toolName}" was never called`);
     }
@@ -686,7 +793,7 @@ export function evaluatePredicate(
       if (!first) {
         return fail(
           predicate,
-          `expected first tool "${predicate.toolName}" but no tools were called`,
+          `expected first tool "${predicate.toolName}" but no tools were called`
         );
       }
       // Hard Constraint 4 (plan): tool calls carry `.toolName`, not `.name`.
@@ -694,7 +801,7 @@ export function evaluatePredicate(
         ? pass(predicate, `first tool call was "${predicate.toolName}"`)
         : fail(
             predicate,
-            `expected first tool "${predicate.toolName}", got "${first.toolName}"`,
+            `expected first tool "${predicate.toolName}", got "${first.toolName}"`
           );
     }
 
@@ -712,7 +819,7 @@ export function evaluatePredicate(
         ? pass(predicate, `tool "${predicate.toolName}" was not called`)
         : fail(
             predicate,
-            `forbidden tool "${predicate.toolName}" was called ${calls.length}×`,
+            `forbidden tool "${predicate.toolName}" was called ${calls.length}×`
           );
     }
 
@@ -722,22 +829,22 @@ export function evaluatePredicate(
       if (
         !Array.isArray(predicate.toolNames) ||
         predicate.toolNames.some(
-          (name) => typeof name !== "string" || !name.trim(),
+          (name) => typeof name !== "string" || !name.trim()
         )
       ) {
         return fail(
           predicate,
-          `onlyToolsCalled requires toolNames (array of tool names)`,
+          `onlyToolsCalled requires toolNames (array of tool names)`
         );
       }
       if (
         (transcript.toolCalls ?? []).some(
-          (call) => typeof call.toolName !== "string" || !call.toolName.trim(),
+          (call) => typeof call.toolName !== "string" || !call.toolName.trim()
         )
       ) {
         return fail(
           predicate,
-          "a tool call has no tool name; the allowed set cannot be verified",
+          "a tool call has no tool name; the allowed set cannot be verified"
         );
       }
       const allowed = new Set(predicate.toolNames);
@@ -745,7 +852,7 @@ export function evaluatePredicate(
         ...new Set(
           (transcript.toolCalls ?? [])
             .map((call) => call.toolName)
-            .filter((name) => typeof name === "string" && !allowed.has(name)),
+            .filter((name) => typeof name === "string" && !allowed.has(name))
         ),
       ];
       if (offenders.length > 0) {
@@ -753,14 +860,16 @@ export function evaluatePredicate(
           predicate,
           allowed.size === 0
             ? `expected no tool call, but ${offenders.join(", ")} was called`
-            : `tool(s) outside the allowed set were called: ${offenders.join(", ")}`,
+            : `tool(s) outside the allowed set were called: ${offenders.join(
+                ", "
+              )}`
         );
       }
       return pass(
         predicate,
         allowed.size === 0
           ? `no tool was called`
-          : `only allowed tools were called`,
+          : `only allowed tools were called`
       );
     }
 
@@ -778,20 +887,22 @@ export function evaluatePredicate(
       )
         return evidenceError(
           predicate,
-          "Invalid responseCloseTo configuration",
+          "Invalid responseCloseTo configuration"
         );
       if (typeof transcript.finalAssistantMessage !== "string")
         return evidenceError(
           predicate,
-          "No final assistant message was captured",
+          "No final assistant message was captured"
         );
       try {
         const distance = normalizedResponseDistance(
           transcript.finalAssistantMessage,
           predicate.reference,
-          predicate,
+          predicate
         );
-        const reason = `Normalized edit distance ${distance} ${distance <= predicate.maxDistance ? "<=" : ">"} ${predicate.maxDistance}`;
+        const reason = `Normalized edit distance ${distance} ${
+          distance <= predicate.maxDistance ? "<=" : ">"
+        } ${predicate.maxDistance}`;
         return distance <= predicate.maxDistance
           ? pass(predicate, reason)
           : fail(predicate, reason);
@@ -800,7 +911,7 @@ export function evaluatePredicate(
           predicate,
           error instanceof Error
             ? error.message
-            : "Unable to measure edit distance",
+            : "Unable to measure edit distance"
         );
       }
     }
@@ -823,12 +934,12 @@ export function evaluatePredicate(
         ? pass(
             predicate,
             `final assistant message contains "${predicate.needle}"` +
-              (caseSensitive ? " (case-sensitive)" : ""),
+              (caseSensitive ? " (case-sensitive)" : "")
           )
         : fail(
             predicate,
             `final assistant message does not contain "${predicate.needle}"` +
-              (caseSensitive ? " (case-sensitive)" : ""),
+              (caseSensitive ? " (case-sensitive)" : "")
           );
     }
 
@@ -844,13 +955,13 @@ export function evaluatePredicate(
       ) {
         return fail(
           predicate,
-          `responseMatches requires a non-empty string pattern`,
+          `responseMatches requires a non-empty string pattern`
         );
       }
       if (NESTED_QUANTIFIER.test(predicate.pattern)) {
         return fail(
           predicate,
-          `regex pattern /${predicate.pattern}/ contains a nested quantifier; refusing to evaluate to avoid catastrophic backtracking`,
+          `regex pattern /${predicate.pattern}/ contains a nested quantifier; refusing to evaluate to avoid catastrophic backtracking`
         );
       }
       let regex: RegExp;
@@ -861,23 +972,23 @@ export function evaluatePredicate(
           predicate,
           `invalid regex pattern /${predicate.pattern}/: ${
             error instanceof Error ? error.message : String(error)
-          }`,
+          }`
         );
       }
       if (message.length > MAX_REGEX_INPUT_CHARS) {
         return fail(
           predicate,
-          `final assistant message exceeds ${MAX_REGEX_INPUT_CHARS} chars; refusing to evaluate /${predicate.pattern}/ safely`,
+          `final assistant message exceeds ${MAX_REGEX_INPUT_CHARS} chars; refusing to evaluate /${predicate.pattern}/ safely`
         );
       }
       return regex.test(message)
         ? pass(
             predicate,
-            `final assistant message matches /${predicate.pattern}/`,
+            `final assistant message matches /${predicate.pattern}/`
           )
         : fail(
             predicate,
-            `final assistant message does not match /${predicate.pattern}/`,
+            `final assistant message does not match /${predicate.pattern}/`
           );
     }
 
@@ -902,7 +1013,7 @@ export function evaluatePredicate(
           : "";
       return fail(
         predicate,
-        `${errors.length} tool error(s): ${detail}${moreErrors}`,
+        `${errors.length} tool error(s): ${detail}${moreErrors}`
       );
     }
 
@@ -919,14 +1030,14 @@ export function evaluatePredicate(
         // Fail closed: a gate that cannot measure usage must not silently pass.
         return fail(
           predicate,
-          `token usage unavailable; cannot verify budget < ${predicate.tokens}`,
+          `token usage unavailable; cannot verify budget < ${predicate.tokens}`
         );
       }
       return total < predicate.tokens
         ? pass(predicate, `token usage ${total} < ${predicate.tokens}`)
         : fail(
             predicate,
-            `token usage ${total} is not under budget ${predicate.tokens}`,
+            `token usage ${total} is not under budget ${predicate.tokens}`
           );
     }
 
@@ -947,18 +1058,18 @@ export function evaluatePredicate(
             : `turn count ${turns} is not a valid count`;
         return fail(
           predicate,
-          `${why}; cannot verify fewer than ${predicate.turns} user turn(s)`,
+          `${why}; cannot verify fewer than ${predicate.turns} user turn(s)`
         );
       }
       // STRICTLY fewer — `turnCountUnder: 3` means 2 turns pass and 3 fail.
       return turns < predicate.turns
         ? pass(
             predicate,
-            `${turns} user turn(s), fewer than ${predicate.turns}`,
+            `${turns} user turn(s), fewer than ${predicate.turns}`
           )
         : fail(
             predicate,
-            `${turns} user turn(s) is not fewer than ${predicate.turns}`,
+            `${turns} user turn(s) is not fewer than ${predicate.turns}`
           );
     }
 
@@ -971,12 +1082,12 @@ export function evaluatePredicate(
       return rendered.length > 0
         ? pass(
             predicate,
-            `widget rendered (${rendered.length}/${scope.length} observation(s))`,
+            `widget rendered (${rendered.length}/${scope.length} observation(s))`
           )
         : fail(
             predicate,
             `no widget rendered across ${scope.length} observation(s); ` +
-              `statuses: ${describeStatuses(scope)}`,
+              `statuses: ${describeStatuses(scope)}`
           );
     }
 
@@ -986,7 +1097,7 @@ export function evaluatePredicate(
       if (!Number.isInteger(predicate.ms) || predicate.ms < 1) {
         return fail(
           predicate,
-          `invalid ms ${String(predicate.ms)}; expected a positive integer ≥ 1`,
+          `invalid ms ${String(predicate.ms)}; expected a positive integer ≥ 1`
         );
       }
       const scope = renderScope(transcript, predicate.toolName);
@@ -994,8 +1105,8 @@ export function evaluatePredicate(
         return fail(
           predicate,
           `${emptyScopeReason(
-            predicate.toolName,
-          )}; cannot verify render latency < ${predicate.ms}ms`,
+            predicate.toolName
+          )}; cannot verify render latency < ${predicate.ms}ms`
         );
       }
       const rendered = scope.filter((o) => o.status === "rendered");
@@ -1003,21 +1114,21 @@ export function evaluatePredicate(
         return fail(
           predicate,
           `no widget rendered; cannot verify render latency < ${predicate.ms}ms; ` +
-            `statuses: ${describeStatuses(scope)}`,
+            `statuses: ${describeStatuses(scope)}`
         );
       }
       const slowest = Math.max(...rendered.map((o) => o.elapsedMs));
       return slowest < predicate.ms
         ? pass(
             predicate,
-            `all ${rendered.length} rendered widget(s) under ${predicate.ms}ms (slowest ${slowest}ms)`,
+            `all ${rendered.length} rendered widget(s) under ${predicate.ms}ms (slowest ${slowest}ms)`
           )
         : fail(
             predicate,
             `widget render took ${slowest}ms, not under ${predicate.ms}ms ` +
               `(${rendered.filter((o) => o.elapsedMs >= predicate.ms).length}/${
                 rendered.length
-              } rendered widget(s) over budget)`,
+              } rendered widget(s) over budget)`
           );
     }
 
@@ -1027,30 +1138,30 @@ export function evaluatePredicate(
         return fail(
           predicate,
           `${emptyScopeReason(
-            predicate.toolName,
-          )}; cannot verify console errors`,
+            predicate.toolName
+          )}; cannot verify console errors`
         );
       }
       const offenders = scope.filter((o) => (o.consoleErrors?.length ?? 0) > 0);
       if (offenders.length === 0) {
         return pass(
           predicate,
-          `no console errors across ${scope.length} observation(s)`,
+          `no console errors across ${scope.length} observation(s)`
         );
       }
       const totalErrors = offenders.reduce(
         (sum, o) => sum + (o.consoleErrors?.length ?? 0),
-        0,
+        0
       );
       // Console error text is live-page-controlled data; truncate like tool
       // error messages.
       const first = truncate(
         scrubText(offenders[0]?.consoleErrors?.[0] ?? ""),
-        MAX_ERROR_MSG_CHARS,
+        MAX_ERROR_MSG_CHARS
       );
       return fail(
         predicate,
-        `${totalErrors} console error(s) across ${offenders.length}/${scope.length} observation(s); first: ${first}`,
+        `${totalErrors} console error(s) across ${offenders.length}/${scope.length} observation(s); first: ${first}`
       );
     }
 
@@ -1068,8 +1179,8 @@ export function evaluatePredicate(
         predicate,
         `final message ended with a question: "${truncate(
           scrubText(lastNonEmptyLine(message)),
-          MAX_VALUE_CHARS,
-        )}"`,
+          MAX_VALUE_CHARS
+        )}"`
       );
     }
 
@@ -1081,8 +1192,8 @@ export function evaluatePredicate(
         return fail(
           predicate,
           `toolLatencyUnder requires a positive integer ms, got ${String(
-            predicate.ms,
-          )}`,
+            predicate.ms
+          )}`
         );
       }
       const scope = timingScope(transcript, predicate.toolName);
@@ -1095,23 +1206,23 @@ export function evaluatePredicate(
         const empty = emptyScopeIsScored(
           transcript,
           "toolCallTimings",
-          predicate.toolName,
+          predicate.toolName
         );
         if (!empty.scored) {
           return evidenceError(
             predicate,
-            `${empty.reason}; cannot verify latency < ${predicate.ms}ms`,
+            `${empty.reason}; cannot verify latency < ${predicate.ms}ms`
           );
         }
         return pass(
           predicate,
-          `no calls to ${scopeLabel(
-            predicate.toolName,
-          )}; latency budget ${predicate.ms}ms not exercised`,
+          `no calls to ${scopeLabel(predicate.toolName)}; latency budget ${
+            predicate.ms
+          }ms not exercised`
         );
       }
       const slowest = scope.reduce((worst, t) =>
-        t.durationMs > worst.durationMs ? t : worst,
+        t.durationMs > worst.durationMs ? t : worst
       );
       if (slowest.durationMs < predicate.ms) {
         // Partial COVERAGE is the same fact as a partial capture, one step
@@ -1125,14 +1236,14 @@ export function evaluatePredicate(
             : incompleteScopeReason(
                 transcript,
                 "toolCallTimings",
-                scope.length,
+                scope.length
               );
         if (gap) {
           return evidenceError(
             predicate,
             `the slowest call read took ${slowest.durationMs}ms, under ` +
               `${predicate.ms}ms, but ${gap}; a slower one may not have been ` +
-              "read",
+              "read"
           );
         }
       }
@@ -1144,14 +1255,14 @@ export function evaluatePredicate(
             predicate,
             `${scope.length} call(s) under ${predicate.ms}ms ` +
               `(slowest "${slowest.toolName}" at ${slowest.durationMs}ms)` +
-              coverage,
+              coverage
           )
         : fail(
             predicate,
             `"${slowest.toolName}" took ${slowest.durationMs}ms, not under ` +
               `${predicate.ms}ms (${
                 scope.filter((t) => t.durationMs >= predicate.ms).length
-              }/${scope.length} call(s) over budget)${coverage}`,
+              }/${scope.length} call(s) over budget)${coverage}`
           );
     }
 
@@ -1162,7 +1273,7 @@ export function evaluatePredicate(
       ) {
         return fail(
           predicate,
-          "toolResultContains requires a non-empty needle",
+          "toolResultContains requires a non-empty needle"
         );
       }
       const scope = resultScope(transcript, predicate.toolName);
@@ -1170,20 +1281,20 @@ export function evaluatePredicate(
         const empty = emptyScopeIsScored(
           transcript,
           "toolResults",
-          predicate.toolName,
+          predicate.toolName
         );
         if (!empty.scored) {
           return evidenceError(
             predicate,
             `${empty.reason}; cannot look for "${truncate(
               predicate.needle,
-              MAX_VALUE_CHARS,
-            )}"`,
+              MAX_VALUE_CHARS
+            )}"`
           );
         }
         return fail(
           predicate,
-          `${scopeLabel(predicate.toolName)} returned no results to search`,
+          `${scopeLabel(predicate.toolName)} returned no results to search`
         );
       }
       const caseSensitive = predicate.caseSensitive ?? false;
@@ -1200,8 +1311,8 @@ export function evaluatePredicate(
           predicate,
           `"${hit.toolName}" result contains "${truncate(
             predicate.needle,
-            MAX_VALUE_CHARS,
-          )}"${suffix}`,
+            MAX_VALUE_CHARS
+          )}"${suffix}`
         );
       }
       // A hit is proof; a miss is only proof when we read everything.
@@ -1209,23 +1320,23 @@ export function evaluatePredicate(
         transcript,
         "toolResults",
         scope.length,
-        scope.filter((r) => r.truncated === true).length,
+        scope.filter((r) => r.truncated === true).length
       );
       if (gap) {
         return evidenceError(
           predicate,
           `"${truncate(predicate.needle, MAX_VALUE_CHARS)}" was not found in ` +
             `${scope.length} result(s) from ${scopeLabel(
-              predicate.toolName,
-            )}, but ${gap}; its absence cannot be established`,
+              predicate.toolName
+            )}, but ${gap}; its absence cannot be established`
         );
       }
       return fail(
         predicate,
         `no result from ${scopeLabel(predicate.toolName)} contains "${truncate(
           predicate.needle,
-          MAX_VALUE_CHARS,
-        )}"${suffix} (${scope.length} result(s) searched)`,
+          MAX_VALUE_CHARS
+        )}"${suffix} (${scope.length} result(s) searched)`
       );
     }
 
@@ -1235,17 +1346,17 @@ export function evaluatePredicate(
         const empty = emptyScopeIsScored(
           transcript,
           "toolResults",
-          predicate.toolName,
+          predicate.toolName
         );
         if (!empty.scored) {
           return evidenceError(
             predicate,
-            `${empty.reason}; cannot validate against the authored schema`,
+            `${empty.reason}; cannot validate against the authored schema`
           );
         }
         return fail(
           predicate,
-          `${scopeLabel(predicate.toolName)} returned no results to validate`,
+          `${scopeLabel(predicate.toolName)} returned no results to validate`
         );
       }
       const failures: string[] = [];
@@ -1264,7 +1375,7 @@ export function evaluatePredicate(
             return evidenceError(
               predicate,
               `"${result.toolName}" result was truncated for storage, so its ` +
-                "payload cannot be read back; nothing was validated",
+                "payload cannot be read back; nothing was validated"
             );
           }
           failures.push(`"${result.toolName}" result was not JSON`);
@@ -1272,7 +1383,7 @@ export function evaluatePredicate(
         }
         const validation = validateAgainstSchema(
           predicate.schema,
-          payload.value,
+          payload.value
         );
         if (validation.outcome === "valid") continue;
         if (validation.outcome === "unsupported-dialect") {
@@ -1281,20 +1392,20 @@ export function evaluatePredicate(
           return evidenceError(
             predicate,
             `authored schema declares dialect "${validation.dialect}", which ` +
-              "this validator does not carry; nothing was validated",
+              "this validator does not carry; nothing was validated"
           );
         }
         if (validation.outcome === "unusable-schema") {
           return evidenceError(
             predicate,
-            `authored schema is unusable: ${validation.message}`,
+            `authored schema is unusable: ${validation.message}`
           );
         }
         const first = validation.violations[0];
         failures.push(
           `"${result.toolName}"${first?.at ? ` at ${first.at}` : ""}: ${
             first?.message ?? "did not match the schema"
-          }`,
+          }`
         );
       }
       if (failures.length === 0) {
@@ -1303,21 +1414,21 @@ export function evaluatePredicate(
           transcript,
           "toolResults",
           scope.length,
-          scope.filter((r) => r.truncated === true).length,
+          scope.filter((r) => r.truncated === true).length
         );
         if (gap) {
           return evidenceError(
             predicate,
             `${scope.length} result(s) from ${scopeLabel(
-              predicate.toolName,
-            )} match the authored schema, but ${gap}; the rest were not read`,
+              predicate.toolName
+            )} match the authored schema, but ${gap}; the rest were not read`
           );
         }
         return pass(
           predicate,
           `${scope.length} result(s) from ${scopeLabel(
-            predicate.toolName,
-          )} match the authored schema`,
+            predicate.toolName
+          )} match the authored schema`
         );
       }
       const shown = failures.slice(0, MAX_ITEMS_SHOWN).join("; ");
@@ -1327,7 +1438,7 @@ export function evaluatePredicate(
           : "";
       return fail(
         predicate,
-        `${failures.length}/${scope.length} result(s) did not match: ${shown}${more}`,
+        `${failures.length}/${scope.length} result(s) did not match: ${shown}${more}`
       );
     }
 
@@ -1338,19 +1449,19 @@ export function evaluatePredicate(
         const empty = emptyScopeIsScored(
           transcript,
           "toolResults",
-          predicate.toolName,
+          predicate.toolName
         );
         if (!empty.scored) {
           return evidenceError(
             predicate,
-            `${empty.reason}; cannot verify size < ${predicate.maxBytes} bytes`,
+            `${empty.reason}; cannot verify size < ${predicate.maxBytes} bytes`
           );
         }
         return pass(
           predicate,
-          `no results from ${scopeLabel(
-            predicate.toolName,
-          )}; size budget ${predicate.maxBytes} bytes not exercised`,
+          `no results from ${scopeLabel(predicate.toolName)}; size budget ${
+            predicate.maxBytes
+          } bytes not exercised`
         );
       }
       // A row we could not measure is not a small row. One unmeasured result
@@ -1362,11 +1473,11 @@ export function evaluatePredicate(
           predicate,
           `${unmeasured.length}/${scope.length} result(s) carry no complete ` +
             `size measurement (first: "${unmeasured[0]?.toolName}"); ` +
-            `cannot verify size < ${predicate.maxBytes} bytes`,
+            `cannot verify size < ${predicate.maxBytes} bytes`
         );
       }
       const largest = scope.reduce((worst, r) =>
-        r.size.bytes > worst.size.bytes ? r : worst,
+        r.size.bytes > worst.size.bytes ? r : worst
       );
       // Over budget is proof whatever else we missed; under budget is a claim
       // about the largest result there WAS.
@@ -1376,7 +1487,7 @@ export function evaluatePredicate(
         const gap = incompleteScopeReason(
           transcript,
           "toolResults",
-          scope.length,
+          scope.length
         );
         if (gap) {
           return evidenceError(
@@ -1384,7 +1495,7 @@ export function evaluatePredicate(
             `the largest result read is ` +
               `${largest.size.bytes.toLocaleString()} bytes, under ` +
               `${predicate.maxBytes.toLocaleString()}, but ${gap}; a larger ` +
-              "one may not have been read",
+              "one may not have been read"
           );
         }
       }
@@ -1396,7 +1507,7 @@ export function evaluatePredicate(
               `${largest.size.bytes.toLocaleString()} bytes ` +
               `(${basis}, ${estimatedTokens(largest.size.bytes)}), ` +
               `under ${predicate.maxBytes.toLocaleString()}` +
-              coverageNote(scope.length, returned),
+              coverageNote(scope.length, returned)
           )
         : fail(
             predicate,
@@ -1404,7 +1515,7 @@ export function evaluatePredicate(
               `${largest.size.bytes.toLocaleString()} bytes ` +
               `(${basis}, ${estimatedTokens(largest.size.bytes)}), not under ` +
               `${predicate.maxBytes.toLocaleString()}` +
-              coverageNote(scope.length, returned),
+              coverageNote(scope.length, returned)
           );
     }
 
@@ -1414,13 +1525,13 @@ export function evaluatePredicate(
         return evidenceError(
           predicate,
           "no tool inventory captured; cannot compare arguments against a " +
-            "schema the run never recorded",
+            "schema the run never recorded"
         );
       }
       if (calls.length === 0) {
         return pass(
           predicate,
-          `no calls to ${scopeLabel(predicate.toolName)} to validate`,
+          `no calls to ${scopeLabel(predicate.toolName)} to validate`
         );
       }
       const failures: string[] = [];
@@ -1431,14 +1542,14 @@ export function evaluatePredicate(
           return evidenceError(
             predicate,
             `tool "${call.toolName}" was called but is not in the captured ` +
-              "inventory; cannot validate its arguments",
+              "inventory; cannot validate its arguments"
           );
         }
         if (tool.inputSchema === undefined) {
           return evidenceError(
             predicate,
             `tool "${call.toolName}" declares no inputSchema; there is no ` +
-              "contract to validate against",
+              "contract to validate against"
           );
         }
         // A key absent from `properties` is NOT a violation: JSON Schema
@@ -1458,30 +1569,34 @@ export function evaluatePredicate(
         }
         const validation = validateAgainstSchema(
           tool.inputSchema,
-          call.arguments ?? {},
+          call.arguments ?? {}
         );
         if (validation.outcome === "valid") continue;
         if (validation.outcome === "unsupported-dialect") {
           return evidenceError(
             predicate,
             `tool "${call.toolName}" declares JSON Schema dialect ` +
-              `"${validation.dialect}", which this validator does not carry`,
+              `"${validation.dialect}", which this validator does not carry`
           );
         }
         if (validation.outcome === "unusable-schema") {
           return evidenceError(
             predicate,
             `tool "${call.toolName}" declares an unusable inputSchema: ` +
-              validation.message,
+              validation.message
           );
         }
         for (const violation of validation.violations.slice(
           0,
-          MAX_ITEMS_SHOWN,
+          MAX_ITEMS_SHOWN
         )) {
           failures.push(
             `"${call.toolName}" ${violation.class}` +
-              `${violation.at && violation.at !== "#" ? ` at ${violation.at}` : ""}`,
+              `${
+                violation.at && violation.at !== "#"
+                  ? ` at ${violation.at}`
+                  : ""
+              }`
           );
         }
       }
@@ -1496,7 +1611,7 @@ export function evaluatePredicate(
           predicate,
           `${calls.length} call(s) match the declared inputSchema${note}` +
             "; schema validity does not establish that the arguments match " +
-            "the user's intent",
+            "the user's intent"
         );
       }
       const shown = failures.slice(0, MAX_ITEMS_SHOWN).join("; ");
@@ -1506,7 +1621,7 @@ export function evaluatePredicate(
           : "";
       return fail(
         predicate,
-        `${failures.length} schema violation(s): ${shown}${more}${note}`,
+        `${failures.length} schema violation(s): ${shown}${more}${note}`
       );
     }
 
@@ -1536,14 +1651,14 @@ export function evaluatePredicate(
         return fail(
           predicate,
           `an identical call was repeated back-to-back: "${current.toolName}" ` +
-            `with ${brief(current.arguments ?? {})}`,
+            `with ${brief(current.arguments ?? {})}`
         );
       }
       return pass(
         predicate,
         `no identical call to ${scopeLabel(
-          predicate.toolName,
-        )} was repeated back-to-back`,
+          predicate.toolName
+        )} was repeated back-to-back`
       );
     }
 
@@ -1553,14 +1668,14 @@ export function evaluatePredicate(
         ? pass(
             predicate,
             `${calls.length} call(s) to ${scopeLabel(
-              predicate.toolName,
-            )}, fewer than ${predicate.count}`,
+              predicate.toolName
+            )}, fewer than ${predicate.count}`
           )
         : fail(
             predicate,
             `${calls.length} call(s) to ${scopeLabel(
-              predicate.toolName,
-            )} is not fewer than ${predicate.count}`,
+              predicate.toolName
+            )} is not fewer than ${predicate.count}`
           );
     }
 
@@ -1573,7 +1688,7 @@ export function evaluatePredicate(
       ) {
         return fail(
           predicate,
-          "toolCalledBefore requires non-empty toolName and beforeToolName",
+          "toolCalledBefore requires non-empty toolName and beforeToolName"
         );
       }
       const calls = transcript.toolCalls ?? [];
@@ -1587,7 +1702,7 @@ export function evaluatePredicate(
           return fail(
             predicate,
             `"${predicate.beforeToolName}" was called before any ` +
-              `"${predicate.toolName}"`,
+              `"${predicate.toolName}"`
           );
         }
       }
@@ -1596,12 +1711,12 @@ export function evaluatePredicate(
         ? pass(
             predicate,
             `"${predicate.beforeToolName}" was never called, so the ordering ` +
-              "rule has nothing to violate",
+              "rule has nothing to violate"
           )
         : pass(
             predicate,
             `all ${checked} "${predicate.beforeToolName}" call(s) followed a ` +
-              `"${predicate.toolName}" call`,
+              `"${predicate.toolName}" call`
           );
     }
 
@@ -1609,11 +1724,11 @@ export function evaluatePredicate(
       if (captureState(transcript, "toolInventory") !== "complete") {
         return evidenceError(
           predicate,
-          "no tool inventory captured; cannot read tool descriptions",
+          "no tool inventory captured; cannot read tool descriptions"
         );
       }
       const called = new Set(
-        (transcript.toolCalls ?? []).map((c) => c.toolName),
+        (transcript.toolCalls ?? []).map((c) => c.toolName)
       );
       const undescribed: string[] = [];
       for (const name of called) {
@@ -1628,7 +1743,7 @@ export function evaluatePredicate(
         if (describesItselfAsDeprecated(tool.description)) {
           return fail(
             predicate,
-            `a tool whose description marks it deprecated was called: "${name}"`,
+            `a tool whose description marks it deprecated was called: "${name}"`
           );
         }
       }
@@ -1641,12 +1756,12 @@ export function evaluatePredicate(
           predicate,
           `${undescribed.length} called tool(s) are not in the captured ` +
             `inventory, so their descriptions could not be read: ` +
-            `${undescribed.slice(0, MAX_ITEMS_SHOWN).join(", ")}`,
+            `${undescribed.slice(0, MAX_ITEMS_SHOWN).join(", ")}`
         );
       }
       return pass(
         predicate,
-        "no called tool's description marks it deprecated",
+        "no called tool's description marks it deprecated"
       );
     }
 
@@ -1654,7 +1769,7 @@ export function evaluatePredicate(
       if (captureState(transcript, "toolInventory") !== "complete") {
         return evidenceError(
           predicate,
-          "no tool inventory captured; cannot read destructiveHint",
+          "no tool inventory captured; cannot read destructiveHint"
         );
       }
       const inventory = transcript.toolInventory ?? [];
@@ -1665,11 +1780,11 @@ export function evaluatePredicate(
         return evidenceError(
           predicate,
           "no tool in the inventory declares annotations; destructiveHint " +
-            "was never stated, so it cannot be checked",
+            "was never stated, so it cannot be checked"
         );
       }
       const called = new Set(
-        (transcript.toolCalls ?? []).map((c) => c.toolName),
+        (transcript.toolCalls ?? []).map((c) => c.toolName)
       );
       const undeclaredCalls: string[] = [];
       for (const name of called) {
@@ -1698,7 +1813,7 @@ export function evaluatePredicate(
         if (annotations.destructiveHint === true) {
           return fail(
             predicate,
-            `a tool declaring destructiveHint was called: "${name}"`,
+            `a tool declaring destructiveHint was called: "${name}"`
           );
         }
         if (annotations.readOnlyHint === true) continue;
@@ -1706,7 +1821,7 @@ export function evaluatePredicate(
           return fail(
             predicate,
             `"${name}" was called and declares neither destructiveHint nor ` +
-              "readOnlyHint; the protocol reads an absent hint as destructive",
+              "readOnlyHint; the protocol reads an absent hint as destructive"
           );
         }
       }
@@ -1718,31 +1833,31 @@ export function evaluatePredicate(
           predicate,
           `${undeclaredCalls.length} called tool(s) have no annotations in ` +
             `the captured inventory, so destructiveHint could not be read: ` +
-            `${undeclaredCalls.slice(0, MAX_ITEMS_SHOWN).join(", ")}`,
+            `${undeclaredCalls.slice(0, MAX_ITEMS_SHOWN).join(", ")}`
         );
       }
       return pass(
         predicate,
-        "every called tool is declared read-only or explicitly non-destructive",
+        "every called tool is declared read-only or explicitly non-destructive"
       );
     }
 
     case "toolErrorNamesInput": {
       const errors = (transcript.toolErrors ?? []).filter(
         (e) =>
-          predicate.toolName === undefined || e.toolName === predicate.toolName,
+          predicate.toolName === undefined || e.toolName === predicate.toolName
       );
       if (errors.length === 0) {
         return pass(
           predicate,
-          `no errors from ${scopeLabel(predicate.toolName)} to inspect`,
+          `no errors from ${scopeLabel(predicate.toolName)} to inspect`
         );
       }
       if (captureState(transcript, "toolInventory") !== "complete") {
         return evidenceError(
           predicate,
           "no tool inventory captured; cannot tell an input key from any " +
-            "other word in the message",
+            "other word in the message"
         );
       }
       for (const error of errors) {
@@ -1752,7 +1867,7 @@ export function evaluatePredicate(
             predicate,
             `a tool error carried no message at all${
               error.toolName ? ` ("${error.toolName}")` : ""
-            }`,
+            }`
           );
         }
         const tool = error.toolName
@@ -1769,7 +1884,7 @@ export function evaluatePredicate(
         // A sent VALUE is a property of ONE call, and may only be read off the
         // call that failed: the id join, or the only call to that tool.
         const candidates = (transcript.toolCalls ?? []).filter(
-          (c) => !error.toolName || c.toolName === error.toolName,
+          (c) => !error.toolName || c.toolName === error.toolName
         );
         const joined =
           (error.toolCallId === undefined
@@ -1785,7 +1900,7 @@ export function evaluatePredicate(
               // matches "401", a `30` matches "30 seconds" — and crediting the
               // server for that is worse than not checking at all.
               (typeof value === "string" && value.length >= 3) ||
-              (typeof value === "number" && String(value).length >= 3),
+              (typeof value === "number" && String(value).length >= 3)
           )
           .map((value) => String(value).toLowerCase());
         const names = sent.some((value) => message.includes(value));
@@ -1798,7 +1913,7 @@ export function evaluatePredicate(
             predicate,
             `a tool error names a value sent by one of ${candidates.length} ` +
               `calls to "${error.toolName}" and carries no call id; cannot ` +
-              "tell whether it named its own input",
+              "tell whether it named its own input"
           );
         }
         if (!names) {
@@ -1809,13 +1924,13 @@ export function evaluatePredicate(
             predicate,
             `a tool error did not name an input${
               error.toolName ? ` ("${error.toolName}")` : ""
-            }: ${truncate(scrubText(error.message ?? ""), MAX_ERROR_MSG_CHARS)}`,
+            }: ${truncate(scrubText(error.message ?? ""), MAX_ERROR_MSG_CHARS)}`
           );
         }
       }
       return pass(
         predicate,
-        `all ${errors.length} tool error(s) named an input key or a sent value`,
+        `all ${errors.length} tool error(s) named an input key or a sent value`
       );
     }
 
@@ -1823,7 +1938,7 @@ export function evaluatePredicate(
       if (captureState(transcript, "toolResults") !== "complete") {
         return evidenceError(
           predicate,
-          "no tool results captured; cannot tell a full page from a short one",
+          "no tool results captured; cannot tell a full page from a short one"
         );
       }
       const calls = callScope(transcript, predicate.toolName);
@@ -1840,7 +1955,7 @@ export function evaluatePredicate(
         results.length > 0 && results.every((r) => r.toolCallId !== undefined);
       const consumed = new Set<number>();
       const resultFor = (
-        call: TranscriptToolCall,
+        call: TranscriptToolCall
       ): TranscriptToolResult | undefined => {
         const take = (index: number): TranscriptToolResult | undefined => {
           if (index < 0) return undefined;
@@ -1849,7 +1964,7 @@ export function evaluatePredicate(
         };
         if (call.toolCallId !== undefined) {
           const byId = results.findIndex(
-            (r) => r.toolCallId === call.toolCallId,
+            (r) => r.toolCallId === call.toolCallId
           );
           if (byId >= 0) return take(byId);
           // Where every row carries an id, no match means this call produced
@@ -1858,8 +1973,8 @@ export function evaluatePredicate(
         }
         return take(
           results.findIndex(
-            (r, index) => !consumed.has(index) && r.toolName === call.toolName,
-          ),
+            (r, index) => !consumed.has(index) && r.toolName === call.toolName
+          )
         );
       };
       let inspected = 0;
@@ -1880,7 +1995,7 @@ export function evaluatePredicate(
           return fail(
             predicate,
             `a full page carried no continuation metadata: "${call.toolName}" ` +
-              `returned ${length} result(s) against a requested limit of ${limit}`,
+              `returned ${length} result(s) against a requested limit of ${limit}`
           );
         }
       }
@@ -1888,7 +2003,7 @@ export function evaluatePredicate(
         predicate,
         inspected === 0
           ? `no full page from ${scopeLabel(predicate.toolName)} to inspect`
-          : `all ${inspected} full page(s) carried continuation metadata`,
+          : `all ${inspected} full page(s) carried continuation metadata`
       );
     }
 
@@ -1907,7 +2022,7 @@ export function evaluatePredicate(
 /** Evaluate every predicate, preserving order. */
 export function evaluatePredicates(
   transcript: IterationTranscript,
-  predicates: Predicate[] | undefined,
+  predicates: Predicate[] | undefined
 ): PredicateResult[] {
   return (predicates ?? []).map((p) => {
     try {
@@ -1934,7 +2049,7 @@ export function evaluatePredicates(
  */
 export function allPredicatesPassed(results: PredicateResult[]): boolean {
   return results.every(
-    (r) => r.passed || checkRole(r.predicate) === "advisory",
+    (r) => r.passed || checkRole(r.predicate) === "advisory"
   );
 }
 
@@ -1961,13 +2076,13 @@ export interface TurnChecksInput {
  * one reaches it directly (a different write path, a test, a future caller).
  */
 export function evaluateTurnChecks(
-  turns: TurnChecksInput[],
+  turns: TurnChecksInput[]
 ): PredicateResult[] {
   const results: PredicateResult[] = [];
   for (const turn of turns) {
     if (!turn.checks || turn.checks.length === 0) continue;
     const turnScopable = turn.checks.filter((check) =>
-      isTurnScopablePredicateKind(check.type),
+      isTurnScopablePredicateKind(check.type)
     );
     for (const result of evaluatePredicates(turn.transcript, turnScopable)) {
       results.push({

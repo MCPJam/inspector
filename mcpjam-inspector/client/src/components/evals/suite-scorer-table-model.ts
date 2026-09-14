@@ -32,10 +32,18 @@ import {
 import type { SuiteCapabilities } from "@/hooks/use-suite-capabilities";
 import type { EvalJudgeConfig } from "./types";
 import {
+  STANDARD_ASSERTION_CHECKS,
+  standardCheckOfKind,
+  type AssertionCheck,
+  type EffectiveRule,
+  type RuleSource,
+} from "./standard-checks-model";
+import {
   judgeMode,
   stageConfigStates,
   stageEmptyIsGap,
   type GraderRow,
+  type JudgeMode,
   type StageConfigState,
   type SuiteGradingModel,
 } from "./suite-grading-model";
@@ -167,12 +175,13 @@ export function withGoalCompletionRole(
 }
 
 export type ScorerLibraryCategoryId =
-  "selection" | "call" | "userValue" | "budget" | "response";
+  "discovery" | "selection" | "call" | "userValue" | "budget" | "response";
 
 export const SCORER_LIBRARY_CATEGORY_LABELS: Record<
   ScorerLibraryCategoryId,
   string
 > = {
+  discovery: "Discovery",
   selection: "Selection",
   call: "Tool call",
   userValue: "User value",
@@ -181,6 +190,7 @@ export const SCORER_LIBRARY_CATEGORY_LABELS: Record<
 };
 
 const LIBRARY_CATEGORY_ORDER: readonly ScorerLibraryCategoryId[] = [
+  "discovery",
   "selection",
   "call",
   "userValue",
@@ -200,6 +210,7 @@ export function libraryCategoryOfKind(
 ): ScorerLibraryCategoryId {
   if (GRADER_PRESENTATION_GROUP[kind] === "budget") return "budget";
   const stage = PREDICATE_STAGE[kind];
+  if (stage === "discovery") return "discovery";
   if (stage === "selection") return "selection";
   if (stage === "call") return "call";
   if (stage === "response") return "response";
@@ -241,6 +252,7 @@ export function scorerLibraryCategories(
   ),
 ): ScorerLibraryCategory[] {
   const buckets: Record<ScorerLibraryCategoryId, PredicateKind[]> = {
+    discovery: [],
     selection: [],
     call: [],
     userValue: [],
@@ -259,11 +271,37 @@ export function scorerLibraryCategories(
   );
 }
 
-export type ScorerTableRowKind = "observed" | "match" | "predicate" | "judge";
+export type ScorerTableRowKind =
+  "observed" | "match" | "predicate" | "judge" | "preset";
+
+/**
+ * A standard-check family a row belongs to, when its kind backs one.
+ *
+ * `suiteRules` is how many of the suite's rules share the kind: a case turns
+ * a family off as a whole, so a row that would hide two other rules says so.
+ */
+export type ScorerTableFamily = {
+  id: AssertionCheck["id"];
+  label: string;
+  suiteRules: number;
+};
 
 export type ScorerTableRow = {
   id: string;
   kind: ScorerTableRowKind;
+  /**
+   * The On column. Always true for an observed or match row (there is no
+   * control), false for a `preset` row (nothing authored yet) and for a suite
+   * rule the case suppressed.
+   */
+  enabled: boolean;
+  /** Which list a `predicate` row is stored in. Absent for every other kind. */
+  source?: RuleSource;
+  /** A suite rule the case turned off. Listed so it can be turned back on. */
+  suppressed?: boolean;
+  family?: ScorerTableFamily;
+  /** The rule a `preset` row would author when switched on. */
+  preset?: Predicate;
   /** Scorer column — name, plus `formatCriterion` for a predicate. */
   name: string;
   kindLabel: string;
@@ -339,6 +377,8 @@ function predicateKindLabel(predicate: Predicate): string {
  * not, and showing "1" says so without pretending there is a knob.
  */
 function budgetThreshold(predicate: Predicate): string {
+  if (predicate.type === "toolDescriptionsPresent")
+    return String(predicate.minLength ?? 20);
   if (predicate.type === "tokenBudgetUnder") return String(predicate.tokens);
   if (predicate.type === "turnCountUnder") return String(predicate.turns);
   if (predicate.type === "toolLatencyUnder") return String(predicate.ms);
@@ -359,6 +399,7 @@ function budgetThreshold(predicate: Predicate): string {
  */
 function hasAuthoredThreshold(predicate: Predicate): boolean {
   return (
+    predicate.type === "toolDescriptionsPresent" ||
     predicate.type === "tokenBudgetUnder" ||
     predicate.type === "turnCountUnder" ||
     predicate.type === "toolLatencyUnder" ||
@@ -367,16 +408,11 @@ function hasAuthoredThreshold(predicate: Predicate): boolean {
   );
 }
 
-function isBudgetRow(row: GraderRow, predicates: Predicate[]): boolean {
-  if (row.predicateIndex === undefined) return false;
-  const predicate = predicates[row.predicateIndex];
-  return predicate !== undefined && hasAuthoredThreshold(predicate);
-}
-
 function observedRow(stage: UserValueStage): ScorerTableRow {
   return {
     id: `observed:${stage}`,
     kind: "observed",
+    enabled: true,
     name: "Observed by the runner",
     kindLabel: "Runner",
     threshold: "",
@@ -391,6 +427,7 @@ function matchTableRow(row: GraderRow): ScorerTableRow {
   return {
     id: row.id,
     kind: "match",
+    enabled: true,
     name: row.label,
     kindLabel: matchKindLabel(row.matchField),
     threshold: "1",
@@ -401,36 +438,80 @@ function matchTableRow(row: GraderRow): ScorerTableRow {
   };
 }
 
+function familyOf(
+  predicate: Predicate,
+  rules: EffectiveRule[],
+): ScorerTableFamily | undefined {
+  const check = standardCheckOfKind(predicate.type);
+  if (!check) return undefined;
+  return {
+    id: check.id,
+    label: check.label,
+    suiteRules: rules.filter(
+      (rule) =>
+        rule.source === "suite" && rule.predicate.type === check.preset.type,
+    ).length,
+  };
+}
+
 function predicateTableRow(
   row: GraderRow,
-  predicates: Predicate[],
+  rules: EffectiveRule[],
 ): ScorerTableRow | null {
   if (row.predicateIndex === undefined) return null;
-  const predicate = predicates[row.predicateIndex];
-  if (!predicate) return null;
-  const budget = isBudgetRow(row, predicates);
+  const rule = rules[row.predicateIndex];
+  if (!rule) return null;
+  const { predicate } = rule;
+  const budget = hasAuthoredThreshold(predicate);
   return {
     id: row.id,
     kind: "predicate",
+    enabled: !rule.suppressed,
+    source: rule.source,
+    suppressed: rule.suppressed,
+    family: familyOf(predicate, rules),
     name: formatCriterion({ predicate }),
     kindLabel: predicateKindLabel(predicate),
     threshold: budget ? budgetThreshold(predicate) : "1",
     thresholdKind: budget ? "budget" : "fixed",
     role: roleOfPredicate(predicate),
-    muted: false,
+    muted: rule.suppressed,
     predicateIndex: row.predicateIndex,
+  };
+}
+
+/**
+ * A standard check nothing in the list authors yet: off, with the preset's
+ * criterion and role shown so switching it on is not a surprise.
+ */
+function presetTableRow(check: AssertionCheck): ScorerTableRow {
+  const { preset } = check;
+  return {
+    id: `preset:${check.id}`,
+    kind: "preset",
+    enabled: false,
+    family: { id: check.id, label: check.label, suiteRules: 0 },
+    preset,
+    name: formatCriterion({ predicate: preset }),
+    kindLabel: predicateKindLabel(preset),
+    threshold: hasAuthoredThreshold(preset) ? budgetThreshold(preset) : "1",
+    thresholdKind: "none",
+    role: roleOfPredicate(preset),
+    muted: true,
   };
 }
 
 function judgeTableRow(
   row: GraderRow,
   judgeConfig: EvalJudgeConfig | undefined,
+  judgeEnabled: boolean,
 ): ScorerTableRow {
   const slot: JudgeSlot = row.judgeSlot ?? "goalCompletion";
   if (slot === "groundedness") {
     return {
       id: row.id,
       kind: "judge",
+      enabled: true,
       name: row.label,
       kindLabel: "Judge",
       threshold: "",
@@ -444,6 +525,7 @@ function judgeTableRow(
   return {
     id: row.id,
     kind: "judge",
+    enabled: judgeEnabled,
     name: row.label,
     kindLabel: "Judge",
     threshold: threshold === undefined ? "" : String(threshold),
@@ -454,18 +536,39 @@ function judgeTableRow(
   };
 }
 
+/**
+ * The standard checks of this stage nothing lists yet, as off rows.
+ *
+ * A suppressed suite rule is still a listed row of its kind, so its family
+ * gets no second, preset row: the person sees the rule they turned off, not
+ * a fresh copy of the catalog entry beside it.
+ */
+function presetRowsForStage(
+  stage: UserValueStage,
+  listed: ScorerTableRow[],
+): ScorerTableRow[] {
+  const listedFamilies = new Set(
+    listed.flatMap((row) => (row.family ? [row.family.id] : [])),
+  );
+  return STANDARD_ASSERTION_CHECKS.filter(
+    (check) => check.stage === stage && !listedFamilies.has(check.id),
+  ).map(presetTableRow);
+}
+
 function rowsForStage(
   stage: UserValueStage,
   model: SuiteGradingModel,
-  predicates: Predicate[],
+  rules: EffectiveRule[],
   judgeConfig: EvalJudgeConfig | undefined,
+  judgeEnabled: boolean,
+  listPresets: boolean,
 ): ScorerTableRow[] {
   const authored = model.byStage[stage];
   const rows: ScorerTableRow[] = [];
 
   if (stage === "connection" || stage === "discovery") {
     rows.push(observedRow(stage));
-    return rows;
+    if (stage === "connection") return rows;
   }
 
   if (stage === "call") {
@@ -476,28 +579,29 @@ function rowsForStage(
     else rows.push(observedRow(stage));
     for (const row of authored) {
       if (row.kind === "predicate") {
-        const next = predicateTableRow(row, predicates);
+        const next = predicateTableRow(row, rules);
         if (next) rows.push(next);
       }
     }
-    return rows;
+    return listPresets ? [...rows, ...presetRowsForStage(stage, rows)] : rows;
   }
 
   for (const row of authored) {
     if (row.kind === "match") rows.push(matchTableRow(row));
     else if (row.kind === "predicate") {
-      const next = predicateTableRow(row, predicates);
+      const next = predicateTableRow(row, rules);
       if (next) rows.push(next);
     } else if (row.kind === "judge") {
-      rows.push(judgeTableRow(row, judgeConfig));
+      rows.push(judgeTableRow(row, judgeConfig, judgeEnabled));
     }
   }
 
-  if (rows.length === 0 && !stageEmptyIsGap(stage)) {
+  const presets = listPresets ? presetRowsForStage(stage, rows) : [];
+  if (rows.length === 0 && presets.length === 0 && !stageEmptyIsGap(stage)) {
     rows.push(observedRow(stage));
   }
 
-  return rows;
+  return [...rows, ...presets];
 }
 
 function configCard(state: StageConfigState, index: number): StageCardView {
@@ -525,24 +629,55 @@ function configCard(state: StageConfigState, index: number): StageCardView {
 /**
  * The table and the chain cards, from the same grading model.
  *
+ * `model` must be grouped over `predicates` in order — row indexes point into
+ * that list. `rules` carries each predicate's source and suppression; absent,
+ * every predicate is the suite's own. `activeModel` is grouped over only the
+ * rules that will run, for the cards: a suppressed rule is listed but must
+ * not be counted as a gate or a warn.
+ *
  * `judgeCapabilities` is accepted so a later slice can hide a judge slot
  * the deployment does not run; this release always lists goal completion.
  */
 export function buildScorerTable(input: {
   model: SuiteGradingModel;
   predicates: Predicate[];
+  rules?: EffectiveRule[];
+  activeModel?: SuiteGradingModel;
   judgeConfig?: EvalJudgeConfig;
+  /** Overrides the judge row's On state; a case's judge-skipped flag. */
+  judgeEnabled?: boolean;
   judgeCapabilities?: SuiteCapabilities["judge"];
+  /** List the standard checks nothing authors yet as off rows. Default on. */
+  listPresets?: boolean;
 }): ScorerTableView {
   void input.judgeCapabilities;
+  const rules =
+    input.rules ??
+    input.predicates.map((predicate, index): EffectiveRule => ({
+      predicate,
+      source: "suite",
+      index,
+      suppressed: false,
+    }));
+  // A case can skip the judge, never switch on one the suite turned off.
+  const configuredMode = judgeMode(input.judgeConfig);
+  const judgeEnabled = configuredMode !== "off" && (input.judgeEnabled ?? true);
+  const mode: JudgeMode = judgeEnabled ? configuredMode : "off";
   const groups = USER_VALUE_STAGES.map((stage, index) => ({
     stage,
     ordinal: String(index + 1).padStart(2, "0"),
     label: USER_VALUE_STAGE_LABELS[stage],
     question: USER_VALUE_STAGE_QUESTIONS[stage],
-    rows: rowsForStage(stage, input.model, input.predicates, input.judgeConfig),
+    rows: rowsForStage(
+      stage,
+      input.model,
+      rules,
+      input.judgeConfig,
+      judgeEnabled,
+      input.listPresets ?? true,
+    ),
   }));
-  const states = stageConfigStates(input.model, judgeMode(input.judgeConfig));
+  const states = stageConfigStates(input.activeModel ?? input.model, mode);
   const cards = states.map((state, index) => configCard(state, index));
   return { groups, cards };
 }

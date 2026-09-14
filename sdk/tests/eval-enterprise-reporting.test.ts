@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   normalizeReportingConfig,
   buildReportingBody,
@@ -16,6 +16,12 @@ const executor = (): HostExecutor =>
     getPromptHistory: () => [],
     resetPromptHistory: () => {},
   }) as unknown as HostExecutor;
+beforeEach(() => {
+  vi.stubGlobal("process", {
+    ...process,
+    env: { MCPJAM_GIT_AUTODETECT: "false" },
+  });
+});
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();

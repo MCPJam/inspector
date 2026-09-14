@@ -60,194 +60,202 @@ export type ArgMatcher = {
  * any kind can be marked advisory (`role: "advisory"`, `severity: "warn"`)
  * without a parallel field.
  */
-export type Predicate =
+export type Predicate = (
+  | { type: "toolDescriptionsPresent"; minLength?: number }
+  | {
+      type: "toolAnnotationsPresent";
+      require?: ("readOnlyHint" | "destructiveHint")[];
+    }
+  | { type: "toolNamesUnique" }
+  | { type: "noDeprecatedToolExposed" }
+  | { type: "toolInputSchemasWellFormed" }
+  | { type: "toolOutputSchemasPresent" }
   /** A call to `toolName` whose args satisfy `args` occurred at least `minCount` (default 1) times. */
-  (
-    | {
-        type: "toolCalledWith";
-        toolName: string;
-        args: ArgMatcher;
-        minCount?: number;
-      }
-    /** `toolName` was called at least once (args irrelevant). */
-    | { type: "toolCalledAtLeastOnce"; toolName: string }
-    /** `toolName` was never called (forbidden tool). */
-    | { type: "toolNeverCalled"; toolName: string }
-    /**
-     * No tool OUTSIDE `toolNames` was called.
-     *
-     * Subset semantics: it says nothing about whether the listed tools WERE
-     * called (`toolCalledAtLeastOnce` says that), only that nothing else was.
-     * An EMPTY list means no tool at all was called — the negative case, as a
-     * check that can be turn-scoped and can carry a role.
-     */
-    | { type: "onlyToolsCalled"; toolNames: string[] }
-    /** The first tool call observed in the transcript was `toolName`. */
-    | { type: "firstToolWas"; toolName: string }
-    /** The final assistant message contains `needle`. Case-insensitive unless `caseSensitive`. */
-    | {
-        type: "responseCloseTo";
-        reference: string;
-        maxDistance: number;
-        caseSensitive?: boolean;
-        normalizeWhitespace?: boolean;
-      }
-    | { type: "responseContains"; needle: string; caseSensitive?: boolean }
-    /** The final assistant message matches the regular expression `pattern` (regex source, no flags). */
-    | { type: "responseMatches"; pattern: string }
-    /** No tool produced an error (neither MCP `isError: true` nor a JSON-RPC/transport failure). */
-    | { type: "noToolErrors" }
-    /** The final assistant message is a non-empty (non-whitespace) string. */
-    | { type: "finalAssistantMessageNonEmpty" }
-    /** Total token usage for the iteration is strictly under `tokens`. */
-    | { type: "tokenBudgetUnder"; tokens: number }
-    /**
-     * At least one widget render observation (narrowed to `toolName` when set)
-     * has `status === "rendered"`. Fails closed when the iteration recorded no
-     * render observations in scope.
-     */
-    | { type: "widgetRendered"; toolName?: string }
-    /**
-     * Every rendered widget observation (narrowed to `toolName` when set) mounted
-     * in strictly under `ms` milliseconds. Fails closed when no observation in
-     * scope rendered — an unrendered widget has no latency to attest.
-     */
-    | { type: "widgetRenderLatencyUnder"; ms: number; toolName?: string }
-    /**
-     * No widget render observation (narrowed to `toolName` when set) captured
-     * console errors. Fails closed when the iteration recorded no render
-     * observations in scope.
-     */
-    | { type: "widgetNoConsoleErrors"; toolName?: string }
-    /**
-     * The iteration used STRICTLY FEWER than `turns` user turns.
-     *
-     * A "turn" is one user-role message in the transcript, so this expresses
-     * "resolved in under N turns" without conflating it with a run's `maxTurns`
-     * cap — that bounds the agent loop, this grades the outcome. Fails closed
-     * when the transcript carries no turn count: an unmeasured budget is not a
-     * met budget.
-     */
-    | { type: "turnCountUnder"; turns: number }
-    /**
-     * OBSERVATION. The final assistant message does not end with a question.
-     *
-     * What it sees is exactly what it says: the last non-empty line of the final
-     * message, and whether it ends in `?`. It does NOT distinguish an answer that
-     * stopped to ask for a missing parameter from a complete answer that ends by
-     * offering more ("Would you like a breakdown?"), and the label must never
-     * call it "clarifying". Report-only for that reason; the corpus holds both
-     * shapes.
-     */
-    | { type: "noEndingQuestion" }
-    /**
-     * Every observed call in scope settled in strictly under `ms`.
-     *
-     * MEASUREMENT against an author-set threshold, so it may gate. Latency alone
-     * is never a verdict: nothing derives one from a duration unless the author
-     * wrote the ceiling down here.
-     *
-     * `status: "error"` — never a pass, never a fail — when the capture carries
-     * no timing for the calls in scope. A harness that narrated its calls has no
-     * measurement to attest, and an unmeasured budget is not a met budget.
-     */
-    | { type: "toolLatencyUnder"; ms: number; toolName?: string }
-    /** A tool result in scope contains `needle`. Case-insensitive unless set. */
-    | {
-        type: "toolResultContains";
-        needle: string;
-        caseSensitive?: boolean;
-        toolName?: string;
-      }
-    /**
-     * Every tool result in scope validates against the authored JSON Schema.
-     *
-     * Any JSON root: protocol 2026-07-28 dropped 2025-11-25's object-only
-     * restriction on `structuredContent`, so requiring an object here would fail
-     * servers that are correct under the current spec.
-     */
-    | { type: "toolResultMatchesSchema"; schema: unknown; toolName?: string }
-    /**
-     * Every tool result in scope is strictly under `maxBytes`.
-     *
-     * Graded on what the SERVER returned, measured before our own storage cap —
-     * see {@link TranscriptToolResultSize}. Bytes, not tokens: tokens are an
-     * estimate and a budget must be graded on a measurement.
-     */
-    | { type: "toolResultSizeUnder"; maxBytes: number; toolName?: string }
-    /**
-     * Every observed call's arguments validate against the tool's DECLARED
-     * `inputSchema`.
-     *
-     * Deterministic validation of the server's own contract, so it may gate.
-     * Violations are classified — a missing required property, a wrong type, a
-     * value outside an enum, a key a closed schema forbids — because those are
-     * four different notes to a server developer.
-     *
-     * WHAT IT DOES NOT DO: schema validity does not establish that the arguments
-     * match the user's intent. A search for closed web tickets when the user
-     * asked about open mobile bugs is schema-perfect. Semantic mismatch stays a
-     * judged question.
-     */
-    | { type: "argumentsMatchToolSchema"; toolName?: string }
-    /**
-     * OBSERVATION. No call repeated the one immediately before it with equal
-     * arguments.
-     *
-     * A poll loop and a retry after a transient failure are both exactly this
-     * shape, and both are correct. Report-only for that reason; the corpus holds
-     * both counterexamples.
-     */
-    | { type: "noRepeatedIdenticalCall"; toolName?: string }
-    /** Strictly fewer than `count` calls in scope. Measurement vs a ceiling. */
-    | { type: "toolCallCountUnder"; count: number; toolName?: string }
-    /**
-     * Every call to `beforeToolName` was preceded by a call to `toolName`.
-     *
-     * Deterministic validation of an authored route. Vacuously true when
-     * `beforeToolName` never ran — the rule has nothing to violate.
-     */
-    | { type: "toolCalledBefore"; toolName: string; beforeToolName: string }
-    /**
-     * OBSERVATION. No called tool's own description marks it deprecated.
-     *
-     * A regex over a description is a heuristic: "Replaces the deprecated
-     * `old_search` tool" describes a CURRENT tool. Anchored to self-deprecation
-     * to keep that case out, and Report/Warn only because the anchor is still a
-     * guess about prose.
-     */
-    | { type: "noDeprecatedToolCalled" }
-    /**
-     * No called tool declares `annotations.destructiveHint: true`.
-     *
-     * Deterministic validation, not a guess: an annotation is the server's own
-     * DECLARATION. The author asserts the prompt is read-only by adding this
-     * check; the predicate only reads the hint. `status: "error"` when no tool
-     * in the inventory carries annotations at all — a pass there would read as
-     * "nothing destructive was called".
-     */
-    | { type: "noDestructiveToolCalled" }
-    /**
-     * OBSERVATION. Every tool error message names one of that tool's input keys,
-     * or a value the call actually sent.
-     *
-     * NOT a measure of recovery quality. "Rate limited. Retry in 30 seconds." is
-     * exactly what a good error looks like and names nothing; naming an input
-     * would add nothing to it. The label says what was seen — "a tool error did
-     * not name an input" — and the quality question stays with the judge.
-     */
-    | { type: "toolErrorNamesInput"; toolName?: string }
-    /**
-     * OBSERVATION. A page whose length equals its requested limit carries
-     * recognized continuation metadata.
-     *
-     * A FULL PAGE IS NOT PROOF MORE RESULTS EXIST — 25 of 25 may be all there
-     * is. The label therefore reads "a full page carried no continuation
-     * metadata" and never "truncated".
-     */
-    | { type: "fullPageHasContinuation"; toolName?: string }
-  ) &
-    CheckPolicy;
+  | {
+      type: "toolCalledWith";
+      toolName: string;
+      args: ArgMatcher;
+      minCount?: number;
+    }
+  /** `toolName` was called at least once (args irrelevant). */
+  | { type: "toolCalledAtLeastOnce"; toolName: string }
+  /** `toolName` was never called (forbidden tool). */
+  | { type: "toolNeverCalled"; toolName: string }
+  /**
+   * No tool OUTSIDE `toolNames` was called.
+   *
+   * Subset semantics: it says nothing about whether the listed tools WERE
+   * called (`toolCalledAtLeastOnce` says that), only that nothing else was.
+   * An EMPTY list means no tool at all was called — the negative case, as a
+   * check that can be turn-scoped and can carry a role.
+   */
+  | { type: "onlyToolsCalled"; toolNames: string[] }
+  /** The first tool call observed in the transcript was `toolName`. */
+  | { type: "firstToolWas"; toolName: string }
+  /** The final assistant message contains `needle`. Case-insensitive unless `caseSensitive`. */
+  | {
+      type: "responseCloseTo";
+      reference: string;
+      maxDistance: number;
+      caseSensitive?: boolean;
+      normalizeWhitespace?: boolean;
+    }
+  | { type: "responseContains"; needle: string; caseSensitive?: boolean }
+  /** The final assistant message matches the regular expression `pattern` (regex source, no flags). */
+  | { type: "responseMatches"; pattern: string }
+  /** No tool produced an error (neither MCP `isError: true` nor a JSON-RPC/transport failure). */
+  | { type: "noToolErrors" }
+  /** The final assistant message is a non-empty (non-whitespace) string. */
+  | { type: "finalAssistantMessageNonEmpty" }
+  /** Total token usage for the iteration is strictly under `tokens`. */
+  | { type: "tokenBudgetUnder"; tokens: number }
+  /**
+   * At least one widget render observation (narrowed to `toolName` when set)
+   * has `status === "rendered"`. Fails closed when the iteration recorded no
+   * render observations in scope.
+   */
+  | { type: "widgetRendered"; toolName?: string }
+  /**
+   * Every rendered widget observation (narrowed to `toolName` when set) mounted
+   * in strictly under `ms` milliseconds. Fails closed when no observation in
+   * scope rendered — an unrendered widget has no latency to attest.
+   */
+  | { type: "widgetRenderLatencyUnder"; ms: number; toolName?: string }
+  /**
+   * No widget render observation (narrowed to `toolName` when set) captured
+   * console errors. Fails closed when the iteration recorded no render
+   * observations in scope.
+   */
+  | { type: "widgetNoConsoleErrors"; toolName?: string }
+  /**
+   * The iteration used STRICTLY FEWER than `turns` user turns.
+   *
+   * A "turn" is one user-role message in the transcript, so this expresses
+   * "resolved in under N turns" without conflating it with a run's `maxTurns`
+   * cap — that bounds the agent loop, this grades the outcome. Fails closed
+   * when the transcript carries no turn count: an unmeasured budget is not a
+   * met budget.
+   */
+  | { type: "turnCountUnder"; turns: number }
+  /**
+   * OBSERVATION. The final assistant message does not end with a question.
+   *
+   * What it sees is exactly what it says: the last non-empty line of the final
+   * message, and whether it ends in `?`. It does NOT distinguish an answer that
+   * stopped to ask for a missing parameter from a complete answer that ends by
+   * offering more ("Would you like a breakdown?"), and the label must never
+   * call it "clarifying". Report-only for that reason; the corpus holds both
+   * shapes.
+   */
+  | { type: "noEndingQuestion" }
+  /**
+   * Every observed call in scope settled in strictly under `ms`.
+   *
+   * MEASUREMENT against an author-set threshold, so it may gate. Latency alone
+   * is never a verdict: nothing derives one from a duration unless the author
+   * wrote the ceiling down here.
+   *
+   * `status: "error"` — never a pass, never a fail — when the capture carries
+   * no timing for the calls in scope. A harness that narrated its calls has no
+   * measurement to attest, and an unmeasured budget is not a met budget.
+   */
+  | { type: "toolLatencyUnder"; ms: number; toolName?: string }
+  /** A tool result in scope contains `needle`. Case-insensitive unless set. */
+  | {
+      type: "toolResultContains";
+      needle: string;
+      caseSensitive?: boolean;
+      toolName?: string;
+    }
+  /**
+   * Every tool result in scope validates against the authored JSON Schema.
+   *
+   * Any JSON root: protocol 2026-07-28 dropped 2025-11-25's object-only
+   * restriction on `structuredContent`, so requiring an object here would fail
+   * servers that are correct under the current spec.
+   */
+  | { type: "toolResultMatchesSchema"; schema: unknown; toolName?: string }
+  /**
+   * Every tool result in scope is strictly under `maxBytes`.
+   *
+   * Graded on what the SERVER returned, measured before our own storage cap —
+   * see {@link TranscriptToolResultSize}. Bytes, not tokens: tokens are an
+   * estimate and a budget must be graded on a measurement.
+   */
+  | { type: "toolResultSizeUnder"; maxBytes: number; toolName?: string }
+  /**
+   * Every observed call's arguments validate against the tool's DECLARED
+   * `inputSchema`.
+   *
+   * Deterministic validation of the server's own contract, so it may gate.
+   * Violations are classified — a missing required property, a wrong type, a
+   * value outside an enum, a key a closed schema forbids — because those are
+   * four different notes to a server developer.
+   *
+   * WHAT IT DOES NOT DO: schema validity does not establish that the arguments
+   * match the user's intent. A search for closed web tickets when the user
+   * asked about open mobile bugs is schema-perfect. Semantic mismatch stays a
+   * judged question.
+   */
+  | { type: "argumentsMatchToolSchema"; toolName?: string }
+  /**
+   * OBSERVATION. No call repeated the one immediately before it with equal
+   * arguments.
+   *
+   * A poll loop and a retry after a transient failure are both exactly this
+   * shape, and both are correct. Report-only for that reason; the corpus holds
+   * both counterexamples.
+   */
+  | { type: "noRepeatedIdenticalCall"; toolName?: string }
+  /** Strictly fewer than `count` calls in scope. Measurement vs a ceiling. */
+  | { type: "toolCallCountUnder"; count: number; toolName?: string }
+  /**
+   * Every call to `beforeToolName` was preceded by a call to `toolName`.
+   *
+   * Deterministic validation of an authored route. Vacuously true when
+   * `beforeToolName` never ran — the rule has nothing to violate.
+   */
+  | { type: "toolCalledBefore"; toolName: string; beforeToolName: string }
+  /**
+   * OBSERVATION. No called tool's own description marks it deprecated.
+   *
+   * A regex over a description is a heuristic: "Replaces the deprecated
+   * `old_search` tool" describes a CURRENT tool. Anchored to self-deprecation
+   * to keep that case out, and Report/Warn only because the anchor is still a
+   * guess about prose.
+   */
+  | { type: "noDeprecatedToolCalled" }
+  /**
+   * No called tool declares `annotations.destructiveHint: true`.
+   *
+   * Deterministic validation, not a guess: an annotation is the server's own
+   * DECLARATION. The author asserts the prompt is read-only by adding this
+   * check; the predicate only reads the hint. `status: "error"` when no tool
+   * in the inventory carries annotations at all — a pass there would read as
+   * "nothing destructive was called".
+   */
+  | { type: "noDestructiveToolCalled" }
+  /**
+   * OBSERVATION. Every tool error message names one of that tool's input keys,
+   * or a value the call actually sent.
+   *
+   * NOT a measure of recovery quality. "Rate limited. Retry in 30 seconds." is
+   * exactly what a good error looks like and names nothing; naming an input
+   * would add nothing to it. The label says what was seen — "a tool error did
+   * not name an input" — and the quality question stays with the judge.
+   */
+  | { type: "toolErrorNamesInput"; toolName?: string }
+  /**
+   * OBSERVATION. A page whose length equals its requested limit carries
+   * recognized continuation metadata.
+   *
+   * A FULL PAGE IS NOT PROOF MORE RESULTS EXIST — 25 of 25 may be all there
+   * is. The label therefore reads "a full page carried no continuation
+   * metadata" and never "truncated".
+   */
+  | { type: "fullPageHasContinuation"; toolName?: string }
+) &
+  CheckPolicy;
 
 /** The `type` discriminants of {@link Predicate}, for validators. */
 export type PredicateType = Predicate["type"];
@@ -313,7 +321,7 @@ export const RENDER_OBSERVATION_PREDICATE_KINDS = [
 
 export function requiresRenderObservations(kind: string): boolean {
   return (RENDER_OBSERVATION_PREDICATE_KINDS as readonly string[]).includes(
-    kind,
+    kind
   );
 }
 
@@ -336,6 +344,7 @@ export function requiresRenderObservations(kind: string): boolean {
  * (`OBSERVATION_PREDICATE_KINDS`) and proven by the shared parity fixtures.
  */
 export const OBSERVATION_PREDICATE_KINDS = [
+  "noDeprecatedToolExposed",
   "noEndingQuestion",
   "noRepeatedIdenticalCall",
   "noDeprecatedToolCalled",
@@ -424,6 +433,33 @@ const checkPolicyShape = {
  */
 export const predicateUnion = z.discriminatedUnion("type", [
   z.object({
+    type: z.literal("toolDescriptionsPresent"),
+    minLength: z.number().int().positive().optional(),
+    ...checkPolicyShape,
+  }),
+  z.object({
+    type: z.literal("toolAnnotationsPresent"),
+    require: z
+      .array(z.enum(["readOnlyHint", "destructiveHint"]))
+      .max(2)
+      .refine(
+        (keys) => new Set(keys).size === keys.length,
+        "Annotation keys must be unique"
+      )
+      .optional(),
+    ...checkPolicyShape,
+  }),
+  z.object({ type: z.literal("toolNamesUnique"), ...checkPolicyShape }),
+  z.object({ type: z.literal("noDeprecatedToolExposed"), ...checkPolicyShape }),
+  z.object({
+    type: z.literal("toolInputSchemasWellFormed"),
+    ...checkPolicyShape,
+  }),
+  z.object({
+    type: z.literal("toolOutputSchemasPresent"),
+    ...checkPolicyShape,
+  }),
+  z.object({
     type: z.literal("toolCalledWith"),
     toolName: z.string().min(1),
     args: argMatcherSchema,
@@ -481,7 +517,7 @@ export const predicateUnion = z.discriminatedUnion("type", [
             return false;
           }
         },
-        { message: "Invalid regular expression" },
+        { message: "Invalid regular expression" }
       ),
     ...checkPolicyShape,
   }),
@@ -547,7 +583,7 @@ export const predicateUnion = z.discriminatedUnion("type", [
       .unknown()
       .refine(
         (value) => canonicalSize(value) <= MAX_SCHEMA_BYTES,
-        `schema must canonicalize to at most ${MAX_SCHEMA_BYTES} bytes`,
+        `schema must canonicalize to at most ${MAX_SCHEMA_BYTES} bytes`
       ),
     toolName: z.string().min(1).optional(),
     ...checkPolicyShape,
@@ -834,12 +870,21 @@ export type TranscriptToolInventoryEntry = {
  * decides whether a check reports a scored absence or an error. "Zero calls
  * were made" is a measurement; "we did not record the calls" is not.
  */
+/** One raw tools/list declaration, before name merging or aliasing. */
+export type TranscriptToolDeclaration = TranscriptToolInventoryEntry & {
+  /** Stable identity of the server in the selected run target. */
+  serverKey: string;
+  outputSchema?: unknown;
+};
+
 export type TranscriptCaptureState = "complete" | "partial" | "absent";
 
 export type TranscriptCapture = {
   toolResults: TranscriptCaptureState;
   toolCallTimings: TranscriptCaptureState;
   toolInventory: TranscriptCaptureState;
+  /** Older producers omit this channel and cannot establish discovery checks. */
+  toolDeclarations?: TranscriptCaptureState;
 };
 
 /**
@@ -876,6 +921,8 @@ export type IterationTranscript = {
   toolCallTimings?: TranscriptToolCallTiming[];
   /** The tools advertised to the model this iteration. See {@link capture}. */
   toolInventory?: TranscriptToolInventoryEntry[];
+  /** Complete raw catalog snapshot for each selected server, including pages. */
+  toolDeclarations?: TranscriptToolDeclaration[];
   /**
    * Whether each evidence channel above was fully captured.
    *

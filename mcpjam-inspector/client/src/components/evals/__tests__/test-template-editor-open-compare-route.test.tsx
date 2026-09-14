@@ -1034,7 +1034,7 @@ describe("TestTemplateEditor run view from route", () => {
     activeCaseDoc = goldenCaseDoc;
     renderGoldenCase({ observeFirst: true, checksPage: true });
     fireEvent.click(
-      await screen.findByRole("checkbox", { name: "Outcome achieved" }),
+      await screen.findByRole("checkbox", { name: "Goal completion judge" }),
     );
     fireEvent.click(screen.getByRole("button", { name: "Save overrides" }));
     await waitFor(() => expect(updateTestCaseMutationMock).toHaveBeenCalled());

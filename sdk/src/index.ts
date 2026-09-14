@@ -922,6 +922,7 @@ export type {
   EvalExpectedToolCall,
   EvalCiMetadata,
   EvalReportingReceipt,
+  EvalReportingWarning,
   EvalTraceInput,
   EvalTraceSpanCategory,
   EvalTraceSpanInput,

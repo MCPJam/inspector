@@ -9,7 +9,7 @@ export const RESPONSE_CLOSE_TO_IMPLEMENTATION = {
 } as const;
 export function normalizeCloseToText(
   value: string,
-  options: { caseSensitive?: boolean; normalizeWhitespace?: boolean },
+  options: { caseSensitive?: boolean; normalizeWhitespace?: boolean }
 ): string {
   let text = options.caseSensitive ? value : value.toLowerCase();
   if (options.normalizeWhitespace) text = text.replace(/\s+/gu, " ").trim();
@@ -19,7 +19,7 @@ export function normalizeCloseToText(
 export function normalizedResponseDistance(
   message: string,
   reference: string,
-  options: { caseSensitive?: boolean; normalizeWhitespace?: boolean },
+  options: { caseSensitive?: boolean; normalizeWhitespace?: boolean }
 ): number {
   if (
     message.length > MAX_RESPONSE_CLOSE_TO_CHARS ||
@@ -35,15 +35,38 @@ export function normalizedResponseDistance(
     right.length > MAX_RESPONSE_CLOSE_TO_CHARS
   )
     throw new Error(
-      "responseCloseTo normalized input exceeds the linear input limit",
+      "responseCloseTo normalized input exceeds the linear input limit"
     );
-  const a = Array.from(left),
-    b = Array.from(right);
+  if (left === right) return 0;
+  const leftPoints = Array.from(left),
+    rightPoints = Array.from(right);
+  const denominator = Math.max(leftPoints.length, rightPoints.length);
+  // Equal outer spans do not contribute to edit distance. Keep the original
+  // denominator: trimming is a work optimization, never score normalization.
+  let start = 0,
+    leftEnd = leftPoints.length,
+    rightEnd = rightPoints.length;
+  while (
+    start < leftEnd &&
+    start < rightEnd &&
+    leftPoints[start] === rightPoints[start]
+  )
+    start++;
+  while (
+    leftEnd > start &&
+    rightEnd > start &&
+    leftPoints[leftEnd - 1] === rightPoints[rightEnd - 1]
+  ) {
+    leftEnd--;
+    rightEnd--;
+  }
+  const a = leftPoints.slice(start, leftEnd),
+    b = rightPoints.slice(start, rightEnd);
+  if (!a.length || !b.length) return Math.max(a.length, b.length) / denominator;
   if (a.length * b.length > MAX_RESPONSE_CLOSE_TO_CELLS)
     throw new Error(
-      "responseCloseTo exceeds the 4000000-cell computation limit",
+      "responseCloseTo exceeds the 4000000-cell computation limit"
     );
-  if (a.length === 0) return 1;
   // Allocate only the shorter row; the work cap is checked before these arrays.
   const rows = a.length >= b.length ? a : b,
     columns = a.length >= b.length ? b : a;
@@ -55,9 +78,9 @@ export function normalizedResponseDistance(
       current[j] = Math.min(
         previous[j] + 1,
         current[j - 1] + 1,
-        previous[j - 1] + (rows[i - 1] === columns[j - 1] ? 0 : 1),
+        previous[j - 1] + (rows[i - 1] === columns[j - 1] ? 0 : 1)
       );
     [previous, current] = [current, previous];
   }
-  return previous[columns.length] / Math.max(a.length, b.length);
+  return previous[columns.length] / denominator;
 }

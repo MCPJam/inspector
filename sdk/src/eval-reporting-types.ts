@@ -140,11 +140,14 @@ export type MCPServerReplayConfig = {
 };
 
 export type MCPJamReportingConfig = {
+  /** Explicitly end a partial run without certifying its incomplete population. Requires target termination support. */
+  terminalStatus?: "cancelled" | "timed_out";
   enabled?: boolean;
   /** Local transport controls; never included in the reporting payload. */
   transport?: {
     signal?: AbortSignal;
     timeoutMs?: number;
+    /** Budget for one HTTP request including retries/body; each chunk has its own budget. */
     operationTimeoutMs?: number;
     maxResponseBytes?: number;
     maxRequestBytes?: number;
@@ -273,7 +276,18 @@ export type ReportEvalResultsInput = MCPJamReportingConfig & {
   mcpClientManager?: MCPClientManager;
 };
 
+/** Optional evidence omitted without changing core iteration persistence. */
+export type EvalReportingWarning = {
+  code:
+    | "RUN_METADATA_OMITTED"
+    | "RUN_EVALUATIONS_OMITTED"
+    | "RUN_EVALUATIONS_NOT_CONFIRMED";
+  message: string;
+};
+
 export type ReportEvalResultsOutput = {
+  /** Core run persisted; these optional additions were not stored or confirmed. */
+  warnings?: EvalReportingWarning[];
   /** Link derived only from validated hosted identity. */
   url?: string;
   suiteId: string;
@@ -341,6 +355,7 @@ export type EvalReportingReceipt = {
   acknowledgedIterations: number | null;
   pendingIterations: number | null;
   report?: ReportEvalResultsOutput;
+  warnings?: EvalReportingWarning[];
   error?: { code: string; message: string };
   reason?: "disabled" | "missing_api_key";
 };

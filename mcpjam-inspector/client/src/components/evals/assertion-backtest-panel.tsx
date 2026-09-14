@@ -17,6 +17,17 @@ export function AssertionBacktestPanel({
   const [report, setReport] = useState<EvalBacktestReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const [cooldownUntil, setCooldownUntil] = useState(0);
+  const [coolingDown, setCoolingDown] = useState(false);
+  useEffect(() => {
+    const remaining = cooldownUntil - Date.now();
+    setCoolingDown(remaining > 0);
+    if (remaining > 0) {
+      const timer = setTimeout(() => setCoolingDown(false), remaining);
+      return () => clearTimeout(timer);
+    }
+  }, [cooldownUntil]);
+  useEffect(() => setCooldownUntil(0), [projectId, runId]);
   const request = useRef<AbortController | null>(null);
   const fingerprint = JSON.stringify({ projectId, runId, assertions });
   useEffect(() => {
@@ -26,13 +37,15 @@ export function AssertionBacktestPanel({
     setPending(false);
     return () => request.current?.abort();
   }, [fingerprint]);
-  async function preview() {
+  async function preview(more = false) {
     if (!projectId || !runId) return;
+    const previous = more ? report : null;
+    if (more && !previous?.continuation) return;
     const controller = new AbortController();
     request.current?.abort();
     request.current = controller;
     setPending(true);
-    setReport(null);
+    if (!more) setReport(null);
     setError(null);
     try {
       const response = await authFetch(
@@ -44,11 +57,25 @@ export function AssertionBacktestPanel({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             assertions: { mode: "replace", list: assertions },
+            ...(previous?.continuation
+              ? { continuation: previous.continuation }
+              : {}),
           }),
           signal: controller.signal,
         },
       );
       const body = await response.json();
+      if (controller.signal.aborted) return;
+      if (response.status === 429) {
+        const seconds = Number(response.headers?.get("Retry-After") ?? 60);
+        setCooldownUntil(
+          Date.now() +
+            1000 *
+              (Number.isFinite(seconds)
+                ? Math.max(0, Math.min(seconds, 600))
+                : 60),
+        );
+      }
       if (!response.ok)
         throw new Error(
           body.message ?? body.error?.message ?? "The preview could not run",
@@ -61,7 +88,41 @@ export function AssertionBacktestPanel({
         !Array.isArray(result.differences)
       )
         throw new Error("The preview returned an unsupported response");
-      if (!controller.signal.aborted) setReport(result);
+      if (controller.signal.aborted) return;
+      if (!more) setCooldownUntil(Date.now() + 60_000);
+      if (previous) {
+        if (
+          previous.sourceHash !== result.sourceHash ||
+          previous.draftHash !== result.draftHash
+        )
+          throw new Error("Preview source changed; start a new preview");
+        const seen = new Set(
+          previous.differences.map(
+            (row) => `${row.iterationId}:${row.evaluatorId}`,
+          ),
+        );
+        if (
+          result.differences.some((row) =>
+            seen.has(`${row.iterationId}:${row.evaluatorId}`),
+          )
+        )
+          throw new Error("Preview returned duplicate evidence");
+        const counts = {
+          iterations: previous.counts.iterations + result.counts.iterations,
+          comparable: previous.counts.comparable + result.counts.comparable,
+          ungradable: previous.counts.ungradable + result.counts.ungradable,
+          flipped: previous.counts.flipped + result.counts.flipped,
+        };
+        setReport({
+          ...result,
+          counts,
+          complete:
+            !result.continuationAvailable &&
+            counts.ungradable === 0 &&
+            counts.comparable > 0,
+          differences: [...previous.differences, ...result.differences],
+        });
+      } else setReport(result);
     } catch (caught) {
       if (!controller.signal.aborted)
         setError(
@@ -92,12 +153,24 @@ export function AssertionBacktestPanel({
           type="button"
           variant="outline"
           size="sm"
-          disabled={pending || !projectId || !runId || assertions.length === 0}
+          disabled={
+            pending ||
+            coolingDown ||
+            !projectId ||
+            !runId ||
+            assertions.length === 0
+          }
           onClick={() => void preview()}
         >
           {pending ? "Previewing…" : "Preview assertions"}
         </Button>
       </div>
+      {coolingDown ? (
+        <p className="text-xs text-muted-foreground">
+          Wait one minute before starting another assertion preview. You can
+          continue this preview below; judge previews have a separate cooldown.
+        </p>
+      ) : null}
       {!runId ? (
         <p className="text-xs text-muted-foreground">
           Finish a run to preview these assertions against captured evidence.
@@ -119,7 +192,18 @@ export function AssertionBacktestPanel({
           {report.continuationAvailable ? (
             <p className="text-xs text-muted-foreground">
               The preview reached its iteration limit. It does not describe the
-              full run.
+              full run.{" "}
+              {report.continuation ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={pending}
+                  onClick={() => void preview(true)}
+                >
+                  Load more evidence
+                </Button>
+              ) : null}
             </p>
           ) : null}
           <ul className="max-h-60 overflow-auto space-y-1 text-xs">

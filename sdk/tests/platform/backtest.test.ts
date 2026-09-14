@@ -42,3 +42,32 @@ it("posts an explicit draft and preserves cancellation", async () => {
   expect(backtestEvalRunOperation.readOnly).toBe(false);
   expect(backtestEvalRunOperation.risk).toBe("none");
 });
+
+it("passes a continuation with the unchanged draft", async () => {
+  const fetch = vi.fn(
+    async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      new Response(JSON.stringify({ schemaVersion: 1 }), { status: 200 })
+  );
+  const client = new PlatformApiClient({
+    baseUrl: "https://example.com/api/v1",
+    getAuth: () => "token",
+    fetch: fetch as typeof globalThis.fetch,
+  });
+  const draft = { assertions: { mode: "inherit" as const, list: [] } };
+  const continuation = {
+    cursor: "next",
+    sourceHash: "source",
+    reservationId: "reservation",
+    draftHash: "draft",
+  };
+  await client.backtestEvalRun({
+    projectId: "project",
+    runId: "run",
+    draft,
+    continuation,
+  });
+  expect(JSON.parse(fetch.mock.calls[0][1]!.body as string)).toEqual({
+    ...draft,
+    continuation,
+  });
+});

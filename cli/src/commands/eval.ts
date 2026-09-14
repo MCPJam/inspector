@@ -4545,12 +4545,17 @@ export function registerEvalCommands(program: Command): void {
         "--json <draft>",
         "Draft JSON (or @file, or -); assertions has mode and list"
       )
+      .option(
+        "--continuation <json>",
+        "Continuation object from the previous preview response"
+      )
   ).action(
     async (
       options: PlatformOptions & {
         project?: string;
         run: string;
         json: string;
+        continuation?: string;
       },
       command
     ) => {
@@ -4560,7 +4565,19 @@ export function registerEvalCommands(program: Command): void {
       );
       const input = validateOpInput(
         backtestEvalRunOperation,
-        { runId: options.run, project: options.project, draft },
+        {
+          runId: options.run,
+          project: options.project,
+          draft,
+          ...(options.continuation
+            ? {
+                continuation: new JsonInputContext().parseJsonInputRecord(
+                  options.continuation,
+                  "--continuation"
+                ),
+              }
+            : {}),
+        },
         { projectOptional: true }
       );
       await executeOp(backtestEvalRunOperation, input, options, command);

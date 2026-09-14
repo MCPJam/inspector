@@ -42,20 +42,10 @@ function setCi(env: NodeJS.ProcessEnv): void {
 describe("CI metadata on SDK upload payloads", () => {
   const fetchMock = vi.fn<typeof fetch>();
   beforeEach(() => {
-    for (const key of new Set(
-      ciFixtures.flatMap((fixture) => Object.keys(fixture.env))
-    )) {
-      vi.stubEnv(key, undefined);
-    }
-    for (const key of [
-      "MCPJAM_GITHUB_EVENT_PAYLOAD",
-      "JENKINS_HOME",
-      "GIT_LOCAL_BRANCH",
-      "GIT_BRANCH",
-      "CI_MERGE_REQUEST_SOURCE_BRANCH_NAME",
-      "CI_COMMIT_REF_NAME",
-    ])
-      vi.stubEnv(key, undefined);
+    vi.stubGlobal("process", {
+      ...process,
+      env: { MCPJAM_GIT_AUTODETECT: "false" },
+    });
     vi.stubEnv("MCPJAM_API_KEY", "sk_test_key");
     vi.stubEnv("MCPJAM_BASE_URL", input.baseUrl);
     fetchMock
@@ -119,7 +109,7 @@ describe("CI metadata on SDK upload payloads", () => {
 
   it.each([
     {},
-    { provider: "custom", commitSha: "custom-ref", branch: "custom" },
+    { provider: "custom", commitSha: "c".repeat(40), branch: "custom" },
   ])(
     "preserves explicit CI %j in direct and incremental uploads",
     async (ci) => {

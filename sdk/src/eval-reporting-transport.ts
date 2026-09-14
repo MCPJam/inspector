@@ -3,7 +3,7 @@ export interface ReportingTransportOptions {
   timeoutMs: number;
   retryDelaysMs: number[];
   operationTimeoutMs?: number;
-  /** Absolute deadline shared by every request in one report/flush operation. */
+  /** Optional caller-provided absolute ceiling, in addition to the per-request budget. */
   deadlineAt?: number;
   signal?: AbortSignal;
   maxResponseBytes?: number;

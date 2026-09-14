@@ -1,3 +1,4 @@
+import { suppressedSuiteStandardCheckIdsSchema } from "@mcpjam/sdk/contract";
 /**
  * Public v1 eval surface: async suite runs + polling reads.
  *
@@ -514,6 +515,8 @@ const publicInlineTestSchema = z
       .optional(),
     matchOptions: matchOptionsSchema.optional(),
     predicates: casePredicatesSchema.optional(),
+    suppressedSuiteStandardCheckIds:
+      suppressedSuiteStandardCheckIdsSchema.optional(),
     ...inlineTestAliasShape,
     ...inlineTestUnsupportedShape,
   })
@@ -562,6 +565,11 @@ function publicInlineTestToRunTest(
       ? { matchOptions: test.matchOptions }
       : {}),
     ...(test.predicates !== undefined ? { predicates: test.predicates } : {}),
+    ...(test.suppressedSuiteStandardCheckIds !== undefined
+      ? {
+          suppressedSuiteStandardCheckIds: test.suppressedSuiteStandardCheckIds,
+        }
+      : {}),
   };
 }
 
@@ -696,6 +704,8 @@ const createEvalSuiteSchema = z.strictObject({
             .optional(),
           matchOptions: matchOptionsSchema.optional(),
           predicates: casePredicatesSchema.optional(),
+          suppressedSuiteStandardCheckIds:
+            suppressedSuiteStandardCheckIdsSchema.optional(),
           ...inlineTestAliasShape,
           ...inlineTestUnsupportedShape,
         })
@@ -847,6 +857,12 @@ function normalizeCreateTestsToRunTests(
         ? { matchOptions: test.matchOptions }
         : {}),
       ...(test.predicates !== undefined ? { predicates: test.predicates } : {}),
+      ...(test.suppressedSuiteStandardCheckIds !== undefined
+        ? {
+            suppressedSuiteStandardCheckIds:
+              test.suppressedSuiteStandardCheckIds,
+          }
+        : {}),
     };
   });
 }
@@ -2189,6 +2205,12 @@ function toCaseDto(testCase: CaseDoc) {
     ...(testCase.matchOptions
       ? { matchOptions: toPublicMatchOptions(testCase.matchOptions) }
       : {}),
+    ...(testCase.suppressedSuiteStandardCheckIds !== undefined
+      ? {
+          suppressedSuiteStandardCheckIds:
+            testCase.suppressedSuiteStandardCheckIds,
+        }
+      : {}),
     ...(testCase.predicates
       ? {
           checks: {
@@ -2687,6 +2709,8 @@ const publicCaseBodyShape = {
     )
     .optional(),
   matchOptions: publicMatchOptionsSchema.nullable().optional(),
+  suppressedSuiteStandardCheckIds:
+    suppressedSuiteStandardCheckIdsSchema.optional(),
   checks: z
     .object({
       mode: z.enum(["inherit", "replace", "extend"]),
@@ -3269,6 +3293,8 @@ function buildCaseMutationArgs(
           opts.forCreate
           ? toInternalMatchOptions(body.matchOptions)
           : mergeMatchOptions(opts.existingMatchOptions, body.matchOptions);
+  if (body.suppressedSuiteStandardCheckIds !== undefined)
+    args.suppressedSuiteStandardCheckIds = body.suppressedSuiteStandardCheckIds;
   if (body.checks !== undefined && !(opts.forCreate && body.checks === null))
     args.predicates =
       body.checks === null

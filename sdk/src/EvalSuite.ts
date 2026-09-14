@@ -140,7 +140,10 @@ export class EvalSuite {
       throw new TypeError("defaults.iterations must be a positive integer");
     this.name = config?.name ?? "EvalSuite";
     this.mcpjamConfig = config?.mcpjam;
-    this.matchOptions = config?.matchOptions === undefined ? undefined : structuredClone(config.matchOptions);
+    this.matchOptions =
+      config?.matchOptions === undefined
+        ? undefined
+        : structuredClone(config.matchOptions);
     assertValidMatchOptions(this.matchOptions ?? {});
   }
 
@@ -301,10 +304,9 @@ export class EvalSuite {
       return await this.runInternal(executor, {
         ...options,
         signal,
-        mcpjam: {
-          ...reporting,
-          transport: { ...reporting?.transport, signal },
-        },
+        // Execution cancellation must still allow its evidence to be persisted.
+        // Only an explicitly authored transport signal cancels reporting.
+        mcpjam: reporting,
       });
     } finally {
       if (timer !== undefined) clearTimeout(timer);

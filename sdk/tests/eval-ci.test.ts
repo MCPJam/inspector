@@ -142,7 +142,7 @@ describe("SDK eval CI detection", () => {
   it("preserves explicit settings and allows opting out with an empty object", () => {
     const ci = Object.freeze({
       provider: "custom",
-      commitSha: "custom-ref",
+      commitSha: "c".repeat(40),
       runUrl: "https://ci.example.com/run",
     });
     expect(resolveEvalCiMetadata(ci, ciFixtures[0].env)).toEqual({
@@ -153,5 +153,11 @@ describe("SDK eval CI detection", () => {
     expect(resolveEvalCiMetadata(undefined, ciFixtures[0].env)).toEqual(
       ciFixtures[0].expected
     );
+  });
+  it("omits malformed explicit commit identity through the same sanitizer", () => {
+    expect(resolveEvalCiMetadata({ commitSha: "not-a-sha" }, {})).toEqual({});
+    expect(
+      resolveEvalCiMetadata({ commitSha: "  " + "d".repeat(40) + "  " }, {})
+    ).toEqual({ commitSha: "d".repeat(40) });
   });
 });

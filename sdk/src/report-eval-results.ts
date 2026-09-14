@@ -7,11 +7,11 @@ import {
 import {
   prepareReportingConfig,
   snapshotReportingInput,
-  AUTO_CI,
   buildReportingBody,
   requiresRunMetadataCapability,
 } from "./eval-reporting-config.js";
 import type {
+  EvalReportingWarning,
   EvalResultInput,
   EvalWidgetSnapshotInput,
   ReportEvalResultsInput,
@@ -49,6 +49,7 @@ export const DEFAULT_MCPJAM_BASE_URL = "https://app.mcpjam.com";
 export const DEFAULT_MCPJAM_PROJECT = "default";
 
 type RuntimeConfig = ReportingTransportOptions & {
+  warnings?: EvalReportingWarning[];
   apiKey: string;
   baseUrl: string;
   project: string;
@@ -842,7 +843,7 @@ async function startEvalRun(
     hostConfigHash?: SdkEvalsWireHostConfig["hostConfigHash"];
   }
 ): Promise<StartRunResponse> {
-  return await requestWithRetry<StartRunResponse>(
+  return await requestStartOrReport<StartRunResponse>(
     config,
     ingestPath(config, "runs/start"),
     payload
@@ -868,6 +869,7 @@ async function finalizeEvalRun(
   payload: {
     runId: string;
     externalRunId: string;
+    terminalStatus?: "cancelled" | "timed_out";
   }
 ): Promise<ReportEvalResultsOutput> {
   return await requestWithRetry<ReportEvalResultsOutput>(
@@ -1101,13 +1103,16 @@ async function reportEvalResultsInternal(
   if (!input.suiteName || input.suiteName.trim().length === 0) {
     throw new Error("suiteName is required");
   }
-  if (!Array.isArray(input.results) || input.results.length === 0) {
+  if (
+    !Array.isArray(input.results) ||
+    (input.results.length === 0 && !input.terminalStatus)
+  ) {
     throw new Error("results must include at least one eval result");
   }
 
   const config = createRuntimeConfig(input);
-  config.deadlineAt = Date.now() + (config.operationTimeoutMs ?? 60_000);
   await requireReportingCapabilities(config, input);
+  const terminalStatus = await resolveTerminationStatus(config, input);
   // Backend stores inline widget evidence after content hashing and authorization.
   // Pre-uploading fresh blob IDs would change identical retry payloads.
   const uploadedResults = input.results;
@@ -1129,6 +1134,7 @@ async function reportEvalResultsInternal(
     : {};
 
   if (
+    !terminalStatus &&
     shouldUseOneShotUpload(
       {
         ...input,
@@ -1139,7 +1145,7 @@ async function reportEvalResultsInternal(
       config
     )
   ) {
-    const oneShot = await requestWithRetry<ReportEvalResultsOutput>(
+    const oneShot = await requestStartOrReport<ReportEvalResultsOutput>(
       config,
       ingestPath(config, "report"),
       {
@@ -1200,6 +1206,7 @@ async function reportEvalResultsInternal(
   const finalized = await finalizeEvalRun(config, {
     runId: start.runId,
     externalRunId,
+    ...(terminalStatus ? { terminalStatus } : {}),
   });
   printRunUrl(config, finalized);
   return finishReportedRun(config, input, finalized);
@@ -1263,32 +1270,22 @@ export async function requireReportingCapabilities(
     | import("./eval-reporting-types.js").MCPJamReportingConfig
 ): Promise<void> {
   if (!requiresRunMetadataCapability(input)) return;
-  const onlyAutomatic =
-    (input as { [AUTO_CI]?: boolean })[AUTO_CI] &&
-    input.runName === undefined &&
-    input.runTags === undefined &&
-    input.runMetadata === undefined &&
-    input.ci?.pullRequestNumber === undefined;
   try {
     const response = await requestWithRetry<{
       capabilities: { evalsRunMetadata?: number };
     }>(config, ingestPath(config, "capabilities"), {});
     if (response.capabilities.evalsRunMetadata === 1) return;
   } catch (error) {
-    if (!onlyAutomatic) throw error;
+    // Optional compatibility probing cannot discard the core run. An explicit
+    // upload cancellation still stops work immediately.
+    if (config.signal?.aborted) throw error;
   }
-  if (onlyAutomatic) {
-    input.ci = { ...input.ci };
-    delete input.ci.dirty;
-    console.warn(
-      "[mcpjam/sdk] Automatic worktree state omitted: target run-metadata support was not confirmed."
-    );
-    return;
-  }
-  throw new EvalReportingError(
-    "SDK_RUN_METADATA_UNSUPPORTED: this deployment must enable run metadata before reporting these fields",
-    { isReportingBackendIncompatible: true }
-  );
+  omitRunMetadata(input);
+  addReportingWarning(config, {
+    code: "RUN_METADATA_OMITTED",
+    message:
+      "Optional run metadata and expanded CI fields were omitted because target support was not confirmed. Core eval results are still reported.",
+  });
 }
 
 async function finishReportedRun(
@@ -1303,7 +1300,7 @@ async function finishReportedRun(
       input.externalRunId!,
       input.runEvaluations
     );
-  return report;
+  return attachReportingWarnings(config, report);
 }
 
 export async function reportCaseRunEvaluations(
@@ -1312,17 +1309,118 @@ export async function reportCaseRunEvaluations(
   externalRunId: string,
   evaluations: import("./run-evaluators.js").CaseRunEvaluation[]
 ): Promise<void> {
+  try {
+    let supported = false;
+    try {
+      const support = await requestWithRetry<{
+        capabilities: { evalsRunEvaluations?: number };
+      }>(config, ingestPath(config, "capabilities"), {});
+      supported = support.capabilities.evalsRunEvaluations === 1;
+    } catch (error) {
+      if (config.signal?.aborted) throw error;
+    }
+    if (!supported) {
+      addReportingWarning(config, {
+        code: "RUN_EVALUATIONS_OMITTED",
+        message:
+          "Advisory case-run evaluations were not uploaded because target support was not confirmed. Core eval results are persisted.",
+      });
+      return;
+    }
+    await requestWithRetry(config, ingestPath(config, "runs/evaluations"), {
+      runId,
+      externalRunId,
+      evaluations,
+    });
+  } catch {
+    // The core run has already been acknowledged. Keep that fact even when
+    // optional advisory persistence fails or the caller cancels this last step.
+    addReportingWarning(config, {
+      code: "RUN_EVALUATIONS_NOT_CONFIRMED",
+      message:
+        "Advisory case-run persistence could not be confirmed. Core eval results are persisted; local advisory results remain available.",
+    });
+  }
+}
+
+function addReportingWarning(
+  config: RuntimeConfig,
+  warning: EvalReportingWarning
+): void {
+  config.warnings ??= [];
+  if (config.warnings.some((entry) => entry.code === warning.code)) return;
+  config.warnings.push(warning);
+  try {
+    console.warn(`[mcpjam/sdk] ${warning.message}`);
+  } catch {
+    /* presentation only */
+  }
+}
+
+/** Attach only SDK-produced diagnostics, never raw backend errors or payloads. */
+export function attachReportingWarnings(
+  config: RuntimeConfig,
+  report: ReportEvalResultsOutput
+): ReportEvalResultsOutput {
+  return config.warnings?.length
+    ? { ...report, warnings: structuredClone(config.warnings) }
+    : report;
+}
+
+/** Explicit partial terminalization is a semantic contract, never silently downgraded. */
+export async function resolveTerminationStatus(
+  config: RuntimeConfig,
+  input: import("./eval-reporting-types.js").MCPJamReportingConfig
+): Promise<"cancelled" | "timed_out" | undefined> {
+  if (!input.terminalStatus) return undefined;
   const support = await requestWithRetry<{
-    capabilities: { evalsRunEvaluations?: number };
+    capabilities: { evalsRunTermination?: number };
   }>(config, ingestPath(config, "capabilities"), {});
-  if (support.capabilities.evalsRunEvaluations !== 1)
+  if (support.capabilities.evalsRunTermination !== 1)
     throw new EvalReportingError(
-      "SDK_RUN_EVALUATIONS_UNSUPPORTED: enable advisory case-run persistence on the target deployment",
+      "SDK_RUN_TERMINATION_UNSUPPORTED: target support is required to explicitly terminate a partial run",
       { isReportingBackendIncompatible: true }
     );
-  await requestWithRetry(config, ingestPath(config, "runs/evaluations"), {
-    runId,
-    externalRunId,
-    evaluations,
-  });
+  return input.terminalStatus;
+}
+
+function omitRunMetadata(
+  input: import("./eval-reporting-types.js").MCPJamReportingConfig
+): void {
+  delete input.runName;
+  delete input.runTags;
+  delete input.runMetadata;
+  if (input.ci) {
+    input.ci = { ...input.ci };
+    delete input.ci.dirty;
+    delete input.ci.pullRequestNumber;
+  }
+}
+
+/** A stale capability response must not prevent otherwise valid legacy evidence. */
+async function requestStartOrReport<T>(
+  config: RuntimeConfig,
+  path: string,
+  body: Record<string, unknown>
+): Promise<T> {
+  try {
+    return await requestWithRetry<T>(config, path, body);
+  } catch (error) {
+    if (
+      !(error instanceof EvalReportingError) ||
+      ![400, 422].includes(error.statusCode ?? 0) ||
+      !requiresRunMetadataCapability(body)
+    )
+      throw error;
+    // Retry once, with the SAME external identity and evidence. Policy and
+    // evaluator fields stay intact, so an invalid core report still fails.
+    const legacyBody = { ...body };
+    omitRunMetadata(legacyBody);
+    addReportingWarning(config, {
+      code: "RUN_METADATA_OMITTED",
+      message:
+        "Optional run metadata was omitted after target validation refused the expanded payload. Core evidence and policy were preserved for retry.",
+    });
+    return await requestWithRetry<T>(config, path, legacyBody);
+  }
 }

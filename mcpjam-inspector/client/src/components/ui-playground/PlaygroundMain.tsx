@@ -49,6 +49,7 @@ import { ModelDefinition } from "@/shared/types";
 import { cn } from "@/lib/utils";
 import { Thread } from "@/components/chat-v2/thread";
 import { ChatInput } from "@/components/chat-v2/chat-input";
+import { collectInputHistory } from "@/components/chat-v2/chat-input/input-history";
 import { StickToBottom } from "use-stick-to-bottom";
 import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
 import {
@@ -728,6 +729,22 @@ export function PlaygroundMain({
     Record<string, { version: number; messages: UIMessage[] }>
   >({});
   const compareTranscriptsRef = useRef<Record<string, UIMessage[]>>({});
+  /**
+   * Prompts sent from the composer WHILE IN COMPARE MODE, oldest first.
+   *
+   * Compare sends never reach root `messages`: they are broadcast to each
+   * card's own session, whose transcript lives in `compareTranscriptsRef`
+   * (a ref, so cards re-render without the parent) and is only replayed into
+   * the single-pane thread when compare ends. So the conversation — this
+   * feature's whole history source — has a hole in it for exactly the mode
+   * people iterate hardest in.
+   *
+   * State, not a ref, because the composer's history has to re-derive when it
+   * grows. Cleared in `clearMultiModelUiState`, which runs at the same
+   * transitions that hand the lead transcript back to the thread, so the two
+   * sources never both hold the same prompt.
+   */
+  const [compareSentPrompts, setCompareSentPrompts] = useState<string[]>([]);
   // Three-state compare mode tracked across renders so transition effects
   // can tell "off → multi-host" from "multi-model → multi-host" (the
   // latter needs cross-mode transcript handoff). Refs are mode-neutral
@@ -2131,6 +2148,9 @@ export function PlaygroundMain({
   );
 
   const clearMultiModelUiState = useCallback(() => {
+    // The lead transcript is replayed into the thread by the same transitions
+    // that call this, so the thread becomes the single source again.
+    setCompareSentPrompts([]);
     setBroadcastRequest(null);
     setDeterministicExecutionRequest(null);
     setStopBroadcastRequestId(0);
@@ -4399,6 +4419,11 @@ export function PlaygroundMain({
         prependMessages,
         widgetModelContext: modelContextQueue,
       });
+      // The composer's own record of this send — root `messages` will not see
+      // it until compare ends (see `compareSentPrompts`).
+      if (composerText.trim()) {
+        setCompareSentPrompts((prev) => [...prev, composerText]);
+      }
       setModelContextQueue([]);
     } else {
       trackSendMessage({ single_model_send: true });
@@ -4884,9 +4909,24 @@ export function PlaygroundMain({
       : undefined;
 
   // Shared chat input props
+  /**
+   * Up/Down through this thread's own user messages (BB-183). Same derivation
+   * as `ChatTabV2` — the Playground mirrors that component rather than reusing
+   * it, so the wiring has to be made twice; the walk itself does not.
+   */
+  const chatInputHistory = useMemo(() => {
+    const fromThread = collectInputHistory(messages);
+    if (compareSentPrompts.length === 0) return fromThread;
+    // Newest first, like the thread's own, and joined with the same
+    // adjacent-duplicate rule across the seam.
+    const merged = [...compareSentPrompts].reverse().concat(fromThread);
+    return merged.filter((entry, index) => merged[index - 1] !== entry);
+  }, [messages, compareSentPrompts]);
+
   const sharedChatInputProps = {
     value: composer.input,
     onChange: composer.handleInputChange,
+    inputHistory: chatInputHistory,
     onSubmit,
     stop: stopActiveChat,
     disabled: composerDisabled,

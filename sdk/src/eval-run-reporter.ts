@@ -13,6 +13,8 @@ import type {
 } from "./eval-reporting-types.js";
 import {
   appendEvalRunIterations,
+  attachReportingWarnings,
+  resolveTerminationStatus,
   chunkResultsForUpload,
   createRuntimeConfig,
   type EvalReportingRuntimeConfig,
@@ -52,9 +54,13 @@ export interface EvalRunReporter {
   add(result: EvalResultInput): void;
   record(result: EvalResultInput): Promise<void>;
   flush(): Promise<void>;
-  finalize(): Promise<ReportEvalResultsOutput>;
+  finalize(options?: {
+    terminalStatus: "cancelled" | "timed_out";
+  }): Promise<ReportEvalResultsOutput>;
   /** Always resolves with reporting state, including when strict mode rejects. */
-  finalizeWithReceipt(): Promise<EvalReportingReceipt>;
+  finalizeWithReceipt(options?: {
+    terminalStatus: "cancelled" | "timed_out";
+  }): Promise<EvalReportingReceipt>;
   getBufferedCount(): number;
   setExpectedIterations(count: number): void;
 
@@ -150,6 +156,7 @@ class EvalRunReporterImpl implements EvalRunReporter {
   private finalized = false;
   private completedResult: ReportEvalResultsOutput | null = null;
   private preparation: Promise<CreateEvalRunReporterInput>;
+  private preparationApplied = false;
   private reusedReport: ReportEvalResultsOutput | null = null;
   private buffered: EvalResultInput[] = [];
   private generatedIterationCount = 0;
@@ -378,11 +385,20 @@ class EvalRunReporterImpl implements EvalRunReporter {
     return this.addedCount;
   }
 
+  private async applyPreparation(): Promise<void> {
+    if (this.preparationApplied) return;
+    const terminalStatus = this.input.terminalStatus;
+    this.input = {
+      ...this.input,
+      ...(await this.preparation),
+      ...(terminalStatus ? { terminalStatus } : {}),
+    };
+    this.preparationApplied = true;
+  }
+
   flush(): Promise<void> {
     this.ensureNotFinalized();
     return this.enqueue(async () => {
-      this.runtimeConfig.deadlineAt =
-        Date.now() + (this.runtimeConfig.operationTimeoutMs ?? 60_000);
       await this.flushInternal();
     });
   }
@@ -391,13 +407,11 @@ class EvalRunReporterImpl implements EvalRunReporter {
     if (this.buffered.length === 0) {
       return;
     }
-    this.runtimeConfig.deadlineAt ??=
-      Date.now() + (this.runtimeConfig.operationTimeoutMs ?? 60_000);
     this.inFlight = this.buffered;
     this.buffered = [];
     this.reportingError = undefined;
     try {
-      this.input = { ...this.input, ...(await this.preparation) };
+      await this.applyPreparation();
       const serverReplayConfigs = resolveServerReplayConfigs(this.input);
       if (!this.runId) {
         await requireReportingCapabilities(this.runtimeConfig, this.input);
@@ -479,7 +493,21 @@ class EvalRunReporterImpl implements EvalRunReporter {
     }
   }
 
-  finalize(): Promise<ReportEvalResultsOutput> {
+  finalize(options?: {
+    terminalStatus: "cancelled" | "timed_out";
+  }): Promise<ReportEvalResultsOutput> {
+    if (options) {
+      if (!["cancelled", "timed_out"].includes(options.terminalStatus))
+        throw new TypeError("terminalStatus must be cancelled or timed_out");
+      if (
+        (this.finalizing || this.finalized) &&
+        options.terminalStatus !== this.input.terminalStatus
+      )
+        throw new Error(
+          "Cannot change termination after finalization has started"
+        );
+      this.input = { ...this.input, terminalStatus: options.terminalStatus };
+    }
     if (this.completedResult) return Promise.resolve(this.completedResult);
     if (this.finalizePromise) return this.finalizePromise;
     this.finalizing = true;
@@ -492,34 +520,39 @@ class EvalRunReporterImpl implements EvalRunReporter {
     return this.finalizePromise;
   }
 
-  async finalizeWithReceipt(): Promise<EvalReportingReceipt> {
+  async finalizeWithReceipt(options?: {
+    terminalStatus: "cancelled" | "timed_out";
+  }): Promise<EvalReportingReceipt> {
     let report: ReportEvalResultsOutput | undefined;
+    let failure: unknown;
     try {
-      report = await this.finalize();
-    } catch {
-      /* reflected below */
+      report = await this.finalize(options);
+    } catch (error) {
+      failure = error;
     }
+    const reportingError = failure ?? this.reportingError;
     const accounting = this.getReportingAccounting();
     const persisted =
-      !!report?.runId && !this.reportingError && accounting.pending === 0;
+      !!report?.runId && !reportingError && accounting.pending === 0;
     // The one-shot helper can have acknowledged earlier chunks before failing.
-    const unknown = !!this.reportingError && !this.runId;
+    const unknown = !!reportingError && !this.runId;
     return {
       schemaVersion: 1,
       state: persisted ? "persisted" : "failed",
       acceptedIterations: accounting.accepted,
       acknowledgedIterations: unknown ? null : accounting.acknowledged,
       pendingIterations: unknown ? null : accounting.pending,
+      ...(report?.warnings?.length
+        ? { warnings: structuredClone(report.warnings) }
+        : {}),
       ...(persisted
         ? { report }
-        : { error: reportingReceiptError(this.reportingError) }),
+        : { error: reportingReceiptError(reportingError) }),
     };
   }
 
   private async finalizeInternal(): Promise<ReportEvalResultsOutput> {
-    this.input = { ...this.input, ...(await this.preparation) };
-    this.runtimeConfig.deadlineAt =
-      Date.now() + (this.runtimeConfig.operationTimeoutMs ?? 60_000);
+    await this.applyPreparation();
     if (this.completedResult) {
       return this.completedResult;
     }
@@ -558,11 +591,16 @@ class EvalRunReporterImpl implements EvalRunReporter {
       if (this.completedResult) {
         return this.completedResult;
       }
+      const terminalStatus = await resolveTerminationStatus(
+        this.runtimeConfig,
+        this.input
+      );
       const result =
-        this.reusedReport ??
+        (terminalStatus ? undefined : this.reusedReport) ??
         (await finalizeEvalRun(this.runtimeConfig, {
           runId: this.runId,
           externalRunId: this.externalRunId,
+          ...(terminalStatus ? { terminalStatus } : {}),
         }));
       if (this.input.runEvaluations?.length)
         await reportCaseRunEvaluations(
@@ -571,10 +609,11 @@ class EvalRunReporterImpl implements EvalRunReporter {
           this.externalRunId,
           this.input.runEvaluations
         );
-      printRunUrl(this.runtimeConfig, result);
-      this.completedResult = result;
+      const reported = attachReportingWarnings(this.runtimeConfig, result);
+      printRunUrl(this.runtimeConfig, reported);
+      this.completedResult = reported;
       this.finalized = true;
-      return result;
+      return reported;
     } catch (error) {
       this.reportingError = error;
       await captureEvalReportingFailure(error, {

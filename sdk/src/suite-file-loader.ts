@@ -165,6 +165,7 @@ export type ResolvedEvalSuiteFileCase = {
   steps: EvalSuiteFileCase["steps"];
   /** The case's checks, from `cases[].checks` or its `assertions` alias. */
   assertions: NonNullable<EvalSuiteFileCase["checks"]>;
+  suppressedSuiteStandardCheckIds?: string[];
   expectedOutput?: string;
   isNegativeTest: boolean;
   /** Resolved from `cases[].model`, else `defaults.model`. */
@@ -564,6 +565,12 @@ function resolveCase(
     // original name and still loads. The schema refuses both at once, so this
     // never has to choose between two lists.
     assertions: authoredCase.checks ?? authoredCase.assertions ?? [],
+    ...(authoredCase.suppressedSuiteStandardCheckIds !== undefined
+      ? {
+          suppressedSuiteStandardCheckIds:
+            authoredCase.suppressedSuiteStandardCheckIds,
+        }
+      : {}),
     ...(authoredCase.expectedOutput === undefined
       ? {}
       : { expectedOutput: authoredCase.expectedOutput }),
@@ -642,6 +649,7 @@ const CASE_KEY_ORDER = [
   "expectedOutput",
   "steps",
   "checks",
+  "suppressedSuiteStandardCheckIds",
   // Beside `checks`, its deprecated spelling. A key missing from this list
   // serializes into the remainder AFTER `import`, so an authored `checks`
   // would move on the first write-back and churn the diff.

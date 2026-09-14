@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { ConvexHttpClient } from "convex/browser";
-import { evalBacktestDraftSchema } from "../../../../sdk/src/contract/eval-backtest.js";
+import { evalBacktestRequestSchema } from "../../../../sdk/src/contract/eval-backtest.js";
 import { runAssertionBacktest } from "../../services/evals/assertion-backtest.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1Error, v1Resource } from "./envelope.js";
@@ -17,7 +17,7 @@ router.post("/projects/:projectId/eval-runs/:runId/backtest", async (c) => {
   } catch {
     return v1Error(c, "VALIDATION_ERROR", "Backtest draft must be JSON");
   }
-  const parsed = evalBacktestDraftSchema.safeParse(value);
+  const parsed = evalBacktestRequestSchema.safeParse(value);
   if (!parsed.success)
     return v1Error(
       c,
@@ -39,7 +39,13 @@ router.post("/projects/:projectId/eval-runs/:runId/backtest", async (c) => {
     const report = await runAssertionBacktest({
       runId: c.req.param("runId"),
       suiteId: run.suiteId,
-      draft: parsed.data,
+      draft: {
+        assertions: parsed.data.assertions,
+        ...(parsed.data.matchOptions !== undefined
+          ? { matchOptions: parsed.data.matchOptions }
+          : {}),
+      },
+      continuation: parsed.data.continuation,
       signal: c.req.raw.signal,
       readPage: (args) =>
         client.action(
@@ -50,7 +56,34 @@ router.post("/projects/:projectId/eval-runs/:runId/backtest", async (c) => {
     return v1Resource(c, report);
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
-    if (message.includes("EVAL_JUDGE_BACKTEST_COOLDOWN"))
+    const data =
+      error && typeof error === "object" && "data" in error
+        ? error.data
+        : undefined;
+    const code =
+      data && typeof data === "object" && "code" in data
+        ? data.code
+        : undefined;
+    if (code === "CONFLICT")
+      return v1Error(
+        c,
+        "CONFLICT",
+        "The source run or preview reservation changed; start a new preview",
+      );
+    if (code === "TIMEOUT")
+      return v1Error(c, "TIMEOUT", "The preview exceeded its deadline");
+    if (code === "VALIDATION_ERROR")
+      return v1Error(c, "VALIDATION_ERROR", "Invalid backtest request");
+    if (code === "NOT_FOUND")
+      return v1Error(
+        c,
+        "NOT_FOUND",
+        "Eval run not found or preview is not authorized",
+      );
+    if (
+      code === "EVAL_BACKTEST_COOLDOWN" ||
+      message.includes("EVAL_BACKTEST_COOLDOWN")
+    )
       return v1Error(
         c,
         "RATE_LIMITED",

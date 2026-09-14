@@ -10,6 +10,7 @@ const NORMALIZED = Symbol("normalizedEvalReportingConfig");
 /** A total inventory: adding a public option requires choosing its boundary. */
 export const REPORTING_CONFIG_FIELDS = {
   enabled: "local",
+  terminalStatus: "local",
   transport: "local",
   apiKey: "local",
   baseUrl: "local",
@@ -48,6 +49,11 @@ export function normalizeReportingConfig<T extends MCPJamReportingConfig>(
   env: NodeJS.ProcessEnv = process.env
 ): T {
   if ((input as T & { [NORMALIZED]?: boolean })[NORMALIZED]) return input;
+  if (
+    input.terminalStatus !== undefined &&
+    !["cancelled", "timed_out"].includes(input.terminalStatus)
+  )
+    fail("terminalStatus");
   if (input.runEvaluations) {
     const evaluations = input.runEvaluations;
     if (
@@ -136,7 +142,7 @@ export function normalizeReportingConfig<T extends MCPJamReportingConfig>(
       !["0", "false"].includes(env.MCPJAM_GIT_AUTODETECT ?? ""),
     ci: resolveEvalCiMetadata(input.ci, env),
     ...(runName !== undefined ? { runName } : {}),
-    ...(runTags.length || input.runTags ? { runTags } : {}),
+    ...(runTags.length ? { runTags } : { runTags: undefined }),
     ...(runMetadata !== undefined ? { runMetadata: { ...runMetadata } } : {}),
   };
 }
@@ -160,7 +166,7 @@ export function requiresRunMetadataCapability(
 ): boolean {
   return (
     input.runName !== undefined ||
-    input.runTags !== undefined ||
+    !!input.runTags?.length ||
     input.runMetadata !== undefined ||
     input.ci?.dirty !== undefined ||
     input.ci?.pullRequestNumber !== undefined

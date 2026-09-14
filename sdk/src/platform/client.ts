@@ -1,5 +1,6 @@
 import type {
   EvalBacktestDraft,
+  EvalBacktestContinuation,
   EvalBacktestReport,
 } from "../contract/eval-backtest.js";
 import type {
@@ -588,8 +589,8 @@ export class PlatformApiClient {
     this.userAgent = isBrowserPage()
       ? options.userAgent
       : options.userAgent
-        ? `${options.userAgent} ${DEFAULT_PLATFORM_USER_AGENT}`
-        : DEFAULT_PLATFORM_USER_AGENT;
+      ? `${options.userAgent} ${DEFAULT_PLATFORM_USER_AGENT}`
+      : DEFAULT_PLATFORM_USER_AGENT;
     this.launchHeaders = buildLaunchHeaders(options);
     // Lower-cased at construction so `request` cannot end up with two spellings
     // of one header — HTTP names are case-insensitive, but a plain object's
@@ -711,8 +712,8 @@ export class PlatformApiClient {
             params.connectableOnly === undefined
               ? undefined
               : params.connectableOnly
-                ? "true"
-                : "false",
+              ? "true"
+              : "false",
           ...pageQuery({ cursor: params.cursor, limit: params.limit }),
         },
       },
@@ -2577,6 +2578,35 @@ export class PlatformApiClient {
   }
 
   /**
+   * Preview deterministic evaluators using stored evidence, without model calls
+   * or verdict writes. Resume a bounded result with its continuation and the
+   * unchanged draft. Starting a new preview has a separate one-minute cooldown.
+   */
+  backtestEvalRun(
+    params: {
+      projectId: string;
+      runId: string;
+      draft: EvalBacktestDraft;
+      continuation?: EvalBacktestContinuation;
+    },
+    options?: RequestOptions
+  ): Promise<EvalBacktestReport> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(params.runId)}/backtest`,
+      {
+        body: {
+          ...params.draft,
+          ...(params.continuation ? { continuation: params.continuation } : {}),
+        },
+      },
+      options
+    );
+  }
+
+  /**
    * Request (or with `force`, re-request) LLM-as-judge grading of a finished
    * run. SPENDS the org's model budget; poll `getEvalRun().judges` rather than
    * re-requesting.
@@ -2586,18 +2616,6 @@ export class PlatformApiClient {
    * the run was created, so turning the judge on for the suite does not reach
    * an already-recorded run.
    */
-  backtestEvalRun(
-    params: { projectId: string; runId: string; draft: EvalBacktestDraft },
-    options?: RequestOptions
-  ): Promise<EvalBacktestReport> {
-    return this.request(
-      "POST",
-      `/projects/${encodeURIComponent(params.projectId)}/eval-runs/${encodeURIComponent(params.runId)}/backtest`,
-      { body: params.draft },
-      options
-    );
-  }
-
   requestEvalRunJudge(
     params: {
       projectId: string;

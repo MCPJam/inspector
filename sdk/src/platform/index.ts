@@ -858,6 +858,7 @@ export type {
 
 export type {
   EvalBacktestDraft,
+  EvalBacktestContinuation,
   EvalBacktestReport,
   EvalBacktestDifference,
 } from "../contract/eval-backtest.js";

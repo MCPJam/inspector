@@ -122,6 +122,18 @@ describe("TURN_SCOPABLE_PREDICATE_KINDS", () => {
     // reason it is case-only. A bare count went stale the moment the union
     // grew past 12 and said nothing about WHICH kinds it was counting.
     const CASE_ONLY = {
+      toolDescriptionsPresent:
+        "raw catalogs are captured for the whole iteration",
+      toolAnnotationsPresent:
+        "raw catalogs are captured for the whole iteration",
+      toolNamesUnique: "raw catalogs are captured for the whole iteration",
+      noDeprecatedToolExposed:
+        "raw catalogs are captured for the whole iteration",
+      toolInputSchemasWellFormed:
+        "raw catalogs are captured for the whole iteration",
+      toolOutputSchemasPresent:
+        "raw catalogs are captured for the whole iteration",
+
       // Meaningless against a single turn's slice.
       tokenBudgetUnder: "per-turn token usage is not captured",
       turnCountUnder: "a turn's own turn count is always 1",

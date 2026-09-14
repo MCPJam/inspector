@@ -79,3 +79,5 @@ export {
   type CheckRole,
   type CheckSeverity,
 } from "./policy.js";
+
+export type { TranscriptToolDeclaration } from "./types.js";

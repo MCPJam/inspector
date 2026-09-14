@@ -965,9 +965,9 @@ export const startSuiteRunWithRecorder = async ({
   ): import("@/shared/eval-matching").Predicate[] | undefined =>
     resolveCaseSuccessPredicates({
       suiteDefaults: suiteDefaultPredicates,
+      suppressedSuiteStandardCheckIds: tc.suppressedSuiteStandardCheckIds,
       envelope: tc.predicates as
-        | import("@/shared/eval-matching").CasePredicates
-        | undefined,
+        import("@/shared/eval-matching").CasePredicates | undefined,
       legacyCase: tc.successPredicates as
         | import("@/shared/eval-matching").Predicate[]
         | undefined,

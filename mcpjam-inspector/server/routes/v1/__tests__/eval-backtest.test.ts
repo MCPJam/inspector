@@ -61,10 +61,36 @@ it("reserves bounded evidence without verdict mutation", async () => {
   );
 });
 it("returns cooldown/nonterminal as errors", async () => {
-  mocks.action.mockRejectedValue(new Error("EVAL_JUDGE_BACKTEST_COOLDOWN"));
+  mocks.action.mockRejectedValue(new Error("EVAL_BACKTEST_COOLDOWN"));
   const result = await post();
   expect(result.status).toBe(429);
   expect(result.headers.get("Retry-After")).toBe("60");
   mocks.action.mockRejectedValue(new Error("EVAL_RUN_NOT_TERMINAL"));
   expect((await post()).status).toBe(409);
+});
+
+it.each([
+  ["CONFLICT", 409],
+  ["VALIDATION_ERROR", 400],
+  ["NOT_FOUND", 404],
+])(
+  "maps typed backend %s without disclosing internals",
+  async (code, status) => {
+    mocks.action.mockRejectedValue(
+      Object.assign(new Error("Server Error"), {
+        data: { code, message: "private backend context" },
+      }),
+    );
+    const response = await post();
+    expect(response.status).toBe(status);
+    expect(await response.text()).not.toContain("private backend context");
+  },
+);
+it("maps typed assertion cooldown separately from judge previews", async () => {
+  mocks.action.mockRejectedValue(
+    Object.assign(new Error("Server Error"), {
+      data: { code: "EVAL_BACKTEST_COOLDOWN" },
+    }),
+  );
+  expect((await post()).status).toBe(429);
 });

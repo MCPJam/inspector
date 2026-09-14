@@ -43,7 +43,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 /** Text of the last assistant message in a message list, if any. */
 export function extractFinalAssistantMessage(
-  messages: unknown,
+  messages: unknown
 ): string | undefined {
   if (!Array.isArray(messages)) return undefined;
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -61,7 +61,7 @@ export function extractFinalAssistantMessage(
     if (Array.isArray(content)) {
       const text = content
         .map((part) =>
-          isRecord(part) && part.type === "text" ? String(part.text ?? "") : "",
+          isRecord(part) && part.type === "text" ? String(part.text ?? "") : ""
         )
         .join("");
       return text.trim() ? text : undefined;
@@ -135,6 +135,8 @@ export interface BuildTranscriptInput {
    * Absent ⇒ declaration-comparing checks report `status: "error"`.
    */
   toolInventory?: TranscriptToolInventoryEntry[];
+  toolDeclarations?: import("./types.js").TranscriptToolDeclaration[];
+  declarationsCaptured?: import("./types.js").TranscriptCaptureState;
 }
 
 /**
@@ -163,7 +165,7 @@ export interface TurnTranscriptInput {
  * "calls to X" all resolve to the turn, with no change to the evaluator core.
  */
 export function buildTurnTranscript(
-  input: TurnTranscriptInput,
+  input: TurnTranscriptInput
 ): IterationTranscript {
   return {
     toolCalls: input.toolCalls,
@@ -215,7 +217,7 @@ function capResultText(result: TranscriptToolResult): TranscriptToolResult {
 function stateFor(
   captured: boolean | undefined,
   rows: readonly unknown[] | undefined,
-  cap: number,
+  cap: number
 ): TranscriptCaptureState {
   if (rows === undefined && captured !== true) return "absent";
   return (rows?.length ?? 0) > cap ? "partial" : "complete";
@@ -223,7 +225,7 @@ function stateFor(
 
 /** Assemble an {@link IterationTranscript} from runner per-iteration data. */
 export function buildIterationTranscript(
-  input: BuildTranscriptInput,
+  input: BuildTranscriptInput
 ): IterationTranscript {
   const finalAssistantMessage =
     input.finalAssistantMessage ??
@@ -237,14 +239,22 @@ export function buildIterationTranscript(
     toolResults: stateFor(
       input.resultsCaptured,
       input.toolResults,
-      MAX_TOOL_RESULT_ROWS,
+      MAX_TOOL_RESULT_ROWS
     ),
     toolCallTimings: stateFor(
       input.timingsCaptured,
       input.toolCallTimings,
-      MAX_TOOL_CALL_TIMING_ROWS,
+      MAX_TOOL_CALL_TIMING_ROWS
     ),
     toolInventory: input.toolInventory === undefined ? "absent" : "complete",
+    ...(input.declarationsCaptured !== undefined
+      ? {
+          toolDeclarations:
+            input.toolDeclarations === undefined
+              ? "absent"
+              : input.declarationsCaptured,
+        }
+      : {}),
   };
   return {
     toolCalls: input.toolCalls,
@@ -266,11 +276,14 @@ export function buildIterationTranscript(
       ? {
           toolCallTimings: input.toolCallTimings.slice(
             0,
-            MAX_TOOL_CALL_TIMING_ROWS,
+            MAX_TOOL_CALL_TIMING_ROWS
           ),
         }
       : {}),
     ...(input.toolInventory ? { toolInventory: input.toolInventory } : {}),
+    ...(input.toolDeclarations
+      ? { toolDeclarations: input.toolDeclarations }
+      : {}),
     capture,
   };
 }

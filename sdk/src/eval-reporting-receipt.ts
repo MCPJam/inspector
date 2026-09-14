@@ -69,6 +69,7 @@ export async function captureEvalReporting(
         acknowledgedIterations: acceptedIterations,
         pendingIterations: 0,
         report,
+        ...(report.warnings?.length ? { warnings: report.warnings } : {}),
       },
     };
   } catch (error) {

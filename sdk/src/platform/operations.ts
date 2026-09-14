@@ -1,7 +1,9 @@
 import {
   evalBacktestDraftSchema,
+  evalBacktestContinuationSchema,
   type EvalBacktestReport,
 } from "../contract/eval-backtest.js";
+import { suppressedSuiteStandardCheckIdsSchema } from "../contract/standard-checks.js";
 import { platformBrowserToolPolicySchema } from "./browser-policy.js";
 import { BROWSER_AGENT_ACT_VERBS } from "./browser-agent-contract.js";
 import type { PlatformSessionBrowserCommand } from "./types.js";
@@ -2643,7 +2645,7 @@ function foldClientSelectors<
     hosts?: string[];
     client?: string;
     clients?: string[];
-  },
+  }
 >(input: T): T {
   if (input.client !== undefined && input.host !== undefined) {
     throw operationInputError(
@@ -2682,7 +2684,7 @@ function foldClientSelectors<
  */
 function foldComposeClientSelector<
   C extends { host?: string; client?: string },
-  T extends { compose?: C },
+  T extends { compose?: C }
 >(input: T): T & { compose?: C & { host: string } } {
   const compose = input.compose;
   if (!compose) return input as T & { compose?: C & { host: string } };
@@ -4244,13 +4246,13 @@ export const runEvalSuiteOperation: PlatformOperation<
       project,
       suite,
       detail,
-      input.environment ? [input.environment] : (input.environments ?? []),
+      input.environment ? [input.environment] : input.environments ?? [],
       signal
     );
     const selectedHosts = resolveSuiteHostTargets(
       suite,
       detail,
-      input.host ? [input.host] : (input.hosts ?? [])
+      input.host ? [input.host] : input.hosts ?? []
     );
 
     // Attached environments arrive as bare IDS — the suite detail carries no
@@ -4386,8 +4388,8 @@ export const runEvalSuiteOperation: PlatformOperation<
             ...(disclosureEnvironmentIds.length === 1
               ? { environmentId: disclosureEnvironmentIds[0]! }
               : disclosureEnvironmentIds.length > 1
-                ? { environmentIds: disclosureEnvironmentIds }
-                : {}),
+              ? { environmentIds: disclosureEnvironmentIds }
+              : {}),
             ...(disclosureHostId ? { namedHostId: disclosureHostId } : {}),
           },
           { signal: disclosureBound.signal }
@@ -4966,6 +4968,8 @@ const evalCaseInput = z.object({
     .describe(
       "Per-case check gate (advanced): `{ mode: inherit | replace | extend, list: [...] }`. `predicates` is the deprecated spelling of this field; passing both is an error."
     ),
+  suppressedSuiteStandardCheckIds:
+    suppressedSuiteStandardCheckIdsSchema.optional(),
   /** @deprecated Use `checks`. */
   predicates: z
     .record(z.string(), z.any())
@@ -5220,6 +5224,8 @@ const caseFieldsShape = {
   // untouched (omitted). On create, null is treated as "no override".
   matchOptions: publicMatchOptionsSchema.nullable().optional(),
   checks: publicCheckOverrideSchema.nullable().optional(),
+  suppressedSuiteStandardCheckIds:
+    suppressedSuiteStandardCheckIdsSchema.optional(),
   // THE CONVERTER'S CLAIM, on the operation surface too.
   //
   // Without it Zod strips the key and `buildCaseBody` never sees it, so a
@@ -5401,7 +5407,7 @@ export const getEvalRunDisclosureOperation: PlatformOperation<
       project,
       suite,
       detail,
-      input.environment ? [input.environment] : (input.environments ?? []),
+      input.environment ? [input.environment] : input.environments ?? [],
       signal
     );
     // SAME plan resolution `run_eval_suite` uses — including its
@@ -5490,8 +5496,8 @@ export const getEvalRunDisclosureOperation: PlatformOperation<
         ...(disclosureEnvironmentIds.length === 1
           ? { environmentId: disclosureEnvironmentIds[0]! }
           : disclosureEnvironmentIds.length > 1
-            ? { environmentIds: disclosureEnvironmentIds }
-            : {}),
+          ? { environmentIds: disclosureEnvironmentIds }
+          : {}),
         ...(disclosureHostId ? { namedHostId: disclosureHostId } : {}),
       },
       { signal }
@@ -7913,6 +7919,7 @@ export type RequestEvalRunJudgeResult = {
 
 const backtestEvalRunInput = evalRunScopedInput.extend({
   draft: evalBacktestDraftSchema,
+  continuation: evalBacktestContinuationSchema.optional(),
 });
 export type BacktestEvalRunInput = z.infer<typeof backtestEvalRunInput>;
 export const backtestEvalRunOperation: PlatformOperation<
@@ -7927,7 +7934,7 @@ export const backtestEvalRunOperation: PlatformOperation<
   name: "backtest_eval_run",
   title: "Preview MCPJam eval assertions",
   description:
-    "Preview an explicit assertion draft against stored evidence from a terminal run. Replace, extend or inherit frozen assertions explicitly. No model calls or verdict writes; reserves a one-minute per-run cooldown. Returns partial comparison and per-evaluator missing-evidence reasons. This is not a release verdict. Unsupported custom evaluators are never executed. Use mcpjam cloud eval backtest --run <id> --json <draft> from the CLI.",
+    "Preview an explicit assertion draft against stored evidence from a terminal run. Replace, extend or inherit frozen assertions explicitly. No model calls or verdict writes; reserves a one-minute deterministic-preview cooldown, independent of judge previews. Returns partial comparison and per-evaluator missing-evidence reasons. This is not a release verdict. Unsupported custom evaluators are never executed. Use mcpjam cloud eval backtest --run <id> --json <draft> from the CLI.",
   readOnly: false,
   risk: "none",
   permalink: derivePermalinks((result) => [
@@ -7944,7 +7951,12 @@ export const backtestEvalRunOperation: PlatformOperation<
       { signal }
     );
     const report = await client.backtestEvalRun(
-      { projectId: project.id, runId: input.runId, draft: input.draft },
+      {
+        projectId: project.id,
+        runId: input.runId,
+        draft: input.draft,
+        continuation: input.continuation,
+      },
       { signal }
     );
     return {
@@ -9041,12 +9053,12 @@ export const driveChatSessionBrowserOperation: PlatformOperation<
       input.op === "navigate"
         ? { op: "navigate", url: input.url }
         : input.op === "invoke"
-          ? {
-              op: "invoke_page_tool",
-              toolKey: input.toolKey,
-              input: input.input,
-            }
-          : { ...input.command, op: "act" };
+        ? {
+            op: "invoke_page_tool",
+            toolKey: input.toolKey,
+            input: input.input,
+          }
+        : { ...input.command, op: "act" };
     return client.chatSessionBrowser(
       input.sessionId,
       "command",
@@ -10982,7 +10994,7 @@ async function resolveComposeServerGroup(
  * Callers run this once, up front.
  */
 async function materializeComposeServers<
-  T extends { serverGroup?: string; server?: string; servers?: string[] },
+  T extends { serverGroup?: string; server?: string; servers?: string[] }
 >(
   client: PlatformApiClient,
   project: PlatformProject,

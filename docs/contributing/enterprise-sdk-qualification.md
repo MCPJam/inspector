@@ -37,3 +37,12 @@ The PR descriptions identify the final commits and additional regression runs. L
 7. Record deployed artifact versions and all LA01–LA20 observations in the approved plan. No launch acceptance row is automatically passed by merging this implementation.
 
 Rollback stops new capability advertisement/writes first and preserves already-stored expanded data. No deployment, flag activation, package publication, or merge was performed as part of this implementation.
+
+
+## Review corrections
+
+The initial local qualification did not establish merge readiness: four deterministic tests failed in GitHub Actions, both branches conflicted with newer discovery assertions, and the hosted image omitted the evaluator workspace. The follow-up ports the discovery contracts into the extracted implementation, isolates CI metadata fixtures, preserves existing criterion IDs, and checks every Docker workspace manifest before dependency installation.
+
+Reporting now budgets each HTTP request independently, preserves cancellation evidence, and supports explicit capability-gated partial terminalization. Optional metadata/advisory persistence yields structured warnings while retaining core acknowledgements. A validation fallback strips only optional metadata and preserves the same external identity, evidence, and policy. Hosted backtest comparisons use the producing namespace; pagination and explicit preview controls are covered by regressions.
+
+The local Docker daemon is unavailable, so hosted image execution must be verified by the PR preview build. Backend CI on the initial candidate passed; the earlier local OAuth vault failures were not reproduced by CI. Neither PR is called merge-ready until checks run on the revised heads.

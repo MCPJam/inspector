@@ -60,6 +60,7 @@ export type SimpleCaseFormProps = {
   predicates?: CasePredicates;
   onPredicatesChange: (next: CasePredicates | undefined) => void;
   suiteDefaultPredicates?: Predicate[];
+  suppressedSuiteStandardCheckIds?: string[];
   availableTools?: string[];
   isNegativeTest?: boolean;
   /** Absent on surfaces with no deep step editor; the Steps buttons hide. */
@@ -126,6 +127,7 @@ export function SimpleCaseForm({
   predicates,
   onPredicatesChange,
   suiteDefaultPredicates = [],
+  suppressedSuiteStandardCheckIds,
   availableTools = [],
   isNegativeTest,
   onOpenDeepEditor,
@@ -206,6 +208,7 @@ export function SimpleCaseForm({
       suiteDefaultMatchOptions,
       predicates,
       suiteDefaultPredicates,
+      suppressedSuiteStandardCheckIds,
       snapshotPredicates,
       expectedOutput,
       judgeConfigOverride,
@@ -220,6 +223,7 @@ export function SimpleCaseForm({
       suiteDefaultMatchOptions,
       predicates,
       suiteDefaultPredicates,
+      suppressedSuiteStandardCheckIds,
       snapshotPredicates,
       expectedOutput,
       judgeConfigOverride,

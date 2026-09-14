@@ -37,6 +37,111 @@ describe("createEvalRunReporter", () => {
     vi.restoreAllMocks();
   });
 
+  it("gives each chunk a bounded request budget instead of exhausting one upload deadline", async () => {
+    let now = 1_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const sizes: number[] = [];
+    global.fetch = vi.fn(async (_url, init) => {
+      now += 40_000;
+      const body = JSON.parse(init!.body as string);
+      if (body.results) {
+        sizes.push(body.results.length);
+        return okResponse({
+          inserted: body.results.length,
+          skipped: 0,
+          total: sizes.reduce((sum, count) => sum + count, 0),
+        });
+      }
+      return okResponse({ suiteId: "suite", runId: "run", status: "running" });
+    }) as any;
+    const reporter = createEvalRunReporter({
+      apiKey: "test-key",
+      suiteName: "large upload",
+      strict: true,
+      transport: { operationTimeoutMs: 60_000 },
+    });
+    for (let index = 0; index < 401; index++)
+      reporter.add({ caseTitle: `case-${index}`, passed: true });
+    await reporter.flush();
+    expect(sizes).toEqual([200, 200, 1]);
+    expect(reporter.getReportingAccounting()).toEqual({
+      accepted: 401,
+      acknowledged: 401,
+      pending: 0,
+    });
+  });
+
+  it("explicitly terminalizes a partial run without changing its planned count", async () => {
+    const calls: any[] = [];
+    global.fetch = vi.fn(async (url, init) => {
+      const body = JSON.parse(init!.body as string);
+      calls.push(body);
+      if (String(url).endsWith("capabilities"))
+        return okResponse({ capabilities: { evalsRunTermination: 1 } });
+      if (String(url).endsWith("iterations"))
+        return okResponse({ inserted: 1, skipped: 0, total: 1 });
+      if (String(url).endsWith("finalize"))
+        return okResponse({
+          suiteId: "suite",
+          runId: "run",
+          status: "cancelled",
+          result: "inconclusive",
+          summary: { total: 1, passed: 1, failed: 0, passRate: 1 },
+        });
+      return okResponse({ suiteId: "suite", runId: "run", status: "running" });
+    }) as any;
+    const reporter = createEvalRunReporter({
+      apiKey: "test-key",
+      suiteName: "partial",
+      expectedIterations: 3,
+      strict: true,
+      ci: {},
+    });
+    reporter.add({ caseTitle: "received", passed: true });
+    await reporter.flush();
+    const receipt = await reporter.finalizeWithReceipt({
+      terminalStatus: "cancelled",
+    });
+    expect(calls[0].expectedIterations).toBe(3);
+    expect(calls.at(-1)).toMatchObject({
+      runId: "run",
+      terminalStatus: "cancelled",
+    });
+    expect(reporter.getReportingError()).toBeUndefined();
+    expect(receipt).toMatchObject({
+      state: "persisted",
+      acceptedIterations: 1,
+      acknowledgedIterations: 1,
+      pendingIterations: 0,
+      report: { status: "cancelled", result: "inconclusive" },
+    });
+  });
+
+  it("refuses partial termination without target support and never calls finalize", async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        okResponse({ suiteId: "suite", runId: "run", status: "running" })
+      )
+      .mockResolvedValueOnce(okResponse({ inserted: 1, skipped: 0, total: 1 }))
+      .mockResolvedValueOnce(okResponse({ capabilities: {} }));
+    global.fetch = fetch as any;
+    const reporter = createEvalRunReporter({
+      apiKey: "test-key",
+      suiteName: "partial",
+      expectedIterations: 3,
+      strict: true,
+      ci: {},
+    });
+    reporter.add({ caseTitle: "received", passed: true });
+    await reporter.flush();
+    expect(
+      await reporter.finalizeWithReceipt({ terminalStatus: "timed_out" })
+    ).toMatchObject({ state: "failed", acknowledgedIterations: 1 });
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(reporter.getReportingError()).toBeTruthy();
+  });
+
   it("retains results accepted while an append is in flight", async () => {
     let release!: (value: any) => void;
     let entered!: () => void;

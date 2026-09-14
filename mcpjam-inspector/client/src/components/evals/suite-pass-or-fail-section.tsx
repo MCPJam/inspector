@@ -15,6 +15,10 @@
  * WHAT IT IS NOT. It shows no results. A chain is one trial's journey and a
  * funnel is a population statistic; this is neither. Every chip here says what
  * a grader IS (a gate, a warn, or a report), never what a run DID.
+ *
+ * The table is shared with a case's checks page (`CaseChecksPage`), which
+ * mounts the same `SuiteScorerTable` in case scope. Do not add a second list
+ * of the stages above it: one numbered 01–06 layout is the point.
  */
 
 import type { UserValueStage } from "@mcpjam/sdk/contract";
@@ -80,10 +84,9 @@ export function SuitePassOrFailSection({
 }) {
   return (
     <SuiteScorerTable
+      scope={{ kind: "suite", predicates, onPredicatesChange }}
       matchOptions={matchOptions}
       onMatchOptionsChange={onMatchOptionsChange}
-      predicates={predicates}
-      onPredicatesChange={onPredicatesChange}
       judgeConfig={judgeConfig}
       onJudgeConfigChange={onJudgeConfigChange}
       availableModels={availableModels}

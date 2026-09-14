@@ -1,3 +1,8 @@
+import {
+  hostedPredicateScoreDefinition,
+  hostedToolMatchScoreDefinition,
+  HOSTED_TOOL_MATCH_SCORER_ID,
+} from "./score-definitions.js";
 import { evaluateToolCalls, resolveMatchOptions } from "@mcpjam/sdk/matchers";
 import {
   buildIterationTranscript,
@@ -21,6 +26,7 @@ import {
 } from "@mcpjam/sdk/contract";
 import type {
   EvalBacktestDraft,
+  EvalBacktestContinuation,
   EvalBacktestReport,
   EvalBacktestDifference,
 } from "../../../../sdk/src/contract/eval-backtest.js";
@@ -133,10 +139,18 @@ export function backtestIteration(
           return parsed.success ? [parsed.data] : [];
         })
       : [];
+  const hosted = definitions.some(
+    (definition) =>
+      definition.idSource === "platform" &&
+      (definition.scorerId.startsWith("predicate:") ||
+        definition.scorerId === HOSTED_TOOL_MATCH_SCORER_ID),
+  );
   const seen = new Set<string>();
   const differences: EvalBacktestDifference[] = rules.map((rule, index) => {
     const definition = resolveScoreDefinition(
-      predicateScoreDefinition(rule, { ordinal: index }),
+      hosted
+        ? hostedPredicateScoreDefinition({ predicate: rule })
+        : predicateScoreDefinition(rule, { ordinal: index }),
     );
     const priorDefinition = definitions.find(
       (item) => item.scorerId === definition.scorerId,
@@ -193,7 +207,9 @@ export function backtestIteration(
     };
   });
   if (draft.matchOptions) {
-    const evaluatorId = TOOL_MATCH_SCORER_ID;
+    const evaluatorId = hosted
+      ? HOSTED_TOOL_MATCH_SCORER_ID
+      : TOOL_MATCH_SCORER_ID;
     seen.add(evaluatorId);
     const prior = definitions.find((item) => item.scorerId === evaluatorId);
     const old = stored.find(
@@ -221,11 +237,16 @@ export function backtestIteration(
     } else {
       const matchOptions = resolveMatchOptions(draft.matchOptions);
       const definition = resolveScoreDefinition(
-        toolMatchScoreDefinition({
-          expectedToolCalls: row.expectedToolCalls,
-          matchOptions,
-          isNegativeTest: row.isNegativeTest,
-        }),
+        hosted
+          ? hostedToolMatchScoreDefinition({
+              matchOptions,
+              isNegativeTest: row.isNegativeTest,
+            })
+          : toolMatchScoreDefinition({
+              expectedToolCalls: row.expectedToolCalls,
+              matchOptions,
+              isNegativeTest: row.isNegativeTest,
+            }),
       );
       const next = toEvaluatorResult(
         fromToolMatchResult(
@@ -277,11 +298,15 @@ export async function runAssertionBacktest(input: {
   runId: string;
   suiteId: string;
   draft: EvalBacktestDraft;
+  continuation?: EvalBacktestContinuation;
   readPage: (args: Record<string, unknown>) => Promise<BacktestEvidencePage>;
   signal?: AbortSignal;
 }): Promise<EvalBacktestReport> {
   const deadline = Date.now() + 30_000;
   const draft: EvalBacktestDraft = JSON.parse(JSON.stringify(input.draft));
+  const draftHash = canonicalDigest(draft);
+  if (input.continuation && input.continuation.draftHash !== draftHash)
+    throw new Error("EVAL_BACKTEST_SOURCE_CHANGED");
   const differences: EvalBacktestDifference[] = [];
   const seen = new Set<string>();
   let page: BacktestEvidencePage | undefined;
@@ -308,6 +333,12 @@ export async function runAssertionBacktest(input: {
                 sourceHash: page.sourceHash,
                 reservationId: page.reservationId,
               }
+            : input.continuation
+            ? {
+                cursor: input.continuation.cursor,
+                sourceHash: input.continuation.sourceHash,
+                reservationId: input.continuation.reservationId,
+              }
             : {}),
         }),
         new Promise<never>((_, reject) => {
@@ -321,7 +352,12 @@ export async function runAssertionBacktest(input: {
       clearTimeout(timeout);
       if (cancel) input.signal?.removeEventListener("abort", cancel);
     }
-    if (priorPage && page.sourceHash !== priorPage.sourceHash)
+    if (
+      page.sourceHash !==
+      (priorPage?.sourceHash ??
+        input.continuation?.sourceHash ??
+        page.sourceHash)
+    )
       throw new Error("EVAL_BACKTEST_SOURCE_CHANGED");
     if (page.iterations?.length > 10)
       throw new Error("Backtest evidence page exceeded its row limit");
@@ -353,7 +389,7 @@ export async function runAssertionBacktest(input: {
     schemaVersion: 1,
     sourceRunId: input.runId,
     sourceHash: page!.sourceHash,
-    draftHash: canonicalDigest(draft),
+    draftHash,
     configRevision: page!.configRevision,
     complete:
       page!.isDone &&
@@ -361,6 +397,16 @@ export async function runAssertionBacktest(input: {
       differences.length > 0 &&
       comparable === differences.length,
     continuationAvailable: !page!.isDone,
+    ...(!page!.isDone
+      ? {
+          continuation: {
+            cursor: page!.cursor!,
+            sourceHash: page!.sourceHash,
+            reservationId: page!.reservationId,
+            draftHash,
+          },
+        }
+      : {}),
     counts: {
       iterations: count,
       comparable,

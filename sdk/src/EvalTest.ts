@@ -1103,8 +1103,8 @@ export class EvalTest {
                   status: controller.signal.aborted
                     ? "cancelled"
                     : timeoutTriggered && !passed
-                      ? "timed_out"
-                      : "completed",
+                    ? "timed_out"
+                    : "completed",
                   ...promptMetrics,
                   ...(timeoutTriggered && !passed
                     ? { error: timeoutError.message }
@@ -1216,8 +1216,8 @@ export class EvalTest {
               status: controller.signal.aborted
                 ? "cancelled"
                 : lastAttemptTimedOut
-                  ? "timed_out"
-                  : "failed",
+                ? "timed_out"
+                : "failed",
               ...promptMetrics,
               error: lastError,
               retryCount: attempts,
@@ -1277,7 +1277,8 @@ export class EvalTest {
         );
         if (this.config.runEvaluators?.length) {
           let context:
-            ReturnType<typeof runEvaluatorContextFromIterations> | undefined;
+            | ReturnType<typeof runEvaluatorContextFromIterations>
+            | undefined;
           const identity = {
             caseId: this.config.id,
             externalRunId: options.mcpjam?.externalRunId,
@@ -1416,7 +1417,7 @@ export class EvalTest {
         : undefined,
       transport: {
         ...config?.transport,
-        signal: options.signal ?? config?.transport?.signal,
+        signal: config?.transport?.signal,
       },
       expectedIterations: config?.expectedIterations ?? options.iterations,
       suiteName: config?.suiteName ?? `EvalTest: ${this.getName()}`,
@@ -1650,7 +1651,8 @@ export class EvalTest {
     promptResults: PromptResult[];
     tokens: { input: number; output: number; total: number };
     legacy:
-      { kind: "returned"; passed: boolean } | { kind: "threw"; error: unknown };
+      | { kind: "returned"; passed: boolean }
+      | { kind: "threw"; error: unknown };
     evaluationConfig: EvaluationConfigSnapshot;
     options: EvalTestRunOptions;
     skipNonDeterministic?: string;
@@ -2015,7 +2017,10 @@ export class EvalTest {
       return;
     }
     assertValidMatchOptions(matchOptions);
-    this.config = { ...this.config, matchOptions: structuredClone(matchOptions) };
+    this.config = {
+      ...this.config,
+      matchOptions: structuredClone(matchOptions),
+    };
   }
 
   /**

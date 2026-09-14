@@ -175,6 +175,5 @@ export function resolveEvalCiMetadata(
     : {
         ...detectEvalCiMetadata(env),
         ...sanitize(ci),
-        ...(ci.commitSha ? { commitSha: ci.commitSha.trim() } : {}),
       };
 }

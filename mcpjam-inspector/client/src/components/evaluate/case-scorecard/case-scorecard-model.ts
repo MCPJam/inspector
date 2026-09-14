@@ -1,3 +1,4 @@
+import { filterSuppressedSuiteAssertions } from "@mcpjam/sdk/contract";
 /**
  * One case's scorers, in the order the chain grades them.
  *
@@ -315,6 +316,7 @@ export type CaseScorecardInput = {
   suiteDefaultMatchOptions?: EvalMatchOptions;
   predicates?: CasePredicates;
   suiteDefaultPredicates?: Predicate[];
+  suppressedSuiteStandardCheckIds?: string[];
   /**
    * Inspect mode. A frozen trial carries the RESOLVED predicate list only, so
    * suite-vs-case provenance is unknowable there; supplying this replaces both
@@ -365,6 +367,18 @@ const NEGATIVE_CONTRADICTING_KINDS: ReadonlySet<PredicateKind> =
  * arrived from the wire on an older/newer build, never for a known one.
  */
 const PREDICATE_PURPOSE: Record<PredicateKind, string> = {
+  toolDescriptionsPresent:
+    "Check the raw tool catalog captured during discovery",
+  toolAnnotationsPresent:
+    "Check the raw tool catalog captured during discovery",
+  toolNamesUnique: "Check the raw tool catalog captured during discovery",
+  noDeprecatedToolExposed:
+    "Check the raw tool catalog captured during discovery",
+  toolInputSchemasWellFormed:
+    "Check the raw tool catalog captured during discovery",
+  toolOutputSchemasPresent:
+    "Check the raw tool catalog captured during discovery",
+
   toolCalledWith: "Require this tool, with these arguments",
   toolCalledAtLeastOnce: "Require this tool on future runs",
   toolNeverCalled: "Catch this tool being called",
@@ -772,7 +786,10 @@ export function buildCaseScorecard(input: CaseScorecardInput): CaseScorecard {
   };
 
   const envelopeMode = input.predicates?.mode ?? "inherit";
-  const suiteDefaults = input.suiteDefaultPredicates ?? [];
+  const suiteDefaults = filterSuppressedSuiteAssertions(
+    input.suiteDefaultPredicates ?? [],
+    input.suppressedSuiteStandardCheckIds,
+  );
   const frozen = input.snapshotPredicates;
 
   const caseRows: ScorecardRow[] = frozen
@@ -859,10 +876,17 @@ export function buildCaseScorecard(input: CaseScorecardInput): CaseScorecard {
  * rather than a second copy of its rules.
  */
 export function effectiveCasePredicates(
-  input: Pick<CaseScorecardInput, "predicates" | "suiteDefaultPredicates">,
+  input: Pick<
+    CaseScorecardInput,
+    "predicates" | "suiteDefaultPredicates" | "suppressedSuiteStandardCheckIds"
+  >,
 ): Predicate[] {
   return (
-    resolveCasePredicates(input.suiteDefaultPredicates, input.predicates) ?? []
+    resolveCasePredicates(
+      input.suiteDefaultPredicates,
+      input.predicates,
+      input.suppressedSuiteStandardCheckIds,
+    ) ?? []
   );
 }
 

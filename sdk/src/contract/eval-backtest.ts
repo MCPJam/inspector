@@ -22,6 +22,20 @@ export const evalBacktestDraftSchema = z
       .strict(),
   })
   .strict();
+export const evalBacktestContinuationSchema = z
+  .object({
+    cursor: z.string().min(1).max(8192),
+    sourceHash: z.string().min(1).max(256),
+    reservationId: z.string().min(1).max(256),
+    draftHash: z.string().min(1).max(256),
+  })
+  .strict();
+export const evalBacktestRequestSchema = evalBacktestDraftSchema.extend({
+  continuation: evalBacktestContinuationSchema.optional(),
+});
+export type EvalBacktestContinuation = z.infer<
+  typeof evalBacktestContinuationSchema
+>;
 export type EvalBacktestDraft = z.infer<typeof evalBacktestDraftSchema>;
 export type EvalBacktestDifference = {
   iterationId: string;
@@ -42,6 +56,7 @@ export type EvalBacktestReport = {
   configRevision?: unknown;
   complete: boolean;
   continuationAvailable: boolean;
+  continuation?: EvalBacktestContinuation;
   counts: {
     iterations: number;
     comparable: number;
