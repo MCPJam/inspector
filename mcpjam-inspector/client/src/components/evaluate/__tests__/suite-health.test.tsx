@@ -139,6 +139,7 @@ describe("Suite Health", () => {
     expect(screen.getByRole("heading", { name: "Amazon" })).toBeVisible();
     expect(screen.getByTestId("suite-health-average")).toHaveTextContent("67%");
     expect(screen.getAllByTestId("suite-health-bar")).toHaveLength(2);
+    expect(screen.getAllByTestId("suite-health-bar-date")).toHaveLength(2);
     expect(screen.getByTestId("suite-health-threshold")).toHaveStyle({
       bottom: "80%",
     });

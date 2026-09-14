@@ -227,7 +227,7 @@ export function SuiteHealth({
                 )}
               </div>
               <div className="min-w-0 flex-1 overflow-x-auto pt-2">
-                <div style={{ minWidth: Math.max(0, points.length * 16) }}>
+                <div style={{ minWidth: points.length * 80 }}>
                   <div
                     className="relative flex h-20 items-end gap-1.5"
                     role="group"
@@ -266,16 +266,12 @@ export function SuiteHealth({
                       </div>
                     )}
                   </div>
-                  <div className="mt-2 flex justify-between text-[11px] text-muted-foreground">
-                    <span>{dateLabel(points[0].date)}</span>
-                    {points.length > 2 && (
-                      <span>
-                        {dateLabel(points[Math.floor(points.length / 2)].date)}
+                  <div className="mt-2 flex gap-1.5 text-[11px] text-muted-foreground">
+                    {points.map((point) => (
+                      <span key={point.key} data-testid="suite-health-bar-date" className="min-w-2 flex-1 whitespace-nowrap text-center">
+                        {dateLabel(point.date)}
                       </span>
-                    )}
-                    {points.length > 1 && (
-                      <span>{dateLabel(points[points.length - 1].date)}</span>
-                    )}
+                    ))}
                   </div>
                 </div>
               </div>
