@@ -184,11 +184,11 @@ A run that never uses a browser tool records nothing, and costs nothing.
 
 
 
-Checks are what actually decide pass/fail. They're pure functions of the iteration transcript, so the verdict is the same every time you replay it — which is the property you want if you're using Evaluate as a regression gate.
+Assertions are what actually decide pass/fail. They're pure functions of the iteration transcript, so the verdict is the same every time you replay it — which is the property you want if you're using Evaluate as a regression gate.
 
 Set defaults on the suite; override per case with **inherit** (use suite defaults), **replace** (use only the case's list), or **extend** (suite defaults, then the case's list).
 
-| Check | Passes when | Scope |
+| Assertion | Passes when | Scope |
 | --- | --- | --- |
 | **Tool was called with…** | The named tool was called with arguments matching your spec (per the suite's `argumentMatching` mode). | Turn or case |
 | **Tool was called at least once** | The named tool fired at least once across the turn. | Turn or case |
@@ -203,13 +203,13 @@ Set defaults on the suite; override per case with **inherit** (use suite default
 | **Widget no console errors** | The widget rendered without console errors. | Turn or case |
 | **Token budget under N** | Total token usage stayed below the cap. | Case only |
 
-When a check is authored on an individual prompt turn it is evaluated against **that turn's slice** of the transcript — tool calls, assistant message, tool errors, and widget observations for that turn only. `Token budget under N` is case-only because per-turn token usage is not reliably captured; all other checks are turn-scopable.
+When an assertion is authored on an individual prompt turn it is evaluated against **that turn's slice** of the transcript — tool calls, assistant message, tool errors, and widget observations for that turn only. `Token budget under N` is case-only because per-turn token usage is not reliably captured; all other assertions are turn-scopable.
 
 <Note>
-**A per-trial token ceiling is not a spend control.** It is set without seeing
+**A per-iteration token ceiling is not a spend control.** It is set without seeing
 what the suite normally uses, it is in a unit that is not comparable across
 models, and it goes stale on every prompt or model change. `Token budget under
-N` remains a valid check and keeps working wherever it is already authored,
+N` remains a valid assertion and keeps working wherever it is already authored,
 but for spend, two things replace it: [cost on every run](#cost), which shows
 what a suite actually costs, and `--max-cost-increase-percent`, which fails CI
 when a change makes the suite more expensive relative to its own baseline. For
