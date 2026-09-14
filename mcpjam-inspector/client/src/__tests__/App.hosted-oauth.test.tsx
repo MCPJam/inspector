@@ -115,7 +115,11 @@ const {
     toggleServerSelection: vi.fn(),
     setSelectedMultipleServersToAllServers: vi.fn(),
     projects: {
-      ws_local: { id: "ws_local", sharedProjectId: "project-1" },
+      ws_local: {
+        id: "ws_local",
+        name: "Default",
+        sharedProjectId: "project-1",
+      },
     },
     activeProjectId: "ws_local",
     handleSwitchProject: vi.fn(),
@@ -150,7 +154,10 @@ const {
     mockHandleOAuthCallback: vi.fn(),
     mockHostedShellGateState: {
       value: "ready" as
-        "ready" | "auth-loading" | "project-loading" | "logged-out",
+        | "ready"
+        | "auth-loading"
+        | "project-loading"
+        | "logged-out",
     },
     mockListTools: vi.fn().mockResolvedValue({ tools: [] }),
     mockMCPSidebar: vi.fn(() => <div />),
@@ -196,7 +203,9 @@ const {
   };
 });
 
-function mockFreshGuestUser() {
+function mockFreshGuestUser(
+  allProjects?: Array<{ _id: string; organizationId?: string }>,
+) {
   mockUseQuery.mockImplementation((ref: string) =>
     ref === "users:getCurrentUser"
       ? {
@@ -208,6 +217,8 @@ function mockFreshGuestUser() {
           // Fresh guest cookie/user rows have not seen first-run NUX yet.
           hasSeenOnboarding: false,
         }
+      : ref === "projects:getMyProjects"
+      ? allProjects
       : undefined,
   );
 }
@@ -3512,7 +3523,16 @@ describe("App hosted OAuth callback handling", () => {
     mockConvexAuthState.isAuthenticated = true;
     mockWorkOsAuthState.user = null;
     mockHostedShellGateState.value = "ready";
-    mockFreshGuestUser();
+    mockFreshGuestUser([{ _id: "k5700000000000000000000000a" }]);
+    const appState = createAppStateMock();
+    appState.activeProjectId = "k5700000000000000000000000a";
+    appState.projects = {
+      k5700000000000000000000000a: {
+        id: "k5700000000000000000000000a",
+        sharedProjectId: "k5700000000000000000000000a",
+      },
+    };
+    mockUseAppState.mockReturnValue(appState);
 
     render(<App />);
 
@@ -3541,7 +3561,16 @@ describe("App hosted OAuth callback handling", () => {
     mockConvexAuthState.isAuthenticated = true;
     mockWorkOsAuthState.user = null;
     mockHostedShellGateState.value = "ready";
-    mockFreshGuestUser();
+    mockFreshGuestUser([{ _id: "k5700000000000000000000000a" }]);
+    const appState = createAppStateMock();
+    appState.activeProjectId = "k5700000000000000000000000a";
+    appState.projects = {
+      k5700000000000000000000000a: {
+        id: "k5700000000000000000000000a",
+        sharedProjectId: "k5700000000000000000000000a",
+      },
+    };
+    mockUseAppState.mockReturnValue(appState);
 
     render(<App />);
 
@@ -3554,6 +3583,44 @@ describe("App hosted OAuth callback handling", () => {
 
     expect(window.location.pathname).toBe(
       "/p/k5700000000000000000000000a/servers",
+    );
+  });
+
+  it("does not cover an inaccessible project route with onboarding", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState(
+      {},
+      "",
+      "/p/k57missing000000000000000001/servers",
+    );
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockUseQuery.mockImplementation((ref: string) =>
+      ref === "users:getCurrentUser"
+        ? {
+            ...existingConvexUser,
+            _id: "guest-1",
+            externalId: "guest-1",
+            email: "guest@example.com",
+            isAnonymous: true,
+            hasSeenOnboarding: false,
+          }
+        : ref === "projects:getMyProjects"
+        ? []
+        : undefined,
+    );
+
+    render(<App />);
+
+    await screen.findByTestId("app-shell");
+    expect(
+      screen.queryByRole("heading", { name: "Welcome to MCPJam" }),
+    ).not.toBeInTheDocument();
+    expect(window.location.pathname).toBe(
+      "/p/k57missing000000000000000001/servers",
     );
   });
 
@@ -3827,6 +3894,53 @@ describe("App hosted OAuth callback handling", () => {
     });
     expect(screen.getByText("2 tools ready to use.")).toBeInTheDocument();
     expect(window.location.pathname).toBe("/home");
+  });
+
+  it("keeps a successful connection when initial tool discovery fails", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/servers");
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+    mockListTools.mockRejectedValueOnce(new Error("Tool listing timed out"));
+    const appState = createAppStateMock();
+    mockUseAppState.mockReturnValue(appState);
+
+    const view = render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to MCPJam" });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+      target: { value: "https://personal.example/mcp" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+
+    appState.appState.servers = {
+      Personal: {
+        name: "Personal",
+        config: {
+          transportType: "http",
+          url: "https://personal.example/mcp",
+        },
+        connectionStatus: "connected",
+      },
+    };
+    view.rerender(<App />);
+
+    await screen.findByRole("heading", { name: "Connected to Personal" });
+    expect(
+      screen.getByText("Connected — tools can finish loading in Playground."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Set up your server" }),
+    ).not.toBeInTheDocument();
+    expect(
+      JSON.parse(
+        localStorage.getItem("mcp-first-run-server-choice-state") ?? "{}",
+      ),
+    ).toEqual(expect.objectContaining({ status: "completed" }));
   });
 
   it("cancels first-run connection progress without completing onboarding", async () => {
@@ -4447,18 +4561,18 @@ describe("App hosted OAuth callback handling", () => {
       ref === "users:getCurrentUser"
         ? existingConvexUser
         : ref === "hosts:listHosts"
-          ? [
-              {
-                hostId: "m17b6q9xw2tv4kz8p3r5s0dc",
-                name: "Slack",
-                hostConfigId: "host-config-slack",
-                modelId: "claude-sonnet-4",
-                serverCount: 0,
-                createdAt: 0,
-                updatedAt: 0,
-              },
-            ]
-          : undefined,
+        ? [
+            {
+              hostId: "m17b6q9xw2tv4kz8p3r5s0dc",
+              name: "Slack",
+              hostConfigId: "host-config-slack",
+              modelId: "claude-sonnet-4",
+              serverCount: 0,
+              createdAt: 0,
+              updatedAt: 0,
+            },
+          ]
+        : undefined,
     );
     localStorage.setItem(
       "mcp-previewed-host-id",

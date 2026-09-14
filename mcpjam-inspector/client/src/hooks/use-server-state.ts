@@ -4681,6 +4681,10 @@ export function useServerState({
   // (or another host can require it) without re-adding the server.
   const handleRuntimeDisconnect = useCallback(
     (serverName: string) => {
+      // Invalidate any connect/reconnect that is still awaiting I/O. Without
+      // this, a late completion can overwrite this disconnect with success or
+      // failure and reopen a canceled onboarding attempt.
+      nextOpToken(serverName);
       dispatch({ type: "DISCONNECT", name: serverName });
     },
     [dispatch]
