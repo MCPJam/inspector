@@ -12,8 +12,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * tab still mounts.
  */
 
-const { mockSwarmsTab, mockUserTestingTab, mockRouteContext, mockUseAuth } =
-  vi.hoisted(() => ({
+const {
+  mockSwarmsTab,
+  mockUserTestingTab,
+  mockRouteContext,
+  mockUseAuth,
+  mockUseViewerProjectRole,
+} = vi.hoisted(() => ({
     mockSwarmsTab: vi.fn(() => <div>Swarms Tab</div>),
     mockUserTestingTab: vi.fn(() => <div>User Testing Tab</div>),
     mockUseAuth: vi.fn(() => ({
@@ -22,6 +27,7 @@ const { mockSwarmsTab, mockUserTestingTab, mockRouteContext, mockUseAuth } =
       signIn: vi.fn(),
       signUp: vi.fn(),
     })),
+    mockUseViewerProjectRole: vi.fn(),
     mockRouteContext: {
       billingUiEnabled: true,
       activeTabBillingLocked: false,
@@ -68,7 +74,10 @@ vi.mock("../hooks/useProjects", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../hooks/useProjects")>();
   return {
     ...actual,
-    useViewerProjectRole: () => ({ role: "member", isLoading: false }),
+    useViewerProjectRole: (args: unknown) => {
+      mockUseViewerProjectRole(args);
+      return { role: "member", isLoading: false };
+    },
   };
 });
 
@@ -130,8 +139,18 @@ const SURFACES = [
   },
 ];
 
-function renderRoute(element: React.ReactElement) {
-  return render(<MemoryRouter>{element}</MemoryRouter>);
+/**
+ * Both halves of the location matter.
+ *
+ * `MemoryRouter` supplies the router context, but these routes are also
+ * mounted outside a router on the legacy hash path, so they fall back to
+ * `window.location.pathname` through `getRouteFallbackPathname()`. A test that
+ * only set `initialEntries` would leave the component reading "/" and would
+ * pass for a reason that has nothing to do with the path under test.
+ */
+function renderRoute(element: React.ReactElement, at = "/") {
+  window.history.replaceState({}, "", at);
+  return render(<MemoryRouter initialEntries={[at]}>{element}</MemoryRouter>);
 }
 
 function signedIn() {
@@ -160,6 +179,7 @@ describe("gated feature routes — hosted", () => {
     mockRouteContext.billingUiEnabled = true;
     mockRouteContext.convexProjectId = "project-1";
     mockRouteContext.isAuthenticated = true;
+    mockUseViewerProjectRole.mockClear();
     signedIn();
   });
 
@@ -266,16 +286,56 @@ describe("gated feature routes — hosted", () => {
     });
   });
 
-  // A pasted URL has to hit the same gate as a sidebar click; the deep-link
-  // params are read after the gate, so reaching them at all would be the bug.
-  it("gates a deep-linked study for a guest", () => {
-    guest();
+  /**
+   * A pasted URL has to hit the same gate as a sidebar click.
+   *
+   * The earlier version of this rendered at the default `/` location and
+   * called itself a deep-link test, which only re-proved the ordinary gate.
+   * These mount at the real paths, including the `new` create routes, which
+   * are the ones most likely to be shared around.
+   */
+  describe.each([
+    ["/user-testing/study_8k2", ScenariosRoute, "user-testing" as const],
+    ["/user-testing/new", ScenariosRoute, "user-testing" as const],
+    ["/swarms/swarm_42", SwarmsRoute, "swarms" as const],
+    ["/swarms/new", SwarmsRoute, "swarms" as const],
+  ])("deep link %s", (path, Route, feature) => {
+    it("shows a guest the preview and never mounts the tab", () => {
+      guest();
 
-    renderRoute(<ScenariosRoute />);
+      renderRoute(<Route />, path);
 
-    expect(
-      screen.getByText(GATED_FEATURE_COPY["user-testing"].heroTitle),
-    ).toBeInTheDocument();
-    expect(mockUserTestingTab).not.toHaveBeenCalled();
+      expect(
+        screen.getByText(GATED_FEATURE_COPY[feature].heroTitle),
+      ).toBeInTheDocument();
+      expect(mockSwarmsTab).not.toHaveBeenCalled();
+      expect(mockUserTestingTab).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * The preview must not issue member-only queries. Convex `isAuthenticated`
+   * is true for an anonymous guest, so passing it straight through fired
+   * `projects:getProjectMembers` for a visitor who cannot read the answer and
+   * never mounts the tab.
+   */
+  describe("member-only queries on the preview", () => {
+    it("does not ask for the members list for a guest", () => {
+      guest();
+
+      renderRoute(<SwarmsRoute />);
+
+      expect(mockUseViewerProjectRole).toHaveBeenCalledWith(
+        expect.objectContaining({ isAuthenticated: false }),
+      );
+    });
+
+    it("still asks for it for a signed-in member", () => {
+      renderRoute(<SwarmsRoute />);
+
+      expect(mockUseViewerProjectRole).toHaveBeenCalledWith(
+        expect.objectContaining({ isAuthenticated: true }),
+      );
+    });
   });
 });

@@ -173,9 +173,16 @@ describe("SwarmsRoute member-only gate", () => {
     renderRoute(<SwarmsRoute />);
 
     expect(mockUseViewerProjectRole).toHaveBeenCalledWith({
-      isAuthenticated: true,
+      // `false` until WorkOS produces a user, NOT Convex's `isAuthenticated`,
+      // which is true for anonymous sessions (REEV-6). The members query is
+      // member-only, so it must not run for a visitor who has no account and
+      // could not read the answer. It enables the moment identity resolves.
+      isAuthenticated: false,
       projectId: "project-1",
       viewerEmail: undefined,
+      // The point of this test, unchanged: the wait is bounded by WorkOS
+      // hydrate rather than Convex auth, so an anonymous session never spins
+      // forever.
       identityLoading: true,
     });
     expect(screen.queryByText("Swarms Tab")).not.toBeInTheDocument();

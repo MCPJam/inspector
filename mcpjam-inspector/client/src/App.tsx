@@ -1666,8 +1666,10 @@ function useGatedFeatureGate(feature: GatedFeatureId): ReactElement | null {
 }
 
 // The User Testing surface: `/user-testing` (the project's scenarios) and
-// `/user-testing/:scenarioId` (one scenario). Same billing feature and
-// `sandboxes-enabled` flag as Swarms below.
+// `/user-testing/:scenarioId` (one scenario). Same billing feature and the
+// same gated-preview decision as Swarms below. Neither reads a feature flag
+// any more: REEV-6 took `sandboxes-enabled` out of the client, so what a
+// visitor gets is decided on arrival from identity and entitlement.
 export function ScenariosRoute() {
   const { convexProjectId, isAuthenticated } = useAppRouteContext();
   // The sidebar filters this item on the flag, but a filtered nav item is not
@@ -1798,10 +1800,19 @@ export function SwarmsRoute() {
   const roleGateActive =
     isAuthenticated && !!convexProjectId && isWorkOsSignedIn;
   const { role, isLoading: roleLoading } = useViewerProjectRole({
-    isAuthenticated,
+    // `roleGateActive`, NOT the bare Convex `isAuthenticated` (REEV-6).
+    // `isAuthenticated` is true for an anonymous guest, so passing it fired
+    // `projects:getProjectMembers` for a visitor who never mounts SwarmsTab
+    // and could not read the answer anyway. A member-only query running on a
+    // sign-up screen is the thing the preview was supposed to prevent.
+    //
+    // This only narrows WHEN the query runs. The role it returns is consulted
+    // solely under `roleGateActive`, which is the same condition, so no
+    // decision below loses an input it used to have.
+    isAuthenticated: roleGateActive,
     projectId: convexProjectId,
     viewerEmail: user?.email,
-    // Bound the "wait for email" window to WorkOS hydrate — not Convex auth —
+    // Bound the "wait for email" window to WorkOS hydrate, not Convex auth,
     // so we never spin forever on anonymous sessions.
     identityLoading: isWorkOsLoading,
   });
