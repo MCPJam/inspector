@@ -460,9 +460,7 @@ export function RunResultsMatrix({
                   <div className="mt-3 flex items-baseline gap-1">
                     <span className="text-lg font-semibold tabular-nums">
                       {target.counts.passed}
-                      <span className="text-muted-foreground">
-                        /{target.iterations.length}
-                      </span>
+                      /{target.iterations.length}
                     </span>
                     <span className="text-[10px] text-muted-foreground">
                       iters passed
