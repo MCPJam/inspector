@@ -273,6 +273,7 @@ export function ProjectRunsTable({
   );
   const [branchFilter, setBranchFilter] = useState(ALL_EVAL_FILTER_VALUES);
   const [commitFilter, setCommitFilter] = useState("");
+  const [hoveredHealthRun, setHoveredHealthRun] = useState<string | null>(null);
 
   // Legacy feeds support a server-side origins query. Evaluate history keeps
   // its query stable: some deployed backends reject that optional argument.
@@ -759,6 +760,8 @@ export function ProjectRunsTable({
           onRetry={history.retry}
           hostNamesById={hostNamesById}
           suiteOverview={suiteOverview}
+          onHoverRun={setHoveredHealthRun}
+          onSelectRun={onSelectRun}
         />
       )}
       <section
@@ -1123,6 +1126,7 @@ export function ProjectRunsTable({
                   return (
                     <EvaluateHistoryRow
                       key={launch.key}
+                      highlighted={hoveredHealthRun === launch.key}
                       rows={launch.runs}
                       details={history.details}
                       historyRows={historyRows}

@@ -98,6 +98,7 @@ export function EvaluateHistoryRow({
   showSuite = false,
   onOpen,
   testId,
+  highlighted = false,
 }: {
   rows: ProjectRunRow[];
   details: Map<string, ProjectRunHistoryDetail>;
@@ -107,6 +108,7 @@ export function EvaluateHistoryRow({
   showSuite?: boolean;
   onOpen?: () => void;
   testId?: string;
+  highlighted?: boolean;
 }) {
   const representative = [...rows].sort(
     (a, b) => a.runNumber - b.runNumber || a._id.localeCompare(b._id),
@@ -136,7 +138,8 @@ export function EvaluateHistoryRow({
   return (
     <TableRow
       data-testid={testId}
-      className={cn(onOpen && "cursor-pointer")}
+      data-highlighted={highlighted || undefined}
+      className={cn(onOpen && "cursor-pointer", highlighted && "bg-muted/50")}
       {...(onOpen
         ? {
             tabIndex: 0,

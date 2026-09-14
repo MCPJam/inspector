@@ -607,6 +607,17 @@ describe("project run history metrics", () => {
     const runRows = inTable().getAllByRole("button", { name: /^Open run #/ });
     expect(runRows).toHaveLength(2);
     expect(runRows[0]).toHaveTextContent("UI suite");
+    const user = userEvent.setup();
+    const bars = await screen.findAllByTestId("suite-health-bar");
+    const newestBar = bars[bars.length - 1];
+    await user.hover(newestBar);
+    expect(runRows[0]).toHaveAttribute("data-highlighted", "true");
+    expect(runRows[1]).not.toHaveAttribute("data-highlighted");
+    await user.unhover(newestBar);
+    expect(runRows[0]).not.toHaveAttribute("data-highlighted");
+    await user.click(newestBar);
+    expect(onSelectRun).toHaveBeenLastCalledWith({ suiteId: "suite_1", runId: "new" });
+    onSelectRun.mockClear();
     await userEvent.setup().click(runRows[0]);
     expect(onSelectRun).toHaveBeenCalledWith({
       suiteId: "suite_1",

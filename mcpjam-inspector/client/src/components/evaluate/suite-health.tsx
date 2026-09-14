@@ -40,10 +40,16 @@ export function buildSuiteHealth(
       const stats = projectRunRollup(members, details);
       if (!stats || stats.total === 0) return [];
       const run = details.get(members[0]._id)!.run;
+      const representative = [...launch.runs].sort(
+        (a, b) => a.runNumber - b.runNumber || a._id.localeCompare(b._id),
+      )[0];
       return [
         {
           key: launch.key,
-          runNumber: members[0].runNumber,
+          runNumber: representative.runNumber,
+          target: representative.suiteName !== null
+            ? { suiteId: representative.suiteId, runId: representative._id }
+            : null,
           date: Math.max(...members.map((row) => row.createdAt)),
           rate: (100 * stats.passed) / stats.total,
           threshold: run.passCriteria?.minimumPassRate ?? null,
@@ -68,6 +74,8 @@ export function SuiteHealth({
   onRetry,
   hostNamesById,
   suiteOverview,
+  onHoverRun,
+  onSelectRun,
 }: {
   rows: ProjectRunRow[];
   details: Map<string, ProjectRunHistoryDetail>;
@@ -76,6 +84,8 @@ export function SuiteHealth({
   onRetry: () => void;
   hostNamesById: ReadonlyMap<string, string | null>;
   suiteOverview?: EvalSuiteOverviewEntry[];
+  onHoverRun?: (key: string | null) => void;
+  onSelectRun?: (target: { suiteId: string; runId: string }) => void;
 }) {
   const [selectedSuite, setSelectedSuite] = useState<string>();
   const [selectedClient, setSelectedClient] = useState<string>();
@@ -224,14 +234,19 @@ export function SuiteHealth({
                     aria-label="Pass rate per run"
                   >
                     {points.map((point) => (
-                      <div
+                      <button
                         key={point.key}
-                        tabIndex={0}
-                        role="img"
+                        type="button"
+                        disabled={!point.target || !onSelectRun}
+                        onMouseEnter={() => onHoverRun?.(point.key)}
+                        onMouseLeave={() => onHoverRun?.(null)}
+                        onFocus={() => onHoverRun?.(point.key)}
+                        onBlur={() => onHoverRun?.(null)}
+                        onClick={() => point.target && onSelectRun?.(point.target)}
                         aria-label={`Run #${point.runNumber}, ${dateLabel(point.date)}: ${Math.round(point.rate)}%`}
                         title={`Run #${point.runNumber} · ${dateLabel(point.date)} · ${Math.round(point.rate)}%`}
                         data-testid="suite-health-bar"
-                        className="min-w-2 flex-1 rounded-sm bg-primary hover:opacity-80 focus-visible:outline-2 focus-visible:outline-ring"
+                        className="min-w-2 flex-1 cursor-pointer rounded-sm border-0 bg-primary p-0 hover:opacity-80 focus-visible:outline-2 focus-visible:outline-ring disabled:cursor-default"
                         style={{
                           height: `${point.rate}%`,
                           minHeight: point.rate === 0 ? 1 : undefined,
