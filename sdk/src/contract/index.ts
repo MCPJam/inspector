@@ -627,6 +627,66 @@ export {
  */
 export { evalVerdictPolicyJsonSchema } from "./eval-verdict-policy.schema.generated.js";
 
+// ── the one grading policy (canonical read model + boundary adapters) ────────
+/**
+ * ONE policy, read out of every contract that has expressed one.
+ *
+ * `verdict-policy.ts` above pins what a DECISION looks like; this pins the
+ * RULES a producer is handed to reach one, so a suite file, a per-case hosted
+ * suite and a suite-wide hosted suite can be described in a single vocabulary
+ * without any of them being restated under another's semantics. The criterion
+ * SCOPE travels with the threshold precisely because `minimumAccuracy` and
+ * `passThreshold` are not one number in two units.
+ *
+ * `planEvalGradingPolicyEdit` is the only sanctioned way an edit against that
+ * model reaches the wire: it writes the field the current scope already uses,
+ * writes nothing at all for an edit that changes nothing, and refuses whole
+ * rather than dropping a field it cannot represent.
+ */
+export type {
+  EvalEmptyPopulationRate,
+  EvalGradingCaseOverride,
+  EvalGradingPolicyEdit,
+  EvalGradingPolicyOrigin,
+  EvalGradingPolicyRefusal,
+  EvalGradingPolicySettingsPatch,
+  EvalGradingPolicyWritePlan,
+  EvalGradingValidity,
+  EvalIterationRule,
+  EvalPassCriterion,
+  EvalPassCriterionScope,
+  EvalRunReportingProducer,
+  EvalSuiteWidePopulation,
+  HostedSuiteGradingStorage,
+  ResolvedEvalGradingPolicy,
+  SuiteFileGradingInput,
+} from "./grading-policy.js";
+export {
+  EVAL_GRADING_POLICY_ORIGINS,
+  EVAL_GRADING_POLICY_REFUSALS,
+  EVAL_RUN_REPORTING_PRODUCERS,
+  EVAL_SUITE_WIDE_POPULATIONS,
+  LEGACY_SUITE_WIDE_THRESHOLD_PERCENT,
+  MAX_MINIMUM_ITERATIONS,
+  SUITE_FILE_DEFAULT_COVERAGE,
+  SUITE_FILE_VALIDITY_DEFAULTS,
+  evalEmptyPopulationRateSchema,
+  evalGradingCaseOverrideSchema,
+  evalGradingPolicySchema,
+  evalGradingPolicyStructuralSchema,
+  evalGradingValiditySchema,
+  evalIterationRuleSchema,
+  evalPassCriterionFraction,
+  evalPassCriterionSchema,
+  hostedGradingStorageFromDto,
+  planEvalGradingPolicyEdit,
+  resolveEvalGradingIterations,
+  resolveEvalGradingValidityPolicy,
+  resolveGradingPolicyFromHostedSuite,
+  resolveGradingPolicyFromRunReporting,
+  resolveGradingPolicyFromSuiteFile,
+} from "./grading-policy.js";
+
 // ── user-facing words for the closed vocabularies ────────────────────────────
 export {
   DECISION_LABEL_VOCABULARIES,
