@@ -21,9 +21,9 @@ const FIRST_RUN_SERVER_CHOICE_STORAGE_KEY = "mcp-first-run-server-choice-state";
 function readPersistedState(
   storageKey: string,
 ): OnboardingPersistedState | null {
-  const stored = localStorage.getItem(storageKey);
-  if (!stored) return null;
   try {
+    const stored = localStorage.getItem(storageKey);
+    if (!stored) return null;
     const parsed = JSON.parse(stored) as Partial<OnboardingPersistedState>;
     if (
       parsed.status === "started" ||
@@ -57,12 +57,23 @@ function readPersistedState(
   }
 }
 
+function writePersistedState(
+  storageKey: string,
+  state: OnboardingPersistedState,
+): void {
+  try {
+    localStorage.setItem(storageKey, JSON.stringify(state));
+  } catch {
+    // Storage can be unavailable in sandboxed or privacy-restricted contexts.
+  }
+}
+
 export function readOnboardingState(): OnboardingPersistedState | null {
   return readPersistedState(STORAGE_KEY);
 }
 
 export function writeOnboardingState(state: OnboardingPersistedState): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  writePersistedState(STORAGE_KEY, state);
 }
 
 export function markOnboardingStarted(): void {
@@ -100,7 +111,11 @@ export function markOnboardingDismissed(): void {
 }
 
 export function clearOnboardingState(): void {
-  localStorage.removeItem(STORAGE_KEY);
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // Treat unavailable storage as already clear.
+  }
 }
 
 /**
@@ -113,10 +128,7 @@ export function readFirstRunServerChoiceState(): OnboardingPersistedState | null
 }
 
 function writeFirstRunServerChoiceState(state: OnboardingPersistedState): void {
-  localStorage.setItem(
-    FIRST_RUN_SERVER_CHOICE_STORAGE_KEY,
-    JSON.stringify(state),
-  );
+  writePersistedState(FIRST_RUN_SERVER_CHOICE_STORAGE_KEY, state);
 }
 
 export function markFirstRunServerChoiceStarted(

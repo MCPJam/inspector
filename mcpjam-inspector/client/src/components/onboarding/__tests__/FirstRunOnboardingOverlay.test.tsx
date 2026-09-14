@@ -105,8 +105,8 @@ describe("FirstRunOnboardingOverlay", () => {
       "duration-500",
     );
     const continueButton = screen.getByRole("button", { name: "Continue" });
-    expect(continueButton).toHaveClass(
-      "justify-self-start",
+    expect(continueButton).toHaveClass("justify-self-start");
+    expect(continueButton).not.toHaveClass(
       "focus-visible:!border-0",
       "focus-visible:!ring-0",
     );
@@ -197,6 +197,16 @@ describe("FirstRunOnboardingOverlay", () => {
     expect(
       screen.getByRole("button", { name: "Hide technical details" }),
     ).toHaveAttribute("aria-expanded", "true");
+    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+      target: { value: "   " },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
+    expect(screen.getByText("Enter a server URL or command.")).toBeVisible();
+    expect(onConnectOwnServer).toHaveBeenCalledTimes(1);
+
+    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+      target: { value: "  https://mcp.example.com/mcp  " },
+    });
     fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
     expect(onConnectOwnServer).toHaveBeenCalledTimes(2);
     expect(onConnectOwnServer).toHaveBeenLastCalledWith({

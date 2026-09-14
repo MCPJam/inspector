@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   readOnboardingState,
   writeOnboardingState,
@@ -20,6 +20,10 @@ import {
 describe("onboarding-state", () => {
   beforeEach(() => {
     localStorage.clear();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   describe("readOnboardingState / writeOnboardingState", () => {
@@ -73,6 +77,24 @@ describe("onboarding-state", () => {
       );
       expect(readOnboardingState()).toBeNull();
     });
+
+    it("treats unavailable storage as absent", () => {
+      vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+        throw new DOMException("Blocked", "SecurityError");
+      });
+
+      expect(readOnboardingState()).toBeNull();
+      expect(readFirstRunServerChoiceState()).toBeNull();
+    });
+
+    it("does not throw when storage rejects onboarding writes", () => {
+      vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+        throw new DOMException("Blocked", "SecurityError");
+      });
+
+      expect(() => writeOnboardingState({ status: "seen" })).not.toThrow();
+      expect(() => markFirstRunServerChoiceStarted("Example")).not.toThrow();
+    });
   });
 
   describe("clearOnboardingState", () => {
@@ -80,6 +102,14 @@ describe("onboarding-state", () => {
       writeOnboardingState({ status: "seen" });
       clearOnboardingState();
       expect(readOnboardingState()).toBeNull();
+    });
+
+    it("does not throw when storage rejects removal", () => {
+      vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => {
+        throw new DOMException("Blocked", "SecurityError");
+      });
+
+      expect(() => clearOnboardingState()).not.toThrow();
     });
   });
 

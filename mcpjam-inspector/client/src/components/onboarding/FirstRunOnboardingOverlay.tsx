@@ -16,7 +16,7 @@ import { Label } from "@mcpjam/design-system/label";
 import { AlertCircle, Check, ChevronDown, Circle, Loader2 } from "lucide-react";
 
 /** Time the welcome splash remains visible before it advances to server choice. */
-export const FIRST_RUN_WELCOME_AUTO_ADVANCE_MS = 8_500;
+export const FIRST_RUN_WELCOME_AUTO_ADVANCE_MS = 5_500;
 
 type FirstRunOverlayStep =
   | "welcome"
@@ -149,10 +149,18 @@ export function FirstRunOnboardingOverlay({
   const submitServerDetails = useCallback(
     (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault();
+      const trimmedUrlOrCommand = serverUrlOrCommand.trim();
+      if (!trimmedUrlOrCommand) {
+        setServerUrlError("Enter a server URL or command.");
+        return;
+      }
+
+      setServerUrlError(null);
+      setServerUrlOrCommand(trimmedUrlOrCommand);
       onConnectOwnServer({
-        name: serverName.trim() || deriveServerName(serverUrlOrCommand),
+        name: serverName.trim() || deriveServerName(trimmedUrlOrCommand),
         transport: serverTransport,
-        urlOrCommand: serverUrlOrCommand,
+        urlOrCommand: trimmedUrlOrCommand,
         authentication: serverAuthentication,
       });
     },
@@ -261,7 +269,7 @@ export function FirstRunOnboardingOverlay({
               <Button
                 type="button"
                 variant="link"
-                className="mt-7 h-auto justify-self-start p-0 text-[12.5px] font-semibold text-foreground underline decoration-foreground/35 underline-offset-4 hover:text-foreground hover:decoration-foreground focus-visible:!border-0 focus-visible:!ring-0"
+                className="mt-7 h-auto justify-self-start p-0 text-[12.5px] font-semibold text-foreground underline decoration-foreground/35 underline-offset-4 hover:text-foreground hover:decoration-foreground"
                 onClick={continueToChoice}
               >
                 Continue
@@ -543,10 +551,17 @@ export function FirstRunOnboardingOverlay({
                     className="h-10 border-border bg-card font-mono text-[11.5px] shadow-none"
                     spellCheck={false}
                     value={serverUrlOrCommand}
-                    onChange={(event) =>
-                      setServerUrlOrCommand(event.target.value)
-                    }
+                    aria-invalid={serverUrlError ? true : undefined}
+                    onChange={(event) => {
+                      setServerUrlOrCommand(event.target.value);
+                      if (serverUrlError) setServerUrlError(null);
+                    }}
                   />
+                  {serverUrlError ? (
+                    <p className="text-[10.5px] text-destructive" role="alert">
+                      {serverUrlError}
+                    </p>
+                  ) : null}
                 </div>
 
                 <div className="grid gap-1.5">

@@ -180,6 +180,10 @@ test("a browser agent discovers MCPJam's tools, navigates, and reads the screen 
       "mcp-onboarding-state",
       JSON.stringify({ status: "completed", completedAt: 1 }),
     );
+    window.localStorage.setItem(
+      "mcp-first-run-server-choice-state",
+      JSON.stringify({ status: "completed", completedAt: 1, shownAt: 1 }),
+    );
   });
 
   const agent = await BrowserAgent.attach(page);
