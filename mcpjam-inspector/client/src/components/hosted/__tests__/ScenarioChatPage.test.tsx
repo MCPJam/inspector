@@ -1493,6 +1493,38 @@ describe("ScenarioChatPage", () => {
       ).toEqual(["t1"]);
     });
 
+    it("says What to try once, and does not call it optional", async () => {
+      // The popover used to open on "Optional things to try" over a footnote
+      // leading with "Try any, in any order" — telling a tester the list was
+      // skippable, every single time they opened it. The list still IS
+      // optional (nothing gates the composer, nothing reports completion); it
+      // is just not what the heading should say.
+      writeStudyWithTasks("sbx_copy", [{ id: "t1", title: "Only task" }]);
+
+      render(<ScenarioChatPage />);
+
+      const trigger = await screen.findByTestId("scenario-tasks-trigger");
+      // Read the attribute rather than passing an asymmetric matcher to
+      // `toHaveAccessibleName`: that overload takes a string or a regex, and a
+      // matcher object there can pass without ever comparing anything.
+      expect(trigger.getAttribute("aria-label")).toMatch(/^What to try — /);
+      expect(trigger.getAttribute("aria-label")).not.toMatch(/optional/i);
+
+      await userEvent.click(trigger);
+      expect(
+        await screen.findByTestId("scenario-tasks-item-t1"),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/Optional things to try/i)).toBeNull();
+      expect(screen.queryByText(/in any order/i)).toBeNull();
+      // The footnote's other half stays. It is not framing — it is the one
+      // thing about this control a tester cannot work out by looking at it.
+      expect(
+        screen.getByText("This checklist is only for you."),
+      ).toBeInTheDocument();
+      // The heading is the trigger's name, so both now read "What to try".
+      expect(screen.getAllByText("What to try").length).toBeGreaterThan(1);
+    });
+
     it("reads All checked rather than 0 unchecked once everything is ticked", async () => {
       writeStudyWithTasks("sbx_done", [{ id: "t1", title: "Only task" }]);
       sessionStorage.setItem(

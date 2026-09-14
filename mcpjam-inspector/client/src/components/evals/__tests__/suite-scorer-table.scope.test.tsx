@@ -174,7 +174,7 @@ describe("case scope", () => {
       }),
     ).toHaveValue(3);
     expect(
-      within(own).getByRole("button", { name: "Warn" }),
+      within(own).getByRole("button", { name: "Advisory" }),
     ).toBeInTheDocument();
   });
 
@@ -252,23 +252,11 @@ describe("case scope", () => {
       predicates: { mode: "extend", list: [] },
       suppressedSuiteStandardCheckIds: [],
     });
-    await user.click(
-      screen.getByRole("button", {
-        name: "User turn count stays below the configured limit",
-      }),
-    );
-    await user.click(screen.getByRole("button", { name: "Warn" }));
+    await user.click(screen.getByRole("button", { name: "Advisory" }));
     expect(onDraftChange).toHaveBeenLastCalledWith({
       predicates: {
         mode: "extend",
-        list: [
-          {
-            type: "turnCountUnder",
-            turns: 3,
-            role: "advisory",
-            severity: "warn",
-          },
-        ],
+        list: [{ type: "turnCountUnder", turns: 3, role: "advisory" }],
       },
       suppressedSuiteStandardCheckIds: [],
     });

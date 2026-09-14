@@ -2632,7 +2632,7 @@ function operationInputError(message: string): PlatformApiError {
  *
  * Passing both spellings of ONE selector is a refusal, never a precedence
  * rule — the same call `clients.ts` makes for `--client` / `--host` and this
- * file already makes for `repetitions` / `iterations`. A precedence rule is
+ * file already makes for `iterations` / `repetitions`. A precedence rule is
  * invisible: a script that passes both because someone half-finished a
  * migration keeps running, silently launching against whichever of two
  * possibly-different clients this function happened to prefer, and spends on
@@ -3019,9 +3019,9 @@ function resolveSuiteHostTargets(
 /** The knobs both launch shapes forward, in the wire's own vocabulary. */
 function runKnobBody(
   input: {
-    repetitions?: number;
-    /** Deprecated alias for repetitions. */
     iterations?: number;
+    /** Legacy spelling of iterations. */
+    repetitions?: number;
     notes?: string;
     minPassRate?: number;
     matchOptions?: z.infer<typeof publicMatchOptionsSchema>;
@@ -3033,8 +3033,8 @@ function runKnobBody(
   caseIds: string[] | undefined
 ): Record<string, unknown> {
   return {
-    ...(input.repetitions !== undefined || input.iterations !== undefined
-      ? { iterationOverride: input.repetitions ?? input.iterations }
+    ...(input.iterations !== undefined || input.repetitions !== undefined
+      ? { iterationOverride: input.iterations ?? input.repetitions }
       : {}),
     ...(caseIds ? { caseIds } : {}),
     ...(input.matchOptions ? { matchOptionsOverride: input.matchOptions } : {}),
@@ -3862,15 +3862,10 @@ const importApprovalsSchema = z
   .min(1);
 
 const RUN_KNOB_FIELDS = {
-  repetitions: z
-    .number()
-    .int()
-    .min(1)
-    .max(10)
-    .optional()
-    .describe(
-      "Run each case this many times under verdict policy 2, overriding its saved repetitions FOR THIS RUN ONLY (the suite is untouched). Multiplies what the run costs."
-    ),
+  // `iterations` is the canonical spelling of the configured count
+  // (`docs/evals-vocabulary-consolidation.md`); `repetitions` is its legacy
+  // spelling. Both fold onto the wire's `iterationOverride`, so flipping which
+  // one is canonical changes documentation and precedence, not meaning.
   iterations: z
     .number()
     .int()
@@ -3878,8 +3873,15 @@ const RUN_KNOB_FIELDS = {
     .max(10)
     .optional()
     .describe(
-      "Run each case this many times, overriding its saved iteration count FOR THIS RUN ONLY (the suite is untouched). Multiplies what the run costs."
+      "Run each case this many times under verdict policy 2, overriding its saved iterations FOR THIS RUN ONLY (the suite is untouched). Multiplies what the run costs."
     ),
+  repetitions: z
+    .number()
+    .int()
+    .min(1)
+    .max(10)
+    .optional()
+    .describe("Legacy spelling of iterations."),
   notes: z
     .string()
     .trim()
@@ -4009,12 +4011,12 @@ const runEvalSuiteInput = z
     ...RUN_KNOB_FIELDS,
   })
   .superRefine((input, ctx) => {
-    if (input.repetitions !== undefined && input.iterations !== undefined) {
+    if (input.iterations !== undefined && input.repetitions !== undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ["repetitions"],
+        path: ["iterations"],
         message:
-          "Use either repetitions or the deprecated iterations alias, not both.",
+          "Send iterations or repetitions, not both — they are two spellings of one field.",
       });
     }
   });
@@ -4634,8 +4636,8 @@ const runEvalCaseInput = z
           DEPRECATED_HOST_SELECTOR_SUFFIX
       ),
     compose: composeRunTargetInput.optional(),
-    repetitions: RUN_KNOB_FIELDS.repetitions,
     iterations: RUN_KNOB_FIELDS.iterations,
+    repetitions: RUN_KNOB_FIELDS.repetitions,
     idempotencyKey: RUN_KNOB_FIELDS.idempotencyKey,
     // A single-case run of an APPROXIMATED case needs the same per-run
     // approval a suite run does. Without it this operation could never launch
@@ -4646,12 +4648,12 @@ const runEvalCaseInput = z
     importApprovals: RUN_KNOB_FIELDS.importApprovals,
   })
   .superRefine((input, ctx) => {
-    if (input.repetitions !== undefined && input.iterations !== undefined) {
+    if (input.iterations !== undefined && input.repetitions !== undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ["repetitions"],
+        path: ["iterations"],
         message:
-          "Use either repetitions or the deprecated iterations alias, not both.",
+          "Send iterations or repetitions, not both — they are two spellings of one field.",
       });
     }
   });
@@ -4807,9 +4809,9 @@ export const runEvalCaseOperation: PlatformOperation<
             ...(environment ? { environmentId: environment.id } : {}),
             ...(host ? { namedHostId: host.id } : {}),
             ...(ephemeralLaunch ? { ephemeralEnvironment: true } : {}),
-            ...(input.repetitions !== undefined ||
-            input.iterations !== undefined
-              ? { iterationOverride: input.repetitions ?? input.iterations }
+            ...(input.iterations !== undefined ||
+            input.repetitions !== undefined
+              ? { iterationOverride: input.iterations ?? input.repetitions }
               : {}),
             ...(input.idempotencyKey
               ? { idempotencyKey: input.idempotencyKey }
@@ -5629,10 +5631,10 @@ const updateEvalSuiteInput = z
                 "Advisory pass threshold, 0–1 (passed = score >= threshold)."
               ),
             role: z
-              .enum(["advisory", "gating"])
+              .enum(["advisory", "gating", "required"])
               .optional()
               .describe(
-                "Whether the judge decides the verdict. `gating` is accepted only on a calibrated judge, and only where the deployment allows it."
+                "Whether the judge decides the verdict. `required` (legacy spelling: `gating`) is accepted only on a calibrated judge, and only where the deployment allows it."
               ),
             severity: z
               .literal("warn")
@@ -7459,7 +7461,7 @@ const startEvalDescriptionExperimentInput = z.object({
     .max(400)
     .optional()
     .describe(
-      "Refuse the launch if plannedTrials (cases × repetitions × 2) exceeds this. Default 200; hard cap 400."
+      "Refuse the launch if plannedTrials (cases × iterations × 2) exceeds this. Default 200; hard cap 400."
     ),
 });
 
@@ -7479,7 +7481,7 @@ export const startEvalDescriptionExperimentOperation: PlatformOperation<
   name: "start_eval_description_experiment",
   title: "Start an eval description experiment",
   description:
-    "Launch the two-arm description-rewrite experiment: one ORIGINAL replay of the source run and one REWRITE replay that applies the proposed description. SPENDS eval-iteration credits — plannedTrials = cases × repetitions × 2, refused over the cap (default 200, hard 400) — plus whatever the suite's judge auto-run costs on both arms. Returns immediately with a launching receipt; poll get_eval_description_experiment. Report-only: nothing writes result, a gate, or a verdict. Emulated engine only in v1; a harness source is refused.",
+    "Launch the two-arm description-rewrite experiment: one ORIGINAL replay of the source run and one REWRITE replay that applies the proposed description. SPENDS eval-iteration credits — plannedTrials = cases × iterations × 2, refused over the cap (default 200, hard 400) — plus whatever the suite's judge auto-run costs on both arms. Returns immediately with a launching receipt; poll get_eval_description_experiment. Report-only: nothing writes result, a gate, or a verdict. Emulated engine only in v1; a harness source is refused.",
   readOnly: false,
   risk: "spend",
   permalink: noPermalink("mutation-only"),

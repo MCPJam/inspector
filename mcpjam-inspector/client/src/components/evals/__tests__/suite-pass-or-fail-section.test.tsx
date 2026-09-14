@@ -111,14 +111,14 @@ describe("SuitePassOrFailSection", () => {
     }
   });
 
-  it("marks the judge advisory by default and gating when the role says so", () => {
+  it("marks the judge advisory by default and required when the role says so", () => {
     const advisory = renderSection();
     expect(
       within(
         advisory.container.querySelector(
           '[data-scorer-id="judge:goalCompletion"]',
         ) as HTMLElement,
-      ).getByText("Report"),
+      ).getByText("Advisory"),
     ).toBeTruthy();
     advisory.unmount();
 
@@ -128,20 +128,12 @@ describe("SuitePassOrFailSection", () => {
     const group = gating.container.querySelector(
       '[data-stage-group="userValue"]',
     ) as HTMLElement;
-    // The row reads Gate; its control opens from the title.
-    expect(
-      within(
-        group.querySelector(
-          '[data-scorer-id="judge:goalCompletion"]',
-        ) as HTMLElement,
-      ).getByText("Gate"),
-    ).toBeTruthy();
-    fireEvent.click(
-      within(group).getByRole("button", { name: "Goal completion judge" }),
-    );
+    // The row's control reads Required; it sits on the row itself.
     const judgeRole = group.querySelector('[aria-label="Judge role"]');
     expect(
-      within(judgeRole as HTMLElement).getByRole("button", { name: "Gate" }),
+      within(judgeRole as HTMLElement).getByRole("button", {
+        name: "Required",
+      }),
     ).toHaveAttribute("aria-pressed", "true");
   });
 

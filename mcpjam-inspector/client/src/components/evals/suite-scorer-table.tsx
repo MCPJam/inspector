@@ -37,7 +37,6 @@ import { Input } from "@mcpjam/design-system/input";
 import type { ModelDefinition } from "@/shared/types";
 import type { SuiteCapabilities } from "@/hooks/use-suite-capabilities";
 import { DEFAULT_JUDGE_THRESHOLD } from "@/components/shared/session-quality/judge-config";
-import { hasJudgeSeverityCapability } from "@/hooks/use-suite-capabilities";
 import { ValidatorsSection } from "./validators-section";
 import { CheckRow, blankPredicate } from "./checks-section";
 import { GlobalGatesSectionInfoHint } from "./global-gates-info";
@@ -191,7 +190,6 @@ export function SuiteScorerTable({
     capabilities?.judge,
     unavailableReason,
   );
-  const judgeSeveritySupported = hasJudgeSeverityCapability(capabilities);
 
   /** A rule this page may edit in place: its own list, not an inherited one. */
   const editable = (rule: EffectiveRule | undefined) =>
@@ -403,7 +401,6 @@ export function SuiteScorerTable({
                         }
                         checkPolicy={checkPolicy}
                         judgeDisabledReason={judgeDisabledReason}
-                        judgeSeveritySupported={judgeSeveritySupported}
                         judgeConfig={judgeConfig}
                         expanded={expanded === row.id}
                         onToggleExpand={() =>
@@ -531,7 +528,6 @@ function ScorerRow({
   onEnabledChange,
   checkPolicy,
   judgeDisabledReason,
-  judgeSeveritySupported,
   judgeConfig,
   expanded,
   editable,
@@ -549,7 +545,6 @@ function ScorerRow({
   onEnabledChange: (enabled: boolean) => void;
   checkPolicy: boolean;
   judgeDisabledReason: string | undefined;
-  judgeSeveritySupported: boolean;
   judgeConfig: EvalJudgeConfig | undefined;
   expanded: boolean;
   /** This page may change the row's threshold, role and body in place. */
@@ -676,7 +671,6 @@ function ScorerRow({
                 predicate={predicate}
                 checkPolicy={checkPolicy}
                 judgeDisabledReason={judgeDisabledReason}
-                judgeSeveritySupported={judgeSeveritySupported}
                 judgeEditable={judgeEditable}
                 editable={editable}
                 onPredicateChange={onPredicateChange}
@@ -792,7 +786,6 @@ function RoleCell({
   predicate,
   checkPolicy,
   judgeDisabledReason,
-  judgeSeveritySupported,
   judgeEditable,
   editable,
   onPredicateChange,
@@ -802,7 +795,6 @@ function RoleCell({
   predicate: Predicate | undefined;
   checkPolicy: boolean;
   judgeDisabledReason: string | undefined;
-  judgeSeveritySupported: boolean;
   /** The suite page edits the judge's role; a case only reads it. */
   judgeEditable: boolean;
   /** This page owns the rule; an inherited one reads its role. */
@@ -812,7 +804,7 @@ function RoleCell({
 }) {
   if (row.kind === "observed") return null;
   if (row.kind === "match") {
-    return <RoleChip role="gate" />;
+    return <RoleChip role="required" />;
   }
   if (row.kind === "preset") {
     return <RoleChip role={row.role} />;
@@ -821,16 +813,17 @@ function RoleCell({
     if (row.judgeSlot === "groundedness" || !judgeEditable) {
       return <RoleChip role={row.role} />;
     }
-    const gateEnabled = judgeDisabledReason === undefined;
-    const roles: ScorerUiRole[] = judgeSeveritySupported
-      ? ["gate", "warn", "report"]
-      : ["gate", "report"];
+    const requiredEnabled = judgeDisabledReason === undefined;
+    // Two segments unconditionally. The judge-severity capability used to
+    // decide whether a third segment, Warn, could be offered; with Warn and
+    // Report collapsed into Advisory there is no third tier for it to gate.
+    const roles: ScorerUiRole[] = ["required", "advisory"];
     return (
       <div className="space-y-1">
         <RoleSegmentGroup
           value={row.role}
           roles={roles}
-          disabledRoles={gateEnabled ? undefined : ["gate"]}
+          disabledRoles={requiredEnabled ? undefined : ["required"]}
           ariaLabel="Judge role"
           onChange={onJudgeRoleChange}
         />
@@ -855,18 +848,18 @@ function RoleCell({
     }
     if (!checkPolicy) {
       // Read-only, but honest: an SDK- or CLI-authored advisory check still
-      // reads Warn/Report here rather than being relabelled Gate — and the
+      // reads Advisory here rather than being relabelled Required — and the
       // chip says why it is not a control.
       return <RoleChip role={row.role} note={BACKEND_SUPPORT_HINT} />;
     }
-    // Observations get two segments, the same way groundedness does: a
-    // heuristic must not decide a release, and offering a Gate the schema is
-    // going to refuse is a control that lies.
+    // Observations get one segment, the same way groundedness does: a
+    // heuristic must not decide a release, and offering a Required the schema
+    // is going to refuse is a control that lies.
     return (
       <RoleSegmentGroup
         value={row.role}
-        // An observation is a heuristic, so it is offered as Warn or Report
-        // and never as a Gate — the same rule the Zod schema enforces at the
+        // An observation is a heuristic, so it is offered as Advisory only and
+        // never as Required — the same rule the Zod schema enforces at the
         // save, surfaced as an absent segment rather than a refused save.
         roles={rolesForPredicateKind(predicate.type)}
         ariaLabel="Assertion role"

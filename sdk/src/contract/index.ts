@@ -92,6 +92,14 @@ export {
 } from "./derive.js";
 
 export {
+  EMIT_CANONICAL_ROLE,
+  authoredRequiredRole,
+  capabilityAcceptsCanonicalRole,
+  definitionsForDeployment,
+  roleForDeployment,
+} from "./policy-spelling.js";
+
+export {
   LEGACY_TEST_SCORER_ID,
   LEGACY_TEST_VERSION,
   TOOL_MATCH_SCORER_ID,
