@@ -464,22 +464,22 @@ When two or more host configurations are attached to a suite, a **By case / By h
 ### Cost
 
 Every iteration carries the MCPJam-billed cost of the model work it did,
-priced when the trial finished and stamped with the rates used — so a run's
+priced when the iteration finished and stamped with the rates used — so a run's
 cost does not move later when prices change. It rolls up onto cases, runs and
 the metric strip.
 
-A dash (`—`) means **no cost was observed**, never that the trial was free:
+A dash (`—`) means **no cost was observed**, never that the iteration was free:
 
 | Why | What you see |
 |---|---|
 | Your own API key (BYOK) | MCPJam did not bill it, so there is no cost to report. |
-| A harness run (Claude Code, Codex, Cursor) | A harness turn mixes models — sub-agents on cheaper models under a main one — and the trial's totals carry no per-model split, so no honest single figure exists. Harness cost arrives with billed attribution. |
+| A harness run (Claude Code, Codex, Cursor) | A harness turn mixes models — sub-agents on cheaper models under a main one — and the iteration's totals carry no per-model split, so no honest single figure exists. Harness cost arrives with billed attribution. |
 | No token usage reported | Nothing to price. |
 
 A cost your own SDK runner reported is shown but labelled **runner** — it is
 real, but MCPJam neither computed nor verified it.
 
-When only some of a run's trials were priced, the total says so. That
+When only some of a run's iterations were priced, the total says so. That
 distinction matters most in CI: a run that looks cheaper may simply be a run
 we priced less of, which is why the compare API reports coverage counts
 alongside the cost and a cost gate treats partial coverage as non-gateable
