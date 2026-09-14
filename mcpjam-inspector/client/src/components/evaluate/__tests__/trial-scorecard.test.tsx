@@ -243,7 +243,7 @@ describe("TrialScorecard", () => {
       "notMeasured",
     );
     expect(screen.getByTestId("trial-scorecard-summary").textContent).toBe(
-      "No scorers ran",
+      "No evaluators ran",
     );
   });
 
@@ -377,7 +377,7 @@ describe("summaryLine", () => {
 
   it("says a case has no gates rather than reporting 0 of 0", () => {
     expect(summaryLine({ ...base, warn: 1 })).toBe("No gates ran · 1 warn");
-    expect(summaryLine(base)).toBe("No scorers ran");
+    expect(summaryLine(base)).toBe("No evaluators ran");
   });
 
   it("names an unevaluable scorer as such, not as a failure", () => {

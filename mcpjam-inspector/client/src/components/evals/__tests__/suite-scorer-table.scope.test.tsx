@@ -257,7 +257,7 @@ describe("case scope", () => {
       },
       suppressedSuiteStandardCheckIds: [],
     });
-    await user.click(screen.getByRole("button", { name: "Add scorer" }));
+    await user.click(screen.getByRole("button", { name: "Add assertion" }));
     await user.click(
       await screen.findByTestId("add-step-item-check:noToolErrors"),
     );

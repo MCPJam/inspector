@@ -192,7 +192,7 @@ describe("nothing is written until the person says so", () => {
 });
 
 describe("adding a scorer", () => {
-  it("Add scorer appends a check and the sheet keeps rendering", async () => {
+  it("Add assertion appends an assertion and the sheet keeps rendering", async () => {
     // Restored with the scorer table. The test that displaced it asserted the
     // sheet sent `disabledStageChecks` — an argument `applySuiteSettings` has
     // never declared — against a mock that validates nothing, so it certified
@@ -206,7 +206,7 @@ describe("adding a scorer", () => {
     const { container } = renderSettingsSheet();
     openSettingsRow(container, "checks");
 
-    await user.click(screen.getByRole("button", { name: "Add scorer" }));
+    await user.click(screen.getByRole("button", { name: "Add assertion" }));
     await user.click(
       await screen.findByTestId("add-step-item-check:noToolErrors"),
     );

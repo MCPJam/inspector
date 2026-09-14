@@ -56,7 +56,7 @@ it("shows all sections and retains unsupported entries in search without allowin
   expect(
     screen.getByTestId("add-step-item-widget:widgetToolCalled"),
   ).toBeEnabled();
-  fireEvent.change(screen.getByLabelText("Filter steps and checks"), {
+  fireEvent.change(screen.getByLabelText("Filter steps and assertions"), {
     target: { value: "schema" },
   });
   const unsupported = screen.getByTestId(

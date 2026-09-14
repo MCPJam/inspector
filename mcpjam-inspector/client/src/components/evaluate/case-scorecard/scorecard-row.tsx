@@ -151,6 +151,7 @@ export function ScorecardRowView({
       {open && canEditFields && row.predicate && onChangePredicate ? (
         <div className="border-t border-border/50 px-2.5 py-2">
           <CheckRow
+            noun="assertion"
             embedded
             predicate={row.predicate}
             onChange={onChangePredicate}
