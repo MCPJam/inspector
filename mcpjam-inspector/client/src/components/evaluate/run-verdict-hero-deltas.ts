@@ -75,7 +75,11 @@ function toneOf(delta: number, invert: boolean): HeroDeltaTone {
   return improved ? "progress" : "regression";
 }
 
-function deltaOf(
+/**
+ * One signed movement between two measurements, or null when either side is
+ * missing — there is no honest delta against a baseline that does not exist.
+ */
+export function deltaOf(
   current: number | null,
   previous: number | null,
   formatAbs: (value: number) => string,
