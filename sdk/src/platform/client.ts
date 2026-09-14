@@ -209,6 +209,28 @@ export interface PlatformApiClientOptions {
    */
   extraHeaders?: Record<string, string>;
   /**
+   * Which eval vocabulary this client speaks — the spelling of the eval
+   * authoring fields on every request and response
+   * (`docs/evals-vocabulary-consolidation.md`, "The wire").
+   *
+   * `1` (the default, and what an omitted option means) is byte-for-byte the
+   * documented contract: `checks`, `repetitions`, the legacy floor `iterations`.
+   * `2` sends `x-mcpjam-eval-vocabulary: 2` on EVERY request, under which a
+   * case spells its rules `assertions`, its exact count `iterations` and the
+   * legacy floor `legacyIterations`, and the eval responses come back in the
+   * same spelling ({@link PlatformEvalCaseV2}, {@link PlatformEvalSuiteDetailV2}).
+   *
+   * OPT IN, never inferred: a deployment that predates the negotiation ignores
+   * the header and answers in vocabulary 1, which a caller expecting 2 would
+   * then misread. Read `getProjectCapabilities().vocabulary` first and send `2`
+   * only when the deployment advertises it. The eval methods keep their
+   * vocabulary-1 result types; a caller that opted in narrows.
+   *
+   * Applied after `extraHeaders`, like every header this client owns: an edge
+   * credential must not be able to change which vocabulary a body is read in.
+   */
+  evalVocabulary?: 1 | 2;
+  /**
    * WHAT THIS PROCESS IS, declared on every eval-run launch this client makes.
    *
    * The platform stamps a run's `source` itself, and everything arriving over
@@ -289,6 +311,14 @@ export const RUN_LAUNCH_HEADERS = {
   launcher: "x-mcpjam-launcher",
   ci: "x-mcpjam-ci",
 } as const;
+
+/**
+ * The eval-vocabulary negotiation header, mirrored from the server's
+ * `routes/v1/eval-vocabulary.ts`. Sent only when the client was constructed
+ * with `evalVocabulary: 2`; absent means vocabulary 1, and a server that
+ * predates the negotiation ignores it — see {@link PlatformApiClientOptions.evalVocabulary}.
+ */
+export const EVAL_VOCABULARY_HEADER = "x-mcpjam-eval-vocabulary";
 
 /**
  * The API boundary's own caps, mirrored here.
@@ -575,8 +605,17 @@ export class PlatformApiClient {
    * them.
    */
   private readonly launchHeaders?: Record<string, string>;
+  /** The vocabulary every request declares; `1` sends no header. */
+  private readonly evalVocabulary: 1 | 2;
+  /**
+   * The options this client was built from, kept so {@link withEvalVocabulary}
+   * can derive a sibling that differs in exactly one thing. Never mutated.
+   */
+  private readonly constructorOptions: PlatformApiClientOptions;
 
   constructor(options: PlatformApiClientOptions) {
+    this.constructorOptions = options;
+    this.evalVocabulary = options.evalVocabulary ?? 1;
     this.baseUrl = stripTrailingSlashes(
       options.baseUrl ?? DEFAULT_PLATFORM_API_BASE_URL
     );
@@ -603,6 +642,24 @@ export class PlatformApiClient {
           ])
         )
       : undefined;
+  }
+
+  /**
+   * A client identical to this one except for the vocabulary it speaks.
+   *
+   * The negotiation is per deployment, and a caller only learns which
+   * vocabulary a deployment understands by asking it (`getProjectCapabilities`)
+   * — with a client it already holds. This is the step from "asked" to
+   * "speaks": same credential, same base URL, same launch declaration, one
+   * header more. The original client is untouched; the CLI keeps it for the
+   * operations that still speak vocabulary 1.
+   */
+  withEvalVocabulary(vocabulary: 1 | 2): PlatformApiClient {
+    if (vocabulary === this.evalVocabulary) return this;
+    return new PlatformApiClient({
+      ...this.constructorOptions,
+      evalVocabulary: vocabulary,
+    });
   }
 
   /** Coding-agent browser entry point; command outcomes are returned in-band. */
@@ -5209,6 +5266,18 @@ export class PlatformApiClient {
     }
     if (this.userAgent) {
       headers["user-agent"] = this.userAgent;
+    }
+    // On EVERY request, not only the eval ones: the server negotiates the
+    // header app-wide and refuses an unknown value everywhere, so a client
+    // that speaks 2 says so uniformly rather than per route. Vocabulary 1 is
+    // the absence of the header, byte-for-byte today's contract, which is
+    // why `1` sends nothing rather than "1".
+    if (this.evalVocabulary === 2) {
+      headers[EVAL_VOCABULARY_HEADER] = "2";
+    } else {
+      // Owned in both directions: an edge credential that injected the
+      // header would make a vocabulary-1 body mean something else.
+      delete headers[EVAL_VOCABULARY_HEADER];
     }
     // After `extraHeaders`, like every other header this client owns: an edge
     // authenticator's credential must not be able to relabel a run's origin.

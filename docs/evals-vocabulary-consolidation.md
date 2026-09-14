@@ -424,7 +424,7 @@ vocabulary: {
   version: 2,
   evaluatorKinds: ["assertion", "judge"],
   assertionKinds: PREDICATE_KINDS,
-  fields: { assertions: ["checks", "predicates"], defaultAssertions: ["defaultPredicates"], iterations: ["repetitions"], legacyIterations: ["runs"] },
+  fields: { assertions: ["checks", "predicates"], defaultAssertions: ["defaultPredicates", "checks"], iterations: ["repetitions"], legacyIterations: ["runs"] },
 }
 ```
 

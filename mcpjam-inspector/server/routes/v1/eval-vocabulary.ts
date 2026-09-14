@@ -21,7 +21,12 @@
  */
 
 import type { Context } from "hono";
-import type { ScorerRole } from "@mcpjam/sdk/contract";
+import type { z } from "zod";
+import {
+  EVALUATOR_KINDS,
+  PREDICATE_KINDS,
+  type ScorerRole,
+} from "@mcpjam/sdk/contract";
 import { isRequiredRole } from "@mcpjam/sdk/predicates";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 
@@ -305,4 +310,90 @@ export function projectStepRolesForVocabulary<T>(
     } as T;
   });
   return changed ? out : steps;
+}
+
+// ── field spellings ──────────────────────────────────────────────────────────
+
+/**
+ * The legacy spellings a VOCABULARY-2 body may use for each canonical field,
+ * exactly as the contract's "Capability" section pins them.
+ *
+ * `iterations` is absent from `legacyIterations` on purpose: under vocabulary
+ * 1 that key IS the floor, but under vocabulary 2 it is the exact count. One
+ * key means two things across the boundary, which is exactly why the
+ * negotiated vocabulary — never the presence of a field — decides which sense
+ * a body means. These tables are also what the vocabulary-2 request schemas
+ * and their both-spellings refusals are built from, so the capability can
+ * never advertise a spelling the schema does not accept.
+ */
+export const CASE_FIELD_ALIASES_V2 = {
+  assertions: ["checks", "predicates"],
+  iterations: ["repetitions"],
+  legacyIterations: ["runs"],
+} as const;
+
+/**
+ * `checks` is listed beside `defaultPredicates` because it is the REST wire's
+ * own vocabulary-1 spelling of the suite's default rules (`settings.checks` →
+ * Convex `defaultPredicates`), and a vocabulary-2 body may still send it.
+ */
+export const SUITE_SETTINGS_ALIASES_V2 = {
+  defaultAssertions: ["defaultPredicates", "checks"],
+  iterations: ["repetitions"],
+} as const;
+
+/**
+ * What this deployment understands, advertised on the project capabilities
+ * read so a client reads the value rather than inferring support from the
+ * presence of a field on an unrelated object.
+ */
+export const EVAL_VOCABULARY_CAPABILITY = {
+  version: 2,
+  evaluatorKinds: EVALUATOR_KINDS,
+  assertionKinds: PREDICATE_KINDS,
+  fields: {
+    assertions: CASE_FIELD_ALIASES_V2.assertions,
+    defaultAssertions: SUITE_SETTINGS_ALIASES_V2.defaultAssertions,
+    iterations: CASE_FIELD_ALIASES_V2.iterations,
+    legacyIterations: CASE_FIELD_ALIASES_V2.legacyIterations,
+  },
+} as const;
+
+// ── both spellings of one field ──────────────────────────────────────────────
+
+/**
+ * The refusal for a body that spells one field twice — the contract's exact
+ * sentence, shared by every surface that accepts two spellings so a caller
+ * reads one message whichever route they hit.
+ */
+export function bothSpellingsMessage(
+  canonical: string,
+  legacy: string,
+): string {
+  return `Send ${canonical} or ${legacy}, not both — they are two spellings of one field.`;
+}
+
+/**
+ * Add one issue per pair a body spells twice.
+ *
+ * Decided by PRESENCE, not truthiness: an explicit `null` is a clear the
+ * storage layer must see, so it counts as "sent" here exactly as a value does.
+ * Refused rather than resolved by precedence — `{ runs: 3, legacyIterations:
+ * 5 }` is a caller who believes both landed, and picking one silently is the
+ * same class of bug as stripping it.
+ */
+export function addBothSpellingsIssues(
+  body: Record<string, unknown>,
+  ctx: z.RefinementCtx,
+  pairs: ReadonlyArray<readonly [canonical: string, legacy: string]>,
+): void {
+  for (const [canonical, legacy] of pairs) {
+    if (body[canonical] !== undefined && body[legacy] !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: [canonical],
+        message: bothSpellingsMessage(canonical, legacy),
+      });
+    }
+  }
 }

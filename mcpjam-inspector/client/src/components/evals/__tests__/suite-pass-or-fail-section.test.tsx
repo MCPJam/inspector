@@ -14,7 +14,7 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SuitePassOrFailSection } from "../suite-pass-or-fail-section";
 import {
@@ -83,15 +83,10 @@ describe("SuitePassOrFailSection", () => {
 
   it("says 'No evaluator' for an unconfigured response stage", () => {
     const { container } = renderSection();
-    // The card carries the claim. The table under it lists the stage's
-    // standard checks as off rows, none of them an evaluator.
-    expect(
-      container.querySelector('[data-testid="stage-chain-card-response"]')
-        ?.textContent,
-    ).toContain("No evaluator");
+    // The stage lists its standard assertions as off rows, none of them on.
     const rows = Array.from(
       container.querySelectorAll(
-        '[data-stage-group="response"] tr[data-scorer-row]',
+        '[data-stage-group="response"] [data-scorer-row]',
       ),
     );
     expect(rows.length).toBeGreaterThan(0);
@@ -108,7 +103,7 @@ describe("SuitePassOrFailSection", () => {
     const { container } = renderSection();
     for (const stage of ["connection", "discovery"]) {
       const copy = emptyCopy(container, stage) ?? "";
-      expect(copy, stage).toContain("Observed by the runner");
+      expect(copy, stage).toContain("Measured by the runner");
       expect(copy.toLowerCase(), stage).not.toContain("no evaluator");
       // The run-state word. Settings has observed nothing, so claiming a
       // measurement did not happen states something nobody looked at.
@@ -119,25 +114,26 @@ describe("SuitePassOrFailSection", () => {
   it("marks the judge advisory by default and required when the role says so", () => {
     const advisory = renderSection();
     expect(
-      advisory.container.querySelector(
-        '[data-testid="stage-chain-card-userValue"]',
-      )?.textContent,
-    ).toContain("Judge on request");
+      within(
+        advisory.container.querySelector(
+          '[data-scorer-id="judge:goalCompletion"]',
+        ) as HTMLElement,
+      ).getByText("Advisory"),
+    ).toBeTruthy();
     advisory.unmount();
 
     const gating = renderSection({
       judgeConfig: { goalCompletion: { role: "gating" } },
     });
-    const card = gating.container.querySelector(
-      '[data-testid="stage-chain-card-userValue"]',
-    );
-    expect(card?.textContent).toContain("Required");
     const group = gating.container.querySelector(
       '[data-stage-group="userValue"]',
     ) as HTMLElement;
+    // The row's control reads Required; it sits on the row itself.
     const judgeRole = group.querySelector('[aria-label="Judge role"]');
     expect(
-      within(judgeRole as HTMLElement).getByRole("button", { name: "Required" }),
+      within(judgeRole as HTMLElement).getByRole("button", {
+        name: "Required",
+      }),
     ).toHaveAttribute("aria-pressed", "true");
   });
 

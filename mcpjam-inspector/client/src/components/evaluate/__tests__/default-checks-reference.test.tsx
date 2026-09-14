@@ -45,7 +45,7 @@ describe("Default checks navigation and page", () => {
     const { container } = render(<Page />);
     // The same numbered table the suite settings page renders.
     expect(
-      screen.getByRole("heading", { name: "User Value Chain Assertions" }),
+      screen.getByRole("heading", { name: "User value chain evaluators" }),
     ).toBeInTheDocument();
     expect(
       screen.queryByText("Show default assertions"),
@@ -54,10 +54,13 @@ describe("Default checks navigation and page", () => {
     // Runner-measured stages are rows without an On box: nothing to author.
     for (const stage of ["connection", "discovery"]) {
       const observed = container.querySelector(
-        `[data-stage-group="${stage}"] tr[data-scorer-row="observed"]`,
+        `[data-stage-group="${stage}"] [data-scorer-row="observed"]`,
       );
-      expect(observed?.textContent, stage).toContain("Observed by the runner");
-      expect(observed?.querySelector('[role="checkbox"]'), stage).toBeNull();
+      expect(observed?.textContent, stage).toContain("Measured by the runner");
+      expect(
+        observed?.querySelector('[role="checkbox"]'),
+        stage,
+      ).toBeDisabled();
     }
     expect(
       screen.queryByRole("checkbox", { name: "OAuth connection" }),
