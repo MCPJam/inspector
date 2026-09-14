@@ -528,8 +528,9 @@ export function NewSwarmCreateFlow({
   >(restoredDraft?.iterationsByPersona ?? {});
   const handleIterationsChange = useCallback(
     (personaKey: string, value: number) => {
-      // A cleared number input reports NaN; hold the last good count rather
-      // than quoting a persona at zero conversations.
+      // Clearing the field reports "", which Number() turns into 0; the clamp
+      // below lifts that to the minimum rather than quoting zero conversations.
+      // The guard covers anything that cannot be clamped at all.
       if (!Number.isFinite(value)) return;
       const next = Math.min(
         MAX_SWARM_ITERATIONS,

@@ -2147,6 +2147,22 @@ describe("SwarmsTab — Describe step (Production Redesign)", () => {
     ).toHaveTextContent(/across 2 personas/i);
   });
 
+  it("keeps a usable count when the counter is cleared", async () => {
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+
+    const counter = screen.getAllByTestId(
+      "new-swarm-persona-iterations",
+    )[0];
+    fireEvent.change(counter, { target: { value: "" } });
+
+    expect(counter).toHaveValue(1);
+    expect(
+      screen.getByTestId("new-swarm-launch-session-estimate"),
+    ).toHaveTextContent(/2 conversations/i);
+  });
   it("moves only the persona whose counter was touched", async () => {
     // The whole reason the control left the footer: two personas can carry
     // different goal counts, so one number cannot size both.
