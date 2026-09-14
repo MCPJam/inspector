@@ -9246,7 +9246,16 @@
         "operationId": "unpublishScenario",
         "tags": ["User testing"],
         "summary": "Unpublish an environment",
-        "description": "Takes the scenario down. Deliberately NOT behind the beta gate that guards publishing: an organization that loses the flag must still be able to take a live scenario down.\n\nUnpublishing something already unpublished answers 200 with `deleted: false` — a no-op, not an error.",
+        "description": "Takes the scenario down. Deliberately NOT behind the beta gate that guards publishing: an organization that loses the flag must still be able to take a live scenario down.\n\nUnpublishing something already unpublished answers 200 with `deleted: false` — a no-op, not an error.\n\nAn environment may back more than one study. `scenarioId` names which one to take down. Omitting it is the whole contract while the environment backs a single study, and is refused rather than guessed at once it backs several.",
+        "parameters": [
+          {
+            "name": "scenarioId",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string" },
+            "description": "Which study on this environment to unpublish. Omit while the environment backs a single study; required once it backs more than one, because the server refuses to pick between them."
+          }
+        ],
         "responses": {
           "200": {
             "description": "The scenario was removed (or there was none).",
@@ -16969,6 +16978,21 @@
             "type": "string",
             "description": "Existing suite to rerun. A bare `suiteId` with no `tests` reruns the suite exactly as configured."
           },
+          "hosts": {
+            "type": "array",
+            "description": "Attachments for a new inline suite only. Each host is a project host name or ID; servers optionally selects bound server names or IDs. A sole host is selected automatically. Omit for the project default. Cannot be combined with suiteId.",
+            "items": {
+              "type": "object",
+              "required": ["host"],
+              "properties": {
+                "host": { "type": "string", "minLength": 1 },
+                "servers": {
+                  "type": "array",
+                  "items": { "type": "string", "minLength": 1 }
+                }
+              }
+            }
+          },
           "suiteName": {
             "type": "string",
             "description": "Name for a new suite. Required (non-empty) when no `suiteId` is given."
@@ -17558,6 +17582,21 @@
         "type": "object",
         "required": ["id", "suiteId", "status", "source", "createdAt"],
         "properties": {
+          "client": {
+            "type": "object",
+            "description": "Durable execution client, omitted on older runs without a descriptor. Separate from launcher identity.",
+            "required": ["id", "name", "source"],
+            "properties": {
+              "id": { "type": ["string", "null"] },
+              "name": { "type": "string" },
+              "source": {
+                "type": "string",
+                "enum": ["environment", "attached_host", "suite_default", "sdk"]
+              },
+              "hostStyle": { "type": "string" },
+              "modelId": { "type": "string" }
+            }
+          },
           "id": {
             "type": "string"
           },
@@ -17704,8 +17743,8 @@
           },
           "modelSource": {
             "type": "string",
-            "enum": ["client_default", "override"],
-            "description": "`client_default` inherited the host model; `override` used the environment's `modelId`."
+            "enum": ["client_default", "override", "case"],
+            "description": "`client_default` inherited the host model; `override` used the environment's `modelId`; `case` used the sole model in the case snapshot."
           },
           "executionEngine": {
             "type": "string",
@@ -18370,9 +18409,14 @@
             "type": "string",
             "description": "Model the compared run actually executed with."
           },
+          "client": {
+            "type": "object",
+            "properties": { "name": { "type": "string" } },
+            "required": ["name"]
+          },
           "modelSource": {
             "type": "string",
-            "enum": ["client_default", "override"]
+            "enum": ["client_default", "override", "case"]
           }
         },
         "required": [

@@ -298,10 +298,12 @@ describe("SuiteScorerTable", () => {
     renderTable();
     await user.click(screen.getByRole("button", { name: "Add assertion" }));
     for (const name of [
-      "Assertions · Tool selection",
-      "Assertions · Answer and outcome",
-      "Limits · Time and usage",
-      "Assertions · Tool inputs and results",
+      "Assertions · Discovery",
+      "Assertions · Selection",
+      "Assertions · Tool call",
+      "Assertions · Response",
+      "Assertions · User value",
+      "Assertions · Budgets",
     ]) {
       expect(screen.getByRole("region", { name })).toBeInTheDocument();
     }

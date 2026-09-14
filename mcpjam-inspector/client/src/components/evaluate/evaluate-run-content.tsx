@@ -21,6 +21,7 @@
  */
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { Copy } from "lucide-react";
+import { runClientIdentity } from "../evals/helpers";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 
@@ -170,10 +171,7 @@ export function SingleRunContent({
         {
           key: run._id,
           run,
-          client: run.namedHostId
-            ? (names.get(run.namedHostId) ??
-              `Client …${run.namedHostId.slice(-6)}`)
-            : "Suite client",
+          client: runClientIdentity(run, names).name,
           modelId,
           model: compactModelIdTail(modelLabel),
           iterations,

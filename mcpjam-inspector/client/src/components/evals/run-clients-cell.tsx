@@ -4,6 +4,8 @@ import {
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
 import { resolveHostLogoByName } from "@/lib/host-logo";
+import { findHostStyle } from "@/lib/client-styles";
+import { getScenarioHostLogo } from "@/lib/scenario-client-style";
 import { compactModelIdTail } from "@/lib/environment-label";
 import { usePreferencesStoreWithDefaults } from "@/stores/preferences/preferences-provider";
 import type { SuiteRunHistoryRow } from "../evaluate/suite-detail-model";
@@ -12,6 +14,7 @@ export const VISIBLE_RUN_CLIENT_PAIRINGS = 2;
 
 type ClientModelPairing = {
   client: string;
+  hostStyle?: string;
   models: string[];
 };
 
@@ -22,13 +25,16 @@ function pairingLabel(mapping: ClientModelPairing): string {
 }
 
 /** Recorded client/model pairs, never a cross product of two independent lists. */
-export function RunClientsCell({ rows }: { rows: SuiteRunHistoryRow[] }) {
+export function RunClientsCell({ rows }: { rows: Pick<SuiteRunHistoryRow, "client" | "models" | "hostStyle">[];
+}) {
   const theme = usePreferencesStoreWithDefaults((state) => state.themeMode);
   const mappings = [
     ...new Map(
       rows.map((row) => [
         JSON.stringify([row.client, row.models]),
-        { client: row.client ?? "Unknown client", models: row.models },
+        { client: row.client ?? "Suite default", models: row.models,
+          hostStyle: row.hostStyle,
+        },
       ]),
     ).values(),
   ];
@@ -38,10 +44,13 @@ export function RunClientsCell({ rows }: { rows: SuiteRunHistoryRow[] }) {
   const hidden = mappings.slice(VISIBLE_RUN_CLIENT_PAIRINGS);
   const allLabels = mappings.map(pairingLabel);
 
-  const logo = (client: string) => (
+  const logo = (client: string, hostStyle?: string) => (
     <span className="inline-flex size-4 shrink-0 items-center justify-center overflow-hidden rounded-sm border border-border/50 bg-background">
       <img
-        src={resolveHostLogoByName(client, theme)}
+        src={
+          hostStyle && findHostStyle(hostStyle)
+            ? getScenarioHostLogo(hostStyle, undefined, theme)
+            : resolveHostLogoByName(client, theme)}
         alt=""
         className="size-2.5 object-contain"
       />
@@ -58,7 +67,7 @@ export function RunClientsCell({ rows }: { rows: SuiteRunHistoryRow[] }) {
           key={`${mapping.client}-${mapping.models.join(",")}-${index}`}
           className="inline-flex min-w-0 items-center gap-1.5"
         >
-          {logo(mapping.client)}
+          {logo(mapping.client, mapping.hostStyle)}
           <span className="truncate text-xs">
             {mapping.client}
             <span className="text-muted-foreground">

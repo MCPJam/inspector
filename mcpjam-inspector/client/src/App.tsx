@@ -970,8 +970,7 @@ export function HostsRoute() {
   }, [urlHostState, idShapedHostId, navigate]);
 
   // URL is the source of truth for the open host canvas. Sync into shared
-  // state so `GlobalHostBar`, `onCanvasReplaceHost`, and other surfaces that
-  // still read `hostsTabSelectedHostId` stay aligned.
+  // state so surfaces reading `hostsTabSelectedHostId` stay aligned.
   useEffect(() => {
     if (hostsTabSelectedHostId !== openableHostId) {
       setHostsTabSelectedHostId(openableHostId);
@@ -5019,14 +5018,12 @@ export default function App() {
       : undefined;
 
   const isEvalsTab = activeTab === "evals" || activeTab === "evaluate";
-  const globalHostBarProps =
+  const clientBootstrapProps =
     isAuthenticated &&
     convexProjectId &&
     !isEvalsTab &&
-    // The playground has its own client chip in the chat-input toolbar
-    // (switch / compare / add host), so the global host bar is redundant
-    // there. User Testing and Swarms are project-scoped lists, not per-host
-    // screens, so a global host selector would be selecting nothing.
+    // Preserve the existing initialization scope; these workflows own their
+    // client initialization and selection.
     activeTab !== "playground" &&
     activeTab !== "scenarios" &&
     activeTab !== "swarms" &&
@@ -5036,23 +5033,6 @@ export default function App() {
     activeTab !== "xaa-flow"
       ? {
           projectId: convexProjectId,
-          onEditHost: (hostId: string) => {
-            setHostsTabSelectedHostId(hostId);
-            navigateApp(buildHostsPath(hostId));
-          },
-          // Active whenever the clients tab is mounted — the URL is the
-          // source of truth for which host the canvas renders, so every
-          // dropdown/cycle change must push `/clients/<hostId>`. Without
-          // this, bare `/clients` (no `:hostId`) renders the cached
-          // `previewedHostId` and clicking a different host only updates
-          // the preview store, leaving the canvas stuck on the original.
-          onCanvasReplaceHost:
-            activeTab === "clients"
-              ? (hostId: string) => {
-                  setHostsTabSelectedHostId(hostId);
-                  navigateApp(buildHostsPath(hostId), { replace: true });
-                }
-              : undefined,
         }
       : undefined;
 
@@ -5251,7 +5231,7 @@ export default function App() {
               settings={settingsShellActive}
               hidden={appChromeHeaderHidden || settingsShellActive}
               activeServerSelectorProps={activeServerSelectorProps}
-              globalHostBarProps={globalHostBarProps}
+              clientBootstrapProps={clientBootstrapProps}
             />
             <AppChromePanel
               settings={settingsShellActive}
