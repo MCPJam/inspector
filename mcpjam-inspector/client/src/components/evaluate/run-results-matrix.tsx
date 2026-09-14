@@ -106,7 +106,7 @@ function CellResults({ items }: { items: EvalIteration[] }) {
         <span className="flex min-w-0 items-center gap-2">
           <span
             className={cn(
-              "flex items-center gap-1.5 text-xs font-semibold",
+              "flex items-center gap-1.5 text-[12px] font-semibold",
               statusTone,
             )}
           >
