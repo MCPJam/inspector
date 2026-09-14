@@ -57,7 +57,10 @@ describe("Default checks navigation and page", () => {
         `[data-stage-group="${stage}"] [data-scorer-row="observed"]`,
       );
       expect(observed?.textContent, stage).toContain("Measured by the runner");
-      expect(observed?.querySelector('[role="checkbox"]'), stage).toBeDisabled();
+      expect(
+        observed?.querySelector('[role="checkbox"]'),
+        stage,
+      ).toBeDisabled();
     }
     expect(
       screen.queryByRole("checkbox", { name: "OAuth connection" }),
