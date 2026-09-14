@@ -2651,6 +2651,56 @@ describe("useServerState OAuth callback failures", () => {
     );
   });
 
+  it("does not publish a sync result after a runtime disconnect", async () => {
+    let resolveSync!: (serverId: string) => void;
+    mockCreateServerIfMissing.mockImplementationOnce(
+      () =>
+        new Promise<string>((resolve) => {
+          resolveSync = resolve;
+        })
+    );
+    tryResolveProjectServerMock.mockReturnValue(null);
+    const appState = createCloudCliAppState();
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch, appState, {
+      isAuthenticated: true,
+      hasSignedInUser: true,
+      useLocalFallback: false,
+      effectiveProjects: appState.projects,
+      effectiveActiveProjectId: "proj_cloud",
+      activeProjectServersFlat: [],
+    });
+
+    let connectPromise!: Promise<void>;
+    act(() => {
+      connectPromise = result.current.handleConnect({
+        name: "Excalidraw (App)",
+        type: "http",
+        url: "https://mcp.excalidraw.com/mcp",
+      });
+    });
+    await waitFor(() => expect(mockCreateServerIfMissing).toHaveBeenCalled());
+
+    act(() => result.current.handleRuntimeDisconnect("Excalidraw (App)"));
+    await act(async () => {
+      resolveSync("srv_excalidraw");
+      await connectPromise;
+    });
+
+    expect(testConnectionMock).not.toHaveBeenCalled();
+    expect(injectHostedServerMapping).not.toHaveBeenCalled();
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "DISCONNECT",
+      name: "Excalidraw (App)",
+    });
+    expect(
+      dispatch.mock.calls.some(
+        ([action]) =>
+          action.type === "CONNECT_SUCCESS" || action.type === "CONNECT_FAILURE"
+      )
+    ).toBe(false);
+  });
+
   it("applies project connection defaults on local reconnect", async () => {
     const { reconnectServer } = await import("@/state/mcp-api");
     const { ensureAuthorizedForReconnect } = await import(

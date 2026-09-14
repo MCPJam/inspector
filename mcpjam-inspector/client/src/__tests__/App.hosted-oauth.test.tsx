@@ -3687,6 +3687,7 @@ describe("App hosted OAuth callback handling", () => {
         name: "Example",
         type: "http",
         url: "https://mcp.example.com/mcp",
+        useOAuth: true,
         authMethod: "auto",
       }),
       { suppressErrorToast: true },

@@ -3412,6 +3412,7 @@ export function useServerState({
           serverEntryForSave,
           clientSecretSyncOptions
         );
+        if (isStaleOp(formData.name, token)) return;
         if (synced.ok) {
           hostedServerId = synced.serverId;
           syncedConnectionTarget = {
@@ -3423,6 +3424,7 @@ export function useServerState({
           workspaceNameTaken = synced.reason === "workspace-name-taken";
         }
       } catch (err) {
+        if (isStaleOp(formData.name, token)) return;
         syncErr = err;
         logger.warn("Sync to Convex failed (pre-connection)", {
           serverName: formData.name,
