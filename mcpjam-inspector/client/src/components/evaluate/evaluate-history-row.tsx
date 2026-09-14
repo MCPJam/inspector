@@ -6,14 +6,13 @@ import {
 } from "@mcpjam/design-system/table";
 import { cn } from "@/lib/utils";
 import { runClientIdentity } from "../evals/helpers";
-import { resolveRunOrigin } from "@/lib/evals/run-origin";
+import { resolveRunOrigin, RUN_ORIGIN_META } from "@/lib/evals/run-origin";
 import { RunClientsCell } from "../evals/run-clients-cell";
 import {
   RunCommitCell,
   readRunGitMetadata,
   type RunGitMetadataValue,
 } from "../evals/run-git-metadata";
-import { RunSourceBadge } from "../evals/run-source-badge";
 import { projectRunRollup } from "../evals/project-run-suite-groups";
 import { runEffectiveOutcome } from "../evals/project-runs-table";
 import type { ProjectRunRow } from "../evals/project-runs-table";
@@ -39,7 +38,7 @@ export function EvaluateHistoryHeader({
           "Rate",
           "Platform",
           "Commit",
-          "When",
+          "Date",
           "Latency",
           "Tokens",
           "Calls",
@@ -215,7 +214,9 @@ export function EvaluateHistoryRow({
       <TableCell>
         <div className="flex flex-wrap items-center gap-2">
           {platforms.map(({ row }) => (
-            <RunSourceBadge key={row._id} run={row} neutral />
+            <span key={row._id} className="text-muted-foreground">
+              {RUN_ORIGIN_META[resolveRunOrigin(row) ?? "ui"].label}
+            </span>
           ))}
         </div>
       </TableCell>

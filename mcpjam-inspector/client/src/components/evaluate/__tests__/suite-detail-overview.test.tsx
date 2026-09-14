@@ -187,7 +187,7 @@ describe("SuiteDetailOverview", () => {
       "Rate",
       "Platform",
       "Commit",
-      "When",
+      "Date",
       "Latency",
       "Tokens",
       "Calls",

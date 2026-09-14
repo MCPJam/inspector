@@ -63,6 +63,7 @@ describe("Evaluate history rows", () => {
     expect(screen.queryByRole("link", { name: "second" })).toBeNull();
     expect(screen.queryByRole("link", { name: "#2" })).toBeNull();
     expect(screen.getByText("UI")).toHaveClass("text-muted-foreground");
+    expect(screen.getByText("UI")).not.toHaveAttribute("data-slot", "badge");
   });
 
   it("does not infer a result from the pass percentage", () => {
@@ -128,7 +129,7 @@ describe("Evaluate history rows", () => {
       "Rate",
       "Platform",
       "Commit",
-      "When",
+      "Date",
       "Latency",
       "Tokens",
       "Calls",
