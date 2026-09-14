@@ -84,7 +84,7 @@ describe("scorecard integration regressions", () => {
     ).toBe(true);
   });
 
-  it("recognizes a frozen gate even after the live draft removes it", () => {
+  it("recognizes a frozen required rule even after the live draft removes it", () => {
     const batch = groupCaseIterations([
       {
         ...iteration,
@@ -104,7 +104,7 @@ describe("scorecard integration regressions", () => {
     );
     expect(result.current.output.diagnosis).toBeNull();
     expect(
-      result.current.output.suggestions.some((s) => s.role === "gate"),
+      result.current.output.suggestions.some((s) => s.role === "required"),
     ).toBe(true);
   });
 

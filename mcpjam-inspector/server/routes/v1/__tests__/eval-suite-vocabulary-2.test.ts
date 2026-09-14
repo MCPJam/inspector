@@ -32,7 +32,7 @@ vi.mock("convex/browser", () => ({
 }));
 
 import v1Routes from "../index.js";
-import { EVAL_VOCABULARY_HEADER } from "../../../utils/eval-vocabulary.js";
+import { EVAL_VOCABULARY_HEADER } from "../eval-vocabulary.js";
 
 function request(
   method: string,

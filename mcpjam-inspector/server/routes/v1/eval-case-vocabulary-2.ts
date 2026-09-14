@@ -39,7 +39,7 @@ import {
   SUITE_SETTINGS_ALIASES_V2,
   addBothSpellingsIssues,
   type EvalVocabulary,
-} from "../../utils/eval-vocabulary.js";
+} from "./eval-vocabulary.js";
 
 // ── names ────────────────────────────────────────────────────────────────────
 

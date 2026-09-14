@@ -55,7 +55,7 @@ import {
   DropdownMenuContent,
   DropdownMenuCheckboxItem,
 } from "@mcpjam/design-system/dropdown-menu";
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { usePaginatedQuery, useQuery } from "convex/react";
 import { ChevronDown, GitBranch, Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -312,6 +312,24 @@ export function ProjectRunsTable({
     () => visibleRunOriginFilters(platformPostLaunchEnabled),
     [platformPostLaunchEnabled],
   );
+  // A chip that disappears takes its filter with it. `platform-post-launch`
+  // can go off mid-session — PostHog re-reads flags, and an unresolved read is
+  // off — which would otherwise leave the table filtered by a chip no longer
+  // in the menu, unreachable except through Clear filters.
+  useEffect(() => {
+    const visible = new Set(platformFilters.map((filter) => filter.value));
+    const hidden = [...sourceFilter].filter((value) => !visible.has(value));
+    if (hidden.length === 0) return;
+    if (hidden.includes("github")) {
+      setRepositoryFilter(ALL_EVAL_FILTER_VALUES);
+      setBranchFilter(ALL_EVAL_FILTER_VALUES);
+      setCommitFilter("");
+    }
+    setSourceFilter(
+      (previous) =>
+        new Set([...previous].filter((value) => visible.has(value))),
+    );
+  }, [platformFilters, sourceFilter]);
   const { hosts } = useHostList({
     isAuthenticated: historyMetricsEnabled,
     projectId,
@@ -376,6 +394,7 @@ export function ProjectRunsTable({
     metricData,
     passRateChanges,
     loadedRunCount,
+    scopedRowCount,
   } = useMemo(() => {
     const hostNamesById = new Map(
       hosts.map((host) => [host.hostId, host.name]),
@@ -554,8 +573,21 @@ export function ProjectRunsTable({
       historyMetricsEnabled ? completeRuns : rows,
       comparisonRows,
     );
+    // Scoped to the picked suite: with one suite selected, counting launches
+    // from the others reads as a miscount rather than as pagination headroom.
+    const scopedIds = new Set(
+      rows.flatMap((row) =>
+        suiteFilter === ALL_SUITES || row.suiteId === suiteFilter
+          ? [row._id]
+          : [],
+      ),
+    );
     const loadedRunCount = allSuiteGroups.reduce(
-      (sum, suite) => sum + suite.launches.length,
+      (sum, suite) =>
+        sum +
+        suite.launches.filter((launch) =>
+          launch.runs.some((row) => scopedIds.has(row._id)),
+        ).length,
       0,
     );
     return {
@@ -572,6 +604,7 @@ export function ProjectRunsTable({
       metricData,
       passRateChanges,
       loadedRunCount,
+      scopedRowCount: scopedIds.size,
     };
   }, [
     rows,
@@ -583,6 +616,7 @@ export function ProjectRunsTable({
     projectEnvironmentsEnabled,
     historyMetricsEnabled,
     sourceFilter,
+    suiteFilter,
     clientFilter,
     serverFilter,
     repositoryFilter,
@@ -921,7 +955,8 @@ export function ProjectRunsTable({
         */}
         {hasClientSideFilter && canLoadMore && (
           <p className="px-[18px] pb-3 text-[11px] text-muted-foreground">
-            Filtering the {historyMetricsEnabled ? loadedRunCount : rows.length}{" "}
+            Filtering the{" "}
+            {historyMetricsEnabled ? loadedRunCount : scopedRowCount}{" "}
             most recent runs loaded so far. Load more below to widen the search.
           </p>
         )}
@@ -1038,7 +1073,7 @@ export function ProjectRunsTable({
               : `${
                   historyMetricsEnabled ? launches.length : filtered.length
                 } of ${
-                  historyMetricsEnabled ? loadedRunCount : rows.length
+                  historyMetricsEnabled ? loadedRunCount : scopedRowCount
                 } loaded runs`}
             {status !== "Exhausted" ? " · more available" : ""}
           </span>

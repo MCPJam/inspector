@@ -312,11 +312,11 @@ describe("StepReplayView — scorecard presentation", () => {
     );
     const header = screen.getByTestId("steps-verdict-header");
     expect(header.textContent).toContain("1 of 1 assertion passed");
-    expect(header.textContent).toContain("· 1 warn");
+    expect(header.textContent).toContain("· 1 advisory");
     expect(header.textContent).not.toContain("failed");
   });
 
-  it("marks the advisory row itself as a warning", () => {
+  it("marks the advisory row itself as advisory", () => {
     const { container } = render(
       <StepReplayView
         steps={[steps[0], advisory]}
@@ -327,7 +327,7 @@ describe("StepReplayView — scorecard presentation", () => {
     const row = container.querySelector(
       '[data-step-id="a3"]',
     ) as HTMLElement;
-    expect(within(row).getByText("Warn")).toBeTruthy();
+    expect(within(row).getByText("Advisory")).toBeTruthy();
   });
 
   it("uses the page's verdict word rather than deriving a second one", () => {
@@ -386,7 +386,7 @@ it("reports advisory misses when the trial has no gating checks", () => {
     />,
   );
   expect(screen.getByTestId("steps-verdict-header")).toHaveTextContent(
-    "1 warn",
+    "1 advisory",
   );
   expect(screen.getByTestId("steps-verdict-header")).not.toHaveTextContent(
     "check passed",

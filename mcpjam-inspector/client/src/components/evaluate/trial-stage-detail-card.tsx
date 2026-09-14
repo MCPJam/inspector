@@ -100,15 +100,20 @@ export function TrialStageDetailCard({
         </p>
       ) : null}
 
-      {(row.stage === "connection" || row.stage === "discovery") && (
-        <p className="mt-2 text-xs text-muted-foreground">
-          {row.reason === "impliedByLaterEvidence"
-            ? row.stage === "connection"
-              ? "Later tool or discovery evidence confirms the server was reached. No separate connection assertion was recorded."
-              : "A recorded tool call provides evidence of discovery. No separate discovery assertion was recorded."
-            : "This stage reports the runner’s setup observations, rather than an authored assertion."}
-        </p>
-      )}
+      {(row.stage === "connection" || row.stage === "discovery") &&
+        // When the runner explained the failure itself (the reasons list
+        // below), the generic sentence would only stand between the reader
+        // and that explanation.
+        (row.reason === "impliedByLaterEvidence" ||
+          predicateReasons.length === 0) && (
+          <p className="mt-2 text-xs text-muted-foreground">
+            {row.reason === "impliedByLaterEvidence"
+              ? row.stage === "connection"
+                ? "Later tool or discovery evidence confirms the server was reached. No separate connection assertion was recorded."
+                : "A recorded tool call provides evidence of discovery. No separate discovery assertion was recorded."
+              : "This stage reports the runner’s setup observations, rather than an authored assertion."}
+          </p>
+        )}
 
       {children}
 

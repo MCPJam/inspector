@@ -103,7 +103,12 @@ import {
   type StructuredRunReport,
   type SuiteFileFailureStage,
 } from "@mcpjam/sdk";
-import { composeSuiteGateWithBaseReport } from "@mcpjam/sdk/contract";
+import {
+  EVAL_SUITE_SCHEMA_VERSION,
+  EVAL_SUITE_SCHEMA_VERSIONS,
+  composeSuiteGateWithBaseReport,
+  type EvalSuiteSchemaVersion,
+} from "@mcpjam/sdk/contract";
 import type {
   SuiteGateComposedOutcome,
   SuiteGateReportV1,
@@ -228,8 +233,8 @@ type CreateOptions = PlatformOptions & {
  * The client selector, from `--client` or the deprecated `--host`.
  *
  * Both-at-once is a usage ERROR, not a precedence rule — the same call
- * `clients.ts` makes for its own pair and the one `--repetitions` /
- * `--iterations` makes here. A precedence rule is invisible: a script that
+ * `clients.ts` makes for its own pair and the one `--iterations` /
+ * `--repetitions` makes here. A precedence rule is invisible: a script that
  * passes both because someone half-finished a migration keeps running,
  * launching against whichever of two possibly-different clients this happened
  * to prefer, and PAYING for the run.
@@ -2989,17 +2994,34 @@ async function runEvalValidate(
  * fail-closed pagination guard: a suite whose cases do not fit one page refuses
  * rather than exporting a file that silently holds fewer tests than the suite.
  */
+function isEvalSuiteSchemaVersion(
+  value: string
+): value is EvalSuiteSchemaVersion {
+  return (EVAL_SUITE_SCHEMA_VERSIONS as readonly string[]).includes(value);
+}
+
 async function runEvalExport(
   options: PlatformOptions & {
     suite: string;
     project?: string;
     out?: string;
     force?: boolean;
+    schemaVersion?: string;
   },
   command: Command
 ): Promise<void> {
   const globalOptions = getGlobalOptions(command);
   const resolved = resolveCloudProjectArgs(options);
+
+  // The dialect is the author's choice, never inferred: an offline file has no
+  // capability handshake with whatever will read it, so the conservative
+  // default stays dialect 1 and dialect 2 is written only when asked for.
+  const schemaVersion = options.schemaVersion ?? EVAL_SUITE_SCHEMA_VERSION;
+  if (!isEvalSuiteSchemaVersion(schemaVersion)) {
+    throw usageError(
+      `--schema-version must be ${EVAL_SUITE_SCHEMA_VERSIONS.map((v) => `"${v}"`).join(" or ")} (received ${JSON.stringify(schemaVersion)}).`
+    );
+  }
 
   // Checked BEFORE the fetch when the caller named the path: refusing to
   // overwrite is not worth a round trip. With no `--out` the path is derived
@@ -3057,7 +3079,7 @@ async function runEvalExport(
     { projectScope: resolved.projectScope }
   );
 
-  const built = buildSuiteFileFromPlatform(fetched);
+  const built = buildSuiteFileFromPlatform(fetched, { schemaVersion });
   if (!built.ok) {
     writeExportRefusal(built.findings, globalOptions.format);
     return;
@@ -3341,12 +3363,12 @@ export function registerEvalCommands(program: Command): void {
       "Run EVERY attached environment (or, if none, every attached host) — one PAID RUN per target"
     )
     .option(
-      "--repetitions <n>",
+      "--iterations <n>",
       "Run each case this many times under verdict policy 2 (1-10)",
-      (v) => parseIntOption(v, "--repetitions")
+      (v) => parseIntOption(v, "--iterations")
     )
-    .option("--iterations <n>", "Deprecated alias for --repetitions", (v) =>
-      parseIntOption(v, "--iterations")
+    .option("--repetitions <n>", "Legacy spelling of --iterations", (v) =>
+      parseIntOption(v, "--repetitions")
     )
     .option(
       "--case <id-or-title...>",
@@ -3484,11 +3506,11 @@ export function registerEvalCommands(program: Command): void {
           throw usageError("Provide --suite <id-or-name> or --file <path>.");
         }
         if (
-          options.repetitions !== undefined &&
-          options.iterations !== undefined
+          options.iterations !== undefined &&
+          options.repetitions !== undefined
         ) {
           throw usageError(
-            "Use either --repetitions or its deprecated --iterations alias, not both."
+            "Use --iterations or --repetitions, not both — they are two spellings of one flag."
           );
         }
         // One selector from here down: `--client` is canonical under
@@ -3596,11 +3618,11 @@ export function registerEvalCommands(program: Command): void {
                         : {}),
                       ...(clientSelectors ? { host: clientSelectors } : {}),
                       ...(options.allTargets ? { allTargets: true } : {}),
-                      ...(options.repetitions !== undefined ||
-                      options.iterations !== undefined
+                      ...(options.iterations !== undefined ||
+                      options.repetitions !== undefined
                         ? {
-                            repetitions:
-                              options.repetitions ?? options.iterations,
+                            iterations:
+                              options.iterations ?? options.repetitions,
                           }
                         : {}),
                       ...(options.case?.length ? { case: options.case } : {}),
@@ -3646,10 +3668,12 @@ export function registerEvalCommands(program: Command): void {
                     ),
                     ...selectorField("client", "clients", clientSelectors),
                     ...(options.allTargets ? { allAttached: true } : {}),
-                    ...(options.repetitions !== undefined
-                      ? { repetitions: options.repetitions }
-                      : options.iterations !== undefined
-                      ? { iterations: options.iterations }
+                    // One canonical key on the wire whichever flag was typed;
+                    // the op accepts `iterations` and folds it to the run's
+                    // `iterationOverride`.
+                    ...(options.iterations !== undefined ||
+                    options.repetitions !== undefined
+                      ? { iterations: options.iterations ?? options.repetitions }
                       : {}),
                     ...(options.case?.length ? { cases: options.case } : {}),
                     ...(options.excludeSkills ? { excludeSkills: true } : {}),
@@ -4407,38 +4431,44 @@ export function registerEvalCommands(program: Command): void {
       )
       .requiredOption("--experiment <id>", "Description-experiment ID")
       .option("--case-scope <scope>", "Which cases to replay: all or affected")
-      // `--repetitions` everywhere it means repetitions. This flag's own help
-      // text already said "Repetitions", and `--iterations` means "please stop
-      // using this" on `eval run` one command over. `--max-trials` beside it is
-      // left alone: it caps the PRODUCT of cases and repetitions, which really
-      // is trials.
-      .option("--repetitions <n>", "Repetitions per case per arm (1–10)")
-      .option("--iterations <n>", "Deprecated alias for --repetitions (1–10)")
+      .option("--iterations <n>", "Iterations per case per arm (1–10)")
+      .option("--repetitions <n>", "Legacy spelling of --iterations (1–10)")
       .option(
-        "--max-trials <n>",
-        "Refuse if plannedTrials exceeds this (max 400)"
+        "--max-iterations <n>",
+        "Refuse if the planned total (cases × iterations × arms) exceeds this (max 400)"
       )
+      .option("--max-trials <n>", "Legacy spelling of --max-iterations")
   ).action(
     async (
       options: PlatformOptions & {
         project?: string;
         experiment: string;
         caseScope?: string;
-        repetitions?: string;
         iterations?: string;
+        repetitions?: string;
+        maxIterations?: string;
         maxTrials?: string;
       },
       command
     ) => {
       if (
-        options.repetitions !== undefined &&
-        options.iterations !== undefined
+        options.iterations !== undefined &&
+        options.repetitions !== undefined
       ) {
         throw usageError(
-          "Use either --repetitions or its deprecated --iterations alias, not both."
+          "Use --iterations or --repetitions, not both — they are two spellings of one flag."
         );
       }
-      const repetitions = options.repetitions ?? options.iterations;
+      if (
+        options.maxIterations !== undefined &&
+        options.maxTrials !== undefined
+      ) {
+        throw usageError(
+          "Use --max-iterations or --max-trials, not both — they are two spellings of one flag."
+        );
+      }
+      const iterations = options.iterations ?? options.repetitions;
+      const maxIterations = options.maxIterations ?? options.maxTrials;
       // The operation's own schema holds the documented limits (iterations
       // 1..10, max trials ≤ 400, case scope all|affected); validating here
       // turns an out-of-range flag into a usage error instead of a request.
@@ -4447,21 +4477,23 @@ export function registerEvalCommands(program: Command): void {
         ...(options.caseScope !== undefined
           ? { caseScope: options.caseScope }
           : {}),
-        ...(repetitions !== undefined
+        ...(iterations !== undefined
           ? {
               iterationOverride: parsePositiveInteger(
-                repetitions,
-                options.repetitions !== undefined
-                  ? "--repetitions"
-                  : "--iterations"
+                iterations,
+                options.iterations !== undefined
+                  ? "--iterations"
+                  : "--repetitions"
               ),
             }
           : {}),
-        ...(options.maxTrials !== undefined
+        ...(maxIterations !== undefined
           ? {
               maxTrials: parsePositiveInteger(
-                options.maxTrials,
-                "--max-trials"
+                maxIterations,
+                options.maxIterations !== undefined
+                  ? "--max-iterations"
+                  : "--max-trials"
               ),
             }
           : {}),
@@ -4807,8 +4839,11 @@ export function registerEvalCommands(program: Command): void {
       "Minimum share of iterations that must pass, as a percentage"
     )
     .option(
+      // The FLAG keeps its name. It is a published CI contract — renaming it
+      // breaks every pipeline that spells it — and it names the quality gate,
+      // not an assertion's policy role. Only the help text moves.
       "--no-gating-score-errors",
-      "Fail if any gating scorer errored during the run"
+      "Fail if any required scorer errored during the run"
     )
     .option(
       "--min-scorer-pass-rate <scorerId=percent>",
@@ -4840,7 +4875,7 @@ export function registerEvalCommands(program: Command): void {
     )
     .option(
       "--gate-deterministic-regressions",
-      "Fail if a deterministic gating scorer flipped from passed to failed; requires --baseline or --baseline-sha"
+      "Fail if a deterministic required scorer flipped from passed to failed; requires --baseline or --baseline-sha"
     )
     .option(
       "--max-p95-latency-increase-ms <ms>",
@@ -4959,7 +4994,7 @@ export function registerEvalCommands(program: Command): void {
     )
     .option(
       "--gate-deterministic-regressions",
-      "Fail if a deterministic gating scorer flipped from passed to failed"
+      "Fail if a deterministic required scorer flipped from passed to failed"
     )
     .option(
       "--max-p95-latency-increase-ms <ms>",
@@ -5031,6 +5066,10 @@ export function registerEvalCommands(program: Command): void {
       "Where to write (default .mcpjam/evals/<suite-id>.yaml)"
     )
     .option("--force", "Replace an existing file at the output path")
+    .option(
+      "--schema-version <1|2>",
+      "Suite-file dialect to write: 1 (repetitions, checks — the default) or 2 (iterations, assertions)"
+    )
     .action(
       async (
         options: PlatformOptions & {
@@ -5038,6 +5077,7 @@ export function registerEvalCommands(program: Command): void {
           project?: string;
           out?: string;
           force?: boolean;
+          schemaVersion?: string;
         },
         command
       ) => {
@@ -5733,12 +5773,12 @@ export function registerEvalCommands(program: Command): void {
       "Deprecated alias for --client. NOT the host-compat catalog id `mcpjam tools --host` takes."
     )
     .option(
-      "--repetitions <n>",
+      "--iterations <n>",
       "Run the case this many times under verdict policy 2 (1-10)",
-      (v) => parseIntOption(v, "--repetitions")
+      (v) => parseIntOption(v, "--iterations")
     )
-    .option("--iterations <n>", "Deprecated alias for --repetitions", (v) =>
-      parseIntOption(v, "--iterations")
+    .option("--repetitions <n>", "Legacy spelling of --iterations", (v) =>
+      parseIntOption(v, "--repetitions")
     )
     .option(
       "--idempotency-key <key>",
@@ -5806,11 +5846,11 @@ export function registerEvalCommands(program: Command): void {
         command
       ) => {
         if (
-          options.repetitions !== undefined &&
-          options.iterations !== undefined
+          options.iterations !== undefined &&
+          options.repetitions !== undefined
         ) {
           throw usageError(
-            "Use either --repetitions or its deprecated --iterations alias, not both."
+            "Use --iterations or --repetitions, not both — they are two spellings of one flag."
           );
         }
         const clientSelector = clientSelectorOf<string>(options);
@@ -5828,10 +5868,9 @@ export function registerEvalCommands(program: Command): void {
                   ? { environment: options.environment }
                   : {}),
                 ...(clientSelector ? { client: clientSelector } : {}),
-                ...(options.repetitions !== undefined
-                  ? { repetitions: options.repetitions }
-                  : options.iterations !== undefined
-                  ? { iterations: options.iterations }
+                ...(options.iterations !== undefined ||
+                options.repetitions !== undefined
+                  ? { iterations: options.iterations ?? options.repetitions }
                   : {}),
                 ...(options.idempotencyKey
                   ? { idempotencyKey: options.idempotencyKey }

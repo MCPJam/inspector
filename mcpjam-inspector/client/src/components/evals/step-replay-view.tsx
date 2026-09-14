@@ -369,7 +369,7 @@ export function StepReplayView({
                     EVAL_WARN_BADGE_STRONG_CLASS,
                   )}
                 >
-                  Warn
+                  Advisory
                 </span>
               </div>
             ) : null}
@@ -499,7 +499,7 @@ function StepsVerdictHeader({
       {warned > 0 ? (
         <span className={cn("text-xs", EVAL_WARN_BADGE_STRONG_CLASS)}>
           {checkTotal > 0 ? " · " : ""}
-          {warned} warn
+          {warned} advisory
         </span>
       ) : null}
     </div>

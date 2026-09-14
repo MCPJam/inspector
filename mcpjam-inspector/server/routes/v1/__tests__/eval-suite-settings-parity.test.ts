@@ -4,6 +4,7 @@ import { updateSuiteSchema } from "../evals.js";
 import {
   EVAL_SUITE_SETTINGS_MANIFEST,
   QUALITY_GATE_REQUEST_SAMPLES,
+  CANONICAL_ROLE_SAMPLE_BY_PATH,
   SAMPLE_BY_PATH,
   SETTINGS_PAGE_HIDDEN_KEYS,
 } from "@/shared/eval-suite-settings-manifest";
@@ -265,5 +266,32 @@ describe("eval suite settings manifest — API parity", () => {
         `${row.key}'s reason claims a backend save path this repo cannot check — describe the row instead`,
       ).toBe(false);
     }
+  });
+});
+
+describe("the canonical role spelling reaches the PATCH schema", () => {
+  // The SCHEMA takes all three spellings — reading a stored contract must
+  // never fail on one. Which of them a given REQUEST may send is decided by
+  // `x-mcpjam-eval-vocabulary` at the route, and `eval-edit.test.ts` covers
+  // that refusal end to end. This test is the half that would otherwise go
+  // unnoticed: a schema that quietly stopped accepting `required` would make
+  // the route's vocabulary-2 branch unreachable, with every existing test
+  // still green.
+  for (const [path, sample] of Object.entries(CANONICAL_ROLE_SAMPLE_BY_PATH)) {
+    it(`accepts ${path}`, () => {
+      const parsed = updateSuiteSchema.safeParse(
+        requestBodyForApiPath(path, sample)
+      );
+      expect(parsed.success, parsed.success ? "" : parsed.error.message).toBe(
+        true
+      );
+    });
+  }
+
+  it("keeps the vocabulary-1 sample's advisory severity, which is a later step to drop", () => {
+    const checks = SAMPLE_BY_PATH["settings.checks"] as Array<
+      Record<string, unknown>
+    >;
+    expect(checks.some((c) => c.severity === "warn")).toBe(true);
   });
 });

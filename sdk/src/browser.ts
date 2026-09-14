@@ -329,8 +329,11 @@ export {
   ERROR_CATALOG,
   extractNodeErrno,
   RETRYABLE_NODE_ERROR_CODES,
+  summarizeBearerChallenge,
+  bodyKindFromContentType,
 } from "./error-describer/index.js";
 export type {
+  BearerChallengeSummary,
   DescribeContext,
   ErrorOrigin,
   NormalizedError,

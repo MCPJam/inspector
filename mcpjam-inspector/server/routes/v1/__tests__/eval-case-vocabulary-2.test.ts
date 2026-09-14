@@ -41,7 +41,7 @@ import v1Routes from "../index.js";
 import {
   EVAL_VOCABULARY_HEADER,
   bothSpellingsMessage,
-} from "../../../utils/eval-vocabulary.js";
+} from "../eval-vocabulary.js";
 
 type Vocabulary = "1" | "2" | undefined;
 
