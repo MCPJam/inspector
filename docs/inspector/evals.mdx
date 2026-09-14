@@ -100,12 +100,12 @@ The other tabs are unchanged: **Chat**, **Tool Calls** and **Trace** show the tr
 
 The right column resolves to one of these views, in precedence order:
 
-1. **Explicit history pick** — a trial you selected from History.
+1. **Explicit history pick** — an iteration you selected from History.
 2. **Recording** — a live recording session is active.
 3. **Live run** — a quick run is in progress.
 4. **Latest** — the most recent persisted iteration with a trace.
 5. **Spec preview** — the authored steps rendered as a conversation preview.
-6. **Empty** — no trial yet; start typing a prompt.
+6. **Empty** — no iteration yet; start typing a prompt.
 
 <Note>
   A **negative case** is one you marked **No tool should be called**. Meta questions ("what params does `search` take?"), conversational drift, and ambiguous prompts are the usual shape. A case that simply names no tool is *not* negative — it is graded by its checks.
