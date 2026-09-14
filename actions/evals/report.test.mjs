@@ -10,6 +10,7 @@ import {
   publishPullRequestComment,
   readActionReceipts,
   renderReports,
+  truncateMarkdown,
 } from "./report.mjs";
 
 const receipt = {
@@ -106,6 +107,117 @@ test("uses the backend case verdict through its encoded declared identity", () =
   ]);
   assert.match(reports.comment, /✅ Passed.*1\/1/s);
   assert.match(reports.comment, /No failed or inconclusive cases/);
+});
+
+test("keeps a hosted case's own verdict when its minted id cannot be reproduced", () => {
+  // A stored `caseKey` is encoded into the `k_` space and the iteration DTO
+  // does not carry it, so the row cannot be joined by id. Re-deriving the
+  // verdict from trials would call this 2/3 case failed under a ✅ header.
+  const reports = renderReports([
+    {
+      receipt,
+      run: {
+        id: "run1",
+        status: "completed",
+        result: "passed",
+        verdictSummary: {
+          cases: [
+            {
+              ...verdict("k_hash_9f2a", "openai", "gpt-5", 2, 3, "passed"),
+              effectivePassThreshold: 0.66,
+            },
+          ],
+        },
+      },
+      iterations: [
+        iteration("cart", "Add to cart", "passed", 900),
+        iteration("cart", "Add to cart", "passed", 1000),
+        iteration("cart", "Add to cart", "failed", 1100),
+      ],
+    },
+  ]);
+  assert.match(reports.comment, /No failed or inconclusive cases/);
+  assert.match(reports.comment, /Requirement:.*≥66%/);
+  // The title still comes back: one decided case, one iteration group.
+  assert.match(reports.summary, /Add to cart/);
+});
+
+test("reports the action verdict and the run result separately", () => {
+  const bundle = {
+    receipt,
+    run: { id: "run1", status: "cancelled", result: "cancelled" },
+    iterations: [iteration("cart", "Add to cart", "passed", 900)],
+  };
+  assert.match(
+    renderReports([bundle]).comment,
+    /## ⚠️ MCPJam Evals — Cancelled/,
+  );
+  const gated = renderReports([bundle], {
+    result: "passed",
+    message: "All gates passed or were waived.",
+  });
+  assert.match(gated.comment, /## ✅ MCPJam Evals — Passed/);
+  assert.match(gated.comment, /All gates passed or were waived\./);
+  assert.match(gated.comment, /Run result: ⚠️ Cancelled/);
+});
+
+test("separates two cases that share a title and escapes table headers", () => {
+  const reports = renderReports([
+    {
+      receipt,
+      run: {
+        id: "run1",
+        status: "completed",
+        result: "failed",
+        environment: { name: "Staging | EU" },
+        verdictSummary: {
+          cases: [
+            verdict("d_search-a", "openai", "gpt-5", 3, 3, "passed"),
+            verdict("d_search-b", "openai", "gpt-5", 0, 3, "failed"),
+          ],
+        },
+      },
+      iterations: [
+        iteration("search-a", "Search", "passed", 900),
+        iteration("search-b", "Search", "failed", 900),
+      ],
+    },
+  ]);
+  // The failing case's own rate, not the passing namesake's.
+  assert.match(reports.comment, /Failed cases[\s\S]*\| Search \| ❌ 0% \(0\/3\)/);
+  assert.match(reports.comment, /2 cases/);
+  assert.match(reports.comment, /Staging \\\| EU \/ gpt-5/);
+});
+
+test("truncates an oversized report instead of losing it whole", () => {
+  const long = `header\n${"row\n".repeat(500)}`;
+  const cut = truncateMarkdown(long, 200, "\n\n_trimmed_");
+  assert.ok(cut.length <= 200);
+  assert.ok(cut.startsWith("header"));
+  assert.ok(cut.endsWith("_trimmed_"));
+  assert.equal(truncateMarkdown("short", 200, "\n\n_trimmed_"), "short");
+});
+
+test("refuses a receipt that points at another deployment", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "mcpjam-receipts-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await writeFile(join(directory, "good.json"), JSON.stringify(receipt));
+  await writeFile(
+    join(directory, "elsewhere.json"),
+    JSON.stringify({ ...receipt, runId: "run2", baseUrl: "https://evil.example.com" }),
+  );
+  await writeFile(
+    join(directory, "insecure.json"),
+    JSON.stringify({ ...receipt, runId: "run3", baseUrl: "http://app.mcpjam.com" }),
+  );
+  assert.deepEqual(
+    await readActionReceipts(directory, "https://app.mcpjam.com"),
+    [receipt],
+  );
+  assert.deepEqual(
+    (await readActionReceipts(directory)).map((row) => row.runId).sort(),
+    ["run1", "run2"],
+  );
 });
 
 test("creates and then updates one marked PR comment", async () => {

@@ -43,6 +43,9 @@ async function fixture(t, overrides = {}) {
   const receipt = {
     launch: {
       project: { id: "project1" },
+      // The real CLI receipt always names the suite, so every hosted run takes
+      // the detailed-report path. A fixture without it never exercises it.
+      suite: { id: "suite1", name: "Suite" },
       outcome: "started",
       targets: [{ status: "started", runId: "run1" }],
     },
@@ -63,6 +66,21 @@ async function fixture(t, overrides = {}) {
     gateCodes: {},
     gateXml: {},
     noGateReport: false,
+    iterations: [
+      {
+        id: "iteration1",
+        testCaseId: "case1",
+        title: "Add to cart",
+        status: "completed",
+        result: "passed",
+        model: "gpt-5",
+        provider: "openai",
+        durationMs: 10,
+        usage: null,
+        actualToolCalls: [],
+        error: null,
+      },
+    ],
   };
   const invoke = async (args, childEnv) => {
     calls.push({ args, env: childEnv });
@@ -84,8 +102,32 @@ async function fixture(t, overrides = {}) {
       );
     return { code: behavior.gateCodes[id] ?? 0, stdout: "never logged" };
   };
-  const run = () => runAction(env, invoke, (line) => logs.push(line));
-  return { root, env, calls, logs, behavior, run };
+  // Never the global fetch: a hosted run now publishes detailed reports, and
+  // an unstubbed test would reach the live API with the fixture key.
+  const fetched = [];
+  const fetchImpl = async (url) => {
+    fetched.push(String(url));
+    const runId = /eval-runs\/([^/?]+)/.exec(String(url))?.[1];
+    return {
+      ok: true,
+      status: 200,
+      json: async () =>
+        String(url).includes("/iterations")
+          ? { items: behavior.iterations }
+          : {
+              id: runId,
+              runNumber: 3,
+              status: behavior.runStatus ?? "completed",
+              result:
+                behavior.runResult ??
+                behavior.receipt.runs.find((row) => row.id === runId)?.result ??
+                "passed",
+            },
+    };
+  };
+  const run = () =>
+    runAction(env, invoke, (line) => logs.push(line), undefined, fetchImpl);
+  return { root, env, calls, logs, behavior, fetched, fetchImpl, run };
 }
 
 test("runs a suite, retains CI metadata, publishes output IDs and a report directory", async (t) => {
@@ -163,6 +205,129 @@ test("runs an SDK eval command and reports only its exact receipt run", async (t
   assert.equal(result.result, "passed");
   assert.deepEqual(result.runIds, ["run1"]);
   assert.match(await readFile(f.env.GITHUB_STEP_SUMMARY, "utf8"), /Client \/ Model/);
+});
+
+test("a waived gate reports the action verdict, not the failed run result", async (t) => {
+  const f = await fixture(t, {
+    MCPJAM_ACTION_GATE: "true",
+    MCPJAM_ACTION_MIN_PASS_RATE: "95",
+  });
+  f.behavior.runCode = 1;
+  f.behavior.receipt.runs[0].result = "failed";
+  f.behavior.report.metadata.runs[0].result = "failed";
+  f.behavior.report.cases = [{ category: "eval", passed: false }];
+  f.behavior.gateXml.run1 =
+    '<testsuites name="gate" skipped="1"><testcase><skipped message="Gate WAIVED"/></testcase></testsuites>';
+  const result = await f.run();
+  assert.equal(result.result, "passed");
+  const summary = await readFile(f.env.GITHUB_STEP_SUMMARY, "utf8");
+  assert.match(summary, /## ✅ MCPJam Evals — Passed/);
+  assert.match(summary, /Run result: ❌ Failed/);
+  // The verdict block survives the rendered report, exit codes included.
+  assert.match(summary, /MCPJam evals: passed[\s\S]*Gate exit codes: \{"run1":0\}/);
+  assert.ok(f.fetched.some((url) => url.includes("/eval-runs/run1")));
+});
+
+test("a cancelled run is never relabelled as failed", async (t) => {
+  const f = await fixture(t);
+  f.behavior.runCode = 1;
+  f.behavior.runResult = "cancelled";
+  f.behavior.receipt.runs[0].result = "failed";
+  f.behavior.report.metadata.runs[0].result = "failed";
+  const result = await f.run();
+  assert.equal(result.result, "failed");
+  assert.match(
+    await readFile(f.env.GITHUB_STEP_SUMMARY, "utf8"),
+    /Run result: ⚠️ Cancelled/,
+  );
+});
+
+test("a command reporting an inconclusive run says so instead of calling it failed", async (t) => {
+  const f = await fixture(t, {
+    MCPJAM_ACTION_PROJECT: "",
+    MCPJAM_ACTION_SUITE: "",
+    MCPJAM_ACTION_COMMAND: "npm run eval:smoke",
+  });
+  f.behavior.runResult = "inconclusive";
+  const execute = async (command, env) => {
+    assert.equal(env.MCPJAM_BASE_URL, "https://app.mcpjam.com");
+    assert.equal(env.MCPJAM_ACTION_GITHUB_TOKEN, undefined);
+    await writeFile(
+      join(env.MCPJAM_ACTION_RECEIPT_DIR, "receipt.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        baseUrl: "https://app.mcpjam.com",
+        projectId: "project1",
+        suiteId: "suite1",
+        suiteName: "SDK suite",
+        framework: "vitest",
+        runId: "run1",
+      }),
+    );
+    return { code: 0 };
+  };
+  const result = await runAction(
+    { ...f.env, MCPJAM_ACTION_GITHUB_TOKEN: "gh-token" },
+    undefined,
+    () => {},
+    execute,
+    f.fetchImpl,
+  );
+  assert.equal(result.result, "failed");
+  assert.match(result.message, /run1 is inconclusive/);
+});
+
+test("a command that reports no run is not blamed on the SDK version", async (t) => {
+  const f = await fixture(t, {
+    MCPJAM_ACTION_PROJECT: "",
+    MCPJAM_ACTION_SUITE: "",
+    MCPJAM_ACTION_COMMAND: "npm run eval:smoke",
+  });
+  for (const [code, pattern] of [
+    [0, /exited 0 but reported no MCPJam run/],
+    [137, /exited 137 without reporting/],
+  ]) {
+    const result = await runAction(
+      f.env,
+      undefined,
+      () => {},
+      async () => ({ code }),
+      f.fetchImpl,
+    );
+    assert.equal(result.result, "failed");
+    assert.match(result.message, pattern);
+  }
+});
+
+test("a receipt naming another deployment is never sent the API key", async (t) => {
+  const f = await fixture(t, {
+    MCPJAM_ACTION_PROJECT: "",
+    MCPJAM_ACTION_SUITE: "",
+    MCPJAM_ACTION_COMMAND: "npm run eval:smoke",
+  });
+  const execute = async (_command, env) => {
+    await writeFile(
+      join(env.MCPJAM_ACTION_RECEIPT_DIR, "receipt.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        baseUrl: "https://evil.example.com",
+        projectId: "project1",
+        suiteId: "suite1",
+        suiteName: "SDK suite",
+        runId: "run1",
+      }),
+    );
+    return { code: 0 };
+  };
+  const result = await runAction(
+    f.env,
+    undefined,
+    () => {},
+    execute,
+    f.fetchImpl,
+  );
+  assert.equal(result.result, "failed");
+  assert.deepEqual(f.fetched, []);
 });
 
 for (const [name, overrides] of Object.entries({

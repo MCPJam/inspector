@@ -106,6 +106,14 @@ its own thresholds or deciding whether a waiver is active.
 | `cli-version`           | `5.7.1`     | Exact published version, not `latest` or a URL.                              |
 | `idempotency-key`       | Derived     | Optional stable retry key, at most 256 characters.                           |
 
+### Targeting a non-production deployment
+
+Set `MCPJAM_BASE_URL` (or the CLI's `MCPJAM_API_URL`) on the step to point both
+modes at one deployment; the action reduces either to its origin, hands it to
+the eval command as `MCPJAM_BASE_URL`, and refuses a run receipt that names any
+other origin rather than sending it the API key. It defaults to
+`https://app.mcpjam.com`.
+
 The CLI's default wait is 10 minutes, with its existing grading extension when
 no explicit limit is supplied. The example workflow sets a 60-minute job limit.
 Large suites or several targets may need a longer GitHub job timeout.
@@ -119,7 +127,10 @@ need to preserve identity across changes to the workflow's step layout.
 ## Reports and outputs
 
 The action saves JSON and Markdown eval reports, one `gate-N.xml` per attempted
-hosted gate when enabled, and `action-result.json`. It uploads them before the
+hosted gate when enabled, and `action-result.json`. The checks summary always
+ends with the action's own verdict, its message and the exit codes, after the
+rendered report; the rendered report is trimmed if it would otherwise push the
+summary past the size GitHub accepts. It uploads them before the
 final failure step,
 using a unique artifact name per invocation. Reports use the CLI's redaction, with
 an additional literal API-key scrub. Raw CLI stdout and stderr are not uploaded.

@@ -4,11 +4,29 @@ import { createHash } from "node:crypto";
 const TERMINAL = new Set(["completed", "failed", "cancelled", "timed_out"]);
 const MAX_PAGES = 100;
 const COMMENT_LIMIT = 64_000;
+// GitHub discards a step summary over 1 MiB, taking the verdict with it.
+export const SUMMARY_LIMIT = 900_000;
 
 const validId = (value) =>
   typeof value === "string" && /^[a-zA-Z0-9_-]+$/.test(value);
 
-export async function readActionReceipts(directory) {
+// A receipt is written by the eval command, so its destination decides where
+// the MCPJam API key is sent. Accept only the origin this action was
+// configured for, and otherwise only a credential-free HTTPS origin.
+function receiptOrigin(value, allowedOrigin) {
+  if (typeof value !== "string") return undefined;
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    return undefined;
+  }
+  if (url.username || url.password) return undefined;
+  if (allowedOrigin) return url.origin === allowedOrigin ? url.origin : undefined;
+  return url.protocol === "https:" ? url.origin : undefined;
+}
+
+export async function readActionReceipts(directory, allowedOrigin) {
   const receipts = [];
   for (const file of await readdir(directory)) {
     if (!file.endsWith(".json")) continue;
@@ -18,15 +36,16 @@ export async function readActionReceipts(directory) {
     } catch {
       continue;
     }
+    const baseUrl = receiptOrigin(value?.baseUrl, allowedOrigin);
     if (
+      baseUrl &&
       value?.schemaVersion === 1 &&
-      typeof value.baseUrl === "string" &&
       validId(value.projectId) &&
       validId(value.suiteId) &&
       validId(value.runId) &&
       typeof value.suiteName === "string"
     ) {
-      receipts.push(value);
+      receipts.push({ ...value, baseUrl });
     }
   }
   return [
@@ -97,17 +116,27 @@ const percentile = (values, p) => {
 const variantKey = (provider, model) => `${provider ?? ""}\0${model ?? ""}`;
 const variantLabel = (client, model, provider) =>
   [client || provider, model].filter(Boolean).join(" / ") || "Default";
+const RESULT_LABELS = {
+  passed: "Passed",
+  failed: "Failed",
+  inconclusive: "Inconclusive",
+  cancelled: "Cancelled",
+  timed_out: "Timed out",
+};
+const resultLabel = (value) => RESULT_LABELS[value] ?? "Unknown";
 const statusIcon = (verdict) =>
   verdict === "passed" ? "✅" : verdict === "failed" ? "❌" : "⚠️";
 
-function buildCaseRows(bundle) {
+function groupIterations(bundle) {
   const groups = new Map();
   for (const iteration of bundle.iterations) {
     const provider = iteration.provider ?? null;
     const model = iteration.model ?? bundle.run.effectiveModelId ?? null;
-    const key = [iteration.testCaseId ?? iteration.caseId ?? iteration.title, variantKey(provider, model)].join("\0");
+    const caseKey = iteration.testCaseId ?? iteration.caseId ?? iteration.title;
+    const key = [caseKey, variantKey(provider, model)].join("\0");
     if (!groups.has(key)) {
       groups.set(key, {
+        caseKey,
         title: iteration.title || "Unknown case",
         declaredCaseId: iteration.caseId,
         testCaseId: iteration.testCaseId,
@@ -118,51 +147,128 @@ function buildCaseRows(bundle) {
     }
     groups.get(key).iterations.push(iteration);
   }
+  return [...groups.values()];
+}
 
+// The ids the backend could have minted for this group, in its own order.
+// A stored `caseKey` is encoded into the `k_`/`kh_` spaces, and the public
+// iteration DTO does not carry it, so a hosted case is frequently unjoinable.
+const mintedCandidates = (group) =>
+  [
+    group.testCaseId ? `c_${group.testCaseId}` : undefined,
+    group.declaredCaseId ? `d_${group.declaredCaseId}` : undefined,
+  ].filter(Boolean);
+
+const entryVariantKey = (entry) =>
+  entry.executionVariant
+    ? variantKey(
+        entry.executionVariant.provider ?? null,
+        entry.executionVariant.model,
+      )
+    : null;
+
+function tallyGroup(group) {
+  const passed = group.iterations.filter((row) => row.result === "passed").length;
+  const failed = group.iterations.filter((row) => row.result === "failed").length;
+  return { passed, failed, eligible: passed + failed };
+}
+
+const groupErrors = (group) =>
+  (group?.iterations ?? []).map((row) => row.error).filter(Boolean);
+
+/**
+ * One row per decided case-variant.
+ *
+ * A run that carries a decision is the ONLY authority for its own verdicts,
+ * counts and thresholds: re-deriving them from raw trials produces a table
+ * that contradicts the run's own result whenever a case passes below 100%.
+ * So the rows come from the decision, and the iterations only supply the
+ * title, the timings and the recorded errors. A run with no decision (a
+ * legacy run) has nothing but its trials, and is tallied from them.
+ */
+function buildCaseRows(bundle) {
+  const groups = groupIterations(bundle);
   const decisions = Array.isArray(bundle.run.verdictSummary?.cases)
     ? bundle.run.verdictSummary.cases
     : [];
-  return [...groups.values()].map((group) => {
-    const decision = decisions.find((entry) => {
-      // The backend namespaces stored row ids with `c_` and SDK-declared ids
-      // with `d_`. Prefer the stored identity, as the run UI does. Never join
-      // a raw iteration id directly to the encoded decision identity.
-      const candidates = [
-        group.testCaseId ? `c_${group.testCaseId}` : undefined,
-        group.declaredCaseId ? `d_${group.declaredCaseId}` : undefined,
-      ].filter(Boolean);
-      if (!candidates.includes(entry.caseId)) return false;
-      if (!entry.executionVariant) return true;
-      return (
-        entry.executionVariant.model === group.model &&
-        (entry.executionVariant.provider ?? null) === group.provider
-      );
+  if (decisions.length === 0) {
+    return groups.map((group) => {
+      const { passed, failed, eligible } = tallyGroup(group);
+      return {
+        ...group,
+        passed,
+        failed,
+        eligible,
+        verdict: eligible === 0 ? "inconclusive" : failed ? "failed" : "passed",
+        threshold: undefined,
+        errors: groupErrors(group),
+      };
     });
-    const passed = decision?.passedTrials ?? group.iterations.filter((row) => row.result === "passed").length;
-    const failed = decision?.failedTrials ?? group.iterations.filter((row) => row.result === "failed").length;
-    const eligible = decision?.eligibleTrials ?? passed + failed;
-    const verdict = decision?.verdict ?? (eligible === 0 ? "inconclusive" : failed ? "failed" : "passed");
-    return {
-      ...group,
-      passed,
-      failed,
-      eligible,
-      verdict,
-      threshold: decision?.effectivePassThreshold,
-      errors: group.iterations.map((row) => row.error).filter(Boolean),
-    };
+  }
+
+  const unmatched = new Set(groups);
+  const rows = decisions.map((entry) => {
+    const group = groups.find(
+      (candidate) =>
+        unmatched.has(candidate) &&
+        mintedCandidates(candidate).includes(entry.caseId) &&
+        (!entry.executionVariant ||
+          entryVariantKey(entry) ===
+            variantKey(candidate.provider, candidate.model)),
+    );
+    if (group) unmatched.delete(group);
+    return { entry, group };
   });
+  // A decision row and an iteration group left alone in one execution variant
+  // can only be each other, so a case whose minted id this action cannot
+  // reproduce still recovers its title without guessing at its verdict.
+  for (const bucket of new Set(rows.map((row) => entryVariantKey(row.entry)))) {
+    const pending = rows.filter(
+      (row) => !row.group && entryVariantKey(row.entry) === bucket,
+    );
+    const peers = [...unmatched].filter(
+      (group) => bucket === null || variantKey(group.provider, group.model) === bucket,
+    );
+    if (pending.length === 1 && peers.length === 1) {
+      pending[0].group = peers[0];
+      unmatched.delete(peers[0]);
+    }
+  }
+
+  return rows.map(({ entry, group }) => ({
+    caseKey: group?.caseKey ?? entry.caseId,
+    title: group?.title ?? `Case ${entry.caseId}`,
+    provider: group?.provider ?? entry.executionVariant?.provider ?? null,
+    model: group?.model ?? entry.executionVariant?.model ?? null,
+    iterations: group?.iterations ?? [],
+    passed: entry.passedTrials,
+    failed: entry.failedTrials,
+    eligible: entry.eligibleTrials,
+    verdict: entry.verdict,
+    threshold: entry.effectivePassThreshold,
+    errors: groupErrors(group),
+  }));
+}
+
+export function truncateMarkdown(text, limit, note) {
+  if (text.length <= limit) return text;
+  let content = "";
+  for (const line of text.split("\n")) {
+    if (content.length + line.length + 1 + note.length > limit) break;
+    content += `${content ? "\n" : ""}${line}`;
+  }
+  return content + note;
 }
 
 function table(headers, rows) {
   return [
-    `| ${headers.join(" | ")} |`,
+    `| ${headers.map(escapeCell).join(" | ")} |`,
     `|${headers.map(() => "---").join("|")}|`,
     ...rows.map((row) => `| ${row.map(escapeCell).join(" | ")} |`),
   ].join("\n");
 }
 
-function renderBundle(bundle, full) {
+function renderBundle(bundle, full, outcome) {
   const cases = buildCaseRows(bundle);
   const variants = [
     ...new Map(
@@ -193,19 +299,23 @@ function renderBundle(bundle, full) {
     ];
   });
   const failedCases = cases.filter((row) => row.verdict !== "passed");
-  const caseTitles = [...new Set(failedCases.map((row) => row.title))];
-  const failedRows = caseTitles.map((title) => [
-    title,
+  // Keyed by case identity, never by title: two cases may share a title, and
+  // matching on it shows one case's pass rate under the other's failure.
+  const failedKeys = [...new Set(failedCases.map((row) => row.caseKey))];
+  const failedRows = failedKeys.map((caseKey) => [
+    cases.find((row) => row.caseKey === caseKey)?.title ?? caseKey,
     ...variants.map((variant) => {
       const row = cases.find(
-        (item) => item.title === title && variantKey(item.provider, item.model) === variant.key,
+        (item) =>
+          item.caseKey === caseKey &&
+          variantKey(item.provider, item.model) === variant.key,
       );
       return row
         ? `${statusIcon(row.verdict)} ${pct(row.passed, row.eligible)}`
         : "—";
     }),
   ]);
-  const caseCount = new Set(cases.map((row) => row.title)).size;
+  const caseCount = new Set(cases.map((row) => row.caseKey)).size;
   const total = cases.reduce((sum, row) => sum + row.eligible, 0);
   const passed = cases.reduce((sum, row) => sum + row.passed, 0);
   const runNumber = bundle.run.runNumber ? `Run #${bundle.run.runNumber}` : `Run ${bundle.run.id}`;
@@ -215,10 +325,17 @@ function renderBundle(bundle, full) {
     bundle.receipt.baseUrl,
   );
   link.searchParams.set("project", bundle.receipt.projectId);
+  // The headline is the ACTION's verdict when it has one. The run's own result
+  // is one input to it — a waived gate passes a failed run, a command that
+  // exits non-zero fails a passed one — so reporting the run result as the
+  // outcome contradicts the check the reader is looking at.
+  const headline = outcome?.result ?? bundle.run.result;
   const lines = [
-    `## ${statusIcon(bundle.run.result)} MCPJam Evals — ${bundle.run.result === "passed" ? "Passed" : bundle.run.result === "inconclusive" ? "Inconclusive" : "Failed"}`,
+    `## ${statusIcon(headline)} MCPJam Evals — ${resultLabel(headline)}`,
     "",
+    ...(outcome?.message ? [`${escapeCell(outcome.message)}  `] : []),
     `**${escapeCell(bundle.receipt.suiteName)} · ${runNumber}**  `,
+    `Run result: ${statusIcon(bundle.run.result)} ${resultLabel(bundle.run.result)}  `,
     `${caseCount} cases · ${passed}/${total} eligible iterations passed · ${variants.length} client/model combination${variants.length === 1 ? "" : "s"}  `,
     ...(Number.isFinite(threshold)
       ? [`**Requirement:** Each case must pass ≥${Math.round(threshold * 100)}% of its eligible iterations.`, ""]
@@ -326,10 +443,14 @@ function renderBundle(bundle, full) {
   ].join("\n");
 }
 
-export function renderReports(bundles) {
+export function renderReports(bundles, outcome) {
   return {
-    summary: bundles.map((bundle) => renderBundle(bundle, true)).join("\n\n---\n\n"),
-    comment: bundles.map((bundle) => renderBundle(bundle, false)).join("\n\n---\n\n"),
+    summary: bundles
+      .map((bundle) => renderBundle(bundle, true, outcome))
+      .join("\n\n---\n\n"),
+    comment: bundles
+      .map((bundle) => renderBundle(bundle, false, outcome))
+      .join("\n\n---\n\n"),
   };
 }
 
@@ -365,17 +486,11 @@ export async function publishPullRequestComment(body, env, fetchImpl = fetch) {
   }
   const old = existing?.body?.match(/ run=(\d+) attempt=(\d+) /);
   if (old && (Number(old[1]) > run || (Number(old[1]) === run && Number(old[2]) > attempt))) return "stale";
-  let content = `${marker}\n${body}`;
-  if (content.length > COMMENT_LIMIT) {
-    const note = "\n\n_Comment truncated. View the complete checks summary and MCPJam run._";
-    const lines = content.split("\n");
-    content = "";
-    for (const line of lines) {
-      if (content.length + line.length + 1 + note.length > COMMENT_LIMIT) break;
-      content += `${content ? "\n" : ""}${line}`;
-    }
-    content += note;
-  }
+  const content = truncateMarkdown(
+    `${marker}\n${body}`,
+    COMMENT_LIMIT,
+    "\n\n_Comment truncated. View the complete checks summary and MCPJam run._",
+  );
   const url = existing
     ? `${api}/repos/${repository}/issues/comments/${existing.id}`
     : `${api}/repos/${repository}/issues/${pull}/comments`;

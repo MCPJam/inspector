@@ -54,6 +54,41 @@ describe("GitHub Action eval receipts", () => {
     });
   });
 
+  it("stands in the configured project for a backend that omits it", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "mcpjam-action-receipt-"));
+    directories.push(directory);
+    process.env[MCPJAM_ACTION_RECEIPT_DIR] = directory;
+
+    const report = {
+      suiteId: "suite-1",
+      runId: "run-1",
+      status: "completed" as const,
+      result: "passed" as const,
+      summary: { total: 1, passed: 1, failed: 0, passRate: 1 },
+    };
+    await writeGithubActionReceipt(
+      { baseUrl: "https://app.mcpjam.com", project: "project-9" },
+      { suiteName: "Suite" },
+      report
+    );
+    // The zero-config sentinel is not an id and must never reach the action.
+    await writeGithubActionReceipt(
+      { baseUrl: "https://app.mcpjam.com", project: "default" },
+      { suiteName: "Suite" },
+      report
+    );
+
+    const files = (await readdir(directory)).sort();
+    const written = await Promise.all(
+      files.map(async (file) =>
+        JSON.parse(await readFile(join(directory, file), "utf8"))
+      )
+    );
+    expect(
+      written.map((receipt) => receipt.projectId).sort()
+    ).toEqual(["project-9", undefined]);
+  });
+
   it("does nothing outside the action", async () => {
     delete process.env[MCPJAM_ACTION_RECEIPT_DIR];
     await expect(

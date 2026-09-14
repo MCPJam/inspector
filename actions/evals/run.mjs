@@ -11,10 +11,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
+  SUMMARY_LIMIT,
   fetchRunBundle,
   publishPullRequestComment,
   readActionReceipts,
   renderReports,
+  truncateMarkdown,
 } from "./report.mjs";
 
 const validId = (value) =>
@@ -98,6 +100,29 @@ export function parseInputs(env) {
   if (!inputs.idempotencyKey && !inputs.command)
     inputs.idempotencyKey = deriveIdempotencyKey(env, inputs);
   return inputs;
+}
+
+/**
+ * The ONE deployment this action talks to.
+ *
+ * The CLI reads `MCPJAM_API_URL` and the SDK reads `MCPJAM_BASE_URL`, so a
+ * workflow that sets only one of them would otherwise point hosted mode and
+ * command mode at different deployments. Both are collapsed to an origin here,
+ * the command is given it as `MCPJAM_BASE_URL`, and a receipt naming any other
+ * origin is refused rather than sent the API key.
+ */
+export function resolveConfiguredOrigin(env) {
+  const raw = (env.MCPJAM_BASE_URL || env.MCPJAM_API_URL || "").trim();
+  if (!raw) return "https://app.mcpjam.com";
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error("MCPJAM_BASE_URL must be an absolute URL.");
+  }
+  if (url.username || url.password)
+    throw new Error("MCPJAM_BASE_URL must not carry credentials.");
+  return url.origin;
 }
 
 export function deriveIdempotencyKey(env, inputs) {
@@ -259,21 +284,37 @@ async function output(env, values, apiKey) {
   }
 }
 
+// One run at a time, and a run that cannot be read costs only itself: a
+// concurrent fetch that rejects discards every bundle already paid for and
+// leaves the reader with no report at all.
+async function loadRunBundles(receipts, apiKey, fetchImpl, log) {
+  const bundles = [];
+  const missing = [];
+  for (const receipt of receipts) {
+    try {
+      bundles.push(await fetchRunBundle(receipt, apiKey, fetchImpl));
+    } catch {
+      missing.push(receipt.runId);
+    }
+  }
+  if (missing.length > 0)
+    log(
+      `::warning::Could not load MCPJam results for ${missing.join(", ")}. The summary covers the runs that loaded.`,
+    );
+  return { bundles, missing };
+}
+
 async function publishDetailedReports({
-  receipts,
+  bundles,
   directory,
   jsonName,
   inputs,
   env,
   log,
   fetchImpl,
+  outcome,
 }) {
-  const bundles = await Promise.all(
-    receipts.map((receipt) =>
-      fetchRunBundle(receipt, inputs.apiKey, fetchImpl),
-    ),
-  );
-  const reports = renderReports(bundles);
+  const reports = renderReports(bundles, outcome);
   await writeFile(join(directory, "eval-report.md"), `${reports.summary}\n`);
   await writeFile(
     join(directory, jsonName),
@@ -281,19 +322,19 @@ async function publishDetailedReports({
   );
   if (inputs.comment && env.MCPJAM_ACTION_PULL_REQUEST) {
     try {
-      const outcome = await publishPullRequestComment(
+      const published = await publishPullRequestComment(
         reports.comment,
         env,
         fetchImpl,
       );
-      log(`MCPJam PR comment ${outcome}.`);
+      log(`MCPJam PR comment ${published}.`);
     } catch {
       log(
         "::warning::Could not publish the MCPJam PR comment. Check pull-requests: write permission.",
       );
     }
   }
-  return { bundles, summary: reports.summary };
+  return reports.summary;
 }
 
 export async function runAction(
@@ -313,45 +354,82 @@ export async function runAction(
   let renderedSummary = "";
   const key = (env.MCPJAM_API_KEY ?? "").trim();
   if (key) log(`::add-mask::${escapeCommand(key)}`);
+  const githubToken = (env.MCPJAM_ACTION_GITHUB_TOKEN ?? "").trim();
+  if (githubToken) log(`::add-mask::${escapeCommand(githubToken)}`);
   let directory;
   try {
     const inputs = parseInputs(env);
+    const origin = resolveConfiguredOrigin(env);
     directory = await mkdtemp(
       join(env.RUNNER_TEMP || tmpdir(), "mcpjam-evals-"),
     );
     if (inputs.command) {
-      const receiptDirectory = directory;
+      // The action's own token is never handed to the user's command: the
+      // command needs the MCPJam key and its receipt directory, nothing else.
+      const { MCPJAM_ACTION_GITHUB_TOKEN: _token, ...commandEnv } = env;
       const command = await execute(inputs.command, {
-        ...env,
+        ...commandEnv,
         MCPJAM_API_KEY: inputs.apiKey,
-        MCPJAM_ACTION_RECEIPT_DIR: receiptDirectory,
+        MCPJAM_BASE_URL: origin,
+        MCPJAM_ACTION_RECEIPT_DIR: directory,
       });
       state.runExitCode = command.code;
-      const receipts = await readActionReceipts(receiptDirectory);
+      const receipts = await readActionReceipts(directory, origin);
       if (receipts.length === 0) {
+        // Every cause but one leaves the same empty directory, so name the
+        // condition rather than blaming a version: a command that never got
+        // that far, and reporting that failed non-strictly (an expired key, an
+        // unreachable API) both land here having exited normally.
         state.message =
-          "The eval command uploaded no action receipt. Upgrade @mcpjam/sdk and ensure it reports results.";
+          command.code === 0
+            ? `The eval command exited 0 but reported no MCPJam run to ${origin}. Check its output for an API key or connectivity failure, and that it reports results with @mcpjam/sdk.`
+            : `The eval command exited ${command.code} without reporting a MCPJam run.`;
         throw new Error(state.message);
       }
       state.runIds = receipts.map((receipt) => receipt.runId);
-      const details = await publishDetailedReports({
+      const { bundles, missing } = await loadRunBundles(
         receipts,
+        inputs.apiKey,
+        fetchImpl,
+        log,
+      );
+      if (bundles.length === 0) {
+        state.message = "Could not load any uploaded MCPJam run.";
+        throw new Error(state.message);
+      }
+      const unresolved = bundles.filter(
+        (bundle) => bundle.run.result !== "passed",
+      );
+      const result =
+        command.code === 0 && unresolved.length === 0 && missing.length === 0
+          ? "passed"
+          : "failed";
+      // Name what actually happened. An inconclusive run is not a failed one,
+      // and a summary that says it is contradicts the report beside it.
+      const outcome = {
+        result,
+        message:
+          result === "passed"
+            ? "All eval runs passed."
+            : command.code !== 0
+              ? `The eval command exited ${command.code}.`
+              : unresolved.length > 0
+                ? `Not every eval run passed: ${unresolved.map((bundle) => `${bundle.receipt.runId} is ${bundle.run.result}`).join(", ")}.`
+                : `Could not load every uploaded eval run: ${missing.join(", ")}.`,
+      };
+      renderedSummary = await publishDetailedReports({
+        bundles,
         directory,
         jsonName: "eval-report.json",
         inputs,
         env,
         log,
         fetchImpl,
+        outcome,
       });
-      renderedSummary = details.summary;
-      const allPassed = details.bundles.every(
-        (bundle) => bundle.run.result === "passed",
-      );
-      state.result = command.code === 0 && allPassed ? "passed" : "failed";
-      state.message =
-        state.result === "passed"
-          ? "All eval runs passed."
-          : "The eval command or an uploaded run failed.";
+      // Adopted only once the reports the verdict points at actually exist.
+      state.result = outcome.result;
+      state.message = outcome.message;
     } else {
       const prefix = [
         "--yes",
@@ -439,28 +517,32 @@ export async function runAction(
       const projectId = receipt.launch.project?.id;
       const suiteId = receipt.launch.suite?.id;
       if (ids.length > 0 && validId(projectId) && validId(suiteId)) {
-        const baseUrl = env.MCPJAM_API_URL
-          ? new URL(env.MCPJAM_API_URL).origin
-          : "https://app.mcpjam.com";
         const detailReceipts = ids.map((runId) => ({
           schemaVersion: 1,
-          baseUrl,
+          baseUrl: origin,
           projectId,
           suiteId,
           suiteName: receipt.launch.suite.name || inputs.suite,
           runId,
         }));
         try {
-          const details = await publishDetailedReports({
-            receipts: detailReceipts,
-            directory,
-            jsonName: "eval-details.json",
-            inputs,
-            env,
-            log,
+          const { bundles } = await loadRunBundles(
+            detailReceipts,
+            inputs.apiKey,
             fetchImpl,
-          });
-          renderedSummary = details.summary;
+            log,
+          );
+          if (bundles.length > 0)
+            renderedSummary = await publishDetailedReports({
+              bundles,
+              directory,
+              jsonName: "eval-details.json",
+              inputs,
+              env,
+              log,
+              fetchImpl,
+              outcome: state,
+            });
         } catch {
           log("::warning::Could not load detailed MCPJam results for the summary.");
         }
@@ -495,12 +577,16 @@ export async function runAction(
     }
   }
   if (env.GITHUB_STEP_SUMMARY) {
+    // The verdict block is never replaced by the rendered report: it carries
+    // the action's own result, the exit codes and the run ids, and GitHub
+    // discards an oversized summary whole rather than trimming it.
+    const verdict = `### MCPJam evals: ${state.result}\n\n${state.message}\n\nRun exit code: ${state.runExitCode === "" ? "not started" : state.runExitCode}\n\nRuns: ${state.runIds.join(", ") || "none"}\n\nGate exit codes: ${JSON.stringify(state.gateExitCodes)}\n`;
+    const detail = renderedSummary
+      ? `${truncateMarkdown(renderedSummary, SUMMARY_LIMIT - verdict.length, "\n\n_Report truncated. See the uploaded reports and the MCPJam run._")}\n\n---\n\n`
+      : "";
     await appendFile(
       env.GITHUB_STEP_SUMMARY,
-      redactSecret(
-        renderedSummary || `### MCPJam evals: ${state.result}\n\n${state.message}\n\nRun exit code: ${state.runExitCode === "" ? "not started" : state.runExitCode}\n\nRuns: ${state.runIds.join(", ") || "none"}\n\nGate exit codes: ${JSON.stringify(state.gateExitCodes)}\n`,
-        key,
-      ),
+      redactSecret(`${detail}${verdict}`, key),
     );
   }
   await output(
