@@ -146,7 +146,7 @@ export function EvaluateRunPage({
             <div className="flex min-w-0 items-center gap-3">
               <h2 className="text-2xl font-bold leading-8 tracking-tight text-foreground">
                 {targets[0].runNumber
-                  ? `#${targets[0].runNumber}`
+                  ? `Run #${targets[0].runNumber}`
                   : `Run ${formatRunId(targets[0]._id)}`}{" "}
                 Results
               </h2>
