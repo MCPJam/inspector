@@ -929,11 +929,17 @@ export function NewSwarmConfirmStep({
   const activeReusedTargets = reusedPersonas.flatMap(
     (persona) => reusedResolved[persona._id]?.targets ?? []
   );
-  // Empty draft goals stay visible for authoring but don't count toward
-  // launch readiness — Create & launch only persists trimmed goals.
-  const newJourneyCount = proposed.reduce(
-    (sum, persona) =>
-      sum + persona.journeys.filter((journey) => journey.goal.trim()).length,
+  const iterationsFor = (personaKey: string) =>
+    iterationsByPersona[personaKey] ?? DEFAULT_SWARM_ITERATIONS;
+  // Empty draft goals stay visible for authoring but never launch, so they
+  // count toward neither launch readiness nor a subtotal — Create & launch
+  // only persists trimmed goals.
+  const authoredPersonas = proposed.map((persona) => ({
+    goalCount: persona.journeys.filter((journey) => journey.goal.trim()).length,
+    iterations: iterationsFor(persona.key),
+  }));
+  const newJourneyCount = authoredPersonas.reduce(
+    (sum, persona) => sum + persona.goalCount,
     0
   );
   const journeyCount = newJourneyCount + activeReusedTargets.length;
@@ -941,14 +947,6 @@ export function NewSwarmConfirmStep({
   // a reuse-heavy swarm was under-reporting its own session count. Reused
   // journeys are counted at THEIR OWN sessions, which is what launch runs
   // them at; the counter only sizes the journeys this swarm creates.
-  const iterationsFor = (personaKey: string) =>
-    iterationsByPersona[personaKey] ?? DEFAULT_SWARM_ITERATIONS;
-  // Blank goals stay visible for authoring but never launch, so they must
-  // not appear in a subtotal either.
-  const authoredPersonas = proposed.map((persona) => ({
-    goalCount: persona.journeys.filter((journey) => journey.goal.trim()).length,
-    iterations: iterationsFor(persona.key),
-  }));
   const launchSessionEstimate = estimateLaunchSessions({
     personas: authoredPersonas,
     reusedSessionsPerTarget: activeReusedTargets.map(
