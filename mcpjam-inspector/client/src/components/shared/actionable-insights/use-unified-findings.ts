@@ -149,10 +149,10 @@ export function useUnifiedFindings(args: {
     args.envelope === undefined || args.envelope === null
       ? null
       : experiment === null
-      ? BACKEND_MISSING_NOTE
-      : experiment.writesEnabled
-      ? null
-      : WRITES_DISABLED_NOTE;
+        ? BACKEND_MISSING_NOTE
+        : experiment.writesEnabled
+          ? null
+          : WRITES_DISABLED_NOTE;
 
   return {
     envelope: args.envelope,
@@ -167,9 +167,9 @@ export function useUnifiedFindings(args: {
       error:
         buildError ??
         (jobFailed
-          ? experiment?.job?.errorMessage ??
+          ? (experiment?.job?.errorMessage ??
             experiment?.job?.errorCode ??
-            "The build failed."
+            "The build failed.")
           : null),
       onRun: onBuild,
     },
@@ -180,8 +180,8 @@ export function useUnifiedFindings(args: {
         args.generation.canRequest,
       pending: args.generation.pending,
       error: args.generation.failedGeneration
-        ? args.generation.error ??
-          "The AI explanation did not complete. The observations below are unaffected."
+        ? (args.generation.error ??
+          "The AI explanation did not complete. The observations below are unaffected.")
         : args.generation.error,
       onRun: onEnrich,
     },

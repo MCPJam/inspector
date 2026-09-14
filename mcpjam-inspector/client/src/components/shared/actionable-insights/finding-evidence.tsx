@@ -17,8 +17,7 @@ import type { ActionableFindingEvidence } from "@/lib/insights-envelope-api";
 import { EVIDENCE_KIND_LABEL } from "./finding-provenance";
 
 export type FindingEvidenceLocator =
-  | { kind: "iteration"; id: string }
-  | { kind: "session"; id: string };
+  { kind: "iteration"; id: string } | { kind: "session"; id: string };
 
 export function locatorFor(
   evidence: ActionableFindingEvidence,

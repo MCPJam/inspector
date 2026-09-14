@@ -89,8 +89,8 @@ function StateNote({
         tone === "destructive"
           ? "border-destructive/40 bg-destructive/10 text-destructive"
           : tone === "warning"
-          ? "border-warning/40 bg-warning/10 text-foreground"
-          : "border-border/60 bg-muted/30 text-muted-foreground",
+            ? "border-warning/40 bg-warning/10 text-foreground"
+            : "border-border/60 bg-muted/30 text-muted-foreground",
       )}
       data-testid={testId}
     >
