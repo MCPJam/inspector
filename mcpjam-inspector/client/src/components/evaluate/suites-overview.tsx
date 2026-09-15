@@ -30,6 +30,7 @@ interface SuitesOverviewProps {
     "environmentId" | "hostId" | "modelId"
   >[];
   hostNamesById?: ReadonlyMap<string, string>;
+  hostModelsById?: ReadonlyMap<string, string>;
   overview: EvalSuiteOverviewEntry[];
   onSelectSuite: (id: string) => void;
   onRerun: (suite: EvalSuite) => void;
@@ -74,6 +75,7 @@ export function ConnectedSuitesOverview({
       {...props}
       environments={environments}
       hostNamesById={new Map(hosts.map((host) => [host.hostId, host.name]))}
+      hostModelsById={new Map(hosts.map((host) => [host.hostId, host.modelId]))}
     />
   );
 }
@@ -105,6 +107,7 @@ export function SuitesOverview(props: SuitesOverviewProps) {
 function OverviewBody({
   environments = [],
   hostNamesById = new Map(),
+  hostModelsById = new Map(),
   overview,
   onSelectSuite,
   onRerun,
@@ -146,7 +149,9 @@ function OverviewBody({
               (env) => env.environmentId === id,
             );
             return environment
-              ? environment.modelId || "Client default"
+              ? environment.modelId ||
+                  hostModelsById.get(environment.hostId) ||
+                  "Model unavailable"
               : "Model unavailable";
           })
         : [suite.defaultConfig?.modelId || "Case models"],
