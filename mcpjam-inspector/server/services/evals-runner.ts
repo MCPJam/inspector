@@ -2507,24 +2507,8 @@ export async function runIterationUnderBudget<T>(args: {
 
     // Aborted on someone else's clock. The run being cancelled is not this
     // iteration's problem to report.
-    {
-      const reason = args.runSignal?.reason;
-      throw reason instanceof Error ? reason : RUN_CANCELLED_ERROR;
-    }
-
-    // Our budget. Give the SAME in-flight call a bounded window to unwind — it
-    // is already aborted, so this waits for cleanup, not for work. If it
-    // finishes cleanly inside the grace window its real outcome wins: a trial
-    // that beat the buzzer by a hair produced real evidence, and discarding it
-    // for a timeout we no longer need would be manufacturing an exclusion.
-    const unwound = await Promise.race([
-      running,
-      delay(args.graceMs).then(() => ({ kind: "grace" as const })),
-    ]);
-    if (unwound.kind === "settled") return unwound.value;
-
-    await args.onTimeout(handle.elapsedMs());
-    return args.timedOutOutcome();
+    const reason = args.runSignal?.reason;
+    throw reason instanceof Error ? reason : RUN_CANCELLED_ERROR;
   } finally {
     handle.dispose();
     // The held promise may still reject after we stopped waiting on it;
