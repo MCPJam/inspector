@@ -178,7 +178,7 @@ export function CreditBalanceCard({
                 ? 0
                 : (monthlyRemaining / monthlyTotal) * 100
             }
-            ariaLabel="Monthly team credits remaining"
+            ariaLabel="Monthly credits remaining"
             ariaValueText={`${monthlyRemaining.toLocaleString()} of ${monthlyTotal.toLocaleString()} monthly credits remaining`}
             isLoading={isLoading}
             showCoin

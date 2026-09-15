@@ -4,10 +4,19 @@ export function priceTopupPreset(
   preset: CreditTopupPreset,
   status: { catalogPlanId?: string; topUpEligible?: boolean } | undefined,
   entry:
-    | { catalogPlanId?: string; topUp?: { centsPerCredit: number; eligible?: boolean } }
+    | {
+        catalogPlanId?: string;
+        topUp?: { centsPerCredit: number; eligible?: boolean };
+      }
     | undefined,
 ): CreditTopupPreset | null {
-  if (!status || !entry || status.topUpEligible === false || entry.topUp?.eligible === false) return null;
+  if (
+    !status ||
+    !entry ||
+    status.topUpEligible === false ||
+    entry.topUp?.eligible === false
+  )
+    return null;
   if (!status.catalogPlanId && !entry.catalogPlanId) return preset;
   if (status.catalogPlanId !== entry.catalogPlanId || !entry.topUp) return null;
   const credits = Number(

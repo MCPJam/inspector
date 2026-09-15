@@ -27,7 +27,13 @@ describe("AutoTopupSettings", () => {
   it("does not resave unchanged enrolled preferences but allows edits", async () => {
     const user = userEvent.setup();
     const save = vi.fn();
-    render(<AutoTopupSettings view={view({ status: "enrolled" })} canManage onSave={save} />);
+    render(
+      <AutoTopupSettings
+        view={view({ status: "enrolled" })}
+        canManage
+        onSave={save}
+      />,
+    );
     const button = screen.getByRole("button", { name: "Save settings" });
     expect(button).toBeDisabled();
     await user.click(button);
@@ -36,7 +42,9 @@ describe("AutoTopupSettings", () => {
     await user.type(screen.getByLabelText("Minimum balance"), "200");
     expect(button).toBeEnabled();
     await user.click(button);
-    expect(save).toHaveBeenCalledWith(expect.objectContaining({ thresholdCredits: 200 }));
+    expect(save).toHaveBeenCalledWith(
+      expect.objectContaining({ thresholdCredits: 200 }),
+    );
   });
   it("saves integer USD cents without claiming enrollment", async () => {
     const user = userEvent.setup();

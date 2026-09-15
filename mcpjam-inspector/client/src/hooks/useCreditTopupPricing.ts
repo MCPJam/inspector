@@ -30,6 +30,10 @@ export function useCreditTopupPricing(
     );
   const entry = status ? catalog?.plans[status.effectivePlan] : undefined;
   return Object.assign(quotePreset, {
-    canPurchase: !!status && !!entry && status.topUpEligible !== false && entry.topUp?.eligible !== false,
+    canPurchase:
+      !!status &&
+      !!entry &&
+      status.topUpEligible !== false &&
+      entry.topUp?.eligible !== false,
   });
 }

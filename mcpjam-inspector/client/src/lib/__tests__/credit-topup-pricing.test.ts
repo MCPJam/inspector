@@ -35,6 +35,21 @@ it("does not quote an offered bundle's price for a different purchased bundle", 
 });
 
 it("does not quote a locked wallet or an ineligible catalog", () => {
-  expect(priceTopupPreset(preset, { catalogPlanId: "team", topUpEligible: false }, { catalogPlanId: "team", topUp: { centsPerCredit: 0.9, eligible: true } })).toBeNull();
-  expect(priceTopupPreset(preset, { catalogPlanId: "team", topUpEligible: true }, { catalogPlanId: "team", topUp: { centsPerCredit: 0.9, eligible: false } })).toBeNull();
+  expect(
+    priceTopupPreset(
+      preset,
+      { catalogPlanId: "team", topUpEligible: false },
+      { catalogPlanId: "team", topUp: { centsPerCredit: 0.9, eligible: true } },
+    ),
+  ).toBeNull();
+  expect(
+    priceTopupPreset(
+      preset,
+      { catalogPlanId: "team", topUpEligible: true },
+      {
+        catalogPlanId: "team",
+        topUp: { centsPerCredit: 0.9, eligible: false },
+      },
+    ),
+  ).toBeNull();
 });

@@ -5,7 +5,10 @@ import userEvent from "@testing-library/user-event";
 import { CreditTopupDialog } from "../CreditTopupDialog";
 
 vi.mock("@/hooks/useCreditTopupPricing", () => ({
-  useCreditTopupPricing: () => Object.assign((preset: unknown) => preset, { canPurchase: pricingState.canPurchase }),
+  useCreditTopupPricing: () =>
+    Object.assign((preset: unknown) => preset, {
+      canPurchase: pricingState.canPurchase,
+    }),
 }));
 
 const pricingState = vi.hoisted(() => ({ canPurchase: true }));
@@ -73,7 +76,14 @@ describe("CreditTopupDialog", () => {
 
   it("blocks ineligible manual purchases", async () => {
     pricingState.canPurchase = false;
-    render(<CreditTopupDialog open onOpenChange={vi.fn()} organizationId="org-1" source="chat_banner" />);
+    render(
+      <CreditTopupDialog
+        open
+        onOpenChange={vi.fn()}
+        organizationId="org-1"
+        source="chat_banner"
+      />,
+    );
     const button = screen.getByRole("button", { name: /Continue/ });
     expect(button).toBeDisabled();
     await userEvent.click(button);

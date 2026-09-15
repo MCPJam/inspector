@@ -173,11 +173,7 @@ function formatCurrentPlanBillingDetailLine(
   const plan = billingStatus.plan ?? "free";
   const interval = billingStatus.billingInterval ?? "monthly";
   const entry = planCatalog.plans[plan];
-  if (
-    !entry ||
-    (billingStatus.catalogPlanId &&
-      entry.catalogPlanId !== billingStatus.catalogPlanId)
-  ) {
+  if (!entry || entry.catalogPlanId !== billingStatus.catalogPlanId) {
     return "Your existing subscription terms apply. View billing details for your price.";
   }
   if (plan === "free" || entry.billingModel === "free") {

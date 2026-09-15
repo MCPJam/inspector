@@ -13,7 +13,7 @@ let balanceState:
       freeDailyCreditsTotal: number;
       freeDailyResetAt: number;
       walletLocked: boolean;
-      billingModel?: "daily" | "monthly_per_seat";
+      billingModel?: "daily" | "monthly_per_seat" | "monthly_flat";
       monthlyAllowanceTotal?: number;
       monthlyAllowanceRemaining?: number;
       monthlyResetAt?: number | null;
@@ -109,6 +109,18 @@ describe("CreditBalanceCard", () => {
     window.location.hash = "";
   });
 
+  it("uses a plan-neutral label for flat monthly credits", () => {
+    balanceState = {
+      ...balanceState!,
+      billingModel: "monthly_flat",
+      monthlyAllowanceTotal: 5000,
+      monthlyAllowanceRemaining: 4000,
+    };
+    render(<CreditBalanceCard organizationId="org-1" />);
+    expect(
+      screen.getByLabelText("Monthly credits remaining"),
+    ).toBeInTheDocument();
+  });
   it("opens enrollment from Auto-reload beneath the balance", async () => {
     const user = userEvent.setup();
     render(<CreditBalanceCard canManageCredits />);

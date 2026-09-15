@@ -114,7 +114,13 @@ export function AutoTopupSettings({
       setError("Maximum monthly spend must cover at least one refill.");
       return;
     }
-    if (!onSave || !view || !view.eligible || (view.status === "enrolled" && !dirty)) return;
+    if (
+      !onSave ||
+      !view ||
+      !view.eligible ||
+      (view.status === "enrolled" && !dirty)
+    )
+      return;
     await perform(async () => {
       await onSave({
         thresholdCredits,
@@ -233,7 +239,15 @@ export function AutoTopupSettings({
           </p>
         )}
         {canManage && (
-          <Button type="submit" disabled={busy || !view?.eligible || !onSave || (view.status === "enrolled" && !dirty)}>
+          <Button
+            type="submit"
+            disabled={
+              busy ||
+              !view?.eligible ||
+              !onSave ||
+              (view.status === "enrolled" && !dirty)
+            }
+          >
             {busy ? "Working…" : "Save settings"}
           </Button>
         )}

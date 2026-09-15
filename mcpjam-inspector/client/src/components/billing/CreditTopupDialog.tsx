@@ -205,7 +205,12 @@ export function CreditTopupDialog({
           <Button
             type="button"
             onClick={handleConfirm}
-            disabled={!selectedPreset || !organizationId || !quotePreset.canPurchase || isStartingCheckout}
+            disabled={
+              !selectedPreset ||
+              !organizationId ||
+              !quotePreset.canPurchase ||
+              isStartingCheckout
+            }
           >
             {isStartingCheckout
               ? "Redirecting…"

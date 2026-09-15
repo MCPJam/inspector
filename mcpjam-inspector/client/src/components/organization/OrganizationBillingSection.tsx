@@ -4,6 +4,7 @@ import {
   PLAN_ORDER,
   offeredPlans,
   canCheckoutPlan,
+  canCheckoutPlanEntry,
   formatCatalogPrice,
 } from "@/lib/pricing-catalog";
 import {
@@ -116,10 +117,7 @@ function getPlanColumnCta(params: {
     billingInterval,
   } = params;
 
-  const isDifferentBundle =
-    !!currentCatalogPlanId &&
-    !!entry.catalogPlanId &&
-    currentCatalogPlanId !== entry.catalogPlanId;
+  const isDifferentBundle = currentCatalogPlanId !== entry.catalogPlanId;
   const isCurrentPlan =
     currentPlan === plan && (!isDifferentBundle || plan === "free");
   const isHigherTier = getPlanRank(plan) > getPlanRank(currentPlan);
@@ -142,6 +140,13 @@ function getPlanColumnCta(params: {
   }
 
   if (isDowngrade) {
+    if (
+      plan !== "free" &&
+      ((plan !== "pro" && plan !== "team") ||
+        !canCheckoutPlanEntry(entry, plan, billingInterval))
+    ) {
+      return { label: "Unavailable", disabled: true, variant: "outline" };
+    }
     if (scheduledCancellationDate !== null) {
       return {
         label: "Downgrade scheduled",
@@ -167,8 +172,7 @@ function getPlanColumnCta(params: {
   ) {
     if (
       (plan !== "team" && plan !== "pro") ||
-      !entry.checkout?.supportedIntervals.includes(billingInterval) ||
-      entry.prices[billingInterval] == null
+      !canCheckoutPlanEntry(entry, plan, billingInterval)
     ) {
       return { label: "Unavailable", disabled: true, variant: "outline" };
     }
@@ -528,7 +532,7 @@ function BillingIntervalToggle({
 }: {
   billingInterval: BillingInterval;
   onBillingIntervalChange: (interval: BillingInterval) => void;
-  annualDiscountPct: number;
+  annualDiscountPct: number | null;
 }) {
   return (
     <div
@@ -548,12 +552,14 @@ function BillingIntervalToggle({
         onClick={() => onBillingIntervalChange("annual")}
       >
         Annual
-        <span
-          className="shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary sm:px-2 sm:text-xs"
-          title="Team: savings vs paying the monthly rate for 12 months."
-        >
-          -{annualDiscountPct}%
-        </span>
+        {annualDiscountPct != null && annualDiscountPct > 0 ? (
+          <span
+            className="shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary sm:px-2 sm:text-xs"
+            title="Savings vs paying monthly for 12 months."
+          >
+            -{annualDiscountPct}%
+          </span>
+        ) : null}
       </button>
       <button
         type="button"
@@ -949,7 +955,12 @@ export function OrganizationBillingSection({
   const billingConfigured = billingStatus?.billingConfigured ?? false;
   const canManageBilling = billingStatus?.canManageBilling ?? false;
   const isBillingActionPending = isStartingPlanChange || isOpeningPortal;
-  const annualDiscountPct = getAnnualDiscountPercent(planCatalog);
+  const teamDiscount = getAnnualDiscountPercent(planCatalog);
+  const annualDiscountPct =
+    planCatalog?.plans.pro &&
+    getAnnualDiscountPercent(planCatalog, "pro") !== teamDiscount
+      ? null
+      : teamDiscount;
   const compareSections = planCatalog
     ? buildComparePlanSectionsFromCatalog(planCatalog)
     : null;
@@ -966,7 +977,6 @@ export function OrganizationBillingSection({
 
   return (
     <div className="space-y-5">
-
       <Dialog
         open={checkoutPlanNotice !== null}
         onOpenChange={(open) => {
@@ -1262,8 +1272,9 @@ export function OrganizationBillingSection({
                             const showPlanChangeSpinner =
                               pendingPlanChangeTarget === plan &&
                               (cta.label === "Upgrade" ||
-                                cta.label === "Downgrade") &&
-                              plan === "team";
+                                cta.label === "Downgrade" ||
+                                cta.label === "Change plan") &&
+                              (plan === "team" || plan === "pro");
                             const showCtaSpinner = showPlanChangeSpinner;
                             const isPopular = plan === POPULAR_PLAN;
                             const showDeferredTrialBillingCopy =

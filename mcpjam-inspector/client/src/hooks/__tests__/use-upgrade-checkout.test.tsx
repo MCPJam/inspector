@@ -60,10 +60,14 @@ function planCatalog(
     currency: "USD",
     plans: {
       team: {
+        plan: "team",
+        isSelfServe: true,
         displayName: "Team",
         prices,
         limits: { maxEvalIterationsPerMonth: 5_000 },
-        checkout: supportedIntervals ? { supportedIntervals } : null,
+        checkout: supportedIntervals
+          ? { plan: "team", supportedIntervals }
+          : null,
       },
     },
   };
@@ -385,6 +389,7 @@ it("offers Pro for v2 Free customers without per-seat price copy", () => {
     plans: {
       pro: {
         plan: "pro",
+        isSelfServe: true,
         displayName: "Pro",
         billingModel: "flat",
         prices: { monthly: 2900, annual: 28800 },
@@ -403,3 +408,38 @@ it("offers Pro for v2 Free customers without per-seat price copy", () => {
   expect(result.current.teamName).toBe("Pro");
   expect(result.current.priceUnit).toBe("per month");
 });
+
+it.each(["not-self-serve", "wrong-plan", "unpriced"])(
+  "falls back to Team when Pro is %s",
+  (reason) => {
+    const catalog = planCatalog(["monthly", "annual"]);
+    billingState.planCatalog = {
+      ...catalog,
+      plans: {
+        ...catalog.plans,
+        pro: {
+          ...catalog.plans.team,
+          plan: "pro",
+          displayName: "Pro",
+          isSelfServe: reason !== "not-self-serve",
+          prices:
+            reason === "unpriced"
+              ? { monthly: null, annual: null }
+              : { monthly: 2900, annual: 28800 },
+          checkout: {
+            plan: reason === "wrong-plan" ? "team" : "pro",
+            supportedIntervals: ["monthly", "annual"],
+          },
+        },
+      },
+    };
+    const { result } = renderHook(() =>
+      useUpgradeCheckout({
+        organizationId: "org",
+        origin: "evals",
+        limitKind: "eval_iterations",
+      }),
+    );
+    expect(result.current.teamName).toBe("Team");
+  },
+);

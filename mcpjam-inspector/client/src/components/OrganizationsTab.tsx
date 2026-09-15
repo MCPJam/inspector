@@ -177,7 +177,7 @@ function getScheduledBillingChangeCancellationState(
   const scheduledBillingInterval = billingStatus.stripeScheduledBillingInterval;
 
   if (
-    currentPlan !== "team" ||
+    (currentPlan !== "team" && currentPlan !== "pro") ||
     currentBillingInterval == null ||
     scheduledPlan == null ||
     scheduledBillingInterval == null

@@ -30,7 +30,13 @@ export function canCheckoutPlan(
   plan: "pro" | "team",
   interval: BillingInterval,
 ): boolean {
-  const entry = catalog?.plans[plan];
+  return canCheckoutPlanEntry(catalog?.plans[plan], plan, interval);
+}
+export function canCheckoutPlanEntry(
+  entry: PlanCatalogEntry | undefined,
+  plan: "pro" | "team",
+  interval: BillingInterval,
+): boolean {
   return (
     !!entry?.isSelfServe &&
     entry.checkout?.plan === plan &&

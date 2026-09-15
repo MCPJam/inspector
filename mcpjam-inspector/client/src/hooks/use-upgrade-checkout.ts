@@ -1,3 +1,4 @@
+import { canCheckoutPlan } from "@/lib/pricing-catalog";
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import {
@@ -241,7 +242,10 @@ export function useUpgradeCheckout({
   const userId = user?.id ?? null;
 
   const targetPlan =
-    planCatalog?.plans.pro && billingStatus?.effectivePlan === "free"
+    billingStatus?.effectivePlan === "free" &&
+    (["monthly", "annual"] as const).some((candidate) =>
+      canCheckoutPlan(planCatalog, "pro", candidate),
+    )
       ? "pro"
       : "team";
   const teamEntry = planCatalog?.plans[targetPlan];
@@ -252,8 +256,8 @@ export function useUpgradeCheckout({
   // to trust yet, so both cards render as placeholders and `isLoadingPrices`
   // keeps checkout closed.
   const supportedIntervals: BillingInterval[] = teamEntry
-    ? (teamEntry.checkout?.supportedIntervals ?? []).filter(
-        (candidate) => teamEntry.prices[candidate] != null,
+    ? (teamEntry.checkout?.supportedIntervals ?? []).filter((candidate) =>
+        canCheckoutPlan(planCatalog, targetPlan, candidate),
       )
     : ["monthly", "annual"];
   const annualSupported = supportedIntervals.includes("annual");
