@@ -522,6 +522,9 @@ function EvaluateTabContent({
         isExcalidrawConnected: connectedServerNames.has(EXCALIDRAW_SERVER_NAME),
         existingQuickstartSuiteId,
         previewedHostId,
+        // Stay in Evaluate. The default lands on `/evals/...`, which dropped
+        // the reader into the shipped tab's copy of the suite they just made.
+        navigate: navigatePlaygroundEvalsRoute,
       });
     } finally {
       setIsQuickstartRunning(false);
