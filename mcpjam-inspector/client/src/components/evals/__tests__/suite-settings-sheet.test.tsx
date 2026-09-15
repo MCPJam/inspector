@@ -45,8 +45,9 @@ vi.mock("convex/react", () => ({
 // written against; a real read here would also need `useConvex` on the mock
 // above, which this file deliberately does not provide.
 vi.mock("@/hooks/use-suite-capabilities", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("@/hooks/use-suite-capabilities")>();
+  const actual = await importOriginal<
+    typeof import("@/hooks/use-suite-capabilities")
+  >();
   return {
     ...actual,
     useSuiteCapabilities: () => ({
@@ -89,6 +90,8 @@ vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
 vi.mock("posthog-js/react", () => ({ useFeatureFlagEnabled: () => true }));
 vi.mock("@/hooks/useProjectEnvironments", () => ({
   useProjectEnvironments: () => [],
+  useEnsureAdhocEnvironments: () => vi.fn(),
+  useModelMatrixCapability: () => false,
 }));
 vi.mock("../use-suite-data", () => ({
   useSuiteData: () => ({ runTrendData: [], modelStats: [] }),

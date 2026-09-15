@@ -90,9 +90,9 @@ describe("suite scope", () => {
   it("switches a preset on by appending it and a rule off by removing it", async () => {
     const user = userEvent.setup();
     const { next } = renderSuite([{ type: "noToolErrors" }]);
-    await user.click(screen.getByRole("checkbox", { name: latency.label }));
+    await user.click(screen.getByRole("checkbox", { name: latency.name }));
     expect(next()).toEqual([{ type: "noToolErrors" }, latency.preset]);
-    await user.click(screen.getByRole("checkbox", { name: errors.label }));
+    await user.click(screen.getByRole("checkbox", { name: errors.name }));
     expect(next()).toEqual([]);
   });
 
@@ -100,15 +100,13 @@ describe("suite scope", () => {
     const { container } = renderSuite([], {
       scorers: { predicateKinds: ["noToolErrors"] },
     } as SuiteCapabilities);
-    expect(
-      screen.getByRole("checkbox", { name: latency.label }),
-    ).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: latency.name })).toBeDisabled();
     expect(
       within(row(container, `preset:${latency.id}`)).getByText(
         BACKEND_SUPPORT_HINT,
       ),
     ).toBeInTheDocument();
-    expect(screen.getByRole("checkbox", { name: errors.label })).toBeEnabled();
+    expect(screen.getByRole("checkbox", { name: errors.name })).toBeEnabled();
   });
 
   it("names a family row by its standard check, with the criterion under it", async () => {
@@ -116,13 +114,13 @@ describe("suite scope", () => {
     const { container } = renderSuite([{ type: "toolLatencyUnder", ms: 1234 }]);
     const latencyRow = row(container, "predicate:0");
     expect(latencyRow).toHaveAttribute("data-scorer-enabled", "true");
-    expect(within(latencyRow).getByText(latency.label)).toBeInTheDocument();
+    expect(within(latencyRow).getByText(latency.name)).toBeInTheDocument();
     expect(within(latencyRow).getByText(/1,234/)).toBeInTheDocument();
     // On, so no second preset row for the same family.
     expect(row(container, `preset:${latency.id}`)).toBeNull();
     // Still editable: the title opens the assertion's own fields.
     await user.click(
-      within(latencyRow).getByRole("button", { name: latency.label }),
+      within(latencyRow).getByRole("button", { name: latency.name }),
     );
     expect(
       within(latencyRow).getByRole("spinbutton", {
@@ -157,15 +155,17 @@ describe("case scope", () => {
     const inherited = row(container, "predicate:0");
     expect(inherited).toHaveAttribute("data-scorer-source", "suite");
     expect(within(inherited).getByText("From suite")).toBeInTheDocument();
-    // No title button: an inherited assertion opens no editor here.
-    expect(within(inherited).queryByRole("button")).toBeNull();
+    await user.click(
+      within(inherited).getByRole("button", { name: latency.name }),
+    );
+    expect(within(inherited).queryByRole("spinbutton")).toBeNull();
     expect(within(inherited).getByText(/1,234/)).toBeInTheDocument();
     const own = row(container, "predicate:1");
     expect(own).toHaveAttribute("data-scorer-source", "case");
     expect(within(own).getByText("This case")).toBeInTheDocument();
     await user.click(
       within(own).getByRole("button", {
-        name: "User turn count stays below the configured limit",
+        name: "User turns to completion",
       }),
     );
     expect(
@@ -192,7 +192,7 @@ describe("case scope", () => {
         "Turns off all 2 suite assertions of this kind for this case.",
       ),
     ).toBeInTheDocument();
-    const boxes = screen.getAllByRole("checkbox", { name: latency.label });
+    const boxes = screen.getAllByRole("checkbox", { name: latency.name });
     expect(boxes).toHaveLength(2);
     await user.click(boxes[0]);
     expect(onDraftChange).toHaveBeenCalledWith({
@@ -225,9 +225,7 @@ describe("case scope", () => {
         } as SuiteCapabilities,
       },
     );
-    expect(
-      screen.getByRole("checkbox", { name: latency.label }),
-    ).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: latency.name })).toBeDisabled();
     expect(
       within(row(container, "predicate:0")).getByText(BACKEND_SUPPORT_HINT),
     ).toBeInTheDocument();
@@ -245,13 +243,16 @@ describe("case scope", () => {
     await user.click(
       screen.getByRole("checkbox", {
         name: STANDARD_ASSERTION_CHECKS.find((c) => c.id === "userValue.turns")!
-          .label,
+          .name,
       }),
     );
     expect(onDraftChange).toHaveBeenLastCalledWith({
       predicates: { mode: "extend", list: [] },
       suppressedSuiteStandardCheckIds: [],
     });
+    await user.click(
+      screen.getByRole("button", { name: "User turns to completion" }),
+    );
     await user.click(screen.getByRole("button", { name: "Advisory" }));
     expect(onDraftChange).toHaveBeenLastCalledWith({
       predicates: {
@@ -295,9 +296,9 @@ describe("case scope", () => {
     );
     // Read-only threshold and role: the suite's, not the case's to edit.
     expect(screen.getByText(/threshold 0\.7/i)).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Goal completion judge" }),
-    ).toBeNull();
+    await user.click(
+      screen.getByRole("button", { name: "Goal completion judge" }),
+    );
     expect(
       screen.queryByRole("spinbutton", { name: "Judge threshold" }),
     ).toBeNull();

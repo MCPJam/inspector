@@ -160,13 +160,8 @@ describe("combined run report", () => {
     expect(within(hero).queryByTestId("run-verdict-stat-delta")).toBeNull();
     expect(screen.queryByTestId("run-verdict-word")).toBeNull();
     expect(screen.queryByTestId("run-header-verdict")).toBeNull();
-    const pairingDecisions = screen
-      .getAllByTestId("run-header-pairing-decision")
-      .map((node) => node.textContent);
-    expect(pairingDecisions).toEqual(["SHIP"]);
-    const shipPill = screen.getByTestId("run-header-decision-pill");
-    expect(shipPill).toHaveAttribute("data-decision", "ship");
-    expect(within(shipPill).getAllByLabelText(/ · /)).toHaveLength(3);
+    expect(screen.queryByTestId("run-header-pairing-decision")).toBeNull();
+    expect(screen.queryByTestId("run-header-decision-pill")).toBeNull();
     const pairingRows = within(hero).getAllByTestId("run-verdict-pairing");
     expect(pairingRows).toHaveLength(3);
     const rateOf = (row: HTMLElement) =>
@@ -227,16 +222,8 @@ describe("combined run report", () => {
     expect(
       within(filteredPairing).getByTestId("run-verdict-pairing-rate"),
     ).toHaveTextContent("0%");
-    expect(
-      screen
-        .getAllByTestId("run-header-pairing-decision")
-        .map((node) => node.textContent),
-    ).toEqual(pairingDecisions);
-    expect(
-      within(screen.getByTestId("run-header-decision-pill")).getAllByLabelText(
-        / · /,
-      ),
-    ).toHaveLength(3);
+    expect(screen.queryByTestId("run-header-pairing-decision")).toBeNull();
+    expect(screen.queryByTestId("run-header-decision-pill")).toBeNull();
     expect(
       screen.queryByRole("heading", { name: "Filtered results" }),
     ).toBeNull();

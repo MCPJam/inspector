@@ -144,11 +144,11 @@ describe("run results matrix", () => {
         name: "Inspect Refund order on Claude · sonnet",
       }),
     );
-    expect(screen.queryByRole("button", { name: "Edit evaluator" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Edit evaluators" })).toBeNull();
     await user.click(
       screen.getByRole("button", { name: "Open iteration 1 details" }),
     );
-    await user.click(screen.getByRole("button", { name: "Edit evaluator" }));
+    await user.click(screen.getByRole("button", { name: "Edit evaluators" }));
     expect(onEditEvaluator).toHaveBeenCalledWith("refund");
     expect(screen.queryByRole("dialog")).toBeNull();
   });
@@ -606,4 +606,18 @@ describe("run results matrix", () => {
       expect(screen.getByRole("option", { name: "Pending" })).toBeVisible();
     },
   );
+});
+
+
+describe("test-name navigation", () => {
+  it.each(["sdk", "ui"] as const)("opens the saved definition for %s cases instead of run details", async (source) => {
+    const onEditCase = vi.fn();
+    render(<RunResultsMatrix run={run("one", { source })} iterations={[iteration("only", "one")]} onEditCase={onEditCase} />);
+    await userEvent.click(screen.getByRole("button", { name: "Open test case: Refund order" }));
+    expect(onEditCase).toHaveBeenCalledWith("refund");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: /Inspect Refund order on/ }));
+    expect(screen.getByRole("dialog")).toBeVisible();
+    expect(onEditCase).toHaveBeenCalledTimes(1);
+  });
 });

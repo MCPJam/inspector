@@ -307,11 +307,11 @@ describe("EvaluateRunContent", () => {
     }
   });
 
-  it("pairs hero deltas to a fallback previous launch when previousRunId is omitted", () => {
+  it.each(["running", "completed"])("pairs fallback comparisons only after the run finishes (%s)", (status) => {
     const current = {
       _id: "run_2",
-      status: "running",
-      result: "pending",
+      status,
+      result: status === "running" ? "pending" : "failed",
       namedHostId: "host-1",
       effectiveModelId: "sonnet",
       runNumber: 2,
@@ -348,6 +348,11 @@ describe("EvaluateRunContent", () => {
       siblingRuns: [previous, current],
       allIterations: previousRows,
     });
+
+    if (status === "running") {
+      expect(screen.queryByTestId("run-verdict-stat-delta")).toBeNull();
+      return;
+    }
 
     // Two failures last time, one pass and one failure now: the row's headline
     // rate moves, and Passed carries the count it moved by.

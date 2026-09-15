@@ -139,7 +139,13 @@ function AiGeneratedLabel() {
   );
 }
 
-function PairingPassList({ pairings }: { pairings: HeroPairingPass[] }) {
+function PairingPassList({
+  pairings,
+  showDeltas,
+}: {
+  pairings: HeroPairingPass[];
+  showDeltas: boolean;
+}) {
   const theme = usePreferencesStoreWithDefaults((state) => state.themeMode);
   return (
     <ul
@@ -177,7 +183,7 @@ function PairingPassList({ pairings }: { pairings: HeroPairingPass[] }) {
                 ? "—"
                 : `${Math.round(pairing.passRate)}%`}
             </span>
-            {pairing.passRateDelta ? (
+            {showDeltas && pairing.pending === 0 && pairing.passRateDelta ? (
               <StatDelta delta={pairing.passRateDelta} />
             ) : null}
           </div>
@@ -188,7 +194,7 @@ function PairingPassList({ pairings }: { pairings: HeroPairingPass[] }) {
               count
               value={String(pairing.passed)}
               tone="pass"
-              delta={pairing.delta}
+              delta={showDeltas && pairing.pending === 0 ? pairing.delta : null}
             />
             <PairingStat
               label="Failed"
@@ -214,25 +220,25 @@ function PairingPassList({ pairings }: { pairings: HeroPairingPass[] }) {
             <PairingStat
               label="P50"
               value={formatRunCaseLatencyMs(pairing.stats.latencyP50Ms)}
-              delta={pairing.statDeltas.latencyP50}
+              delta={showDeltas && pairing.pending === 0 ? pairing.statDeltas.latencyP50 : null}
               unavailable={pairing.stats.latencyP50Ms == null}
             />
             <PairingStat
               label="P95"
               value={formatRunCaseLatencyMs(pairing.stats.latencyP95Ms)}
-              delta={pairing.statDeltas.latencyP95}
+              delta={showDeltas && pairing.pending === 0 ? pairing.statDeltas.latencyP95 : null}
               unavailable={pairing.stats.latencyP95Ms == null}
             />
             <PairingStat
               label="Tokens"
               value={formatCount(pairing.stats.tokens)}
-              delta={pairing.statDeltas.tokens}
+              delta={showDeltas && pairing.pending === 0 ? pairing.statDeltas.tokens : null}
               unavailable={pairing.stats.tokens == null}
             />
             <PairingStat
               label="Calls"
               value={formatCount(pairing.stats.toolCalls)}
-              delta={pairing.statDeltas.toolCalls}
+              delta={showDeltas && pairing.pending === 0 ? pairing.statDeltas.toolCalls : null}
               unavailable={pairing.stats.toolCalls == null}
             />
           </div>
@@ -293,7 +299,14 @@ export function RunVerdictHero({
 
         {hasPairings ? (
           <div className={cn(showVerdict && "mt-4")}>
-            <PairingPassList pairings={pairings} />
+            <PairingPassList
+              pairings={pairings}
+              showDeltas={
+                !view.pending &&
+                !["Running", "Pending", "Queued"].includes(headerVerdict.word) &&
+                !["Running", "Pending", "Queued"].includes(view.verdict.word)
+              }
+            />
           </div>
         ) : null}
 

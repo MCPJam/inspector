@@ -37,15 +37,13 @@ describe("Default checks navigation and page", () => {
           onChecksChange={onChecksChange}
           judgeSkipped={skipped}
           onJudgeSkippedChange={setSkipped}
-          onSave={vi.fn()}
-          saveDisabled={false}
         />
       );
     }
     const { container } = render(<Page />);
     // The same numbered table the suite settings page renders.
     expect(
-      screen.getByRole("heading", { name: "User value chain evaluators" }),
+      screen.getByRole("heading", { name: "Test Case Evaluators" }),
     ).toBeInTheDocument();
     expect(
       screen.queryByText("Show default evaluators"),
@@ -56,7 +54,7 @@ describe("Default checks navigation and page", () => {
       const observed = container.querySelector(
         `[data-stage-group="${stage}"] [data-scorer-row="observed"]`,
       );
-      expect(observed?.textContent, stage).toContain("Measured by the runner");
+      expect(observed?.textContent, stage).toContain("Required");
       expect(
         observed?.querySelector('[role="checkbox"]'),
         stage,
@@ -81,16 +79,19 @@ describe("Default checks navigation and page", () => {
       (c) => c.id === "response.performance",
     )!;
     expect(
-      screen.getByRole("checkbox", { name: latency.label }),
+      screen.getByRole("checkbox", { name: latency.name }),
     ).not.toBeChecked();
-    await user.click(screen.getByRole("checkbox", { name: latency.label }));
+    await user.click(screen.getByRole("checkbox", { name: latency.name }));
     expect(onChecksChange).toHaveBeenCalledWith({
       predicates: { mode: "extend", list: [latency.preset] },
       suppressedSuiteStandardCheckIds: [],
     });
-    // The save path is the case's own; the page never blocks it on a preview.
+    // Changes persist through the change callbacks; navigation uses breadcrumbs.
     expect(
-      screen.getByRole("button", { name: "Save overrides" }),
-    ).toBeEnabled();
+      screen.queryByRole("button", { name: "Save overrides" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Back to case" }),
+    ).not.toBeInTheDocument();
   });
 });

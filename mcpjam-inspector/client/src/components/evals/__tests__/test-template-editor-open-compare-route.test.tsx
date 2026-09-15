@@ -13,6 +13,7 @@ import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provi
 import { TestTemplateEditor } from "../test-template-editor";
 import type { EvalIteration } from "../types";
 import { STAGE_ANALYZER_VERSION } from "@mcpjam/sdk/contract";
+import { toast } from "sonner";
 
 function renderWithProviders(
   ui: ReactElement,
@@ -1030,18 +1031,148 @@ describe("TestTemplateEditor run view from route", () => {
     );
   });
 
-  it("saves judge overrides from the dedicated UVC page", async () => {
+  it("automatically saves judge overrides from the dedicated UVC page", async () => {
     activeCaseDoc = goldenCaseDoc;
     renderGoldenCase({ observeFirst: true, checksPage: true });
     fireEvent.click(
       await screen.findByRole("checkbox", { name: "Goal completion judge" }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Save overrides" }));
     await waitFor(() => expect(updateTestCaseMutationMock).toHaveBeenCalled());
     expect(updateTestCaseMutationMock.mock.calls.at(-1)?.[0]).toMatchObject({
       judgeConfigOverride: { goalCompletion: { enabled: false } },
     });
     expect(screen.queryByTestId("case-workspace")).not.toBeInTheDocument();
+  });
+
+  it("saves rapid evaluator changes in order, including clearing the judge override", async () => {
+    activeCaseDoc = goldenCaseDoc;
+    let finishFirstSave!: () => void;
+    updateTestCaseMutationMock.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishFirstSave = resolve;
+        }),
+    );
+    renderGoldenCase({ observeFirst: true, checksPage: true });
+    const judge = await screen.findByRole("checkbox", {
+      name: "Goal completion judge",
+    });
+    fireEvent.click(judge);
+    await waitFor(() =>
+      expect(updateTestCaseMutationMock).toHaveBeenCalledTimes(1),
+    );
+    fireEvent.click(judge);
+    expect(updateTestCaseMutationMock).toHaveBeenCalledTimes(1);
+    finishFirstSave();
+    await waitFor(() =>
+      expect(updateTestCaseMutationMock).toHaveBeenCalledTimes(2),
+    );
+    expect(updateTestCaseMutationMock.mock.calls[1][0]).toMatchObject({
+      judgeConfigOverride: null,
+    });
+  });
+
+  it("keeps a failed autosave visible and includes it in the next edit", async () => {
+    activeCaseDoc = goldenCaseDoc;
+    updateTestCaseMutationMock.mockRejectedValueOnce(new Error("Offline"));
+    renderGoldenCase({ observeFirst: true, checksPage: true });
+    fireEvent.click(
+      await screen.findByRole("checkbox", { name: "Goal completion judge" }),
+    );
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "could not be saved",
+    );
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Goal completion judge" }),
+    );
+    await waitFor(() =>
+      expect(updateTestCaseMutationMock).toHaveBeenCalledTimes(2),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("status")).not.toBeInTheDocument(),
+    );
+    expect(updateTestCaseMutationMock.mock.calls[1][0]).toMatchObject({
+      judgeConfigOverride: null,
+    });
+  });
+
+  it.each(["switch", "unmount"])(
+    "invalidates a previous case's Retry action on %s",
+    async (transition) => {
+      activeCaseDoc = goldenCaseDoc;
+      const errorToast = vi.spyOn(toast, "error");
+      updateTestCaseMutationMock.mockRejectedValueOnce(new Error("Offline"));
+      function CaseSwitcher() {
+        const [caseId, setCaseId] = useState("case-1");
+        return (
+          <>
+            <button
+              onClick={() => {
+                activeCaseDoc = { ...goldenCaseDoc, _id: "case-2" };
+                setCaseId("case-2");
+              }}
+            >
+              Switch case
+            </button>
+            <TestTemplateEditor
+              simpleCaseEditor
+              observeFirst
+              checksPage
+              suiteIterations={[]}
+              suiteId="suite-1"
+              selectedTestCaseId={caseId}
+              connectedServerNames={new Set(["srv"])}
+              projectId={null}
+              availableModels={[]}
+            />
+          </>
+        );
+      }
+      const view = renderWithProviders(<CaseSwitcher />);
+      try {
+        fireEvent.click(
+          await screen.findByRole("checkbox", {
+            name: "Goal completion judge",
+          }),
+        );
+        await screen.findByText(
+          "Changes could not be saved. Edit again or retry.",
+        );
+        const action = errorToast.mock.calls.at(-1)?.[1]?.action;
+        expect(action).toMatchObject({ label: "Retry" });
+        const retry = (action as { onClick: (event: unknown) => void }).onClick;
+        if (transition === "switch") {
+          fireEvent.click(screen.getByRole("button", { name: "Switch case" }));
+          expect(screen.queryByRole("status")).not.toBeInTheDocument();
+        } else {
+          view.unmount();
+        }
+        await act(async () => {
+          retry({});
+        });
+        expect(updateTestCaseMutationMock).toHaveBeenCalledTimes(1);
+      } finally {
+        errorToast.mockRestore();
+      }
+    },
+  );
+
+  it("does not autosave unfinished assertion fields", async () => {
+    activeCaseDoc = {
+      ...goldenCaseDoc,
+      predicates: {
+        mode: "extend",
+        list: [{ type: "toolLatencyUnder", ms: -1 }],
+      },
+    };
+    renderGoldenCase({ observeFirst: true, checksPage: true });
+    fireEvent.click(
+      await screen.findByRole("checkbox", { name: "Goal completion judge" }),
+    );
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Complete the assertion fields",
+    );
+    expect(updateTestCaseMutationMock).not.toHaveBeenCalled();
   });
 
   it("Run test case saves the latest keystrokes", async () => {
