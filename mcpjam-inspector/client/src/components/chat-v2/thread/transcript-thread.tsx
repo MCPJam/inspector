@@ -1,3 +1,13 @@
+/**
+ * The LIVE, interactive transcript: Playground and Chat.
+ *
+ * Read-only transcripts — Sessions (User Testing and Swarm), Scenarios, shared
+ * threads — render through `@mcpjam/chat-ui`'s `ReadOnlyTranscript` instead.
+ * The two renderers are deliberate and the split is interactivity, not team
+ * ownership; see "Which renderer is canonical" in `chat-ui/README.md` before
+ * adding a third, and put anything the two must agree on (JSON token colours,
+ * avatar policy) in shared code rather than in matching CSS (BB-239).
+ */
 import {
   type CSSProperties,
   useEffect,

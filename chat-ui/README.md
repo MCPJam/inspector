@@ -50,6 +50,8 @@ export function Transcript({ messages }) {
 | `reasoningDisplayMode` | `"inline" \| "collapsible" \| "collapsed" \| "hidden"` | `"inline"`                                  |
 | `widgetPolicy`         | `"placeholder" \| "hidden"`                     | `"placeholder"`                                    |
 | `className`            | `string`                                        | —                                                  |
+| `showAssistantAvatar`  | `boolean`                                       | `false`                                            |
+| `renderAvatar`         | `(model) => ReactNode`                          | —                                                  |
 
 ### Host integration (interactive embedders)
 
@@ -86,3 +88,39 @@ any `--token` to theme.
 
 Tier A is read-only transcript review. Full MCP Apps widget replay (sandbox
 origin, CSP, security review) is a separate Tier B effort.
+
+## Which renderer is canonical (BB-239)
+
+MCPJam has two message renderers, and it needs both. What it does not need is
+for them to look like two products, which is what happened to Sessions: a
+generic chat bubble in front of every response and monochrome JSON, next to a
+Playground that had neither. The rule that keeps them together:
+
+| Surface                                                       | Renderer                                     |
+| ------------------------------------------------------------- | -------------------------------------------- |
+| **Live, interactive chat** — Playground, Chat                  | `chat-v2/thread/transcript-thread.tsx`       |
+| **Read-only transcripts** — Sessions (User Testing and Swarm), Scenarios, shared threads, any future review surface | `@mcpjam/chat-ui` `ReadOnlyTranscript`       |
+
+The split is about *interactivity*, not about which team owns the screen. A new
+surface that replays a finished conversation uses `ReadOnlyTranscript` — there
+is no case for a third renderer, and "ours needs one small thing different" is
+what `renderTool` / `renderWidget` / `renderTurnFooter` / `renderAvatar` exist
+for.
+
+Where the two must agree visually, **the agreement lives in shared code rather
+than in matching CSS**, because matching CSS is what drifted:
+
+- **JSON colouring** — one tokenizer, `internal/json-tokens.ts`, exported as
+  `tokenizeJson`. The inspector's `ui/json-editor/json-syntax-highlighter.ts`
+  re-exports it, so the Playground's `JsonEditor` and this package's `JsonView`
+  colour a payload from the same token stream. The class names
+  (`json-key`, `json-string`, …) are shared too, so a transcript embedded in the
+  inspector inherits the app's palette.
+- **No generic assistant avatar** — `showAssistantAvatar` defaults to `false`,
+  matching `transcript-thread.tsx`, which has never drawn one. A host with a
+  real identity to show opts in and supplies it through `renderAvatar`.
+
+Deliberate differences that are **not** drift: this package never mounts a
+widget, never edits a payload (the Playground's `JsonEditor` is CodeMirror and
+writable; `JsonView` is a `<pre>`), and folds large tool results by default
+because a review surface is read top-to-bottom while a live chat is watched.

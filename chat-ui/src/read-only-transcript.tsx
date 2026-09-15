@@ -42,6 +42,7 @@ export interface TranscriptProps {
   reasoningDisplayMode?: ReasoningDisplayMode;
   widgetPolicy?: WidgetPolicy;
   className?: string;
+  /** See `MessageViewProps.showAssistantAvatar` — off by default (BB-239). */
   showAssistantAvatar?: boolean;
   renderAvatar?: (model: ChatUiModel | undefined) => ReactNode;
   /** Host override for the tool block (inspector interactive `ToolPart`). */
@@ -75,7 +76,7 @@ export function Transcript({
   reasoningDisplayMode = "inline",
   widgetPolicy = "placeholder",
   className,
-  showAssistantAvatar = true,
+  showAssistantAvatar = false,
   renderAvatar,
   renderTool,
   renderWidget,

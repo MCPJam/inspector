@@ -42,6 +42,17 @@ export { SourceUrlPart } from "./parts/source-url-part";
 export { SourceDocumentPart } from "./parts/source-document-part";
 export { JsonPart } from "./parts/json-part";
 export { JsonView } from "./parts/json-view";
+// The one JSON tokenizer. Public because the inspector's `ui/json-editor`
+// re-exports it: the Playground's editor and this package's `JsonView` colour
+// a payload from the same token stream, which is what stops the two surfaces
+// drifting apart again (BB-239).
+export {
+  formatPath,
+  highlightJson,
+  tokenizeJson,
+  type Token,
+  type TokenType,
+} from "./internal/json-tokens";
 export { Markdown } from "./internal/markdown";
 
 // --- Public types ---

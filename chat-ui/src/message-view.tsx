@@ -29,7 +29,21 @@ export interface MessageViewProps {
   widgetPolicy?: WidgetPolicy;
   renderTool?: (ctx: ToolRenderContext) => ReactNode;
   renderWidget?: (input: WidgetRenderInput) => ReactNode;
-  /** Show a generic assistant avatar to the left of assistant messages. */
+  /**
+   * Show an avatar to the left of assistant messages. **Off by default.**
+   *
+   * The default used to be `true`, which put a generic `MessageCircle` bubble
+   * in front of every assistant response in Sessions — the "generic chat icon"
+   * BB-239 was filed about. The Playground and Chat renderer
+   * (`chat-v2/thread/transcript-thread.tsx`) has never drawn one, so the
+   * default was also the single thing making two views of the same
+   * conversation look like two products.
+   *
+   * The prop stays because the *seam* is still right: a host with a real
+   * identity to show — a provider logo, a named persona — opts in and supplies
+   * it via `renderAvatar`. What is wrong is spending a 32px gutter on an icon
+   * that identifies nothing.
+   */
   showAssistantAvatar?: boolean;
   /** Host override for the assistant avatar (e.g. provider logos). */
   renderAvatar?: (model: ChatUiModel | undefined) => ReactNode;
@@ -77,7 +91,7 @@ function MessageViewImpl({
   widgetPolicy = "placeholder",
   renderTool,
   renderWidget,
-  showAssistantAvatar = true,
+  showAssistantAvatar = false,
   renderAvatar,
   renderTurnFooter,
   turnIndex = 0,

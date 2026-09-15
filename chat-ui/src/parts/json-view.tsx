@@ -1,4 +1,6 @@
+import { Fragment, useMemo, type ReactNode } from "react";
 import { cn } from "../internal/cn";
+import { tokenizeJson } from "../internal/json-tokens";
 
 /**
  * Stable JSON stringify that survives circular references (tool outputs can
@@ -40,9 +42,46 @@ export function renderJsonText(value: unknown): string {
 }
 
 /**
- * Minimal read-only JSON display. Replaces the inspector's heavyweight
- * `@/components/ui/json-editor` (CodeMirror-based, editable) with a plain
- * pre block — Tier A only needs to *show* tool input/output, not edit it.
+ * Past this many characters a payload stops being read and starts being
+ * scrolled, and tokenising it on every render costs more than the colour is
+ * worth. Beyond the cap the same text renders as plain monospace — still
+ * complete, still foldable, just uncoloured.
+ *
+ * Generous on purpose: a tool result big enough to trip this is already behind
+ * a closed `FoldedBlock`, so the uncoloured case is one a reader has to go
+ * looking for.
+ */
+export const HIGHLIGHT_CHAR_LIMIT = 100_000;
+
+/**
+ * Whether `text` is worth handing to the tokenizer.
+ *
+ * `renderJsonText` passes STRING payloads through verbatim, so plenty of what
+ * reaches this view is prose, a stack trace, or a bare log line rather than
+ * JSON. The tokenizer skips characters it does not recognise, so feeding it
+ * prose does not throw — it silently drops most of the text, which would
+ * render a *truncated* payload. Gating on a structural opener is what keeps
+ * the uncoloured path lossless.
+ */
+function shouldHighlight(text: string): boolean {
+  if (text.length > HIGHLIGHT_CHAR_LIMIT) return false;
+  const head = text.trimStart()[0];
+  return head === "{" || head === "[";
+}
+
+/**
+ * Read-only JSON display: the payload as monospace text, coloured by the same
+ * tokenizer the Playground's `JsonEditor` uses (`internal/json-tokens`).
+ *
+ * Deliberately NOT the inspector's `@/components/ui/json-editor` — that is
+ * CodeMirror-based and editable, and Tier A only needs to *show* a payload.
+ * Sharing the tokenizer instead of the component is what gives Sessions the
+ * Playground's colours without dragging an editor into a read-only package
+ * (BB-239).
+ *
+ * Anything that is not a JSON object or array — a string payload, a stack
+ * trace — renders as plain text rather than being forced through the
+ * tokenizer; see `shouldHighlight`.
  */
 export function JsonView({
   value,
@@ -65,6 +104,51 @@ export function JsonView({
   className?: string;
 }) {
   const text = preRendered ?? renderJsonText(value);
+
+  /**
+   * Tokens, or `null` for "render this as plain text".
+   *
+   * Memoised on the text alone: the tokenizer is a full scan of the payload,
+   * and a transcript re-renders on every hover, fold and score that lands
+   * anywhere in it.
+   */
+  const tokens = useMemo(
+    () => (shouldHighlight(text) ? tokenizeJson(text) : null),
+    [text]
+  );
+
+  const body = useMemo(() => {
+    if (!tokens) return text;
+
+    const nodes: ReactNode[] = [];
+    let lastIndex = 0;
+
+    // Whitespace and anything the tokenizer did not claim is emitted verbatim
+    // between tokens, so the block is character-for-character the string that
+    // `FoldedBlock` measured — indentation included.
+    for (const [i, token] of tokens.entries()) {
+      if (token.start > lastIndex) {
+        nodes.push(
+          <Fragment key={`gap-${lastIndex}`}>
+            {text.slice(lastIndex, token.start)}
+          </Fragment>
+        );
+      }
+      nodes.push(
+        <span key={`t-${i}`} className={`json-${token.type}`}>
+          {token.value}
+        </span>
+      );
+      lastIndex = token.end;
+    }
+
+    if (lastIndex < text.length) {
+      nodes.push(<Fragment key="gap-end">{text.slice(lastIndex)}</Fragment>);
+    }
+
+    return nodes;
+  }, [tokens, text]);
+
   return (
     <pre
       className={cn(
@@ -72,7 +156,7 @@ export function JsonView({
         className
       )}
     >
-      {text}
+      {body}
     </pre>
   );
 }
