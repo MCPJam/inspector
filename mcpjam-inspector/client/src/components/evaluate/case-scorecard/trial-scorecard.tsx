@@ -94,7 +94,6 @@ export function TrialScorecard({
   liveStepStatusById,
   judgeSlot,
   scoresSection,
-  suggestionsSlot,
   nextQuestionSlot,
   judgeHidden = false,
   isRunning = false,
@@ -111,14 +110,6 @@ export function TrialScorecard({
   liveStepStatusById?: Map<string, EvalStepStatus>;
   judgeSlot?: ReactNode;
   scoresSection?: ReactNode | null;
-  /**
-   * "Suggested from this run", under the graded rows.
-   *
-   * A slot rather than a hook, for the same reason `IterationDetails.scorecard`
-   * is one: the writers that accept a suggestion and the flag that gates it
-   * belong to the editor, and `RunColumn` mounts this component too.
-   */
-  suggestionsSlot?: ReactNode;
   nextQuestionSlot?: ReactNode;
   /**
    * True while a reviewer is labelling this trial and has not revealed the
@@ -408,21 +399,6 @@ export function TrialScorecard({
           </p>
         )}
       </section>
-
-      {/*
-        The integrity view stays reachable, collapsed. It answers a different
-        question — which score rows the backend could not join, and whether it
-        downgraded the verdict for it — and a reader who needs that is looking
-        for it.
-      */}
-      {(!judgeHidden || !judgeCase) && suggestionsSlot ? (
-        <details className="text-xs text-muted-foreground">
-          <summary className="cursor-pointer py-2">
-            Suggested assertions
-          </summary>
-          {suggestionsSlot}
-        </details>
-      ) : null}
 
       {scoresSection ? (
         <details
