@@ -43,14 +43,8 @@ describe("getSubsectionsForGroup", () => {
   });
 
   it("routes quality-gate and nested validity keys to the policy subsection", () => {
-    for (const key of [
-      "validity",
-      "qualityGateBaseline",
-      "qualityGateAllowedDrop",
-      "qualityGateNoDeterministicRegressions",
-      "qualityGateMaximumP95LatencyIncreaseMs",
-      "qualityGateNoGatingScoreErrors",
-    ] as const) {
+    // The baseline keys are no longer on the page, so they route nowhere.
+    for (const key of ["validity", "qualityGateNoGatingScoreErrors"] as const) {
       expect(subsectionForSettingKey(key, "grading", base)?.id, key).toBe(
         "policy",
       );
@@ -93,15 +87,15 @@ describe("getSubsectionsForGroup", () => {
         x: 0,
         y: 0,
         toJSON: () => ({}),
-      } as DOMRect);
+      }) as DOMRect;
 
     const policy = document.createElement("div");
     policy.setAttribute("data-subsection-id", "policy");
-    policy.getBoundingClientRect = () => ({ top: -80, height: 40 } as DOMRect);
+    policy.getBoundingClientRect = () => ({ top: -80, height: 40 }) as DOMRect;
 
     const checks = document.createElement("div");
     checks.setAttribute("data-setting-key", "checks");
-    checks.getBoundingClientRect = () => ({ top: 40, height: 80 } as DOMRect);
+    checks.getBoundingClientRect = () => ({ top: 40, height: 80 }) as DOMRect;
 
     root.append(policy, checks);
 

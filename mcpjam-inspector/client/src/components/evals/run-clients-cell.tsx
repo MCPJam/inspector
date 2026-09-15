@@ -138,9 +138,10 @@ export function RunClientsCell({
         className={
           column === "model"
             ? "hidden min-w-0 max-w-80 flex-col items-start gap-2 @min-[1100px]/run-history:flex"
-            : column
-              ? "flex min-w-0 max-w-80 flex-col items-start gap-2"
-              : "flex min-w-0 max-w-80 items-center gap-2"
+            : // Clients sit on ONE line, the way the suites list shows them.
+              // Stacking them made a two-client run twice as tall as a
+              // one-client run, so the table's row height read as a result.
+              "flex min-w-0 max-w-80 items-center gap-2"
         }
         aria-label={columnLabel}
       >

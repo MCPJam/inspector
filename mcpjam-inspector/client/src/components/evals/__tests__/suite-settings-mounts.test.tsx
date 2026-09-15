@@ -30,9 +30,8 @@ vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
 }));
 vi.mock("@/hooks/use-suite-capabilities", async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import("@/hooks/use-suite-capabilities")
-  >();
+  const actual =
+    await importOriginal<typeof import("@/hooks/use-suite-capabilities")>();
   return {
     ...actual,
     // "unavailable" is the honest default for a mount test: it is what a
@@ -115,7 +114,10 @@ describe("the suite settings page mounts its editors", () => {
     { key: "judge", edits: "judgeConfig" },
     { key: "judgeRubric", edits: "judgeRubric" },
     { key: "validity", edits: "verdictPolicyDefaults.validity" },
-    { key: "qualityGateBaseline", edits: "gatePolicy.baseline" },
+    {
+      key: "qualityGateNoGatingScoreErrors",
+      edits: "gatePolicy.noGatingScoreErrors",
+    },
   ];
 
   it("renders every control that edits a live suite field", () => {

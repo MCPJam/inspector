@@ -152,21 +152,25 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   },
   {
     key: "qualityGateBaseline",
+    settingsPage: "hidden",
     label: "Baseline",
     api: "settings.qualityGate.baseline",
   },
   {
     key: "qualityGateAllowedDrop",
+    settingsPage: "hidden",
     label: "Allowed drop",
     api: "settings.qualityGate.maximumPassRateDrop",
   },
   {
     key: "qualityGateNoDeterministicRegressions",
+    settingsPage: "hidden",
     label: "Deterministic regressions",
     api: "settings.qualityGate.noDeterministicRegressions",
   },
   {
     key: "qualityGateMaximumP95LatencyIncreaseMs",
+    settingsPage: "hidden",
     label: "p95 latency increase",
     api: "settings.qualityGate.maximumP95LatencyIncreaseMs",
   },
@@ -218,6 +222,15 @@ export type EvalSuiteSettingKey =
  * carrying it. Adding a key here is now a deliberate test change.
  */
 export const SETTINGS_PAGE_HIDDEN_KEYS = {
+  // Baseline comparison was removed from the settings page. The fields are
+  // unchanged on the API and a run still enforces them, so the three
+  // conditions that need a baseline are hidden with it rather than left as
+  // controls nothing could satisfy. A suite that carries one is shown
+  // read-only in the quality-gate section.
+  qualityGateBaseline: "API and CLI only; not edited on the settings page",
+  qualityGateAllowedDrop: "API and CLI only; needs a baseline",
+  qualityGateNoDeterministicRegressions: "API and CLI only; needs a baseline",
+  qualityGateMaximumP95LatencyIncreaseMs: "API and CLI only; needs a baseline",
   schedule: "Triggers group, gated on the scheduled-evals feature flag",
   githubChecks: "Organization settings → GitHub Checks, per repository",
   deleteSuite: "Suite overview header",

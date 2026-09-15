@@ -35,10 +35,6 @@ export const NESTED_SETTING_KEYS: Record<
     "repetitions",
     "passThreshold",
     "validity",
-    "qualityGateBaseline",
-    "qualityGateAllowedDrop",
-    "qualityGateNoDeterministicRegressions",
-    "qualityGateMaximumP95LatencyIncreaseMs",
     "qualityGateNoGatingScoreErrors",
   ],
   passOrFail: [

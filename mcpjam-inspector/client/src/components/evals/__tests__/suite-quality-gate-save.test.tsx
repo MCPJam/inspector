@@ -31,9 +31,8 @@ vi.mock("convex/react", () => ({
 }));
 
 vi.mock("@/hooks/use-suite-capabilities", async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import("@/hooks/use-suite-capabilities")
-  >();
+  const actual =
+    await importOriginal<typeof import("@/hooks/use-suite-capabilities")>();
   return {
     ...actual,
     useSuiteCapabilities: () => mocks.capabilities(),
@@ -156,12 +155,10 @@ describe("quality-gate direct save", () => {
   it("saves in one click with an automatic revision note", async () => {
     const user = userEvent.setup();
     const { container } = renderSettingsSheet();
-    openSettingsRow(container, "qualityGateBaseline");
-    await user.selectOptions(
-      screen.getByLabelText("Quality gate baseline"),
-      "run",
+    openSettingsRow(container, "qualityGateNoGatingScoreErrors");
+    await user.click(
+      screen.getByRole("switch", { name: "Any required evaluator errored" }),
     );
-    await user.type(screen.getByLabelText("Baseline run id"), "run-1");
     expect(saveButton()).toBeEnabled();
     fireEvent.click(saveButton());
     expect(
@@ -174,9 +171,7 @@ describe("quality-gate direct save", () => {
       gatePolicy: unknown;
       revision: { note?: string; source: string };
     };
-    expect(args.gatePolicy).toMatchObject({
-      baseline: { kind: "run", runId: "run-1" },
-    });
+    expect(args.gatePolicy).toMatchObject({ noGatingScoreErrors: true });
     expect(args.revision.source).toBe("ui");
     expect(args.revision.note).toMatch(/^Updated suite settings: .+\.$/);
   });
@@ -189,12 +184,10 @@ describe("quality-gate direct save", () => {
     );
     const user = userEvent.setup();
     const { container } = renderSettingsSheet();
-    openSettingsRow(container, "qualityGateBaseline");
-    await user.selectOptions(
-      screen.getByLabelText("Quality gate baseline"),
-      "run",
+    openSettingsRow(container, "qualityGateNoGatingScoreErrors");
+    await user.click(
+      screen.getByRole("switch", { name: "Any required evaluator errored" }),
     );
-    await user.type(screen.getByLabelText("Baseline run id"), "run-1");
     fireEvent.click(saveButton());
     await waitFor(() => expect(mocks.toastError).toHaveBeenCalled());
     expect(screen.getByTestId("suite-settings-commit-bar")).toBeTruthy();
@@ -267,13 +260,11 @@ describe.skip("the review dialog does not outlive its suite", () => {
       withDataRouter(<SwitchableSheet suites={[unlocked, locked, other]} />),
     );
 
-    // The simplified sheet exposes only the baseline; dirty the draft there.
-    openSettingsRow(container, "qualityGateBaseline");
-    await user.selectOptions(
-      screen.getByLabelText("Quality gate baseline"),
-      "run",
+    // Dirty the draft through the one quality-gate row the sheet still edits.
+    openSettingsRow(container, "qualityGateNoGatingScoreErrors");
+    await user.click(
+      screen.getByRole("switch", { name: "Any required evaluator errored" }),
     );
-    await user.type(screen.getByLabelText("Baseline run id"), "run-1");
     fireEvent.click(reviewOpener());
     expect(screen.getByRole("dialog")).toBeTruthy();
 
