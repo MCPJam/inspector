@@ -122,46 +122,68 @@ function OverviewBody({
   const [clientFilter, setClientFilter] = useState(ALL_EVAL_FILTER_VALUES);
   const [serverFilter, setServerFilter] = useState(ALL_EVAL_FILTER_VALUES);
   const [modelFilter, setModelFilter] = useState(ALL_EVAL_FILTER_VALUES);
-  const clientsForSuite = (suite: EvalSuite) => {
-    const ids = suite.environmentIds?.length
-      ? environments
-          .filter((env) => suite.environmentIds!.includes(env.environmentId))
-          .map((env) => env.hostId)
-      : (suite.hostAttachments ?? []).map((host) => host.namedHostId);
-    return [
-      ...new Set(
-        ids.map(
-          (id) =>
-            hostNamesById.get(id) ||
-            suite.hostAttachments
-              ?.find((host) => host.namedHostId === id)
-              ?.hostName?.trim() ||
-            id,
+  // Resolved once per suite per data change, not four times per render: the
+  // model pass alone is a scan of `environments` for every environment id.
+  const resolved = useMemo(() => {
+    const environmentsById = new Map(
+      environments.map((environment) => [environment.environmentId, environment]),
+    );
+    const entries = overview.map(({ suite }) => {
+      const ids = suite.environmentIds?.length
+        ? suite.environmentIds
+            .map((id) => environmentsById.get(id)?.hostId)
+            .filter((hostId): hostId is string => Boolean(hostId))
+        : (suite.hostAttachments ?? []).map((host) => host.namedHostId);
+      // A host id is not a name. Until `useHostList` resolves, an unnamed id
+      // is UNKNOWN, not a label — printing the raw id put opaque Convex ids in
+      // the column and, worse, in the filter's option list.
+      const clients = [
+        ...new Set(
+          ids
+            .map(
+              (id) =>
+                hostNamesById.get(id)?.trim() ||
+                suite.hostAttachments
+                  ?.find((host) => host.namedHostId === id)
+                  ?.hostName?.trim() ||
+                null,
+            )
+            .filter((name): name is string => Boolean(name)),
         ),
-      ),
-    ];
-  };
-  const modelsForSuite = (suite: EvalSuite) => [
-    ...new Set(
-      suite.environmentIds?.length
-        ? suite.environmentIds.map((id) => {
-            const environment = environments.find(
-              (env) => env.environmentId === id,
-            );
-            return environment
-              ? environment.modelId ||
-                  hostModelsById.get(environment.hostId) ||
-                  "Model unavailable"
-              : "Model unavailable";
-          })
-        : [suite.defaultConfig?.modelId || "Case models"],
-    ),
-  ];
+      ];
+      // `null` where the model is not resolved YET, so the placeholder stays a
+      // display string and never becomes a value the Model filter offers.
+      const models = [
+        ...new Set(
+          suite.environmentIds?.length
+            ? suite.environmentIds.map((id) => {
+                const environment = environmentsById.get(id);
+                return environment
+                  ? environment.modelId ||
+                      hostModelsById.get(environment.hostId) ||
+                      null
+                  : null;
+              })
+            : [suite.defaultConfig?.modelId || null],
+        ),
+      ];
+      return [suite._id, { clients, models }] as const;
+    });
+    return new Map(entries);
+  }, [overview, environments, hostNamesById, hostModelsById]);
+  const clientsForSuite = (suite: EvalSuite) =>
+    resolved.get(suite._id)?.clients ?? [];
+  const modelsForSuite = (suite: EvalSuite) =>
+    resolved.get(suite._id)?.models ?? [];
   const modelOptions = [
-    ...new Set(overview.flatMap(({ suite }) => modelsForSuite(suite))),
+    ...new Set(
+      [...resolved.values()]
+        .flatMap((entry) => entry.models)
+        .filter((model): model is string => Boolean(model)),
+    ),
   ].sort();
   const clientOptions = [
-    ...new Set(overview.flatMap((entry) => clientsForSuite(entry.suite))),
+    ...new Set([...resolved.values()].flatMap((entry) => entry.clients)),
   ].sort();
   const serverOptions = [
     ...new Set(
@@ -544,22 +566,28 @@ function lastRunLabel(entry: EvalSuiteOverviewEntry): string {
   return formatDistanceToNow(timestamp, { addSuffix: true });
 }
 
-function ModelCell({ models }: { models: string[] }) {
+/** `null` is a model this view could not resolve; it is shown, never filtered on. */
+function ModelCell({ models }: { models: (string | null)[] }) {
+  const labels = models.map((model) => model ?? "Model unavailable");
   return (
     <span
       className="min-w-0 text-sm text-muted-foreground"
-      title={models.join(", ")}
+      title={labels.join(", ")}
     >
       <span className="hidden truncate @min-[1100px]/suites:block">
-        {models.map(compactModelIdTail).join(", ")}
+        {models
+          .map((model) => (model ? compactModelIdTail(model) : "Model unavailable"))
+          .join(", ")}
       </span>
       <span
         className="flex min-w-0 items-center gap-1 @min-[1100px]/suites:hidden"
         data-testid="suite-compact-models"
       >
-        <span className="truncate">{compactModelIdTail(models[0])}</span>
+        <span className="truncate">
+          {models[0] ? compactModelIdTail(models[0]) : "Model unavailable"}
+        </span>
         {models.length > 1 && (
-          <span className="shrink-0" title={models.slice(1).join(", ")}>
+          <span className="shrink-0" title={labels.slice(1).join(", ")}>
             +{models.length - 1}
           </span>
         )}

@@ -53,21 +53,6 @@ const stageAnalytics = vi.hoisted(() => ({
     error: null,
   },
 }));
-const routeFacts = vi.hoisted(() => ({
-  calls: [] as Array<Record<string, unknown>>,
-  current: {
-    status: "absent" as string,
-    document: null as unknown,
-    error: null as { kind: string; message: string } | null,
-  },
-}));
-const serverFacts = vi.hoisted(() => ({
-  current: {
-    status: "idle" as string,
-    document: null as unknown,
-    error: null as { kind: string; message: string } | null,
-  },
-}));
 const flagEnabled = vi.hoisted(() => ({ current: false }));
 const descriptionExperimentFlag = vi.hoisted(() => ({ current: false }));
 const failureGroupsFlag = vi.hoisted(() => ({ current: false }));
@@ -135,22 +120,6 @@ vi.mock("@/hooks/use-eval-run-stage-analytics", () => ({
     refetch: () => {},
   }),
 }));
-vi.mock("@/hooks/use-eval-run-route-facts", () => ({
-  useEvalRunRouteFacts: (args: Record<string, unknown>) => {
-    routeFacts.calls.push(args);
-    return {
-      ...routeFacts.current,
-      refetch: () => {},
-    };
-  },
-}));
-vi.mock("@/hooks/use-eval-run-server-facts", () => ({
-  useEvalRunServerFacts: () => ({
-    ...serverFacts.current,
-    refetch: () => {},
-  }),
-}));
-
 // Server quality reaches Convex through `useMutation`, which needs a provider
 // this test has no reason to stand up. It is advisory input to the improve
 // prompt, never a source of anything the page claims.
@@ -260,12 +229,6 @@ afterEach(() => {
     document: null,
     error: null,
   };
-  routeFacts.calls = [];
-  routeFacts.current = {
-    status: "absent",
-    document: null,
-    error: null,
-  };
   flagEnabled.current = false;
   descriptionExperimentFlag.current = false;
   failureGroupsFlag.current = false;
@@ -288,7 +251,6 @@ afterEach(() => {
     start: () => Promise.resolve(),
     refetch: () => {},
   };
-  serverFacts.current = { status: "idle", document: null, error: null };
   compareState.current = { status: "disabled", dto: null, errorKind: null };
   detailState.current = {
     ...detailState.current,
@@ -473,7 +435,6 @@ describe("EvaluateRunContent", () => {
     expect(screen.queryByText("Full run report")).toBeNull();
     expect(screen.queryByTestId("run-stage-strip")).toBeNull();
     expect(screen.getByRole("table")).toBeInTheDocument();
-    expect(routeFacts.calls).toHaveLength(0);
   });
 
   it("opens the failing iteration through the app's own routing", async () => {

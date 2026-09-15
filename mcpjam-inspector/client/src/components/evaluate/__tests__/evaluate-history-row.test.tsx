@@ -62,8 +62,10 @@ describe("Evaluate history rows", () => {
     expect(screen.getAllByRole("link", { name: "abc1234" })).toHaveLength(1);
     expect(screen.queryByRole("link", { name: "second" })).toBeNull();
     expect(screen.queryByRole("link", { name: "#2" })).toBeNull();
+    // The platform badge, worn neutral: the column already says "Platform",
+    // and the badge is what carries the origin's own tooltip.
     expect(screen.getByText("UI")).toHaveClass("text-muted-foreground");
-    expect(screen.getByText("UI")).not.toHaveAttribute("data-slot", "badge");
+    expect(screen.getByText("UI")).not.toHaveClass("bg-primary");
   });
 
   it("does not infer a result from the pass percentage", () => {

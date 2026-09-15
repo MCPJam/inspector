@@ -39,10 +39,13 @@ export function buildSuiteHealth(
         return [];
       const stats = projectRunRollup(members, details);
       if (!stats || stats.total === 0) return [];
-      const run = details.get(members[0]._id)!.run;
-      const representative = [...launch.runs].sort(
+      // The bar measures the SELECTED client's runs, so the run it names and
+      // opens has to come from those members. Taking it from the whole launch
+      // labelled a Cursor bar with the Claude run beside it and opened that.
+      const representative = [...members].sort(
         (a, b) => a.runNumber - b.runNumber || a._id.localeCompare(b._id),
       )[0];
+      const run = details.get(representative._id)!.run;
       return [
         {
           key: launch.key,
@@ -66,10 +69,18 @@ export function buildSuiteHealth(
   };
 }
 
+/**
+ * Runs charted at once. The page reads a bounded slice of history, and a bar
+ * plus a date label per run is a DOM node per run — both are why this is the
+ * most recent window rather than everything loaded.
+ */
+const MAX_HEALTH_POINTS = 60;
+
 export function SuiteHealth({
   rows,
   details,
   complete,
+  partial = false,
   failed,
   onRetry,
   hostNamesById,
@@ -79,7 +90,10 @@ export function SuiteHealth({
 }: {
   rows: ProjectRunRow[];
   details: Map<string, ProjectRunHistoryDetail>;
+  /** Enough has loaded to draw something. */
   complete: boolean;
+  /** More runs exist than the chart has read. */
+  partial?: boolean;
   failed: boolean;
   onRetry: () => void;
   hostNamesById: ReadonlyMap<string, string | null>;
@@ -112,10 +126,11 @@ export function SuiteHealth({
       ? selectedClient
       : (clients.keys().next().value ?? "");
   const {
-    points,
+    points: allPoints,
     average,
     threshold: recordedThreshold,
   } = buildSuiteHealth(rows, details, suiteId, clientKey);
+  const points = allPoints.slice(-MAX_HEALTH_POINTS);
   const threshold =
     suiteOverview?.find((entry) => entry.suite._id === suiteId)?.suite
       .defaultPassCriteria?.minimumPassRate ?? recordedThreshold;
@@ -182,13 +197,13 @@ export function SuiteHealth({
           <div className="py-8 text-sm text-muted-foreground" role="status">
             {failed ? (
               <>
-                Could not load all run history.{" "}
+                Could not load run history.{" "}
                 <Button variant="outline" size="sm" onClick={onRetry}>
                   Retry
                 </Button>
               </>
             ) : (
-              "Loading all run history…"
+              "Loading run history…"
             )}
           </div>
         ) : average == null ? (
@@ -205,10 +220,27 @@ export function SuiteHealth({
                 {Math.round(average)}%
               </span>
               <span className="text-[13px] text-muted-foreground">
-                average across all {points.length}{" "}
-                {points.length === 1 ? "run" : "runs"}
+                {/* Says what it counted. The average is over every run read;
+                    the chart below shows the most recent window of them. */}
+                average across {allPoints.length}{" "}
+                {allPoints.length === 1 ? "run" : "runs"}
+                {partial ? " read so far" : ""}
               </span>
             </div>
+            {allPoints.length > points.length && (
+              <p className="text-xs text-muted-foreground">
+                Charting the most recent {points.length} of {allPoints.length}{" "}
+                runs.
+              </p>
+            )}
+            {failed && (
+              <p className="text-xs text-muted-foreground">
+                Some runs could not be read.{" "}
+                <Button variant="outline" size="sm" onClick={onRetry}>
+                  Retry
+                </Button>
+              </p>
+            )}
             <div className="flex gap-2 pt-2">
               <div className="relative mt-2 h-20 w-9 shrink-0 text-right text-[11px] text-muted-foreground">
                 <span className="absolute right-0 top-0 -translate-y-1/2">

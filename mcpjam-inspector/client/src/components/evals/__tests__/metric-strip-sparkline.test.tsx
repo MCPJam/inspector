@@ -174,11 +174,20 @@ describe("MetricStrip bars", () => {
     expect(
       screen.getByTestId("metric-sparkline-pass-rate").querySelector("svg"),
     ).toHaveClass("text-primary");
-    for (const bar of screen
-      .getByTestId("metric-sparkline-latency")
-      .querySelectorAll("rect[data-chart-bar]")) {
-      expect(bar).toHaveClass("fill-primary");
+    // Both series are primary, and the pair stays TELLABLE APART: a dual
+    // sparkline whose two bars share one fill hides the shorter inside the
+    // taller, which is the comparison the chart exists to make.
+    const bars = [
+      ...screen
+        .getByTestId("metric-sparkline-latency")
+        .querySelectorAll("rect[data-chart-bar]"),
+    ];
+    for (const bar of bars) {
+      expect(bar.getAttribute("class")).toMatch(/fill-primary/);
     }
+    expect(
+      new Set(bars.map((bar) => bar.getAttribute("class"))).size,
+    ).toBeGreaterThan(1);
   });
 
   it("uses zero-based bars without trend lines across the metric row", () => {

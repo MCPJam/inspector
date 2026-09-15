@@ -60,7 +60,7 @@ import {
   DropdownMenuContent,
   DropdownMenuCheckboxItem,
 } from "@mcpjam/design-system/dropdown-menu";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode, useRef } from "react";
 import { usePaginatedQuery, useQuery } from "convex/react";
 import { ChevronDown, GitBranch, Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -106,6 +106,14 @@ import {
 } from "./run-decision-summary-presentation";
 
 export const PROJECT_RUNS_PAGE_SIZE = 50;
+
+/**
+ * Pages the Evaluate tab reads on its own before deferring to "Load more".
+ *
+ * Each page costs one run read and one iteration read per run, so an uncapped
+ * reach turns a mature project into thousands of queries on every visit.
+ */
+export const SUITE_HEALTH_AUTO_PAGES = 4;
 
 /**
  * One row of `testSuites:listProjectRuns` — the backend's explicit
@@ -323,10 +331,19 @@ export function ProjectRunsTable({
   // Hydrate loaded history before display filters: options and comparison baselines
   // must not disappear when another row is hidden.
   const history = useProjectRunHistory(projectId, rows, historyMetricsEnabled);
-  // Suite Health averages all runs, not just the first page. Finish each
-  // bounded page before requesting the next; legacy tables remain manual.
+  // Suite Health reads more than the first page, but not the whole archive:
+  // every page costs a run read and an iteration read per run, so the reach is
+  // bounded and the rest stays behind the manual control. Finish each page
+  // before requesting the next; legacy tables remain manual throughout.
+  const autoLoadedPages = useRef(0);
   useEffect(() => {
-    if (evaluateLayout && status === "CanLoadMore" && !history.loading) {
+    if (
+      evaluateLayout &&
+      status === "CanLoadMore" &&
+      !history.loading &&
+      autoLoadedPages.current < SUITE_HEALTH_AUTO_PAGES
+    ) {
+      autoLoadedPages.current += 1;
       loadMore(PROJECT_RUNS_PAGE_SIZE);
     }
   }, [evaluateLayout, status, history.loading, loadMore]);
@@ -751,10 +768,16 @@ export function ProjectRunsTable({
           key={projectId}
           rows={rows}
           details={history.details}
+          // Ready as soon as SOMETHING can be drawn. Requiring every run of
+          // every page left one unreadable run able to withhold the chart for
+          // good, and the retry it offered re-read the whole history to no
+          // effect. What is missing is reported beside the chart instead.
           complete={
-            status === "Exhausted" &&
-            !history.loading &&
-            rows.every((row) => history.details.has(row._id))
+            !history.loading && rows.some((row) => history.details.has(row._id))
+          }
+          partial={
+            status !== "Exhausted" ||
+            rows.some((row) => !history.details.has(row._id))
           }
           failed={history.errorCount > 0}
           onRetry={history.retry}

@@ -6,10 +6,11 @@ import {
 } from "@mcpjam/design-system/table";
 import { cn } from "@/lib/utils";
 import { runClientIdentity } from "../evals/helpers";
-import { resolveRunOrigin, RUN_ORIGIN_META } from "@/lib/evals/run-origin";
+import { resolveRunOrigin } from "@/lib/evals/run-origin";
 import { RunClientsCell } from "../evals/run-clients-cell";
 import {
   RunCommitCell,
+  RunPlatformBadge,
   readRunGitMetadata,
   type RunGitMetadataValue,
 } from "../evals/run-git-metadata";
@@ -119,7 +120,7 @@ export function EvaluateHistoryRow({
   const result = historyResult(rows);
   // Parsed once per row and carried: the dedup key and the chips below read
   // the same value rather than re-parsing the CI metadata.
-  const platforms: { row: ProjectRunRow; git: RunGitMetadataValue | null }[] = [
+  const commits: { row: ProjectRunRow; git: RunGitMetadataValue | null }[] = [
     ...new Map(
       rows.map((row) => {
         const git = readRunGitMetadata(row.ciMetadata);
@@ -134,6 +135,12 @@ export function EvaluateHistoryRow({
         ] as const;
       }),
     ).values(),
+  ];
+  // The platform cell names WHERE the run came from, so it is keyed by origin
+  // alone. Keying it by commit as well printed "GitHub Actions" once per
+  // distinct commit in a launch that fanned out over several.
+  const platforms = [
+    ...new Map(rows.map((row) => [resolveRunOrigin(row) ?? "ui", row])).values(),
   ];
   const createdAt = historyTimestamp(representative.createdAt);
   const clientRows = rows.map((row) => historyRows.get(row._id) ?? {
@@ -210,16 +217,16 @@ export function EvaluateHistoryRow({
       </TableCell>
       <TableCell>
         <div className="flex flex-wrap items-center gap-2">
-          {platforms.map(({ row }) => (
-            <span key={row._id} className="text-muted-foreground">
-              {RUN_ORIGIN_META[resolveRunOrigin(row) ?? "ui"].label}
-            </span>
+          {/* The badge, not a re-derived label: it carries the tooltip that
+              separates a verified attribution from a client's own claim. */}
+          {platforms.map((row) => (
+            <RunPlatformBadge key={row._id} run={row} neutral />
           ))}
         </div>
       </TableCell>
       <TableCell>
         <div className="flex flex-wrap items-center gap-2">
-          {platforms.map(({ row, git }) => (
+          {commits.map(({ row, git }) => (
             <RunCommitCell key={row._id} git={git} />
           ))}
         </div>

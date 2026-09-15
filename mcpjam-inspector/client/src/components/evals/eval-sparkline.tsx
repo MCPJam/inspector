@@ -213,7 +213,9 @@ export function EvalSparkline({
                 height={h - pad - point.y}
                 rx={0.6}
                 fill="currentColor"
-                opacity={hoverIndex === index ? 0.85 : 1}
+                // The hovered bar is the PROMINENT one. Resting below full
+                // opacity is what leaves room for hover to read as emphasis.
+                opacity={hoverIndex === index ? 1 : 0.6}
               />
             );
           })}
@@ -367,7 +369,7 @@ export function EvalDualSparkline({
                   width={width}
                   height={h - pad - point.y}
                   rx={0.6}
-                  className="fill-primary"
+                  className="fill-primary/40"
                 />
                 {secondaryPoint && (
                   <rect
