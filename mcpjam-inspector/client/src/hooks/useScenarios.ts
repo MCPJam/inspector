@@ -15,7 +15,9 @@ export type {
 };
 
 export type ScenarioMode =
-  "anyone_with_link" | "invited_only" | "project_members";
+  | "anyone_with_link"
+  | "invited_only"
+  | "project_members";
 
 export interface ScenarioMember {
   _id: string;
