@@ -24,17 +24,20 @@
 import { severityStyles } from "@/components/ui/error-card";
 import { cn } from "@/lib/utils";
 
-export const SWARM_PRODUCTION_NOTICE_HEADING =
+// Module-local, not exported: the tests assert the copy with their own
+// literal regexes on purpose, since a test importing the same constant the
+// component renders asserts only that a string equals itself.
+const SWARM_PRODUCTION_NOTICE_HEADING =
   "Use a development or staging server for Swarms";
 
-export const SWARM_PRODUCTION_NOTICE_BODY =
+const SWARM_PRODUCTION_NOTICE_BODY =
   "Agents take real actions on these servers, including writing and deleting data. Use development servers, not production.";
 
 export function SwarmProductionNotice({
-  "data-testid": testId = "swarm-production-notice",
+  "data-testid": testId,
 }: {
-  "data-testid"?: string;
-} = {}) {
+  "data-testid": string;
+}) {
   const styles = severityStyles("info");
   const Icon = styles.icon;
   return (

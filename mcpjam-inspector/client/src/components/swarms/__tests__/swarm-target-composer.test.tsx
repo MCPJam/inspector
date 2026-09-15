@@ -495,6 +495,14 @@ describe("SwarmTargetComposer — BB-234's production notice", () => {
     }
     expect(notice.className).not.toMatch(/amber|destructive/);
 
+    // The glyph is the other half of "reads as a warning", and it lives
+    // outside the container's className this assertion reads: an amber
+    // `AlertTriangle` inside the blue band would pass everything above while
+    // the surface still reads as the alarm the thread asked to remove.
+    const icon = notice.querySelector("svg");
+    expect(icon?.getAttribute("class")).toMatch(/lucide-info/);
+    expect(icon?.getAttribute("class")).not.toMatch(/triangle|amber/i);
+
     // Treatment borrowed, semantics not: nothing has failed here, so the
     // standing notice must not announce itself as a live alert the way
     // ErrorCard does.
