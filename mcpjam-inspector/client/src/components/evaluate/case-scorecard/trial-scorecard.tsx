@@ -333,7 +333,7 @@ export function TrialScorecard({
   }
 
   return (
-    <div className="flex flex-col gap-3 p-3" data-testid="trial-scorecard">
+    <div className="flex flex-col gap-4 p-4" data-testid="trial-scorecard">
       <section
         className="space-y-4"
         aria-label="User value chain — default assertions"
@@ -356,10 +356,11 @@ export function TrialScorecard({
               (group) => group.stage === stage,
             );
             return selected ? (
-              <div className="mt-3 space-y-2" aria-label="Recorded assertions">
+              <ul className="mt-4" aria-label="Recorded assertions">
                 {selected.rows.map((row) => (
                   <TrialScorecardRow
                     key={row.key}
+                    layout="report"
                     row={row}
                     body={row.provenance === "judge" ? judgeSlot : undefined}
                     hideJudgeResult={judgeHidden}
@@ -368,16 +369,16 @@ export function TrialScorecard({
                   />
                 ))}
                 {stage === "userValue" && showUserValueEvidence && (
-                  <div
+                  <li
                     className="text-xs text-muted-foreground"
                     data-testid="user-value-pass-evidence"
                   >
                     {userValueEvidence.length
                       ? userValueEvidence.join(" ")
                       : "This run recorded a pass without supporting evidence."}
-                  </div>
+                  </li>
                 )}
-              </div>
+              </ul>
             ) : null;
           }}
         />

@@ -197,7 +197,7 @@ export function EvalSparkline({
         viewBox={`0 0 ${w} ${h}`}
         preserveAspectRatio="none"
         aria-hidden
-        className={strokeClassName}
+        className={bars ? "text-primary" : strokeClassName}
       >
         <Baseline w={w} h={h} pad={pad} />
         {bars &&
@@ -213,7 +213,9 @@ export function EvalSparkline({
                 height={h - pad - point.y}
                 rx={0.6}
                 fill="currentColor"
-                opacity={hoverIndex === index ? 0.85 : 0.45}
+                // The hovered bar is the PROMINENT one. Resting below full
+                // opacity is what leaves room for hover to read as emphasis.
+                opacity={hoverIndex === index ? 1 : 0.6}
               />
             );
           })}
@@ -367,7 +369,7 @@ export function EvalDualSparkline({
                   width={width}
                   height={h - pad - point.y}
                   rx={0.6}
-                  className="fill-foreground/30"
+                  className="fill-primary/40"
                 />
                 {secondaryPoint && (
                   <rect
@@ -377,7 +379,7 @@ export function EvalDualSparkline({
                     width={width}
                     height={h - pad - secondaryPoint.y}
                     rx={0.6}
-                    className="fill-foreground/65"
+                    className="fill-primary"
                   />
                 )}
               </g>

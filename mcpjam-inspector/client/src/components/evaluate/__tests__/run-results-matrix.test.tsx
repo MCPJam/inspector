@@ -61,6 +61,155 @@ const names = new Map([
 ]);
 
 describe("run results matrix", () => {
+  it("opens the test case from the left column in Results and Metrics", async () => {
+    const user = userEvent.setup();
+    const onEditCase = vi.fn();
+    render(
+      <RunResultsMatrix
+        run={run("one")}
+        iterations={[iteration("pass", "one")]}
+        hostNamesById={names}
+        onEditCase={onEditCase}
+      />,
+    );
+    const caseButton = screen.getByRole("button", { name: "Open test case: Refund order" });
+    expect(caseButton).toHaveClass("min-h-16", "text-foreground");
+    expect(caseButton).not.toHaveClass("hover:underline", "hover:bg-muted/30");
+    expect(caseButton.closest("th")).toHaveClass("hover:bg-muted/50");
+    await user.click(caseButton);
+    expect(onEditCase).toHaveBeenLastCalledWith("refund");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await user.click(screen.getByRole("radio", { name: "Metrics" }));
+    screen
+      .getByRole("button", { name: "Open test case: Refund order" })
+      .focus();
+    await user.keyboard("{Enter}");
+    expect(onEditCase).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("keeps case names as text when navigation or a saved case ID is missing", () => {
+    const props = {
+      run: run("one"),
+      iterations: [iteration("pass", "one")],
+      hostNamesById: names,
+    };
+    const { rerender } = render(<RunResultsMatrix {...props} />);
+    expect(
+      screen.queryByRole("button", { name: /Open test case:/ }),
+    ).toBeNull();
+    rerender(
+      <RunResultsMatrix
+        {...props}
+        iterations={[iteration("pass", "one", { testCaseId: undefined })]}
+        onEditCase={vi.fn()}
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: /Open test case:/ }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("rowheader", { name: "Refund order" }),
+    ).toBeVisible();
+  });
+
+  it("renders result fractions with the larger dark design treatment", () => {
+    render(
+      <RunResultsMatrix
+        run={run("one")}
+        iterations={[iteration("pass", "one")]}
+        hostNamesById={names}
+      />,
+    );
+    expect(screen.getByLabelText("1 of 1 iterations passed")).toHaveClass(
+      "text-lg",
+      "font-semibold",
+      "text-card-foreground",
+    );
+  });
+
+  it("opens evaluator settings from the iteration scorecard", async () => {
+    const onEditEvaluator = vi.fn();
+    render(
+      <RunResultsMatrix
+        run={run("one")}
+        iterations={[iteration("pass", "one")]}
+        hostNamesById={names}
+        onEditEvaluator={onEditEvaluator}
+      />,
+    );
+    const user = userEvent.setup();
+    await user.click(
+      screen.getByRole("button", {
+        name: "Inspect Refund order on Claude · sonnet",
+      }),
+    );
+    expect(screen.queryByRole("button", { name: "Edit evaluator" })).toBeNull();
+    await user.click(
+      screen.getByRole("button", { name: "Open iteration 1 details" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Edit evaluator" }));
+    expect(onEditEvaluator).toHaveBeenCalledWith("refund");
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("opens the saved case editor and closes the iterations drawer", async () => {
+    const onEditCase = vi.fn();
+    render(
+      <RunResultsMatrix
+        run={run("one")}
+        iterations={[iteration("pass", "one")]}
+        hostNamesById={names}
+        onEditCase={onEditCase}
+      />,
+    );
+    const user = userEvent.setup();
+    await user.click(
+      screen.getByRole("button", {
+        name: "Inspect Refund order on Claude · sonnet",
+      }),
+    );
+    await user.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Edit test case",
+      }),
+    );
+    expect(onEditCase).toHaveBeenCalledWith("refund");
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("shows only the empty state when switching to a pairing without iterations", async () => {
+    const user = userEvent.setup();
+    render(
+      <RunResultsMatrix
+        run={run("one")}
+        runs={[run("two", { namedHostId: "cursor", effectiveModelId: "gpt" })]}
+        iterations={[iteration("pass", "one")]}
+        hostNamesById={names}
+      />,
+    );
+    await user.click(
+      screen.getByRole("button", {
+        name: "Inspect Refund order on Claude · sonnet",
+      }),
+    );
+    const drawer = within(screen.getByRole("dialog"));
+    expect(drawer.getByText("1/1")).toBeVisible();
+    await user.click(drawer.getByRole("button", { name: "Cursor · gpt" }));
+    expect(
+      drawer.getAllByText(
+        "No recorded iterations for this case on this client and model.",
+      ),
+    ).toHaveLength(1);
+    expect(drawer.queryByText("0/0")).toBeNull();
+    expect(drawer.queryByText("Passed")).toBeNull();
+    expect(drawer.queryByText("P50")).toBeNull();
+    expect(drawer.queryByText("Iterations")).toBeNull();
+    expect(drawer.queryByText("Client / Model")).toBeNull();
+    await user.click(drawer.getByRole("button", { name: "Claude · sonnet" }));
+    expect(drawer.getByText("1/1")).toBeVisible();
+  });
+
   it("uses persisted models only to seed queued columns, never phantom completed columns", () => {
     const current = run("legacy", {
       namedHostId: undefined,

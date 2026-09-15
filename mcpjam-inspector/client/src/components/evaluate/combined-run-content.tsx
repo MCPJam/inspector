@@ -48,6 +48,8 @@ export function CombinedRunContent({
   allIterations,
   previousRunId,
   decisionSummaryEnabled,
+  onEditCase,
+  onEditEvaluator,
 }: Parameters<typeof SingleRunContent>[0] & { runs: EvalSuiteRun[] }) {
   const history = useProjectRunHistory(
     projectId ?? "",
@@ -184,6 +186,8 @@ export function CombinedRunContent({
           <RunVerdictHero view={view} headerVerdict={fullVerdict} />
           <div className="border-t border-border/40">
             <RunResultsMatrix
+              onEditCase={onEditCase}
+              onEditEvaluator={onEditEvaluator}
               run={selectedRuns[0]}
               suiteName={suiteName}
               runs={selectedRuns}
