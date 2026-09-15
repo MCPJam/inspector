@@ -1558,7 +1558,7 @@ function EvaluateTabContent({
             }
             detailCrumb={
               route.type === "test-edit" && route.checks
-                ? { label: "UVC checks" }
+                ? { label: "Test Case Evaluators" }
                 : undefined
             }
             onCurrentCrumbClick={

@@ -327,6 +327,16 @@ export function buildSuiteRunHistoryAggregates(
   );
   const totalTokens = sumTokens(iterations);
   const totalToolCalls = sumToolCalls(iterations);
+  const measuredTokenRuns = new Set(
+    iterations
+      .filter((iteration) => sumTokens([iteration]) != null)
+      .map((iteration) => iteration.suiteRunId),
+  ).size;
+  const measuredToolCallRuns = new Set(
+    iterations
+      .filter((iteration) => sumToolCalls([iteration]) != null)
+      .map((iteration) => iteration.suiteRunId),
+  ).size;
   const runCount = runs.length;
   return {
     runCount,
@@ -334,10 +344,12 @@ export function buildSuiteRunHistoryAggregates(
     latencyP50: iterationLatencyP50(iterations),
     latencyP95: iterationLatencyP95(iterations),
     tokensPerRun:
-      runCount > 0 && totalTokens != null ? totalTokens / runCount : null,
+      measuredTokenRuns > 0 && totalTokens != null
+        ? totalTokens / measuredTokenRuns
+        : null,
     toolCallsPerRun:
-      runCount > 0 && totalToolCalls != null
-        ? totalToolCalls / runCount
+      measuredToolCallRuns > 0 && totalToolCalls != null
+        ? totalToolCalls / measuredToolCallRuns
         : null,
   };
 }

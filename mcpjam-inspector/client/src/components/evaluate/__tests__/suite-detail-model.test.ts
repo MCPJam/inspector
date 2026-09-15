@@ -595,3 +595,31 @@ describe("resolveRunHistoryVerdict — a run held for its judge", () => {
     ).toEqual({ verdict: "running", label: "Grading" });
   });
 });
+
+it("averages each measurement over only runs that report it", () => {
+  const runs = ["r1", "r2", "r3"].map((_id) => makeRun({ _id }));
+  const result = buildSuiteRunHistoryAggregates(runs, [
+    makeIteration({
+      _id: "i1",
+      suiteRunId: "r1",
+      tokensUsed: 100,
+      actualToolCalls: undefined,
+    }),
+    makeIteration({
+      _id: "i2",
+      suiteRunId: "r1",
+      tokensUsed: 100,
+      actualToolCalls: undefined,
+    }),
+    makeIteration({
+      _id: "i3",
+      suiteRunId: "r2",
+      tokensUsed: undefined,
+      actualToolCalls: [],
+    }),
+  ]);
+  expect(result.tokensPerRun).toBe(200);
+  expect(result.toolCallsPerRun).toBe(0);
+  expect(buildSuiteRunHistoryAggregates(runs, []).tokensPerRun).toBeNull();
+  expect(buildSuiteRunHistoryAggregates(runs, []).toolCallsPerRun).toBeNull();
+});

@@ -57,7 +57,7 @@ export function CaseChecksPage({
         <div className="flex items-start justify-between gap-4">
           <div>
             <h2 className="text-lg font-semibold">
-              User value chain evaluators
+              Test Case Evaluators
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
               Overrides for {title}. Step assertions are authored in the case
@@ -89,7 +89,7 @@ export function CaseChecksPage({
         />
         {onConfigureSuite ? (
           <Button variant="outline" size="sm" onClick={onConfigureSuite}>
-            Configure suite assertions
+            Configure suite evaluators
           </Button>
         ) : null}
       </div>

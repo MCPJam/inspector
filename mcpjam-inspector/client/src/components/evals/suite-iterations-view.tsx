@@ -2116,10 +2116,12 @@ export function SuiteIterationsView({
                           iteration: iterationId,
                         })
                       }
-                      {...(onEditTestCase && !editingDisabled
+                      {...(!editingDisabled
                         ? {
                             onEditCase: (testCaseId: string) =>
-                              navigation.toTestEdit(suite._id, testCaseId),
+                              onEditTestCase
+                                ? onEditTestCase(testCaseId)
+                                : navigation.toTestEdit(suite._id, testCaseId),
                             onEditEvaluator: (testCaseId: string) =>
                               navigation.toTestEdit(suite._id, testCaseId, {
                                 checks: true,
