@@ -51,13 +51,20 @@ Each conformance run walks through:
 6. **Authenticated request** — retries the MCP request with the token
 7. **Post-auth verification** (optional) — connects via MCP and lists tools / calls a tool
 
-When `--conformance-checks` is enabled, six additional negative checks run after the flow:
+When `--conformance-checks` is enabled, nine additional checks run after the flow — six negative checks that probe client-facing security, and three server-side obligation checks that verify the server meets normative spec requirements:
+
+**Negative checks (client-facing security):**
 - **DCR redirect URI policy** — attempts dynamic client registration with a non-loopback `http://` redirect URI and expects rejection under the MCP authorization profile
 - **Invalid client** — confirms the auth server rejects an unknown client ID
 - **Invalid redirect at the authorization endpoint** — sends an authorization request with a mismatched `redirect_uri` and looks for rejection before the server redirects back to it
 - **Invalid token** — confirms the MCP server rejects an obviously invalid bearer token with HTTP 401
 - **Invalid redirect** — attempts a token request with a mismatched redirect URI to look for exact-match enforcement; this check may be skipped if the request is rejected for a different reason first
 - **Token format** — validates the token response has the expected fields
+
+**Server-side obligation checks (spec compliance):**
+- **Unauthenticated request challenge** — sends an unauthenticated MCP request and confirms the server responds with HTTP 401 and a `WWW-Authenticate: Bearer` challenge, never a 5xx; skipped if the server accepts anonymous `initialize` (which is spec-legal)
+- **Resource metadata URL in challenge** — confirms the `WWW-Authenticate` Bearer challenge includes an absolute `resource_metadata` URL (RFC 9728 §5.1); skipped on protocol version `2025-03-26`, which predates RFC 9728
+- **Stale session rejection** — sends an authenticated request with an unknown `Mcp-Session-Id` and confirms the server rejects it with a 4xx (404 preferred), never a 5xx; skipped on the stateless `2026-07-28` transport
 
 ## Scenarios
 
@@ -180,7 +187,7 @@ mcpjam oauth conformance \
   --verify-tools
 ```
 
-This adds 6 checks after the main flow: DCR redirect URI policy, invalid client rejection, invalid redirect enforcement at the authorization endpoint, invalid bearer token rejection at the MCP server, invalid redirect enforcement at the token endpoint, and token format validation.
+This adds 9 checks after the main flow: 6 negative checks (DCR redirect URI policy, invalid client rejection, invalid redirect enforcement at the authorization endpoint, invalid bearer token rejection at the MCP server, invalid redirect enforcement at the token endpoint, and token format validation) plus 3 server-side obligation checks (unauthenticated request challenge, resource metadata URL in challenge, and stale session rejection).
 
 ## Registration strategies
 
@@ -267,6 +274,11 @@ supported way to persist live tokens.
 | `authenticated_mcp_request` 401 | Token `aud` doesn't match MCP resource URL | Ensure your auth server sets `aud` correctly |
 | `verify_list_tools` auth error | Token works for OAuth but MCP layer rejects it — scope issue | Check that the token's scope matches what tool handlers require |
 | DCR + `client_credentials`: "Dynamic registration produced a public client" | DCR returned `token_endpoint_auth_method: "none"` | Use `--registration preregistered` with explicit credentials instead |
+| `oauth_unauthenticated_challenge` failed — "instead of 401" | Server returned 5xx on an unauthenticated request | Return HTTP 401 with `WWW-Authenticate: Bearer` for unauthenticated requests (RFC 6750 §3) |
+| `oauth_unauthenticated_challenge` failed — "expected HTTP 401, received 403" | Server returns 403 instead of 401 | Return 401 with a Bearer challenge so clients can discover the auth server |
+| `oauth_resource_metadata_challenge` failed — "omitted the resource_metadata parameter" | Bearer challenge missing `resource_metadata` | Add `resource_metadata="https://..."` to the `WWW-Authenticate: Bearer` header (RFC 9728 §5.1) |
+| `oauth_resource_metadata_challenge` failed — "must be an absolute http(s) URL" | `resource_metadata` is a relative URL | Use an absolute `https://` URL for `resource_metadata` |
+| `oauth_stale_session_rejection` failed — "instead of a 4xx" | Server crashes with 5xx on an unknown `Mcp-Session-Id` | Return 404 (or another 4xx) when the session ID is not recognized |
 
 ## CI/CD integration
 
