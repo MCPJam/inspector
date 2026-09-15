@@ -2428,6 +2428,7 @@ export async function prepareEvalRun(
     recorder,
     deduped: runWasDeduped,
     status: existingRunStatus,
+    executionBudgets: runExecutionBudgets,
     githubCredentialPolicy,
     hostConfig: runHostConfigSnapshot,
     pluginVersions: runEnvironmentPluginVersions = [],
@@ -2872,6 +2873,10 @@ export async function prepareEvalRun(
     await runEvalSuiteWithAiSdk({
       suiteId: resolvedSuiteId,
       runId,
+      // The budgets the LAUNCH froze. Omitted when the backend predates the
+      // field, which the runner reads as "resolve the platform defaults" —
+      // same code path, differing only in which rung each field came from.
+      ...(runExecutionBudgets ? { executionBudgets: runExecutionBudgets } : {}),
       config,
       modelApiKeys: resolvedModelApiKeys ?? undefined,
       orgModelConfig: resolvedOrgModelConfig,
