@@ -3273,7 +3273,7 @@ function legacyVersusV2Refine(
       code: z.ZodIssueCode.custom,
       path: ["minimumAccuracy"],
       message:
-        "settings.minimumAccuracy is the legacy policy; send passThreshold instead.",
+        "settings.minimumAccuracy is the suite-wide accuracy threshold; this suite is graded per case, so send settings.passThreshold (a fraction).",
     });
   }
 }
