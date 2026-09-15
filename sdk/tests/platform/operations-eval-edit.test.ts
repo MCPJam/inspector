@@ -653,10 +653,11 @@ describe("declaredSuiteId reaches the wire", () => {
 
   it("omits the marker entirely on an ordinary edit", async () => {
     const { client, calls } = makeClient();
-    await deleteEvalCaseOperation.execute(
-      { suite: "s1", case: "c2" },
-      { client, signal: undefined, onScopeResolved: undefined } as never
-    );
+    await deleteEvalCaseOperation.execute({ suite: "s1", case: "c2" }, {
+      client,
+      signal: undefined,
+      onScopeResolved: undefined,
+    } as never);
     const write = calls.find((call) => call.method === "DELETE");
     // Not a capability: an app edit sends nothing, and gets the refusal a
     // CI-owned suite is right to give it.
@@ -677,14 +678,66 @@ describe("declaredSuiteId reaches the wire", () => {
 
   it("sends nothing at all when the caller named no id", async () => {
     const { client, calls } = makeClient();
-    await updateEvalSuiteOperation.execute(
-      { suite: "s1", name: "Renamed" },
-      { client, signal: undefined, onScopeResolved: undefined } as never
-    );
+    await updateEvalSuiteOperation.execute({ suite: "s1", name: "Renamed" }, {
+      client,
+      signal: undefined,
+      onScopeResolved: undefined,
+    } as never);
     // An ordinary edit must not carry an empty marker: the route would forward
     // it, and a platform that predates the lock rejects unknown arguments.
     expect(
       calls.find((call) => call.method === "PATCH")?.body
     ).not.toHaveProperty("declaredSuiteId");
   });
+});
+
+describe("update_eval_suite grading scope", () => {
+  it.each([
+    {
+      settings: { policy: "legacy" },
+      edit: { repetitions: 5, passThreshold: 0.9 },
+      error: /no default iteration count/,
+    },
+    {
+      settings: {
+        policy: "v2",
+        verdictPolicyVersion: 2,
+        verdictPolicyDefaults: { repetitions: 1, passThreshold: 1 },
+      },
+      edit: { minimumIterations: 3 },
+      error: /no iteration minimum/,
+    },
+    {
+      settings: {},
+      edit: { passThreshold: 0.9 },
+      error: /deployment does not report/,
+    },
+    {
+      settings: {
+        policy: "v2",
+        verdictPolicyVersion: 2,
+        verdictPolicyDefaults: { repetitions: 1, passThreshold: 1 },
+      },
+      edit: { repetitions: 5, passThreshold: 0.9 },
+    },
+  ])(
+    "guards grading fields before PATCH: $edit",
+    async ({ settings, edit, error }) => {
+      const { client, calls } = makeClient();
+      vi.spyOn(client, "getEvalSuite").mockResolvedValue({ settings } as any);
+      const result = updateEvalSuiteOperation.execute(
+        { suite: "My Suite", settings: edit },
+        { client }
+      );
+      if (error) {
+        await expect(result).rejects.toThrow(error);
+        expect(calls.filter((call) => call.method === "PATCH")).toHaveLength(0);
+      } else {
+        await result;
+        expect(calls.find((call) => call.method === "PATCH")?.body).toEqual({
+          settings: edit,
+        });
+      }
+    }
+  );
 });

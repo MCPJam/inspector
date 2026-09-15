@@ -4,14 +4,22 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { ReadOnlyTranscript, Transcript } from "../read-only-transcript";
 import type { ToolRenderContext } from "../types";
 import { assistantParts, toolPart } from "./factories";
-import {
-  FOLD_CHAR_LIMIT,
-  FOLD_LINE_LIMIT,
-  countLines,
-  foldSizeLabel,
-  shouldFold,
-} from "../parts/folded-block";
+import { ToolCallPart } from "../tool-call-part";
 import { JsonView } from "../parts/json-view";
+
+/**
+ * Open every tool card on screen. They start collapsed — see the block comment
+ * on the "collapsing" describe below — so a test about what a card SHOWS has
+ * to open it first, and one that forgets will read an empty container rather
+ * than a wrong one.
+ */
+function openToolCards() {
+  for (const header of screen.getAllByTestId("tool-card-header")) {
+    if (header.getAttribute("aria-expanded") === "false") {
+      fireEvent.click(header);
+    }
+  }
+}
 
 /**
  * BB-198. A session transcript has to read as a conversation, not as a JSON
@@ -34,6 +42,7 @@ describe("tool result presentation", () => {
       ]),
     ];
     const { container } = render(<ReadOnlyTranscript messages={messages} />);
+    openToolCards();
 
     expect(container.textContent).toContain(
       "Found 1 unpaid invoice totalling $42.00.",
@@ -55,8 +64,10 @@ describe("tool result presentation", () => {
       ]),
     ];
     const { container } = render(<ReadOnlyTranscript messages={messages} />);
+    openToolCards();
 
-    expect(container.textContent).toContain("Output");
+    // Headed RESULT, not "Output" — the card wears the inspector's wording.
+    expect(container.textContent).toContain("Result");
     expect(container.textContent).toContain('"temp": 72');
   });
 
@@ -73,6 +84,7 @@ describe("tool result presentation", () => {
       ]),
     ];
     const { container } = render(<ReadOnlyTranscript messages={messages} />);
+    openToolCards();
 
     expect(container.textContent).toContain('"temp": 72');
   });
@@ -93,6 +105,7 @@ describe("tool result presentation", () => {
       ]),
     ];
     const { container } = render(<ReadOnlyTranscript messages={messages} />);
+    openToolCards();
 
     expect(container.textContent).not.toContain("not markdown at all");
     expect(container.textContent).toContain('"temp": 72');
@@ -110,12 +123,19 @@ describe("tool result presentation", () => {
       ]),
     ];
     const { container } = render(<ReadOnlyTranscript messages={messages} />);
+    openToolCards();
 
     expect(container.textContent).toContain("It is 72 degrees.");
     expect(container.textContent).not.toContain('"temp": 72');
   });
 
-  it("leaves a small payload open, with no control to press", () => {
+  it("puts a small payload behind the card too", () => {
+    // The old card folded per payload and left short ones open, on the
+    // grounds that a disclosure revealing what is already visible is noise.
+    // The card collapsing as a whole answers a different question — how much
+    // of the screen one tool call is allowed — and a call that renders its
+    // header plus two lines while its neighbour renders a header is a ragged
+    // transcript, not a considerate one.
     const messages = [
       assistantParts([
         toolPart({ toolName: "ping", input: { host: "a" }, output: { ok: 1 } }),
@@ -123,12 +143,17 @@ describe("tool result presentation", () => {
     ];
     const { container } = render(<ReadOnlyTranscript messages={messages} />);
 
+    expect(container.textContent).not.toContain('"ok": 1');
+    openToolCards();
     expect(container.textContent).toContain('"ok": 1');
-    // A disclosure that only ever reveals what is already visible is noise.
-    expect(container.querySelector(".mcpjam-chat-fold-toggle")).toBeNull();
   });
 
-  it("folds a large payload closed, and says how big it is", () => {
+  it("renders nothing of a collapsed payload, rather than hiding it visually", () => {
+    // The fold this replaces collapsed by CLIPPING: the whole payload stayed
+    // in the DOM behind a `max-h`, which is why it needed `aria-hidden` and
+    // `inert` to stop a screen reader being read four hundred lines while the
+    // toggle beside it said collapsed. A closed card mounts none of it, so
+    // there is nothing to mark and nothing to get wrong.
     const rows = Array.from({ length: 200 }, (_, i) => ({
       id: `row_${i}`,
       value: i,
@@ -136,97 +161,46 @@ describe("tool result presentation", () => {
     const messages = [
       assistantParts([toolPart({ toolName: "dump", output: { rows } })]),
     ];
-    render(<ReadOnlyTranscript messages={messages} />);
+    const { container } = render(<ReadOnlyTranscript messages={messages} />);
 
-    const toggle = screen.getByRole("button", { name: /Output/ });
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
-    // The size, so the reader can tell "two lines I skipped" from "eight
-    // hundred" before deciding to open it.
-    expect(toggle.textContent).toMatch(/\d+ lines/);
-    expect(screen.getByTestId("folded-block-preview")).toBeInTheDocument();
-
-    fireEvent.click(toggle);
-    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(container.textContent).not.toContain("row_0");
     expect(screen.queryByTestId("folded-block-preview")).toBeNull();
+
+    const header = screen.getByTestId("tool-card-header");
+    expect(header).toHaveAttribute("aria-expanded", "false");
+    // The name is still there closed — the transcript says WHICH tool ran
+    // without saying what it returned.
+    expect(container.textContent).toContain("dump");
+
+    fireEvent.click(header);
+    expect(header).toHaveAttribute("aria-expanded", "true");
+    expect(container.textContent).toContain("row_0");
   });
 
-  it("labels a length-folded payload by its size, not by its one line", () => {
-    // Both limits close a block, and a single long line trips only the char
-    // one. Reporting "1 lines" there was broken grammar and, worse, the
-    // opposite of the signal the label exists to give.
-    const messages = [
-      assistantParts([
-        toolPart({ toolName: "dump", output: "x".repeat(FOLD_CHAR_LIMIT * 3) }),
-      ]),
-    ];
-    render(<ReadOnlyTranscript messages={messages} />);
-
-    const toggle = screen.getByRole("button", { name: /Output/ });
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
-    expect(toggle.textContent).not.toContain("1 lines");
-    expect(toggle.textContent).toContain("k characters");
-    // Two words, not one, for anything computing an accessible name off the
-    // concatenated text rather than off the flex gap a sighted reader sees.
-    expect(toggle.textContent).toContain("Output ");
-  });
-
-  it("folds a long readable result too — prose can bury a transcript as well", () => {
+  it("collapses a long readable result too — prose can bury a transcript as well", () => {
     const messages = [
       assistantParts([
         toolPart({
           toolName: "report",
           traceDisplayText: Array.from(
-            { length: FOLD_LINE_LIMIT + 10 },
+            { length: 30 },
             (_, i) => `line ${i}`,
-          ).join("\n"),
+          ).join(String.fromCharCode(10)),
         }),
       ]),
     ];
-    render(<ReadOnlyTranscript messages={messages} />);
+    const { container } = render(<ReadOnlyTranscript messages={messages} />);
 
-    expect(
-      screen.getByRole("button", { name: /Result/ }),
-    ).toHaveAttribute("aria-expanded", "false");
+    expect(container.textContent).not.toContain("line 0");
+    openToolCards();
+    expect(container.textContent).toContain("line 0");
   });
 
-  it("hides a collapsed payload from assistive technology", () => {
-    // The collapse is a `max-h` clip, so the hidden remainder stays in the
-    // DOM. Unmarked, a screen reader reads the whole payload while the button
-    // beside it reports `aria-expanded="false"` — the toggle and the content
-    // disagree, and the reader is handed the dump the fold exists to spare
-    // them. `inert` rides along as the right primitive for a clipped subtree;
-    // no payload renderer emits a focusable node today, so it guards the next
-    // one rather than a live leak.
-    const lines = Array.from(
-      { length: FOLD_LINE_LIMIT + 10 },
-      (_, i) => `line ${i}`,
-    );
-    const messages = [
-      assistantParts([
-        toolPart({ toolName: "report", traceDisplayText: lines.join("\n") }),
-      ]),
-    ];
-    render(<ReadOnlyTranscript messages={messages} />);
-
-    const preview = screen.getByTestId("folded-block-preview");
-    expect(preview).toHaveAttribute("aria-hidden", "true");
-    expect(preview).toHaveAttribute("inert");
-    // The payload really is inside the hidden wrapper, not a sibling of it —
-    // otherwise the attributes above would be decoration.
-    expect(preview.textContent).toContain("line 0");
-
-    // Expanding drops the wrapper entirely, so nothing has to be un-hidden.
-    fireEvent.click(screen.getByRole("button", { name: /Result/ }));
-    expect(screen.queryByTestId("folded-block-preview")).toBeNull();
-    expect(
-      screen.getByRole("button", { name: /Result/ }).closest("div")
-        ?.textContent,
-    ).toContain("line 0");
-  });
-
-  it("keeps the error visible rather than folding it", () => {
+  it("opens a FAILED call by itself", () => {
     // An error is the reason you opened the session; it is not evidence to be
-    // put away behind a disclosure.
+    // put away behind a disclosure. This is the one case where the card does
+    // not start closed, and it is why `defaultOpen` is a tri-state rather than
+    // a boolean that defaults to false.
     const messages = [
       assistantParts([
         toolPart({
@@ -238,9 +212,65 @@ describe("tool result presentation", () => {
     ];
     const { container } = render(<ReadOnlyTranscript messages={messages} />);
 
+    expect(screen.getByTestId("tool-card-header")).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
     expect(container.textContent).toContain("boom: it failed");
-    expect(container.querySelector(".mcpjam-chat-fold-toggle")).toBeNull();
   });
+
+  it("opens a call that fails AFTER it was rendered", () => {
+    // A streaming call mounts long before it fails, and `MessageView` keys a
+    // tool part by its `toolCallId`, so the same component is still there when
+    // the error lands. Reading `hasError` once, in a `useState` initialiser,
+    // left the card collapsed over exactly the failure the rule above exists
+    // to surface. Caught in review on #5097.
+    const { container, rerender } = render(
+      <ToolCallPart toolName="broken" toolState="input-available" />,
+    );
+    expect(container.textContent).not.toContain("boom");
+
+    rerender(
+      <ToolCallPart
+        toolName="broken"
+        toolState="output-error"
+        errorText="boom: it failed"
+      />,
+    );
+    expect(container.textContent).toContain("boom: it failed");
+  });
+
+  it("keeps a card the reader closed shut", () => {
+    // Their answer outranks ours. Asserted on the toggle rather than on a
+    // prop, because this is the half of the fix a derived default could have
+    // broken: recomputing on every render would re-open it under them.
+    render(<ToolCallPart toolName="ping" input={{ host: "a" }} defaultOpen />);
+
+    const header = screen.getByTestId("tool-card-header");
+    expect(header).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(header);
+    expect(header).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("lets an explicit defaultOpen win in both directions", () => {
+    // A host showing ONE call rather than a transcript of them wants it open;
+    // one showing a wall of failures wants them closed. Asserted on the
+    // component directly — the transcript does not expose the prop.
+    const { container: openContainer } = render(
+      <ToolCallPart toolName="ping" input={{ host: "a" }} defaultOpen />,
+    );
+    expect(openContainer.textContent).toContain('"host": "a"');
+
+    const { container: closedContainer } = render(
+      <ToolCallPart
+        toolName="broken"
+        errorText="boom"
+        defaultOpen={false}
+      />,
+    );
+    expect(closedContainer.textContent).not.toContain("boom");
+  });
+
 });
 
 /**
@@ -324,35 +354,6 @@ describe("renderTool override", () => {
     );
 
     expect(seen[0]!.resultText).toBeUndefined();
-  });
-});
-
-describe("fold thresholds", () => {
-  it("folds on line count", () => {
-    expect(shouldFold("a\n".repeat(FOLD_LINE_LIMIT - 2))).toBe(false);
-    expect(shouldFold("a\n".repeat(FOLD_LINE_LIMIT + 2))).toBe(true);
-  });
-
-  it("folds on one very long line, which a line count cannot see", () => {
-    expect(shouldFold("x".repeat(FOLD_CHAR_LIMIT + 1))).toBe(true);
-  });
-
-  it("labels by whichever limit actually closed the block", () => {
-    expect(foldSizeLabel("a" + "\n".repeat(FOLD_LINE_LIMIT + 8))).toBe(
-      "21 lines",
-    );
-    // One long line: a line count would say "1" and tell the reader nothing.
-    expect(foldSizeLabel("x".repeat(FOLD_CHAR_LIMIT + 100))).toBe(
-      "900 characters",
-    );
-    expect(foldSizeLabel("x".repeat(2000))).toBe("2.0k characters");
-  });
-
-  it("counts lines without a trailing-newline off-by-one", () => {
-    expect(countLines("")).toBe(0);
-    expect(countLines("one")).toBe(1);
-    expect(countLines("one\ntwo")).toBe(2);
-    expect(countLines("one\n")).toBe(2);
   });
 });
 

@@ -93,22 +93,28 @@ vi.mock("@/hooks/use-available-models", () => ({
     ],
   }),
 }));
-vi.mock("@/components/hosts/ServerGroupPicker", () => ({
-  ServerGroupPicker: ({
+vi.mock("@/components/hosts/server-picker", () => ({
+  ServerPicker: ({
     triggerTestId,
     value,
     onChange,
+    emptyTriggerLabel,
   }: {
     triggerTestId?: string;
     value: string | null;
     onChange: (id: string) => void;
+    emptyTriggerLabel?: string;
   }) => (
     <button
       type="button"
-      data-testid={triggerTestId ?? "server-group-picker"}
+      data-testid={triggerTestId ?? "server-picker"}
+      // Exposed rather than rendered: the page seeds a selection on mount, so
+      // the empty label never reaches the screen here even though it is what
+      // ships for a project with no groups.
+      data-empty-label={emptyTriggerLabel}
       onClick={() => onChange("att-1")}
     >
-      {value ?? "No server group · pick one"}
+      {value ?? emptyTriggerLabel}
     </button>
   ),
 }));
@@ -140,6 +146,9 @@ describe("CreateSuitePage", () => {
     flagState.environments = true;
     capability.matrix = true;
     environmentsRef.current = [];
+    attachmentsRef.current = [
+      { _id: "att-1", name: "Excalidraw", serverIds: ["srv-a"] },
+    ];
     resolveMock.mockReset();
     resolveMock.mockResolvedValue({
       environmentIds: ["env-1"],
@@ -153,6 +162,30 @@ describe("CreateSuitePage", () => {
       createdIds: ["env-1"],
       reusedIds: [],
     });
+  });
+
+  it("blocks in the same vocabulary the field invites", async () => {
+    // `hasServer` is satisfied by ANY serverAttachments row, including the one
+    // minted for a bare server, so a reason that says "server group" tells the
+    // user to go and do something narrower than what would unblock them —
+    // the split BB-142 exists to remove.
+    attachmentsRef.current = [];
+    render(
+      <CreateSuitePage
+        onCancel={onCancel}
+        onSubmit={onSubmit}
+        hostsEnabled
+        projectId="proj-1"
+      />,
+    );
+
+    // The reason lives in a tooltip, which Radix mounts on focus.
+    fireEvent.focus(screen.getByTestId("create-suite-continue").parentElement!);
+
+    // Radix renders the content twice: the visible tip and its announcement.
+    const [reason] = await screen.findAllByText(/first\.$/);
+    expect(reason).toHaveTextContent(/server or group/);
+    expect(screen.queryAllByText(/Pick a server group/)).toHaveLength(0);
   });
 
   it("renders a full page, not a dialog", () => {
@@ -579,5 +612,30 @@ describe("CreateSuitePage", () => {
         }),
       );
     });
+  });
+});
+
+describe("create suite — what the empty server field says", () => {
+  it("asks for a server or a group, in BB-142's vocabulary", async () => {
+    render(
+      <CreateSuitePage
+        onCancel={vi.fn()}
+        onSubmit={vi.fn()}
+        hostsEnabled
+        projectId="proj-1"
+      />,
+    );
+
+    const trigger = await screen.findByTestId(
+      "create-suite-servers-servers-picker",
+    );
+    // "server group" is the vocabulary BB-142 replaced; this surface was the
+    // last caller still passing it, and the composer default it overrides
+    // ("Servers · client default") is wrong here because the server is
+    // REQUIRED — `serverOptional={false}` — so there is no client default to
+    // fall back to.
+    const label = trigger.getAttribute("data-empty-label") ?? "";
+    expect(label).not.toMatch(/server group/i);
+    expect(label).toMatch(/pick a server or group/i);
   });
 });

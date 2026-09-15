@@ -1851,14 +1851,16 @@ function toRunDto(run: RunDoc) {
     // evidence is not valid evidence. Omitted rather than nulled so the DTO is
     // unchanged for every run predating integrity checking.
     ...toRunScoreIntegrity(run.scoreIntegrity),
-    // The v2 verdict policy evidence: which policy decided this run, the
+    // The per-case grading evidence: which criterion decided this run, the
     // decision itself (validity first, then the task verdict, with the
     // denominators and reasons it was taken on), and the integrity error when
     // the run's own evidence could not be decided under it. ALL THREE ARE
-    // ABSENT for a legacy percent-threshold run — see `toRunVerdictProjection`.
+    // ABSENT for a run decided by the suite-wide accuracy threshold — see
+    // `toRunVerdictProjection`.
     //
     // A caller gating on `result` must read `verdictPolicyVersion` first: only
-    // under v2 can `result` be `"inconclusive"`, and only then does
+    // under per-case grading can `result` be `"inconclusive"`, because only
+    // that criterion has a validity phase — and only then does
     // `verdictSummary` explain the decision.
     ...toRunVerdictProjection(run),
     // The waiver in force over this run's gate, or `null`.
@@ -2767,14 +2769,16 @@ const V2_ONLY_CASE_FIELDS = [
  *
  * Both fields were accepted, forwarded, stored and echoed back by a GET on ANY
  * suite — but the backend only reads them under `verdictPolicyVersion: 2`. On
- * a legacy suite the trial count comes from `runs` and `minIterations`, so
- * `repetitions` sat inert while the read that echoed it back was exactly the
- * evidence a caller used to conclude it had landed.
+ * a suite decided by the suite-wide accuracy threshold the trial count comes
+ * from `runs` raised to `minIterations`, so `repetitions` sat inert while the
+ * read that echoed it back was exactly the evidence a caller used to conclude
+ * it had landed.
  *
- * A 4xx naming the upgrade is the only honest answer: the alternative is
- * storing a number the run will not use and reporting it as though it will.
- * Deliberately NOT auto-upgrading the suite — changing how every case in a
- * suite is decided is not a side effect of editing one case.
+ * A 4xx naming the operation that would work is the only honest answer: the
+ * alternative is storing a number the run will not use and reporting it as
+ * though it will. Deliberately NOT changing the suite's criterion — that
+ * re-decides every case in the suite, and it is not a side effect of editing
+ * one case.
  */
 function assertCasePolicyFieldsSupported(
   suite: SuiteDoc | null,
@@ -2792,7 +2796,7 @@ function assertCasePolicyFieldsSupported(
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      `${label}${spelled} sets ${meaning}, which only a suite on verdict policy 2 reads — this suite is on the legacy policy, where the trial count comes from ${names.floor} and the suite's minimumIterations. Upgrade the suite first (PATCH the suite with ${names.settingsExactCount} and settings.passThreshold), or drop ${spelled}.`,
+      `${label}${spelled} sets ${meaning}, which only a per-case-graded suite reads — this suite is decided by a suite-wide accuracy threshold, where the trial count comes from ${names.floor} raised to the suite's minimumIterations. Switch the suite to per-case grading first (PATCH the suite with ${names.settingsExactCount} and settings.passThreshold), or drop ${spelled}.`,
     );
   }
 }
@@ -3269,7 +3273,7 @@ function legacyVersusV2Refine(
       code: z.ZodIssueCode.custom,
       path: ["minimumAccuracy"],
       message:
-        "settings.minimumAccuracy is the legacy policy; send passThreshold instead.",
+        "settings.minimumAccuracy is the suite-wide accuracy threshold; this suite is graded per case, so send settings.passThreshold (a fraction).",
     });
   }
 }
@@ -7993,24 +7997,28 @@ evals.get("/projects/:projectId/eval-suites/:suiteId", async (c) => {
 });
 
 /**
- * Map the public v2 policy fields onto `updateTestSuite` arguments.
+ * Map the public per-case grading fields onto `updateTestSuite` arguments.
  *
  * TWO CASES, and conflating them is how a caller loses a field they never
  * mentioned. `verdictPolicyDefaults` is stored and written WHOLESALE, so:
  *
- *   - a LEGACY suite has nothing to merge over. Sending `repetitions` alone
- *     would materialize a v2 policy with no threshold, which the backend
- *     refuses (`assertValidV2SuiteDefaults`) — so this route refuses first,
- *     with a message that names the missing half instead of a platform error
- *     that names neither. The upgrade is therefore explicit: both fields, or
- *     no upgrade.
- *   - a V2 suite merges field-by-field over what is stored, including inside
- *     `validity`, because PATCH is merge semantics everywhere else on this
- *     body and a caller adjusting one ceiling did not ask to clear the others.
+ *   - a suite on the SUITE-WIDE threshold has nothing to merge over. Sending
+ *     `repetitions` alone would materialize a per-case criterion with no
+ *     threshold, which the backend refuses
+ *     (`assertValidV2SuiteDefaults`) — so this route refuses first, with a
+ *     message that names the missing half instead of a platform error that
+ *     names neither. Changing which criterion decides the suite is therefore
+ *     explicit: both fields, or no change.
+ *   - a suite already on PER-CASE grading merges field-by-field over what is
+ *     stored, including inside `validity`, because PATCH is merge semantics
+ *     everywhere else on this body and a caller adjusting one ceiling did not
+ *     ask to clear the others.
  *
- * `minimumAccuracy` on a v2 suite is refused rather than translated. It is a
- * percent against a different trial resolver; silently dividing it by 100 into
- * `passThreshold` would answer a question the caller did not ask.
+ * `minimumAccuracy` on a per-case suite is refused rather than translated, and
+ * the message says why: the two thresholds differ in SCOPE as well as units,
+ * so dividing the percent by 100 moves the bar for every suite with more than
+ * one case. Silently answering a question the caller did not ask is worse than
+ * refusing the one they did.
  */
 function applyVerdictPolicySettings(
   suite: SuiteDoc,
@@ -8023,7 +8031,7 @@ function applyVerdictPolicySettings(
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "This suite is on verdict policy v2; send settings.passThreshold (a fraction) instead of settings.minimumAccuracy.",
+      "This suite is decided by per-case grading: each case must pass at least settings.passThreshold (a FRACTION) of its own iterations. settings.minimumAccuracy is a suite-wide PERCENT over the whole run, which is a different criterion and not a unit conversion of this one — ten cases, nine always passing and one always failing, passes a 90% suite-wide bar and fails a 0.9 per-case one. Send settings.passThreshold.",
     );
   }
   const touchesPolicy =
@@ -8040,7 +8048,7 @@ function applyVerdictPolicySettings(
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        `Upgrading to verdict policy v2 requires both ${names.settingsExactCount} and settings.passThreshold.`,
+        `This suite is decided by a suite-wide accuracy threshold, so switching it to per-case grading requires both ${names.settingsExactCount} and settings.passThreshold: a per-case criterion is a fraction over a case's own iterations, and neither half answers what a case is graded against on its own. Sending both is what makes the change explicit — it re-decides every case in the suite, so it is never a side effect of editing one field.`,
       );
     }
     updateArgs.verdictPolicyVersion = EVAL_VERDICT_POLICY_VERSION;

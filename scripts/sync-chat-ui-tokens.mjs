@@ -19,8 +19,10 @@
  * are likewise untouched — they are chat-ui's own port of the inspector's
  * waterfall styling, not core palette tokens.
  *
- * Values are emitted as HSL channel triplets because that is what
- * `hsl(var(--token))` consumers expect; the source of truth stays OKLCH.
+ * Most values are emitted as HSL channel triplets because that is what
+ * `hsl(var(--token))` consumers expect; the source of truth stays OKLCH. A
+ * group marked `raw` keeps the canonical OKLCH instead, for tokens read as
+ * `var(--token)` directly — the `--json-*` syntax colours are the case.
  *
  * Usage:
  *   node scripts/sync-chat-ui-tokens.mjs           # rewrite chat-ui/src/styles.css
@@ -97,6 +99,20 @@ const TOKEN_GROUPS = [
       "--warning-foreground",
     ],
   },
+  {
+    comment:
+      "JSON syntax colors for the token spans JsonView emits. Raw, not HSL\n     triplets: these are consumed as `var(--json-key)` directly, not through\n     `hsl(var(…))` like the role tokens above.",
+    raw: true,
+    tokens: [
+      "--json-key",
+      "--json-string",
+      "--json-number",
+      "--json-boolean",
+      "--json-boolean-false",
+      "--json-null",
+      "--json-punctuation",
+    ],
+  },
 ];
 
 function buildRuleset({ label, mode, selectors }, modes) {
@@ -104,7 +120,10 @@ function buildRuleset({ label, mode, selectors }, modes) {
   for (const group of TOKEN_GROUPS) {
     if (group.comment) lines.push(`  /* ${group.comment} */`);
     for (const token of group.tokens) {
-      const value = oklchToHslTriplet(requireToken(modes[mode], token, label));
+      const source = requireToken(modes[mode], token, label);
+      // `raw` groups are consumed as `var(--token)`, so they keep the canonical
+      // OKLCH; the rest are `hsl(var(--token))` and need the channel triplet.
+      const value = group.raw ? source : oklchToHslTriplet(source);
       lines.push(`  ${token}: ${value};`);
     }
   }
