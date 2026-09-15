@@ -69,21 +69,9 @@ const stageAnalytics = vi.hoisted(() => ({
 }));
 const flagEnabled = vi.hoisted(() => ({ current: false }));
 const descriptionExperimentFlag = vi.hoisted(() => ({ current: false }));
-const failureGroupsFlag = vi.hoisted(() => ({ current: false }));
 // Retained as input to the improve prompt, not as a bottom-page section.
 const serverQuality = vi.hoisted(() => ({
   current: { result: null as unknown },
-}));
-const failureGroups = vi.hoisted(() => ({
-  calls: [] as Array<{ enabled?: boolean; suiteId?: string }>,
-  current: {
-    latest: null as unknown,
-    inFlight: null as unknown,
-    loading: false,
-    requesting: false,
-    error: null as string | null,
-    request: () => Promise.resolve(),
-  },
 }));
 const descriptionExperiment = vi.hoisted(() => ({
   calls: [] as Array<{ enabled?: boolean }>,
@@ -112,15 +100,7 @@ vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: (flag: string) =>
     flag === "description-experiments-enabled"
       ? descriptionExperimentFlag.current
-      : flag === "evaluate-failure-groups-enabled"
-        ? failureGroupsFlag.current
-        : flagEnabled.current,
-}));
-vi.mock("@/hooks/use-suite-failure-groups", () => ({
-  useSuiteFailureGroups: (args: { enabled?: boolean; suiteId?: string }) => {
-    failureGroups.calls.push(args);
-    return failureGroups.current;
-  },
+      : flagEnabled.current,
 }));
 vi.mock("../use-eval-description-experiment", () => ({
   useEvalDescriptionExperiment: (args: { enabled?: boolean }) => {
@@ -245,17 +225,7 @@ afterEach(() => {
   };
   flagEnabled.current = false;
   descriptionExperimentFlag.current = false;
-  failureGroupsFlag.current = false;
   serverQuality.current = { result: null };
-  failureGroups.calls = [];
-  failureGroups.current = {
-    latest: null,
-    inFlight: null,
-    loading: false,
-    requesting: false,
-    error: null,
-    request: () => Promise.resolve(),
-  };
   descriptionExperiment.calls = [];
   descriptionExperiment.current = {
     status: "idle",
@@ -329,64 +299,67 @@ describe("EvaluateRunContent", () => {
     }
   });
 
-  it.each(["running", "completed"])("pairs fallback comparisons only after the run finishes (%s)", (status) => {
-    const current = {
-      _id: "run_2",
-      status,
-      result: status === "running" ? "pending" : "failed",
-      namedHostId: "host-1",
-      effectiveModelId: "sonnet",
-      runNumber: 2,
-      createdAt: 2_000,
-    } as unknown as EvalSuiteRun;
-    const previous = {
-      _id: "run_1",
-      status: "completed",
-      result: "failed",
-      namedHostId: "host-1",
-      effectiveModelId: "sonnet",
-      runNumber: 1,
-      createdAt: 1_000,
-    } as unknown as EvalSuiteRun;
-    const previousRows = [
-      {
-        _id: "prev_1",
-        suiteRunId: "run_1",
-        result: "failed",
+  it.each(["running", "completed"])(
+    "pairs fallback comparisons only after the run finishes (%s)",
+    (status) => {
+      const current = {
+        _id: "run_2",
+        status,
+        result: status === "running" ? "pending" : "failed",
+        namedHostId: "host-1",
+        effectiveModelId: "sonnet",
+        runNumber: 2,
+        createdAt: 2_000,
+      } as unknown as EvalSuiteRun;
+      const previous = {
+        _id: "run_1",
         status: "completed",
-      },
-      {
-        _id: "prev_2",
-        suiteRunId: "run_1",
         result: "failed",
-        status: "completed",
-      },
-    ] as unknown as EvalIteration[];
+        namedHostId: "host-1",
+        effectiveModelId: "sonnet",
+        runNumber: 1,
+        createdAt: 1_000,
+      } as unknown as EvalSuiteRun;
+      const previousRows = [
+        {
+          _id: "prev_1",
+          suiteRunId: "run_1",
+          result: "failed",
+          status: "completed",
+        },
+        {
+          _id: "prev_2",
+          suiteRunId: "run_1",
+          result: "failed",
+          status: "completed",
+        },
+      ] as unknown as EvalIteration[];
 
-    renderContent({
-      run: current,
-      iterations: ITERATIONS,
-      previousRunId: null,
-      siblingRuns: [previous, current],
-      allIterations: previousRows,
-    });
+      renderContent({
+        run: current,
+        iterations: ITERATIONS,
+        previousRunId: null,
+        siblingRuns: [previous, current],
+        allIterations: previousRows,
+      });
 
-    if (status === "running") {
-      expect(screen.queryByTestId("run-verdict-stat-delta")).toBeNull();
-      return;
-    }
+      if (status === "running") {
+        expect(screen.queryByTestId("run-verdict-stat-delta")).toBeNull();
+        return;
+      }
 
-    // Two failures last time, one pass and one failure now: the row's headline
-    // rate moves, and Passed carries the count it moved by.
-    expect(screen.getByTestId("run-verdict-pairing-rate")).toHaveTextContent(
-      "+50%",
-    );
-    expect(
-      screen
-        .getAllByTestId("run-verdict-stat-delta")
-        .map((delta) => delta.textContent),
-    ).toContain("+1");
-  });
+      // Two failures last time, one pass and one failure now: the row's headline
+      // rate moves, and Passed carries the count it moved by.
+      expect(screen.getByTestId("run-verdict-pairing-rate")).toHaveTextContent(
+        "+50%",
+      );
+      expect(
+        screen
+          .getAllByTestId("run-verdict-stat-delta")
+          .map((delta) => delta.textContent),
+      ).toContain("+1");
+    },
+  );
 
   it("says nothing about a verdict while the read is in flight", () => {
     detailState.current = {
@@ -603,37 +576,6 @@ describe("EvaluateRunContent", () => {
     renderContent();
     expect(descriptionExperiment.calls.at(-1)?.enabled).toBe(true);
     const card = screen.getByTestId("description-experiment-card");
-    expect(card).toBeInTheDocument();
-    expect(screen.queryByTestId("run-advisory-section")).toBeNull();
-  });
-
-  it("does not query or render failure groups when the flag is off", () => {
-    detailState.current = {
-      ...detailState.current,
-      status: "ready",
-      summary: summary(),
-      diagnostics: [DIAGNOSTIC],
-    };
-    renderContent({
-      run: { ...RUN, suiteId: "suite_1" } as EvalSuiteRun,
-    });
-    expect(failureGroups.calls).toEqual([]);
-    expect(screen.queryByTestId("failure-groups-card")).toBeNull();
-  });
-
-  it("keeps the failure-groups card without the retired advisory section", () => {
-    failureGroupsFlag.current = true;
-    serverQuality.current = { result: {} };
-    detailState.current = {
-      ...detailState.current,
-      status: "ready",
-      summary: summary(),
-      diagnostics: [DIAGNOSTIC],
-    };
-    renderContent({
-      run: { ...RUN, suiteId: "suite_1" } as EvalSuiteRun,
-    });
-    const card = screen.getByTestId("failure-groups-card");
     expect(card).toBeInTheDocument();
     expect(screen.queryByTestId("run-advisory-section")).toBeNull();
   });
