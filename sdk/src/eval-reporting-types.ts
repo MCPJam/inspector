@@ -160,6 +160,7 @@ export type MCPJamReportingConfig = {
    * works too). Defaults to the API key org's Default project.
    */
   project?: string;
+  /** Defaults to server IDs from resolved replay configs; pass [] to opt out. */
   serverNames?: string[];
   serverReplayConfigs?: MCPServerReplayConfig[];
   suiteName?: string;
