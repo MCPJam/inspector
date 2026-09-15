@@ -359,6 +359,14 @@ export function SuiteDetailOverview({
 
   const generating = Boolean(generationConfig && projectId);
   const exitGeneration = useCallback(() => setGenerationConfig(undefined), []);
+  /**
+   * Back to the suite WITH the scope dialog open. Reopening it in place would
+   * not show: the generation view returns before the dialog is rendered.
+   */
+  const changeGenerationSettings = useCallback(() => {
+    setGenerationConfig(undefined);
+    setGenerationOpen(true);
+  }, []);
   useEffect(() => {
     if (!generating) return;
     onGeneratingChange?.({ exit: exitGeneration });
@@ -392,6 +400,7 @@ export function SuiteDetailOverview({
         projectId={projectId}
         suiteId={suite._id}
         suiteName={suite.name}
+        onChangeSettings={changeGenerationSettings}
       />
     );
 

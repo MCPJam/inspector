@@ -9,6 +9,10 @@ import {
   registerEvalSuite,
 } from "@/lib/mcpjam-agent/eval-workspace";
 import { EvalGenerationWorkspace } from "../eval-generation-workspace";
+import {
+  NO_READ_ONLY_CASES_MESSAGE,
+  NO_READ_ONLY_TOOLS_MESSAGE,
+} from "@/shared/eval-generation-errors";
 
 const target = { projectId: "p", suiteId: "s", suiteName: "Suite" };
 const key = evalSuiteKey(target);
@@ -103,6 +107,49 @@ it("retains drafts and exposes errors without endless skeletons", () => {
     screen.getByRole("button", { name: "Retry generation" }),
   ).toBeEnabled();
 });
+/**
+ * A scope no server can satisfy fails identically on every attempt, so the
+ * retry button was an offer that could not be met. The way out is the setting
+ * the message names.
+ */
+it("offers the settings, not a retry, when retrying cannot succeed", () => {
+  const generate = vi.fn(() => new Promise<void>(() => {}));
+  const unregister = registerEvalSuite(target, {
+    read: () => ({}),
+    generate,
+    save: vi.fn(),
+  });
+  const onChangeSettings = vi.fn();
+  seed("error", [], NO_READ_ONLY_TOOLS_MESSAGE);
+  renderWithProviders(
+    <EvalGenerationWorkspace
+      {...target}
+      autoStart={false}
+      onChangeSettings={onChangeSettings}
+    />,
+  );
+  expect(screen.queryByRole("button", { name: "Retry generation" })).toBeNull();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Change generation settings" }),
+  );
+  expect(onChangeSettings).toHaveBeenCalledTimes(1);
+  expect(generate).not.toHaveBeenCalled();
+  unregister();
+});
+
+/** The sibling scope failure IS model-dependent, so the retry stands. */
+it("keeps the retry when a fresh attempt could still succeed", () => {
+  seed("error", [], NO_READ_ONLY_CASES_MESSAGE);
+  renderWithProviders(
+    <EvalGenerationWorkspace
+      {...target}
+      autoStart={false}
+      onChangeSettings={vi.fn()}
+    />,
+  );
+  expect(screen.getByRole("button", { name: "Retry generation" })).toBeEnabled();
+});
+
 it("shows startup failures and retries directly", () => {
   const generate = vi.fn(() => new Promise<void>(() => {}));
   renderWithProviders(<EvalGenerationWorkspace {...target} />);

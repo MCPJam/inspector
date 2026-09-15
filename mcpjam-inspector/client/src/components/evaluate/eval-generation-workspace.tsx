@@ -16,6 +16,7 @@ import {
 } from "@/lib/evals/eval-generation-config";
 import { EvalGeneratedDrafts } from "./eval-generated-drafts";
 import { describeMCPJamLimitMessage } from "@/lib/mcpjam-limit";
+import { isUnretryableGenerationScope } from "@/shared/eval-generation-errors";
 
 export function EvalGenerationWorkspace({
   projectId,
@@ -23,12 +24,15 @@ export function EvalGenerationWorkspace({
   suiteName,
   autoStart = true,
   config,
+  onChangeSettings,
 }: {
   projectId: string;
   suiteId: string;
   suiteName: string;
   autoStart?: boolean;
   config?: GenerateCasesConfig;
+  /** Reopen the scope dialog, for a failure that retrying cannot fix. */
+  onChangeSettings?: () => void;
 }) {
   const generation = useEvalGeneration(
     (s) => s.suites[evalSuiteKey({ projectId, suiteId })],
@@ -96,6 +100,7 @@ export function EvalGenerationWorkspace({
   const errorText = error
     ? (describeMCPJamLimitMessage(error) ?? error)
     : undefined;
+  const scopeIsUnfixableByRetry = isUnretryableGenerationScope(error);
   const running = generation?.status === "running" || (!generation && !error);
   const revealing = Boolean(nextDraftId);
   const busy = running || revealing;
@@ -172,9 +177,27 @@ export function EvalGenerationWorkspace({
                 {errorText}
               </p>
             )}
-            <Button variant="outline" size="sm" onClick={start} disabled={busy}>
-              Retry generation
-            </Button>
+            {/* Retrying a scope the servers cannot satisfy fails identically
+                every time. Offer the setting that would fix it instead. */}
+            {scopeIsUnfixableByRetry && onChangeSettings ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onChangeSettings}
+                disabled={busy}
+              >
+                Change generation settings
+              </Button>
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={start}
+                disabled={busy}
+              >
+                Retry generation
+              </Button>
+            )}
           </div>
         )}
         {!busy && !error && !generation?.drafts.length && (
