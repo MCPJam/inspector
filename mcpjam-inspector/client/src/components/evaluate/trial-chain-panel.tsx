@@ -145,7 +145,7 @@ export function TrialChainPanel({
   if (layout === "report") {
     return (
       <div
-        className="grid gap-4 sm:grid-cols-[170px_minmax(0,1fr)]"
+        className="grid gap-6 rounded-lg border border-border/60 p-4 sm:grid-cols-[170px_minmax(0,1fr)]"
         data-testid="trial-chain-panel"
       >
         <nav className="space-y-1" aria-label="Iteration stages">
@@ -182,6 +182,7 @@ export function TrialChainPanel({
           ) : selectedRow ? (
             <TrialStageDetailCard
               row={selectedRow}
+              report
               {...(nextAction && selectedRow.stage === chain.firstFailedStage
                 ? { nextAction }
                 : {})}

@@ -81,6 +81,7 @@ function latestQueryArgs(): Record<string, unknown> {
 import {
   ProjectRunsTable,
   PROJECT_RUNS_PAGE_SIZE,
+  SUITE_HEALTH_AUTO_PAGES,
 } from "../project-runs-table";
 import { GroupSummaryRow } from "../project-run-suite-groups";
 import {
@@ -138,6 +139,34 @@ beforeEach(() => {
 });
 
 describe("ProjectRunsTable", () => {
+  it("gives each project a fresh auto-loading budget without remounting", () => {
+    setRows([makeRow()], "CanLoadMore");
+    const loadMore = mocks.paginated.current.loadMore;
+    const onSelectRun = vi.fn();
+    const view = (projectId: string) => (
+      <ProjectRunsTable projectId={projectId} onSelectRun={onSelectRun} evaluateLayout />
+    );
+    const { rerender } = render(view("project-a"));
+    for (let page = 1; page < SUITE_HEALTH_AUTO_PAGES; page += 1) {
+      mocks.paginated.current.status = "LoadingMore";
+      rerender(view("project-a"));
+      mocks.paginated.current.status = "CanLoadMore";
+      rerender(view("project-a"));
+    }
+    expect(loadMore).toHaveBeenCalledTimes(SUITE_HEALTH_AUTO_PAGES);
+    mocks.paginated.current.status = "LoadingMore";
+    rerender(view("project-a"));
+    mocks.paginated.current.status = "CanLoadMore";
+    rerender(view("project-a"));
+    expect(loadMore).toHaveBeenCalledTimes(SUITE_HEALTH_AUTO_PAGES);
+
+    // Readiness stays the same: projectId itself must trigger the reset/load.
+    rerender(view("project-b"));
+    expect(latestQueryArgs().projectId).toBe("project-b");
+    expect(loadMore).toHaveBeenCalledTimes(SUITE_HEALTH_AUTO_PAGES + 1);
+    expect(loadMore).toHaveBeenLastCalledWith(PROJECT_RUNS_PAGE_SIZE);
+  });
+
   it("filters embedded history and keeps pagination available for more matches", async () => {
     const user = userEvent.setup();
     mocks.backendFiltersOrigins = true;
@@ -572,6 +601,59 @@ describe("project run history metrics", () => {
       };
     });
   }
+
+  it("renders Ding Dong as flat runs with Suite Health", async () => {
+    arrangeHistory();
+    const onSelectRun = vi.fn();
+    render(
+      <ProjectRunsTable
+        projectId="proj_1"
+        onSelectRun={onSelectRun}
+        historyMetricsEnabled
+        evaluateLayout
+      />,
+    );
+    await waitFor(() => expect(inTable().getByText("50%")).toBeVisible());
+    expect(
+      inTable()
+        .getAllByRole("columnheader")
+        .map((cell) => cell.textContent),
+    ).toEqual([
+      "Run",
+      "Suite",
+      "Client",
+      "Model",
+      "Result",
+      "Rate",
+      "Platform",
+      "Commit",
+      "Date",
+      "Latency",
+      "Tokens",
+      "Calls",
+    ]);
+    expect(screen.queryByTestId("project-run-history-metrics")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Collapse suite/ })).toBeNull();
+    const runRows = inTable().getAllByRole("button", { name: /^Open run #/ });
+    expect(runRows).toHaveLength(2);
+    expect(runRows[0]).toHaveTextContent("UI suite");
+    const user = userEvent.setup();
+    const bars = await screen.findAllByTestId("suite-health-bar");
+    const newestBar = bars[bars.length - 1];
+    await user.hover(newestBar);
+    expect(runRows[0]).toHaveAttribute("data-highlighted", "true");
+    expect(runRows[1]).not.toHaveAttribute("data-highlighted");
+    await user.unhover(newestBar);
+    expect(runRows[0]).not.toHaveAttribute("data-highlighted");
+    await user.click(newestBar);
+    expect(onSelectRun).toHaveBeenLastCalledWith({ suiteId: "suite_1", runId: "new" });
+    onSelectRun.mockClear();
+    await userEvent.setup().click(runRows[0]);
+    expect(onSelectRun).toHaveBeenCalledWith({
+      suiteId: "suite_1",
+      runId: "new",
+    });
+  });
 
   it("renders the grouped table shell on the first page load", () => {
     setRows([], "LoadingFirstPage");
