@@ -1222,7 +1222,7 @@ function EvaluateTabContent({
             (testCase) => testCase._id === selectedTestId,
           )?.title || "Test case"
       : route.type === "suite-edit"
-        ? "Settings"
+        ? "Test Suite Evaluators"
         : route.type === "run-detail"
           ? runBreadcrumbLabel
           : null;
@@ -1557,15 +1557,27 @@ function EvaluateTabContent({
               route.type === "list" ? handleOpenCreateSuite : undefined
             }
             detailCrumb={
-              route.type === "test-edit" && route.checks
-                ? { label: "Test Case Evaluators" }
-                : undefined
+              route.type === "suite-edit" && route.fromCaseChecks
+                ? { label: "Test Suite Evaluators" }
+                : route.type === "test-edit" && route.checks
+                  ? { label: "Test Case Evaluators" }
+                  : undefined
             }
             onCurrentCrumbClick={
-              route.type === "test-edit" && route.checks
+              route.type === "suite-edit" && route.fromCaseChecks
                 ? () =>
-                    playgroundNavigation.toTestEdit(route.suiteId, route.testId)
-                : undefined
+                    playgroundNavigation.toTestEdit(
+                      route.suiteId,
+                      route.fromCaseChecks!,
+                      { checks: true },
+                    )
+                : route.type === "test-edit" && route.checks
+                  ? () =>
+                      playgroundNavigation.toTestEdit(
+                        route.suiteId,
+                        route.testId,
+                      )
+                  : undefined
             }
             landingView={landingView}
             onLandingViewChange={setLandingView}
@@ -1587,15 +1599,17 @@ function EvaluateTabContent({
                   : undefined
             }
           >
-            {route.type === "eval-server"
-              ? evalServer?.name
-              : route.type === "test-edit" && route.fromEvalServer
-                ? (previewCaseTitleFromDraft(
-                    route.fromEvalServer,
-                    route.suiteId,
-                    route.testId,
-                  ) ?? nestedPageLabel)
-                : renderPlaygroundBreadcrumb()}
+            {route.type === "suite-edit" && route.fromCaseChecks
+              ? "Test Case Evaluators"
+              : route.type === "eval-server"
+                ? evalServer?.name
+                : route.type === "test-edit" && route.fromEvalServer
+                  ? (previewCaseTitleFromDraft(
+                      route.fromEvalServer,
+                      route.suiteId,
+                      route.testId,
+                    ) ?? nestedPageLabel)
+                  : renderPlaygroundBreadcrumb()}
           </EvalsHeader>
         )
       }

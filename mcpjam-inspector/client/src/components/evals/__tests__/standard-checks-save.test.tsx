@@ -30,14 +30,13 @@ it("saves a family override, reloads it off, and restores the customized inherit
         ]}
         {...draft}
         capabilities={capabilities}
-        onChecksChange={setDraft}
+        onChecksChange={(next) => {
+          setDraft(next);
+          stored = next;
+          save(next);
+        }}
         judgeSkipped={false}
         onJudgeSkippedChange={() => {}}
-        onSave={() => {
-          stored = draft;
-          save(draft);
-        }}
-        saveDisabled={false}
       />
     );
   }
@@ -50,7 +49,6 @@ it("saves a family override, reloads it off, and restores the customized inherit
   expect(screen.getByText(/1,234/)).toBeTruthy();
   expect(screen.getByText("From suite")).toBeTruthy();
   fireEvent.click(screen.getByRole("checkbox", { name: check.name }));
-  fireEvent.click(screen.getByRole("button", { name: "Save overrides" }));
   expect(save).toHaveBeenCalledWith({
     predicates: undefined,
     suppressedSuiteStandardCheckIds: [check.id],
@@ -63,7 +61,6 @@ it("saves a family override, reloads it off, and restores the customized inherit
   );
   expect(screen.getByText("From suite · off for this case")).toBeTruthy();
   fireEvent.click(screen.getByRole("checkbox", { name: check.name }));
-  fireEvent.click(screen.getByRole("button", { name: "Save overrides" }));
   expect(stored).toEqual({
     predicates: undefined,
     suppressedSuiteStandardCheckIds: [],
@@ -83,8 +80,6 @@ it("keeps inherited toggles disabled until suppression is supported", () => {
       }
       judgeSkipped={false}
       onJudgeSkippedChange={() => {}}
-      onSave={() => {}}
-      saveDisabled={false}
     />,
   );
   expect(screen.getByRole("checkbox", { name: check.name })).toBeDisabled();

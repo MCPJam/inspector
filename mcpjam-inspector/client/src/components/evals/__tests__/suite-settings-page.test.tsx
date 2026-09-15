@@ -46,9 +46,8 @@ vi.mock("convex/react", () => ({
 // written against; a real read here would also need `useConvex` on the mock
 // above, which this file deliberately does not provide.
 vi.mock("@/hooks/use-suite-capabilities", async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import("@/hooks/use-suite-capabilities")
-  >();
+  const actual =
+    await importOriginal<typeof import("@/hooks/use-suite-capabilities")>();
   return {
     ...actual,
     useSuiteCapabilities: () => ({
@@ -146,8 +145,8 @@ describe("suite settings page", () => {
     expect(
       container.querySelector('nav[aria-label="Settings sections"]'),
     ).toBeNull();
-    const sections = ["policy", "environments", "passOrFail"].map(
-      (key) => container.querySelector(`[data-setting-key="${key}"]`)!,
+    const sections = ["policy", "environments", "passOrFail"].map((key) =>
+      container.querySelector(`[data-setting-key="${key}"]`)!,
     );
     expect(sections.every(Boolean)).toBe(true);
     expect(
@@ -186,17 +185,13 @@ describe("suite settings page", () => {
     );
   });
 
-  it("hides an unavailable policy upgrade and discloses an available upgrade", () => {
+  it("hides an unavailable policy upgrade and shows an available upgrade without Advanced", () => {
     const unavailable = renderSettingsSheet();
     expect(screen.queryByText("Switch to verdict policy v2")).toBeNull();
     unavailable.unmount();
     capability.canUpgrade = true;
-    const { container } = renderSettingsSheet();
-    const advanced = container.querySelector(
-      '[data-setting-key="policy"] details',
-    ) as HTMLDetailsElement;
-    expect(advanced.open).toBe(false);
-    fireEvent.click(advanced.querySelector("summary")!);
+    renderSettingsSheet();
+    expect(screen.queryByText("Advanced")).toBeNull();
     expect(
       screen.getByRole("button", { name: "Switch to verdict policy v2" }),
     ).toBeEnabled();

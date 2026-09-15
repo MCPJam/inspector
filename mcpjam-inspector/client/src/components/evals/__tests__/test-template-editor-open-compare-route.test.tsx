@@ -1030,18 +1030,80 @@ describe("TestTemplateEditor run view from route", () => {
     );
   });
 
-  it("saves judge overrides from the dedicated UVC page", async () => {
+  it("automatically saves judge overrides from the dedicated UVC page", async () => {
     activeCaseDoc = goldenCaseDoc;
     renderGoldenCase({ observeFirst: true, checksPage: true });
     fireEvent.click(
       await screen.findByRole("checkbox", { name: "Goal completion judge" }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Save overrides" }));
     await waitFor(() => expect(updateTestCaseMutationMock).toHaveBeenCalled());
     expect(updateTestCaseMutationMock.mock.calls.at(-1)?.[0]).toMatchObject({
       judgeConfigOverride: { goalCompletion: { enabled: false } },
     });
     expect(screen.queryByTestId("case-workspace")).not.toBeInTheDocument();
+  });
+
+  it("saves rapid evaluator changes in order, including clearing the judge override", async () => {
+    activeCaseDoc = goldenCaseDoc;
+    let finishFirstSave!: () => void;
+    updateTestCaseMutationMock.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishFirstSave = resolve;
+        }),
+    );
+    renderGoldenCase({ observeFirst: true, checksPage: true });
+    const judge = await screen.findByRole("checkbox", {
+      name: "Goal completion judge",
+    });
+    fireEvent.click(judge);
+    await waitFor(() =>
+      expect(updateTestCaseMutationMock).toHaveBeenCalledTimes(1),
+    );
+    fireEvent.click(judge);
+    expect(updateTestCaseMutationMock).toHaveBeenCalledTimes(1);
+    finishFirstSave();
+    await waitFor(() =>
+      expect(updateTestCaseMutationMock).toHaveBeenCalledTimes(2),
+    );
+    expect(updateTestCaseMutationMock.mock.calls[1][0]).toMatchObject({
+      judgeConfigOverride: null,
+    });
+  });
+
+  it("keeps a failed autosave visible and includes it in the next edit", async () => {
+    activeCaseDoc = goldenCaseDoc;
+    updateTestCaseMutationMock.mockRejectedValueOnce(new Error("Offline"));
+    renderGoldenCase({ observeFirst: true, checksPage: true });
+    fireEvent.click(
+      await screen.findByRole("checkbox", { name: "Goal completion judge" }),
+    );
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "could not be saved",
+    );
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Goal completion judge" }),
+    );
+    await waitFor(() =>
+      expect(updateTestCaseMutationMock).toHaveBeenCalledTimes(2),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("status")).not.toBeInTheDocument(),
+    );
+    expect(updateTestCaseMutationMock.mock.calls[1][0]).toMatchObject({
+      judgeConfigOverride: null,
+    });
+  });
+
+  it("does not autosave unfinished assertion fields", async () => {
+    activeCaseDoc = {
+      ...goldenCaseDoc,
+      predicates: { mode: "extend", list: [{ type: "toolLatencyUnder", ms: -1 }] },
+    };
+    renderGoldenCase({ observeFirst: true, checksPage: true });
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Goal completion judge" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Complete the assertion fields");
+    expect(updateTestCaseMutationMock).not.toHaveBeenCalled();
   });
 
   it("Run test case saves the latest keystrokes", async () => {

@@ -32,6 +32,7 @@ import { MATCH_OPTIONS_DEFAULTS } from "@/shared/eval-matching";
 import { STAGE_CHIP_TONE_CLASS } from "@/components/evaluate/stage-chain-model";
 import { cn } from "@/lib/utils";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
+import { Badge } from "@mcpjam/design-system/badge";
 import { Input } from "@mcpjam/design-system/input";
 import type { ModelDefinition } from "@/shared/types";
 import type { SuiteCapabilities } from "@/hooks/use-suite-capabilities";
@@ -107,6 +108,9 @@ export function SuiteScorerTable({
   passOrFailHint,
   judgeHint,
   groundednessEvidence,
+  headerContent,
+  headerDescription,
+  headerActions,
 }: {
   scope: ScorerTableScope;
   matchOptions?: EvalMatchOptions;
@@ -125,6 +129,9 @@ export function SuiteScorerTable({
   passOrFailHint: string;
   judgeHint: string;
   groundednessEvidence?: GroundednessRunEvidence;
+  headerContent?: React.ReactNode;
+  headerDescription?: React.ReactNode;
+  headerActions?: React.ReactNode;
 }) {
   const suitePredicates =
     scope.kind === "suite" ? scope.predicates : scope.suitePredicates;
@@ -322,26 +329,41 @@ export function SuiteScorerTable({
   return (
     <div>
       <div data-setting-key="checks">
-        <div className="mb-4 flex items-start justify-between gap-4">
-          {suiteChrome ? (
-            <div className="space-y-1">
-              <div className="flex items-center gap-1.5">
-                <h3 className="text-lg font-semibold tracking-tight text-foreground">
-                  Checks by stage
-                </h3>
-                <GlobalGatesSectionInfoHint />
-              </div>
-              <p className="text-sm text-muted-foreground">{passOrFailHint}</p>
-            </div>
-          ) : (
-            <span />
+        <div
+          className={cn(
+            "flex flex-wrap items-center justify-between gap-4",
+            headerDescription ? "mb-2" : "mb-4",
           )}
-          <SuiteScorerLibraryMenu
-            authorableKinds={authorableKinds}
-            triggerLabel="Add assertion"
-            onAdd={(kind) => addPredicate(blankPredicate(kind))}
-          />
+        >
+          {headerContent ??
+            (suiteChrome ? (
+              <div className="space-y-1">
+                <div className="flex items-center gap-1.5">
+                  <h3 className="text-lg font-semibold tracking-tight text-foreground">
+                    Checks by stage
+                  </h3>
+                  <GlobalGatesSectionInfoHint />
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  {passOrFailHint}
+                </p>
+              </div>
+            ) : (
+              <span />
+            ))}
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+            {headerActions}
+            <SuiteScorerLibraryMenu
+              primary
+              authorableKinds={authorableKinds}
+              triggerLabel="Add assertion"
+              onAdd={(kind) => addPredicate(blankPredicate(kind))}
+            />
+          </div>
         </div>
+        {headerDescription ? (
+          <div className="mb-6">{headerDescription}</div>
+        ) : null}
         {scenarioMigrationNotice ? (
           <div className="mb-4">{scenarioMigrationNotice}</div>
         ) : null}
@@ -358,7 +380,7 @@ export function SuiteScorerTable({
         <div>
           <div className="grid grid-cols-1 gap-x-6 border-b border-border pb-2 text-sm text-muted-foreground sm:grid-cols-[minmax(10rem,1fr)_2fr]">
             <span>Stage of user value chain</span>
-            <span className="hidden sm:block">What we check</span>
+            <span className="hidden sm:block">Evaluators</span>
           </div>
           {table.groups.map((group) => (
             <section
@@ -567,14 +589,14 @@ function ScorerRow({
     row.kind === "judge" &&
     row.judgeSlot === "goalCompletion" &&
     scope === "suite";
-  const opensEditor = on && row.kind !== "observed";
+  const opensEditor = on && row.kind !== "observed" && row.kind !== "match";
   const sourceLine =
     scope === "case" && row.kind === "predicate"
       ? row.suppressed
         ? "From suite · off for this case"
         : inherited
-        ? "From suite"
-        : "This case"
+          ? "From suite"
+          : "This case"
       : null;
   const familyLine =
     inherited && row.family && row.family.suiteRules > 1
@@ -587,9 +609,7 @@ function ScorerRow({
   // only when it carries a threshold ("under 5,000 ms"). A bare assertion's title is
   // its criterion, so no extra detail is needed.
   let detail: string | null = null;
-  if (row.kind === "observed") {
-    detail = "Measured by the runner";
-  } else if (row.kind === "judge") {
+  if (row.kind === "judge") {
     if (row.thresholdKind === "judge") {
       detail = `Threshold ${
         judgeConfig?.goalCompletion?.threshold ?? DEFAULT_JUDGE_THRESHOLD
@@ -645,6 +665,9 @@ function ScorerRow({
                 </span>
               ) : null}
             </div>
+            {row.kind === "observed" || row.kind === "match" ? (
+              <Badge variant="outline">Required</Badge>
+            ) : null}
           </div>
           {sourceLine ? (
             <span className="block text-xs text-muted-foreground">

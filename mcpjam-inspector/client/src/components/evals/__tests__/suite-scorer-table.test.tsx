@@ -83,7 +83,7 @@ describe("SuiteScorerTable", () => {
       const group = container.querySelector(
         `[data-stage-group="${stage}"]`,
       ) as HTMLElement;
-      expect(group.textContent).toContain("Measured by the runner");
+      expect(group.textContent).toContain("Required");
       const details = group.querySelector("details");
       expect(details).toBeTruthy();
       expect(
@@ -410,7 +410,7 @@ it("shows short names at rest and allows multiple role editors to stay open", ()
       { type: "toolLatencyUnder", ms: 1234 },
     ],
   });
-  expect(screen.getByText("What we check")).toBeInTheDocument();
+  expect(screen.getByText("Evaluators")).toBeInTheDocument();
   for (const question of Object.values(USER_VALUE_STAGE_QUESTIONS))
     expect(screen.queryByText(question)).toBeNull();
   expect(

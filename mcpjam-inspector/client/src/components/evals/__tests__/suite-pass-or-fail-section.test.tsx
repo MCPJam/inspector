@@ -103,7 +103,7 @@ describe("SuitePassOrFailSection", () => {
     const { container } = renderSection();
     for (const stage of ["connection", "discovery"]) {
       const copy = emptyCopy(container, stage) ?? "";
-      expect(copy, stage).toContain("Measured by the runner");
+      expect(copy, stage).toContain("Required");
       expect(copy.toLowerCase(), stage).not.toContain("no evaluator");
       // The run-state word. Settings has observed nothing, so claiming a
       // measurement did not happen states something nobody looked at.

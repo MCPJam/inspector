@@ -35,7 +35,7 @@ import type { EvalJudgeConfig } from "./types";
  * same sentence.
  */
 export const PASS_OR_FAIL_HINT =
-  "Choose what to check at each stage of the user value chain.";
+  "Evaluators grade the evidence available for each iteration.";
 
 export const JUDGE_HINT =
   "A judge scores iteration evidence from 0–1. Goal completion can gate after review-protocol and calibration requirements are met, or through an explicit owner acknowledgement once protocol readiness is met.";
