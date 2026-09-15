@@ -48,15 +48,25 @@ export function RunClientsCell({
   ];
   if (!mappings.length) return <span className="text-muted-foreground">—</span>;
 
-  const visible = mappings.slice(0, VISIBLE_RUN_CLIENT_PAIRINGS);
-  const hidden = mappings.slice(VISIBLE_RUN_CLIENT_PAIRINGS);
-  const allLabels = mappings.map(pairingLabel);
+  const entries =
+    column === "client"
+      ? [
+          ...new Map(
+            mappings.map((mapping) => [mapping.client, mapping]),
+          ).values(),
+        ]
+      : mappings;
+  const visible = entries.slice(0, VISIBLE_RUN_CLIENT_PAIRINGS);
+  const hidden = entries.slice(VISIBLE_RUN_CLIENT_PAIRINGS);
+  const allLabels = entries.map((mapping) =>
+    column === "client" ? mapping.client : pairingLabel(mapping),
+  );
   const models = [...new Set(mappings.flatMap((mapping) => mapping.models))];
   // Each column announces ITS OWN values. One shared pairing list made the
   // Client and Model cells read out the same sentence twice per row.
   const columnLabel =
     column === "client"
-      ? mappings.map((mapping) => mapping.client).join(", ")
+      ? entries.map((mapping) => mapping.client).join(", ")
       : column === "model"
         ? models.map(compactModelIdTail).join(", ") || "-"
         : allLabels.join(", ");
@@ -182,7 +192,9 @@ export function RunClientsCell({
                 aria-label={
                   column === "model"
                     ? `${hiddenModels.length} more models`
-                    : `${hidden.length} more client and model pairings`
+                    : column === "client"
+                      ? `${hidden.length} more clients`
+                      : `${hidden.length} more client and model pairings`
                 }
               >
                 +{column === "model" ? hiddenModels.length : hidden.length}
