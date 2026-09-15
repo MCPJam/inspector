@@ -8,6 +8,7 @@ const {
   mockRouteContext,
   mockViewerRole,
   mockUseAuth,
+  mockUseIsMemberActor,
   mockUseViewerProjectRole,
 } = vi.hoisted(() => {
   const mockViewerRole = {
@@ -17,6 +18,7 @@ const {
   return {
     mockSwarmsTab: vi.fn(() => <div>Swarms Tab</div>),
     mockViewerRole,
+    mockUseIsMemberActor: vi.fn(() => true as boolean | undefined),
     mockUseAuth: vi.fn(() => ({
       user: { email: "guest@example.com" },
       isLoading: false,
@@ -43,6 +45,9 @@ vi.mock("react-router", async (importOriginal) => {
   };
 });
 
+vi.mock("@/hooks/use-is-member-actor", () => ({
+  useIsMemberActor: () => mockUseIsMemberActor(),
+}));
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => mockUseAuth(),
 }));
@@ -111,6 +116,9 @@ describe("SwarmsRoute member-only gate", () => {
   beforeEach(() => {
     mockSwarmsTab.mockClear();
     mockUseAuth.mockClear();
+    mockUseIsMemberActor.mockClear();
+    // Default: the socket is carrying a real member. Cases below set it.
+    mockUseIsMemberActor.mockReturnValue(true);
     mockUseViewerProjectRole.mockClear();
     mockUseViewerProjectRole.mockImplementation(() => mockViewerRole);
     mockRouteContext.billingUiEnabled = true;
@@ -127,6 +135,7 @@ describe("SwarmsRoute member-only gate", () => {
   });
 
   it("bounds role loading to WorkOS identity hydrate, not Convex auth alone", () => {
+    mockUseIsMemberActor.mockReturnValue(undefined);
     mockUseAuth.mockReturnValue({ user: null, isLoading: true });
     mockViewerRole.isLoading = true;
 
@@ -171,6 +180,7 @@ describe("SwarmsRoute member-only gate", () => {
     // They still skip the INVITEE-guest notice below: that is a different
     // population, a signed-in person holding project role `guest`, who needs
     // to be told to ask an admin rather than to make an account.
+    mockUseIsMemberActor.mockReturnValue(false);
     mockUseAuth.mockReturnValue({ user: null, isLoading: false });
     mockViewerRole.role = undefined;
     mockViewerRole.isLoading = false;
@@ -233,6 +243,7 @@ describe("SwarmsRoute member-only gate", () => {
     // gate features on the local app?")
     mockRouteContext.isAuthenticated = false;
     mockRouteContext.convexProjectId = null;
+    mockUseIsMemberActor.mockReturnValue(false);
     mockUseAuth.mockReturnValue({ user: null, isLoading: false });
 
     renderRoute(<SwarmsRoute />);

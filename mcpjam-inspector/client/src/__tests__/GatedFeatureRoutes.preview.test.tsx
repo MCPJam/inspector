@@ -17,6 +17,7 @@ const {
   mockUserTestingTab,
   mockRouteContext,
   mockUseAuth,
+  mockUseIsMemberActor,
   mockUseViewerProjectRole,
 } = vi.hoisted(() => ({
     mockSwarmsTab: vi.fn(() => <div>Swarms Tab</div>),
@@ -27,6 +28,10 @@ const {
       signIn: vi.fn(),
       signUp: vi.fn(),
     })),
+    // The gate's identity source. WorkOS is still mocked below because the
+    // route reads it for the invitee-guest notice, but it is no longer what
+    // decides preview vs tab.
+    mockUseIsMemberActor: vi.fn(() => true as boolean | undefined),
     mockUseViewerProjectRole: vi.fn(),
     mockRouteContext: {
       billingUiEnabled: true,
@@ -56,6 +61,9 @@ vi.mock("react-router", async (importOriginal) => {
 });
 
 vi.mock("@workos-inc/authkit-react", () => ({ useAuth: () => mockUseAuth() }));
+vi.mock("@/hooks/use-is-member-actor", () => ({
+  useIsMemberActor: () => mockUseIsMemberActor(),
+}));
 
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
@@ -147,6 +155,7 @@ function renderRoute(element: React.ReactElement, at = "/") {
 }
 
 function signedIn() {
+  mockUseIsMemberActor.mockReturnValue(true);
   mockUseAuth.mockReturnValue({
     user: { email: "member@example.com" },
     isLoading: false,
@@ -156,6 +165,11 @@ function signedIn() {
 }
 
 function guest() {
+  // `false` means the JWT Convex is holding belongs to an anonymous actor.
+  // Note this is NOT "no WorkOS user": in hosted mode a signed-in person's
+  // first render carries a guest bearer, which is the whole reason the gate
+  // reads this rather than `useAuth().user`.
+  mockUseIsMemberActor.mockReturnValue(false);
   mockUseAuth.mockReturnValue({
     user: null,
     isLoading: false,
@@ -216,7 +230,8 @@ describe("gated feature routes — hosted", () => {
       expect(tabMock).not.toHaveBeenCalled();
     });
 
-    it("holds — showing neither preview nor tab — while WorkOS is resolving", () => {
+    it("holds — showing neither preview nor tab — while identity is resolving", () => {
+      mockUseIsMemberActor.mockReturnValue(undefined);
       mockUseAuth.mockReturnValue({
         user: null,
         isLoading: true,

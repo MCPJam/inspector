@@ -32,6 +32,11 @@ vi.mock("react-router", async (importOriginal) => {
 // person have an account?"). A resolved, signed-in user keeps every assertion
 // below about the FLAG and BILLING gates — the guest path has its own suite in
 // `GatedFeatureRoutes.preview.test.tsx`.
+// The preview gate reads the identity Convex holds, not WorkOS. Signed-in by
+// default here: this suite is about the billing path, not the sign-in one.
+vi.mock("@/hooks/use-is-member-actor", () => ({
+  useIsMemberActor: () => true,
+}));
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({ user: { email: "member@example.com" }, isLoading: false }),
 }));

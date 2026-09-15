@@ -285,7 +285,6 @@ import {
   useHostList,
   useHostMutations,
 } from "@/hooks/useClients";
-import { useIsHostedGuest } from "@/hooks/use-hosted-guest";
 import { GuestFeaturePreview } from "@/components/guest-preview/GatedFeaturePreview";
 import { GuestPreviewCta } from "@/components/guest-preview/GuestPreviewCta";
 import type { GatedFeatureId } from "@/components/guest-preview/feature-highlights";
@@ -1646,9 +1645,23 @@ export function CompatibilityRoute() {
  * hooks — it calls hooks itself, so it can never sit after an early return.
  */
 function useGatedFeatureGate(feature: GatedFeatureId): ReactElement | null {
-  const isHostedGuest = useIsHostedGuest();
+  // `useIsMemberActor`, NOT a WorkOS-identity hook, and the difference is a
+  // real production window rather than a preference. In hosted mode every SPA
+  // document is served with `__MCP_GUEST_BOOTSTRAP__` injected regardless of
+  // session cookie, so a signed-in user's first render carries a GUEST bearer:
+  // WorkOS says "member", Convex says "authenticated", and the socket holds a
+  // guest. Anything reading `useAuth().user` answers "member" for a caller the
+  // backend will treat as a guest. This hook asks `users:getCurrentUser`, whose
+  // answer is resolved from the JWT actually received, so it reports the
+  // identity a member-only function would see.
+  //
+  // REEV-6 shipped its own `useIsHostedGuest` before this existed; that hook is
+  // deleted rather than kept beside this one. Two identity hooks that disagree
+  // in a window neither names is how the gate drifts from the backend.
+  const isMember = useIsMemberActor();
+  const isGuest = isMember === undefined ? undefined : !isMember;
 
-  if (isHostedGuest === undefined) {
+  if (isGuest === undefined) {
     return (
       <div className="flex h-full items-center justify-center">
         <Loader2 className="size-5 animate-spin text-muted-foreground" />
@@ -1656,7 +1669,7 @@ function useGatedFeatureGate(feature: GatedFeatureId): ReactElement | null {
     );
   }
 
-  if (isHostedGuest) {
+  if (isGuest) {
     return (
       <GuestFeaturePreview feature={feature}>
         <GuestPreviewCta feature={feature} />
@@ -1673,17 +1686,23 @@ function useGatedFeatureGate(feature: GatedFeatureId): ReactElement | null {
 // any more: REEV-6 took `sandboxes-enabled` out of the client, so what a
 // visitor gets is decided on arrival from identity and entitlement.
 export function ScenariosRoute() {
-  // `PricingFeatureSignInGate` arrived on main in #5104, independently of this
-  // work and behind its own `pricing-feature-signin-required` flag. Kept rather
-  // than removed: with that flag off it renders its children untouched, so the
-  // preview below is what a visitor gets, and with it on the two gates would
-  // stack. Which of the two survives is a product decision, not a merge
-  // decision, so the merge does not make it.
-  return (
-    <PricingFeatureSignInGate feature="User testing">
-      <ScenariosRouteContent />
-    </PricingFeatureSignInGate>
-  );
+  // NO `PricingFeatureSignInGate` HERE, deliberately, and it is not an
+  // oversight from the merge that brought it in.
+  //
+  // #5104 added that wrapper to Evals, Swarm and User Testing behind
+  // `pricing-feature-signin-required`, solving the same problem REEV-6 solves
+  // and reaching a different answer: a one-line "Sign in to use User testing."
+  // with a sign-in button. Two gates for one job is worse than either alone —
+  // whichever flag moves last silently decides what a visitor sees — so REEV-6
+  // owns these two routes and the wrapper is removed from them.
+  //
+  // It STAYS on Evals (`EvalsRoute`, `EvalRunnerRoute`). Evaluate is out of
+  // REEV-6's scope by decision, so nothing here replaces that gate.
+  //
+  // What the preview has that the message does not: it shows the product, and
+  // it offers sign-UP. Their message only offers sign-in, which is the wrong
+  // primary action for someone who has never had an account.
+  return <ScenariosRouteContent />;
 }
 
 function ScenariosRouteContent() {
@@ -1774,11 +1793,9 @@ function decodeParam(raw: string): string | null {
 }
 
 export function SwarmsRoute() {
-  return (
-    <PricingFeatureSignInGate feature="Swarm">
-      <SwarmsRouteContent />
-    </PricingFeatureSignInGate>
-  );
+  // No `PricingFeatureSignInGate`, for the reason spelled out on
+  // `ScenariosRoute` above: REEV-6's preview is the gate for this surface.
+  return <SwarmsRouteContent />;
 }
 
 function SwarmsRouteContent() {
