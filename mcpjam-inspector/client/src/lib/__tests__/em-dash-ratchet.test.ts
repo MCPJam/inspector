@@ -27,7 +27,7 @@ const CLIENT_SRC = resolve(fileURLToPath(import.meta.url), "../../..");
 const EM_DASH = "—";
 
 // JSX decodes these to an em dash, and the AST hands back raw source text.
-const EM_DASH_ENTITY = /&(?:mdash|#8212|#x2014);/gi;
+const EM_DASH_ENTITY = /&(?:mdash|#0*8212|#x0*2014);/gi;
 
 // Fixtures and generated output are not product copy.
 const SKIPPED_ROOTS = ["test/", "generated/"];
@@ -92,12 +92,15 @@ const LEGACY_EM_DASH_COPY = new Map<string, number>([
   ["components/evals/explore-cases-list.tsx", 1],
   ["components/evals/export-traces-modal.tsx", 1],
   ["components/evals/goal-completion-card.tsx", 2],
-  ["components/evals/goal-completion-presentation.tsx", 4],
+  ["components/evals/goal-completion-presentation.tsx", 5],
+  ["components/evals/harness-system-tools.ts", 1],
   ["components/evals/helpers.ts", 2],
   ["components/evals/import-evidence-card.tsx", 1],
   ["components/evals/judge-gate-panel.tsx", 1],
   ["components/evals/judge-rubric-editor.tsx", 2],
   ["components/evals/judges-section.tsx", 2],
+  ["components/evals/live-trace-raw-empty.tsx", 1],
+  ["components/evals/live-trace-timeline-empty.tsx", 1],
   ["components/evals/monitoring-tab.tsx", 3],
   ["components/evals/pinned-render-check-card.tsx", 1],
   ["components/evals/preview/expected-conversation.tsx", 1],
@@ -199,6 +202,7 @@ const LEGACY_EM_DASH_COPY = new Map<string, number>([
   ["components/project-environments/ProjectEnvironmentsRoute.tsx", 3],
   ["components/project/ProjectSecretsSection.tsx", 5],
   ["components/PromptsTab.tsx", 4],
+  ["components/registry/DirectoryDetailDialog.tsx", 1],
   ["components/registry/OrgRegistryRemoveDialog.tsx", 1],
   ["components/registry/OrgRegistryServerDialog.tsx", 1],
   ["components/RegistryTab.tsx", 7],
@@ -343,6 +347,11 @@ function mayCarryEmDash(source: string): boolean {
 function copyText(node: ts.Node): string | null {
   switch (node.kind) {
     case ts.SyntaxKind.StringLiteral:
+      // An attribute value is the one string literal JSX decodes, and the AST
+      // hands it back raw. Everywhere else the entity is just text.
+      return ts.isJsxAttribute(node.parent)
+        ? (node as ts.StringLiteral).text.replace(EM_DASH_ENTITY, EM_DASH)
+        : (node as ts.StringLiteral).text;
     case ts.SyntaxKind.NoSubstitutionTemplateLiteral:
     case ts.SyntaxKind.TemplateHead:
     case ts.SyntaxKind.TemplateMiddle:
@@ -356,8 +365,9 @@ function copyText(node: ts.Node): string | null {
 }
 
 function isEmptyValuePlaceholder(node: ts.Node, text: string): boolean {
-  if (text.trim() !== EM_DASH) return false;
   if (node.kind === ts.SyntaxKind.JsxText) {
+    // JSX text carries the surrounding indentation, so it has to be trimmed.
+    if (text.trim() !== EM_DASH) return false;
     const siblings = (node.parent as ts.JsxElement | ts.JsxFragment).children;
     // A JSX comment parses as an expression with nothing in it, and interpolates
     // no value, so it leaves a lone dash a placeholder.
@@ -365,6 +375,9 @@ function isEmptyValuePlaceholder(node: ts.Node, text: string): boolean {
       (child) => ts.isJsxExpression(child) && child.expression !== undefined,
     );
   }
+  // A quoted dash is padded only to sit between two things, as `{" — "}` and
+  // `join(" — ")` do, and that is a separator inside a sentence.
+  if (text !== EM_DASH) return false;
   // A template chunk always sits next to an interpolation.
   return (
     node.kind === ts.SyntaxKind.StringLiteral ||
