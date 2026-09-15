@@ -72,8 +72,8 @@ import { sanitizeForConvexTransport } from "../../services/evals/convex-sanitize
 import type { BenchmarkWriteGuard } from "../../services/evals/artifact-ledger.js";
 import {
   environmentEffectiveServerIds,
-  environmentServerIds,
   environmentServerNames,
+  environmentServerRefsForManager,
   resolveEnvironmentForLaunch,
   type ResolvedEnvironmentForLaunch,
 } from "../../services/environments/resolve.js";
@@ -2371,7 +2371,9 @@ export async function prepareEvalRun(
   }
 
   const resolvedServerIds = resolveServerIdsOrThrow(
-    environmentLaunch ? environmentServerIds(environmentLaunch) : serverIds,
+    environmentLaunch
+      ? environmentServerRefsForManager(environmentLaunch, clientManager)
+      : serverIds,
     clientManager,
   );
   const persistedServerRefs =
