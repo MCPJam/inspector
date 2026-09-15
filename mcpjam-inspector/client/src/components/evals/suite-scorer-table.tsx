@@ -328,7 +328,7 @@ export function SuiteScorerTable({
             <div className="space-y-1">
               <div className="flex items-center gap-1.5">
                 <h3 className="text-lg font-semibold tracking-tight text-foreground">
-                  Assertions
+                  Test Suite Evaluators
                 </h3>
                 <GlobalGatesSectionInfoHint />
               </div>
