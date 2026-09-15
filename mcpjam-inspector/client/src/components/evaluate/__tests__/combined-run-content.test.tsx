@@ -114,6 +114,23 @@ beforeEach(() => {
 });
 
 describe("combined run report", () => {
+  it("narrows client and model choices by the selected case status", async () => {
+    const user = userEvent.setup();
+    render(<CombinedRunContent {...props} />);
+    await user.click(await screen.findByRole("combobox", { name: "Filter by status" }));
+    await user.click(screen.getByRole("option", { name: "Passed", exact: true }));
+    await user.click(screen.getByRole("combobox", { name: "Filter by client" }));
+    expect(screen.getByRole("option", { name: "Cursor", exact: true })).toBeVisible();
+    expect(screen.queryByRole("option", { name: "ChatGPT", exact: true })).toBeNull();
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("combobox", { name: "Filter by model" }));
+    expect(screen.queryByRole("option", { name: "gpt-5.1", exact: true })).toBeNull();
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Clear filters" }));
+    await user.click(screen.getByRole("combobox", { name: "Filter by client" }));
+    expect(screen.getByRole("option", { name: "ChatGPT", exact: true })).toBeVisible();
+  });
+
   it("opens all pairings from any member and filters metrics and columns without changing reports", async () => {
     const user = userEvent.setup();
     render(

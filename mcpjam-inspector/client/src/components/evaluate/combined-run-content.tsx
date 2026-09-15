@@ -1,3 +1,7 @@
+import {
+  dependentFilterOptions,
+  selectedFilter,
+} from "../evals/filter-options";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
   EvalRunDecisionDiagnostic,
@@ -16,7 +20,7 @@ import {
 } from "../evals/eval-list-filter";
 import { useProjectRunHistory } from "../evals/use-project-run-history";
 import type { EvalSuiteRun, EvalIteration } from "../evals/types";
-import { buildRunResultsMatrix } from "./run-results-matrix-model";
+import { buildRunResultsMatrix, resultCounts } from "./run-results-matrix-model";
 import { RunResultsMatrix } from "./run-results-matrix";
 import {
   buildRunVerdictHero,
@@ -58,6 +62,10 @@ export function CombinedRunContent({
   );
   const [client, setClient] = useState(ALL_EVAL_FILTER_VALUES);
   const [model, setModel] = useState(ALL_EVAL_FILTER_VALUES);
+  const [matrixFilters, setMatrixFilters] = useState({
+    search: "",
+    status: ALL_EVAL_FILTER_VALUES,
+  });
   const [reports, setReports] = useState<Map<string, MemberReport>>(new Map());
   const record = useCallback((id: string, report: MemberReport) => {
     setReports((previous) => new Map(previous).set(id, report));
@@ -131,12 +139,38 @@ export function CombinedRunContent({
   const clearPairingFilters = () => {
     setClient(ALL_EVAL_FILTER_VALUES);
     setModel(ALL_EVAL_FILTER_VALUES);
+    setMatrixFilters({ search: "", status: ALL_EVAL_FILTER_VALUES });
   };
+  const optionTargets = matrix.targets.filter(
+    (target) =>
+      (!matrixFilters.search &&
+        matrixFilters.status === ALL_EVAL_FILTER_VALUES) ||
+      matrix.rows.some(
+        (row) =>
+          (target.cells.get(row.key)?.length ?? 0) > 0 &&
+          row.title.toLowerCase().includes(matrixFilters.search) &&
+          (matrixFilters.status === ALL_EVAL_FILTER_VALUES ||
+            resultCounts(target.cells.get(row.key) ?? [])[
+              matrixFilters.status as
+                "passed" | "failed" | "pending" | "cancelled"
+            ] > 0),
+      ),
+  );
+  const options = dependentFilterOptions(optionTargets, {
+    client: {
+      selected: selectedFilter(client),
+      values: (target) => [target.client],
+    },
+    model: {
+      selected: selectedFilter(model),
+      values: (target) => [target.modelId],
+    },
+  });
   const pairingFilterProps = {
     client,
     model,
-    clientOptions: [...new Set(matrix.targets.map((target) => target.client))],
-    modelOptions: [...new Set(matrix.targets.map((target) => target.modelId))],
+    clientOptions: options.client,
+    modelOptions: options.model,
     isFiltered,
     onClientChange: setClient,
     onModelChange: setModel,
@@ -199,6 +233,7 @@ export function CombinedRunContent({
               toolbarExtra={<PairingFilters {...pairingFilterProps} />}
               extraFiltersActive={isFiltered}
               onClearExtraFilters={clearPairingFilters}
+              onFilterChange={setMatrixFilters}
             />
           </div>
         </>

@@ -15,6 +15,7 @@ import {
   type GenerateCasesConfig,
 } from "@/lib/evals/eval-generation-config";
 import { EvalGeneratedDrafts } from "./eval-generated-drafts";
+import { describeMCPJamLimitMessage } from "@/lib/mcpjam-limit";
 
 export function EvalGenerationWorkspace({
   projectId,
@@ -90,6 +91,11 @@ export function EvalGenerationWorkspace({
   }, [nextDraftId]);
 
   const error = startError || generation?.error;
+  // The limit dialog already opened on the refusal; the inline line only has
+  // to say why generation stopped, not echo the raw JSON body.
+  const errorText = error
+    ? (describeMCPJamLimitMessage(error) ?? error)
+    : undefined;
   const running = generation?.status === "running" || (!generation && !error);
   const revealing = Boolean(nextDraftId);
   const busy = running || revealing;
@@ -164,7 +170,7 @@ export function EvalGenerationWorkspace({
           <div className="space-y-3">
             {(startError || !generation?.drafts.length) && (
               <p role="alert" className="text-sm text-destructive">
-                {error}
+                {errorText}
               </p>
             )}
             <Button variant="outline" size="sm" onClick={start} disabled={busy}>

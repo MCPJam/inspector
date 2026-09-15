@@ -236,6 +236,7 @@ export function RunResultsMatrix({
   toolbarExtra,
   extraFiltersActive = false,
   onClearExtraFilters,
+  onFilterChange,
   onEditCase,
   onEditEvaluator,
 }: {
@@ -250,6 +251,7 @@ export function RunResultsMatrix({
   toolbarExtra?: ReactNode;
   extraFiltersActive?: boolean;
   onClearExtraFilters?: () => void;
+  onFilterChange?: (filters: { search: string; status: string }) => void;
   onEditCase?: (testCaseId: string) => void;
   onEditEvaluator?: (testCaseId: string) => void;
 }) {
@@ -277,15 +279,27 @@ export function RunResultsMatrix({
   const counts = resultCounts(
     data.targets.flatMap((target) => target.iterations),
   );
-  const statusOptions = (
-    ["failed", "passed", "pending", "cancelled"] as const
-  ).filter((value) =>
-    value === "pending"
-      ? showPending
-      : value === "cancelled"
-        ? counts.cancelled > 0
-        : true,
-  );
+  const query = search.trim().toLowerCase();
+  const statusOptions = (["failed", "passed", "pending", "cancelled"] as const)
+    .filter((value) =>
+      value === "pending"
+        ? showPending
+        : value === "cancelled"
+          ? counts.cancelled > 0
+          : true,
+    )
+    .filter(
+      (value) =>
+        value === status ||
+        data.rows.some(
+          (row) =>
+            row.title.toLowerCase().includes(query) &&
+            data.targets.some(
+              (target) =>
+                resultCounts(target.cells.get(row.key) ?? [])[value] > 0,
+            ),
+        ),
+    );
   useEffect(() => {
     if (status === "pending" && !showPending) setStatus(ALL_EVAL_FILTER_VALUES);
     if (status === "cancelled" && counts.cancelled === 0)
@@ -304,7 +318,9 @@ export function RunResultsMatrix({
       : status === "cancelled" && counts.cancelled === 0
         ? ALL_EVAL_FILTER_VALUES
         : status;
-  const query = search.trim().toLowerCase();
+  useEffect(() => {
+    onFilterChange?.({ search: query, status: activeStatus });
+  }, [query, activeStatus, onFilterChange]);
   const rows = data.rows.filter(
     (row) =>
       row.title.toLowerCase().includes(query) &&
@@ -459,8 +475,7 @@ export function RunResultsMatrix({
                   </div>
                   <div className="mt-3 flex items-baseline gap-1">
                     <span className="text-lg font-semibold tabular-nums">
-                      {target.counts.passed}
-                      /{target.iterations.length}
+                      {target.counts.passed}/{target.iterations.length}
                     </span>
                     <span className="text-[10px] text-muted-foreground">
                       iters passed
@@ -923,9 +938,7 @@ function IterationDrawer({
                 />
                 {onEditEvaluator && (
                   <div className="mt-4 flex justify-end">
-                    <Button onClick={onEditEvaluator}>
-                      Edit evaluators
-                    </Button>
+                    <Button onClick={onEditEvaluator}>Edit evaluators</Button>
                   </div>
                 )}
               </>

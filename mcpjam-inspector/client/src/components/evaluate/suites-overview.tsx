@@ -1,4 +1,8 @@
 import {
+  dependentFilterOptions,
+  selectedFilter,
+} from "../evals/filter-options";
+import {
   EvalListFilter,
   ALL_EVAL_FILTER_VALUES,
 } from "../evals/eval-list-filter";
@@ -126,7 +130,10 @@ function OverviewBody({
   // model pass alone is a scan of `environments` for every environment id.
   const resolved = useMemo(() => {
     const environmentsById = new Map(
-      environments.map((environment) => [environment.environmentId, environment]),
+      environments.map((environment) => [
+        environment.environmentId,
+        environment,
+      ]),
     );
     const entries = overview.map(({ suite }) => {
       const ids = suite.environmentIds?.length
@@ -175,21 +182,26 @@ function OverviewBody({
     resolved.get(suite._id)?.clients ?? [];
   const modelsForSuite = (suite: EvalSuite) =>
     resolved.get(suite._id)?.models ?? [];
-  const modelOptions = [
-    ...new Set(
-      [...resolved.values()]
-        .flatMap((entry) => entry.models)
-        .filter((model): model is string => Boolean(model)),
-    ),
-  ].sort();
-  const clientOptions = [
-    ...new Set([...resolved.values()].flatMap((entry) => entry.clients)),
-  ].sort();
-  const serverOptions = [
-    ...new Set(
-      overview.flatMap((entry) => getEffectiveSuiteServers(entry.suite)),
-    ),
-  ].sort();
+  const options = dependentFilterOptions(overview, {
+    client: {
+      selected: selectedFilter(clientFilter),
+      values: ({ suite }) => clientsForSuite(suite),
+    },
+    model: {
+      selected: selectedFilter(modelFilter),
+      values: ({ suite }) =>
+        modelsForSuite(suite).filter((model): model is string =>
+          Boolean(model),
+        ),
+    },
+    server: {
+      selected: selectedFilter(serverFilter),
+      values: ({ suite }) => getEffectiveSuiteServers(suite),
+    },
+  });
+  const clientOptions = options.client;
+  const modelOptions = options.model;
+  const serverOptions = options.server;
   const isFiltering =
     modelFilter !== ALL_EVAL_FILTER_VALUES ||
     clientFilter !== ALL_EVAL_FILTER_VALUES ||
