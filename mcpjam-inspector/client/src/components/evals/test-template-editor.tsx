@@ -4,7 +4,7 @@ import {
   readEvalToolMetadata,
   useEvalToolMetadata,
 } from "@/lib/mcpjam-agent/eval-tool-metadata";
-import { DEFAULTS } from "./constants";
+import { DEFAULTS, EVAL_DESTRUCTIVE_BUTTON_CLASS } from "./constants";
 import {
   caseViewModel,
   capturedCaseChanged,
@@ -34,10 +34,19 @@ import {
   RotateCw,
   Save,
   Square,
+  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { listEvalTools, streamEvalTestCase } from "@/lib/apis/evals-api";
 import { Button } from "@mcpjam/design-system/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@mcpjam/design-system/dialog";
 import {
   Tooltip,
   TooltipContent,
@@ -313,6 +322,12 @@ interface TestTemplate {
 interface TestTemplateEditorProps {
   suiteId: string;
   selectedTestCaseId: string;
+  /**
+   * Delete this case and leave the editor. The caller owns both halves —
+   * the mutation is the suite list's batch delete, and only the caller knows
+   * where the editor should land afterwards. Absent hides the header trash.
+   */
+  onDeleteCase?: (testCaseId: string) => Promise<void>;
   connectedServerNames: Set<string>;
   projectId: string | null;
   /**
@@ -960,6 +975,7 @@ function CaseEditorTabs({
 export function TestTemplateEditor({
   suiteId,
   selectedTestCaseId,
+  onDeleteCase,
   connectedServerNames,
   projectId,
   availableModels,
@@ -1166,6 +1182,23 @@ export function TestTemplateEditor({
   // locally and only persist on Save. See ./draft-test-case.ts.
   const draftKind = parseDraftTestCaseId(selectedTestCaseId);
   const isDraft = draftKind !== null;
+  const [deleteCaseOpen, setDeleteCaseOpen] = useState(false);
+  const [isDeletingCase, setIsDeletingCase] = useState(false);
+
+  const confirmDeleteCase = async () => {
+    if (!onDeleteCase || isDeletingCase) return;
+    setIsDeletingCase(true);
+    try {
+      await onDeleteCase(selectedTestCaseId);
+      toast.success("Test case deleted");
+      setDeleteCaseOpen(false);
+    } catch (error) {
+      console.error("Failed to delete test case:", error);
+      toast.error("Failed to delete test case");
+    } finally {
+      setIsDeletingCase(false);
+    }
+  };
 
   // Same readiness gate the suite list upstream uses: a signed-in actor must
   // wait for its `users` row, while an actor that will never have one (a
@@ -4303,6 +4336,26 @@ export function TestTemplateEditor({
                     </TooltipContent>
                   </Tooltip>
                 )}
+                {onDeleteCase && !isDraft && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 px-2 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                        aria-label="Delete test case"
+                        data-testid="case-header-delete"
+                        onClick={() => setDeleteCaseOpen(true)}
+                      >
+                        <Trash2 className="size-3.5" aria-hidden />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent variant="muted" side="top" sideOffset={6}>
+                      Delete test case
+                    </TooltipContent>
+                  </Tooltip>
+                )}
                 {useWorkspace &&
                   useSpine &&
                   workspaceLeftView.kind !== "inspecting" && (
@@ -5657,6 +5710,42 @@ export function TestTemplateEditor({
           </div>
         </div>
       )}
+      <Dialog
+        open={deleteCaseOpen}
+        onOpenChange={(open) => {
+          if (!open && !isDeletingCase) setDeleteCaseOpen(false);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Trash2 className="size-5 text-destructive" aria-hidden />
+              Delete test case
+            </DialogTitle>
+            <DialogDescription>
+              Delete “{editForm?.title || "Untitled test case"}”? This cannot be
+              undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setDeleteCaseOpen(false)}
+              disabled={isDeletingCase}
+            >
+              Cancel
+            </Button>
+            <Button
+              className={EVAL_DESTRUCTIVE_BUTTON_CLASS}
+              data-testid="case-header-delete-confirm"
+              onClick={confirmDeleteCase}
+              disabled={isDeletingCase}
+            >
+              {isDeletingCase ? "Deleting…" : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

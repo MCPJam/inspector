@@ -1227,7 +1227,17 @@ function EvaluateTabContent({
           ? runBreadcrumbLabel
           : null;
 
+  /**
+   * Case generation replaces the suite page WITHOUT changing the route, so
+   * the breadcrumb has to be told. `exit` is how its suite crumb gets back:
+   * navigating to the route we are already on would change nothing.
+   */
+  const [generatingCases, setGeneratingCases] = useState<{
+    exit: () => void;
+  } | null>(null);
+
   const renderPlaygroundBreadcrumb = () => {
+    if (generatingCases) return "Generate test cases";
     if (!hasDetailRoute) return null;
     return isNestedDetail ? nestedPageLabel : suiteBreadcrumbLabel;
   };
@@ -1501,6 +1511,7 @@ function EvaluateTabContent({
           evaluateDecisionSummary={decisionSummaryEnabled}
           evaluateCaseEditor
           evaluateObserveFirst={observeFirstEnabled}
+          onGeneratingChange={setGeneratingCases}
           evalRunsDisabledReason={evalRunsDisabledReason}
           onDeleteTestCasesBatch={handleDeleteTestCasesBatch}
           onRunTestCase={(testCase, opts) => {
@@ -1588,13 +1599,18 @@ function EvaluateTabContent({
                     onClick: () =>
                       handleBackToEvalServer(route.fromEvalServer!),
                   }
-                : isNestedDetail && suiteBreadcrumbLabel && selectedSuiteId
+                : generatingCases && suiteBreadcrumbLabel
                   ? {
                       label: suiteBreadcrumbLabel,
-                      onClick: () =>
-                        playgroundNavigation.toSuiteOverview(selectedSuiteId),
+                      onClick: generatingCases.exit,
                     }
-                  : undefined
+                  : isNestedDetail && suiteBreadcrumbLabel && selectedSuiteId
+                    ? {
+                        label: suiteBreadcrumbLabel,
+                        onClick: () =>
+                          playgroundNavigation.toSuiteOverview(selectedSuiteId),
+                      }
+                    : undefined
             }
           >
             {route.type === "suite-edit" && route.fromCaseChecks
