@@ -361,7 +361,7 @@ Fields specific to `ReportEvalResultsInput` (everything else comes from [`MCPJam
 | `project` | `string` | No | Project id results are filed under (falls back to `MCPJAM_PROJECT_ID`, then the org's Default project) |
 | `suiteName` | `string` | No | Suite name for the run |
 | `suiteDescription` | `string` | No | Description of the suite |
-| `serverNames` | `string[]` | No | MCP server names being tested |
+| `serverNames` | `string[]` | No | MCP server names to associate with the run. When omitted, the SDK infers names from the server IDs in the resolved replay configs. Pass `[]` to opt out of inference and record no server names. |
 | `serverReplayConfigs` | `MCPServerReplayConfig[]` | No | Advanced override for replay credential capture |
 | `notes` | `string` | No | Free-form notes |
 | `passCriteria` | `{ minimumPassRate: number }` | No | Pass threshold (0-100) |
