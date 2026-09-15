@@ -296,6 +296,19 @@ function CompactPersonaCard({
 }
 
 /**
+ * The character just typed, found by comparing the field against what it
+ * showed. `selectionStart` would say it directly, but reading it on a number
+ * input throws, so the caret is inferred from where the two texts diverge.
+ * Null when the text did not grow by exactly one character.
+ */
+function insertedCharacter(shown: string, typed: string): string | null {
+  if (typed.length !== shown.length + 1) return null;
+  let index = 0;
+  while (index < shown.length && shown[index] === typed[index]) index++;
+  return typed[index];
+}
+
+/**
  * Iterations for one persona, and what they cost.
  *
  * Sits on the collapsed card next to the persona it sizes, the way Remove
@@ -358,15 +371,15 @@ function PersonaIterationsRow({
           onFocus={(event) => event.target.select()}
           onChange={(event) => {
             const typed = event.target.value;
-            // A digit pressed next to the one already there reads as 12, not
-            // 2. The range ends below ten, so the digit just typed is the
-            // count the user meant and the one before it is the stale one.
-            const entered =
-              typed.length > 1 && Number(typed) > MAX_SWARM_ITERATIONS
-                ? typed.slice(-1)
-                : typed;
-            const count = Number(entered);
+            const shown = String(draft ?? iterations);
+            const grew = typed.length > shown.length;
+            // A digit pressed beside the one already there reads as 12, not 2.
+            // The range ends below ten, so a digit added to a field that
+            // already holds one is the count meant and the rest is stale.
+            const entered = grew ? insertedCharacter(shown, typed) : typed;
+            const count = entered === null ? Number.NaN : Number(entered);
             if (
+              entered !== null &&
               entered !== "" &&
               Number.isInteger(count) &&
               count >= MIN_SWARM_ITERATIONS &&
@@ -375,7 +388,10 @@ function PersonaIterationsRow({
               commit(count);
               return;
             }
-            setDraft(entered);
+            // Only a shrinking field holds text that is not a count: an empty
+            // box on the way to one. Anything else is a keystroke the control
+            // cannot take, and showing it would display a forbidden value.
+            setDraft(typed.length < shown.length ? typed : shown);
           }}
           onBlur={() => {
             if (draft === null) return;

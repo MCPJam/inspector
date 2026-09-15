@@ -2293,6 +2293,45 @@ describe("SwarmsTab — Describe step (Production Redesign)", () => {
       screen.getByTestId("new-swarm-launch-session-estimate"),
     ).toHaveTextContent(/4 conversations/i);
   });
+
+  it("takes the digit typed before the current one, not the one it displaced", async () => {
+    // The caret does not have to sit at the end: Home then "2" over a 3 grows
+    // the text to 23, where keeping the last character would drop the 2 and
+    // silently leave the old count standing.
+    const user = userEvent.setup();
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+
+    const counter = screen.getAllByTestId("new-swarm-persona-iterations")[0];
+    await user.click(counter);
+    await user.keyboard("3");
+    fireEvent.change(counter, { target: { value: "23" } });
+
+    expect(counter).toHaveValue(2);
+    expect(
+      screen.getByTestId("new-swarm-launch-session-estimate"),
+    ).toHaveTextContent(/3 conversations/i);
+  });
+
+  it("refuses a digit that no count can be, instead of showing it", async () => {
+    // "1" then "0" is 10, out of range. The 0 must not sit in the field as
+    // though the control accepted zero iterations.
+    const user = userEvent.setup();
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+
+    const counter = screen.getAllByTestId("new-swarm-persona-iterations")[0];
+    await user.click(counter);
+    await user.keyboard("0");
+
+    expect(counter).toHaveValue(1);
+    fireEvent.blur(counter);
+    expect(counter).toHaveValue(1);
+  });
   it("moves only the persona whose counter was touched", async () => {
     // The whole reason the control left the footer: two personas can carry
     // different goal counts, so one number cannot size both.
