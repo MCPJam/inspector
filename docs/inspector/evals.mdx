@@ -99,9 +99,15 @@ A case can hold steps this form has no section for — a second prompt, or a pin
 
 **Right column — the selected trial**
 
-The trial opens on its **Scorecard**: the same scorers the left column lists, in the same order, each with what happened to it on this trial. A row shows its result, its provenance, its role, and — where there is one — the reason, which for a step is the message the runner recorded.
+The trial opens on its **Scorecard**: the same scorers the left column lists, in the same order, each with what happened to it on this trial. Each row is an expanded report showing:
 
-The summary line counts **required rows only**: "2 of 2 required passed · 1 advisory". An advisory miss is shown on its row and never counted as a failure, because it did not fail the trial. A scorer with no result reads **Not measured** rather than passing by default. The verdict word itself stays in the header above.
+- **Looks for** — what the evaluator checks.
+- **Observed** — what the runner actually saw on this trial.
+- **Why it passed / failed** — the evaluator's reason, with blind-review masking applied until you submit your label for judge-decided rows.
+
+A row also shows its result, its provenance, and its role. A scorer with no result reads **Not measured** rather than passing by default. The verdict word itself stays in the header above.
+
+The summary line counts **required rows only**: "2 of 2 required passed · 1 advisory". An advisory miss is shown on its row and never counted as a failure, because it did not fail the trial.
 
 The judge's row hosts the judge panel, so labelling a trial works where the judge sits. Under the rows, **Score rows** expands the raw score contract, including any row the backend could not join.
 
