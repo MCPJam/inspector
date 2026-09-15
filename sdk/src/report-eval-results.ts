@@ -19,6 +19,7 @@ import type {
 } from "./eval-reporting-types.js";
 import { EvalReportingError } from "./errors.js";
 import { buildAppPermalink } from "./platform/permalinks.js";
+import { writeGithubActionReceipt } from "./github-action-receipt.js";
 import {
   isEvalRunVerdict,
   evalVerdictDecisionSchema,
@@ -111,8 +112,8 @@ export function projectRunVerdict(
     result: isEvalRunVerdict(run.result)
       ? run.result
       : run.result === "pending"
-      ? "pending"
-      : "failed",
+        ? "pending"
+        : "failed",
     ...(run.verdictPolicyVersion !== undefined
       ? {
           verdictPolicyVersion:
@@ -789,8 +790,8 @@ async function requestWithRetry<T>(
       typeof value.error === "string"
         ? value.error
         : typeof value.message === "string"
-        ? value.message
-        : "Reporting request was rejected"
+          ? value.message
+          : "Reporting request was rejected"
     );
   try {
     return await reportingRequest(
@@ -1340,18 +1341,22 @@ function resultsWithFrozenPolicySpelling(
   let changed = false;
   const out = results.map((result) => {
     const metadata = result.metadata as
-      | { evaluationConfig?: { definitions?: unknown } }
-      | undefined;
+      { evaluationConfig?: { definitions?: unknown } } | undefined;
     const definitions = metadata?.evaluationConfig?.definitions;
     if (!Array.isArray(definitions)) return result;
     // `definitionsForDeployment` with no advertised capability IS the freeze:
     // one function decides the legacy spelling for both paths, so they cannot
     // drift apart.
-    const frozen = definitionsForDeployment(
-      definitions as { role: ScorerRole }[],
-      undefined
+    const frozen = definitions.map((definition) =>
+      definition == null
+        ? definition
+        : definitionsForDeployment(
+            [definition as { role: ScorerRole }],
+            undefined
+          )[0]
     );
-    if (frozen === definitions) return result;
+    if (frozen.every((definition, index) => definition === definitions[index]))
+      return result;
     changed = true;
     return {
       ...result,
@@ -1378,9 +1383,7 @@ export async function requireReportingCapabilities(
   // resolver caches a failed probe as `null` and only rethrows an explicit
   // upload cancellation.
   const capabilities = (await resolveTargetCapabilities(config)) as
-    | { evalsRunMetadata?: number }
-    | null
-    | undefined;
+    { evalsRunMetadata?: number } | null | undefined;
   if (capabilities?.evalsRunMetadata === 1) return;
   omitRunMetadata(input);
   addReportingWarning(config, {
@@ -1402,7 +1405,9 @@ async function finishReportedRun(
       input.externalRunId!,
       input.runEvaluations
     );
-  return attachReportingWarnings(config, report);
+  const completed = attachReportingWarnings(config, report);
+  await writeGithubActionReceipt(config, input, completed);
+  return completed;
 }
 
 export async function reportCaseRunEvaluations(
