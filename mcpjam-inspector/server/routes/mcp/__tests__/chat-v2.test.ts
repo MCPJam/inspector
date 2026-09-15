@@ -1597,6 +1597,18 @@ describe("POST /api/mcp/chat-v2", () => {
           const url = String(input);
           if (url === "https://test-convex.example.com/stream") {
             return createSseResponse([
+              // A COMPLETED turn needs CONTENT. A finish-only stream is the
+              // EMPTY-RESPONSE shape, which the engine now routes to its
+              // empty-step failure branch (`describeEmptyStepFailure`) rather
+              // than settling clean — so these assertions, which describe what
+              // a finished turn persists, were staged on a turn that never
+              // finished. (This suite builds the route without
+              // `requestLogContextMiddleware`, so that branch's failure report
+              // additionally throws here; production mounts it on `/api/*` and
+              // persists the turn regardless. The fixture is wrong either way.)
+              { type: "text-start", id: "text-1" },
+              { type: "text-delta", id: "text-1", delta: "Hello" },
+              { type: "text-end", id: "text-1" },
               {
                 type: "finish",
                 finishReason: "stop",
@@ -1667,8 +1679,12 @@ describe("POST /api/mcp/chat-v2", () => {
           sourceType: "direct",
           directVisibility: "project",
         });
+        // The reply is part of what "completed" means: the old fixture
+        // streamed nothing back, so this asserted a persisted conversation
+        // with a question and no answer.
         expect(body.sessionMessages).toEqual([
           { role: "user", content: "Hello" },
+          { role: "assistant", content: [{ type: "text", text: "Hello" }] },
         ]);
         // Phase 3: hostStyle defaults to 'claude' when the client
         // doesn't supply one (no more legacy 'direct' on the wire).
@@ -1702,6 +1718,10 @@ describe("POST /api/mcp/chat-v2", () => {
           const url = String(input);
           if (url === "https://test-convex.example.com/stream") {
             return createSseResponse([
+              // Content, so this is a COMPLETED turn — see above.
+              { type: "text-start", id: "text-1" },
+              { type: "text-delta", id: "text-1", delta: "Hello" },
+              { type: "text-end", id: "text-1" },
               {
                 type: "finish",
                 finishReason: "stop",
@@ -1756,6 +1776,10 @@ describe("POST /api/mcp/chat-v2", () => {
           const url = String(input);
           if (url === "https://test-convex.example.com/stream") {
             return createSseResponse([
+              // Content, so this is a COMPLETED turn — see above.
+              { type: "text-start", id: "text-1" },
+              { type: "text-delta", id: "text-1", delta: "Hello" },
+              { type: "text-end", id: "text-1" },
               {
                 type: "finish",
                 finishReason: "stop",
@@ -1808,6 +1832,10 @@ describe("POST /api/mcp/chat-v2", () => {
           const url = String(input);
           if (url === "https://test-convex.example.com/stream") {
             return createSseResponse([
+              // Content, so this is a COMPLETED turn — see above.
+              { type: "text-start", id: "text-1" },
+              { type: "text-delta", id: "text-1", delta: "Hello" },
+              { type: "text-end", id: "text-1" },
               {
                 type: "finish",
                 finishReason: "stop",
