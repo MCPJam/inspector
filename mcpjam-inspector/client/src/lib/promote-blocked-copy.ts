@@ -12,6 +12,27 @@ const PROMOTION_BLOCKED_COPY: Record<string, string> = {
 };
 
 /**
+ * Our copy for a refusal the backend coded, or `null` when it did not code one.
+ *
+ * Split out from `getPromoteBlockedMessage` so BOTH halves of the promote
+ * dialog can reach it: the load path wants a string it can always render,
+ * while the submit path has to try billing copy before falling back. The same
+ * refusal must read the same either way (BB-247).
+ */
+export function getPromotionBlockedCopy(error: unknown): string | null {
+  const data = readConvexErrorPayload(error);
+  if (!data || typeof data !== "object") return null;
+  const code = "code" in data ? (data as { code: unknown }).code : null;
+  if (typeof code !== "string") return null;
+  // `hasOwn`, not truthiness: a bare object literal inherits `constructor`,
+  // `toString` and friends, so `PROMOTION_BLOCKED_COPY["constructor"]` is a
+  // truthy *function* under a signature that promises a string. Unreachable
+  // while codes come from the backend's `as const`, but free to close.
+  if (!Object.hasOwn(PROMOTION_BLOCKED_COPY, code)) return null;
+  return PROMOTION_BLOCKED_COPY[code];
+}
+
+/**
  * Human copy for a refused promote.
  *
  * Chosen by CODE, never by the thrown message. A plain `Error` thrown inside a
@@ -30,25 +51,26 @@ const PROMOTION_BLOCKED_COPY: Record<string, string> = {
  */
 export function getPromoteBlockedMessage(
   error: unknown,
-  fallback: string
+  fallback: string,
 ): string {
-  const data =
-    error && typeof error === "object" && "data" in error
-      ? (error as { data: unknown }).data
-      : null;
+  const known = getPromotionBlockedCopy(error);
+  if (known) return known;
+
+  const data = readConvexErrorPayload(error);
   if (typeof data === "string") {
     return data.trim() ? data.slice(0, 400) : fallback;
   }
-  if (data && typeof data === "object") {
-    const code = "code" in data ? (data as { code: unknown }).code : null;
-    if (typeof code === "string" && PROMOTION_BLOCKED_COPY[code]) {
-      return PROMOTION_BLOCKED_COPY[code];
-    }
-    const message =
-      "message" in data ? (data as { message: unknown }).message : null;
+  if (data && typeof data === "object" && "message" in data) {
+    const message = (data as { message: unknown }).message;
     if (typeof message === "string" && message.trim()) {
       return message.slice(0, 400);
     }
   }
   return fallback;
+}
+
+function readConvexErrorPayload(error: unknown): unknown {
+  return error && typeof error === "object" && "data" in error
+    ? (error as { data: unknown }).data
+    : null;
 }

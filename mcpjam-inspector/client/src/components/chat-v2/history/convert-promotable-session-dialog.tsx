@@ -2,6 +2,7 @@ import { useAction, useConvexAuth } from "convex/react";
 import { useEffect, useMemo, useState } from "react";
 import { SWARM_ACTIONS, type SwarmSessionPromoteDetail } from "@/lib/swarm-api";
 import { getPromoteBlockedMessage } from "@/lib/promote-blocked-copy";
+import { reportCaught } from "@/lib/error-reporting";
 import {
   ConvertSessionDialogCore,
   type PromoteSessionDetailState,
@@ -123,6 +124,12 @@ export function ConvertPromotableSessionDialog({
         if (cancelled) {
           return;
         }
+        // Report BEFORE classifying. `getPromoteBlockedMessage` deliberately
+        // refuses to read `Error.message`, so from here on the only copy of an
+        // unexpected fault — its Request ID, its stack — is this `error`
+        // binding. Dropping it means a broken deploy produces no Sentry issue
+        // and no console line, just users saying "it says failed to load".
+        reportCaught(error, { source: "promote-session-detail" });
         // NEVER `error.message` here: a refusal thrown inside the Convex
         // action arrives wrapped in the raw server envelope, and this string
         // is rendered straight into the dialog's alert — which is how a stack

@@ -136,6 +136,7 @@ vi.mock("@/lib/error-reporting", () => ({
 }));
 
 import userEvent from "@testing-library/user-event";
+import { toast } from "@/lib/toast";
 import {
   ConvertSessionDialogCore,
   type PromoteSessionDetailState,
@@ -305,6 +306,38 @@ describe("ConvertSessionDialogCore", () => {
         { namedHostId: "host-first", enabledOptionalServerIds: [] },
       ],
     });
+  });
+
+  /**
+   * The same refusal reaches the user from two places: the load path (the
+   * alert) and this one (a toast). Before BB-247 the toast rendered the
+   * backend's internal sentence wrapped in the Convex envelope, so one refusal
+   * read two different ways depending on which half of the dialog produced it.
+   */
+  it("shows our coded promotion copy when submit is refused, not the envelope", async () => {
+    importAction.mockRejectedValue(
+      Object.assign(
+        new Error(
+          "[CONVEX A(chatSessionPromote:importChatSessionToTestCase)] " +
+            "[Request ID: 0184] Server Error Uncaught Error: Swarm session's " +
+            "run attempt has not completed. at assertSwarmAttemptSucceeded " +
+            "(../convex/chatSessionPromote.ts:462:6)",
+        ),
+        { data: { code: "SWARM_ATTEMPT_NOT_SUCCEEDED" } },
+      ),
+    );
+    renderCore();
+
+    const submit = screen.getByRole("button", { name: "Promote to test case" });
+    await waitFor(() => expect(submit.hasAttribute("disabled")).toBe(false));
+    fireEvent.click(submit);
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledTimes(1));
+    const shown = vi.mocked(toast.error).mock.calls[0][0] as string;
+    expect(shown).toMatch(/did not finish/i);
+    expect(shown).not.toMatch(/Uncaught Error/);
+    expect(shown).not.toMatch(/Request ID/);
+    expect(shown).not.toMatch(/convex\/chatSessionPromote\.ts/);
   });
 
   it("pre-seeds the client attachment from defaultHostId when it names a project host", () => {

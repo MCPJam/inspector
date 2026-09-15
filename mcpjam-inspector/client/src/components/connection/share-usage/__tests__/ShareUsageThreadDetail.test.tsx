@@ -86,6 +86,13 @@ vi.mock("@/hooks/useSharedChatThreads", () => ({
   useSharedChatWidgetSnapshots: () => ({
     snapshots: [],
   }),
+  // Absent from this factory the transcript subtree threw on every test in the
+  // file and rendered the ErrorBoundary fallback instead — green, but not
+  // exercising the tree it claims to. The assertions here sit outside that
+  // boundary, so nothing was wrong, just unwatched.
+  useSharedChatTurnScores: () => ({
+    scores: [],
+  }),
   useSharedChatTurnTraces: () => ({
     traces: mockTurnTracesState.traces,
   }),
@@ -538,6 +545,10 @@ describe("ShareUsageThreadDetail — promote affordance", () => {
       ["failed", /did not finish/i],
       ["rate_limited", /rate limit/i],
       ["running", /still running/i],
+      // What the backend actually sends for an attempt it could not identify
+      // (`chatSessions.ts` returns the literal `null`, never `undefined`), so
+      // this is the real unclaimed-session path rather than a synthetic one.
+      [null, /outcome is unknown/i],
     ])("disables the button on a %s attempt", async (status, copy) => {
       mockThreadState.runAttemptStatus = status;
       const user = userEvent.setup();

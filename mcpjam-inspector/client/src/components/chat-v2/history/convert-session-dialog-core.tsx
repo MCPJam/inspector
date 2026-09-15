@@ -34,6 +34,7 @@ import {
   normalizeServerNames,
 } from "@/components/evals/suite-environment-utils";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import { getPromotionBlockedCopy } from "@/lib/promote-blocked-copy";
 import {
   useProjectServerAttachments,
   useProjectServers,
@@ -740,7 +741,15 @@ function ConvertSessionDialogCoreInner({
       onOpenChange(false);
       onImported({ suiteId: result.suiteId, testCaseId: result.testCaseId });
     } catch (error) {
-      toast.error(getBillingErrorMessage(error, "Failed to promote session"));
+      // A coded promotion refusal reads the same here as it does on load —
+      // otherwise the SAME refusal reaches the user in our words from one half
+      // of this dialog and in the backend's internal sentence from the other.
+      // Billing copy still wins for billing payloads, which carry their own
+      // upgrade wording.
+      toast.error(
+        getPromotionBlockedCopy(error) ??
+          getBillingErrorMessage(error, "Failed to promote session"),
+      );
     } finally {
       setIsSubmitting(false);
     }

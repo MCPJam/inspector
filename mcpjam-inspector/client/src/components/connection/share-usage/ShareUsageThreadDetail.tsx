@@ -324,6 +324,21 @@ interface ShareUsageThreadDetailProps {
  */
 const PROMOTABLE_SOURCE_TYPES = new Set(["swarm", "scenario"]);
 
+/**
+ * One line per page load, not one per session: the skew is a property of the
+ * deployment, so a warning per rendered session would bury it in its own noise.
+ */
+let warnedMissingRunAttemptStatus = false;
+function warnMissingRunAttemptStatusOnce(): void {
+  if (warnedMissingRunAttemptStatus) return;
+  warnedMissingRunAttemptStatus = true;
+  console.warn(
+    "[share-usage] Swarm sessions carry no runAttemptStatus. The backend " +
+      "predates the promote gate, so every swarm session will report an " +
+      "unknown run outcome and promotion is off until it is deployed."
+  );
+}
+
 export function ShareUsageThreadDetail({
   threadId,
   sessionLink,
@@ -589,7 +604,18 @@ export function ShareUsageThreadDetail({
         return "This session's run stopped on a rate limit, so the conversation is incomplete. Only sessions from runs that finished can become test cases.";
       case "failed":
         return "This session's run did not finish, so the conversation is incomplete. Only sessions from runs that finished can become test cases.";
+      case undefined:
+        // The BACKEND is older than this client: a deploy that predates the
+        // field sends no property at all. Blocking is still right, but this is
+        // a deployment problem, not a damaged session, and it hits EVERY swarm
+        // session at once. Without this line the only symptom is a trickle of
+        // one-off "unknown outcome" tickets that each look like bad data.
+        warnMissingRunAttemptStatusOnce();
+        return "This session's run outcome is unknown, so it cannot be promoted to a test case.";
       default:
+        // `null` (an attempt the backend could not identify) and any status
+        // this client has not learned yet. A property of the session, so no
+        // warning.
         return "This session's run outcome is unknown, so it cannot be promoted to a test case.";
     }
   }, [canPromoteThread, thread?.sourceType, thread?.runAttemptStatus]);
@@ -742,7 +768,10 @@ export function ShareUsageThreadDetail({
                  therefore carried three ways: `title` for the mouse, an
                  `aria-describedby` target for assistive tech, and the visible
                  empty-state copy further up for a session with no transcript.
-                 The click handler is what actually makes it inert. */
+                 Inertness comes from never wiring `setPromoteOpen`, not from
+                 any handler. The design system hangs its disabled styling off
+                 the `disabled:` variant, which by definition never matches
+                 here, so the muted look and the dead cursor are spelled out. */
               <span
                 className="inline-flex"
                 data-testid="share-usage-promote-blocked"
@@ -751,12 +780,11 @@ export function ShareUsageThreadDetail({
                   type="button"
                   variant="outline"
                   size="sm"
-                  className="h-8 rounded-lg px-2.5 text-xs opacity-50"
+                  className="h-8 cursor-not-allowed rounded-lg px-2.5 text-xs opacity-50 hover:bg-transparent hover:text-current"
                   data-testid="share-usage-promote-to-test-case"
                   title={promoteBlockedReason}
                   aria-disabled
                   aria-describedby={promoteBlockedReasonId}
-                  onClick={(event) => event.preventDefault()}
                 >
                   Promote to test case
                 </Button>
