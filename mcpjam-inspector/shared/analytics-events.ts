@@ -354,6 +354,19 @@ export const ANALYTICS_EVENTS = {
   onboarding_connect_excalidraw_error: { source: "client" },
   onboarding_connect_excalidraw_success: { source: "client" },
   onboarding_first_run_eligible: { source: "client" },
+  // --- Explicit first-run server-choice funnel ---
+  // These events are emitted only through first-run-onboarding-analytics.ts,
+  // whose narrow typed API accepts enums and counts instead of server objects.
+  // NEVER attach a server name, URL, command, credential, or raw error.
+  first_run_onboarding_entered: { source: "client" },
+  first_run_onboarding_screen_viewed: { source: "client" },
+  first_run_onboarding_server_selected: { source: "client" },
+  first_run_onboarding_connection_started: { source: "client" },
+  first_run_onboarding_connection_succeeded: { source: "client" },
+  first_run_onboarding_connection_failed: { source: "client" },
+  first_run_onboarding_connection_cancelled: { source: "client" },
+  first_run_onboarding_setup_later_clicked: { source: "client" },
+  first_run_onboarding_playground_opened: { source: "client" },
   playground_compare_lead_promoted: { source: "client" },
   playground_left_rail_tab_changed: { source: "client" },
   playground_right_rail_tab_changed: { source: "client" },

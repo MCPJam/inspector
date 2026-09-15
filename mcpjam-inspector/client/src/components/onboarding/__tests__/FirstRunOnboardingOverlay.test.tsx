@@ -8,9 +8,22 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const motionState = vi.hoisted(() => ({ reduced: false }));
+const analyticsState = vi.hoisted(() => ({
+  entered: vi.fn(),
+  connectionFailed: vi.fn(),
+  screenViewed: vi.fn(),
+  setupLater: vi.fn(),
+}));
 
 vi.mock("framer-motion", () => ({
   useReducedMotion: () => motionState.reduced,
+}));
+
+vi.mock("@/lib/first-run-onboarding-analytics", () => ({
+  trackFirstRunConnectionFailed: analyticsState.connectionFailed,
+  trackFirstRunOnboardingEntered: analyticsState.entered,
+  trackFirstRunOnboardingScreenViewed: analyticsState.screenViewed,
+  trackFirstRunSetupLater: analyticsState.setupLater,
 }));
 
 import {
@@ -76,6 +89,10 @@ function renderOverlay(
 afterEach(() => {
   cleanup();
   motionState.reduced = false;
+  analyticsState.entered.mockReset();
+  analyticsState.connectionFailed.mockReset();
+  analyticsState.screenViewed.mockReset();
+  analyticsState.setupLater.mockReset();
   vi.useRealTimers();
 });
 
@@ -92,6 +109,63 @@ describe("FirstRunOnboardingOverlay", () => {
     expect(
       screen.queryByRole("heading", { name: "Welcome to MCPJam" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("tracks entry once and each logical screen transition once", () => {
+    const { rerenderWithConnectionState } = renderOverlay();
+
+    expect(analyticsState.entered).toHaveBeenCalledOnce();
+    expect(analyticsState.entered).toHaveBeenCalledWith("welcome");
+    expect(analyticsState.screenViewed).toHaveBeenLastCalledWith("welcome");
+
+    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
+    expect(analyticsState.screenViewed).toHaveBeenLastCalledWith(
+      "server_choice",
+    );
+
+    rerenderWithConnectionState({
+      status: "preparing",
+      serverName: "Private value",
+      serverKind: "personal",
+    });
+    expect(analyticsState.screenViewed).toHaveBeenLastCalledWith(
+      "project_preparing",
+    );
+
+    rerenderWithConnectionState({
+      status: "loading-tools",
+      serverName: "Private value",
+      serverKind: "personal",
+    });
+    expect(analyticsState.screenViewed).toHaveBeenLastCalledWith(
+      "loading_tools",
+    );
+
+    rerenderWithConnectionState({
+      status: "connected",
+      serverName: "Private value",
+      serverKind: "personal",
+      toolCount: 2,
+    });
+    expect(analyticsState.screenViewed).toHaveBeenLastCalledWith("connected");
+    expect(analyticsState.entered).toHaveBeenCalledOnce();
+    expect(
+      JSON.stringify(analyticsState.screenViewed.mock.calls),
+    ).not.toContain("Private value");
+  });
+
+  it("tracks setup-later without form contents", () => {
+    const { onSkip } = renderOverlay();
+    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
+    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+      target: { value: "https://private.example/mcp" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Set up later" }));
+
+    expect(analyticsState.setupLater).toHaveBeenCalledOnce();
+    expect(analyticsState.setupLater).toHaveBeenCalledWith();
+    expect(onSkip).toHaveBeenCalledOnce();
   });
 
   it("advances from the welcome card with Get started", () => {
@@ -475,6 +549,10 @@ describe("FirstRunOnboardingOverlay", () => {
 
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Enter a server URL or command.",
+    );
+    expect(analyticsState.connectionFailed).toHaveBeenCalledWith(
+      { serverKind: "personal" },
+      "validation",
     );
     expect(
       screen.queryByRole("heading", { name: "Set up your server" }),

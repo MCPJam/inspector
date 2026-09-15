@@ -3875,6 +3875,24 @@ describe("App hosted OAuth callback handling", () => {
       }),
       { suppressErrorToast: true, suppressSuccessToast: true },
     );
+    expect(mockTrack).toHaveBeenCalledWith(
+      "first_run_onboarding_server_selected",
+      {
+        location: "first_run_onboarding",
+        server_kind: "personal",
+        transport: "http",
+        authentication: "auto",
+      },
+    );
+    expect(mockTrack).toHaveBeenCalledWith(
+      "first_run_onboarding_connection_started",
+      {
+        location: "first_run_onboarding",
+        server_kind: "personal",
+        transport: "http",
+        authentication: "auto",
+      },
+    );
     expect(
       JSON.parse(
         localStorage.getItem("mcp-first-run-server-choice-state") ?? "{}",
@@ -3899,6 +3917,25 @@ describe("App hosted OAuth callback handling", () => {
         "Failed to connect to MCP server",
       );
     });
+    expect(mockTrack).toHaveBeenCalledWith(
+      "first_run_onboarding_connection_failed",
+      {
+        location: "first_run_onboarding",
+        server_kind: "personal",
+        transport: "http",
+        authentication: "auto",
+        failure_stage: "handshake",
+      },
+    );
+    const firstRunPayloads = mockTrack.mock.calls
+      .filter(([event]) => String(event).startsWith("first_run_onboarding_"))
+      .map(([, props]) => props);
+    expect(JSON.stringify(firstRunPayloads)).not.toContain(
+      "Connection refused",
+    );
+    expect(JSON.stringify(firstRunPayloads)).not.toContain(
+      "https://mcp.example.com/mcp",
+    );
   });
 
   it("preserves quoted arguments in a first-run stdio command", async () => {
@@ -3931,6 +3968,15 @@ describe("App hosted OAuth callback handling", () => {
         { suppressErrorToast: true, suppressSuccessToast: true },
       );
     });
+    expect(mockTrack).toHaveBeenCalledWith(
+      "first_run_onboarding_connection_started",
+      {
+        location: "first_run_onboarding",
+        server_kind: "personal",
+        transport: "stdio",
+        authentication: "auto",
+      },
+    );
   });
 
   it("keeps the Excalidraw demo in onboarding while it connects", async () => {
@@ -4018,6 +4064,17 @@ describe("App hosted OAuth callback handling", () => {
         connectedToolCount: 6,
       }),
     );
+    expect(mockTrack).toHaveBeenCalledWith(
+      "first_run_onboarding_connection_succeeded",
+      {
+        location: "first_run_onboarding",
+        server_kind: "demo",
+        transport: "http",
+        authentication: "none",
+        success_stage: "tools_loaded",
+        tool_count: 6,
+      },
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "Open Playground" }));
 
@@ -4039,6 +4096,16 @@ describe("App hosted OAuth callback handling", () => {
         status: "completed",
         playgroundPromptPending: true,
       }),
+    );
+    expect(mockTrack).toHaveBeenCalledWith(
+      "first_run_onboarding_playground_opened",
+      {
+        location: "first_run_onboarding",
+        server_kind: "demo",
+        transport: "http",
+        authentication: "none",
+        tool_count: 6,
+      },
     );
   });
 
@@ -4142,6 +4209,16 @@ describe("App hosted OAuth callback handling", () => {
         connectedToolCount: null,
       }),
     );
+    expect(mockTrack).toHaveBeenCalledWith(
+      "first_run_onboarding_connection_succeeded",
+      {
+        location: "first_run_onboarding",
+        server_kind: "personal",
+        transport: "http",
+        authentication: "auto",
+        success_stage: "handshake_only",
+      },
+    );
   });
 
   it("cancels first-run connection progress without completing onboarding", async () => {
@@ -4170,6 +4247,16 @@ describe("App hosted OAuth callback handling", () => {
 
     expect(appState.handleRuntimeDisconnect).toHaveBeenCalledWith(
       "Excalidraw (App)",
+    );
+    expect(mockTrack).toHaveBeenCalledWith(
+      "first_run_onboarding_connection_cancelled",
+      {
+        location: "first_run_onboarding",
+        server_kind: "demo",
+        transport: "http",
+        authentication: "none",
+        cancel_stage: "connecting",
+      },
     );
     expect(
       screen.getByRole("heading", { name: "Connect to your MCP server" }),
@@ -4316,6 +4403,13 @@ describe("App hosted OAuth callback handling", () => {
         localStorage.getItem("mcp-first-run-server-choice-state") ?? "{}",
       ),
     ).toEqual({ status: "dismissed" });
+    expect(mockTrack).toHaveBeenCalledWith(
+      "first_run_onboarding_setup_later_clicked",
+      {
+        location: "first_run_onboarding",
+        screen: "server_choice",
+      },
+    );
   });
 
   it("does not let the legacy remote seen flag hide server choice", async () => {
