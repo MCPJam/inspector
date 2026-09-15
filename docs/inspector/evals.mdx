@@ -41,7 +41,7 @@ Every case opens in this form, however it was authored — in the app, through t
 
 - **User asks** — the prompt the model receives.
 - **In the app** — interact steps (clicks, typing) recorded against a live widget, shown in the order they run.
-- **Scorers** — everything that grades this case, grouped by the link of the user-value chain it measures, in the same vocabulary the suite's **Assertions** section uses.
+- **Scorers** — everything that grades this case, grouped by the link of the user-value chain it measures, in the same vocabulary the suite's **Test Suite Evaluators** section uses.
 - **Judge · Goal completion** — the goal sentence, and what the judge will actually do with it.
 
 **Scorers**
@@ -51,7 +51,7 @@ One list, one **Add assertion** menu. Each row says what it checks, who wrote it
 - **Route** — the first row under Selection. It answers "which tool should handle it?" and carries that answer's strictness: *Reach the tool* allows extra calls, *Exact route* requires the exact order with no extras. The route is always Required.
 - **Step N** — an assertion written as a step (what the CLI and the SDK produce). It is graded in place, at its position in the run, and is labelled by that position: a step-level "no tool errors" reads **No tool errors so far**, because it only sees the transcript up to that point. Editing one rewrites that step; it never becomes a case-level assertion.
 - **This case** — an assertion you added here. It is graded once, over the finished transcript.
-- **Suite** — a default the suite applies to every case. Read-only here, with a link to the suite settings.
+- **Suite** — a default the suite applies to every case. Read-only here, with a link to the suite's **Test Suite Evaluators** settings.
 
 The list reads as a checklist with progressive disclosure. An off row shows only its name. Once on, the **Required / Advisory** control appears on the row; an assertion that carries a number (such as a latency budget) shows it under the name. Assertions that have their own fields — thresholds, match criteria — show a chevron next to the name; clicking the name opens the editor in place. Assertions that are nothing but their kind (such as **No tool returns an error**) have no editor to open: the role control is inline and the checkbox removes them.
 
@@ -243,7 +243,7 @@ Each suite has default validator settings controlling how tool calls are matched
 
 | Level | Where | Persists? |
 |-------|-------|-----------|
-| Suite default | Suite settings → Default validators | Yes |
+| Suite default | Suite settings → **Test Suite Evaluators** → Default validators | Yes |
 | Case override | Test case editor → Validators | Yes |
 | Run override | Suite header → validators (sliders) icon | No — one run |
 
@@ -418,26 +418,26 @@ The delete button in the suite switcher is hidden for any suite that is CI-activ
 
 ### Suite navigation
 
-Opening the Evaluate tab lands on the **Runs** view by default, showing run history across all suites with grouped runs, pass-rate changes, and filters. Switch to **Suites** using the header tabs to see the suites overview. To drill into a suite, click its name; the **suite switcher** in the breadcrumb lets you jump between suites, create a new one, or delete the current one. If no suites exist yet, the same empty-state hero appears on both the Runs and Suites tabs — click **Eval my server: &lt;server name&gt;** to open the create-suite form with that server and a name already filled in, or click **Create suite** to start blank.
+Opening the Evaluate tab lands on the **Overview** view by default, showing run history across all suites with grouped runs, pass-rate changes, and filters. Switch to **Suites** using the header tabs to see the suites overview. To drill into a suite, click its name; the **suite switcher** in the breadcrumb lets you jump between suites, create a new one, or delete the current one. If no suites exist yet, the same empty-state hero appears on both the Overview and Suites tabs — click **Eval my server: &lt;server name&gt;** to open the create-suite form with that server and a name already filled in, or click **Create suite** to start blank.
 
 ### Suite view
 
 - **Suite accuracy** — pass rate of the most recent run, with the last three runs' trend so you can see whether you're improving or regressing.
 - **Run insights** — an AI-written diff against your previous completed run: which cases moved, which tools changed behavior, which models diverged. Skim this first; it usually points at the right rabbit hole.
-- **Runs tab** — every run with its summary metrics. Click in for the iteration-level breakdown. The table shows **Date** first, then **Run**; suite group rows show a date range and a chevron on the left. Client/model pairings are shown inline per run row; when there are more than two, a **+N** badge appears — hover it to see all pairings in a tooltip.
+- **Overview tab** — every run with its summary metrics, plus a Suite Health chart whose bars link to individual run rows. Click in for the iteration-level breakdown. The table shows **Date** first, then **Run**, with separate **Client**, **Model**, **Platform**, **Commit**, **Rate**, **Latency**, **Tokens**, and **Calls** columns. The Client column counts unique clients; when there are more than two, a **+N** badge appears — hover it to see all clients in a tooltip.
 - **Cases tab** — every case with its latest verdict and a quick replay button.
 - **Executions tab** — a flat, filterable list of every individual test execution across all cases, sorted most-recent-first. Each row shows the case name, result (passed/failed/pending/cancelled), and timestamp. Click any row to open it in the compare view.
 
 When you run a suite against multiple host configurations at once, the Runs list groups them into a single collapsible **run group** row showing mean accuracy and longest duration across all hosts. Expand it to inspect each host's individual run.
 
-The **Runs / Cases** segmented control switches between the run history list and the test-cases overview. **Performance by Model** in the run summary appears only when more than one model was used. To compare two runs, check their boxes in the Runs list and click **Compare**.
+The **Overview / Cases** segmented control switches between the run history list and the test-cases overview. **Performance by Model** in the run summary appears only when more than one model was used. To compare two runs, check their boxes in the Overview list and click **Compare**.
 
 Client and server filters on the **Suites** tab live in the column headers rather than as separate filter pills.
 
 #### Where a run came from
 
 Every run carries an origin badge — **UI**, **SDK**, **API**, **CLI**, **MCP**,
-**GitHub**, **Scheduled** — and the Source chips above the Runs table filter on
+**GitHub**, **Scheduled** — and the Source chips above the Overview table filter on
 it. The filter runs on the server, so an empty result means the project has no
 such runs, not that they were further down the list.
 
@@ -589,7 +589,7 @@ The downloaded file is named `mcpjam-traces-<scope>-<timestamp>.json`.
 If you're new to the surface, the shortest useful loop is:
 
 1. Connect a server in the Inspector.
-2. On the **Suites** or **Runs** landing, click **Eval my server: &lt;server name&gt;** to open the create-suite form with that server and a name already filled in.
+2. On the **Suites** or **Overview** landing, click **Eval my server: &lt;server name&gt;** to open the create-suite form with that server and a name already filled in.
 3. Review the generated cases, confirm the clients and iteration count, then click **Run** to launch.
 4. Open the failures, and decide whether the bug is in your server, your prompt, or the model.
 
