@@ -158,6 +158,38 @@ with who made it and what it was before.
 The same budget is readable and writable from the API at
 `/v1/organizations/{organizationId}/spend-budget`.
 
+### Auto-reload
+
+Auto-reload automatically purchases credits when your balance falls below a threshold you set. It is available to organization admins when enabled for your organization.
+
+**Setting up auto-reload**
+
+1. Open **Organization → Billing** and click **Auto-reload** on the credit balance card.
+2. Set your preferences:
+   - **Credits to add** — how many credits to purchase per refill (500–1,000,000).
+   - **Minimum balance** — the balance level that triggers a refill.
+   - **Maximum monthly spend** — an optional dollar cap on automatic purchases per UTC calendar month. Leave blank for no limit.
+3. Click **Save settings**. Saving preferences alone does not authorize any charge.
+4. After saving, review the displayed price per refill and check the authorization checkbox to confirm you authorize automatic purchases under those terms.
+5. Click **Continue to card setup** and enter your card details in the Stripe form.
+6. Click **Save card and enable refills**. Enrollment takes effect only after Stripe confirms the card and the backend records it.
+
+**What members can see**
+
+Any organization member can open the auto-reload dialog to view the current status, the card on file (brand and last four digits), and the charged and reserved amounts for the current UTC calendar month.
+
+**Turning off auto-reload**
+
+Click **Turn off auto-reload** to stop new automatic purchases. Saved preferences are kept so you can re-enable later. Payments that were already authorized before you turned it off can still complete.
+
+To remove all saved preferences, click **Clear saved settings**.
+
+**Notes**
+
+- Saving or changing preferences resets the authorization. You must re-authorize and complete card setup again before automatic purchases resume.
+- Manual credit top-ups do not count toward the monthly spend limit. Refunds do not reduce the recorded monthly spend.
+- The monthly spend window resets at the start of each UTC calendar month.
+
 ### Seat payment failures
 
 When someone you invited to a paid-seat organization signs up and the automatic seat charge fails or is cancelled, the org billing page shows a **Seat payment didn't go through** notice. As the org owner you can:
