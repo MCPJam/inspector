@@ -1,5 +1,118 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const generateTextMock = vi.hoisted(() => vi.fn());
+const streamTextMock = vi.hoisted(() => vi.fn());
+const preparedToolsOverride = vi.hoisted(() => ({
+  current: undefined as Record<string, any> | undefined,
+}));
+const createLlmModelMock = vi.hoisted(() =>
+  vi.fn(
+    (
+      _modelDefinition?: unknown,
+      _apiKey?: unknown,
+      _baseUrls?: unknown,
+      _customProviders?: unknown,
+    ) => ({
+      id: "mock-model",
+    }),
+  ),
+);
+
+vi.mock("ai", async () => {
+  // Keep the real exports (`createUIMessageStream`,
+  // `createUIMessageStreamResponse`, `parseJsonEventStream`, `pruneMessages`,
+  // etc.) — the engine that `runIterationViaBackend` now drives needs them.
+  // Only override `generateText` / `streamText` so the local-AI-SDK and
+  // stream-AI-SDK paths can be controlled by these tests.
+  const actual = await vi.importActual<typeof import("ai")>("ai");
+  return {
+    ...actual,
+    generateText: (...args: unknown[]) => generateTextMock(...args),
+    streamText: (...args: unknown[]) => streamTextMock(...args),
+    stepCountIs: vi.fn(() => undefined),
+  };
+});
+
+vi.mock("@mcpjam/sdk", async () => {
+  const actual =
+    await vi.importActual<typeof import("@mcpjam/sdk")>("@mcpjam/sdk");
+  return {
+    ...actual,
+    finalizePassedForEval: ({ matchPassed }: { matchPassed: boolean }) =>
+      matchPassed,
+  };
+});
+
+vi.mock("../../../utils/chat-helpers", async () => {
+  // PR 3 of the engine consolidation: `runIterationViaBackend` now drives
+  // `runChatEngineLoop`, which imports `scrubUnavailableToolHistoryForBackend`
+  // / `scrubMcpAppsToolResultsForBackend` / `scrubChatGPTAppsToolResultsForBackend`
+  // from this module. Returning only `createLlmModel` here would make those
+  // imports `undefined`; the engine's `try/catch` then silently swallows the
+  // resulting `TypeError`, runs to a `runSucceeded:false` finish, and the
+  // test never sees the fetch we expect. Keep the real exports and override
+  // only `createLlmModel` so the local-AI-SDK paths can be inspected.
+  const actual = await vi.importActual<
+    typeof import("../../../utils/chat-helpers")
+  >("../../../utils/chat-helpers");
+  return {
+    ...actual,
+    createLlmModel: (
+      modelDefinition: unknown,
+      apiKey: unknown,
+      baseUrls?: unknown,
+      customProviders?: unknown,
+    ) => createLlmModelMock(modelDefinition, apiKey, baseUrls, customProviders),
+  };
+});
+
+// Stub the chat-side tool/system/temperature pipeline. The real implementation
+// in `chat-v2-orchestration` pulls in `getSkillToolsAndPrompt`, which touches
+// the filesystem outside HOSTED_MODE; the eval test environment doesn't need
+// that. Return a minimal `PrepareChatV2Result` shape — the actual tool set
+// stays empty (matching `mcpClientManager.getToolsForAiSdk` → `{}`), and the
+// engine swap only depends on the named output fields.
+// PR 3 of the engine consolidation: `runIterationViaBackend` now drives
+// `runChatEngineLoop`, which imports `serializeToolsForConvex` for tool
+// serialization and uses `http-tool-calls` for local tool execution. Mirror
+// the mocks `assistant-turn.test.ts` uses for the same engine — keep these
+// minimal so the engine path can reach its `fetch` to Convex without
+// blowing up on test-mode-incompatible dependencies (zod schema conversion
+// in tool serialization, etc.).
+vi.mock("../../../utils/mcpjam-tool-helpers", () => ({
+  serializeToolsForConvex: vi.fn(() => []),
+}));
+
+vi.mock("@/shared/http-tool-calls", () => ({
+  hasUnresolvedToolCalls: vi.fn().mockReturnValue(false),
+  executeToolCallsFromMessages: vi.fn().mockResolvedValue([]),
+}));
+
+vi.mock("../../../utils/chat-v2-orchestration", () => ({
+  prepareChatV2: vi.fn(async (options: any) => ({
+    allTools: preparedToolsOverride.current ?? {},
+    enhancedSystemPrompt: options?.systemPrompt ?? "",
+    resolvedTemperature: options?.temperature,
+    scrubMessages: (msgs: unknown[]) => msgs,
+    progressivePlan: { enabled: false },
+    discoveryState: {
+      loadedToolIds: new Set<string>(),
+      catalogVersion: 0,
+    },
+  })),
+}));
+
+const executeStepsMock = vi.hoisted(() => vi.fn());
+vi.mock("../step-executor", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../step-executor")>()),
+  executeSteps: (...args: unknown[]) => executeStepsMock(...args),
+}));
+const assistantTurnMock = vi.hoisted(() => vi.fn());
+vi.mock("../../../utils/assistant-turn.js", () => ({
+  runAssistantTurn: (...args: unknown[]) => assistantTurnMock(...args),
+}));
+import { runEvalSuiteWithAiSdk } from "../../evals-runner.js";
+
 import {
   EXECUTION_BUDGET_DEFAULTS,
   resolveExecutionBudgetsForSurface,
@@ -230,3 +343,261 @@ describe("provisionEvalSandbox — capacity", () => {
     );
   });
 });
+
+describe.each(["local", "hosted"] as const)(
+  "%s iteration lifecycle",
+  (runner) => {
+    afterEach(() => {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+      vi.clearAllMocks();
+    });
+
+    async function startRun(
+      options: {
+        killSwitch?: boolean;
+        runDeadline?: boolean;
+        turnTimeout?: boolean;
+        capacity?: boolean;
+        capacityAbort?: boolean;
+      } = {},
+    ) {
+      vi.useFakeTimers();
+      vi.stubEnv("CONVEX_HTTP_URL", "https://example.convex.site");
+      vi.stubEnv(
+        "MCPJAM_EVAL_ISOLATED_ITERATION_TIMEOUT",
+        options.killSwitch ? "0" : "1",
+      );
+      const model = runner === "local" ? "gpt-4-turbo" : "gpt-5-mini";
+      const snapshot = {
+        title: "Case",
+        query: "Hello",
+        model,
+        provider: "openai",
+      };
+      const rows = Array.from({ length: 3 }, (_, index) => ({
+        _id: `iter-${index + 1}`,
+        testCaseId: "case-1",
+        iterationNumber: index + 1,
+        testCaseSnapshot: snapshot,
+        status: "pending",
+        result: "pending",
+      })) as Array<Record<string, any>>;
+      const recorder = {
+        startIteration: vi.fn(
+          async ({ iterationNumber }) => rows[iterationNumber - 1]._id,
+        ),
+        beginExecutionAttempt: vi.fn(async () => {}),
+        finishIteration: vi.fn(async (args) =>
+          Object.assign(
+            rows.find((row) => row._id === args.iterationId)!,
+            args,
+          ),
+        ),
+        finalize: vi.fn(async () => {}),
+      };
+      const convexClient = {
+        query: vi.fn(async (name) =>
+          name === "testSuites:getTestSuiteRunDetails"
+            ? { iterations: rows }
+            : { status: "running" },
+        ),
+        mutation: vi.fn(async () => ({})),
+        action: vi.fn(async (name, args) => {
+          if (name === "testSuites:updateTestIteration")
+            Object.assign(
+              rows.find((row) => row._id === args.iterationId)!,
+              args,
+            );
+        }),
+      };
+      const manager = {
+        getToolsForAiSdk: vi.fn(async () => ({})),
+        listTools: vi.fn(async () => ({ tools: [] })),
+        getAllToolAnnotations: vi.fn(() => ({})),
+        hasCachedToolAnnotations: vi.fn(() => true),
+        getConnectionStatus: vi.fn(() => "connected"),
+        listServers: vi.fn(() => ["srv-1"]),
+        getAllToolsMetadata: vi.fn(() => ({})),
+        executeTool: vi.fn(),
+      };
+      let calls = 0;
+      executeStepsMock.mockImplementation(async ({ isAborted }) => {
+        calls += 1;
+        if (calls === 2) {
+          // The engine cooperates by returning cancellation, not by throwing.
+          await new Promise<void>((resolve) => {
+            const tick = setInterval(() => {
+              if (isAborted()) {
+                clearInterval(tick);
+                resolve();
+              }
+            }, 1);
+          });
+          return { cancelled: true };
+        }
+        return {};
+      });
+      if (options.turnTimeout) {
+        const actual =
+          await vi.importActual<typeof import("../step-executor")>(
+            "../step-executor",
+          );
+        executeStepsMock.mockImplementation(actual.executeSteps);
+        const waitForAbort = (signal: AbortSignal) =>
+          new Promise<void>((resolve) =>
+            signal.addEventListener("abort", () => resolve(), { once: true }),
+          );
+        streamTextMock.mockImplementation(({ abortSignal }) => ({
+          consumeStream: () => waitForAbort(abortSignal),
+          response: Promise.resolve({ messages: [] }),
+          steps: Promise.resolve([]),
+          totalUsage: Promise.resolve({}),
+          finishReason: Promise.resolve("stop"),
+        }));
+        assistantTurnMock.mockImplementation(async ({ abortSignal }) => {
+          await waitForAbort(abortSignal);
+          return {};
+        });
+      }
+      if (options.capacity || options.capacityAbort) {
+        vi.stubEnv("E2B_API_KEY", "test-key");
+        vi.stubEnv("COMPUTERS_TERMINAL_TOKEN_SECRET", "test-secret");
+        vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "test-token");
+        vi.stubGlobal(
+          "fetch",
+          vi.fn(
+            async () =>
+              new Response(
+                JSON.stringify({ error: "full", code: "at_capacity" }),
+                {
+                  status: 503,
+                  headers: { "content-type": "application/json" },
+                },
+              ),
+          ),
+        );
+      }
+      if (options.capacityAbort) {
+        vi.stubGlobal(
+          "fetch",
+          vi.fn(
+            (_url, init) =>
+              new Promise((_resolve, reject) => {
+                init.signal.addEventListener(
+                  "abort",
+                  () => reject(init.signal.reason),
+                  { once: true },
+                );
+              }),
+          ),
+        );
+      }
+      const pending = runEvalSuiteWithAiSdk({
+        suiteId: "suite-1",
+        runId: "run-1",
+        recorder,
+        config: {
+          tests: [
+            {
+              ...snapshot,
+              runs: 3,
+              testCaseId: "case-1",
+              expectedToolCalls: [],
+              promptTurns: [
+                { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+              ],
+            },
+          ],
+          environment: {
+            servers: ["srv-1"],
+            ...(options.capacity || options.capacityAbort
+              ? { computerEnvironmentId: "env-1" }
+              : {}),
+          },
+        },
+        modelApiKeys: { openai: "sk-test" },
+        convexClient,
+        convexHttpUrl: "https://example.convex.site",
+        convexAuthToken: "token",
+        mcpClientManager: manager,
+        executionBudgets: {
+          ...defaultEvalExecutionBudgets(),
+          turnTimeoutMs: options.turnTimeout ? 20 : 1000,
+          unitTimeoutMs: 100,
+          runTimeoutMs: options.runDeadline ? 50 : 1000,
+        },
+      } as any);
+      await vi.advanceTimersByTimeAsync(options.capacityAbort ? 350 : 150);
+      await pending;
+      return { rows, recorder, convexClient };
+    }
+
+    it("persists the turn clock before the iteration budget expires", async () => {
+      const { rows } = await startRun({ turnTimeout: true });
+      for (const row of rows) {
+        expect(row.status).toBe("completed");
+        expect(row.metadata.timeout).toMatchObject({
+          clock: "turn",
+          budgetMs: 20,
+          elapsedMs: 20,
+        });
+      }
+    });
+
+    it("persists sandbox capacity exhaustion as a setup failure", async () => {
+      const { rows } = await startRun({ capacity: true });
+      for (const row of rows) {
+        expect(row.status).toBe("setup_failed");
+        expect(row.metadata.timeout.clock).toBe("sandboxCapacity");
+        expect(row.metadata.timeout.budgetMs).toBeLessThanOrEqual(100);
+      }
+    });
+
+    it("records iteration timeout when provisioning consumes the remaining unit budget", async () => {
+      const { rows } = await startRun({ capacityAbort: true });
+      for (const row of rows) {
+        expect(row.status).toBe("timed_out");
+        expect(row.metadata.timeout.clock).toBe("iteration");
+      }
+    });
+
+    it("isolates iteration 2 and completes iterations 1 and 3", async () => {
+      const { rows, recorder } = await startRun();
+      expect(rows.map((row) => row.status)).toEqual([
+        "completed",
+        "timed_out",
+        "completed",
+      ]);
+      expect(rows[1].metadata.timeout.clock).toBe("iteration");
+      expect(recorder.finalize).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: "completed",
+          summary: expect.any(Object),
+        }),
+      );
+    });
+
+    it("restores abort-the-run behavior under the compatibility switch", async () => {
+      const { recorder } = await startRun({ killSwitch: true });
+      expect(recorder.finalize).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: "timed_out",
+          stopReason: "iteration_timeout",
+        }),
+      );
+    });
+
+    it("keeps completed evidence and finalizes the run deadline for the backend sweep", async () => {
+      const { rows, recorder } = await startRun({ runDeadline: true });
+      expect(rows[0].status).toBe("completed");
+      expect(recorder.finalize).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: "timed_out",
+          stopReason: "run_timeout",
+        }),
+      );
+    });
+  },
+);

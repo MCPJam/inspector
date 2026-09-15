@@ -1,3 +1,5 @@
+import { EVAL_SANDBOX_CAPACITY_POLICY } from "../utils/run-supervisor/capacity-retry.js";
+import type { TimeoutMetadata } from "../utils/run-supervisor/deadline.js";
 import { isCredentialFreeGithubExecution } from "./github-checks/credential-policy.js";
 import {
   peekPageToolsForChatTurn,
@@ -950,7 +952,11 @@ type DescriptionExperimentIterationStamp = {
  * value would fail that check.
  */
 type IterationMetadataValue =
-  string | number | boolean | DescriptionExperimentIterationStamp;
+  | string
+  | number
+  | boolean
+  | DescriptionExperimentIterationStamp
+  | TimeoutMetadata;
 
 type IterationMetadataBase = Record<string, IterationMetadataValue>;
 
@@ -1980,9 +1986,10 @@ type RunIterationBaseParams = {
   /**
    * The run's FROZEN execution budgets. Resolved once at launch and carried
    * down unchanged — the iteration runners slice `turnTimeoutMs` and
-   * `toolCallTimeoutMs` out of it rather than re-deriving anything.
+   * `turnRetries` out of it rather than re-deriving anything.
    */
   budgets: ResolvedExecutionBudgets;
+  iterationDeadlineAt?: number;
   /**
    * Suite-level raw tool set, kept for `toolSignals` telemetry only.
    * Iteration runners route the actual tool prep through `prepareChatV2`
@@ -2439,7 +2446,7 @@ async function markIterationTimedOut(args: {
  * row to a product failure.
  */
 export async function runIterationUnderBudget<T>(args: {
-  run: (iterationSignal: AbortSignal) => Promise<T>;
+  run: (iterationSignal: AbortSignal, deadlineAt: number) => Promise<T>;
   /** Parent: the run signal (cancel poller ∧ run deadline ∧ shutdown). */
   runSignal: AbortSignal | undefined;
   unitTimeoutMs: number;
@@ -2453,7 +2460,7 @@ export async function runIterationUnderBudget<T>(args: {
   // Started ONCE and held. Racing `args.run(...)` again would launch a second
   // iteration of the same trial — a second model call, a second sandbox, a
   // second set of rows — which is the opposite of what a timeout is for.
-  const running = args.run(handle.signal).then(
+  const running = args.run(handle.signal, Date.now() + args.unitTimeoutMs).then(
     (value) => ({ kind: "settled" as const, value }),
     (error) => ({ kind: "threw" as const, error }),
   );
@@ -2621,7 +2628,7 @@ const executeTestCase = async (params: {
   // Bails immediately if the run was already stopped; on timeout it aborts the
   // whole run (via `abortRun`) and marks the row `timed_out`.
   const runSingleIteration = async <T extends EvalIterationOutcome>(
-    runner: (iterationSignal: AbortSignal) => Promise<T>,
+    runner: (iterationSignal: AbortSignal, deadlineAt: number) => Promise<T>,
     precreatedIterationId: string | undefined,
     runIndex: number,
     timeoutTest: EvalTestCase = normalizedTest,
@@ -2748,13 +2755,14 @@ const executeTestCase = async (params: {
       };
       outcomes.push(
         await runSingleIteration(
-          (iterationSignal) =>
+          (iterationSignal, iterationDeadlineAt) =>
             runLocalIteration({
               ...modelFreeParams,
               // The ITERATION's signal, not the run's: this is what makes the
               // budget abort this trial's own work instead of merely ending
               // the wait for it.
               abortSignal: iterationSignal,
+              iterationDeadlineAt,
               ...(streaming ? { emit: emit! } : {}),
             }),
           undefined,
@@ -2912,10 +2920,11 @@ const executeTestCase = async (params: {
         ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
       };
       const iterationOutcome = await runSingleIteration(
-        (iterationSignal) =>
+        (iterationSignal, iterationDeadlineAt) =>
           runHostedIteration({
             ...backendParams,
             abortSignal: iterationSignal,
+            iterationDeadlineAt,
             ...(streaming ? { emit: emit! } : {}),
           }),
         precreatedIterationId,
@@ -2983,10 +2992,11 @@ const executeTestCase = async (params: {
         ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
       };
       const iterationOutcome = await runSingleIteration(
-        (iterationSignal) =>
+        (iterationSignal, iterationDeadlineAt) =>
           runHostedIteration({
             ...backendParams,
             abortSignal: iterationSignal,
+            iterationDeadlineAt,
             ...(streaming ? { emit: emit! } : {}),
           }),
         precreatedIterationId,
@@ -3040,10 +3050,11 @@ const executeTestCase = async (params: {
       ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
     };
     const iterationOutcome = await runSingleIteration(
-      (iterationSignal) =>
+      (iterationSignal, iterationDeadlineAt) =>
         runLocalIteration({
           ...localParams,
           abortSignal: iterationSignal,
+          iterationDeadlineAt,
           ...(streaming ? { emit: emit! } : {}),
         }),
       precreatedIterationId,
@@ -3092,8 +3103,9 @@ export const runEvalSuiteWithAiSdk = async ({
 }: RunEvalSuiteOptions): Promise<RunEvalSuiteWithAiSdkResult | undefined> => {
   // One resolution for the whole run. When the launch response carried frozen
   // budgets we consume them verbatim — they are the decision, already made,
-  // against the org's ceilings. When it did not (every run launched before the
-  // backend writes them) we resolve `{ authored: undefined }`, which yields
+  // against the platform ceilings; org ceilings apply once the backend
+  // freezes them. Without a frozen snapshot, resolve `{ authored: undefined }`,
+  // which yields
   // the platform defaults byte-for-byte. Same code path either way; the only
   // difference is which rung each field came from.
   const budgets: ResolvedExecutionBudgets =
@@ -3542,6 +3554,14 @@ export const runEvalSuiteWithAiSdk = async ({
         }),
         createRunTimeout(),
       ]);
+      // allSettled and the lifecycle rejection can resolve in the same turn.
+      // A stop already recorded on the run signal wins either race ordering.
+      if (
+        abortController.signal.aborted &&
+        isEvalRunStoppedError(abortController.signal.reason)
+      ) {
+        throw abortController.signal.reason;
+      }
     } catch (error) {
       if (isEvalRunStoppedError(error)) {
         logger.debug("[evals] Run stopped by lifecycle guard", {
@@ -3749,6 +3769,7 @@ const runLocalIteration = async ({
   test,
   runIndex,
   budgets,
+  iterationDeadlineAt = Date.now() + budgets.unitTimeoutMs,
   // Suite-level raw set retained for `toolSignals`; per-iteration tool prep
   // is delegated to prepareChatV2 below.
   tools: _suiteTools,
@@ -4187,16 +4208,35 @@ const runLocalIteration = async ({
             "This eval pins a reproducible computer environment, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it.",
           );
         }
+        const capacityBudgetMs = Math.min(
+          EVAL_SANDBOX_CAPACITY_POLICY.totalBudgetMs,
+          Math.max(0, iterationDeadlineAt - Date.now()),
+        );
+        const capacityStartedAt = Date.now();
         evalSandbox = await provisionEvalSandbox({
+          timeoutMs: capacityBudgetMs,
           bearer: convexAuthToken,
           runId: String(runId),
           ...(iterationId ? { iterationId: String(iterationId) } : {}),
           ...(abortSignal ? { signal: abortSignal } : {}),
         });
         if (!evalSandbox.ok) {
-          throw new Error(
-            `Could not provision the eval's reproducible sandbox: ${evalSandbox.error}`,
-          );
+          const error = new Error(describeEvalSandboxRefusal(evalSandbox));
+          if (
+            evalSandbox.status === 503 &&
+            evalSandbox.code === "at_capacity"
+          ) {
+            iterationMetadataBase.timeout = {
+              clock: "sandboxCapacity",
+              budgetMs: capacityBudgetMs,
+              elapsedMs: Date.now() - capacityStartedAt,
+            };
+            Object.assign(error, {
+              clock: "sandboxCapacity",
+              timeout: iterationMetadataBase.timeout,
+            });
+          }
+          throw error;
         }
         // COMP-17: seed the case's pinned attachments into the fresh box before
         // it's exposed as `bash`. Runs BEFORE buildEvalBashTool so the model's
@@ -4443,6 +4483,10 @@ const runLocalIteration = async ({
     // is cancelled whether or not the run's signal happens to read that way
     // from here — re-reading the signal is a second source of truth for a fact
     // the outcome already carries.
+    if (isIterationBudgetAbort(undefined, abortSignal)) {
+      throw abortSignal?.reason;
+    }
+    if (acc.timeout) iterationMetadataBase.timeout = acc.timeout;
     if (stepOutcome.cancelled || localIsAborted()) {
       return returnLocalCancelled();
     }
@@ -4891,7 +4935,13 @@ const runLocalIteration = async ({
       // PR 9: browser artifacts collected before the failure still persist.
       widgetRenderObservations: browser.widgetRenderObservations,
       browserInteractionSteps: browser.browserInteractionSteps,
-      status: "failed",
+      status:
+        iterationMetadataBase.timeout &&
+        typeof iterationMetadataBase.timeout === "object" &&
+        "clock" in iterationMetadataBase.timeout &&
+        iterationMetadataBase.timeout.clock === "sandboxCapacity"
+          ? "setup_failed"
+          : "failed",
       startedAt: runStartedAt,
       ...(toolPolicyGate?.blocks.length
         ? { policyBlocks: toolPolicyGate.blocks }
@@ -4987,6 +5037,7 @@ const runHostedIterationWithBrowser = async (
     test,
     runIndex,
     budgets,
+    iterationDeadlineAt = Date.now() + budgets.unitTimeoutMs,
     // Suite-level raw set retained for `toolSignals`; per-iteration tool prep
     // is delegated to prepareChatV2 below.
     tools: _suiteTools,
@@ -5466,7 +5517,13 @@ const runHostedIterationWithBrowser = async (
               : "This eval runs on a harness, which boots a disposable computer per iteration, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it.",
         );
       }
+      const capacityBudgetMs = Math.min(
+        EVAL_SANDBOX_CAPACITY_POLICY.totalBudgetMs,
+        Math.max(0, iterationDeadlineAt - Date.now()),
+      );
+      const capacityStartedAt = Date.now();
       evalSandbox = await provisionEvalSandbox({
+        timeoutMs: capacityBudgetMs,
         bearer: convexAuthToken,
         runId: String(runId),
         ...(iterationId ? { iterationId: String(iterationId) } : {}),
@@ -5478,7 +5535,19 @@ const runHostedIterationWithBrowser = async (
         ...(abortSignal ? { signal: abortSignal } : {}),
       });
       if (!evalSandbox.ok) {
-        throw new Error(describeEvalSandboxRefusal(evalSandbox));
+        const error = new Error(describeEvalSandboxRefusal(evalSandbox));
+        if (evalSandbox.status === 503 && evalSandbox.code === "at_capacity") {
+          iterationMetadataBase.timeout = {
+            clock: "sandboxCapacity",
+            budgetMs: capacityBudgetMs,
+            elapsedMs: Date.now() - capacityStartedAt,
+          };
+          Object.assign(error, {
+            clock: "sandboxCapacity",
+            timeout: iterationMetadataBase.timeout,
+          });
+        }
+        throw error;
       }
     }
     const sandboxBinding =
@@ -5606,6 +5675,9 @@ const runHostedIterationWithBrowser = async (
   } catch (error) {
     // Release any sandbox provisioned before a later line in the try threw.
     await releaseEvalSandboxIfAny();
+    if (isIterationBudgetAbort(error, abortSignal)) {
+      throw abortSignal?.reason ?? error;
+    }
     const errorMessage = error instanceof Error ? error.message : String(error);
     logger.error("[evals] iteration setup failed (prepareChatV2)", error);
     if (toolDescriptionOverride) {
@@ -5978,6 +6050,7 @@ const runHostedIterationWithBrowser = async (
   }
   // The executor's own report first — see the local runner for why.
   if (result.cancelled || isAborted()) return returnCancelled();
+  if (result.timeout) iterationMetadataBase.timeout = result.timeout;
   if (result.iterationError) {
     iterationError = result.iterationError;
     iterationErrorDetails = result.iterationErrorDetails;

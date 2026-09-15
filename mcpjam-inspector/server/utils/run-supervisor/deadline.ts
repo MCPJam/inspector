@@ -40,6 +40,9 @@ import { composeAbortSignals } from "@mcpjam/sdk";
 export type DeadlineClock =
   "run" | "iteration" | "session" | "turn" | "toolCall" | "sandboxCapacity";
 
+/** Persisted attribution for a budget that expired. */
+export type TimeoutMetadata = { clock: DeadlineClock; budgetMs: number; elapsedMs: number };
+
 /** The abort reason a fired deadline raises. */
 export interface DeadlineAbortError extends Error {
   name: "AbortError";

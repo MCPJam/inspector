@@ -97,6 +97,7 @@ export function buildLocalStepHandlers(
       ...(outcome?.kind === "cancelled" ? { cancelled: true } : {}),
       ...(newError
         ? {
+            ...(acc.timeout ? { timeout: acc.timeout } : {}),
             iterationError: newError,
             ...(acc.iterationErrorDetails
               ? { iterationErrorDetails: acc.iterationErrorDetails }
@@ -161,6 +162,7 @@ export function buildLocalStepHandlers(
       ...(outcome?.kind === "cancelled" ? { cancelled: true } : {}),
       ...(newError
         ? {
+            ...(acc.timeout ? { timeout: acc.timeout } : {}),
             iterationError: newError,
             ...(acc.iterationErrorDetails
               ? { iterationErrorDetails: acc.iterationErrorDetails }
@@ -263,6 +265,7 @@ export function buildHostedStepHandlers(
       ...(outcome.kind === "cancelled" ? { cancelled: true } : {}),
       ...(outcome.kind === "failed"
         ? {
+            ...(outcome.timeout ? { timeout: outcome.timeout } : {}),
             iterationError: outcome.iterationError,
             ...(outcome.iterationErrorDetails
               ? { iterationErrorDetails: outcome.iterationErrorDetails }
@@ -329,6 +332,7 @@ export function buildHostedStepHandlers(
       ...(outcome.kind === "cancelled" ? { cancelled: true } : {}),
       ...(outcome.kind === "failed"
         ? {
+            ...(outcome.timeout ? { timeout: outcome.timeout } : {}),
             iterationError: outcome.iterationError,
             ...(outcome.iterationErrorDetails
               ? { iterationErrorDetails: outcome.iterationErrorDetails }

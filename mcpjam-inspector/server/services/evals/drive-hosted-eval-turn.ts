@@ -1,3 +1,4 @@
+import type { TimeoutMetadata } from "../../utils/run-supervisor/deadline.js";
 /**
  * drive-hosted-eval-turn.ts — the shared per-turn body of the two hosted eval
  * runners (`runIterationViaBackendWithBrowser` — batch — and
@@ -81,6 +82,7 @@ export type HostedEvalTurnOutcome =
   /** Turn failed; the runner records the iteration with this error. */
   | {
       kind: "failed";
+      timeout?: TimeoutMetadata;
       iterationError: string;
       iterationErrorDetails?: string;
       /**
@@ -582,6 +584,11 @@ export async function driveHostedEvalTurn(
   const turnTimeoutFailure = (): HostedEvalTurnOutcome => {
     acc.capturedSpans.push(...traceCtx.recordedSpans);
     const failure = {
+      timeout: {
+        clock: "turn" as const,
+        budgetMs: turnTimeoutMs,
+        elapsedMs: turnDeadline?.elapsedMs() ?? turnTimeoutMs,
+      },
       iterationError: truncateError(
         `Turn exceeded its ${turnTimeoutMs}ms budget (elapsed ${turnDeadline?.elapsedMs() ?? turnTimeoutMs}ms)`
       ),

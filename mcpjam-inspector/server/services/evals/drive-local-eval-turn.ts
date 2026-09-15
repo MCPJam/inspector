@@ -1,3 +1,4 @@
+import type { TimeoutMetadata } from "../../utils/run-supervisor/deadline.js";
 import type { ModelMessage, Tool as AiTool, ToolChoice, ToolSet } from "ai";
 import type { MCPClientManager } from "@mcpjam/sdk";
 import {
@@ -44,6 +45,7 @@ export type LocalEvalTurnAcc = {
   activePartialResponseMessages: ModelMessage[];
   activeCompletedStepCount: number;
   activeTraceCtx: ReturnType<typeof createAiSdkEvalTraceContext> | null;
+  timeout?: TimeoutMetadata;
   iterationError: string | undefined;
   iterationErrorDetails: string | undefined;
   /**
@@ -83,7 +85,8 @@ export function modelLayerForErrorSpan(
 
 export type LocalEvalTurnOutcome =
   | { kind: "completed" }
-  | { kind: "cancelled" };
+  | { kind: "cancelled" }
+  | { kind: "failed"; timeout: TimeoutMetadata };
 
 export type LocalEvalTurnSinks = {
   emit?: Parameters<typeof consumeFullStreamAsEvalEvents>[1]["emit"];
@@ -438,6 +441,11 @@ export async function driveLocalEvalTurn(
       headless.messages.length > 0
         ? headless.messages
         : acc.activePartialResponseMessages;
+    acc.timeout = {
+      clock: "turn",
+      budgetMs: turnTimeoutMs,
+      elapsedMs: turnElapsedMs,
+    };
     acc.iterationError = `Turn exceeded its ${turnTimeoutMs}ms budget (elapsed ${turnElapsedMs}ms)`;
     // The provider held the connection open past the bound. No other layer
     // reaches this branch.
@@ -470,7 +478,7 @@ export async function driveLocalEvalTurn(
         : {}),
       iterationError: acc.iterationError,
     });
-    return { kind: "completed" };
+    return { kind: "failed", timeout: acc.timeout };
   }
 
   if (headless.aborted || localIsAborted()) {

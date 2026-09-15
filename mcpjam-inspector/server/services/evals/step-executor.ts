@@ -1,3 +1,4 @@
+import type { TimeoutMetadata } from "../../utils/run-supervisor/deadline.js";
 /**
  * step-executor.ts — the single sequential executor over a unified `TestStep[]`.
  *
@@ -160,6 +161,7 @@ export interface StepEngineOutcome {
    * server not connected). Stops the executor; the caller's verdict gate reads
    * it via the returned `iterationError`.
    */
+  timeout?: TimeoutMetadata;
   iterationError?: string;
   iterationErrorDetails?: string;
   /**
@@ -240,6 +242,7 @@ export interface StepExecutorHandlers {
 export interface StepExecutorResult {
   state: StepExecutionState;
   /** Set when a `prompt`/`toolCall` step reported a fatal error. */
+  timeout?: TimeoutMetadata;
   iterationError?: string;
   iterationErrorDetails?: string;
   /** Which layer raised `iterationError` — see `StepEngineOutcome`. */
@@ -567,6 +570,7 @@ export async function executeSteps(args: {
     // turn the model happened to fail.
     return {
       state,
+      ...(failed.timeout ? { timeout: failed.timeout } : {}),
       iterationError: failed.iterationError,
       ...(failed.iterationErrorDetails
         ? { iterationErrorDetails: failed.iterationErrorDetails }
@@ -610,6 +614,7 @@ export async function executeSteps(args: {
         emitSkipped(stepIndex + 1);
         return {
           state,
+          ...(outcome.timeout ? { timeout: outcome.timeout } : {}),
           iterationError: outcome.iterationError,
           iterationErrorDetails: outcome.iterationErrorDetails,
           ...(outcome.errorSource ? { errorSource: outcome.errorSource } : {}),
@@ -653,6 +658,7 @@ export async function executeSteps(args: {
         emitSkipped(stepIndex + 1);
         return {
           state,
+          ...(outcome.timeout ? { timeout: outcome.timeout } : {}),
           iterationError: outcome.iterationError,
           iterationErrorDetails: outcome.iterationErrorDetails,
           ...(outcome.errorSource ? { errorSource: outcome.errorSource } : {}),
