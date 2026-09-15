@@ -705,6 +705,11 @@ describe("the chain is scoped to the persona, not just the goal", () => {
 
     // Persona two's own chain, and it breaks somewhere else — so this cannot
     // pass by repainting persona one's answer OR by going blank.
+    //
+    // COMPLEMENTS the staleness test below rather than overlapping it: this
+    // one resolves the second query immediately, so it cannot see the guard
+    // being dropped; that one leaves it loading, which is the only window the
+    // guard is for. Two regressions, two tests — do not fold them together.
     await waitFor(() =>
       expect(screen.getByTestId("findings-stage-connection")).toHaveAttribute(
         "data-state",
