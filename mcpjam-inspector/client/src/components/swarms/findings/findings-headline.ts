@@ -1,11 +1,14 @@
 /**
- * Deterministic multi-line summary + honesty footnotes for the Findings card.
+ * Deterministic summary sentences + honesty footnotes for the Findings card.
  *
  * The summary answers four questions in the reader's order — which goal broke,
- * for whom, where in the value chain, and how it felt. A finished run that
- * opens on "No findings yet" reads as a broken product rather than an honest
- * one, so the terminal branch states what the run actually established instead
- * of shrugging. Templates only: the LLM headline (`SwarmWaveInsights.summary`)
+ * for whom, where in the value chain, and how it felt. Each answer is returned
+ * as its OWN sentence, so each can be asserted on its own; the card joins them
+ * into one paragraph at render.
+ *
+ * A finished run that opens on "No findings yet" reads as a broken product
+ * rather than an honest one, so the terminal branch states what the run
+ * actually established instead of shrugging. Templates only: the LLM headline (`SwarmWaveInsights.summary`)
  * is a later iteration, and nothing here may claim more than the counts
  * support.
  *
@@ -68,7 +71,11 @@ export function countWords(text: string): number {
     .filter(Boolean).length;
 }
 
-/** Per-line cap — the card holds a few short lines, not a paragraph. */
+/**
+ * Per-SENTENCE cap. The card joins these into a paragraph, so this no longer
+ * keeps a line from wrapping — it keeps each answer short enough that four of
+ * them still read as a summary rather than a report.
+ */
 export function limitWords(text: string, max = LINE_MAX_WORDS): string {
   const words = text
     .trim()
@@ -97,7 +104,7 @@ function firstSentence(text: string): string {
   return end === -1 ? trimmed : trimmed.slice(0, end + 1);
 }
 
-/** Detector sentences do not all ship a full stop; the card's lines do. */
+/** Detector sentences do not all ship a full stop; the card's do. */
 function endWithStop(text: string): string {
   return /[.!?…]$/.test(text) ? text : `${text}.`;
 }
@@ -142,8 +149,8 @@ export function composeFindingsSummary(
    * "finished" nor "still running" can be claimed. */
   opts: { terminal: boolean | null }
 ): string[] {
-  // The cap is applied in one place so no branch can smuggle a long line past
-  // it — an interpolated persona name does that as easily as a goal title.
+  // The cap is applied in one place so no branch can smuggle a long sentence
+  // past it — an interpolated persona name does that as easily as a goal title.
   return composeLines(model, opts).map((line) => limitWords(line));
 }
 

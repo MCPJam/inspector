@@ -3,7 +3,7 @@
  *
  * Config only: these rows say what a future run must meet, never what a
  * past run scored. Comparative conditions need a complete baseline;
- * "Any gating scorer errored" does not. Clearing the baseline selector
+ * "Any required evaluator errored" does not. Clearing the baseline selector
  * also clears the comparative fields so the review diff can name them.
  */
 
@@ -22,10 +22,10 @@ export const QUALITY_GATE_BASELINE_HINT =
   "Comparison conditions use this baseline. The run's own verdict is unchanged.";
 
 export const QUALITY_GATE_ALLOWED_DROP_HINT =
-  "Maximum decrease in a gating scorer's pass rate, in percentage points.";
+  "Maximum decrease in a required evaluator's pass rate, in percentage points.";
 
 export const QUALITY_GATE_ROLE_LEGEND =
-  "Gate, Warn, and Report describe how a scorer is configured, not a run result.";
+  "Required and Advisory describe how an evaluator is configured, not a run result.";
 
 export const QUALITY_GATE_CLI_ENFORCEMENT =
   "Applied by mcpjam cloud eval gate.";
@@ -344,7 +344,7 @@ export function SuiteQualityGateSection({
     policy?.noGatingScoreErrors === true
       ? {
           key: "qualityGateNoGatingScoreErrors",
-          label: "Any gating scorer errored",
+          label: "Any required evaluator errored",
           value: "Fail",
         }
       : null,
@@ -390,9 +390,11 @@ export function SuiteQualityGateSection({
               <option value="previous_completed">Previous run</option>
             ) : null}
           </select>
-          <p className="break-all text-right text-[11px] text-muted-foreground/60">
-            {baselineResolvedLabel}
-          </p>
+          {choice !== "none" ? (
+            <p className="break-all text-right text-[11px] text-muted-foreground/60">
+              {baselineResolvedLabel}
+            </p>
+          ) : null}
           {hiddenComparativeConditions.length > 0 && choice !== "none" ? (
             <p
               className="text-[11px] text-muted-foreground"
@@ -469,24 +471,26 @@ export function SuiteQualityGateSection({
         </label>
       ) : null}
 
-      <GateRow
-        settingKey="qualityGateAllowedDrop"
-        label="Allowed drop"
-        hint={QUALITY_GATE_ALLOWED_DROP_HINT}
-      >
-        <PercentInput
-          aligned={simplified}
-          value={policy?.maximumPassRateDrop}
-          disabled={disabled || !comparativeEnabled}
-          ariaLabel="Maximum gating scorer pass-rate drop"
-          onCommit={(fraction) =>
-            commitPolicy({
-              ...policy,
-              maximumPassRateDrop: fraction,
-            })
-          }
-        />
-      </GateRow>
+      {choice !== "none" ? (
+        <GateRow
+          settingKey="qualityGateAllowedDrop"
+          label="Allowed drop"
+          hint={QUALITY_GATE_ALLOWED_DROP_HINT}
+        >
+          <PercentInput
+            aligned={simplified}
+            value={policy?.maximumPassRateDrop}
+            disabled={disabled || !comparativeEnabled}
+            ariaLabel="Maximum required evaluator pass-rate drop"
+            onCommit={(fraction) =>
+              commitPolicy({
+                ...policy,
+                maximumPassRateDrop: fraction,
+              })
+            }
+          />
+        </GateRow>
+      ) : null}
 
       {/*
         Under `simplified` these three are not editable here — but a policy set
@@ -524,7 +528,7 @@ export function SuiteQualityGateSection({
           <GateRow
             settingKey="qualityGateNoDeterministicRegressions"
             label="Deterministic regressions"
-            hint="Fail when a deterministic gating scorer flips against the baseline."
+            hint="Fail when a deterministic required evaluator flips against the baseline."
           >
             <Switch
               checked={policy?.noDeterministicRegressions === true}
@@ -560,13 +564,13 @@ export function SuiteQualityGateSection({
 
           <GateRow
             settingKey="qualityGateNoGatingScoreErrors"
-            label="Any gating scorer errored"
-            hint="Fails when a gating scorer errors. Does not need a baseline."
+            label="Any required evaluator errored"
+            hint="Fails when a required evaluator errors. Does not need a baseline."
           >
             <Switch
               checked={policy?.noGatingScoreErrors === true}
               disabled={disabled}
-              aria-label="Any gating scorer errored"
+              aria-label="Any required evaluator errored"
               onCheckedChange={(checked) =>
                 commitPolicy({
                   ...policy,

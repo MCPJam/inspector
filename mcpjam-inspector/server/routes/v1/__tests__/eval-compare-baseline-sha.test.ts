@@ -50,7 +50,7 @@ vi.mock("../../../utils/v1-convex-token.js", () => ({
 import v1Routes from "../index.js";
 import { v1OnError } from "../envelope.js";
 
-const RUN_ID = "run_compare";
+const RUN_ID = "runcomparexxxxxxxxxxxxxxxxxxxxxx";
 const BASE = `/api/v1/projects/p1/eval-runs/${RUN_ID}/compare`;
 const SHA = "9f1a2b3c4d5e6f70819293a4b5c6d7e8f9a0b1c2";
 
@@ -69,12 +69,12 @@ function get(path: string): Promise<Response> {
 }
 
 /** The compare run the route reads BEFORE it calls the action. */
-const RUN_DOC = { _id: RUN_ID, projectId: "p1", suiteId: "suite_1" };
+const RUN_DOC = { _id: RUN_ID, projectId: "p1", suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx" };
 
 /** A minimal diff — these tests assert the baseline envelope, not the diff. */
 const DIFF = {
-  suite: { id: "suite_1", name: "Suite" },
-  baseRun: { id: "run_base" },
+  suite: { id: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", name: "Suite" },
+  baseRun: { id: "runbasexxxxxxxxxxxxxxxxxxxxxxxxx" },
   compareRun: { id: RUN_ID },
   scores: {},
   metrics: {},
@@ -102,7 +102,7 @@ describe("compare route: baseCommitSha", () => {
       diff: DIFF,
       baseline: {
         policy: "commit_sha",
-        baseRunId: "run_base",
+        baseRunId: "runbasexxxxxxxxxxxxxxxxxxxxxxxxx",
         baseCommitSha: SHA,
       },
     });
@@ -118,7 +118,7 @@ describe("compare route: baseCommitSha", () => {
 
     const body = (await res.json()) as any;
     expect(body.baseline.policy).toBe("commit_sha");
-    expect(body.baseline.baseRunId).toBe("run_base");
+    expect(body.baseline.baseRunId).toBe("runbasexxxxxxxxxxxxxxxxxxxxxxxxx");
     expect(body.baseline.baseCommitSha).toBe(SHA);
     // Absent means UNAMBIGUOUS. Publishing a 1 here would invent a uniqueness
     // claim the backend never made.
@@ -130,7 +130,7 @@ describe("compare route: baseCommitSha", () => {
     convexActionMock.mockResolvedValue({
       status: "ok",
       diff: DIFF,
-      baseline: { policy: "commit_sha", baseRunId: "run_base" },
+      baseline: { policy: "commit_sha", baseRunId: "runbasexxxxxxxxxxxxxxxxxxxxxxxxx" },
     });
     const padded = encodeURIComponent(` ${SHA} `);
     const res = await get(`${BASE}?baseCommitSha=${padded}`);
@@ -144,7 +144,7 @@ describe("compare route: baseCommitSha", () => {
       diff: DIFF,
       baseline: {
         policy: "commit_sha",
-        baseRunId: "run_base",
+        baseRunId: "runbasexxxxxxxxxxxxxxxxxxxxxxxxx",
         baseCommitSha: SHA,
         matchCount: 3,
       },
@@ -163,7 +163,7 @@ describe("compare route: baseCommitSha", () => {
       diff: DIFF,
       baseline: {
         policy: "commit_sha",
-        baseRunId: "run_base",
+        baseRunId: "runbasexxxxxxxxxxxxxxxxxxxxxxxxx",
         baseCommitSha: SHA,
         matchCount: 1,
         matchCountTruncated: true,
@@ -181,7 +181,7 @@ describe("compare route: baseCommitSha", () => {
       diff: DIFF,
       baseline: {
         policy: "commit_sha",
-        baseRunId: "run_base",
+        baseRunId: "runbasexxxxxxxxxxxxxxxxxxxxxxxxx",
         // No matchCount: the backend established uniqueness. A stray flag must
         // not travel alone — on its own it says nothing a reader can act on.
         matchCountTruncated: true,
@@ -194,7 +194,7 @@ describe("compare route: baseCommitSha", () => {
   });
 
   it("refuses both selectors at the EDGE, without calling the action", async () => {
-    const res = await get(`${BASE}?baseRunId=run_x&baseCommitSha=${SHA}`);
+    const res = await get(`${BASE}?baseRunId=runxxxxxxxxxxxxxxxxxxxxxxxxxxxxx&baseCommitSha=${SHA}`);
     expect(res.status).toBe(400);
     const body = (await res.json()) as any;
     expect(body.code).toBe("VALIDATION_ERROR");

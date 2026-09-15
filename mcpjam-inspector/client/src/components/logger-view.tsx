@@ -59,8 +59,9 @@ import { cn } from "@/lib/utils";
 import { HttpExchangeDetails } from "@/components/tracing/HttpExchangeDetails";
 import { InlineFrameHeaders } from "@/components/tracing/InlineFrameHeaders";
 import type { HttpExchangeLogEvent } from "@mcpjam/sdk/browser";
+import { isWebMcpError } from "@/lib/webmcp-traffic";
 
-type TrafficSource = "mcp-server" | "mcp-apps" | "oauth" | "http";
+type TrafficSource = "mcp-server" | "mcp-apps" | "oauth" | "http" | "webmcp";
 
 interface RenderableRpcItem {
   id: string;
@@ -281,6 +282,14 @@ function DirectionLabel({
     );
   }
 
+  if (source === "webmcp") {
+    return (
+      <span className="font-mono text-[10px] leading-none flex-shrink-0 text-muted-foreground">
+        {direction === "SEND" ? "webmcp →" : "← webmcp"}
+      </span>
+    );
+  }
+
   const isSend = direction === "SEND";
   return (
     <span
@@ -385,6 +394,8 @@ export function LoggerView({
           ? ("oauth" as TrafficSource)
           : item.kind === "http"
           ? ("http" as TrafficSource)
+          : item.kind === "webmcp"
+          ? ("webmcp" as TrafficSource)
           : ("mcp-server" as TrafficSource),
       oauthStatus: item.oauthStatus,
       oauthRecovered: item.oauthRecovered,
@@ -652,6 +663,9 @@ export function LoggerView({
                     </DropdownMenuRadioItem>
                     <DropdownMenuRadioItem value="mcp-apps" className="text-xs">
                       Apps
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="webmcp" className="text-xs">
+                      WebMCP
                     </DropdownMenuRadioItem>
                   </DropdownMenuRadioGroup>
                 </DropdownMenuContent>
@@ -923,6 +937,7 @@ export function LoggerView({
               const isError =
                 it.method === "error" ||
                 it.method === "csp-violation" ||
+                (it.source === "webmcp" && isWebMcpError(it.payload)) ||
                 (isOAuthTraffic && it.oauthStatus === "error") ||
                 // A 4xx/5xx or a fetch that never got a response. `401` is not
                 // excluded here the way the OAuth card excludes its expected
@@ -954,7 +969,10 @@ export function LoggerView({
                   isError={isError}
                   borderClass={borderClass}
                   badge={
-                    isError && !isOAuthTraffic && !isHttpExchange ? (
+                    isError &&
+                    !isOAuthTraffic &&
+                    !isHttpExchange &&
+                    it.source !== "webmcp" ? (
                       <AlertCircle className="h-3 w-3 flex-shrink-0 text-destructive" />
                     ) : (
                       <DirectionLabel

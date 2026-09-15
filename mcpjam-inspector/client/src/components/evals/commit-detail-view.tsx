@@ -12,6 +12,7 @@ import {
   formatDuration,
   formatRunId,
   getRunMetricSource,
+  snapshotTestModels,
 } from "./helpers";
 import { PassCriteriaBadge } from "./pass-criteria-badge";
 import { RunHeaderCompactStats } from "./run-header-compact-stats";
@@ -48,7 +49,7 @@ function getModelsUsed(runs: EvalSuiteRun[]): string[] {
   const models = new Set<string>();
   for (const run of runs) {
     for (const test of run.configSnapshot?.tests ?? []) {
-      if (test.model) models.add(test.model);
+      for (const entry of snapshotTestModels(test)) models.add(entry.model);
     }
   }
   return Array.from(models);

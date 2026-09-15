@@ -1591,3 +1591,91 @@ describe("runtime lifecycle admission", () => {
     expect((await handler.handle(lifecycle("prepare_sleep"))).status).toBe(409);
   });
 });
+
+describe("BrowserdRequestHandler — the wire, checked per command", () => {
+  /** `/v1/status` reports `msSinceActivity`, which is how activity is observed. */
+  const activityOf = async (handler: BrowserdRequestHandler) => {
+    const res = await handler.handle(
+      req({ method: "GET", path: "/v1/status", body: undefined }),
+    );
+    return (res.body as { msSinceActivity?: number }).msSinceActivity;
+  };
+
+  const stamped = (protocolVersion: number, over: Record<string, unknown> = {}) =>
+    req({
+      body: JSON.stringify({
+        command: {
+          commandId: "c1",
+          source: "chat",
+          protocolVersion,
+          action: { kind: "act", verb: "fill_form", fields: [] },
+          ...over,
+        },
+      }),
+    });
+
+  it("refuses a command stamped with a protocol version it does not speak", async () => {
+    // The failure this prevents is not a refusal: a `fill_form` at protocol 1
+    // falls through that daemon's verb switch and answers `ok` for a form with
+    // every field still empty.
+    const { handler, submit } = makeHandler();
+    const res = await handler.handle(stamped(BROWSERD_PROTOCOL_VERSION + 1));
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({
+      error: "protocol_mismatch",
+      protocolVersion: BROWSERD_PROTOCOL_VERSION,
+      bootId: BOOT,
+    });
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("refuses it BEFORE the lease gate, so the answer is the real reason", async () => {
+    // 409 rather than 423: a mismatch answered `lease_held` sends the caller
+    // off to wait for a person who is not there.
+    const lease = new HandoffLease();
+    lease.acquire("panel-a", 60_000);
+    const { handler, submit } = makeHandler({ lease });
+    const res = await handler.handle(stamped(BROWSERD_PROTOCOL_VERSION + 1));
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ error: "protocol_mismatch" });
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("does not count a refused command as activity", async () => {
+    // A caller speaking a wire this daemon does not know is a caller that will
+    // be relaunching it. Counting its attempts would hold the upgrade off with
+    // the very commands the upgrade exists to fix.
+    const { handler } = makeHandler();
+    expect(await activityOf(handler)).toBeUndefined();
+    await handler.handle(stamped(BROWSERD_PROTOCOL_VERSION + 1));
+    expect(await activityOf(handler)).toBeUndefined();
+  });
+
+  it("runs a command that carries no protocolVersion exactly as before", async () => {
+    // Absent means "do not check" — every caller that predates the stamp, and
+    // the in-process client, whose two ends are the same module.
+    const { handler, submit } = makeHandler();
+    const res = await handler.handle(req());
+    expect(res.status).toBe(200);
+    expect(submit).toHaveBeenCalledOnce();
+    expect(await activityOf(handler)).toBeDefined();
+  });
+
+  it("runs a command stamped with the version it speaks", async () => {
+    const { handler, submit } = makeHandler();
+    const res = await handler.handle(
+      req({
+        body: JSON.stringify({
+          command: {
+            commandId: "c1",
+            source: "chat",
+            protocolVersion: BROWSERD_PROTOCOL_VERSION,
+            action: { kind: "reload" },
+          },
+        }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(submit).toHaveBeenCalledOnce();
+  });
+});

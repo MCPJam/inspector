@@ -203,6 +203,10 @@ vi.mock("../../../utils/scenario-runtime-config.js", () => ({
 // through this fetch; the task-created delivery tests use it to turn the
 // tasks policy on. Inert for every request without a `hostId`.
 const fetchHostRuntimeConfigMock = vi.hoisted(() => vi.fn());
+const readLocalBrowserSettingMock = vi.hoisted(() => vi.fn());
+vi.mock("../../../utils/computers/local-browser-settings.js", () => ({
+  readLocalBrowserSetting: (...args: unknown[]) => readLocalBrowserSettingMock(...args),
+}));
 vi.mock("../../../utils/host-runtime-config.js", () => ({
   fetchHostRuntimeConfig: (...args: unknown[]) =>
     fetchHostRuntimeConfigMock(...args),
@@ -465,6 +469,96 @@ describe("POST /api/mcp/chat-v2", () => {
   });
 
   describe("success cases", () => {
+    it("keeps guest local Browser independent of member-only project settings", async () => {
+      const guest = await import("../../../utils/computers/local-engine-request.js");
+      const guestCheck = vi.spyOn(guest, "isGuestChatRequest").mockReturnValue(true);
+      const rollout = await import("../../../utils/computers/browser-rollout.js");
+      const resolveRollout = vi.spyOn(rollout, "resolveBrowserRollout").mockResolvedValue({
+        enabled: true, actor: { id: "guest-browser-user", guest: true },
+      });
+      try {
+        const res = await postAuthenticatedJson({
+          messages: [{ role: "user", content: "Hello" }],
+          model: { id: "gpt-4", provider: "openai" }, apiKey: "test-key",
+          projectId: "guest-project", builtInToolIds: ["browser"], browserEngine: "local",
+        });
+        expect(res.status).toBe(200);
+        await lastStreamExecution;
+        expect(readLocalBrowserSettingMock).not.toHaveBeenCalled();
+        expect(resolveRollout).toHaveBeenCalledOnce();
+        expect(capturedStreamEvents.find((event) => event.type === "data-browser-readiness")?.data.reason)
+          .toContain("browser_consent_required");
+      } finally {
+        guestCheck.mockRestore();
+        resolveRollout.mockRestore();
+      }
+    });
+
+    it.each([
+      { enabled: true, toolIds: [], engine: "local", offered: true },
+      { enabled: false, toolIds: ["browser"], engine: "local", offered: false },
+      { enabled: true, toolIds: [], engine: "cloud", offered: false },
+    ])("resolves local client settings: $enabled / $engine", async ({ enabled, toolIds, engine, offered }) => {
+      fetchHostRuntimeConfigMock.mockResolvedValueOnce({ ok: true, config: {
+        hostId: "host-browser", builtInToolIds: toolIds, localBrowserEnabled: enabled,
+      } });
+      const rollout = await import("../../../utils/computers/browser-rollout.js");
+      const resolveRollout = vi.spyOn(rollout, "resolveBrowserRollout").mockResolvedValue({
+        enabled: true, actor: { id: "test-member", guest: false },
+      });
+      try {
+        const res = await postAuthenticatedJson({
+          messages: [{ role: "user", content: "Hello" }],
+          model: { id: "gpt-4", provider: "openai" }, apiKey: "test-key",
+          hostId: "host-browser", builtInToolIds: toolIds, browserEngine: engine,
+        });
+        expect(res.status).toBe(200);
+        await lastStreamExecution;
+        expect(resolveRollout).toHaveBeenCalledTimes(offered ? 1 : 0);
+        if (offered) {
+          expect(capturedStreamEvents.find((event) => event.type === "data-browser-readiness")?.data.reason)
+            .toContain("browser_consent_required");
+        }
+      } finally { resolveRollout.mockRestore(); }
+    });
+
+    it("loads project defaults for a local chat without a selected client", async () => {
+      readLocalBrowserSettingMock.mockResolvedValueOnce(true);
+      const rollout = await import("../../../utils/computers/browser-rollout.js");
+      const resolveRollout = vi.spyOn(rollout, "resolveBrowserRollout").mockResolvedValueOnce({
+        enabled: true, actor: { id: "test-member", guest: false },
+      });
+      try {
+        const res = await postAuthenticatedJson({
+          messages: [{ role: "user", content: "Hello" }],
+          model: { id: "gpt-4", provider: "openai" }, apiKey: "test-key",
+          projectId: "project-browser", builtInToolIds: [], browserEngine: "local",
+        });
+        expect(res.status).toBe(200);
+        await lastStreamExecution;
+        expect(readLocalBrowserSettingMock).toHaveBeenCalledWith("signed-in-test-token", "project-browser");
+        expect(resolveRollout).toHaveBeenCalledOnce();
+      } finally { resolveRollout.mockRestore(); }
+    });
+
+    it("withholds Browser if the shared setting cannot be read", async () => {
+      readLocalBrowserSettingMock.mockRejectedValueOnce(new Error("Backend unavailable"));
+      const rollout = await import("../../../utils/computers/browser-rollout.js");
+      const resolveRollout = vi.spyOn(rollout, "resolveBrowserRollout");
+      try {
+        const res = await postAuthenticatedJson({
+          messages: [{ role: "user", content: "Hello" }],
+          model: { id: "gpt-4", provider: "openai" }, apiKey: "test-key",
+          projectId: "project-browser", builtInToolIds: ["browser"], browserEngine: "local",
+        });
+        expect(res.status).toBe(200);
+        await lastStreamExecution;
+        expect(resolveRollout).not.toHaveBeenCalled();
+        expect(capturedStreamEvents.find((event) => event.type === "data-browser-readiness")?.data.reason)
+          .toContain("Could not load local Browser settings");
+      } finally { resolveRollout.mockRestore(); }
+    });
+
     it("calls getToolsForAiSdk with selected servers", async () => {
       const res = await postJson(app, "/api/mcp/chat-v2", {
         messages: [{ role: "user", content: "Hello" }],

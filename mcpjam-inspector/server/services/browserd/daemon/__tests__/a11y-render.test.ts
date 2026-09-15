@@ -224,3 +224,42 @@ describe("renderA11yTree — nothing to show", () => {
     expect(renderA11yTree({ role: "RootWebArea" })).toBe(EMPTY_PAGE);
   });
 });
+
+describe("a scroll container's line", () => {
+  it("renders `scrollable` as a flag, before the ref", () => {
+    // The flag order is fixed because these lines land in eval transcripts and
+    // in diffs between two runs of the same page. `scrollable` is APPENDED to
+    // that order, so every line that does not carry it is byte-identical to
+    // what it was before the flag existed.
+    expect(
+      renderA11yTree({ role: "generic", scrollable: true, ref: "e4" }),
+    ).toBe("- generic [scrollable ref=e4]");
+  });
+
+  it("keeps it last among the flags", () => {
+    expect(
+      renderA11yTree({
+        role: "listbox",
+        name: "Results",
+        disabled: true,
+        focused: true,
+        scrollable: true,
+      }),
+    ).toBe('- listbox "Results" [disabled focused scrollable]');
+  });
+
+  it("survives the transparency rule that would otherwise fold the line away", () => {
+    // A `generic` with one child is a wrapper the model does not need — unless
+    // it has a ref, which is exactly what `isRefWorthy` now gives a scroller.
+    // Without the ref this line would not be rendered at all, and the marker
+    // would be invisible on the one node shape it is FOR.
+    expect(
+      renderA11yTree({
+        role: "generic",
+        scrollable: true,
+        ref: "e4",
+        children: [{ role: "listitem", name: "Row 1" }],
+      }),
+    ).toBe('- generic [scrollable ref=e4]\n  - listitem "Row 1"');
+  });
+});

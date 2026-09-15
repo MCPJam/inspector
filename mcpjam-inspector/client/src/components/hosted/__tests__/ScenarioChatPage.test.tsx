@@ -1469,8 +1469,11 @@ describe("ScenarioChatPage", () => {
       render(<ScenarioChatPage />);
 
       const trigger = await screen.findByTestId("scenario-tasks-trigger");
+      // The accessible name must keep "What to try": the consent dialog tells
+      // every tester to look for that name, and a voice-control user says it.
+      expect(screen.getByRole("button", { name: /What to try/ })).toBe(trigger);
       expect(screen.getByTestId("scenario-tasks-remaining")).toHaveTextContent(
-        "3 left",
+        "3 unchecked",
       );
 
       await userEvent.click(trigger);
@@ -1479,7 +1482,7 @@ describe("ScenarioChatPage", () => {
       );
 
       expect(screen.getByTestId("scenario-tasks-remaining")).toHaveTextContent(
-        "2 left",
+        "2 unchecked",
       );
       // Check state is the tester's own bookkeeping — kept in their tab and
       // sent nowhere.
@@ -1490,7 +1493,39 @@ describe("ScenarioChatPage", () => {
       ).toEqual(["t1"]);
     });
 
-    it("reads Done rather than 0 left once everything is ticked", async () => {
+    it("says What to try once, and does not call it optional", async () => {
+      // The popover used to open on "Optional things to try" over a footnote
+      // leading with "Try any, in any order" — telling a tester the list was
+      // skippable, every single time they opened it. The list still IS
+      // optional (nothing gates the composer, nothing reports completion); it
+      // is just not what the heading should say.
+      writeStudyWithTasks("sbx_copy", [{ id: "t1", title: "Only task" }]);
+
+      render(<ScenarioChatPage />);
+
+      const trigger = await screen.findByTestId("scenario-tasks-trigger");
+      // Read the attribute rather than passing an asymmetric matcher to
+      // `toHaveAccessibleName`: that overload takes a string or a regex, and a
+      // matcher object there can pass without ever comparing anything.
+      expect(trigger.getAttribute("aria-label")).toMatch(/^What to try — /);
+      expect(trigger.getAttribute("aria-label")).not.toMatch(/optional/i);
+
+      await userEvent.click(trigger);
+      expect(
+        await screen.findByTestId("scenario-tasks-item-t1"),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/Optional things to try/i)).toBeNull();
+      expect(screen.queryByText(/in any order/i)).toBeNull();
+      // The footnote's other half stays. It is not framing — it is the one
+      // thing about this control a tester cannot work out by looking at it.
+      expect(
+        screen.getByText("This checklist is only for you."),
+      ).toBeInTheDocument();
+      // The heading is the trigger's name, so both now read "What to try".
+      expect(screen.getAllByText("What to try").length).toBeGreaterThan(1);
+    });
+
+    it("reads All checked rather than 0 unchecked once everything is ticked", async () => {
       writeStudyWithTasks("sbx_done", [{ id: "t1", title: "Only task" }]);
       sessionStorage.setItem(
         "scenario-tasks-checked-sbx_done",
@@ -1501,7 +1536,7 @@ describe("ScenarioChatPage", () => {
 
       expect(
         await screen.findByTestId("scenario-tasks-remaining"),
-      ).toHaveTextContent("Done");
+      ).toHaveTextContent("All checked");
     });
 
     it("hides the control for a study with no tasks", async () => {
@@ -2237,6 +2272,185 @@ describe("ScenarioChatPage", () => {
           expect.objectContaining({ scenarioComposerBlocked: false }),
         ),
       );
+    });
+  });
+
+  describe("preview surface", () => {
+    it("keeps surface=preview on the session after the URL collapses to /#slug", async () => {
+      window.history.replaceState(
+        {},
+        "",
+        "/user-testing/demo/scenario-token?surface=preview",
+      );
+
+      render(<ScenarioChatPage pathToken="scenario-token" />);
+
+      expect(
+        await screen.findByTestId("scenario-chat-tab"),
+      ).toBeInTheDocument();
+      await waitFor(() => {
+        expect(window.location.hash).toBe("#resolved-scenario");
+      });
+      expect(window.location.search).toBe("");
+      expect(readScenarioSession()?.surface).toBe("preview");
+      expect(mockChatTabV2).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          hostedContext: expect.objectContaining({
+            scenarioSurface: "preview",
+          }),
+        }),
+      );
+    });
+
+    function writeSurfaceSession(surface: "preview" | "share_link") {
+      writeScenarioSession({
+        scenarioId: "sbx_1",
+        accessVersion: 1,
+        surface,
+        payload: {
+          projectId: "ws_1",
+          scenarioId: "sbx_1",
+          name: "Surface Scenario",
+          description: "",
+          hostStyle: "claude",
+          mode: "anyone_with_link",
+          allowGuestAccess: false,
+          viewerIsProjectMember: true,
+          systemPrompt: "You are helpful.",
+          modelId: "openai/gpt-5-mini",
+          temperature: 0.7,
+          requireToolApproval: false,
+          servers: [],
+        },
+      });
+    }
+
+    it("shows a labelled Back to study control after consent on the preview surface", async () => {
+      writeSurfaceSession("preview");
+      window.history.replaceState({}, "", "/#surface-scenario");
+      const onExit = vi.fn();
+
+      render(<ScenarioChatPage onExitScenarioChat={onExit} />);
+
+      await userEvent.click(
+        await screen.findByRole("button", { name: "Continue" }),
+      );
+      expect(
+        await screen.findByTestId("scenario-chat-tab"),
+      ).toBeInTheDocument();
+
+      await userEvent.click(
+        screen.getByRole("button", { name: "Back to study" }),
+      );
+
+      expect(onExit).toHaveBeenCalledTimes(1);
+      expect(readScenarioSession()).toBeNull();
+      expect(window.location.pathname).toBe("/user-testing/sbx_1");
+      expect(window.location.hash).toBe("");
+    });
+
+    it("keeps the header free of Back to study for a share-link tester", async () => {
+      writeSurfaceSession("share_link");
+      consentAlreadyGiven();
+      window.history.replaceState({}, "", "/#surface-scenario");
+
+      render(<ScenarioChatPage />);
+
+      expect(
+        await screen.findByTestId("scenario-chat-tab"),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Back to study" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "MCPJam" }),
+      ).toBeInTheDocument();
+    });
+
+    it("routes consent Leave back to the study on the preview surface", async () => {
+      writeSurfaceSession("preview");
+      window.history.replaceState({}, "", "/#surface-scenario");
+      const onExit = vi.fn();
+
+      render(<ScenarioChatPage onExitScenarioChat={onExit} />);
+
+      await userEvent.click(
+        await screen.findByRole("button", { name: "Leave" }),
+      );
+
+      expect(onExit).toHaveBeenCalledTimes(1);
+      expect(readScenarioSession()).toBeNull();
+      expect(window.location.pathname).toBe("/user-testing/sbx_1");
+      expect(
+        screen.queryByTestId("scenario-recording-declined"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("keeps the terminal declined panel for a share-link tester who Leaves", async () => {
+      writeSurfaceSession("share_link");
+      window.history.replaceState({}, "", "/#surface-scenario");
+      const onExit = vi.fn();
+
+      render(<ScenarioChatPage onExitScenarioChat={onExit} />);
+
+      await userEvent.click(
+        await screen.findByRole("button", { name: "Leave" }),
+      );
+
+      expect(
+        await screen.findByTestId("scenario-recording-declined"),
+      ).toBeInTheDocument();
+      expect(onExit).not.toHaveBeenCalled();
+      expect(readScenarioSession()?.scenarioId).toBe("sbx_1");
+      expect(window.location.pathname).toBe("/");
+    });
+
+    it("never clears the host tab's stored session when exiting from inside the embed", async () => {
+      mockIsEmbeddedPreview.mockReturnValue(true);
+      const outerSession = {
+        scenarioId: "sbx_outer",
+        accessVersion: 7,
+        payload: {
+          projectId: "ws_outer",
+          scenarioId: "sbx_outer",
+          name: "Outer Dashboard Scenario",
+          description: "Hosted scenario",
+          hostStyle: "chatgpt" as const,
+          mode: "invited_only" as const,
+          allowGuestAccess: false,
+          viewerIsProjectMember: true,
+          systemPrompt: "You are helpful.",
+          modelId: "openai/gpt-5-mini",
+          temperature: 0.4,
+          requireToolApproval: true,
+          servers: [],
+        },
+      };
+      writeScenarioSession(outerSession);
+      consentAlreadyGiven();
+      window.history.replaceState(
+        {},
+        "",
+        "/user-testing/demo/scenario-token?surface=preview",
+      );
+      const onExit = vi.fn();
+
+      render(
+        <ScenarioChatPage
+          pathToken="scenario-token"
+          onExitScenarioChat={onExit}
+        />,
+      );
+
+      await userEvent.click(
+        await screen.findByRole("button", { name: "Back to study" }),
+      );
+
+      expect(onExit).toHaveBeenCalledTimes(1);
+      expect(readScenarioSession()).toMatchObject({
+        scenarioId: "sbx_outer",
+        accessVersion: 7,
+      });
     });
   });
 });

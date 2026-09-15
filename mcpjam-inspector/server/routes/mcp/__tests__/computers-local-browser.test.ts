@@ -53,13 +53,19 @@ vi.mock("../../../middleware/require-verified-auth.js", () => ({
     authState.verified ? next() : c.json({ error: "unauthorized" }, 401),
 }));
 
-const configState = vi.hoisted(() => ({ browserEnabled: true }));
+const enableClients = vi.hoisted(() => vi.fn());
+vi.mock("../../../utils/computers/local-browser-settings.js", () => ({ enableLocalBrowserClients: enableClients }));
+
+const configState = vi.hoisted(() => ({ browserEnabled: true, hosted: false }));
 vi.mock("../../../config.js", async () => {
   const actual = await vi.importActual<typeof import("../../../config.js")>(
     "../../../config.js",
   );
   return {
     ...actual,
+    get HOSTED_MODE() {
+      return configState.hosted;
+    },
     get LOCAL_BROWSER_ENABLED() {
       return configState.browserEnabled;
     },
@@ -69,10 +75,11 @@ vi.mock("../../../config.js", async () => {
 const chromiumState = vi.hoisted(() => ({
   installed: false,
   installs: 0,
+  install: { status: "idle" } as Record<string, unknown>,
 }));
 vi.mock("../../../utils/browser-rendering-setup.js", () => ({
   isChromiumInstalled: async () => chromiumState.installed,
-  getChromiumInstallState: () => ({ status: "idle" as const }),
+  getChromiumInstallState: () => chromiumState.install,
   startChromiumInstall: async () => {
     chromiumState.installs += 1;
     return { status: "installing" as const, percent: 0 };
@@ -293,11 +300,71 @@ beforeEach(() => {
   authState.verified = true;
   authState.guest = false;
   configState.browserEnabled = true;
+  configState.hosted = false;
+  enableClients.mockReset().mockResolvedValue({ enabledProjects: 2, skippedProjects: 1 });
   chromiumState.installed = false;
   chromiumState.installs = 0;
   browserState.runtime = "playwright";
   browserState.surface = "native";
   browserState.touched = [];
+});
+
+describe("POST /local-browser/enable-clients", () => {
+  const enable = (token?: string) => createApp().request(
+    "/api/mcp/computers/local-browser/enable-clients",
+    { method: "POST", headers: {
+      Authorization: "Bearer signed-in-user",
+      ...(token ? { [BROWSER_CONSENT_HEADER]: token } : {}),
+    } },
+  );
+
+  it("requires a valid device grant before changing any shared clients", async () => {
+    expect((await enable()).status).toBe(403);
+    expect((await enable("forged-token")).status).toBe(403);
+    expect(enableClients).not.toHaveBeenCalled();
+    const token = await grantConsent();
+    const response = await enable(token);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ enabledProjects: 2, skippedProjects: 1 });
+    expect(enableClients).toHaveBeenCalledWith("signed-in-user");
+  });
+
+  it("is unavailable in hosted mode and while local rollout is off", async () => {
+    const token = await grantConsent();
+    configState.hosted = true;
+    expect((await enable(token)).status).toBe(404);
+    configState.hosted = false;
+    configState.browserEnabled = false;
+    expect((await enable(token)).status).toBe(404);
+    expect(enableClients).not.toHaveBeenCalled();
+  });
+
+  it("requires verified credentials", async () => {
+    const token = await grantConsent();
+    authState.verified = false;
+    expect((await enable(token)).status).toBe(401);
+    expect(enableClients).not.toHaveBeenCalled();
+  });
+
+  it("allows guests on this device without changing shared clients", async () => {
+    const token = await grantConsent();
+    authState.guest = true;
+    const response = await enable(token);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ scope: "device", enabledProjects: 0 });
+    expect(enableClients).not.toHaveBeenCalled();
+    expect((await enable()).status).toBe(403);
+  });
+
+  it("allows retry after backend failure with the same consent capability", async () => {
+    const token = await grantConsent();
+    enableClients.mockRejectedValueOnce(new Error("Backend unavailable"));
+    const failure = await enable(token);
+    expect(failure.status).toBe(503);
+    expect(await failure.json()).toMatchObject({ code: "browser_client_setup_failed" });
+    expect((await enable(token)).status).toBe(200);
+    expect(enableClients).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("POST /local-browser/lookup", () => {
@@ -467,6 +534,27 @@ describe("GET /local-browser/status", () => {
       running: false,
       leaseHeld: false,
     });
+  });
+
+  it("passes a failure through whole: reason, details, and the next retry", async () => {
+    // The pane shows all three; a route that re-derived the state would
+    // have to know the shape, and would drop whatever it did not know.
+    chromiumState.install = {
+      status: "failed",
+      error: "Download failed: server returned code 403",
+      details:
+        "Failed to install browsers\nDownload failed: server returned code 403",
+      retryAt: 1_700_000_000_000,
+      attempts: 1,
+    };
+    try {
+      expect(await (await status()).json()).toMatchObject({
+        installed: false,
+        install: chromiumState.install,
+      });
+    } finally {
+      chromiumState.install = { status: "idle" };
+    }
   });
 
   it("answers without consent, so the consent screen can describe itself", async () => {

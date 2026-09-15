@@ -296,7 +296,8 @@ vi.mock("@ai-sdk/react", async () => {
   };
 });
 
-vi.mock("ai", () => ({
+vi.mock("ai", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("ai")>()),
   DefaultChatTransport: class MockTransport {
     options: any;
     sendMessages: ReturnType<typeof vi.fn>;
@@ -506,10 +507,14 @@ describe("useChatSession hosted mode", () => {
   });
 
   it("never ships WebMCP ui_* tools from the generic hook", async () => {
-    // MCPJam UI tools are agent-surface-only: even with a non-empty internal
-    // registry, the generic chat body must not carry a `uiTools` field on any
-    // surface. The only sender is agent-chat-instances.ts
-    // (/api/web/mcpjam-agent).
+    // The Playground and every other generic chat surface stay isolated from
+    // the UI-tool catalog: even with a non-empty registry, the body must not
+    // carry a `uiTools` field on any surface. The only sender is
+    // agent-chat-instances.ts (/api/web/mcpjam-agent). A user who explicitly
+    // opts a turn into an open WebMCP session's `pageTools` still gets those
+    // — this is about the automatic snapshot, not about page tools. (The
+    // catalog ALSO reaches browser-native agents now, but through
+    // `document.modelContext`, which never touches this request body.)
     const unregister = useUiToolsRegistry.getState().registerUiTool({
       name: "ui_navigate",
       description: "Navigate the MCPJam inspector",

@@ -122,7 +122,11 @@ vi.mock("../../../utils/chat-v2-orchestration", () => ({
   })),
 }));
 
-import { runEvalSuiteWithAiSdk, streamTestCase } from "../../evals-runner";
+import {
+  defaultEvalExecutionBudgets,
+  runEvalSuiteWithAiSdk,
+  streamTestCase,
+} from "../../evals-runner";
 import type { EvalStreamEvent } from "@/shared/eval-stream-events";
 
 // ── normalization: scrub wall-clock + volatile values so snapshots are stable ──
@@ -146,7 +150,11 @@ function scrub(value: unknown): unknown {
   if (value && typeof value === "object") {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      if (SCRUB_KEYS.has(k)) {
+      if (k === "stageAnalyzerVersion") {
+        // Preserve immutable v11 payload fixtures while asserting the v12 producer.
+        expect(v).toBe(12);
+        out[k] = 11;
+      } else if (SCRUB_KEYS.has(k)) {
         out[k] = v == null ? v : "<scrubbed>";
       } else if (
         k === "id" &&
@@ -287,6 +295,7 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
     environment?: unknown;
   }) {
     return streamTestCase({
+      budgets: defaultEvalExecutionBudgets(),
       test: {
         title: "Case",
         query: "Hello",

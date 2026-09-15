@@ -102,7 +102,9 @@ describe("SuiteQualityGateSection", () => {
     expect(screen.queryByText(/Gate, Warn, and Report/)).toBeNull();
     expect(screen.queryByText(/Applied by mcpjam/)).toBeNull();
     expect(onChange).not.toHaveBeenCalled();
-    const drop = screen.getByLabelText("Maximum gating scorer pass-rate drop");
+    const drop = screen.getByLabelText(
+      "Maximum required evaluator pass-rate drop",
+    );
     fireEvent.change(drop, { target: { value: "10" } });
     fireEvent.blur(drop);
     expect(onChange).toHaveBeenLastCalledWith({
@@ -122,13 +124,13 @@ describe("SuiteQualityGateSection", () => {
     const user = userEvent.setup();
     const { onChange } = renderGate();
     expect(
-      screen.getByRole("switch", { name: "Any gating scorer errored" }),
+      screen.getByRole("switch", { name: "Any required evaluator errored" }),
     ).toBeEnabled();
     expect(
       screen.getByRole("switch", { name: "No deterministic regressions" }),
     ).toBeDisabled();
     await user.click(
-      screen.getByRole("switch", { name: "Any gating scorer errored" }),
+      screen.getByRole("switch", { name: "Any required evaluator errored" }),
     );
     expect(onChange).toHaveBeenCalledWith({ noGatingScoreErrors: true });
   });
@@ -180,7 +182,7 @@ describe("SuiteQualityGateSection", () => {
       policy: { baseline: { kind: "run", runId: "run_abc" } },
     });
     const drop = screen.getByLabelText(
-      "Maximum gating scorer pass-rate drop",
+      "Maximum required evaluator pass-rate drop",
     ) as HTMLInputElement;
     await user.clear(drop);
     await user.type(drop, "0");
@@ -291,4 +293,19 @@ describe("SuiteQualityGateSection", () => {
     });
     expect(screen.getByText("No run selected")).toBeTruthy();
   });
+});
+
+it("only shows baseline details and allowed drop after choosing a baseline", () => {
+  const { container } = renderGate({ simplified: true });
+  const baseline = container.querySelector(
+    '[data-setting-key="qualityGateBaseline"]',
+  )!;
+  expect(baseline.querySelector("p.break-all")).toBeNull();
+  expect(screen.queryByText("Allowed drop")).toBeNull();
+  fireEvent.change(
+    screen.getByRole("combobox", { name: "Quality gate baseline" }),
+    { target: { value: "run" } },
+  );
+  expect(screen.getByText("No run selected")).toBeInTheDocument();
+  expect(screen.getByText("Allowed drop")).toBeInTheDocument();
 });

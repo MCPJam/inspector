@@ -34,6 +34,12 @@
  *                make each reason specific enough to argue with.
  */
 
+import {
+  EVAL_GRADING_VALIDITY_LABELS,
+  EVAL_ITERATION_RULE_LABELS,
+  EVAL_PASS_CRITERION_SCOPE_LABELS,
+} from "@mcpjam/sdk/contract";
+
 /** One settings row: what it is called, and how an agent reaches it. */
 export type EvalSuiteSettingRow = {
   /** Stable identifier, stamped as `data-setting-key` on the rendered row. */
@@ -64,12 +70,21 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   },
   {
     key: "minimumAccuracy",
-    label: "Minimum accuracy",
+    // The SUITE-WIDE criterion, in percent. Labelled from the shared grading
+    // vocabulary rather than spelled here, because the same words have to
+    // appear on this row, in the review dialog, in revision history and in the
+    // CLI's flag help — and "Minimum accuracy" beside a per-case suite's
+    // "Pass threshold" read as two units of one number rather than two
+    // different questions.
+    label: EVAL_PASS_CRITERION_SCOPE_LABELS.suiteWide,
     api: "settings.minimumAccuracy",
   },
   {
     key: "minimumIterations",
-    label: "Minimum iterations",
+    // A FLOOR that raises a case's own count, not a default that replaces it.
+    // The word "minimum" is the whole difference and is never dropped: a case
+    // at 7 resolves to 7 under a floor of 3 and to 3 under a default of 3.
+    label: EVAL_ITERATION_RULE_LABELS.caseCountWithFloor,
     api: "settings.minimumIterations",
   },
   {
@@ -79,12 +94,12 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   },
   {
     key: "environments",
-    label: "Clients",
+    label: "Where it runs",
     api: "environmentIds",
   },
   {
     key: "passOrFail",
-    label: "Scorers and judges",
+    label: "Evaluators",
     // A PRESENTATION grouping, not a setting. It has no stored field of its
     // own: it arranges settings.matchOptions, settings.checks and
     // settings.judge under the chain stage each one measures, and every one of
@@ -99,7 +114,7 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   },
   {
     key: "checks",
-    label: "Scorers",
+    label: "Checks by stage",
     api: "settings.checks",
   },
   {
@@ -113,6 +128,11 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
     api: "settings.judge.rubric",
   },
   {
+    key: "assertionBacktest",
+    label: "Assertion preview",
+    op: "backtest_eval_run",
+  },
+  {
     key: "judgeGroundedness",
     label: "Groundedness",
     // Read-only run evidence until R2-C1 wires execution. A writable sample
@@ -122,28 +142,59 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   },
   {
     key: "policy",
-    label: "Quality gate",
-    // The row itself only chooses WHICH policy is on screen. Both policies'
-    // fields are reachable: settings.minimumAccuracy and
-    // settings.minimumIterations for a legacy suite, settings.repetitions and
-    // settings.passThreshold for a v2 one.
+    // WHAT MUST PASS, and how much. Not the quality gate — that is a
+    // comparison against a baseline run and is its own row below. This row
+    // held both names for as long as one row held both things, and a reader
+    // looking for the threshold their runs are decided against found a heading
+    // about regressions.
+    label: "Pass criteria",
+    // The row shows ONE criterion, the one this suite's runs are decided
+    // against, and the scope decides which field that is. Both are reachable
+    // on their own above and below.
     excluded:
-      "A presentation grouping of settings.minimumAccuracy, settings.minimumIterations, settings.repetitions, settings.passThreshold and settings.qualityGate; the row itself only picks which policy's fields are shown.",
+      "A presentation grouping of settings.minimumAccuracy, settings.passThreshold and settings.validity; the row itself only shows whichever criterion decides this suite.",
+  },
+  {
+    key: "iterations",
+    // HOW MANY TIMES each case runs. Split out of the criterion row because
+    // the two answer different questions and are edited independently: raising
+    // the count does not move the bar, and moving the bar does not change how
+    // much evidence there is.
+    label: "Iterations",
+    excluded:
+      "A presentation grouping of settings.minimumIterations and settings.repetitions; the row itself only shows whichever count rule this suite uses.",
   },
   {
     key: "repetitions",
-    label: "Repetitions",
+    // A DEFAULT that a case replaces, not a floor that raises it. Same
+    // vocabulary as the floor above, one word apart, on purpose.
+    label: EVAL_ITERATION_RULE_LABELS.defaultCount,
     api: "settings.repetitions",
   },
   {
     key: "passThreshold",
-    label: "Pass threshold",
+    /** The PER-CASE criterion, as a fraction. @see minimumAccuracy */
+    label: EVAL_PASS_CRITERION_SCOPE_LABELS.perCase,
     api: "settings.passThreshold",
   },
   {
     key: "validity",
-    label: "Validity",
+    // "Evidence requirements", not "Validity": the stored word names the
+    // mechanism and the label names what a reader is deciding — whether a run
+    // that measured too little is inconclusive rather than passed or failed.
+    label: EVAL_GRADING_VALIDITY_LABELS.enforced,
     api: "settings.validity",
+  },
+  {
+    key: "qualityGate",
+    // The quality gate answers a DIFFERENT question from the pass criteria: not
+    // "did this run meet the bar" but "did it regress against a baseline run".
+    // It has its own conditions, its own baseline and its own audit
+    // requirement, and folding it under the criterion row is what made one
+    // heading mean both.
+    label: "Quality gate",
+    excluded:
+      "A presentation grouping of the settings.qualityGate conditions, each of which is reachable on its own.",
   },
   {
     key: "qualityGateBaseline",
@@ -167,7 +218,7 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   },
   {
     key: "qualityGateNoGatingScoreErrors",
-    label: "Any gating scorer errored",
+    label: "Any required evaluator errored",
     api: "settings.qualityGate.noGatingScoreErrors",
   },
   {
@@ -259,6 +310,27 @@ export const SAMPLE_BY_PATH: Readonly<Record<string, unknown>> = {
 };
 
 /**
+ * Vocabulary-2 samples: the same settings, in the canonical spellings.
+ *
+ * Separate from {@link SAMPLE_BY_PATH} rather than replacing entries in it,
+ * because the two are checked against DIFFERENT boundaries. The vocabulary-1
+ * samples must keep parsing byte-for-byte as they do today; these must be
+ * refused without `x-mcpjam-eval-vocabulary: 2` and accepted with it.
+ *
+ * `settings.checks` keeps its advisory `severity: "warn"` row in the
+ * vocabulary-1 sample for the reason stated above — dropping `severity` is a
+ * contraction step, not this one.
+ */
+export const CANONICAL_ROLE_SAMPLE_BY_PATH: Readonly<Record<string, unknown>> =
+  {
+    "settings.checks": [
+      { type: "responseContains", needle: "hi" },
+      { type: "noToolErrors", role: "required" },
+    ],
+    "settings.judge": { enabled: true, role: "required" },
+  };
+
+/**
  * Full PATCH bodies that exercise `settings.qualityGate` against the
  * refined schema. A standalone leaf is not enough: the refine requires
  * `expectedRevisionNumber` and `revisionNote`, and comparative leaves
@@ -337,7 +409,7 @@ export const QUALITY_GATE_REQUEST_SAMPLES: ReadonlyArray<{
     name: "gating-score errors",
     body: {
       expectedRevisionNumber: 3,
-      revisionNote: "Fail on gating scorer errors.",
+      revisionNote: "Fail on required scorer errors.",
       settings: {
         qualityGate: { noGatingScoreErrors: true },
       },

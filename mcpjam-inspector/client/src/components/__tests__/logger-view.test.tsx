@@ -80,6 +80,35 @@ describe("LoggerView hosted rpc logs", () => {
     useTrafficLogStore.getState().clear();
   });
 
+  it("shows WebMCP records, error styling, source filtering and searchable payloads", async () => {
+    const user = userEvent.setup();
+    useTrafficLogStore.getState().addMcpServerLog({
+      serverId: "browser-1",
+      serverName: "shop.test",
+      kind: "webmcp",
+      direction: "RECEIVE",
+      method: "add_to_cart",
+      timestamp: "2026-09-10T12:00:00.000Z",
+      payload: { output: { isError: true, content: [{ text: "Out of stock" }] } },
+    });
+    useTrafficLogStore.getState().addMcpServerLog({
+      serverId: "srv-1",
+      direction: "SEND",
+      method: "tools/list",
+      timestamp: "2026-09-10T12:00:00.000Z",
+      payload: {},
+    });
+    render(<LoggerView />);
+    expect(screen.getByText("← webmcp")).toBeInTheDocument();
+    expect(screen.getByText("add_to_cart")).toHaveClass("text-destructive");
+    await user.click(screen.getByRole("menuitemradio", { name: "WebMCP" }));
+    expect(screen.queryByText("tools/list")).not.toBeInTheDocument();
+    await user.type(screen.getByPlaceholderText("Search logs"), "Out of stock");
+    expect(screen.getByText("add_to_cart")).toBeInTheDocument();
+    await user.click(screen.getByText("add_to_cart"));
+    expect(screen.getByRole("button", { name: /add_to_cart/ })).toHaveAttribute("aria-expanded", "true");
+  });
+
   it("renders hosted server names and filters by server name prop", () => {
     useTrafficLogStore.getState().addMcpServerLog({
       serverId: "srv-1",

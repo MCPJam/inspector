@@ -862,7 +862,6 @@ describe("listEvalSuiteRunsOperation", () => {
   });
 });
 
-
 describe("updateEvalSuiteOperation", () => {
   function makePatchClient(): {
     client: PlatformApiClient;
@@ -915,7 +914,7 @@ describe("updateEvalSuiteOperation", () => {
         suite: "smoke",
         clients: [{ client: "Claude" }, { client: "ChatGPT", servers: ["a"] }],
       },
-      { client },
+      { client }
     );
 
     expect(patchBodies).toEqual([
@@ -933,7 +932,7 @@ describe("updateEvalSuiteOperation", () => {
           clients: [{ client: "Claude" }],
           hosts: [{ host: "ChatGPT" }],
         },
-        { client },
+        { client }
       )
       .catch((caught: unknown) => caught);
 
@@ -2222,6 +2221,11 @@ describe("operation catalog consistency", () => {
     },
     get_eval_gate_waiver: { project: "p", runId: "r" },
     revoke_eval_gate_waiver: { project: "p", runId: "r", waiverId: "w" },
+    backtest_eval_run: {
+      project: "p",
+      runId: "r",
+      draft: { assertions: { mode: "replace", list: [] } },
+    },
     request_eval_run_judge: { project: "p", runId: "r" },
     list_eval_github_repos: {},
     connect_eval_github_repo: {
@@ -2493,6 +2497,7 @@ describe("operation catalog consistency", () => {
       "cancel_eval_run",
       // Stops a pending connection, releasing the slot it holds.
       "cancel_project_server_connection",
+      "backtest_eval_run",
       "request_eval_run_judge",
       // Description-rewrite experiment. Propose spends a small model budget
       // to draft the rewrite; start launches two replay arms and spends

@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   useQuery: vi.fn(),
   suiteHeader: vi.fn(),
   runOverview: vi.fn(),
+  evaluateRunContent: vi.fn(),
 }));
 
 const cloudState = vi.hoisted(() => ({
@@ -141,6 +142,13 @@ vi.mock("../suite-dashboard", () => ({
       )}
     </div>
   ),
+}));
+
+vi.mock("../../evaluate/evaluate-run-content", () => ({
+  EvaluateRunContent: (props: Record<string, unknown>) => {
+    mocks.evaluateRunContent(props);
+    return <div data-testid="evaluate-run-content" />;
+  },
 }));
 
 vi.mock("../run-detail-view", () => ({
@@ -913,6 +921,23 @@ describe("SuiteIterationsView suiteDetailOverview", () => {
     createdAt: 1,
     completedAt: 2,
   };
+
+  it("lets locked SDK run titles open their definition without enabling evaluator edits", () => {
+    const navigation = { ...noopNav, toTestEdit: vi.fn() };
+    renderOverview({
+      suite: { ...baseSuite, source: "sdk" },
+      configLocked: true,
+      projectId: "project-1",
+      suiteDetailOverview: true,
+      runs: [{ ...detailRun, source: "sdk" }],
+      route: { type: "run-detail", suiteId: "suite-1", runId: "run-1" },
+    }, navigation);
+    const props = mocks.evaluateRunContent.mock.calls.at(-1)?.[0];
+    expect(props.onEditCase).toEqual(expect.any(Function));
+    expect(props.onEditEvaluator).toBeUndefined();
+    props.onEditCase("case-1");
+    expect(navigation.toTestEdit).toHaveBeenCalledWith("suite-1", "case-1");
+  });
 
   it("opens Evaluate (New) run page instead of the unified split", () => {
     renderOverview({

@@ -1,3 +1,4 @@
+import { ToolDeclarationCapture } from "./tool-declaration-capture.js";
 /**
  * MCPClientManager - Manages multiple MCP server connections
  */
@@ -22,6 +23,7 @@ import {
 } from "@modelcontextprotocol/client";
 // beta.4 moved the Node stdio client transport to the `/stdio` subpath.
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { wrapFetchForHttpErrors } from "./http-error-fetch.js";
 
 import type {
   MCPClientManagerConfig,
@@ -320,6 +322,7 @@ export class MCPClientManager {
   private readonly registeredServers = new Map<string, RegisteredServerState>();
   private readonly liveClientStates = new Map<string, LiveClientState>();
   private readonly toolsMetadataCache = new Map<string, Map<string, any>>();
+  private readonly toolDeclarationCapture = new ToolDeclarationCapture();
   private readonly toolsAnnotationsCache = new Map<
     string,
     Map<string, Record<string, unknown> | undefined>
@@ -808,6 +811,7 @@ export class MCPClientManager {
     this.registeredServers.delete(serverId);
     this.toolsMetadataCache.delete(serverId);
     this.toolsAnnotationsCache.delete(serverId);
+    this.toolDeclarationCapture.clear(serverId);
     this.aggregatedToolsListWarmed.delete(serverId);
     this.notificationManager.clearServer(serverId);
     this.elicitationManager.clearServer(serverId);
@@ -861,6 +865,7 @@ export class MCPClientManager {
         }
         return result;
       } catch (error) {
+        this.toolDeclarationCapture.clear(serverId);
         if (isMethodUnavailableError(error, "tools/list")) {
           this.toolsMetadataCache.set(serverId, new Map());
           this.toolsAnnotationsCache.set(serverId, new Map());
@@ -959,6 +964,11 @@ export class MCPClientManager {
    * An empty map is still a valid populated response for a server with no
    * tools; callers must distinguish that from a cold or invalidated cache.
    */
+  /** Raw declarations before SDK aggregation, name merging, or schema filtering. */
+  getCapturedToolDeclarations(serverId: string) {
+    return this.toolDeclarationCapture.read(serverId);
+  }
+
   hasCachedToolAnnotations(serverId: string): boolean {
     return this.toolsAnnotationsCache.has(serverId);
   }
@@ -2780,7 +2790,10 @@ export class MCPClientManager {
         // (hosted inherits it, since hosted builds transports through here).
         // The same seam captures HTTP headers for the wire log when a
         // `httpLogger` is configured — see `buildTransportFetch`.
-        fetch: this.buildTransportFetch(serverId, config),
+        fetch: wrapFetchForHttpErrors(
+          this.buildTransportFetch(serverId, config),
+          effectiveAuthProvider !== undefined
+        ),
         reconnectionOptions: config.reconnectionOptions,
         authProvider: effectiveAuthProvider,
         sessionId: config.sessionId,
@@ -3185,6 +3198,7 @@ export class MCPClientManager {
     if (!state) {
       this.toolsMetadataCache.delete(serverId);
       this.toolsAnnotationsCache.delete(serverId);
+      this.toolDeclarationCapture.clear(serverId);
       this.aggregatedToolsListWarmed.delete(serverId);
       return;
     }
@@ -3208,6 +3222,7 @@ export class MCPClientManager {
     }
     this.toolsMetadataCache.delete(serverId);
     this.toolsAnnotationsCache.delete(serverId);
+    this.toolDeclarationCapture.clear(serverId);
     this.aggregatedToolsListWarmed.delete(serverId);
   }
 
@@ -3240,6 +3255,7 @@ export class MCPClientManager {
     }
     this.toolsMetadataCache.delete(serverId);
     this.toolsAnnotationsCache.delete(serverId);
+    this.toolDeclarationCapture.clear(serverId);
     this.aggregatedToolsListWarmed.delete(serverId);
   }
 
@@ -3724,12 +3740,28 @@ export class MCPClientManager {
       : undefined;
   }
 
-  private resolveRpcLogger(config: MCPServerConfig): RpcLogger | undefined {
-    if (config.rpcLogger) return config.rpcLogger;
-    if (config.logJsonRpc || this.defaultLogJsonRpc)
-      return createDefaultRpcLogger();
-    if (this.defaultRpcLogger) return this.defaultRpcLogger;
-    return undefined;
+  private resolveRpcLogger(config: MCPServerConfig): RpcLogger {
+    const logger =
+      config.rpcLogger ??
+      (config.logJsonRpc || this.defaultLogJsonRpc
+        ? createDefaultRpcLogger()
+        : this.defaultRpcLogger);
+    // Always a function now, so every connection goes through
+    // `wrapTransportForLogging`, logger or not. That wrapper is transparent:
+    // it forwards onmessage/onclose/onerror, sessionId, hasPerRequestStream
+    // and setProtocolVersion, and swallows logger throws — so the only cost
+    // is one observe() per frame, and no consumer's error or close semantics
+    // change.
+    return (event) => {
+      // Observation is local only. It neither enables body logging nor sends
+      // another discovery request. Failure must not interfere with transport.
+      try {
+        this.toolDeclarationCapture.observe(event);
+      } catch {
+        this.toolDeclarationCapture.clear(event.serverId);
+      }
+      logger?.(event);
+    };
   }
 
   /**

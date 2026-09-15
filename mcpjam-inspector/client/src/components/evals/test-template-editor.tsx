@@ -306,6 +306,7 @@ interface TestTemplate {
   matchOptions?: EvalMatchOptions;
   /** Case-level predicate gate override; undefined ⇒ inherit suite defaults. */
   predicates?: CasePredicates;
+  suppressedSuiteStandardCheckIds?: string[];
   /** Authored rubric for the model judge. Empty string clears it. */
   expectedOutput?: string;
   /**
@@ -435,7 +436,7 @@ function CaptureModeToggle({
 }) {
   const options: { value: "record" | "assert"; label: string }[] = [
     { value: "record", label: "Record actions" },
-    { value: "assert", label: "Add checks" },
+    { value: "assert", label: "Add assertions" },
   ];
   return (
     <div className="inline-flex overflow-hidden rounded-md border border-border">
@@ -677,23 +678,24 @@ function getWidgetAssertionGap(a: WidgetAssertion): string | null {
   // `isWidgetAssertion` only asserts that `kind` is a string, so an unknown one
   // has no label — and would otherwise fall past the switch as "complete".
   const name = WIDGET_ASSERTION_LABELS[a.kind];
-  if (!name) return "Pick a check type for the widget check.";
+  if (!name) return "Pick a type for the widget assertion.";
   const label = name.toLowerCase();
   if (!trimmedField(a.toolName)) {
-    return `Pick a view (tool) for the ${label} check.`;
+    return `Pick a view (tool) for the ${label} assertion.`;
   }
   switch (a.kind) {
     case "textVisible":
-      if (!trimmedField(a.text)) return "Enter the text the check looks for.";
+      if (!trimmedField(a.text))
+        return "Enter the text the assertion looks for.";
       return tooLong(a.text)
         ? `Shorten the expected text to ${MAX_SCRIPTED_STEP_TEXT_CHARS} characters or fewer.`
         : null;
     case "elementVisible":
     case "elementHidden":
-      return getLocatorGap(a.target, `${label} check`);
+      return getLocatorGap(a.target, `${label} assertion`);
     case "inputValue":
       return (
-        getLocatorGap(a.target, `${label} check`) ??
+        getLocatorGap(a.target, `${label} assertion`) ??
         (tooLong(a.equals)
           ? `Shorten the expected value to ${MAX_SCRIPTED_STEP_TEXT_CHARS} characters or fewer.`
           : null)
@@ -986,7 +988,6 @@ export function TestTemplateEditor({
   onOpenSuiteSettings,
   checksPage = false,
   onOpenCaseChecks,
-  onCloseCaseChecks,
 }: TestTemplateEditorProps) {
   // Resolves the WorkOS token for signed-in users and the guest bearer for
   // guests (project-owning guests included). See use-convex-access-token.
@@ -1336,6 +1337,8 @@ export function TestTemplateEditor({
       advancedConfig: normalizeAdvancedConfig(currentTestCase.advancedConfig),
       matchOptions: currentTestCase.matchOptions,
       predicates: currentTestCase.predicates,
+      suppressedSuiteStandardCheckIds:
+        currentTestCase.suppressedSuiteStandardCheckIds,
       expectedOutput: currentTestCase.expectedOutput ?? "",
       judgeConfigOverride: currentTestCase.judgeConfigOverride,
       kind: currentTestCase.kind,
@@ -1906,12 +1909,16 @@ export function TestTemplateEditor({
     const normalizedCurrentMatchOptions = JSON.stringify(
       normalizeForComparison(currentTestCase.matchOptions ?? null),
     );
-    const normalizedPredicates = JSON.stringify(
+    const normalizedPredicates = JSON.stringify([
       normalizeForComparison(editForm.predicates ?? null),
-    );
-    const normalizedCurrentPredicates = JSON.stringify(
+      normalizeForComparison(editForm.suppressedSuiteStandardCheckIds ?? []),
+    ]);
+    const normalizedCurrentPredicates = JSON.stringify([
       normalizeForComparison(currentTestCase.predicates ?? null),
-    );
+      normalizeForComparison(
+        currentTestCase.suppressedSuiteStandardCheckIds ?? [],
+      ),
+    ]);
     const normalizedExpectedOutput = (editForm.expectedOutput ?? "").trim();
     const normalizedCurrentExpectedOutput = (
       currentTestCase.expectedOutput ?? ""
@@ -1968,6 +1975,8 @@ export function TestTemplateEditor({
       suiteDefaultMatchOptions: suite?.defaultMatchOptions,
       predicates: editForm?.predicates,
       suiteDefaultPredicates: (suite?.defaultPredicates ?? []) as Predicate[],
+      suppressedSuiteStandardCheckIds:
+        editForm?.suppressedSuiteStandardCheckIds,
       expectedOutput: editForm?.expectedOutput,
       judgeConfigOverride: editForm?.judgeConfigOverride,
       suiteJudgeConfig: suite?.judgeConfig,
@@ -2209,7 +2218,7 @@ export function TestTemplateEditor({
       return getStepsBlockReason(editForm.steps);
     }
     if (!arePredicatesValid || !areStepChecksValid) {
-      return "Fix invalid checks before saving.";
+      return "Fix invalid assertions before saving.";
     }
     return null;
   }, [
@@ -2578,6 +2587,13 @@ export function TestTemplateEditor({
       advancedConfig: normalizeAdvancedConfig(form.advancedConfig),
       matchOptions: form.matchOptions,
       predicates: normalizedPredicates,
+      ...(caseCapabilities.capabilities?.scorers
+        ?.suppressedSuiteStandardCheckIds === true
+        ? {
+            suppressedSuiteStandardCheckIds:
+              form.suppressedSuiteStandardCheckIds ?? [],
+          }
+        : {}),
       // Omitted when undefined: `createTestCase` admits no `null` for this
       // field, and `handleSave` supplies the null-clear on the update path.
       ...(form.judgeConfigOverride !== undefined
@@ -2733,6 +2749,70 @@ export function TestTemplateEditor({
   };
   // Kept current so `runTest` never awaits a save built from a stale draft.
   handleSaveRef.current = handleSave;
+
+  // Serialize automatic saves so a slower request cannot overwrite a newer edit.
+  const checksSaveQueue = useRef<Promise<unknown>>(Promise.resolve());
+  const checksSaveRevision = useRef(0);
+  const [checksSaveStatus, setChecksSaveStatus] = useState<string | null>(null);
+  useEffect(() => {
+    setChecksSaveStatus(null);
+    return () => {
+      // Toast actions can outlive this editor or the case they were created for.
+      checksSaveRevision.current += 1;
+    };
+  }, [currentTestCase?._id]);
+  const saveCaseChecks = (
+    changes: Partial<Parameters<typeof updateTestCaseMutation>[0]>,
+  ) => {
+    if (!currentTestCase || isDraft || !editForm) return;
+    const testCaseId = currentTestCase._id;
+    const revision = ++checksSaveRevision.current;
+    const payload = {
+      testCaseId,
+      predicates: editForm.predicates ?? null,
+      suppressedSuiteStandardCheckIds:
+        editForm.suppressedSuiteStandardCheckIds ?? [],
+      judgeConfigOverride: editForm.judgeConfigOverride ?? null,
+      ...changes,
+    };
+    const predicates = payload.predicates as typeof editForm.predicates;
+    if (
+      predicates &&
+      predicates.mode !== "inherit" &&
+      !areAllChecksValid(predicates.list)
+    ) {
+      setChecksSaveStatus(
+        "Complete the assertion fields to save your changes.",
+      );
+      return;
+    }
+    const enqueue = (retry = false) => {
+      if (revision !== checksSaveRevision.current) return;
+      setChecksSaveStatus("Saving…");
+      checksSaveQueue.current = checksSaveQueue.current
+        .then(() => {
+          if (retry && revision !== checksSaveRevision.current) return;
+          return updateTestCaseMutation(payload);
+        })
+        .then(() => {
+          if (revision === checksSaveRevision.current)
+            setChecksSaveStatus(null);
+        })
+        .catch((error) => {
+          if (revision !== checksSaveRevision.current) return;
+          setChecksSaveStatus(
+            "Changes could not be saved. Edit again or retry.",
+          );
+          toast.error(
+            getBillingErrorMessage(error, "Failed to save evaluator changes"),
+            {
+              action: { label: "Retry", onClick: () => enqueue(true) },
+            },
+          );
+        });
+    };
+    enqueue();
+  };
 
   const buildSelectedCompareModels = (
     modelValues: string[],
@@ -3137,6 +3217,12 @@ export function TestTemplateEditor({
             advancedConfig,
             matchOptions: savePayload.matchOptions,
             predicates: savePayload.predicates,
+            ...(savePayload.suppressedSuiteStandardCheckIds !== undefined
+              ? {
+                  suppressedSuiteStandardCheckIds:
+                    savePayload.suppressedSuiteStandardCheckIds,
+                }
+              : {}),
           },
         });
 
@@ -3223,7 +3309,13 @@ export function TestTemplateEditor({
       const startedAt = Date.now();
       const launchSnapshot = {
         steps: savePayload.steps,
-        predicates: savePayload.predicates,
+        // Freeze the same effective whole-run list the quick-run resolver executes.
+        predicates: resolveCasePredicates(
+          (suite?.defaultPredicates ?? []) as Predicate[],
+          savePayload.predicates,
+          savePayload.suppressedSuiteStandardCheckIds ??
+            currentTestCase?.suppressedSuiteStandardCheckIds,
+        ),
         matchOptions: savePayload.matchOptions,
         expectedOutput: savePayload.expectedOutput,
         isNegativeTest: savePayload.isNegativeTest,
@@ -3740,6 +3832,7 @@ export function TestTemplateEditor({
     predicates: resolveCasePredicates(
       (suite?.defaultPredicates ?? []) as Predicate[],
       editForm?.predicates,
+      editForm?.suppressedSuiteStandardCheckIds,
     ),
     matchOptions: resolveMatchOptions(
       suite?.defaultMatchOptions,
@@ -3872,6 +3965,7 @@ export function TestTemplateEditor({
     suiteDefaultMatchOptions: suite?.defaultMatchOptions,
     predicates: editForm?.predicates,
     suiteDefaultPredicates: (suite?.defaultPredicates ?? []) as Predicate[],
+    suppressedSuiteStandardCheckIds: editForm?.suppressedSuiteStandardCheckIds,
     expectedOutput: editForm?.expectedOutput,
     judgeConfigOverride: editForm?.judgeConfigOverride,
     suiteJudgeConfig: suite?.judgeConfig,
@@ -3966,7 +4060,7 @@ export function TestTemplateEditor({
         </div>
       )}
       {/* Assert-mode pick chooser: opens when a click is captured in "Add
-          checks" mode, builds a widget assertion seeded with the derived
+          assertions" mode, builds a widget assertion seeded with the derived
           locator. Portaled, so its position here doesn't affect layout. */}
       <AssertPickChooser
         pick={pendingPick}
@@ -3976,36 +4070,44 @@ export function TestTemplateEditor({
       {checksPage && editForm ? (
         <CaseChecksPage
           title={editForm.title}
-          disabledChecks={suite?.disabledStageChecks}
           predicates={editForm.predicates}
-          suitePredicates={(suite?.defaultPredicates ?? []) as Predicate[]}
-          availableTools={assertableTools.map((tool) =>
-            typeof tool === "string" ? tool : tool.name,
-          )}
-          onPredicatesChange={(predicates) =>
-            setEditForm((current) =>
-              current ? { ...current, predicates } : current,
-            )
+          suppressedSuiteStandardCheckIds={
+            editForm.suppressedSuiteStandardCheckIds
           }
+          suitePredicates={(suite?.defaultPredicates ?? []) as Predicate[]}
+          suiteJudgeConfig={suite?.judgeConfig}
+          capabilities={caseCapabilities.capabilities}
+          saveStatus={checksSaveStatus}
+          onChecksChange={(next) => {
+            setEditForm((current) =>
+              current ? { ...current, ...next } : current,
+            );
+            saveCaseChecks({
+              predicates: next.predicates ?? null,
+              suppressedSuiteStandardCheckIds:
+                next.suppressedSuiteStandardCheckIds ?? [],
+            });
+          }}
           judgeSkipped={
             editForm.judgeConfigOverride?.goalCompletion?.enabled === false
           }
-          onJudgeSkippedChange={(skipped) =>
+          onJudgeSkippedChange={(skipped) => {
+            const judgeConfigOverride = withCaseJudgeSkipped(
+              editForm.judgeConfigOverride,
+              skipped,
+            );
             setEditForm((current) =>
               current
                 ? {
                     ...current,
-                    judgeConfigOverride: withCaseJudgeSkipped(
-                      current.judgeConfigOverride,
-                      skipped,
-                    ),
+                    judgeConfigOverride,
                   }
                 : current,
-            )
-          }
-          onSave={() => void handleSave()}
-          saveDisabled={savePrimaryDisabled}
-          onBack={onCloseCaseChecks}
+            );
+            saveCaseChecks({
+              judgeConfigOverride: judgeConfigOverride ?? null,
+            });
+          }}
           onConfigureSuite={onOpenSuiteSettings}
         />
       ) : draftKind === "describe" &&
@@ -4047,6 +4149,9 @@ export function TestTemplateEditor({
               availableTools={assertableTools}
               suiteServers={effectiveSuiteServers}
               projectServers={projectServers}
+              suppressedSuiteStandardCheckIds={
+                editForm?.suppressedSuiteStandardCheckIds
+              }
               suiteDefaultPredicates={
                 (suite?.defaultPredicates ?? []) as Predicate[]
               }
@@ -4054,7 +4159,6 @@ export function TestTemplateEditor({
               capabilities={caseCapabilities.capabilities}
               defaultChecks={
                 <DefaultChecksReference
-                  disabledChecks={suite?.disabledStageChecks}
                   onConfigureSuite={onOpenSuiteSettings}
                   onOverride={onOpenCaseChecks}
                 />
@@ -4187,6 +4291,9 @@ export function TestTemplateEditor({
                       setEditForm((current) =>
                         current ? { ...current, predicates: next } : current,
                       )
+                    }
+                    suppressedSuiteStandardCheckIds={
+                      editForm?.suppressedSuiteStandardCheckIds
                     }
                     suiteDefaultPredicates={
                       (suite?.defaultPredicates ?? []) as Predicate[]
@@ -4326,6 +4433,14 @@ export function TestTemplateEditor({
                     </TooltipContent>
                   </Tooltip>
                 )}
+                {useWorkspace &&
+                  useSpine &&
+                  workspaceLeftView.kind !== "inspecting" && (
+                    <DefaultChecksReference
+                      onConfigureSuite={onOpenSuiteSettings}
+                      onOverride={onOpenCaseChecks}
+                    />
+                  )}
                 {useWorkspace ? null : (
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -4622,11 +4737,12 @@ export function TestTemplateEditor({
                   ) : editForm && useSpine ? (
                     <CaseSpine
                       defaultChecks={
-                        <DefaultChecksReference
-                          disabledChecks={suite?.disabledStageChecks}
-                          onConfigureSuite={onOpenSuiteSettings}
-                          onOverride={onOpenCaseChecks}
-                        />
+                        !useWorkspace ? (
+                          <DefaultChecksReference
+                            onConfigureSuite={onOpenSuiteSettings}
+                            onOverride={onOpenCaseChecks}
+                          />
+                        ) : undefined
                       }
                       key={`spine:${currentTestCase?._id ?? "none"}`}
                       steps={editForm.steps}
@@ -4659,6 +4775,9 @@ export function TestTemplateEditor({
                         setEditForm((current) =>
                           current ? { ...current, predicates: next } : current,
                         )
+                      }
+                      suppressedSuiteStandardCheckIds={
+                        editForm?.suppressedSuiteStandardCheckIds
                       }
                       suiteDefaultPredicates={
                         (suite?.defaultPredicates ?? []) as Predicate[]
@@ -4769,6 +4888,9 @@ export function TestTemplateEditor({
                         setEditForm((current) =>
                           current ? { ...current, predicates: next } : current,
                         )
+                      }
+                      suppressedSuiteStandardCheckIds={
+                        editForm?.suppressedSuiteStandardCheckIds
                       }
                       suiteDefaultPredicates={
                         (suite?.defaultPredicates ?? []) as Predicate[]
@@ -5370,7 +5492,7 @@ export function TestTemplateEditor({
                         />
                         <span className="truncate text-[11px] text-muted-foreground">
                           {captureMode === "assert"
-                            ? "Click an element to add a check about it."
+                            ? "Click an element to add an assertion about it."
                             : "Click inside a view to record actions."}
                         </span>
                       </div>

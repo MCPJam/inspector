@@ -32,6 +32,12 @@ function makeInput(
 }
 
 describe("hostConfigInputsEqual", () => {
+  it("marks a local Browser override dirty and clears it on revert", () => {
+    const saved = { ...makeInput(), localBrowserEnabled: true };
+    const edited = { ...saved, localBrowserEnabled: false };
+    expect(hostConfigInputsEqual(saved, edited)).toBe(false);
+    expect(hostConfigInputsEqual(saved, { ...edited, localBrowserEnabled: true })).toBe(true);
+  });
   it("returns true for identical inputs", () => {
     expect(hostConfigInputsEqual(makeInput(), makeInput())).toBe(true);
   });

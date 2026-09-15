@@ -58,12 +58,12 @@ describe("EvalsHeader", () => {
     expect(add).toHaveBeenCalledOnce();
   });
 
-  it("links back to the case from the UVC checks breadcrumb", () => {
+  it("links back to the case from the Test Case Evaluators breadcrumb", () => {
     const back = vi.fn();
     render(
       <EvalsHeader
         parentCrumb={{ label: "Suite", onClick: vi.fn() }}
-        detailCrumb={{ label: "UVC checks" }}
+        detailCrumb={{ label: "Test Case Evaluators" }}
         onCurrentCrumbClick={back}
       >
         Case title
@@ -74,7 +74,10 @@ describe("EvalsHeader", () => {
     fireEvent.click(caseLink);
     expect(back).toHaveBeenCalledOnce();
     expect(
-      screen.getByRole("link", { name: "UVC checks", current: "page" }),
+      screen.getByRole("link", {
+        name: "Test Case Evaluators",
+        current: "page",
+      }),
     ).toBeInTheDocument();
   });
 
@@ -112,7 +115,7 @@ describe("EvalsHeader", () => {
 
     const row = screen.getByTestId("evals-header-title-row");
     const suites = screen.getByRole("button", { name: /^suites$/i });
-    const runs = screen.getByRole("button", { name: /^runs$/i });
+    const runs = screen.getByRole("button", { name: /^overview$/i });
     expect(row).toContainElement(
       screen.getByRole("heading", { name: "Evaluate" }),
     );
@@ -157,7 +160,7 @@ describe("EvalsHeader", () => {
       name: "checkout-flow",
       current: "page",
     });
-    expect(current.className).toMatch(/font-semibold/);
+    expect(current.className).toMatch(/font-normal/);
     expect(
       screen.queryByRole("button", { name: /^create suite$/i }),
     ).toBeNull();

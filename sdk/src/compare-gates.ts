@@ -88,6 +88,21 @@ type PopulationProblem = { condition: string; explanation: string };
  */
 function populationProblems(input: CompareGateInput): PopulationProblem[] {
   const problems: PopulationProblem[] = [];
+  const baseSelection = input.base.selection;
+  const compareSelection = input.compare.selection;
+  if (
+    (baseSelection || compareSelection) &&
+    (!baseSelection ||
+      !compareSelection ||
+      baseSelection.selectedConfigHash !==
+        compareSelection.selectedConfigHash ||
+      baseSelection.sourceConfigHash !== compareSelection.sourceConfigHash)
+  ) {
+    problems.push({
+      condition: "selectionChanged",
+      explanation: "source or selected case populations differ",
+    });
+  }
   if (input.caseSetChanged) {
     problems.push({
       condition: "caseSetChanged",
@@ -179,6 +194,14 @@ export function evaluateCompareGates(
   input: CompareGateInput,
   policy: GatePolicy
 ): GateReport {
+  if (
+    (input.base.selection?.scope === "selected" ||
+      input.compare.selection?.scope === "selected") &&
+    policy.selectionScope !== "selected"
+  )
+    throw new Error(
+      "Incomplete suite selection: comparative gates require an explicit selected scope"
+    );
   const verdicts: GateVerdict[] = [];
   const problems = populationProblems(input);
   const comparablePopulation = problems.length === 0;

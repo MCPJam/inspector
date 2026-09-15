@@ -83,10 +83,8 @@ export interface LLMConfig {
 /**
  * Represents a tool call made by the LLM
  */
-export interface ToolCall {
-  toolName: string;
-  arguments: Record<any, any>;
-}
+export type { ToolCall } from "@mcpjam/evaluators/internal/types";
+import type { ToolCall } from "@mcpjam/evaluators/internal/types";
 
 /**
  * Token usage statistics

@@ -1,4 +1,4 @@
-import { describeError } from "@mcpjam/sdk/browser";
+import { describeAsSlug, describeError } from "@mcpjam/sdk/browser";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 import type { MCPJamLimitSurface } from "@/stores/mcpjam-limit-dialog-store";
 
@@ -36,7 +36,7 @@ export function isSpendBudgetReachedCode(code: string | undefined): boolean {
  * refused.
  */
 export const SPEND_BUDGET_REACHED_MESSAGE =
-  "This organization's spend budget is reached. An owner or admin can raise it in Organization \u2192 Budget.";
+  "This organization's spend budget is reached. An owner or admin can raise it in Organization \u2192 Billing.";
 const MCPJAM_RATE_LIMIT_CODE_PATTERN =
   /\b(?:mcpjam_rate_limit|user_rate_limit)\b/;
 
@@ -349,6 +349,30 @@ export function notifyMCPJamLimitError(args: MCPJamLimitErrorInput): boolean {
     ...(period ? { period } : {}),
   });
   return true;
+}
+
+const MCPJAM_LIMIT_SLUGS = new Set([
+  "provider/mcpjam_limit_daily",
+  "provider/mcpjam_limit_monthly",
+  "provider/mcpjam_limit",
+]);
+
+/**
+ * One plain sentence for a limit refusal, for surfaces that print an error
+ * string inline (the agent side panel, the generation workspace). The dialog
+ * carries the actions; without this those surfaces echo the raw JSON body the
+ * backend refused with, which reads as a crash. `null` for anything that
+ * isn't a limit error, so callers keep their own message.
+ */
+export function describeMCPJamLimitMessage(
+  message: string | null | undefined,
+): string | null {
+  if (!message || !isMCPJamModelLimitError({ message })) return null;
+  const described = describeError(message);
+  const entry = MCPJAM_LIMIT_SLUGS.has(described.slug)
+    ? described
+    : describeAsSlug("provider/mcpjam_limit", message);
+  return `${entry.title}. ${entry.oneLine}`;
 }
 
 export async function notifyMCPJamLimitErrorFromResponse(

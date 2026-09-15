@@ -5,8 +5,15 @@
  *   client → server  text {type:"ping"} or negotiated {type:"input",seq,events}
  *   server → client  text {type:"capabilities",features:["input"]}
  *   server → client  text {type:"input_ack",seq,dispatched,refused?}
- *   server → client  binary  24-byte header + JPEG (see the shared codec)
+ *   server → client  binary  the daemon's own frame-stream record
  *   server → client  text {type:"pong"}
+ *
+ * THE PICTURE IS READ BY THE SHARED READER. A binary message here is exactly a
+ * `browserd-frame-stream` record — it has been since the encoder became a thin
+ * wrapper over that codec — so `createFrameWireReader` consumes it unchanged,
+ * which buys this socket the Playground panes' decode policy for free: one
+ * `createImageBitmap` in flight, one newest pending record, off the main
+ * thread, stale sequences dropped. There is no second decoder to keep in step.
  *
  * Auth is the ordinary inspector session token, sent as a WebSocket
  * subprotocol (`new WebSocket(url, [token])`) — `/api/web/*` is not
@@ -17,11 +24,11 @@
  * Kept free of the store and of React so the wire is unit-testable behind a
  * fake WebSocket.
  */
-import { decodeWebMcpBinaryFrame } from "@/shared/webmcp-inspector-protocol";
-import type {
-  WebMcpBinaryFrame,
-  WebMcpInputEvent,
-} from "@/shared/webmcp-inspector-protocol";
+import type { WebMcpInputEvent } from "@/shared/webmcp-inspector-protocol";
+import {
+  createFrameWireReader,
+  type DecodedFrame,
+} from "@/lib/browser-pane/frame-wire";
 
 /**
  * Close codes the server sends, and what each one MEANS to the ladder.
@@ -53,19 +60,26 @@ export interface FrameStreamConnection {
     events: WebMcpInputEvent[],
     tabId?: string,
   ): Promise<void> | undefined;
-  /** Forget a queued picture when live view stops, without closing input. */
-  discardPendingFrame(): void;
+  /**
+   * Drop the picture when live view stops, without closing input.
+   *
+   * Releases the bitmap this connection is holding. The caller must have
+   * stopped rendering it first — see `close()`.
+   */
+  clearFrame(): void;
   close(): void;
 }
 
 export interface OpenFrameStreamOptions {
   sessionId: string;
-  /** One decoded frame; with coalescing, only the newest per display tick. */
-  onFrame: (frame: WebMcpBinaryFrame) => void;
-  /** Node-local viewers can skip obsolete JPEGs before allocating blob URLs. */
-  coalesceFrames?: boolean;
-  requestFrame?: (callback: FrameRequestCallback) => number;
-  cancelFrame?: (handle: number) => void;
+  /**
+   * One decoded picture, newest first and never out of order.
+   *
+   * The `ImageBitmap` on it is BORROWED: this connection closes it when the
+   * next frame arrives and when the connection is torn down, so a consumer
+   * must draw it and drop the reference rather than hold or close it.
+   */
+  onFrame: (frame: DecodedFrame) => void;
   onOpen?: () => void;
   onInputSent?: (seq: number) => void;
   onInputAck?: (seq: number) => void;
@@ -138,14 +152,40 @@ export function openWebMcpFrameStream(
 
   let ping: unknown;
   let closed = false;
-  let pendingFrame: WebMcpBinaryFrame | undefined;
-  let presentation: number | undefined;
-  let newestSeq = -1;
-  const requestFrame =
-    opts.requestFrame ??
-    ((callback: FrameRequestCallback) => requestAnimationFrame(callback));
-  const cancelFrame =
-    opts.cancelFrame ?? ((handle: number) => cancelAnimationFrame(handle));
+  /**
+   * The picture currently handed out, so the next one can release it.
+   *
+   * An `ImageBitmap` holds a decoded surface the garbage collector cannot see
+   * the cost of — several megabytes at 1024×768 — so a stream at 30fps that
+   * never closed them would hold a second of decoded video at all times. The
+   * CONNECTION owns them rather than the pane, because the connection is the
+   * thing that knows when the stream is over.
+   */
+  let lastBitmap: ImageBitmap | undefined;
+  const frames = createFrameWireReader({
+    onFrame: (frame) => {
+      if (closed) {
+        frame.bitmap.close();
+        return;
+      }
+      // Released BEFORE the new one goes out, matching the local Playground
+      // pane: whoever is drawing has already been handed a newer picture, and
+      // `paintFrame` tolerates a bitmap that was closed under it by reporting
+      // failure rather than throwing.
+      lastBitmap?.close();
+      lastBitmap = frame.bitmap;
+      opts.onFrame(frame);
+    },
+    onFatal: () => {
+      // A reader that has lost its place in a byte stream can never find it
+      // again. The connection goes, and the ladder decides what happens next.
+      try {
+        ws.close();
+      } catch {
+        /* already closing */
+      }
+    },
+  });
   let inputEnabled = false;
   let inputTimedOut = false;
   let inputSeq = 0;
@@ -169,15 +209,19 @@ export function openWebMcpFrameStream(
     }
     awaitingInput.clear();
   };
-  const discardPendingFrame = () => {
-    if (presentation !== undefined) cancelFrame(presentation);
-    presentation = undefined;
-    pendingFrame = undefined;
+  const clearFrame = () => {
+    // The reader first: a decode started before this call would otherwise land
+    // afterwards and republish a picture the caller has just discarded, on a
+    // socket that is still open because live view can come back.
+    frames.drop();
+    lastBitmap?.close();
+    lastBitmap = undefined;
   };
   const clearPresentation = () => {
     closed = true;
     abandonInput();
-    discardPendingFrame();
+    frames.close();
+    clearFrame();
   };
 
   ws.onopen = () => {
@@ -241,25 +285,12 @@ export function openWebMcpFrameStream(
       }
       return;
     }
-    if (!(data instanceof ArrayBuffer)) return;
-    const frame = decodeWebMcpBinaryFrame(data);
-    // A message this client cannot read is dropped, never thrown: a throw in
-    // here would take the whole socket down over one bad paint.
-    if (!frame || closed) return;
-    if (!opts.coalesceFrames) {
-      opts.onFrame(frame);
-      return;
-    }
-    if (frame.seq <= newestSeq) return;
-    newestSeq = frame.seq;
-    pendingFrame = frame;
-    if (presentation !== undefined) return;
-    presentation = requestFrame(() => {
-      presentation = undefined;
-      const latest = pendingFrame;
-      pendingFrame = undefined;
-      if (!closed && latest) opts.onFrame(latest);
-    });
+    if (!(data instanceof ArrayBuffer) || closed) return;
+    // The reader decodes off the main thread and calls back with the newest
+    // picture; a record it cannot read is reported through `onFatal` rather
+    // than thrown, because a throw in here would take the socket down inside
+    // the browser's own event dispatch.
+    frames.push(data);
   };
 
   ws.onclose = (event: CloseEvent) => {
@@ -274,7 +305,7 @@ export function openWebMcpFrameStream(
   ws.onerror = () => {};
 
   return {
-    discardPendingFrame,
+    clearFrame,
     sendInput(events, tabId) {
       if (closed || !inputEnabled || ws.readyState !== WebSocket.OPEN)
         return undefined;

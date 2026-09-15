@@ -27,6 +27,7 @@ import type {
   PlatformEvalRun,
 } from "./platform/types.js";
 import type { StructuredRunVerdict } from "./structured-reporting.js";
+import { isRequiredRole } from "./predicates/policy.js";
 
 /** Whether a run's score evidence verified at ingest. */
 export type ScoreIntegrity = "valid" | "invalid";
@@ -38,6 +39,7 @@ export type GateScore = Pick<
 >;
 
 export type GateInput = {
+  selection?: import("./eval-selection.js").EvalSelectionManifest;
   iterations: { total: number; passed: number };
   /** Joins `scores` to the definitions that say whether each one gates. */
   evaluationConfig?: EvaluationConfigSnapshot;
@@ -76,6 +78,8 @@ export type GateInput = {
 };
 
 export type GatePolicy = {
+  /** Explicitly accept the selected population; default gates require the full suite. */
+  selectionScope?: "full" | "selected";
   /** FRACTION in [0,1]. `1` means every iteration must pass. */
   minimumPassRate?: number;
   maximumTotalTokens?: number;
@@ -395,8 +399,16 @@ export function gateInputFromRunResult(result: EvalRunResult): GateInput {
     // where they could be substituted.
     scoreIntegrity: "valid",
     totals: {
-      tokens: result.tokenUsage.total,
-      e2eP95Ms: result.latency.e2e.p95,
+      tokens: result.iterationDetails.some(
+        (iteration) => iteration.captureError
+      )
+        ? undefined
+        : result.tokenUsage.total,
+      e2eP95Ms: result.iterationDetails.some(
+        (iteration) => iteration.captureError
+      )
+        ? undefined
+        : result.latency.e2e.p95,
     },
   };
 }
@@ -416,6 +428,7 @@ export function gateInputFromSuiteResult(result: EvalSuiteResult): GateInput {
   const definitions = [...byHash.values()];
 
   return {
+    selection: result.selection,
     iterations: {
       total: result.aggregate.iterations,
       passed: result.aggregate.successes,
@@ -436,8 +449,16 @@ export function gateInputFromSuiteResult(result: EvalSuiteResult): GateInput {
     scores: runs.flatMap((run) => scoresFromIterations(run.iterationDetails)),
     scoreIntegrity: "valid",
     totals: {
-      tokens: result.aggregate.tokenUsage.total,
-      e2eP95Ms: result.aggregate.latency.e2e.p95,
+      tokens: runs.some((run) =>
+        run.iterationDetails.some((iteration) => iteration.captureError)
+      )
+        ? undefined
+        : result.aggregate.tokenUsage.total,
+      e2eP95Ms: runs.some((run) =>
+        run.iterationDetails.some((iteration) => iteration.captureError)
+      )
+        ? undefined
+        : result.aggregate.latency.e2e.p95,
       // No `costUsd`, and its absence is the correct answer rather than a
       // gap: a LOCAL run executes on the caller's own provider keys, so
       // MCPJam never billed it and has no price for it. A cost gate on a
@@ -739,6 +760,15 @@ export function evaluateGates(
   input: GateInput,
   policy: GatePolicy
 ): GateReport {
+  if (
+    input.selection?.scope === "selected" &&
+    policy.selectionScope !== "selected"
+  ) {
+    throw new Error(
+      "Incomplete suite selection: a full-suite gate cannot certify a subset; explicitly choose selectionScope=selected"
+    );
+  }
+
   const verdicts: GateVerdict[] = [];
   const scores = input.scores ?? [];
   const byId = definitionsById(input.evaluationConfig);
@@ -912,7 +942,7 @@ export function evaluateGates(
       const errored = scores.filter(
         (score) =>
           score.status === "error" &&
-          byHash.get(score.definitionHash)?.role === "gating"
+          isRequiredRole(byHash.get(score.definitionHash)?.role)
       );
       verdicts.push({
         gate,

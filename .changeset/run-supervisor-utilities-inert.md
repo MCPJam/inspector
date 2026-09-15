@@ -1,0 +1,9 @@
+---
+"@mcpjam/inspector": patch
+---
+
+Adds the run-supervisor utilities the eval and swarm runners will use to give every unit of work its own clock, and moves the Playground's sandbox capacity loop onto the shared one.
+
+`withDeadline` composes a child signal that aborts when either its parent aborts or its own budget expires, and remembers which of the two it was — raising an `AbortError` (never a `TimeoutError`, which the runners' catch blocks do not recognise) that carries the clock's name, so a timeout outcome can say `iteration` or `turn` rather than a bare "aborted". `classifyRetry` composes the classifiers already in the tree into one closed verdict, and the ORDER is the contract: an abort is never retried however timeout-shaped its message, an org spend cap is terminal while a provider throttle waits out its `Retry-After`, and capacity is separated from an ordinary 5xx because it waits in minutes against a shared pool. `withRetry` adds the three things the SDK's `retryWithPolicy` lacks — jittered exponential backoff, `Retry-After`, and a total elapsed budget that also clamps each attempt's own deadline.
+
+`withCapacityRetry` is deliberately a shape rather than a policy. The three loops that want it are not equivalent — the Playground retries only `503 at_capacity` with unbounded attempts inside a ten-minute deadline and no jitter, the swarm retries `503` or a dropped connection for exactly five jittered attempts with no wall clock — so everything that differs is a field, and each caller's own tests pin its own numbers. The Playground call site is the first to move, with its delay sequence and all three of its give-up shapes pinned against the loop it replaces. One deliberate change there: a caller whose signal was already aborted now gets `499 cancelled` instead of a `network error` that was really the abort surfacing through `fetch`.

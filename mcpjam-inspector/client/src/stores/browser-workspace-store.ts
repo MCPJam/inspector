@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { useBrowserComparisonStore } from "./browser-comparison-store";
 
 export const DEFAULT_BROWSER_PANEL_SIZE = 60;
 export const MIN_BROWSER_PANEL_SIZE = 25;
@@ -33,7 +34,10 @@ export const useBrowserWorkspaceStore = create<BrowserWorkspaceState>()(
       collapsedRailForBrowser: false,
       revealSeq: 0,
       revealConversationId: null,
-      openBrowser: (id) =>
+      openBrowser: (conversationId) => {
+        const id = useBrowserComparisonStore
+          .getState()
+          .noteBrowsing(conversationId);
         set((state) => {
           if (!id) return state;
           const alreadyOpen = state.conversations[id]?.open;
@@ -47,7 +51,8 @@ export const useBrowserWorkspaceStore = create<BrowserWorkspaceState>()(
             revealSeq: state.revealSeq + 1,
             revealConversationId: id,
           };
-        }),
+        });
+      },
       closeBrowser: (id) =>
         set((state) => {
           if (
