@@ -67,8 +67,8 @@ vi.mock("@/hooks/useComputersEnabled", () => ({
 vi.mock("@/hooks/useClients", () => ({
   useHostList: () => hostListState,
 }));
-vi.mock("@/components/hosts/ServerGroupPicker", () => ({
-  ServerGroupPicker: () => <div data-testid="server-group-picker" />,
+vi.mock("@/components/hosts/server-picker", () => ({
+  ServerPicker: () => <div data-testid="server-group-picker" />,
 }));
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true }),
