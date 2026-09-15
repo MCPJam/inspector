@@ -938,7 +938,9 @@ function IterationDrawer({
                 />
                 {onEditEvaluator && (
                   <div className="mt-4 flex justify-end">
-                    <Button onClick={onEditEvaluator}>Edit evaluators</Button>
+                    <Button onClick={onEditEvaluator}>
+                      Configure test case evaluators
+                    </Button>
                   </div>
                 )}
               </>
