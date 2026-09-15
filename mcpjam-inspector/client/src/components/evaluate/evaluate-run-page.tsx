@@ -433,7 +433,11 @@ function RunPairingDecisions({
   iterations?: readonly EvalIteration[];
 }) {
   const theme = usePreferencesStoreWithDefaults((state) => state.themeMode);
-  const groups = groupPairingsByDecision(targets, hostNamesById, iterations);
+  const groups = groupPairingsByDecision(
+    targets,
+    hostNamesById,
+    iterations,
+  ).filter((group) => group.tone === "pending");
   if (!groups.length) return null;
   return (
     <span

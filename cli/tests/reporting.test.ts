@@ -136,7 +136,8 @@ test("writes decision summaries to the supplied destination", () => {
 });
 
 test("human output labels its counts with the population they count", () => {
-  // Under verdict policy v2 the counts are case-execution VARIANTS; on a legacy
+  // Under per-case grading the counts are case-execution VARIANTS; under the
+  // suite-wide accuracy threshold
   // run they are trials. The same suite reports a different total under each,
   // so a bare number is not a fact.
   assert.match(

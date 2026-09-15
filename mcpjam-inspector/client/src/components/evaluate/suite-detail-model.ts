@@ -225,17 +225,37 @@ function runModels(iterations: readonly EvalIteration[]): string[] {
   return [...models];
 }
 
-function sumTokens(iterations: readonly EvalIteration[]): number {
-  return iterations.reduce(
-    (sum, iteration) => sum + (iteration.tokensUsed || 0),
-    0,
-  );
+/**
+ * A measured total, or `null` when nothing was measured.
+ *
+ * Zero is a RESULT: a run that made no tool calls made no tool calls, and
+ * reporting that as "—" is reporting a measurement as absent. Only a launch
+ * whose iterations recorded no counter at all has nothing to show.
+ */
+function sumMeasured(
+  iterations: readonly EvalIteration[],
+  read: (iteration: EvalIteration) => number | null | undefined,
+): number | null {
+  let total = 0;
+  let measured = false;
+  for (const iteration of iterations) {
+    const value = read(iteration);
+    if (typeof value !== "number" || !Number.isFinite(value)) continue;
+    total += value;
+    measured = true;
+  }
+  return measured ? total : null;
 }
 
-function sumToolCalls(iterations: readonly EvalIteration[]): number {
-  return iterations.reduce(
-    (sum, iteration) => sum + (iteration.actualToolCalls?.length ?? 0),
-    0,
+function sumTokens(iterations: readonly EvalIteration[]): number | null {
+  return sumMeasured(iterations, (iteration) => iteration.tokensUsed);
+}
+
+export function sumToolCalls(
+  iterations: readonly EvalIteration[],
+): number | null {
+  return sumMeasured(iterations, (iteration) =>
+    iteration.actualToolCalls ? iteration.actualToolCalls.length : null,
   );
 }
 
@@ -290,8 +310,8 @@ export function buildSuiteRunHistoryRows(
           ? [run.effectiveModelId]
           : runModels(iterations),
         latencyMs: iterationLatencyP50(iterations),
-        tokens: tokens > 0 ? tokens : null,
-        toolCalls: toolCalls > 0 ? toolCalls : null,
+        tokens,
+        toolCalls,
       };
     });
 }
@@ -307,16 +327,30 @@ export function buildSuiteRunHistoryAggregates(
   );
   const totalTokens = sumTokens(iterations);
   const totalToolCalls = sumToolCalls(iterations);
+  const measuredTokenRuns = new Set(
+    iterations
+      .filter((iteration) => sumTokens([iteration]) != null)
+      .map((iteration) => iteration.suiteRunId),
+  ).size;
+  const measuredToolCallRuns = new Set(
+    iterations
+      .filter((iteration) => sumToolCalls([iteration]) != null)
+      .map((iteration) => iteration.suiteRunId),
+  ).size;
   const runCount = runs.length;
   return {
     runCount,
-    totalTokens: totalTokens > 0 ? totalTokens : null,
+    totalTokens,
     latencyP50: iterationLatencyP50(iterations),
     latencyP95: iterationLatencyP95(iterations),
     tokensPerRun:
-      runCount > 0 && totalTokens > 0 ? totalTokens / runCount : null,
+      measuredTokenRuns > 0 && totalTokens != null
+        ? totalTokens / measuredTokenRuns
+        : null,
     toolCallsPerRun:
-      runCount > 0 && totalToolCalls > 0 ? totalToolCalls / runCount : null,
+      measuredToolCallRuns > 0 && totalToolCalls != null
+        ? totalToolCalls / measuredToolCallRuns
+        : null,
   };
 }
 

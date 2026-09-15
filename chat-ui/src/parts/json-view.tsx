@@ -6,10 +6,10 @@ import { tokenizeJson } from "../internal/json-tokens";
  * Stable JSON stringify that survives circular references (tool outputs can
  * contain cycles) instead of collapsing to "[object Object]".
  *
- * Callers that need to measure a payload before rendering it (see
- * `FoldedBlock`) should use `renderJsonText` below and pass the result back in
- * as `JsonView`'s `text`, so the string that was sized is the string that is
- * shown — and is produced once rather than once per consumer.
+ * Callers that need the payload as text before rendering it (`ToolCallPart`,
+ * which hands the same string to the `renderJson` seam) should use
+ * `renderJsonText` below and pass the result back in as `JsonView`'s `text`,
+ * so it is produced once rather than once per consumer.
  */
 export function stringifyJson(value: unknown): string {
   const seen = new WeakSet<object>();
@@ -35,7 +35,7 @@ export function stringifyJson(value: unknown): string {
 /**
  * The exact text `JsonView` shows for a value: a string payload verbatim, and
  * anything else through `stringifyJson`. Exported so a caller that must size a
- * payload before rendering it measures what will actually be on screen.
+ * payload before rendering it has what will actually be on screen.
  */
 export function renderJsonText(value: unknown): string {
   return typeof value === "string" ? value : stringifyJson(value);
@@ -44,7 +44,7 @@ export function renderJsonText(value: unknown): string {
 /**
  * Past this many characters, colouring costs more than it returns: one React
  * element per token, against a payload nobody reads line by line. Beyond it
- * the same text renders as plain monospace — complete, foldable, uncoloured.
+ * the same text renders as plain monospace — complete, just uncoloured.
  */
 export const HIGHLIGHT_CHAR_LIMIT = 100_000;
 
@@ -97,32 +97,20 @@ function shouldHighlight(text: string): boolean {
 export function JsonView({
   value,
   text: preRendered,
-  highlight = true,
   className,
 }: {
   value: unknown;
   /**
    * The already-serialised payload, when the caller had to produce it anyway.
    *
-   * `FoldedBlock` has to MEASURE a payload to decide whether to fold it, and
-   * measuring means serialising. Passing that string back in is not an
-   * optimisation of a cheap call: without it a large tool result is stringified
-   * twice on every render, once to size it and once to show it. It also makes
-   * the guarantee real rather than coincidental — the text that was measured is
-   * the text that is displayed, instead of two call sites duplicating the
+   * `ToolCallPart` serialises to hand the same string to the renderer seam and
+   * the view, so passing it back in is not an optimisation of a cheap call:
+   * without it a large tool result is stringified twice on every render. It
+   * also makes the guarantee real rather than coincidental — the text that was
+   * computed is the text displayed, instead of two call sites duplicating the
    * string/object branch below and being trusted to keep agreeing.
    */
   text?: string;
-  /**
-   * Set `false` to skip colouring entirely.
-   *
-   * For content that is mounted but not shown: `FoldedBlock` keeps a closed
-   * payload in the DOM (clipped, `inert`) rather than unmounting it, so a
-   * transcript with thirty tool calls would otherwise build a token tree per
-   * hidden payload. One text node is the right cost for something nobody is
-   * reading.
-   */
-  highlight?: boolean;
   className?: string;
 }) {
   const text = preRendered ?? renderJsonText(value);
@@ -131,11 +119,11 @@ export function JsonView({
    * Tokens, or `null` for "render this as plain text".
    *
    * Memoised on the text: the tokenizer is a full scan of the payload, and a
-   * transcript re-renders on every hover, fold and score that lands in it.
+   * transcript re-renders on every hover and score that lands in it.
    */
   const tokens = useMemo(
-    () => (highlight && shouldHighlight(text) ? tokenizeJson(text) : null),
-    [text, highlight]
+    () => (shouldHighlight(text) ? tokenizeJson(text) : null),
+    [text]
   );
 
   const body = useMemo(() => {
@@ -145,8 +133,8 @@ export function JsonView({
     let lastIndex = 0;
 
     // Whitespace and anything the tokenizer did not claim is emitted verbatim
-    // between tokens, so the block is character-for-character the string that
-    // `FoldedBlock` measured — indentation included.
+    // between tokens, so the block is character-for-character the string it
+    // was given — indentation included.
     for (const [i, token] of tokens.entries()) {
       if (token.start > lastIndex) {
         nodes.push(

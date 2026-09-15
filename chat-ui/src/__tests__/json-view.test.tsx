@@ -39,7 +39,7 @@ describe("JsonView", () => {
     const value = { a: { b: [1, 2] }, c: "two words", "d\\e": "é😀́" };
     const text = renderJsonText(value);
     const { container } = render(<JsonView value={value} />);
-    // Not `toContain`: the block must equal the string `FoldedBlock` measured.
+    // Not `toContain`: the block must equal the string it was given.
     expect(pre(container).textContent).toBe(text);
   });
 
@@ -81,15 +81,6 @@ describe("JsonView", () => {
 
     const { container } = render(<JsonView value={text} />);
     expect(pre(container).textContent).toBe(text);
-    expect(pre(container).querySelector("span")).toBeNull();
-  });
-
-  it("skips colouring when the caller says the block is not shown", () => {
-    // `FoldedBlock` keeps a closed payload mounted, so `highlight={false}` is
-    // what keeps a thirty-tool session from building thirty token trees.
-    const value = { name: "mcpjam" };
-    const { container } = render(<JsonView value={value} highlight={false} />);
-    expect(pre(container).textContent).toBe(renderJsonText(value));
     expect(pre(container).querySelector("span")).toBeNull();
   });
 

@@ -415,3 +415,18 @@ it("requires advertised runner support before offering responseCloseTo", () => {
     "responseCloseTo",
   ]);
 });
+
+it("uses the catalog name for authored and preset families", () => {
+  const predicates = [STANDARD_ASSERTION_CHECKS[0].preset];
+  const table = buildScorerTable({
+    model: groupGradersByStage({ predicates }),
+    predicates,
+  });
+  for (const row of table.groups.flatMap((group) => group.rows)) {
+    if (row.family)
+      expect(row.family.name).toBe(
+        STANDARD_ASSERTION_CHECKS.find((check) => check.id === row.family!.id)!
+          .name,
+      );
+  }
+});

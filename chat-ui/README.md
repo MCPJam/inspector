@@ -125,21 +125,27 @@ Before forking a third renderer, note that `renderTool`, `renderWidget`,
 without owning the whole transcript.
 
 Where the two must agree visually, **the agreement lives in shared code rather
-than in matching CSS**, because matching CSS is what drifted:
+than in matching CSS**, because matching CSS is what drifted. In order of
+preference:
 
-- **JSON colouring** — one tokenizer, `chat-ui/src/internal/json-tokens.ts`,
-  published as `@mcpjam/chat-ui/json-tokens`. The inspector's
-  `client/src/components/ui/json-editor/json-syntax-highlighter.ts` re-exports
-  it, so the Playground's `JsonEditor` and this package's `JsonView` colour a
-  payload from the same token stream, under the same class names.
-- **No generic assistant avatar** — `showAssistantAvatar` defaults to whether
+- **Hand the host's own component through a seam.** `renderJson` is the model:
+  the inspector passes the collapsible JSON tree its Playground uses, so a
+  session's tool payloads are not a lookalike of the Playground's, they are the
+  same component. Reach for this when the thing to share is a whole widget and
+  the host is the one that owns it.
+- **Share the primitive underneath.** One tokenizer,
+  `chat-ui/src/internal/json-tokens.ts`, published as
+  `@mcpjam/chat-ui/json-tokens` and re-exported by the inspector's
+  `mcpjam-inspector/client/src/components/ui/json-editor/json-syntax-highlighter.ts`.
+  This is what colours `JsonView`, the default a host gets when it passes no
+  `renderJson` — an embedder outside this repo, mostly.
+- **Share the default.** `showAssistantAvatar` defaults to whether
   `renderAvatar` was supplied, so neither renderer draws a placeholder nobody
   asked for.
 
 Deliberate differences that are **not** drift: this package never mounts a
-widget, never edits a payload (the Playground's `JsonEditor` is CodeMirror and
-writable; `JsonView` is a `<pre>`), and folds large tool results by default
-because a review surface is read top-to-bottom while a live chat is watched.
+widget, and never edits a payload — the Playground's `JsonEditor` is CodeMirror
+and writable, while `JsonView` is a `<pre>`.
 
 Paths above are repo-root-relative, so they resolve. This file still lives in a
 different workspace from most of them, so a client-side rename will not prompt

@@ -89,7 +89,7 @@ import { useEvalMutations } from "./evals/use-eval-mutations";
 import { useEvalHandlers } from "./evals/use-eval-handlers";
 import { LaunchedCaseJudge } from "./evaluate/case-scorecard/launched-case-judge";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
-import { SuitesOverview } from "./evaluate/suites-overview";
+import { ConnectedSuitesOverview as SuitesOverview } from "./evaluate/suites-overview";
 import { SuiteListRunReview } from "./evaluate/suite-list-run-review";
 import { ProjectRunsTable } from "./evals/project-runs-table";
 import { stripTimestampSuffix } from "./evals/suite-overview-presentation";
@@ -1222,7 +1222,7 @@ function EvaluateTabContent({
             (testCase) => testCase._id === selectedTestId,
           )?.title || "Test case"
       : route.type === "suite-edit"
-        ? "Settings"
+        ? "Test Suite Evaluators"
         : route.type === "run-detail"
           ? runBreadcrumbLabel
           : null;
@@ -1352,7 +1352,7 @@ function EvaluateTabContent({
           data-testid="evals-runs-landing"
         >
           <ProjectRunsTable
-            metricBars
+            evaluateLayout
             historyMetricsEnabled
             projectId={projectId}
             onSelectRun={handleSelectRunFromAllRuns}
@@ -1403,6 +1403,7 @@ function EvaluateTabContent({
       >
         <div>
           <SuitesOverview
+            projectId={projectId}
             overview={visibleSuites}
             onSelectSuite={handleSelectSuite}
             onRerun={(suite) => {
@@ -1461,9 +1462,7 @@ function EvaluateTabContent({
           onDuplicateSuite={() => handlers.handleDuplicateSuite(selectedSuite)}
           alwaysShowEditIterationRows
           onEditTestCase={(testCaseId) =>
-            playgroundNavigation.toTestEdit(selectedSuite._id, testCaseId, {
-              openCompare: true,
-            })
+            playgroundNavigation.toTestEdit(selectedSuite._id, testCaseId)
           }
           onCreateTestCase={async () =>
             handlers.handleCreateTestCase(selectedSuite._id)
@@ -1556,15 +1555,27 @@ function EvaluateTabContent({
               route.type === "list" ? handleOpenCreateSuite : undefined
             }
             detailCrumb={
-              route.type === "test-edit" && route.checks
-                ? { label: "UVC checks" }
-                : undefined
+              route.type === "suite-edit" && route.fromCaseChecks
+                ? { label: "Test Suite Evaluators" }
+                : route.type === "test-edit" && route.checks
+                  ? { label: "Test Case Evaluators" }
+                  : undefined
             }
             onCurrentCrumbClick={
-              route.type === "test-edit" && route.checks
+              route.type === "suite-edit" && route.fromCaseChecks
                 ? () =>
-                    playgroundNavigation.toTestEdit(route.suiteId, route.testId)
-                : undefined
+                    playgroundNavigation.toTestEdit(
+                      route.suiteId,
+                      route.fromCaseChecks!,
+                      { checks: true },
+                    )
+                : route.type === "test-edit" && route.checks
+                  ? () =>
+                      playgroundNavigation.toTestEdit(
+                        route.suiteId,
+                        route.testId,
+                      )
+                  : undefined
             }
             landingView={landingView}
             onLandingViewChange={setLandingView}
@@ -1586,15 +1597,17 @@ function EvaluateTabContent({
                   : undefined
             }
           >
-            {route.type === "eval-server"
-              ? evalServer?.name
-              : route.type === "test-edit" && route.fromEvalServer
-                ? (previewCaseTitleFromDraft(
-                    route.fromEvalServer,
-                    route.suiteId,
-                    route.testId,
-                  ) ?? nestedPageLabel)
-                : renderPlaygroundBreadcrumb()}
+            {route.type === "suite-edit" && route.fromCaseChecks
+              ? "Test Case Evaluators"
+              : route.type === "eval-server"
+                ? evalServer?.name
+                : route.type === "test-edit" && route.fromEvalServer
+                  ? (previewCaseTitleFromDraft(
+                      route.fromEvalServer,
+                      route.suiteId,
+                      route.testId,
+                    ) ?? nestedPageLabel)
+                  : renderPlaygroundBreadcrumb()}
           </EvalsHeader>
         )
       }
