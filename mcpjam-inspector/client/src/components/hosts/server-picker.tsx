@@ -16,7 +16,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { AlertTriangle, ChevronDown, Server, X } from "lucide-react";
+import { ChevronDown, Server, X } from "lucide-react";
 import { useConvexAuth, useMutation } from "convex/react";
 import {
   Popover,
@@ -109,29 +109,6 @@ export type ServerPickerProps = {
    */
   variant?: "pill" | "field";
 };
-
-/**
- * BB-234: a swarm's agents act for real on whatever is picked here — they
- * write and they delete. Inline at the moment of choice rather than a modal
- * after it, which was the call in the thread. It lives here, not in the
- * panel: the design system ships primitives, and which surfaces must carry
- * this is a product question with an open answer.
- */
-const PRODUCTION_WARNING = (
-  <div className="flex items-start gap-1.5 px-2 pb-1 pt-0.5">
-    <AlertTriangle
-      className="mt-[1px] size-3 shrink-0 text-warning"
-      aria-hidden
-    />
-    <p
-      className="text-[11px] leading-snug text-muted-foreground"
-      data-testid="server-picker-production-warning"
-    >
-      Agents take real actions on these servers, including writing and deleting
-      data. Use development servers, not production.
-    </p>
-  </div>
-);
 
 export function ServerPicker({
   projectId,
@@ -881,7 +858,6 @@ export function ServerPicker({
           deriveName={deriveName}
           catalogKnown={catalogKnown}
           busy={busy}
-          notice={PRODUCTION_WARNING}
           onDeleteGroup={
             disabled ? undefined : (id) => void handleDeleteGroup(id)
           }
