@@ -52,6 +52,10 @@ function panelProps(overrides: Record<string, unknown> = {}) {
   };
 }
 
+async function openForm() {
+  await userEvent.click(screen.getByText("Create new group…"));
+}
+
 describe("ServerPickerPanel — Servers tab", () => {
   it("renders one row per server", () => {
     render(<ServerPickerPanel {...panelProps()} />);
@@ -395,10 +399,6 @@ describe("ServerPickerPanel — creating a group", () => {
             : `${picked[0]} + ${picked.length - 1}`,
       ...overrides,
     });
-
-  async function openForm() {
-    await userEvent.click(screen.getByText("Create new group…"));
-  }
 
   it("swaps the group list for a form", async () => {
     render(<ServerPickerPanel {...onCreate()} />);
@@ -784,51 +784,122 @@ describe("ServerPickerPanel — an unanswered catalog", () => {
 });
 
 /**
- * BB-234: agents write and delete on whatever is picked here. Main put the
- * warning in the picker it replaced, in both popover branches; here it sits
- * between the tabs and their content, so no tab and no form can lose it.
+ * The slot between the tabs and their content. WHAT goes in it is the
+ * caller's — BB-234's warning is a product rule about agents, and this
+ * package ships primitives — but WHERE it sits is this panel's contract: a
+ * place no tab and no form can drop.
  */
-describe("ServerPickerPanel — production-server warning", () => {
-  const WARNING = "server-picker-production-warning";
+describe("ServerPickerPanel — the notice slot", () => {
+  const NOTICE = <span data-testid="notice">heed this</span>;
 
-  it("warns that agents write and delete, and to avoid production", () => {
-    render(<ServerPickerPanel {...panelProps()} />);
-    const warning = screen.getByTestId(WARNING);
-    // "writing and deleting" as one phrase: the write half is the surprise.
-    expect(warning).toHaveTextContent(/real actions/i);
-    expect(warning).toHaveTextContent(/writing and\s+deleting data/i);
-    expect(warning).toHaveTextContent(/not production/i);
-  });
+  it("sits between the tab strip and the first row, inside neither", () => {
+    render(<ServerPickerPanel {...panelProps({ notice: NOTICE })} />);
 
-  it("sits between the tabs and the first row, where no list can push it under the fold", () => {
-    render(<ServerPickerPanel {...panelProps()} />);
-    const warning = screen.getByTestId(WARNING);
+    const notice = screen.getByTestId("notice");
     const tabs = screen.getByRole("tablist");
-    const firstRow = screen.getByText("Excalidraw (App)");
+    // Containment, not just order: `& FOLLOWING` is set for a node CONTAINED
+    // BY the tablist too, where this `grid-cols-2` strip would paint it as a
+    // third tab cell — so the order assertions alone allow the one placement
+    // that breaks it.
+    expect(tabs.contains(notice)).toBe(false);
     expect(
-      tabs.compareDocumentPosition(warning) & Node.DOCUMENT_POSITION_FOLLOWING,
+      tabs.compareDocumentPosition(notice) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(
-      warning.compareDocumentPosition(firstRow) &
+      notice.compareDocumentPosition(screen.getByText("Excalidraw (App)")) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
   });
 
-  it("still warns when the project has nothing to pick yet", () => {
-    // The first-run path: one create away from aiming a swarm somewhere.
-    render(<ServerPickerPanel {...panelProps({ servers: [], groups: [] })} />);
-    expect(screen.getByTestId(WARNING)).toBeInTheDocument();
+  it("stays above the list on the groups tab", () => {
+    render(
+      <ServerPickerPanel {...panelProps({ notice: NOTICE, tab: "groups" })} />,
+    );
+
+    const notice = screen.getByTestId("notice");
     expect(
-      screen.getByText("No servers in this project yet."),
-    ).toBeInTheDocument();
+      notice.compareDocumentPosition(screen.getByText("Group 1")) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
-  it("keeps warning while the create form has replaced the group list", async () => {
-    const user = userEvent.setup();
-    render(<ServerPickerPanel {...panelProps({ tab: "groups" })} />);
-    await user.click(screen.getByRole("button", { name: /create new group/i }));
+  it("survives the create form replacing the group list", async () => {
+    render(
+      <ServerPickerPanel {...panelProps({ notice: NOTICE, tab: "groups" })} />,
+    );
+
+    await openForm();
+
     expect(screen.queryByText("Group 1")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Group name")).toBeInTheDocument();
-    expect(screen.getByTestId(WARNING)).toHaveTextContent(/not production/i);
+    expect(screen.getByTestId("notice")).toBeInTheDocument();
+  });
+
+  it("survives a project with nothing to pick yet", () => {
+    // The first-run path: one create away from pointing something somewhere.
+    render(
+      <ServerPickerPanel
+        {...panelProps({ notice: NOTICE, servers: [], groups: [] })}
+      />,
+    );
+
+    expect(screen.getByTestId("notice")).toBeInTheDocument();
+  });
+
+  it("renders nothing there for a caller that supplies none", () => {
+    render(<ServerPickerPanel {...panelProps()} />);
+
+    expect(screen.queryByTestId("notice")).toBeNull();
+  });
+});
+
+describe("ServerPickerPanel — a project with no groups yet", () => {
+  it("says so rather than leaving the tab blank", () => {
+    // With no groups and an empty catalog, `Create new group…` is disabled
+    // too, so without this the tab is one greyed button and no explanation.
+    render(
+      <ServerPickerPanel {...panelProps({ tab: "groups", groups: [] })} />,
+    );
+
+    expect(
+      screen.getByText("No server groups yet — create one below."),
+    ).toBeVisible();
+  });
+
+  it("claims nothing while the list is still unknown", () => {
+    render(
+      <ServerPickerPanel
+        {...panelProps({ tab: "groups", groups: [], busy: true })}
+      />,
+    );
+
+    expect(screen.queryByText(/No server groups yet/)).toBeNull();
+  });
+});
+
+describe("ServerPickerPanel — the create form from the keyboard", () => {
+  it("creates on Enter from the name field", async () => {
+    const onCreateGroup = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ServerPickerPanel {...panelProps({ tab: "groups", onCreateGroup })} />,
+    );
+    await openForm();
+    await userEvent.click(screen.getByLabelText("Excalidraw (App)"));
+
+    await userEvent.type(screen.getByLabelText("Group name"), "pair{Enter}");
+
+    expect(onCreateGroup).toHaveBeenCalledWith("pair", ["srv_1"]);
+  });
+
+  it("does not submit a draft Create would refuse", async () => {
+    const onCreateGroup = vi.fn();
+    render(
+      <ServerPickerPanel {...panelProps({ tab: "groups", onCreateGroup })} />,
+    );
+    await openForm();
+
+    // A name and no servers: the same state the button is disabled for.
+    await userEvent.type(screen.getByLabelText("Group name"), "pair{Enter}");
+
+    expect(onCreateGroup).not.toHaveBeenCalled();
   });
 });

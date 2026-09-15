@@ -4,8 +4,8 @@
  * expands. Presentational and fully controlled: it takes a resolved
  * `{ label, indicatorClassName }`, so it imports nothing from the app.
  */
-import { useEffect, useId, useMemo, useState } from "react";
-import { AlertTriangle, Loader2, Plus, Trash2 } from "lucide-react";
+import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
+import { Loader2, Plus, Trash2 } from "lucide-react";
 import { Badge } from "./badge";
 import { Button } from "./button";
 import { Checkbox } from "./checkbox";
@@ -59,6 +59,12 @@ export type ServerPickerPanelProps = {
    * a refusal the user cannot see reads as a dead control.
    */
   busy?: boolean;
+  /**
+   * Rendered between the tabs and their content, so no tab and no form can
+   * drop it. A slot rather than copy: WHAT a surface must warn about is a
+   * product rule, and this package ships primitives.
+   */
+  notice?: ReactNode;
   /**
    * Remove a group. Only callers that can perform the write pass it, and only
    * they get the control — the panel cannot tell a removable row from one the
@@ -136,6 +142,7 @@ export function ServerPickerPanel({
   onCreateGroup,
   deriveName,
   catalogKnown = true,
+  notice,
   busy = false,
   onDeleteGroup,
   canDeleteSelected = true,
@@ -168,6 +175,31 @@ export function ServerPickerPanel({
     setDraftName(deriveName(draftServers.map((s) => s.name)));
   }, [showForm, nameEdited, submitting, deriveName, draftServers]);
 
+  /** What Create refuses, Enter must refuse too. */
+  const canCreate =
+    draftServers.length > 0 &&
+    draftName.trim().length > 0 &&
+    !submitting &&
+    !busy;
+
+  const submitDraft = async () => {
+    setSubmitting(true);
+    try {
+      // Only ids still on offer: nothing closes this form when `servers`
+      // changes, so a draft can outlive the rows it was built from — and the
+      // derived name and the picked count already ignore the ones that went.
+      await onCreateGroup(
+        draftName.trim(),
+        draftServers.map((s) => s.id),
+      );
+      resetForm();
+    } catch {
+      // The caller reports the reason; keep the draft so the user can fix the
+      // name instead of rebuilding it.
+      setSubmitting(false);
+    }
+  };
+
   const resetForm = () => {
     setShowForm(false);
     setSubmitting(false);
@@ -197,20 +229,7 @@ export function ServerPickerPanel({
         </TabsTrigger>
       </TabsList>
 
-      {/* BB-234: agents act for real on what is picked here. Above both tabs, so no tab and no form can drop it. */}
-      <div className="flex items-start gap-1.5 px-2 pb-1 pt-0.5">
-        <AlertTriangle
-          className="mt-[1px] size-3 shrink-0 text-warning"
-          aria-hidden
-        />
-        <p
-          className="text-[11px] leading-snug text-muted-foreground"
-          data-testid="server-picker-production-warning"
-        >
-          Agents take real actions on these servers, including writing and
-          deleting data. Use development servers, not production.
-        </p>
-      </div>
+      {notice}
 
       <TabsContent value="servers" className="space-y-0.5">
         {servers.length === 0 ? (
@@ -288,6 +307,14 @@ export function ServerPickerPanel({
                   setNameEdited(true);
                   setDraftName(e.target.value);
                 }}
+                onKeyDown={(event) => {
+                  // Enter only. Escape belongs to whatever holds this panel —
+                  // the picker's popover treats it as the way out mid-create,
+                  // and it listens on the document, where this cannot reach.
+                  if (event.key !== "Enter" || !canCreate) return;
+                  event.preventDefault();
+                  void submitDraft();
+                }}
                 placeholder="Name this group"
                 className="h-7 text-xs"
               />
@@ -334,30 +361,8 @@ export function ServerPickerPanel({
                 type="button"
                 size="sm"
                 className="h-7 flex-1 text-xs"
-                disabled={
-                  draftServers.length === 0 ||
-                  draftName.trim().length === 0 ||
-                  submitting ||
-                  busy
-                }
-                onClick={async () => {
-                  setSubmitting(true);
-                  try {
-                    // Only ids still on offer: nothing closes this form when
-                    // `servers` changes, so a draft can outlive the rows it
-                    // was built from — and the derived name and the picked
-                    // count already ignore the ones that went away.
-                    await onCreateGroup(
-                      draftName.trim(),
-                      draftServers.map((s) => s.id),
-                    );
-                    resetForm();
-                  } catch {
-                    // The caller reports the reason; keep the draft so the
-                    // user can fix the name instead of rebuilding it.
-                    setSubmitting(false);
-                  }
-                }}
+                disabled={!canCreate}
+                onClick={() => void submitDraft()}
               >
                 {submitting ? (
                   <Loader2 className="mr-1 size-3 animate-spin" />
@@ -440,6 +445,11 @@ export function ServerPickerPanel({
                 </div>
               );
             })}
+        {!showForm && groups.length === 0 && !busy ? (
+          <p className="px-2 py-1.5 text-xs italic text-muted-foreground">
+            No server groups yet — create one below.
+          </p>
+        ) : null}
         {!showForm ? (
           <button
             type="button"

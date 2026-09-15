@@ -63,32 +63,36 @@ vi.mock("@/components/environment-composer/clients-pill", () => ({
   ),
 }));
 vi.mock("@/components/hosts/server-picker", () => ({
-  // Like the real trigger: the clear sits beside it, only when offered, held and not busy.
+  // The real trigger's shape and ids: one `contents` root holding the trigger
+  // and, beside it, a clear offered only when the caller allows one, a
+  // selection is held, and the picker is not frozen.
   ServerPicker: ({
     triggerTestId,
     value,
     disabled,
+    offerClear = true,
     onClearSelection,
   }: {
     triggerTestId?: string;
     value?: string | null;
     disabled?: boolean;
+    offerClear?: boolean;
     onClearSelection?: () => void;
   }) => (
-    <>
+    <div className="contents">
       <button
         type="button"
-        data-testid={triggerTestId ?? "server-group-picker"}
+        data-testid={triggerTestId ?? "server-picker-trigger"}
         disabled={disabled}
       />
-      {onClearSelection && value && !disabled ? (
+      {onClearSelection && offerClear && value && !disabled ? (
         <button
           type="button"
-          data-testid="servers-picker-clear"
+          data-testid="server-picker-clear"
           onClick={onClearSelection}
         />
       ) : null}
-    </>
+    </div>
   ),
 }));
 vi.mock("@/components/project-environments/environment-picker", () => ({
@@ -172,10 +176,10 @@ describe("EnvironmentComposer slots", () => {
     // when the caller supplies one. Without this the strip is a one-way door.
     render(<Harness slots={["servers"]} initialValue={withServer()} />);
 
-    fireEvent.click(screen.getByTestId("servers-picker-clear"));
+    fireEvent.click(screen.getByTestId("server-picker-clear"));
 
     expect(screen.getByTestId("strip-servers-picker")).toBeVisible();
-    expect(screen.queryByTestId("servers-picker-clear")).toBeNull();
+    expect(screen.queryByTestId("server-picker-clear")).toBeNull();
   });
 
   it("offers no way out where the surface requires a server", () => {
@@ -190,7 +194,7 @@ describe("EnvironmentComposer slots", () => {
     );
 
     expect(screen.getByTestId("strip-servers-picker")).toBeVisible();
-    expect(screen.queryByTestId("servers-picker-clear")).toBeNull();
+    expect(screen.queryByTestId("server-picker-clear")).toBeNull();
   });
 
   it("renders only the requested slots so evals can split Servers from Where it runs", () => {
@@ -205,7 +209,9 @@ describe("EnvironmentComposer slots", () => {
 
     expect(screen.getByTestId("strip-clients-picker")).toBeVisible();
     expect(screen.getByTestId("strip-models-picker")).toBeVisible();
-    expect(screen.getByTestId("strip-models-picker")).toHaveTextContent("models");
+    expect(screen.getByTestId("strip-models-picker")).toHaveTextContent(
+      "models",
+    );
     expect(screen.queryByTestId("strip-servers-picker")).toBeNull();
     expect(screen.queryByTestId("strip-environments-picker")).toBeNull();
   });
@@ -271,7 +277,9 @@ describe("EnvironmentComposer slots", () => {
       />,
     );
 
-    expect(screen.getByTestId("strip-models-picker")).toHaveTextContent("GPT-4");
+    expect(screen.getByTestId("strip-models-picker")).toHaveTextContent(
+      "GPT-4",
+    );
   });
 });
 
@@ -352,6 +360,38 @@ describe("EnvironmentComposer locked slots", () => {
     expect(wrapper.tagName).toBe("SPAN");
     expect(wrapper).toHaveAttribute("role", "button");
     expect(wrapper.closest("button")).toBeNull();
+  });
+
+  it("withholds the clear on a locked servers slot that holds a selection", () => {
+    // Every other lock test renders with nothing selected, where the X never
+    // shows anyway; the lock reaches it only through the picker's own frozen
+    // state, so this is the assertion that pins the chain.
+    render(
+      <Harness
+        slots={["servers"]}
+        initialValue={withServer()}
+        lockedSlots={{ servers: "This study already has sessions." }}
+      />,
+    );
+
+    expect(screen.getByTestId("strip-servers-picker")).toBeDisabled();
+    expect(screen.queryByTestId("server-picker-clear")).toBeNull();
+  });
+
+  it("answers a press on the locked SERVERS pill with its reason", () => {
+    render(
+      <Harness
+        slots={["servers"]}
+        initialValue={withServer()}
+        lockedSlots={{ servers: "This study already has sessions." }}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByTestId("strip-servers-picker").closest('[role="button"]')!,
+    );
+
+    expect(toastError).toHaveBeenCalledWith("This study already has sessions.");
   });
 
   it("leaves an unlocked strip alone", () => {

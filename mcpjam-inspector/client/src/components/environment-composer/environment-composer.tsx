@@ -106,18 +106,9 @@ export function EnvironmentComposer({
    * modelId becomes the pill label; mixed or missing models stay generic.
    */
   clientDefaultLabel?: string | null;
-  /**
-   * Empty-state label for the servers pill. The default is
-   * the strip's own wording, where the group is genuinely optional; a surface
-   * that makes it REQUIRED (evals create) must say so itself rather than
-   * offering "client default" for a choice it will then block on.
-   */
+  /** Empty-state label for the servers pill; a surface that REQUIRES one must say so. */
   emptyServerLabel?: string;
-  /**
-   * Whether this surface accepts no server at all. Surfaces that gate submit
-   * on one pass `false`, and lose the clear control — offering it there empties
-   * a field the form will not take.
-   */
+  /** `false` where submit gates on a server: the clear would only empty a field the form refuses. */
   serverOptional?: boolean;
   /**
    * Slots this surface refuses to let anyone change, each with the reason.
@@ -492,11 +483,10 @@ export function EnvironmentComposer({
                 disabled={slotsDisabled || Boolean(lockedSlots?.servers)}
                 emptyTriggerLabel={emptyServerLabel}
                 triggerTestId={testId("servers-picker")}
-                onClearSelection={
-                  serverOptional
-                    ? () => patchStack({ serverAttachmentId: null })
-                    : undefined
+                onClearSelection={() =>
+                  patchStack({ serverAttachmentId: null })
                 }
+                offerClear={serverOptional}
                 inModal={inModal}
               />,
             )

@@ -16,7 +16,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { ChevronDown, Server, X } from "lucide-react";
+import { AlertTriangle, ChevronDown, Server, X } from "lucide-react";
 import { useConvexAuth, useMutation } from "convex/react";
 import {
   Popover,
@@ -32,6 +32,7 @@ import {
   useProjectServers,
 } from "@/hooks/useViews";
 import { useOptionalSharedAppState } from "@/state/app-state-context";
+import { findProjectByAnyId } from "@/state/app-types";
 import { useServerActionsOptional } from "@/state/server-actions-context";
 import {
   UNKNOWN_CONNECTION_STATUS,
@@ -83,8 +84,19 @@ export type ServerPickerProps = {
   disabled?: boolean;
   /** Trigger label when nothing is selected. */
   emptyTriggerLabel?: string;
-  /** Passed only where the server is optional — the picker cannot tell. */
+  /**
+   * The parent can be told its selection went away. Needed wherever this
+   * picker may delete the row the parent stores, INCLUDING surfaces that
+   * require a server — deleting the group they seeded has to reach them.
+   */
   onClearSelection?: () => void;
+  /**
+   * Whether to offer the X. A surface that gates submit on a server passes
+   * `false`: asking for the client default there only empties a field the
+   * form refuses. Deleting the selected row stays available — that is
+   * `onClearSelection`'s job, not this one's.
+   */
+  offerClear?: boolean;
   /** Render in place: a modal Dialog's overlay swallows clicks on a portal. */
   inModal?: boolean;
   triggerTestId?: string;
@@ -98,6 +110,29 @@ export type ServerPickerProps = {
   variant?: "pill" | "field";
 };
 
+/**
+ * BB-234: a swarm's agents act for real on whatever is picked here — they
+ * write and they delete. Inline at the moment of choice rather than a modal
+ * after it, which was the call in the thread. It lives here, not in the
+ * panel: the design system ships primitives, and which surfaces must carry
+ * this is a product question with an open answer.
+ */
+const PRODUCTION_WARNING = (
+  <div className="flex items-start gap-1.5 px-2 pb-1 pt-0.5">
+    <AlertTriangle
+      className="mt-[1px] size-3 shrink-0 text-warning"
+      aria-hidden
+    />
+    <p
+      className="text-[11px] leading-snug text-muted-foreground"
+      data-testid="server-picker-production-warning"
+    >
+      Agents take real actions on these servers, including writing and deleting
+      data. Use development servers, not production.
+    </p>
+  </div>
+);
+
 export function ServerPicker({
   projectId,
   value,
@@ -105,6 +140,7 @@ export function ServerPicker({
   disabled = false,
   emptyTriggerLabel = "Select server",
   onClearSelection,
+  offerClear = true,
   inModal = false,
   triggerTestId,
   triggerId,
@@ -347,7 +383,19 @@ export function ServerPicker({
     return () => clearTimeout(timer);
   }, [pending, value]);
   const catalog = useMemo(() => catalogRows ?? [], [catalogRows]);
-  const runtime = appState?.servers ?? null;
+  /**
+   * Runtime status is keyed by server NAME and belongs to the project that is
+   * open; this picker can be rendered for another one — an eval row, the
+   * environments editor, a bookmarked URL — where the same name is a
+   * different server. Join only when both resolve to one project: an unmarked
+   * row is a supported state, another project's status is not, and Connect
+   * would hand that name to the open project's runtime.
+   */
+  const activeProjectId = appState?.activeProjectId;
+  const joinable =
+    activeProjectId !== undefined &&
+    findProjectByAnyId(appState?.projects, project)?.id === activeProjectId;
+  const runtime = joinable ? (appState?.servers ?? null) : null;
 
   const selection = useMemo(
     () => resolvePickerSelection(attachments, value),
@@ -786,7 +834,11 @@ export function ServerPicker({
         while the list is unknown (every row looks dangling then) and while a
         write is in flight (its `onChange` would undo the clear).
       */}
-        {onClearSelection && selection && attachmentsKnown && !busy ? (
+        {onClearSelection &&
+        offerClear &&
+        selection &&
+        attachmentsKnown &&
+        !busy ? (
           <button
             type="button"
             data-testid="server-picker-clear"
@@ -829,6 +881,7 @@ export function ServerPicker({
           deriveName={deriveName}
           catalogKnown={catalogKnown}
           busy={busy}
+          notice={PRODUCTION_WARNING}
           onDeleteGroup={
             disabled ? undefined : (id) => void handleDeleteGroup(id)
           }

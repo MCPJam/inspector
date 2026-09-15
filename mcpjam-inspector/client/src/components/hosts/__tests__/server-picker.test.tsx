@@ -29,6 +29,9 @@ const { mockState } = vi.hoisted(() => ({
     catalogLoading: false,
     catalogBootstrapping: false,
     runtime: null as Record<string, { connectionStatus: string }> | null,
+    // Which project that runtime map belongs to. Separate from `runtime`
+    // because the join is only sound when it is this picker's project.
+    activeProjectId: "p_1",
     // Separate from `runtime`: the two providers are independent, and a
     // surface can sit inside SharedAppState but outside ServerActions. Driving
     // both from one switch made every `actions` guard unfalsifiable.
@@ -61,7 +64,13 @@ vi.mock("@/hooks/useViews", () => ({
 
 vi.mock("@/state/app-state-context", () => ({
   useOptionalSharedAppState: () =>
-    mockState.runtime === null ? null : { servers: mockState.runtime },
+    mockState.runtime === null
+      ? null
+      : {
+          servers: mockState.runtime,
+          projects: { p_1: { id: "p_1" }, p_2: { id: "p_2" } },
+          activeProjectId: mockState.activeProjectId,
+        },
 }));
 
 vi.mock("@/state/server-actions-context", () => ({
@@ -97,6 +106,7 @@ beforeEach(() => {
   mockState.catalogLoading = false;
   mockState.catalogBootstrapping = false;
   mockState.runtime = { alpha: { connectionStatus: "connected" } };
+  mockState.activeProjectId = "p_1";
   mockState.hasActions = true;
   mockState.createSpy = vi.fn().mockResolvedValue({ _id: "att_new" });
   mockState.deleteSpy = vi.fn().mockResolvedValue(undefined);
@@ -530,7 +540,10 @@ describe("ServerPicker — a handshake left behind by a project switch", () => {
 
     // Same server name, different project: the handshake was the old one's.
     // The popover stays open across the rerender — clicking the trigger again
-    // would just close it.
+    // would just close it. The OPEN project moves with the prop, as it does in
+    // the app; without that the runtime map is another project's and the rows
+    // carry no status at all.
+    mockState.activeProjectId = "p_2";
     rerender(<ServerPicker projectId="p_2" value={null} onChange={onChange} />);
     const reoffered = await screen.findByRole("button", {
       name: "Connect alpha",
@@ -2272,5 +2285,106 @@ describe("ServerPicker — a write the user walked away from", () => {
     await settle(() => del.resolve(undefined));
 
     expect(await serverRow("srv_2")).toBeDisabled();
+  });
+});
+
+describe("ServerPicker — a project that is not the open one", () => {
+  it("makes no status claim, and offers no Connect, for another project's row", async () => {
+    // The runtime map is keyed by NAME and belongs to whichever project is
+    // open. A picker can be rendered for a different one — an eval row, the
+    // environments editor, a bookmarked URL — where `alpha` is a different
+    // server. Painting it here would also point Connect at the wrong one.
+    mockState.runtime = { alpha: { connectionStatus: "failed" } };
+    mockState.activeProjectId = "p_2";
+    open();
+
+    const dot = await screen.findByTestId("server-status-dot-srv_1");
+    expect(dot).toHaveAccessibleName("Connection state unavailable");
+    expect(dot).toHaveClass("bg-transparent");
+    expect(screen.queryByRole("button", { name: /^Connect / })).toBeNull();
+  });
+
+  it("joins the status once that project is the open one", async () => {
+    // The other half, so the guard above cannot be satisfied by never joining.
+    mockState.runtime = { alpha: { connectionStatus: "failed" } };
+    open();
+
+    const dot = await screen.findByTestId("server-status-dot-srv_1");
+    expect(dot).toHaveAccessibleName("Failed");
+  });
+});
+
+describe("ServerPicker — a surface that refuses an empty field", () => {
+  const PAIR3 = {
+    _id: "att_p3",
+    name: "prod pair",
+    serverIds: ["srv_1", "srv_2"],
+    resolvedServerNames: ["alpha", "beta"],
+  };
+
+  it("withholds the X but still lets the selected row be deleted", async () => {
+    // Two different questions: whether the user may ASK for the client
+    // default, and whether this picker can tell the parent its row went away.
+    // A form that gates submit on a server answers no to the first and yes to
+    // the second — deleting the group it seeded has to reach the parent.
+    mockState.attachments = [PAIR3];
+    const onClearSelection = vi.fn();
+    render(
+      <ServerPicker
+        projectId="p_1"
+        value="att_p3"
+        onChange={vi.fn()}
+        onClearSelection={onClearSelection}
+        offerClear={false}
+      />,
+    );
+
+    expect(screen.queryByTestId("server-picker-clear")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("server-picker-trigger"));
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Delete prod pair" }),
+    );
+
+    await waitFor(() =>
+      expect(mockState.deleteSpy).toHaveBeenCalledWith({
+        serverAttachmentId: "att_p3",
+      }),
+    );
+    expect(onClearSelection).toHaveBeenCalled();
+  });
+
+  it("offers the X where the surface accepts none", async () => {
+    // The other direction: `offerClear` defaults to on, so withholding it is
+    // a choice a caller makes, not the shape of the control.
+    mockState.attachments = [PAIR3];
+    render(
+      <ServerPicker
+        projectId="p_1"
+        value="att_p3"
+        onChange={vi.fn()}
+        onClearSelection={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("server-picker-clear")).toBeVisible();
+  });
+});
+
+describe("ServerPicker — what the popover warns about", () => {
+  it("carries BB-234's warning where the choice is actually made", async () => {
+    // The copy lives here rather than in the panel, so this is the assertion
+    // that proves it reaches a real popover — the panel only owes the slot.
+    open();
+
+    const warning = await screen.findByTestId(
+      "server-picker-production-warning",
+    );
+    // "writing AND deleting" as one phrase: matching only the delete half
+    // would let the write claim be dropped, and writing is the half that
+    // surprises people about a run that looks read-only.
+    expect(warning).toHaveTextContent(/real actions/i);
+    expect(warning).toHaveTextContent(/writing and\s+deleting data/i);
+    expect(warning).toHaveTextContent(/not production/i);
   });
 });

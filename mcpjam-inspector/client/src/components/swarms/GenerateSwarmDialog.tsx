@@ -367,7 +367,7 @@ export function GenerateSwarmDialog({
         </DialogHeader>
         <div className="flex flex-col gap-3 py-1">
           <div className="flex flex-col gap-1.5">
-            <Label>Servers</Label>
+            <Label htmlFor="generate-swarm-server">Servers</Label>
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <ServerPicker
                 projectId={projectId}
@@ -379,9 +379,10 @@ export function GenerateSwarmDialog({
                     customized: true,
                   }))
                 }
-                // The dialog opens with a group already seeded and nothing
-                // gates on it, so without a way back the client's own servers
-                // — what the empty label promises — become unreachable.
+                // Seeded on open, so the X is the only way back to the
+                // client's own servers — what the empty label promises. It can
+                // leave the dialog blocked (`noServers` below says so and how
+                // to fix it), which beats a choice with no way out.
                 onClearSelection={() =>
                   setTargetState((prev) => ({
                     ...prev,
@@ -389,28 +390,22 @@ export function GenerateSwarmDialog({
                     customized: true,
                   }))
                 }
-                // Server-first wording, and the same phrasing the project
-                // environment editor uses: BB-3 was a user who could not find
-                // his servers because every label led with "server group".
+                // BB-3: lead with "server", not "group" — the project
+                // environment editor's exact label.
                 emptyTriggerLabel="Client default · pick a server or group"
                 triggerTestId="generate-server-picker"
+                triggerId="generate-swarm-server"
                 inModal
               />
             </div>
-            {hosts.length === 0 ? (
-              <p className="text-[11px] leading-snug text-muted-foreground">
-                Connect a client before generating.
-              </p>
-            ) : (
-              // Carried over from the picker this field used to render, which
-              // took the line as an `infoText` prop. The new picker is a
-              // trigger chip with no room for it, and the explanation is the
-              // field's rather than the control's, so it sits here — under the
-              // more urgent message when there is one.
-              <p className="text-[11px] leading-snug text-muted-foreground">
-                Generation reads the tools on these servers to write the goals.
-              </p>
-            )}
+            {/* The picker this field used to render took this line as an
+                `infoText` prop; the new trigger is a chip with no room, and
+                the explanation is the field's anyway. Yields to the blocker. */}
+            <p className="text-[11px] leading-snug text-muted-foreground">
+              {hosts.length === 0
+                ? "Connect a client before generating."
+                : "Generation reads the tools on these servers to write the goals."}
+            </p>
           </div>
 
           {noServers ? (

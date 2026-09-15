@@ -109,9 +109,16 @@ vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
 
 // The button is the handle the mid-flight test needs to retarget the dialog.
 vi.mock("@/components/hosts/server-picker", () => ({
-  ServerPicker: ({ onChange }: { onChange: (id: string) => void }) => (
+  ServerPicker: ({
+    onChange,
+    triggerId,
+  }: {
+    onChange: (id: string) => void;
+    triggerId?: string;
+  }) => (
     <button
       type="button"
+      id={triggerId}
       data-testid="generate-server-picker"
       onClick={() => onChange("att-other")}
     >
@@ -335,6 +342,24 @@ describe("SwarmsTab — generate persona", () => {
     // Rejected BEFORE the persona write, so no journey-less row is stranded.
     expect(createPersonaMutation).not.toHaveBeenCalled();
     expect(toastMock.success).not.toHaveBeenCalled();
+  });
+
+  it("names the servers field, and says what the pick is for", () => {
+    // Without the association a screen reader announces the trigger's VALUE
+    // with no field name, while the caption sits right above it. And the line
+    // under the field is the only place left that says why the pick matters —
+    // it came off the old picker's tooltip, which went with the picker.
+    openGeneratePersona();
+
+    expect(screen.getByLabelText("Servers")).toBe(
+      screen.getByTestId("generate-server-picker"),
+    );
+    expect(
+      screen.getByText(/Generation reads the tools on these servers/),
+    ).toBeVisible();
+    expect(
+      screen.queryByText("Connect a client before generating."),
+    ).toBeNull();
   });
 
   it("targets the environments selected at submit, not a mid-flight change", async () => {
