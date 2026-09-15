@@ -71,8 +71,6 @@ export function EvalsHeader({
   isDetail?: boolean;
 }) {
   const isDetail = isDetailProp ?? Boolean(children || parentCrumb);
-  const showLandingTabs =
-    !isDetail && landingView != null && onLandingViewChange != null;
 
   if (isDetail) {
     return (
@@ -156,6 +154,8 @@ export function EvalsHeader({
       </div>
     );
   }
+
+  const showLandingTabs = landingView != null && onLandingViewChange != null;
 
   return (
     <LandingPageHeader
