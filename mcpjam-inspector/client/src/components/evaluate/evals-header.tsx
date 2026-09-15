@@ -218,13 +218,11 @@ export function EvalsHeader({
                         Create suite
                       </DropdownMenuItem>
                     )}
-                    {landingView === "suites" && (
-                      <DropdownMenuItem onSelect={onSetupRun}>
-                        <Play className="h-4 w-4" />
-                        Setup run
-                      </DropdownMenuItem>
-                    )}
-                    {onAddCase && (
+                    {/* Each landing offers ONE alternative to its primary
+                        action, and it is the other landing's subject. Runs
+                        does not offer a case: a case belongs to a suite, and
+                        the runs list never names one. */}
+                    {landingView === "suites" && onAddCase && (
                       <DropdownMenuItem onSelect={onAddCase}>
                         <Plus className="h-4 w-4" />
                         Add test case
