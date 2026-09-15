@@ -138,6 +138,25 @@ Each `MCPTasksCheckResult` includes:
 - optional `warnings`
 - optional `error`
 
+## Conformance score
+
+Use `scoreFromTasksResult` to compute the 0–100 score for a run:
+
+```typescript
+import { scoreFromTasksResult, describeConformanceScore } from "@mcpjam/sdk";
+
+const result = await new MCPTasksConformanceTest({ url: "...", toolName: "long_job" }).run();
+const score = scoreFromTasksResult(result);
+
+console.log(score.score);   // e.g. 100
+console.log(describeConformanceScore(score));
+// "100/100 — 8/8 applicable checks passed [2026-07-28]"
+```
+
+Per-check `warnings` strings count as advisory deductions at the weakest tier (MAY, −1 each). The CLI prints a `Score:` line to stderr after each run (suppressed by `--quiet`). `toConformanceReport` attaches the score to `ConformanceReport.score`, and JUnit XML includes it in a `<properties>` block under each `<testsuite>`.
+
+See [Protocol Conformance SDK](/sdk/reference/protocol-conformance#conformance-score) for the full scoring formula.
+
 ## CI reporting
 
 Use the shared reporting helpers to produce JUnit XML or JSON artifacts:
