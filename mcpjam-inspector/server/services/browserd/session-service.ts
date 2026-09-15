@@ -275,6 +275,25 @@ export class BrowserSessionService {
       : null;
   }
 
+  /** Read the durable conversation owner without creating, reviving, or waking it. */
+  async getConversationSession(args: {
+    projectId: string;
+    conversationId: string;
+    bearer: string;
+    signal?: AbortSignal;
+  }): Promise<BrowserLogicalSessionRecord | null> {
+    const raw = await this.post<{ session?: unknown }>(
+      "/browser-sessions/get",
+      {
+        projectId: args.projectId,
+        bearer: args.bearer,
+        signal: args.signal,
+        body: { conversationId: args.conversationId },
+      },
+    );
+    return parseSession(raw?.session);
+  }
+
   async resolveSession(args: {
     owner: BrowserSessionOwner;
     projectId: string;

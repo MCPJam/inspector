@@ -5,7 +5,7 @@
  * The LLM lives in Convex (to protect the OpenRouter key),
  * while MCP tools execute locally in this Express server.
  */
-
+import { withPageToolAttributionMetadata } from "./page-tool-call-attribution";
 import {
   createUIMessageStream,
   createUIMessageStreamResponse,
@@ -1276,6 +1276,16 @@ interface StreamResult {
   hasToolCalls: boolean;
   finishChunk: UIMessageChunk | null;
   /**
+   * `errorText` of every `tool-input-error` chunk this step produced.
+   *
+   * A tool call whose input fails schema validation contributes NO
+   * `contentParts` entry, so a step whose only output was one of these is
+   * byte-for-byte indistinguishable from a model that said nothing at all.
+   * Keeping the reasons lets {@link describeEmptyStepFailure} name the one
+   * empty-step cause a caller can act on directly.
+   */
+  toolInputErrors: string[];
+  /**
    * Absolute Date.now() of the first emitted stream chunk, for
    * time-to-first-chunk (OTel gen_ai.response.time_to_first_chunk). Undefined
    * if the stream produced no chunks.
@@ -1479,6 +1489,82 @@ function readFinishReasonFromChunk(
   type FinishUIMessageChunk = Extract<UIMessageChunk, { type: "finish" }>;
   const source = finishChunk as Partial<FinishUIMessageChunk> | null;
   return normalizeFinishReason(source?.finishReason);
+}
+
+/**
+ * The sentence every empty-step failure opens with, verbatim.
+ *
+ * This family is classified BY TEXT: `describe.ts`'s inspector-sentinel sniff
+ * matches it to `provider/empty_response` ("The model returned no response, so
+ * the turn could not complete"), and the eval runner's own fallback in
+ * `drive-hosted-eval-turn.ts` emits the identical sentence when the engine
+ * reported nothing structured. So detail is APPENDED to this prefix, never
+ * substituted for it — a message that explains itself must stay classifiable.
+ */
+export const EMPTY_STEP_SENTINEL =
+  "Backend step returned no content (stream error or empty response)";
+
+/**
+ * Explain a step that produced zero content parts.
+ *
+ * A step that emits no text, no reasoning and no tool call has failed at the
+ * model layer — but the engine used to record it as a SUCCESS: the terminal
+ * branch stamped `status: "ok"`, wrote the finish chunk and returned, leaving
+ * the eval runner to infer the failure from `newMessages.length === 0` and
+ * report a sentence that named no cause. The finish chunk held the answer the
+ * whole time.
+ *
+ * The provider finish reasons that arrive with empty content are different
+ * failures with different remedies, so they are named separately:
+ *
+ *  - `error` — the provider rejected its OWN tool call. Google reports this as
+ *    `MALFORMED_FUNCTION_CALL`, and `@ai-sdk/google` maps it to `"error"` with
+ *    no parts and NO throw, so a clean 200 arrives carrying nothing. The
+ *    flash/lite tiers hit it routinely on non-trivial tool schemas.
+ *  - `content-filter` — a safety filter blocked the response.
+ *  - `length` — the output-token ceiling was reached before any content.
+ *  - `stop` / `tool-calls` — the provider claims a clean finish and still sent
+ *    nothing, which is the shape a routed-provider hiccup takes.
+ *
+ * `toolInputErrors` is the OTHER road here, and the only one with a direct
+ * remedy: the model emitted a tool call, the SDK rejected its input against
+ * the schema, and `tool-input-error` carries no content part. The backend's
+ * `experimental_repairToolCall` fires before this point and forecloses most of
+ * them; what reaches here is what repair could not fix.
+ */
+export function describeEmptyStepFailure(options: {
+  finishReason?: string;
+  toolInputErrors?: readonly string[];
+}): string {
+  const firstToolInputError = options.toolInputErrors?.[0];
+  if (firstToolInputError) {
+    return `${EMPTY_STEP_SENTINEL} — the model's tool call was rejected before it could run and nothing else was emitted this step: ${firstToolInputError}`;
+  }
+  const finishReason = options.finishReason;
+  let cause: string;
+  switch (finishReason) {
+    case "error":
+      cause =
+        "The provider rejected its own tool call before returning it — Google calls this MALFORMED_FUNCTION_CALL — which the cheaper model tiers hit on larger tool schemas.";
+      break;
+    case "content-filter":
+      cause = "The provider's safety filter blocked the response.";
+      break;
+    case "length":
+      cause =
+        "The output-token ceiling was reached before any content was produced.";
+      break;
+    case "stop":
+    case "tool-calls":
+      cause =
+        "The provider reported a clean finish and still returned nothing — usually a routed-provider hiccup, so a retry is the first move.";
+      break;
+    default:
+      cause = "The provider ended the stream without a usable finish reason.";
+  }
+  return `${EMPTY_STEP_SENTINEL} — the model emitted no text, no reasoning and no tool call (finishReason: ${
+    finishReason ?? "none reported"
+  }). ${cause}`;
 }
 
 function createClientFinishChunk(
@@ -1879,6 +1965,7 @@ async function processStream(
   onToolCall?: (event: MCPJamToolCallEvent) => void,
 ): Promise<StreamResult> {
   const contentParts: PersistedAssistantPart[] = [];
+  const toolInputErrors: string[] = [];
   let pendingText = "";
   let pendingReasoning = "";
   let pendingReasoningId: string | null = null;
@@ -2042,8 +2129,32 @@ async function processStream(
         case "tool-input-error": {
           flushText();
           flushReasoning();
+          // A tool call the model DID emit, rejected before it could run —
+          // `NoSuchToolError` / `InvalidToolInputError` on the backend's
+          // `streamText`. It is forwarded to the client but pushes nothing
+          // onto `contentParts`, so record why for the empty-step classifier.
+          if (chunk.type === "tool-input-error") {
+            const toolInputErrorText = (chunk as { errorText?: unknown })
+              .errorText;
+            toolInputErrors.push(
+              typeof toolInputErrorText === "string" && toolInputErrorText
+                ? toolInputErrorText
+                : "the model's tool input failed schema validation",
+            );
+          }
           const toolCallId = normalizeToolCallId(chunk.toolCallId);
-          writer.write({ ...chunk, toolCallId });
+          const providerMetadata =
+            "toolName" in chunk && typeof chunk.toolName === "string"
+              ? withPageToolAttributionMetadata(
+                  chunk.providerMetadata,
+                  tools[chunk.toolName],
+                )
+              : undefined;
+          writer.write({
+            ...chunk,
+            toolCallId,
+            ...(providerMetadata ? { providerMetadata } : {}),
+          });
           break;
         }
 
@@ -2058,7 +2169,10 @@ async function processStream(
           // `mergePageToolBindingMetadata`.
           const providerMetadata = mergePageToolBindingMetadata(
             mergeMcpToolOriginMetadata(
-              chunk.providerMetadata,
+              withPageToolAttributionMetadata(
+                chunk.providerMetadata,
+                tools[chunk.toolName],
+              ),
               serverIdForToolCall,
             ),
             pageToolBindingOf(tools[chunk.toolName]),
@@ -2201,7 +2315,13 @@ async function processStream(
       ? abortSignal.reason
       : Object.assign(new Error("Aborted"), { name: "AbortError" });
   }
-  return { contentParts, hasToolCalls, finishChunk, firstChunkAt };
+  return {
+    contentParts,
+    hasToolCalls,
+    finishChunk,
+    firstChunkAt,
+    toolInputErrors,
+  };
 }
 
 /**
@@ -3043,19 +3163,20 @@ async function processOneStep(
   }
 
   // Process the stream
-  const { contentParts, finishChunk, firstChunkAt } = await processStream(
-    res.body,
-    writer,
-    normalizeToolCallId,
-    traceTurn,
-    stepIndex,
-    tools,
-    approvalDecisions,
-    messageHistory,
-    onLiveTextDelta,
-    abortSignal,
-    onToolCall,
-  );
+  const { contentParts, finishChunk, firstChunkAt, toolInputErrors } =
+    await processStream(
+      res.body,
+      writer,
+      normalizeToolCallId,
+      traceTurn,
+      stepIndex,
+      tools,
+      approvalDecisions,
+      messageHistory,
+      onLiveTextDelta,
+      abortSignal,
+      onToolCall,
+    );
   const llmEndAbs = Date.now();
   traceTurn.turnUsage = mergeLiveChatTraceUsage(
     traceTurn.turnUsage,
@@ -3549,6 +3670,102 @@ async function processOneStep(
     }
 
     return { shouldContinue: true, didEmitFinish: false };
+  }
+
+  // AN EMPTY STEP IS A FAILURE, and the finish chunk has been holding the
+  // reason all along.
+  //
+  // This point is reached only when nothing is left to execute — every path
+  // through the `hasUnresolvedToolCalls` branch above returns on its own — so
+  // zero content parts here means the step contributed NOTHING: no assistant
+  // message was pushed above, and none will be.
+  //
+  // Recording that as `status: "ok"` is what let a provider failure read as a
+  // clean turn to every consumer at once: the trace, the step-finish
+  // telemetry, and the eval runner, which was left to infer the failure from
+  // `newMessages.length === 0` and report a sentence naming no cause. Chat
+  // users got the same deal in a different costume — a blank assistant bubble.
+  //
+  // Handled exactly like this function's other two failure sites: llm-failure
+  // spans rather than success spans, a structured `onEngineError` (so the eval
+  // runner's `failTurn` prefers THIS message over its generic fallback), a
+  // trace error event, and one error chunk on the wire. Deliberately no finish
+  // chunk: `didEmitFinish: false` with `shouldContinue: false` is the pair the
+  // agentic loop reads as `settledWithError`.
+  if (contentParts.length === 0) {
+    const emptyStepMessage = describeEmptyStepFailure({
+      finishReason: harnessSpanMeta.finishReason,
+      toolInputErrors,
+    });
+    const emptyStepNormalized = describeError(emptyStepMessage);
+    pushBackendStepLlmFailureSpans(
+      traceTurn.turnSpans,
+      traceTurn.turnStartedAt,
+      traceTurn.promptIndex,
+      stepIndex,
+      stepStartAbs,
+      llmStartAbs,
+      llmEndAbs,
+      {
+        modelId,
+        inputTokens: stepUsage?.inputTokens,
+        outputTokens: stepUsage?.outputTokens,
+        totalTokens: stepUsage?.totalTokens,
+        messageStartIndex: stepMessageStartIndex,
+        messageEndIndex: stepMessageEndIndex,
+        ...harnessSpanMeta,
+      },
+    );
+    setStepSpanMessageRanges(
+      traceTurn.turnSpans,
+      traceTurn.promptIndex,
+      stepIndex,
+      stepMessageStartIndex,
+      stepMessageEndIndex,
+    );
+    emitTraceSnapshot(writer, messageHistory, tools, traceTurn);
+    writeTraceEvent(writer, {
+      type: "error",
+      turnId: traceTurn.turnId,
+      promptIndex: traceTurn.promptIndex,
+      stepIndex,
+      errorText: emptyStepMessage,
+    });
+    emitError(writer, emptyStepMessage);
+    // Same silent-cancel guard as the sites above: an empty step that lands
+    // after the signal fired belongs to a turn the client already cancelled,
+    // and must not inflate the operation-failure rate.
+    if (!abortSignal?.aborted) {
+      failureReporter({
+        message: "[mcpjam-stream-handler] backend step returned no content",
+        error: new Error(emptyStepMessage),
+        source: "mcp.chat-v2.engine-step",
+        // The model rail is MCPJam's own hosted provider, not the user's MCP
+        // server. Filing this against `user_server_hop` would blame the server
+        // under test for its host's outage.
+        hop: "mcpjam_internal",
+        transport: "http_stream",
+        normalized: emptyStepNormalized,
+        context: {
+          promptIndex: traceTurn.promptIndex,
+          stepIndex,
+          finishReason: harnessSpanMeta.finishReason,
+          toolInputErrorCount: toolInputErrors.length,
+        },
+      });
+    }
+    safelyEmitEngineError(onEngineError, {
+      message: emptyStepMessage,
+      rawText: emptyStepMessage,
+      code: "provider_empty_response",
+      promptIndex: traceTurn.promptIndex,
+      stepIndex,
+      normalized: emptyStepNormalized,
+      // A response was streamed in full; only its content was missing. Never
+      // `setup` — the model leg unambiguously ran.
+      phase: "stream",
+    });
+    return { shouldContinue: false, didEmitFinish: false };
   }
 
   pushBackendStepSuccessSpans(

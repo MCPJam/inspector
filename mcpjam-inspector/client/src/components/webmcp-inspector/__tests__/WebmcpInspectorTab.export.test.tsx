@@ -189,4 +189,15 @@ describe("WebmcpInspectorTab — export", () => {
       screen.queryByRole("button", { name: "Export activity" }),
     ).toBeNull();
   });
+
+  it("clears the timeline from the activity rail", () => {
+    render(<WebmcpInspectorTab />);
+    expect(screen.getByText("sess")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear activity" }));
+
+    expect(useWebmcpInspectorStore.getState().activity).toEqual([]);
+    expect(screen.queryByText("sess")).toBeNull();
+    expect(screen.getByText("No logs yet")).toBeInTheDocument();
+  });
 });

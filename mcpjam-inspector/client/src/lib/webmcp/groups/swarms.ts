@@ -30,7 +30,12 @@ import {
   commandResponseToActionResult,
   dispatchInspectorCommand,
 } from "../ui-actions";
-import { asOptionalString, errorResult, fromActionResult } from "./shared";
+import {
+  PUBLISH_NATIVE,
+  asOptionalString,
+  errorResult,
+  fromActionResult,
+} from "./shared";
 
 const PERSONA_PROPERTY = {
   type: "string",
@@ -77,6 +82,7 @@ export function buildSwarmsUiTools(): UiToolDefinition[] {
         idempotentHint: false,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE,
       execute: async (args) => {
         const name = asOptionalString(args.name);
         const role = asOptionalString(args.role);
@@ -121,6 +127,7 @@ export function buildSwarmsUiTools(): UiToolDefinition[] {
         idempotentHint: false,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE,
       execute: async (args) => {
         const persona = asOptionalString(args.persona);
         if (args.persona !== undefined && persona === undefined) {
@@ -162,6 +169,7 @@ export function buildSwarmsUiTools(): UiToolDefinition[] {
         idempotentHint: false,
         openWorldHint: true,
       },
+      nativePublication: PUBLISH_NATIVE,
       execute: async (args) => {
         const journey = asOptionalString(args.journey);
         if (!journey) {

@@ -34,6 +34,11 @@ export function getSubsectionsForGroup(
 ): readonly SuiteSettingsSubsection[] {
   switch (groupId) {
     case "grading": {
+      // One rail entry per row, in the order the rows render. The rail read
+      // "Quality gate, Assertions" while the page held the criterion, the
+      // count, the gate and the evaluators — so three of the four things on
+      // the page had no jump link and the one link that existed named the
+      // wrong one of them.
       return [
         {
           id: "policy",
@@ -41,7 +46,24 @@ export function getSubsectionsForGroup(
           target: { type: "row", key: "policy" },
         },
         {
+          id: "iterations",
+          label: manifestLabel("iterations"),
+          target: { type: "row", key: "iterations" },
+        },
+        {
+          id: "qualityGate",
+          label: manifestLabel("qualityGate"),
+          target: { type: "row", key: "qualityGate" },
+        },
+        {
           id: "checks",
+          // The manifest label, which #5088 brought back into agreement with
+          // the section heading by renaming both to "Checks by stage". This
+          // entry had briefly read an exported heading constant instead,
+          // because the row said "Assertions" while the section said something
+          // else and the jump link named one thing and scrolled to another.
+          // Fixing the manifest is the better fix and it is the one that
+          // landed, so the indirection goes away.
           label: manifestLabel("checks"),
           target: { type: "passOrFailChecks" },
         },
@@ -100,7 +122,10 @@ export function subsectionForSettingKey(
   }
   if (
     groupId === "grading" &&
-    (key === "passOrFail" || key === "checks" || key === "matchOptions")
+    (key === "passOrFail" ||
+      key === "checks" ||
+      key === "matchOptions" ||
+      key === "assertionBacktest")
   ) {
     return subsections.find((sub) => sub.target.type === "passOrFailChecks");
   }
@@ -110,9 +135,11 @@ export function subsectionForSettingKey(
   ) {
     return subsections.find((sub) => sub.id === "checks");
   }
-  if (groupId === "grading" && key === "validity") {
-    return subsections.find((sub) => sub.id === "policy");
-  }
+  // No special case for `validity` or the gate conditions: they are in
+  // `NESTED_SETTING_KEYS` under exactly one row each, so the loop above routes
+  // them. The hand-written `validity` → `policy` line that used to sit here was
+  // a second declaration of the same fact, and it was the one that stayed right
+  // while the partition moved.
   return subsections.find(
     (sub) => sub.target.type === "row" && sub.target.key === key,
   );

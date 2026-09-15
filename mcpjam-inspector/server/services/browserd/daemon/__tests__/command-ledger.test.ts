@@ -410,3 +410,92 @@ describe("CommandLedger", () => {
     expect(() => new CommandLedger({ bootId: "b", maxRows: 0 })).toThrow(RangeError);
   });
 });
+
+/**
+ * A login, as a person reading the trace afterwards sees it.
+ *
+ * The rows are what "share this session" shares, so each case here is a
+ * statement about what somebody else may learn: the NAME of a secret, yes; its
+ * length, no; its value, never.
+ */
+describe("redactAction — a typed credential", () => {
+  it("records the placeholder verbatim instead of a length", () => {
+    // `{redacted: true, chars: 13}` here would be a true statement about
+    // `{{secret:PW}}` and a false one about anything that matters.
+    expect(
+      redactAction({
+        kind: "act",
+        verb: "type",
+        value: "{{secret:GITHUB_PASSWORD}}",
+      }),
+    ).toMatchObject({ placeholderValue: "{{secret:GITHUB_PASSWORD}}" });
+  });
+
+  it("keeps the placeholder out of `value` and `redactedValue`", () => {
+    const record = redactAction({
+      kind: "act",
+      verb: "type",
+      value: "{{secret:PW}}",
+    });
+    expect(record.value).toBeUndefined();
+    expect(record.redactedValue).toBeUndefined();
+  });
+
+  it("still redacts an ordinary typed value", () => {
+    expect(
+      redactAction({ kind: "act", verb: "type", value: "hunter2" }),
+    ).toMatchObject({ redactedValue: { redacted: true, chars: 7 } });
+  });
+
+  it("records a placeholder EMBEDDED in a longer value, whole", () => {
+    // The surrounding text is the model's own and is not a credential; hiding
+    // it would make the row less legible for no gain.
+    expect(
+      redactAction({
+        kind: "act",
+        verb: "type",
+        value: "user-{{secret:SUFFIX}}@x.test",
+      }),
+    ).toMatchObject({ placeholderValue: "user-{{secret:SUFFIX}}@x.test" });
+  });
+
+  it("records fill_form field by field, under the same policy", () => {
+    // The one command that fills a whole login form used to record the verb
+    // and nothing else.
+    expect(
+      redactAction({
+        kind: "act",
+        verb: "fill_form",
+        fields: [
+          { selector: "#user", value: "alex" },
+          { selector: "#pw", value: "{{secret:PW}}" },
+        ],
+      }).fields,
+    ).toEqual([
+      { selector: "#user", redactedValue: { redacted: true, chars: 4 } },
+      { selector: "#pw", placeholderValue: "{{secret:PW}}" },
+    ]);
+  });
+
+  it("records whether the form was SUBMITTED", () => {
+    // "typed a credential" and "typed a credential and submitted" are
+    // different events, and the row could not tell them apart.
+    expect(
+      redactAction({ kind: "act", verb: "type", value: "x", submit: true })
+        .submit,
+    ).toBe(true);
+    expect(
+      redactAction({ kind: "act", verb: "type", value: "x" }).submit,
+    ).toBeUndefined();
+  });
+
+  it("captureTypedText does not change what a placeholder records", () => {
+    // There is nothing withheld to opt back into: the value was never here.
+    expect(
+      redactAction(
+        { kind: "act", verb: "type", value: "{{secret:PW}}" },
+        { captureTypedText: true },
+      ),
+    ).toMatchObject({ placeholderValue: "{{secret:PW}}" });
+  });
+});

@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useContext,
   useEffect,
   useReducer,
   useRef,
@@ -9,6 +10,7 @@ import { cn } from "@mcpjam/design-system/cn";
 import { BrowserTabStrip } from "@/components/browser/BrowserTabStrip";
 import { BrowserNavigationBar } from "@/components/browser/BrowserNavigationBar";
 import { BrowserStartPage } from "@/components/browser/BrowserStartPage";
+import { BrowserWorkspaceChrome } from "./BrowserWorkspaceChrome";
 import {
   addressFieldTarget,
   EMPTY_ADDRESS_FIELD,
@@ -125,6 +127,7 @@ export function BrowserShell({
   ready = true,
   onViewportMeasured,
 }: BrowserShellProps) {
+  const workspace = useContext(BrowserWorkspaceChrome);
   const [address, dispatchAddress] = useReducer(
     reduceAddressField,
     EMPTY_ADDRESS_FIELD,
@@ -211,15 +214,18 @@ export function BrowserShell({
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
-      <BrowserTabStrip
-        tabs={state.tabs}
-        activeTabId={state.activeTabId}
-        disabled={!ready}
-        onActivate={(tabId) => onCommand({ op: "activate_tab", tabId })}
-        onClose={(tabId) => onCommand({ op: "close_tab", tabId })}
-        onNewTab={() => onCommand({ op: "create_tab" })}
-      />
+      {!workspace && (
+        <BrowserTabStrip
+          tabs={state.tabs}
+          activeTabId={state.activeTabId}
+          disabled={!ready}
+          onActivate={(tabId) => onCommand({ op: "activate_tab", tabId })}
+          onClose={(tabId) => onCommand({ op: "close_tab", tabId })}
+          onNewTab={() => onCommand({ op: "create_tab" })}
+        />
+      )}
       <BrowserNavigationBar
+        clientName={workspace?.clientName}
         address={address}
         onAddress={onAddress}
         canGoBack={state.canGoBack}

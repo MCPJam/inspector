@@ -127,7 +127,7 @@ export function TraceViewModeTabs({
         onSelectScorecard?.();
       }}
       className={tabClass(scorecardActive)}
-      title="Every scorer this case carries, and what happened to it"
+      title="Every evaluator this case carries, and what happened to it"
       data-testid="trace-viewer-scorecard-tab"
     >
       <ClipboardCheck className="h-3 w-3 shrink-0" />

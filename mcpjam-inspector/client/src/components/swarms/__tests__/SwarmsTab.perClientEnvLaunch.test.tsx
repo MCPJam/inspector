@@ -47,8 +47,8 @@ vi.mock("@/hooks/useClients", () => ({
   useHostList: () => ({ hosts: HOSTS, isLoading: false }),
 }));
 
-vi.mock("@/components/hosts/ServerGroupPicker", () => ({
-  ServerGroupPicker: () => <div data-testid="server-group-picker" />,
+vi.mock("@/components/hosts/server-picker", () => ({
+  ServerPicker: () => <div data-testid="server-group-picker" />,
 }));
 
 vi.mock("@/contexts/db-user-ready-context", () => ({
@@ -301,7 +301,7 @@ describe("SwarmsTab — a swarm across two per-client environments", () => {
     );
     expect(
       screen.getByTestId("new-swarm-launch-session-estimate"),
-    ).toHaveTextContent(/4 sessions/i);
+    ).toHaveTextContent(/4 conversations/i);
     expect(
       screen.queryByTestId("new-swarm-grading-toggle"),
     ).not.toBeInTheDocument();

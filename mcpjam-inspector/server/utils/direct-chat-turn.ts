@@ -1,3 +1,4 @@
+import { withPageToolAttributionMetadata } from "./page-tool-call-attribution";
 import {
   streamText,
   stepCountIs,
@@ -299,6 +300,17 @@ export interface RunDirectChatTurnOptions {
    */
   prepareAdvertisedTools?: PrepareAdvertisedTools;
   abortSignal?: AbortSignal;
+  /**
+   * Per-turn retry budget handed to the AI SDK for its own transient-failure
+   * retries (`ResolvedExecutionBudgets.turnRetries`). Absent ⇒ the SDK's
+   * default, which the eval default deliberately matches, so a caller that
+   * does not thread budgets is byte-identical to before.
+   *
+   * This is the SDK's retry of ONE model call, not the runner's retry of a
+   * turn: it never re-runs tools and never outlives the turn deadline, since
+   * every attempt shares the same composed `abortSignal`.
+   */
+  maxRetries?: number;
   /** Optional bag of trace-event callbacks. Chat passes these; eval/headless omits. */
   traceEvents?: DirectChatTurnTraceEvents;
   /**
@@ -431,7 +443,10 @@ export function stampMcpToolOriginProviderOptions(
         // an earlier request's approval was granted against, and the very
         // thing the tool's `execute` compares itself to on resume.
         const providerOptions = mergePageToolBindingMetadata(
-          mergeMcpToolOriginMetadata(record.providerOptions, serverId),
+          withPageToolAttributionMetadata(
+            mergeMcpToolOriginMetadata(record.providerOptions, serverId),
+            tools[toolName],
+          ),
           record.type === "tool-call"
             ? pageToolBindingOf(tools[toolName])
             : undefined
@@ -463,7 +478,10 @@ export function withMcpToolOriginChunkMetadata<
   if (typeof chunk.toolName !== "string") return chunk;
   const serverId = readToolServerId(tools, chunk.toolName);
   const providerMetadata = mergePageToolBindingMetadata(
-    mergeMcpToolOriginMetadata(chunk.providerMetadata, serverId),
+    withPageToolAttributionMetadata(
+      mergeMcpToolOriginMetadata(chunk.providerMetadata, serverId),
+      tools[chunk.toolName],
+    ),
     pageToolBindingOf(tools[chunk.toolName])
   );
   return providerMetadata ? { ...chunk, providerMetadata } : chunk;
@@ -542,6 +560,7 @@ export function runDirectChatTurn(
     discoveryState,
     prepareAdvertisedTools,
     abortSignal,
+    maxRetries,
     traceEvents,
     onLiveTextDelta,
     onStepFinish,
@@ -741,6 +760,7 @@ export function runDirectChatTurn(
       () => shouldPauseAfterStep?.() === true,
     ],
     ...(abortSignal ? { abortSignal } : {}),
+    ...(maxRetries !== undefined ? { maxRetries } : {}),
     ...(toolChoice ? { toolChoice } : {}),
     ...(experimentalTelemetry
       ? { experimental_telemetry: experimentalTelemetry }

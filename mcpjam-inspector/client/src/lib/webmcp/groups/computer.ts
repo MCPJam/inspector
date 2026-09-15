@@ -32,7 +32,7 @@ import {
   commandResponseToActionResult,
   dispatchInspectorCommand,
 } from "../ui-actions";
-import { fromActionResult } from "./shared";
+import { PUBLISH_NATIVE, fromActionResult } from "./shared";
 
 const EMPTY_SCHEMA = {
   type: "object",
@@ -58,6 +58,7 @@ export function buildComputerUiTools(): UiToolDefinition[] {
         idempotentHint: false,
         openWorldHint: true,
       },
+      nativePublication: PUBLISH_NATIVE,
       execute: async () => {
         const response = await dispatchInspectorCommand({
           type: "startComputer",
@@ -79,6 +80,7 @@ export function buildComputerUiTools(): UiToolDefinition[] {
         idempotentHint: true,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE,
       execute: async () => {
         const response = await dispatchInspectorCommand({
           type: "hibernateComputer",
@@ -100,6 +102,7 @@ export function buildComputerUiTools(): UiToolDefinition[] {
         idempotentHint: true,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE,
       execute: async () => {
         const response = await dispatchInspectorCommand({
           type: "resetComputer",
@@ -121,6 +124,7 @@ export function buildComputerUiTools(): UiToolDefinition[] {
         idempotentHint: true,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE,
       execute: async () => {
         const response = await dispatchInspectorCommand({
           type: "deleteComputer",

@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Download } from "lucide-react";
+import { Download, Trash2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
 import { LogRow } from "@/components/ui/log-row";
@@ -25,12 +25,14 @@ export function ActivityTimeline({
   onCopy,
   onExportJson,
   onExportOtlp,
+  onClear,
   onClose,
 }: {
   entries: WebMcpActivityEntry[];
   onCopy?: (entries: WebMcpActivityEntry[]) => void;
   onExportJson?: () => void;
   onExportOtlp?: () => void;
+  onClear?: () => void;
   onClose?: () => void;
 }) {
   const [searchQuery, setSearchQuery] = useState("");
@@ -56,35 +58,50 @@ export function ActivityTimeline({
         onClose={onClose}
         closeTitle="Hide activity"
         actions={
-          canExport ? (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7 shrink-0"
-                  title="Export activity"
-                  aria-label="Export activity"
-                >
-                  <Download className="h-3.5 w-3.5" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem
-                  className="text-xs"
-                  onSelect={() => onExportJson?.()}
-                >
-                  Export JSON
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  className="text-xs"
-                  onSelect={() => onExportOtlp?.()}
-                >
-                  Export OTLP
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          ) : null
+          <>
+            {canExport ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 shrink-0"
+                    title="Export activity"
+                    aria-label="Export activity"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem
+                    className="text-xs"
+                    onSelect={() => onExportJson?.()}
+                  >
+                    Export JSON
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    className="text-xs"
+                    onSelect={() => onExportOtlp?.()}
+                  >
+                    Export OTLP
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : null}
+            {onClear ? (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={onClear}
+                disabled={entries.length === 0}
+                className="h-7 w-7 flex-shrink-0"
+                title="Clear activity"
+                aria-label="Clear activity"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            ) : null}
+          </>
         }
       />
       <div className="min-h-0 flex-1 overflow-y-auto">

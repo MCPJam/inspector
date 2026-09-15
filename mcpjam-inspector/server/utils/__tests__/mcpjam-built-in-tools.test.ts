@@ -184,6 +184,7 @@ describe("workspace tool catalog", () => {
       "get_eval_iteration_trace",
       "get_eval_run_steps",
       "cancel_eval_run",
+      "backtest_eval_run",
       "request_eval_run_judge",
       // The GitHub-checks READ, under both spellings. Their connect siblings
       // are in EXCLUDED_FROM_WORKSPACE: they reach a shared repository.

@@ -164,6 +164,7 @@ import {
   markRuntimeSecretsDelivered,
   toSecretEnv,
 } from "../../utils/harness/runtime-secrets.js";
+import { resolveBrowserSecrets } from "../../utils/secrets/browser-secrets.js";
 import { logger } from "../../utils/logger.js";
 import { resolveMrtrAuthPrincipal } from "../../utils/mrtr-hosted-collector.js";
 
@@ -1493,6 +1494,12 @@ chatV2.post("/", async (c) => {
           }
         : undefined;
 
+    // Reuses this turn's list; a failed read means no secrets, so every
+    // placeholder is refused.
+    const browserSecrets = await resolveBrowserSecrets({
+      resolved: runtimeSecrets ?? [],
+    });
+
     const computerSandboxMode =
       isScenarioSession && scenarioId && !resolvedExecution.harness
         ? readComputerSandboxMode(hostRuntimeConfig)
@@ -1683,7 +1690,21 @@ chatV2.post("/", async (c) => {
     // `peekPageTools`). A turn that was not going to drive one pays nothing,
     // and a failure of any kind means "no page tools this turn" rather than a
     // failed conversation.
+    // One owner for discovery AND execution; never infer it from the visible pane.
+    const browserSessionScope =
+      body.browserScope === "conversation" &&
+      body.chatSessionId &&
+      !isScenarioSession
+        ? {
+            kind: "conversation" as const,
+            sessionId: body.chatSessionId,
+            ...(hostId ? { hostId } : {}),
+          }
+        : undefined;
     const pageToolsPeek = await peekPageToolsForChatTurn({
+      ...(browserSessionScope
+        ? { conversationId: browserSessionScope.sessionId }
+        : {}),
       builtInToolIds: resolvedExecution.builtInToolIds,
       browserToolId: BROWSER_BUILT_IN_TOOL_ID,
       firstClass: webmcpPageToolsMode() === "first_class",
@@ -1735,6 +1756,15 @@ chatV2.post("/", async (c) => {
         projectId: hostedBody.projectId,
         ...(executionScope ? { executionScope } : {}),
         ...(body.chatSessionId ? { chatSessionId: body.chatSessionId } : {}),
+        ...(body.chatSessionId
+          ? { browserCorrelation: { chatSessionId: body.chatSessionId } }
+          : {}),
+        // Separate from `secretEnv`: these reach browser commands on the
+        // hosted engine only, never a box's environment.
+        ...(browserSecrets.length > 0 ? { browserSecrets } : {}),
+        ...(markSecretsDelivered
+          ? { onBrowserSecretDelivered: markSecretsDelivered }
+          : {}),
         isGuest: Boolean(c.get("guestId")),
         isScenarioSession,
         // Lets a spend inside a shared scenario bill the scenario OWNER instead
@@ -1766,17 +1796,7 @@ chatV2.post("/", async (c) => {
         // A Playground conversation owns one durable browser identity. It is
         // resolved lazily by the browser tool on first use, so merely opening
         // the chat does not provision a paid desktop.
-        ...(body.browserScope === "conversation" &&
-        body.chatSessionId &&
-        !isScenarioSession
-          ? {
-              browserSessionScope: {
-                kind: "conversation" as const,
-                sessionId: body.chatSessionId,
-                ...(hostId ? { hostId } : {}),
-              },
-            }
-          : {}),
+        ...(browserSessionScope ? { browserSessionScope } : {}),
         ...(pageToolsSnapshot ? { browserPageTools: pageToolsSnapshot } : {}),
         // ONLY WHERE THE SET CAN ACTUALLY GROW. A harness takes its toolset as
         // a constructor argument and never re-reads it, so claiming it here

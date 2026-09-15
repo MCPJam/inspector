@@ -207,6 +207,7 @@ export function useHostMutations() {
     hostId: string;
     name?: string;
     input?: HostConfigInputV2;
+    localBrowserEnabled?: boolean;
   }) => Promise<{ hostId: string; hostConfigId: string }>;
 
   // Transactional server-only edit: the backend composes the rest of the

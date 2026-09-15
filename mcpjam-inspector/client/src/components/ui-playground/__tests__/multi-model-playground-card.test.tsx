@@ -3,6 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MultiModelPlaygroundCard } from "../multi-model-playground-card";
 import type { MultiModelCardSummary } from "@/components/chat-v2/model-compare-card-header";
+import { useBrowserComparisonStore } from "@/stores/browser-comparison-store";
 
 vi.mock("use-stick-to-bottom", () => {
   const StickToBottomComponent = ({
@@ -151,7 +152,9 @@ const model = {
   provider: "openai" as const,
 };
 
-function Harness() {
+function Harness({ browserWorkspace }: {
+  browserWorkspace?: { id: string; order: number; clientCount: number };
+}) {
   const [summaries, setSummaries] = useState<
     Record<string, MultiModelCardSummary>
   >({});
@@ -164,6 +167,8 @@ function Harness() {
         {Object.keys(messageFlags).length}
       </div>
       <MultiModelPlaygroundCard
+        browserWorkspace={browserWorkspace}
+        hostedContext={{ projectId: "project-1", selectedServerIds: [] }}
         compareId={String(model.id)}
         compareLabel={model.name}
         compareKind="model"
@@ -199,6 +204,27 @@ function Harness() {
 describe("MultiModelPlaygroundCard", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    useBrowserComparisonStore.setState({ clients: {}, selected: {} });
+  });
+
+  it("registers the model's own conversation under the shared browser workspace", () => {
+    const view = render(
+      <Harness browserWorkspace={{ id: "parent-chat", order: 1, clientCount: 2 }} />,
+    );
+    expect(useBrowserComparisonStore.getState().clients).toEqual({
+      "chat-session-1": expect.objectContaining({
+        workspaceId: "parent-chat",
+        projectId: "project-1",
+        sessionId: "chat-session-1",
+        clientId: model.id,
+        name: model.name,
+        order: 1,
+        clientCount: 2,
+        started: false,
+      }),
+    });
+    view.unmount();
+    expect(useBrowserComparisonStore.getState().clients).toEqual({});
   });
 
   it("does not loop when parent passes inline summary handlers", () => {

@@ -39,6 +39,26 @@ const buildSsePayload = (events: any[]) =>
     .map((event) => `data: ${JSON.stringify(event)}\n\n`)
     .join("")}data: [DONE]\n\n`;
 
+/**
+ * The hosted /stream reply for a turn that COMPLETES: a text reply, then the
+ * finish chunk. A finish-only stream is the empty-response shape, which the
+ * engine routes to its empty-step failure branch (`describeEmptyStepFailure`)
+ * rather than settling clean, so a fixture for a completed turn must carry
+ * content. (This suite builds the route without `requestLogContextMiddleware`,
+ * so that branch's failure report additionally throws here; production mounts
+ * it on `/api/*` and persists the turn regardless.)
+ */
+const completedStreamEvents = (text = "Hello") => [
+  { type: "text-start", id: "text-1" },
+  { type: "text-delta", id: "text-1", delta: text },
+  { type: "text-end", id: "text-1" },
+  {
+    type: "finish",
+    finishReason: "stop",
+    messageMetadata: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+  },
+];
+
 const createSseResponse = (events: any[]) => {
   const encoder = new TextEncoder();
   const payload = buildSsePayload(events);
@@ -203,6 +223,10 @@ vi.mock("../../../utils/scenario-runtime-config.js", () => ({
 // through this fetch; the task-created delivery tests use it to turn the
 // tasks policy on. Inert for every request without a `hostId`.
 const fetchHostRuntimeConfigMock = vi.hoisted(() => vi.fn());
+const readLocalBrowserSettingMock = vi.hoisted(() => vi.fn());
+vi.mock("../../../utils/computers/local-browser-settings.js", () => ({
+  readLocalBrowserSetting: (...args: unknown[]) => readLocalBrowserSettingMock(...args),
+}));
 vi.mock("../../../utils/host-runtime-config.js", () => ({
   fetchHostRuntimeConfig: (...args: unknown[]) =>
     fetchHostRuntimeConfigMock(...args),
@@ -465,6 +489,96 @@ describe("POST /api/mcp/chat-v2", () => {
   });
 
   describe("success cases", () => {
+    it("keeps guest local Browser independent of member-only project settings", async () => {
+      const guest = await import("../../../utils/computers/local-engine-request.js");
+      const guestCheck = vi.spyOn(guest, "isGuestChatRequest").mockReturnValue(true);
+      const rollout = await import("../../../utils/computers/browser-rollout.js");
+      const resolveRollout = vi.spyOn(rollout, "resolveBrowserRollout").mockResolvedValue({
+        enabled: true, actor: { id: "guest-browser-user", guest: true },
+      });
+      try {
+        const res = await postAuthenticatedJson({
+          messages: [{ role: "user", content: "Hello" }],
+          model: { id: "gpt-4", provider: "openai" }, apiKey: "test-key",
+          projectId: "guest-project", builtInToolIds: ["browser"], browserEngine: "local",
+        });
+        expect(res.status).toBe(200);
+        await lastStreamExecution;
+        expect(readLocalBrowserSettingMock).not.toHaveBeenCalled();
+        expect(resolveRollout).toHaveBeenCalledOnce();
+        expect(capturedStreamEvents.find((event) => event.type === "data-browser-readiness")?.data.reason)
+          .toContain("browser_consent_required");
+      } finally {
+        guestCheck.mockRestore();
+        resolveRollout.mockRestore();
+      }
+    });
+
+    it.each([
+      { enabled: true, toolIds: [], engine: "local", offered: true },
+      { enabled: false, toolIds: ["browser"], engine: "local", offered: false },
+      { enabled: true, toolIds: [], engine: "cloud", offered: false },
+    ])("resolves local client settings: $enabled / $engine", async ({ enabled, toolIds, engine, offered }) => {
+      fetchHostRuntimeConfigMock.mockResolvedValueOnce({ ok: true, config: {
+        hostId: "host-browser", builtInToolIds: toolIds, localBrowserEnabled: enabled,
+      } });
+      const rollout = await import("../../../utils/computers/browser-rollout.js");
+      const resolveRollout = vi.spyOn(rollout, "resolveBrowserRollout").mockResolvedValue({
+        enabled: true, actor: { id: "test-member", guest: false },
+      });
+      try {
+        const res = await postAuthenticatedJson({
+          messages: [{ role: "user", content: "Hello" }],
+          model: { id: "gpt-4", provider: "openai" }, apiKey: "test-key",
+          hostId: "host-browser", builtInToolIds: toolIds, browserEngine: engine,
+        });
+        expect(res.status).toBe(200);
+        await lastStreamExecution;
+        expect(resolveRollout).toHaveBeenCalledTimes(offered ? 1 : 0);
+        if (offered) {
+          expect(capturedStreamEvents.find((event) => event.type === "data-browser-readiness")?.data.reason)
+            .toContain("browser_consent_required");
+        }
+      } finally { resolveRollout.mockRestore(); }
+    });
+
+    it("loads project defaults for a local chat without a selected client", async () => {
+      readLocalBrowserSettingMock.mockResolvedValueOnce(true);
+      const rollout = await import("../../../utils/computers/browser-rollout.js");
+      const resolveRollout = vi.spyOn(rollout, "resolveBrowserRollout").mockResolvedValueOnce({
+        enabled: true, actor: { id: "test-member", guest: false },
+      });
+      try {
+        const res = await postAuthenticatedJson({
+          messages: [{ role: "user", content: "Hello" }],
+          model: { id: "gpt-4", provider: "openai" }, apiKey: "test-key",
+          projectId: "project-browser", builtInToolIds: [], browserEngine: "local",
+        });
+        expect(res.status).toBe(200);
+        await lastStreamExecution;
+        expect(readLocalBrowserSettingMock).toHaveBeenCalledWith("signed-in-test-token", "project-browser");
+        expect(resolveRollout).toHaveBeenCalledOnce();
+      } finally { resolveRollout.mockRestore(); }
+    });
+
+    it("withholds Browser if the shared setting cannot be read", async () => {
+      readLocalBrowserSettingMock.mockRejectedValueOnce(new Error("Backend unavailable"));
+      const rollout = await import("../../../utils/computers/browser-rollout.js");
+      const resolveRollout = vi.spyOn(rollout, "resolveBrowserRollout");
+      try {
+        const res = await postAuthenticatedJson({
+          messages: [{ role: "user", content: "Hello" }],
+          model: { id: "gpt-4", provider: "openai" }, apiKey: "test-key",
+          projectId: "project-browser", builtInToolIds: ["browser"], browserEngine: "local",
+        });
+        expect(res.status).toBe(200);
+        await lastStreamExecution;
+        expect(resolveRollout).not.toHaveBeenCalled();
+        expect(capturedStreamEvents.find((event) => event.type === "data-browser-readiness")?.data.reason)
+          .toContain("Could not load local Browser settings");
+      } finally { resolveRollout.mockRestore(); }
+    });
+
     it("calls getToolsForAiSdk with selected servers", async () => {
       const res = await postJson(app, "/api/mcp/chat-v2", {
         messages: [{ role: "user", content: "Hello" }],
@@ -1502,17 +1616,7 @@ describe("POST /api/mcp/chat-v2", () => {
         .mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
           const url = String(input);
           if (url === "https://test-convex.example.com/stream") {
-            return createSseResponse([
-              {
-                type: "finish",
-                finishReason: "stop",
-                messageMetadata: {
-                  inputTokens: 1,
-                  outputTokens: 1,
-                  totalTokens: 2,
-                },
-              },
-            ]);
+            return createSseResponse(completedStreamEvents());
           }
 
           if (url === "https://test-convex.example.com/ingest-chat") {
@@ -1573,8 +1677,12 @@ describe("POST /api/mcp/chat-v2", () => {
           sourceType: "direct",
           directVisibility: "project",
         });
+        // The reply is part of what "completed" means: the old fixture
+        // streamed nothing back, so this asserted a persisted conversation
+        // with a question and no answer.
         expect(body.sessionMessages).toEqual([
           { role: "user", content: "Hello" },
+          { role: "assistant", content: [{ type: "text", text: "Hello" }] },
         ]);
         // Phase 3: hostStyle defaults to 'claude' when the client
         // doesn't supply one (no more legacy 'direct' on the wire).
@@ -1607,17 +1715,7 @@ describe("POST /api/mcp/chat-v2", () => {
         .mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
           const url = String(input);
           if (url === "https://test-convex.example.com/stream") {
-            return createSseResponse([
-              {
-                type: "finish",
-                finishReason: "stop",
-                messageMetadata: {
-                  inputTokens: 1,
-                  outputTokens: 1,
-                  totalTokens: 2,
-                },
-              },
-            ]);
+            return createSseResponse(completedStreamEvents());
           }
           if (url === "https://test-convex.example.com/ingest-chat") {
             return new Response(null, { status: 200 });
@@ -1661,17 +1759,7 @@ describe("POST /api/mcp/chat-v2", () => {
         .mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
           const url = String(input);
           if (url === "https://test-convex.example.com/stream") {
-            return createSseResponse([
-              {
-                type: "finish",
-                finishReason: "stop",
-                messageMetadata: {
-                  inputTokens: 1,
-                  outputTokens: 1,
-                  totalTokens: 2,
-                },
-              },
-            ]);
+            return createSseResponse(completedStreamEvents());
           }
           if (url === "https://test-convex.example.com/ingest-chat") {
             return new Response(null, { status: 200 });
@@ -1713,17 +1801,7 @@ describe("POST /api/mcp/chat-v2", () => {
         .mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
           const url = String(input);
           if (url === "https://test-convex.example.com/stream") {
-            return createSseResponse([
-              {
-                type: "finish",
-                finishReason: "stop",
-                messageMetadata: {
-                  inputTokens: 1,
-                  outputTokens: 1,
-                  totalTokens: 2,
-                },
-              },
-            ]);
+            return createSseResponse(completedStreamEvents());
           }
           if (url === "https://test-convex.example.com/ingest-chat") {
             return new Response(null, { status: 200 });
@@ -1771,17 +1849,7 @@ describe("POST /api/mcp/chat-v2", () => {
         .mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
           const url = String(input);
           if (url === "https://test-convex.example.com/stream") {
-            return createSseResponse([
-              {
-                type: "finish",
-                finishReason: "stop",
-                messageMetadata: {
-                  inputTokens: 1,
-                  outputTokens: 1,
-                  totalTokens: 2,
-                },
-              },
-            ]);
+            return createSseResponse(completedStreamEvents());
           }
           if (url === "https://test-convex.example.com/ingest-chat") {
             return new Response(null, { status: 200 });
@@ -1823,17 +1891,7 @@ describe("POST /api/mcp/chat-v2", () => {
         .mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
           const url = String(input);
           if (url === "https://test-convex.example.com/stream") {
-            return createSseResponse([
-              {
-                type: "finish",
-                finishReason: "stop",
-                messageMetadata: {
-                  inputTokens: 1,
-                  outputTokens: 1,
-                  totalTokens: 2,
-                },
-              },
-            ]);
+            return createSseResponse(completedStreamEvents());
           }
 
           if (url === "https://test-convex.example.com/ingest-chat") {
@@ -1875,17 +1933,7 @@ describe("POST /api/mcp/chat-v2", () => {
         .mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
           const url = String(input);
           if (url === "https://test-convex.example.com/stream") {
-            return createSseResponse([
-              {
-                type: "finish",
-                finishReason: "stop",
-                messageMetadata: {
-                  inputTokens: 1,
-                  outputTokens: 1,
-                  totalTokens: 2,
-                },
-              },
-            ]);
+            return createSseResponse(completedStreamEvents());
           }
 
           if (url === "https://test-convex.example.com/ingest-chat") {
@@ -1942,17 +1990,7 @@ describe("POST /api/mcp/chat-v2", () => {
         .mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
           const url = String(input);
           if (url === "https://test-convex.example.com/stream") {
-            return createSseResponse([
-              {
-                type: "finish",
-                finishReason: "stop",
-                messageMetadata: {
-                  inputTokens: 1,
-                  outputTokens: 1,
-                  totalTokens: 2,
-                },
-              },
-            ]);
+            return createSseResponse(completedStreamEvents());
           }
 
           if (url === "https://test-convex.example.com/ingest-chat") {
@@ -1996,17 +2034,7 @@ describe("POST /api/mcp/chat-v2", () => {
         .mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
           const url = String(input);
           if (url === "https://test-convex.example.com/stream") {
-            return createSseResponse([
-              {
-                type: "finish",
-                finishReason: "stop",
-                messageMetadata: {
-                  inputTokens: 1,
-                  outputTokens: 1,
-                  totalTokens: 2,
-                },
-              },
-            ]);
+            return createSseResponse(completedStreamEvents());
           }
 
           if (url === "https://test-convex.example.com/ingest-chat") {
@@ -2066,17 +2094,7 @@ describe("POST /api/mcp/chat-v2", () => {
           .mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
             const url = String(input);
             if (url === "https://test-convex.example.com/stream") {
-              return createSseResponse([
-                {
-                  type: "finish",
-                  finishReason: "stop",
-                  messageMetadata: {
-                    inputTokens: 1,
-                    outputTokens: 1,
-                    totalTokens: 2,
-                  },
-                },
-              ]);
+              return createSseResponse(completedStreamEvents());
             }
             if (url === "https://test-convex.example.com/ingest-chat") {
               return new Response(null, { status: 200 });
@@ -2145,17 +2163,7 @@ describe("POST /api/mcp/chat-v2", () => {
             providerKey: "openai",
             model: "gpt-4-turbo",
           });
-          return createSseResponse([
-            {
-              type: "finish",
-              finishReason: "stop",
-              messageMetadata: {
-                inputTokens: 1,
-                outputTokens: 1,
-                totalTokens: 2,
-              },
-            },
-          ]);
+          return createSseResponse(completedStreamEvents());
         }
         throw new Error(`Unexpected fetch URL: ${url}`);
       });
@@ -2275,17 +2283,7 @@ describe("POST /api/mcp/chat-v2", () => {
             projectId: "project-1",
             providerKey: "custom:local-one",
           });
-          return createSseResponse([
-            {
-              type: "finish",
-              finishReason: "stop",
-              messageMetadata: {
-                inputTokens: 1,
-                outputTokens: 1,
-                totalTokens: 2,
-              },
-            },
-          ]);
+          return createSseResponse(completedStreamEvents());
         }
         throw new Error(`Unexpected fetch URL: ${url}`);
       });
@@ -2348,17 +2346,7 @@ describe("POST /api/mcp/chat-v2", () => {
             projectId: "project-1",
             providerKey: "custom:local-one",
           });
-          return createSseResponse([
-            {
-              type: "finish",
-              finishReason: "stop",
-              messageMetadata: {
-                inputTokens: 1,
-                outputTokens: 1,
-                totalTokens: 2,
-              },
-            },
-          ]);
+          return createSseResponse(completedStreamEvents());
         }
         throw new Error(`Unexpected fetch URL: ${url}`);
       });
@@ -2526,17 +2514,7 @@ describe("POST /api/mcp/chat-v2", () => {
         const url = String(input);
         if (url === "https://test-convex.example.com/stream/org") {
           dispatched = capturedTaskSeam().onTaskCreated(taskCreatedEvent);
-          return createSseResponse([
-            {
-              type: "finish",
-              finishReason: "stop",
-              messageMetadata: {
-                inputTokens: 1,
-                outputTokens: 1,
-                totalTokens: 2,
-              },
-            },
-          ]);
+          return createSseResponse(completedStreamEvents());
         }
         throw new Error(`Unexpected fetch URL: ${url}`);
       });
@@ -2740,17 +2718,7 @@ describe("POST /api/mcp/chat-v2", () => {
       // Mock fetch for CONVEX_HTTP_URL
       const originalFetch = global.fetch;
       global.fetch = vi.fn().mockResolvedValue(
-        createSseResponse([
-          {
-            type: "finish",
-            finishReason: "stop",
-            messageMetadata: {
-              inputTokens: 1,
-              outputTokens: 1,
-              totalTokens: 2,
-            },
-          },
-        ]),
+        createSseResponse(completedStreamEvents()),
       );
 
       try {

@@ -23,6 +23,38 @@ function response(body: unknown): Response {
 }
 
 describe("BrowserSessionService", () => {
+  it("reads a conversation through the authenticated get endpoint without opening it", async () => {
+    const requestFetch = vi.fn(async () => response({ session: SESSION }));
+    const service = new BrowserSessionService({
+      baseUrl: "https://convex.example",
+      enabled: true,
+      fetch: requestFetch,
+    });
+    const signal = new AbortController().signal;
+    expect(
+      await service.getConversationSession({
+        projectId: "project-1",
+        conversationId: "chat-1",
+        bearer: "user-token",
+        signal,
+      }),
+    ).toMatchObject(SESSION);
+    expect(requestFetch).toHaveBeenCalledWith(
+      new URL("https://convex.example/browser-sessions/get"),
+      expect.objectContaining({
+        signal,
+        method: "POST",
+        body: JSON.stringify({
+          projectId: "project-1",
+          conversationId: "chat-1",
+        }),
+        headers: expect.objectContaining({
+          authorization: "Bearer user-token",
+        }),
+      }),
+    );
+    expect(requestFetch).toHaveBeenCalledTimes(1);
+  });
   it("resolves a logical session through the authenticated data plane", async () => {
     const requestFetch = vi.fn(
       async (input: RequestInfo | URL, init?: RequestInit) => {

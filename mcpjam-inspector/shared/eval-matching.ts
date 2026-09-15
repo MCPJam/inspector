@@ -1,3 +1,4 @@
+import { filterSuppressedSuiteAssertions } from "@mcpjam/sdk/contract";
 /**
  * Shared tool call matching for the inspector.
  *
@@ -471,8 +472,12 @@ export function resolveExtrasCap(
 export function resolveCasePredicates(
   suiteDefaults: PredicateType[] | undefined,
   caseOverride: CasePredicatesType | undefined,
+  suppressedSuiteStandardCheckIds?: readonly string[],
 ): PredicateType[] | undefined {
-  const defaults = suiteDefaults ?? [];
+  const defaults = filterSuppressedSuiteAssertions(
+    suiteDefaults ?? [],
+    suppressedSuiteStandardCheckIds,
+  );
   const overrideList = (caseOverride?.list ?? []) as PredicateType[];
   let resolved: PredicateType[];
   if (!caseOverride) {
@@ -522,13 +527,22 @@ export function resolveCaseSuccessPredicates(args: {
   runOverride?: PredicateType[] | undefined;
   envelope?: CasePredicatesType | undefined;
   legacyCase?: PredicateType[] | undefined;
+  suppressedSuiteStandardCheckIds?: readonly string[];
 }): PredicateType[] | undefined {
   if (args.runOverride !== undefined) return args.runOverride;
   if (args.envelope !== undefined) {
-    return resolveCasePredicates(args.suiteDefaults, args.envelope);
+    return resolveCasePredicates(
+      args.suiteDefaults,
+      args.envelope,
+      args.suppressedSuiteStandardCheckIds,
+    );
   }
   if (Array.isArray(args.legacyCase) && args.legacyCase.length > 0) {
     return args.legacyCase;
   }
-  return args.suiteDefaults;
+  return resolveCasePredicates(
+    args.suiteDefaults,
+    undefined,
+    args.suppressedSuiteStandardCheckIds,
+  );
 }

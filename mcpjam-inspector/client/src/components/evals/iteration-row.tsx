@@ -43,7 +43,7 @@ export function CompactIterationRow({
 
   const actualToolCalls = iteration.actualToolCalls || [];
 
-  // X/Y checks passed badge — read from the same parsed verdicts the detail
+  // X/Y assertions passed badge — read from the same parsed verdicts the detail
   // view renders. User-facing wording is "checks".
   //
   // Gating SCORES win when present, and are not added to the predicate count:
@@ -126,9 +126,9 @@ export function CompactIterationRow({
                   ? "bg-success/15 text-success"
                   : "bg-destructive/15 text-destructive",
               )}
-              title={`${checksBadge.passed} of ${checksBadge.total} deterministic checks passed`}
+              title={`${checksBadge.passed} of ${checksBadge.total} assertions passed`}
             >
-              {checksBadge.passed} / {checksBadge.total} checks
+              {checksBadge.passed} / {checksBadge.total} assertions
             </span>
           ) : null}
           {isPending && (

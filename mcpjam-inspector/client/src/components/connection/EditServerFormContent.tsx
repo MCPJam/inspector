@@ -18,6 +18,10 @@ import {
   fetchServerSecretKeys,
   fetchServerSecrets,
 } from "@/lib/apis/server-secrets-api";
+import {
+  credentialClearAcknowledgementKey,
+  type PendingCredentialClear,
+} from "@/lib/credential-origin";
 
 interface EditServerFormContentProps {
   formState: ReturnType<typeof useServerForm>;
@@ -265,6 +269,14 @@ export function EditServerFormContent({
         )}
       </div>
 
+      {formState.pendingCredentialClear && (
+        <CredentialClearWarning
+          pending={formState.pendingCredentialClear}
+          acknowledgedFor={formState.credentialClearAcknowledgedFor}
+          onAcknowledge={formState.acknowledgeCredentialClear}
+        />
+      )}
+
       {formState.type === "http" && (
         <div className="space-y-3 pt-2">
           <AuthenticationSection
@@ -436,6 +448,75 @@ export function EditServerFormContent({
             : {})}
         />
       </div>
+    </div>
+  );
+}
+
+/**
+ * What saving this edit will do to the server's stored credentials (MJ-003).
+ *
+ * Two destinations move: an http server's URL across the origin its
+ * credentials were entered for, and a stdio server's command. The backend
+ * clears the stored credentials in both cases, so both get the same warning
+ * and the same acknowledgement — a save that destroys a credential somebody
+ * else entered should not happen on one click.
+ *
+ * The acknowledgement is keyed to the destination, so typing a different one
+ * after ticking the box re-arms the warning.
+ */
+function CredentialClearWarning({
+  pending,
+  acknowledgedFor,
+  onAcknowledge,
+}: {
+  pending: PendingCredentialClear;
+  acknowledgedFor: string | null;
+  onAcknowledge: (key: string | null) => void;
+}) {
+  const key = credentialClearAcknowledgementKey(pending);
+  return (
+    <div
+      role="alert"
+      className="rounded-md border border-warning/40 bg-warning/10 p-3 text-xs space-y-2"
+    >
+      <p className="font-medium">
+        {pending.kind === "url-origin"
+          ? "Saving this URL will clear any saved credentials"
+          : "Saving this command will clear this server's saved credentials"}
+      </p>
+      {pending.kind === "url-origin" ? (
+        <p className="text-muted-foreground">
+          This server points at{" "}
+          <span className="font-mono">{pending.previousOrigin}</span>. Everything
+          saved against that host is cleared when it moves: request headers,
+          environment variables, the bearer token, any OAuth access and refresh
+          tokens, and the OAuth client secret. Save it pointing at{" "}
+          <span className="font-mono">{pending.nextOrigin}</span> and all of them
+          go, including credentials other project members added that you cannot
+          see. Someone has to enter them again before this server connects.
+        </p>
+      ) : (
+        <p className="text-muted-foreground">
+          This server runs{" "}
+          <span className="font-mono">{pending.previousCommand}</span>. Its saved
+          environment variables are held for that command and are cleared when it
+          changes. Save it running{" "}
+          <span className="font-mono">{pending.nextCommand}</span> and they go,
+          including values other project members added that you cannot see.
+          Someone has to enter them again before this server connects.
+        </p>
+      )}
+      <label className="flex items-start gap-2">
+        <input
+          type="checkbox"
+          className="mt-0.5"
+          checked={acknowledgedFor === key}
+          onChange={(e) => onAcknowledge(e.target.checked ? key : null)}
+        />
+        <span>
+          I understand the saved credentials for this server will be cleared.
+        </span>
+      </label>
     </div>
   );
 }

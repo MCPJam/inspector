@@ -63,19 +63,27 @@ vi.mock("@/hooks/useClients", () => ({
 }));
 
 // Surface the picker VALUES the core wires in, without the heavy editors.
-vi.mock("@/components/evals/server-attachment-picker", () => ({
-  ServerAttachmentPicker: ({
+vi.mock("@/components/hosts/server-picker", () => ({
+  ServerPicker: ({
     value,
     triggerId,
+    offerClear,
+    onClearSelection,
   }: {
     value: string | null;
     triggerId?: string;
+    offerClear?: boolean;
+    onClearSelection?: () => void;
   }) => (
     <button
       type="button"
       id={triggerId}
-      data-testid="server-attachment-picker"
+      data-testid="server-picker"
       data-value={value ?? ""}
+      // The two halves the picker asks about separately: may the user empty
+      // this field, and can this dialog be told its row went away.
+      data-offer-clear={String(offerClear ?? true)}
+      data-can-clear={String(Boolean(onClearSelection))}
     />
   ),
 }));
@@ -574,7 +582,19 @@ describe("ConvertSessionDialogCore", () => {
     expect(screen.queryByRole("radiogroup")).toBeNull();
     expect(screen.getByLabelText("Suite name")).toBeTruthy();
     expect(screen.getByTestId("client-picker")).toBeTruthy();
-    expect(screen.getByTestId("server-attachment-picker")).toBeTruthy();
+    expect(screen.getByTestId("server-picker")).toBeTruthy();
+  });
+
+  it("can be told a deleted row is gone, without offering to empty a field it needs", () => {
+    // `newSuiteRequirementsMet` needs a `serverAttachmentId`, so no X here.
+    // The callback still goes down: deleting the selected group from inside
+    // the picker has to reach this dialog, or it keeps an id pointing at
+    // nothing — which is what withholding both props cost.
+    renderCore();
+
+    const picker = screen.getByTestId("server-picker");
+    expect(picker).toHaveAttribute("data-offer-clear", "false");
+    expect(picker).toHaveAttribute("data-can-clear", "true");
   });
 
   it("skips the suite subscription while the database user is not ready", () => {
@@ -701,7 +721,7 @@ describe("ConvertSessionDialogCore — Add to", () => {
   it("does NOT ask for client or server on the existing-suite branch", () => {
     renderWithSuites();
     expect(screen.queryByTestId("client-picker")).toBeNull();
-    expect(screen.queryByTestId("server-attachment-picker")).toBeNull();
+    expect(screen.queryByTestId("server-picker")).toBeNull();
     expect(screen.queryByLabelText("Suite name")).toBeNull();
   });
 
@@ -711,7 +731,7 @@ describe("ConvertSessionDialogCore — Add to", () => {
 
     expect(screen.getByLabelText("Suite name")).toBeTruthy();
     expect(screen.getByTestId("client-picker")).toBeTruthy();
-    expect(screen.getByTestId("server-attachment-picker")).toBeTruthy();
+    expect(screen.getByTestId("server-picker")).toBeTruthy();
     // ...and the existing branch's picker folds away with it.
     expect(screen.queryByTestId("promote-existing-suite-summary")).toBeNull();
   });
@@ -727,7 +747,7 @@ describe("ConvertSessionDialogCore — Add to", () => {
       screen.getByTestId("client-picker"),
     );
     expect(screen.getByLabelText("Server")).toBe(
-      screen.getByTestId("server-attachment-picker"),
+      screen.getByTestId("server-picker"),
     );
   });
 

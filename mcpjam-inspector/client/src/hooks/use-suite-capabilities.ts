@@ -101,11 +101,6 @@ export type SuiteCapabilities = {
     /** An env-var kill switch, not a per-org flag: no reason vocabulary. */
     scheduledEvals: { enabled: boolean };
   };
-  verdictPolicyV2: {
-    deploymentMode: "off" | "shadow" | "enforce";
-    suiteMode: string | null;
-    canUpgrade: boolean;
-  };
   judge: {
     gating: { enabled: boolean; reason?: "not_enabled_on_deployment" };
     role: "advisory" | "gating";
@@ -149,7 +144,11 @@ export type SuiteCapabilities = {
    * closed as "unknown predicate type" on every trial. Absent ⇒ offer only
    * the kinds that predate this field.
    */
-  scorers?: { checkPolicy?: boolean; predicateKinds?: string[] };
+  scorers?: {
+    checkPolicy?: boolean;
+    predicateKinds?: string[];
+    suppressedSuiteStandardCheckIds?: boolean;
+  };
   /**
    * Stored quality-gate capabilities. Absent on a backend that predates B2 —
    * the Quality gate rows then disable rather than inventing a write path.

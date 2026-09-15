@@ -195,6 +195,21 @@ export type GithubCheckRepoConfigRow = {
   allowSuiteCredentialsInForks?: boolean;
   prServerOAuthSourceServerId?: string;
   prServerOAuthPolicyRevision?: number;
+  prServerOAuth: {
+    status:
+      | "not_configured"
+      | "ready"
+      | "authorization_required"
+      | "reauthorization_required"
+      | "selection_required";
+    sourceServerId?: string;
+    sourceName?: string;
+    sources: Array<{
+      serverId: string;
+      name: string;
+      authorized: boolean;
+    }>;
+  };
   conformanceSuiteKinds?: Array<"protocol" | "apps" | "tasks" | "oauth">;
   /**
    * ABSENT IS `on`, NOT `off`. See {@link GithubCheckFeedbackComments}: an
@@ -245,19 +260,11 @@ export type SuiteOption = {
   projectId?: string;
 };
 
-export type PrServerOAuthSource = {
-  serverId: string;
-  projectId: string;
-  name: string;
-  authorized: boolean;
-};
-
 const AVAILABILITY_QUERY =
   "github/checkRepoConfigs:getGithubChecksSettingsAvailability";
 const LIST_QUERY = "github/checkRepoConfigs:listForOrganization";
 const SUITES_QUERY = "testSuites:getTestSuitesOverview";
 const BINDINGS_QUERY = "github/appInstallLink:listBindingsForOrganization";
-const OAUTH_SOURCES_QUERY = "github/checkRepoConfigs:listPrServerOAuthSources";
 
 // The availability message and the rest of this surface's error copy live in
 // `@/lib/github-checks-errors`, which has no React and no Convex client in it.
@@ -321,11 +328,6 @@ export function useGithubChecksSettings(
   const suites: SuiteOption[] | undefined = suiteOverview
     ?.map((entry) => entry.suite)
     .filter((suite): suite is SuiteOption => Boolean(suite?._id));
-
-  const prServerOAuthSources = useQuery(
-    OAUTH_SOURCES_QUERY as any,
-    canQuery ? ({ organizationId } as any) : "skip",
-  ) as PrServerOAuthSource[] | undefined;
 
   // The SERVER-VERIFIED connect, and the only connect path this app uses. It is
   // an action because proving the selected organization-owned installation can
@@ -537,7 +539,6 @@ export function useGithubChecksSettings(
     isEnabled,
     repos,
     suites,
-    prServerOAuthSources,
     bindings,
     connectVerifiedRepo,
     setRepoEnabled,

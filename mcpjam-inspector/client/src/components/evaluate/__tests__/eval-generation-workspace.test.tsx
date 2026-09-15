@@ -135,3 +135,20 @@ it("keeps the confirmed options for retries even if stored preferences change", 
   expect(generate.mock.calls[1]).toEqual(generate.mock.calls[0].map((arg) => typeof arg === "function" ? expect.any(Function) : arg));
   unregister();
 });
+
+it("explains a model-limit refusal instead of echoing its raw body", () => {
+  seed(
+    "error",
+    [],
+    'Failed to generate test cases: {"ok":false,"code":"user_rate_limit","limitKind":"total","error":"Daily MCPJam model limit reached. Use BYOK or try again tomorrow.","isRetryable":true}',
+  );
+  renderWithProviders(
+    <EvalGenerationWorkspace {...target} autoStart={false} />,
+  );
+  const alert = screen.getByRole("alert");
+  expect(alert).toHaveTextContent(/MCPJam (model )?limit reached\./);
+  expect(alert).not.toHaveTextContent("user_rate_limit");
+  expect(
+    screen.getByRole("button", { name: "Retry generation" }),
+  ).toBeEnabled();
+});

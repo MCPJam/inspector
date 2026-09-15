@@ -141,6 +141,16 @@ describe("ToolsTab", () => {
       screen.getByRole("combobox", { name: "Browser profile" }),
     ).toBeDisabled();
   });
+  it("removes inherited local Browser without changing hosted tools", () => {
+    const draft = { ...emptyHostConfigInputV2({ builtInToolIds: ["browser", "web_search"] }), localBrowserEnabled: true };
+    const onDraftChange = vi.fn();
+    render(<BrowserTab projectId="project-1" draft={draft} onDraftChange={onDraftChange} />);
+    expect(screen.getByRole("switch", { name: "Browser" })).toBeChecked();
+    fireEvent.click(screen.getByRole("switch", { name: "Browser" }));
+    const updated = onDraftChange.mock.calls[0][0](draft);
+    expect(updated.localBrowserEnabled).toBe(false);
+    expect(updated.builtInToolIds).toEqual(["browser", "web_search"]);
+  });
   it("renders system tools as minimal switch rows", () => {
     render(
       <ToolsTab draft={emptyHostConfigInputV2()} onDraftChange={vi.fn()} />,

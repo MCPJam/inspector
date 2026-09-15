@@ -57,6 +57,10 @@ const sdkPredicatesEntry = path.resolve(
   rootDir,
   "../sdk/src/predicates/index.ts",
 );
+const sdkAssertionsEntry = path.resolve(
+  rootDir,
+  "../sdk/src/assertions/index.ts",
+);
 const sdkWidgetRuntimeEntry = path.resolve(
   rootDir,
   "../sdk/src/widget-runtime/index.ts",
@@ -80,6 +84,10 @@ const chatUiThreadHelpersEntry = path.resolve(
   "../chat-ui/src/thread-helpers.ts",
 );
 const chatUiTraceEntry = path.resolve(rootDir, "../chat-ui/src/trace.ts");
+const chatUiJsonTokensEntry = path.resolve(
+  rootDir,
+  "../chat-ui/src/json-tokens.ts",
+);
 // Tier B Phase 3c: @mcpjam/widget-react publishes from dist, but a clean
 // checkout has no widget-react/dist until it is built. Resolve from source so
 // the inspector's dev/build/typecheck/test never depend on a widget-react build
@@ -168,6 +176,7 @@ export default defineConfig(({ mode }) => {
         "@/shared": path.resolve(clientDir, "../shared"),
         "@": path.resolve(clientDir, "./src"),
         // More specific subpaths must precede the bare alias (first match wins).
+        "@mcpjam/chat-ui/json-tokens": chatUiJsonTokensEntry,
         "@mcpjam/chat-ui/thread-helpers": chatUiThreadHelpersEntry,
         "@mcpjam/chat-ui/trace": chatUiTraceEntry,
         "@mcpjam/chat-ui": chatUiEntry,
@@ -175,6 +184,7 @@ export default defineConfig(({ mode }) => {
         "@mcpjam/sdk/browser": sdkBrowserEntry,
         "@mcpjam/sdk/contract": sdkContractEntry,
         "@mcpjam/sdk/predicates": sdkPredicatesEntry,
+        "@mcpjam/sdk/assertions": sdkAssertionsEntry,
         "@mcpjam/sdk/widget-runtime": sdkWidgetRuntimeEntry,
         "@mcpjam/sdk/plugin-bundle": sdkPluginBundleEntry,
         "@mcpjam/sdk/host-compat": sdkHostCompatEntry,

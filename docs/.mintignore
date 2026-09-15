@@ -1,0 +1,3 @@
+# Internal program contracts live beside the published pages but are not documentation.
+# Mintlify publishes every page file it finds, navigation or not, so exclude them explicitly.
+evals-vocabulary-consolidation.md

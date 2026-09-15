@@ -1,8 +1,6 @@
 import { BrowserActivityList } from "@/components/browser/BrowserActivityList";
-import { buildHostFocusTabPath } from "@/components/hosts/host-verify-deep-link";
-import { useAppNavigate } from "@/lib/app-navigation";
-import { BrowserRuntimeControls } from "@/components/browser/BrowserRuntimeControls";
 import { useBrowserEngine } from "@/hooks/useBrowserEngine";
+import { useBrowserToolIds } from "@/hooks/useBrowserToolIds";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Cloud,
@@ -43,6 +41,8 @@ import { mintLocalTerminalNonce } from "@/lib/local-computer-consent";
 import { LOCAL_TERMINAL_WS_PATH } from "@/lib/computer-terminal-connection";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
+import { useBrowserComparisonStore } from "@/stores/browser-comparison-store";
+import { ComparisonBrowser } from "@/components/browser/ComparisonBrowser";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 
 /**
@@ -113,7 +113,6 @@ function RightRailTabbed({
   hostConfig: HostConfigDtoV2 | null;
   hostId: string | null;
 }) {
-  const navigate = useAppNavigate();
   const [activeTab, setActiveTab] = useState<RightRailTab>("logs");
   const leftBrowserForLogs = useRef(false);
   const computersEnabled = useComputersEnabledState();
@@ -127,7 +126,11 @@ function RightRailTabbed({
   // harmless (the engine hooks no-op without a shared project) and deliberate.
   const engine = useComputerEngine(projectId);
   const browserEngine = useBrowserEngine(projectId);
-  const browserToolIds = hostConfig?.builtInToolIds;
+  const browserToolIds = useBrowserToolIds(
+    hostConfig,
+    browserEngine.selectedEngine,
+    { projectId, hostId },
+  );
   // The BODY follows `selectedEngine` (consent-blind), mirroring the Computer
   // tab's face choice: someone who picked "This machine" but hasn't authorized
   // it yet must see the local body's pointer, not a cloud terminal they didn't
@@ -137,7 +140,28 @@ function RightRailTabbed({
   // THE FALLBACK BROWSER, and only that. While the workspace flag is on the
   // browser lives in its own panel beside chat and this tab does not exist;
   // with the flag off it is the rail's third tab again, exactly as it was.
-  const sessionHasBrowser = useActiveChatSessionStore(state => !!state.restoredSession?.browser);
+  const comparisonWorkspaceId = useActiveChatSessionStore(
+    (state) => state.sessionId,
+  );
+  const hasComparison = useBrowserComparisonStore((state) =>
+    Object.values(state.clients).some(
+      (client) =>
+        client.workspaceId === comparisonWorkspaceId &&
+        client.projectId === projectId,
+    ),
+  );
+  const comparisonHasBrowser = useBrowserComparisonStore((state) =>
+    Object.values(state.clients).some(
+      (client) =>
+        client.workspaceId === comparisonWorkspaceId &&
+        client.projectId === projectId &&
+        client.started,
+    ),
+  );
+  const restoredHasBrowser = useActiveChatSessionStore(
+    (state) => !!state.restoredSession?.browser,
+  );
+  const sessionHasBrowser = restoredHasBrowser || comparisonHasBrowser;
   const workspaceEnabled = useBrowserWorkspaceEnabled();
   const localBrowserRunning = useLocalBrowserRunning(
     !workspaceEnabled && browserEngine.selectedEngine === "local",
@@ -268,12 +292,6 @@ function RightRailTabbed({
           />
         ) : null}
         <div className="ml-auto flex items-center gap-1">
-          {hasBrowser && activeTab === "browser" ? (
-            <>
-              <BrowserRuntimeControls projectId={projectId} compact />
-              {hostId && <button type="button" onClick={() => navigate(buildHostFocusTabPath(hostId, "browser"))} className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground">Browser settings</button>}
-            </>
-          ) : null}
           <button
             type="button"
             onClick={onClose}
@@ -311,7 +329,14 @@ function RightRailTabbed({
               is what makes that safe — a pane behind the Logs tab must stop
               claiming somebody is watching, and on the hosted engine that claim
               keeps a METERED box awake. */}
-          {!browserSessionId ? (
+          {hasComparison && projectId && browserSessionId ? (
+            <ComparisonBrowser
+              key={`${projectId}:${browserSessionId}`}
+              projectId={projectId}
+              workspaceId={browserSessionId}
+              active={activeTab === "browser"}
+            />
+          ) : !browserSessionId ? (
             <p role="status" className="p-4 text-sm text-muted-foreground">
               Loading conversation…
             </p>
@@ -327,6 +352,7 @@ function RightRailTabbed({
               sessionId={browserSessionId}
               consentGranted={browserEngine.consent.granted}
               consentToken={browserEngine.consent.token}
+              hostId={hostId}
               active={activeTab === "browser"}
             />
           ) : (
@@ -335,6 +361,7 @@ function RightRailTabbed({
               projectId={projectId}
               sessionId={browserSessionId}
               mintToken={mintHostedBrowserToken}
+              hostId={hostId}
               active={activeTab === "browser"}
             />
           )}
