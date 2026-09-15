@@ -31,6 +31,7 @@ import {
   describeEvalPassCriterion,
   normalizeSuiteGatePolicy,
   type SuiteGatePolicyV1,
+  EXECUTION_BUDGET_CEILINGS,
 } from "@mcpjam/sdk/contract";
 import { ORDER_OPTIONS, ARGS_OPTIONS } from "./validators-section";
 import type { EvalJudgeConfig, EvalJudgeRubric } from "./types";
@@ -408,7 +409,55 @@ export function canCommit(
 ): boolean {
   if (dirtyKeys(draft).length === 0) return false;
   if (draft.current.name.trim().length === 0) return false;
+  if (outOfRangeBudgetKeys(draft.current).length > 0) return false;
   return areChecksValid(draft.current.defaultPredicates);
+}
+
+/**
+ * The PLATFORM bound for each authored clock, keyed by draft key.
+ *
+ * `unitTimeoutMs` is the resolved spelling of the iteration clock, which is
+ * why the lookup is explicit rather than a lift of the ceilings object: the
+ * authored vocabulary and the resolved one differ by exactly this name, and a
+ * silent `undefined` here would disable the check for the one clock most
+ * likely to be set too high.
+ */
+const BUDGET_CEILING_MS: Record<ExecutionBudgetDraftKey, number> = {
+  turnTimeoutMs: EXECUTION_BUDGET_CEILINGS.evals.turnTimeoutMs,
+  toolCallTimeoutMs: EXECUTION_BUDGET_CEILINGS.evals.toolCallTimeoutMs,
+  iterationTimeoutMs: EXECUTION_BUDGET_CEILINGS.evals.unitTimeoutMs,
+  runTimeoutMs: EXECUTION_BUDGET_CEILINGS.evals.runTimeoutMs,
+  turnRetries: EXECUTION_BUDGET_CEILINGS.evals.turnRetries,
+};
+
+export type ExecutionBudgetDraftKey =
+  | "turnTimeoutMs"
+  | "toolCallTimeoutMs"
+  | "iterationTimeoutMs"
+  | "runTimeoutMs"
+  | "turnRetries";
+
+/**
+ * Authored clocks the PLATFORM would refuse, so the save button can refuse
+ * them first.
+ *
+ * Only the platform bound, deliberately. An organization that lowered its own
+ * ceiling is still enforced by the server, which names the field and the
+ * bound; the client does not know that number and guessing it would either
+ * block a legal value or promise one the server rejects.
+ */
+export function outOfRangeBudgetKeys(
+  values: SuiteSettingsValues,
+): ExecutionBudgetDraftKey[] {
+  const keys = Object.keys(BUDGET_CEILING_MS) as ExecutionBudgetDraftKey[];
+  return keys.filter((key) => {
+    const value = values[key];
+    if (value === undefined) return false;
+    // Not a number at all is out of range too: a control that parsed junk into
+    // NaN must not reach a save that would send it.
+    if (!Number.isFinite(value)) return true;
+    return value < 0 || value > BUDGET_CEILING_MS[key];
+  });
 }
 
 /**

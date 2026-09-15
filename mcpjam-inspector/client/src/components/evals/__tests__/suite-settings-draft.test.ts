@@ -691,6 +691,27 @@ describe("execution budgets save as one object", () => {
     });
   });
 
+  test("a clock past its platform ceiling cannot be saved", () => {
+    // The input's `max` is an affordance, not a guarantee — typing and pasting
+    // both get past it. Refusing at the save button turns a server round-trip
+    // ending in EXECUTION_BUDGET_EXCEEDS_CEILING into immediate feedback.
+    const tooLong = edit(draftOf(), "turnTimeoutMs", 31 * 60_000);
+    expect(canCommit(tooLong, alwaysValid)).toBe(false);
+
+    const negative = edit(draftOf(), "turnRetries", -1);
+    expect(canCommit(negative, alwaysValid)).toBe(false);
+
+    const atTheCeiling = edit(draftOf(), "turnTimeoutMs", 30 * 60_000);
+    expect(canCommit(atTheCeiling, alwaysValid)).toBe(true);
+  });
+
+  test("an org-lowered ceiling is left to the server", () => {
+    // The client does not know that number. Guessing it would either block a
+    // legal value or promise one the server will refuse.
+    const underPlatformCeiling = edit(draftOf(), "runTimeoutMs", 6 * 3_600_000);
+    expect(canCommit(underPlatformCeiling, alwaysValid)).toBe(true);
+  });
+
   test("describes each clock in the unit it was authored in", () => {
     // 45s is not "0.75 minutes", and one retry is not "1 retries".
     expect(

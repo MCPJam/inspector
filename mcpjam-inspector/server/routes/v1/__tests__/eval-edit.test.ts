@@ -415,6 +415,68 @@ describe("v1 eval-edit routes", () => {
     expect(args.minIterations).toBeNull();
   });
 
+  it("PATCH executionBudgets reaches the mutation, and null clears it", async () => {
+    // The settings-parity ratchet proves the SCHEMA parses
+    // `settings.executionBudgets.*`. It cannot prove the handler forwards it,
+    // and the first cut of this feature did not: the field parsed, the route
+    // returned 200, and the budget was silently dropped — the same shape as a
+    // runtime that shipped dark with green CI on both repos. This test is the
+    // half the ratchet structurally cannot cover.
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+      { settings: { executionBudgets: { turnTimeoutMs: 300_000 } } },
+    );
+    expect(res.status).toBe(200);
+    expect(
+      convexMutationMock.mock.calls.find(
+        (c) => c[0] === "testSuites:updateTestSuite",
+      )![1].executionBudgets,
+    ).toEqual({ turnTimeoutMs: 300_000 });
+
+    vi.clearAllMocks();
+    convexQueryMock.mockImplementation((name: string) =>
+      defaultQueryImpl(name),
+    );
+    convexMutationMock.mockImplementation((name: string) =>
+      defaultMutationImpl(name),
+    );
+
+    // `null` CLEARS back to the platform defaults and must survive as null.
+    const cleared = await request(
+      "PATCH",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+      { settings: { executionBudgets: null } },
+    );
+    expect(cleared.status).toBe(200);
+    const args = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestSuite",
+    )![1];
+    expect(args).toHaveProperty("executionBudgets");
+    expect(args.executionBudgets).toBeNull();
+  });
+
+  it("PATCH rejects an executionBudget above its platform ceiling", async () => {
+    // Refused by PARSING, before the ladder is consulted: the contract
+    // schema's `max` on each field is the platform ceiling.
+    vi.clearAllMocks();
+    convexQueryMock.mockImplementation((name: string) =>
+      defaultQueryImpl(name),
+    );
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+      // 31 minutes; the per-turn ceiling is 30.
+      { settings: { executionBudgets: { turnTimeoutMs: 1_860_000 } } },
+    );
+    expect(res.status).toBe(400);
+    expect(
+      convexMutationMock.mock.calls.some(
+        (c) => c[0] === "testSuites:updateTestSuite",
+      ),
+    ).toBe(false);
+  });
+
   it("PATCH rejects a minimumIterations outside 1–10", async () => {
     for (const value of [0, 11, 2.5]) {
       vi.clearAllMocks();

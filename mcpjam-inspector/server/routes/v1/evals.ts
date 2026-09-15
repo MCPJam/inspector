@@ -2475,6 +2475,11 @@ function toSuiteDetailDto(
       // runs today, but only one of them is something the user chose.
       minimumIterations:
         typeof suite.minIterations === "number" ? suite.minIterations : null,
+      // `null` = nothing authored, so every clock resolves to the platform
+      // default. Readable because it is writable: a caller that could PATCH a
+      // budget and never read it back cannot tell a stored value from a
+      // dropped one, which is precisely the bug this pair closes.
+      executionBudgets: suite.executionBudgets ?? null,
       matchOptions: toPublicMatchOptions(suite.defaultMatchOptions),
       checks:
         projectCheckRolesForVocabulary(
@@ -8177,6 +8182,14 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
     // would turn every attempt to remove the floor into a silent no-op.
     if (s.minimumIterations !== undefined)
       updateArgs.minIterations = s.minimumIterations;
+    // Forwarded verbatim, `null` INCLUDED, for the same reason as the floor
+    // above: the platform reads null as "clear back to the defaults". Sending
+    // nothing when the schema accepted a value is the failure this program has
+    // already shipped once — a field parsed, 200 returned, and the setting
+    // silently dropped, with green CI throughout because the settings ratchet
+    // proves the schema PARSES the path, not that the handler acts on it.
+    if (s.executionBudgets !== undefined)
+      updateArgs.executionBudgets = s.executionBudgets;
     // PATCH is merge semantics: updateTestSuite replaces these objects
     // wholesale, so a partial public field (e.g. only matchOptions.arguments,
     // or only judge.model) must be layered onto the suite's CURRENT values —
