@@ -193,6 +193,11 @@ describe("execution budgets — resolver", () => {
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       for (const field of RESOLVED_EXECUTION_BUDGET_FIELDS) {
+        if (field === "toolCallTimeoutMs") {
+          expect(result.resolved).not.toHaveProperty(field);
+          expect(result.resolved.sources).not.toHaveProperty(field);
+          continue;
+        }
         expect(result.resolved[field]).toBeLessThanOrEqual(ceilings[field]);
         // Capped, not re-labelled: the provenance union is closed.
         expect(result.resolved.sources[field]).toBe("default");

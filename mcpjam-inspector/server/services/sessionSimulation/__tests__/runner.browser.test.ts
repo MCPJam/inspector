@@ -201,13 +201,11 @@ function baseAdapter(overrides?: {
     // takes; these bound how long it and each of its turns may take.
     budgets: {
       turnTimeoutMs: 5 * 60_000,
-      toolCallTimeoutMs: 120_000,
       unitTimeoutMs: 20 * 60_000,
       runTimeoutMs: 2 * 60 * 60_000,
       turnRetries: 2,
       sources: {
         turnTimeoutMs: "default",
-        toolCallTimeoutMs: "default",
         unitTimeoutMs: "default",
         runTimeoutMs: "default",
         turnRetries: "default",
@@ -695,14 +693,12 @@ describe("runSyntheticHostSession — execution budgets", () => {
 
   const budgetsWith = (over: Record<string, number>) => ({
     turnTimeoutMs: 5 * 60_000,
-    toolCallTimeoutMs: 120_000,
     unitTimeoutMs: 20 * 60_000,
     runTimeoutMs: 2 * 60 * 60_000,
     turnRetries: 2,
     ...over,
     sources: {
       turnTimeoutMs: "default",
-      toolCallTimeoutMs: "default",
       unitTimeoutMs: "default",
       runTimeoutMs: "default",
       turnRetries: "default",

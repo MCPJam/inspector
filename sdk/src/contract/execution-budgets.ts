@@ -120,7 +120,7 @@ export type AuthoredExecutionBudgets =
 /** Which surface a defaults/ceilings column belongs to. */
 export type ExecutionBudgetSurface = "evals" | "swarms";
 
-/** The five fields every runtime consumer reads, after resolution. */
+/** Policy fields; toolCallTimeoutMs is reserved until runtime integration. */
 export type ResolvedExecutionBudgetField =
   | "turnTimeoutMs"
   | "toolCallTimeoutMs"
@@ -156,8 +156,14 @@ export type ResolvedExecutionBudgetValues = ResolvedValues;
 /** Which rung of the ladder supplied a resolved value. */
 export type ExecutionBudgetSource = "authored" | "default";
 
-export type ResolvedExecutionBudgets = ResolvedValues & {
-  sources: Record<ResolvedExecutionBudgetField, ExecutionBudgetSource>;
+export type ResolvedExecutionBudgets = Omit<
+  ResolvedValues,
+  "toolCallTimeoutMs"
+> & {
+  sources: Record<
+    Exclude<ResolvedExecutionBudgetField, "toolCallTimeoutMs">,
+    ExecutionBudgetSource
+  >;
 };
 
 /**
@@ -169,14 +175,15 @@ export type ResolvedExecutionBudgets = ResolvedValues & {
 export const resolvedExecutionBudgetsSchema = z
   .object({
     turnTimeoutMs: z.number().int().positive(),
-    toolCallTimeoutMs: z.number().int().positive(),
+    // Accepted from old snapshots, but not emitted until the runtime consumes it.
+    toolCallTimeoutMs: z.number().int().positive().optional(),
     unitTimeoutMs: z.number().int().positive(),
     runTimeoutMs: z.number().int().positive(),
     turnRetries: z.number().int().min(0),
     sources: z
       .object({
         turnTimeoutMs: z.enum(["authored", "default"]),
-        toolCallTimeoutMs: z.enum(["authored", "default"]),
+        toolCallTimeoutMs: z.enum(["authored", "default"]).optional(),
         unitTimeoutMs: z.enum(["authored", "default"]),
         runTimeoutMs: z.enum(["authored", "default"]),
         turnRetries: z.enum(["authored", "default"]),
@@ -188,22 +195,24 @@ export const resolvedExecutionBudgetsSchema = z
 /**
  * Platform defaults, per surface (§3.2).
  *
- * The eval run default is 60 min — up from the 20 min the runner hardcoded —
- * BECAUSE an iteration timeout no longer kills the run. The run cap stops being
- * the working bound and becomes the backstop it was always described as.
+ * Calibration: turn measured (p99.9 3.91 min, max 5.76 min); eval unit
+ * measured (all-tenant max 7.74 min); eval run measured (max 19.91 min).
+ * Tool-call budgets are unmeasured: MCP request-duration telemetry is absent.
+ * Swarm unit and run are unmeasured (one journey run). All ceilings are
+ * policy headroom, not percentiles.
  */
 export const EXECUTION_BUDGET_DEFAULTS: Readonly<
   Record<ExecutionBudgetSurface, ReadonlyResolvedValues>
 > = Object.freeze({
   evals: Object.freeze({
-    turnTimeoutMs: 5 * MINUTE_MS,
+    turnTimeoutMs: 6 * MINUTE_MS,
     toolCallTimeoutMs: 30_000,
     unitTimeoutMs: 10 * MINUTE_MS,
-    runTimeoutMs: 60 * MINUTE_MS,
+    runTimeoutMs: 30 * MINUTE_MS,
     turnRetries: 2,
   }),
   swarms: Object.freeze({
-    turnTimeoutMs: 5 * MINUTE_MS,
+    turnTimeoutMs: 6 * MINUTE_MS,
     toolCallTimeoutMs: 120_000,
     unitTimeoutMs: 20 * MINUTE_MS,
     runTimeoutMs: 2 * HOUR_MS,
@@ -358,7 +367,9 @@ export function resolveExecutionBudgets(args: {
   if (violations.length > 0) {
     return { ok: false, violations };
   }
-  return { ok: true, resolved: { ...values, sources } };
+  const { toolCallTimeoutMs: _unusedToolBudget, ...runtimeValues } = values;
+  const { toolCallTimeoutMs: _unusedToolSource, ...runtimeSources } = sources;
+  return { ok: true, resolved: { ...runtimeValues, sources: runtimeSources } };
 }
 
 /**

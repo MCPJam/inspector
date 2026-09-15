@@ -4,14 +4,14 @@
     "__label": "Platform defaults and ceilings, per surface (§3.2)",
     "defaults": {
       "evals": {
-        "turnTimeoutMs": 300000,
+        "turnTimeoutMs": 360000,
         "toolCallTimeoutMs": 30000,
         "unitTimeoutMs": 600000,
-        "runTimeoutMs": 3600000,
+        "runTimeoutMs": 1800000,
         "turnRetries": 2
       },
       "swarms": {
-        "turnTimeoutMs": 300000,
+        "turnTimeoutMs": 360000,
         "toolCallTimeoutMs": 120000,
         "unitTimeoutMs": 1200000,
         "runTimeoutMs": 7200000,
@@ -47,14 +47,12 @@
       "expect": {
         "ok": true,
         "resolved": {
-          "turnTimeoutMs": 300000,
-          "toolCallTimeoutMs": 30000,
+          "turnTimeoutMs": 360000,
           "unitTimeoutMs": 600000,
-          "runTimeoutMs": 3600000,
+          "runTimeoutMs": 1800000,
           "turnRetries": 2,
           "sources": {
             "turnTimeoutMs": "default",
-            "toolCallTimeoutMs": "default",
             "unitTimeoutMs": "default",
             "runTimeoutMs": "default",
             "turnRetries": "default"
@@ -64,19 +62,17 @@
     },
     {
       "__label": "swarms — nothing authored: the swarm defaults, which differ from evals",
-      "__why": "toolCallTimeoutMs (120s vs 30s), unitTimeoutMs (20min vs 10min) and runTimeoutMs (2h vs 60min) are surface-specific. A mirror that collapsed the two columns would pass every eval case and still be wrong.",
+      "__why": "toolCallTimeoutMs (120s vs 30s), unitTimeoutMs (20min vs 10min) and runTimeoutMs (2h vs 30min) are surface-specific. A mirror that collapsed the two columns would pass every eval case and still be wrong.",
       "args": { "surface": "swarms" },
       "expect": {
         "ok": true,
         "resolved": {
-          "turnTimeoutMs": 300000,
-          "toolCallTimeoutMs": 120000,
+          "turnTimeoutMs": 360000,
           "unitTimeoutMs": 1200000,
           "runTimeoutMs": 7200000,
           "turnRetries": 2,
           "sources": {
             "turnTimeoutMs": "default",
-            "toolCallTimeoutMs": "default",
             "unitTimeoutMs": "default",
             "runTimeoutMs": "default",
             "turnRetries": "default"
@@ -100,13 +96,11 @@
         "ok": true,
         "resolved": {
           "turnTimeoutMs": 90000,
-          "toolCallTimeoutMs": 45000,
           "unitTimeoutMs": 120000,
           "runTimeoutMs": 1800000,
           "turnRetries": 0,
           "sources": {
             "turnTimeoutMs": "authored",
-            "toolCallTimeoutMs": "authored",
             "unitTimeoutMs": "authored",
             "runTimeoutMs": "authored",
             "turnRetries": "authored"
@@ -124,14 +118,12 @@
       "expect": {
         "ok": true,
         "resolved": {
-          "turnTimeoutMs": 300000,
-          "toolCallTimeoutMs": 30000,
+          "turnTimeoutMs": 360000,
           "unitTimeoutMs": 7200000,
-          "runTimeoutMs": 3600000,
+          "runTimeoutMs": 1800000,
           "turnRetries": 2,
           "sources": {
             "turnTimeoutMs": "default",
-            "toolCallTimeoutMs": "default",
             "unitTimeoutMs": "authored",
             "runTimeoutMs": "default",
             "turnRetries": "default"
@@ -149,14 +141,12 @@
       "expect": {
         "ok": true,
         "resolved": {
-          "turnTimeoutMs": 300000,
-          "toolCallTimeoutMs": 120000,
+          "turnTimeoutMs": 360000,
           "unitTimeoutMs": 60000,
           "runTimeoutMs": 7200000,
           "turnRetries": 2,
           "sources": {
             "turnTimeoutMs": "default",
-            "toolCallTimeoutMs": "default",
             "unitTimeoutMs": "authored",
             "runTimeoutMs": "default",
             "turnRetries": "default"
@@ -212,14 +202,12 @@
       "expect": {
         "ok": true,
         "resolved": {
-          "turnTimeoutMs": 300000,
-          "toolCallTimeoutMs": 120000,
+          "turnTimeoutMs": 360000,
           "unitTimeoutMs": 300000,
           "runTimeoutMs": 3600000,
           "turnRetries": 2,
           "sources": {
             "turnTimeoutMs": "default",
-            "toolCallTimeoutMs": "default",
             "unitTimeoutMs": "default",
             "runTimeoutMs": "default",
             "turnRetries": "default"
@@ -238,14 +226,12 @@
       "expect": {
         "ok": true,
         "resolved": {
-          "turnTimeoutMs": 300000,
-          "toolCallTimeoutMs": 120000,
+          "turnTimeoutMs": 360000,
           "unitTimeoutMs": 1200000,
           "runTimeoutMs": 1800000,
           "turnRetries": 2,
           "sources": {
             "turnTimeoutMs": "default",
-            "toolCallTimeoutMs": "default",
             "unitTimeoutMs": "default",
             "runTimeoutMs": "authored",
             "turnRetries": "default"
@@ -278,14 +264,12 @@
       "expect": {
         "ok": true,
         "resolved": {
-          "turnTimeoutMs": 300000,
-          "toolCallTimeoutMs": 120000,
+          "turnTimeoutMs": 360000,
           "unitTimeoutMs": 7200000,
           "runTimeoutMs": 7200000,
           "turnRetries": 5,
           "sources": {
             "turnTimeoutMs": "default",
-            "toolCallTimeoutMs": "default",
             "unitTimeoutMs": "authored",
             "runTimeoutMs": "default",
             "turnRetries": "authored"
@@ -300,14 +284,12 @@
       "expect": {
         "ok": true,
         "resolved": {
-          "turnTimeoutMs": 300000,
-          "toolCallTimeoutMs": 30000,
+          "turnTimeoutMs": 360000,
           "unitTimeoutMs": 600000,
-          "runTimeoutMs": 3600000,
+          "runTimeoutMs": 1800000,
           "turnRetries": 0,
           "sources": {
             "turnTimeoutMs": "default",
-            "toolCallTimeoutMs": "default",
             "unitTimeoutMs": "default",
             "runTimeoutMs": "default",
             "turnRetries": "authored"
