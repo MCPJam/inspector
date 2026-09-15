@@ -1034,7 +1034,7 @@ describe("TestTemplateEditor run view from route", () => {
     activeCaseDoc = goldenCaseDoc;
     renderGoldenCase({ observeFirst: true, checksPage: true });
     fireEvent.click(
-      await screen.findByRole("checkbox", { name: "Outcome achieved" }),
+      await screen.findByRole("checkbox", { name: "Goal completion judge" }),
     );
     fireEvent.click(screen.getByRole("button", { name: "Save overrides" }));
     await waitFor(() => expect(updateTestCaseMutationMock).toHaveBeenCalled());
@@ -1096,7 +1096,7 @@ describe("TestTemplateEditor run view from route", () => {
     };
     renderGoldenCase({ observeFirst: true, suiteIterations: [trial] });
     fireEvent.click((await screen.findAllByTestId("case-run-row"))[0]);
-    fireEvent.click(await screen.findByText("Suggested checks"));
+    fireEvent.click(await screen.findByText("Suggested assertions"));
     const text = await screen
       .findByText("Require that no tool is called")
       .catch(() => {
@@ -1152,6 +1152,15 @@ describe("TestTemplateEditor run view from route", () => {
       screen.queryByTestId("case-pass-criteria-toggle"),
     ).not.toBeInTheDocument();
     expect(screen.getAllByTestId("spine-action-row").length).toBeGreaterThan(0);
+    const defaultChecks = screen.getByRole("button", {
+      name: "Show default evaluators",
+    });
+    expect(screen.getByTestId("case-spine")).not.toContainElement(
+      defaultChecks,
+    );
+    expect(defaultChecks.parentElement).toContainElement(
+      screen.getByRole("button", { name: "Setup Run" }),
+    );
   });
 
   it("shows a step-authored case in the workspace and leaves its flag alone", async () => {

@@ -649,6 +649,10 @@ tools were captured. Use
 `GET /projects/{projectId}/environments/{environmentId}/resolve` to see what it
 will connect before launching.
 
+When creating a new inline suite, `POST .../eval-runs` also accepts `hosts: [{ host: "Claude", servers: ["my-server"] }]`, using the same host name or ID and optional server selection as `POST .../eval-suites`. A single host is selected for the run automatically. With multiple attachments, use `namedHostId` to select the run's client. For an existing suite, update its attachments first. If `hosts` is omitted, the backend supplies the project's default client.
+
+Run reads and listings expose `client: { id, name, source, hostStyle?, modelId? }` when recorded. `id` is the named host ID or `null`; `source` is `environment`, `attached_host`, `suite_default`, or `sdk`. The name is durable even if the host is deleted. SDK executions use `SDK harness`; `launcher.client` separately identifies the launching process. Older runs without a descriptor omit `client`. `modelSource: "case"` means the run's sole model came from its case snapshot; `client_default` and `override` retain their existing meanings.
+
 Every run records which environment it used. `GET .../eval-runs/{runId}` (and
 the run listings) return `environment: { id, name, revision }` — read from the
 run's immutable snapshot, not the suite's current attachments — or `null` for a

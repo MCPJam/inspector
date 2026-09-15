@@ -90,6 +90,17 @@ beforeEach(() => {
   });
 });
 describe("Markdown case import", () => {
+  it("labels file sizes and validation messages in KB", () => {
+    renderWithProviders(<ImportDatasetDialog {...props} />);
+    expect(screen.getByText(/Up to 100 KB/)).toBeVisible();
+    upload("cases.md", "a".repeat(1024));
+    expect(screen.getByText(/cases.md · 1.0 KB/)).toBeVisible();
+    upload("large.md", "a".repeat(100 * 1024 + 1));
+    expect(
+      screen.getByText("Split the file into documents of at most 100 KB."),
+    ).toBeVisible();
+  });
+
   it("stages extracted cases on the suite page and only saves after review", async () => {
     renderWithProviders(<Harness />);
     upload();

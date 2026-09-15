@@ -12,7 +12,6 @@ import { openEvalChat } from "@/lib/mcpjam-agent/eval-scope";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen, userEvent } from "@/test";
 import { SuiteDetailOverview } from "../suite-detail-overview";
-import { formatRunHistoryDate } from "../suite-detail-model";
 import type {
   EvalCase,
   EvalIteration,
@@ -181,19 +180,33 @@ describe("SuiteDetailOverview", () => {
     const headers = table
       .getAllByRole("columnheader")
       .map((header) => header.textContent);
-    expect(headers.slice(0, 2)).toEqual(["Date", "Run"]);
-    expect(table.getAllByRole("button", { name: /^#/ })).toHaveLength(2);
+    expect(headers).toEqual([
+      "Run",
+      "Client",
+      "Model",
+      "Result",
+      "Rate",
+      "Platform",
+      "Commit",
+      "Date",
+      "Latency",
+      "Tokens",
+      "Calls",
+    ]);
+    expect(table.getAllByRole("button", { name: /^Open run #/ })).toHaveLength(
+      2,
+    );
     expect(screen.queryByTestId("suite-run-row-two")).toBeNull();
     const row = within(screen.getByTestId("suite-run-row-one"));
     const cells = screen
       .getByTestId("suite-run-row-one")
       .querySelectorAll("td");
-    expect(cells[0]).toHaveTextContent(formatRunHistoryDate(1000));
-    expect(cells[0]).not.toHaveTextContent("#");
-    expect(cells[1]).toHaveTextContent("#1");
-    expect(cells[1]).not.toHaveTextContent(formatRunHistoryDate(1000));
+    expect(cells[0]).toHaveTextContent("#1");
+    expect(cells[7].querySelector("time")).toHaveAttribute(
+      "dateTime",
+      new Date(1000).toISOString(),
+    );
     expect(row.getByText("25%")).toBeVisible();
-    expect(row.getByText("1/4 passed")).toBeVisible();
     expect(row.getByText(/Claude/)).toBeVisible();
     expect(
       row.queryByRole("button", { name: /Client model mapping/ }),
@@ -208,11 +221,11 @@ describe("SuiteDetailOverview", () => {
       screen.getByRole("option", { name: "Cursor", exact: true }),
     );
     expect(screen.queryByTestId("suite-run-row-solo")).toBeNull();
-    expect(row.getByText("1/4 passed")).toBeVisible();
+    expect(row.getByTitle("1/4 passed")).toHaveTextContent("25%");
     expect(screen.getByTestId("suite-run-history-snapshot")).toHaveTextContent(
       "1/4 passed",
     );
-    await user.click(table.getByRole("button", { name: "#1", exact: true }));
+    await user.click(table.getByRole("button", { name: "Open run #1", exact: true }));
     expect(onRunClick).toHaveBeenCalledWith("one");
   });
 
@@ -293,7 +306,7 @@ describe("SuiteDetailOverview", () => {
     expect(screen.queryByText("card declined")).toBeNull();
     expect(screen.queryByText("Top failure signature")).toBeNull();
     expect(screen.getByText("GitHub")).toBeTruthy();
-    expect(screen.getAllByText("Finished").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Passed").length).toBeGreaterThan(0);
 
     await user.click(screen.getByTestId("suite-run-row-run-1"));
     expect(onRunClick).toHaveBeenCalledWith("run-1");
@@ -312,6 +325,7 @@ describe("SuiteDetailOverview", () => {
     await user.click(screen.getByRole("button", { name: "Edit" }));
     expect(onEditSuite).toHaveBeenCalledTimes(1);
     await user.click(screen.getByRole("button", { name: "Add case" }));
+    await user.click(screen.getByRole("menuitem", { name: "Add manually" }));
     expect(onEditCases).toHaveBeenCalledTimes(1);
 
     await user.click(screen.getByRole("button", { name: "Setup Run" }));
@@ -572,7 +586,8 @@ describe("SuiteDetailOverview", () => {
     // The empty hero is gone at this point — Generate has to live on the card.
     expect(screen.queryByTestId("suite-empty-action-generate")).toBeNull();
 
-    await user.click(screen.getByTestId("suite-detail-generate-cases"));
+    await user.click(screen.getByRole("button", { name: "Add case" }));
+    await user.click(screen.getByRole("menuitem", { name: "Generate" }));
     expect(openEvalChat).not.toHaveBeenCalled();
     expect(screen.getByRole("dialog")).toBeVisible();
     expect(screen.queryByTestId("suite-case-generation-workspace")).toBeNull();
@@ -583,7 +598,7 @@ describe("SuiteDetailOverview", () => {
     expect(screen.queryByRole("button", { name: "Back to suite" })).toBeNull();
   });
 
-  it("disables the card's Generate while a generation is already running", () => {
+  it("disables the card's Generate while a generation is already running", async () => {
     renderWithProviders(
       <SuiteDetailOverview
         projectId="project-1"
@@ -605,7 +620,12 @@ describe("SuiteDetailOverview", () => {
       />,
     );
 
-    expect(screen.getByTestId("suite-detail-generate-cases")).toBeDisabled();
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Add case" }));
+    expect(
+      screen.getByRole("menuitem", { name: "Generating…" }),
+    ).toHaveAttribute("aria-disabled", "true");
   });
 
   it("hides both case-authoring controls on a read-only suite", () => {
@@ -934,9 +954,11 @@ it("offers Markdown import in populated editable suites", async () => {
       rerunningSuiteId={null}
     />,
   );
-  await userEvent
-    .setup()
-    .click(screen.getByRole("button", { name: "Import cases" }));
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Add case" }));
+  await user.click(
+    screen.getByRole("menuitem", { name: "Import", exact: true }),
+  );
   expect(onImportCases).toHaveBeenCalledOnce();
 });
 

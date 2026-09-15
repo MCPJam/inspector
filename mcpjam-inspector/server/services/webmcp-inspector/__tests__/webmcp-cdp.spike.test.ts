@@ -79,6 +79,7 @@ import type { Browser, CDPSession, Page } from "playwright";
 import { chromium } from "playwright";
 import { isChromiumInstalled } from "../../../utils/browser-rendering-setup";
 import { buildWebMcpLaunchArgs, PAGE_API_PROBE } from "../launch-args";
+import { PINNED_CHROMIUM } from "../pinned-chromium";
 import {
   startWebMcpFixtureServer,
   FIXTURE_BIG_OUTPUT_BYTES,
@@ -95,8 +96,12 @@ import {
  * Asserted, not commented: several findings are of the form "not at this
  * version" (`consequential` is the live one), and a claim like that is only
  * meaningful next to the version it was taken from.
+ *
+ * IMPORTED rather than restated. The number used to live here AND in eight
+ * other files, with nothing connecting any of them to the dependency that
+ * decides which browser actually runs. @see pinned-chromium.ts, and
+ * `docs/chromium-bump-checklist.md` for what to re-run when it moves.
  */
-const PINNED_CHROMIUM = "151.0.7922.34";
 
 const CHROMIUM_AVAILABLE = await isChromiumInstalled();
 
@@ -545,6 +550,92 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP support probing", () => {
     }
   }, 60_000);
 });
+
+/**
+ * WHICH FLAGS ARE ACTUALLY NECESSARY, at this Chromium.
+ *
+ * `WEBMCP_LAUNCH_ARGS` carries exactly one switch, and its doc comment claims
+ * that switch is the MINIMAL set that works — a claim that was probed once, by
+ * hand, and has been load-bearing ever since: `daemon/launch-args.ts` builds
+ * the hosted browser's single `--enable-features` from it, and `src/main.ts`
+ * restates it for Electron. If it silently stops being sufficient, a page
+ * registers no tools and the product reports an empty tool list rather than a
+ * broken browser.
+ *
+ * So the claim is a test. THE DECISION RULE, written down here because this is
+ * where it will be read: if "toolsAdded arrives WITHOUT DevToolsWebMCPSupport"
+ * ever fails at a bump, add `DevToolsWebMCPSupport` to `WEBMCP_LAUNCH_ARGS` —
+ * it propagates to browserd for free through `featuresEnabledBy` — and
+ * comma-join it into `src/main.ts`'s single `appendSwitch("enable-features",
+ * ...)` call. @see docs/chromium-bump-checklist.md
+ */
+// GATED ON CHROMIUM ALONE, not on `WEBMCP_CDP_AVAILABLE`. That probe launches
+// with `buildWebMcpLaunchArgs()` — the very flags this block exists to check —
+// so gating on it makes the suite skip in exactly the situation it was written
+// to catch: a bump where those flags stop being sufficient. The regression
+// would report itself as "0 tests, all skipped" and be read as a pass. Every
+// OTHER block in this file legitimately needs WebMCP working to say anything
+// about WebMCP behaviour; this one needs only a browser.
+describe.skipIf(!CHROMIUM_AVAILABLE)(
+  "feature-flag sufficiency at the pinned Chromium",
+  () => {
+    /**
+     * Launch with these args, load the fixture, and report the tools that
+     * arrived on `WebMCP.toolsAdded`.
+     */
+    async function toolsWith(args: readonly string[]): Promise<string[]> {
+      const fixture = await startWebMcpFixtureServer();
+      const browser = await chromium.launch({ headless: true, args: [...args] });
+      try {
+        const page = await browser.newPage();
+        const cdp = await page.context().newCDPSession(page);
+        const added: ToolPayload[] = [];
+        cdp.on("WebMCP.toolsAdded", (e) =>
+          added.push(...(e as { tools: ToolPayload[] }).tools),
+        );
+        await cdp.send("WebMCP.enable" as never);
+        await page.goto(fixture.url, { waitUntil: "domcontentloaded" });
+        await waitFor(
+          () => (added.length > 0 ? true : undefined),
+          10_000,
+        ).catch(() => undefined);
+        return added.map((tool) => tool.name);
+      } finally {
+        await browser.close().catch(() => {});
+        await fixture.close();
+      }
+    }
+
+    it("toolsAdded arrives with WEBMCP_LAUNCH_ARGS alone", async () => {
+      // The claim `launch-args.ts` makes, as a check rather than a comment.
+      expect(await toolsWith(buildWebMcpLaunchArgs())).toContain("echo");
+    }, 60_000);
+
+    it("toolsAdded arrives WITHOUT DevToolsWebMCPSupport, so it is not required", async () => {
+      // THE ONE TO WATCH. `buildWebMcpLaunchArgs` does not carry it, so this is
+      // really an independent restatement of the case above — deliberately, so
+      // that the day it starts failing the failure names the flag to add
+      // rather than reading as "WebMCP broke".
+      const names = await toolsWith([
+        "--disable-dev-shm-usage",
+        "--enable-features=WebMCP",
+      ]);
+      expect(names).toContain("echo");
+    }, 60_000);
+
+    it("adding DevToolsWebMCPSupport and WebMCPTesting changes nothing observable", async () => {
+      // The other half of "minimal": the extra flags are not silently doing
+      // work the one flag is being credited for. If this ever disagrees with
+      // the case above, the minimal set is not minimal.
+      const minimal = await toolsWith(buildWebMcpLaunchArgs());
+      const maximal = await toolsWith([
+        "--disable-dev-shm-usage",
+        "--enable-features=WebMCP,DevToolsWebMCPSupport,WebMCPTesting",
+      ]);
+      expect([...maximal].sort()).toEqual([...minimal].sort());
+    }, 120_000);
+  },
+);
 
 /**
  * DECLARATIVE registration: a `<form toolname>` with no script at all.

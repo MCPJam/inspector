@@ -176,12 +176,18 @@ See [Eval reporting — Tool execution and `passed`](/sdk/reference/eval-reporti
 
 Predicates express richer pass/fail criteria than tool-call matching — without an LLM judge. Each predicate is a pure function of the iteration transcript, so it produces the same verdict every time, which makes it safe to use as a CI release gate.
 
-Predicates are authored in the corpus JSON (the Inspector's per-case **Checks** editor writes the same shape) and threaded through the runner automatically; there is no predicate field to set on individual uploaded results. A case passes iff every **gating** predicate passes — an advisory one is recorded and never fails the case, and neither does one that could not be scored. An absent or empty list means no predicate gate.
+Predicates are authored in the corpus JSON (the Inspector's per-case **Checks** editor writes the same shape) and threaded through the runner automatically; there is no predicate field to set on individual uploaded results. A case passes iff every **required** predicate passes (`"gating"` is the legacy spelling of that role and is still accepted) — an **advisory** one is recorded and never fails the case, including when it could not be scored. A required check that could not be scored does hold the gate shut. An absent or empty list means no predicate gate.
 
-The built-in predicate types. **Measures** is the link of the [user-value chain](/sdk/concepts/user-value-chain) the check is filed at — nothing files at Connection or Discovery, which the runner decides for you:
+The built-in predicate types. **Measures** is the link of the [user-value chain](/sdk/concepts/user-value-chain) the check is filed at — Connection is measured by the runner; Discovery combines runner evidence with optional catalog assertions:
 
 | Type | Measures | What it checks |
 |------|----------|----------------|
+| `toolDescriptionsPresent` | Discovery | Trimmed descriptions meet the minimum length (default 20). |
+| `toolAnnotationsPresent` | Discovery | Every tool declares annotations; optionally require boolean readOnlyHint and destructiveHint. |
+| `toolNamesUnique` | Discovery | Raw tool names are unique within each server. |
+| `noDeprecatedToolExposed` | Discovery | No description marks itself deprecated. Heuristic; advisory only. |
+| `toolInputSchemasWellFormed` | Discovery | Every input schema has an object root and documented properties. |
+| `toolOutputSchemasPresent` | Discovery | Every tool declares an output schema; does not validate result conformance. |
 | `toolCalledWith` | Selection | A specific tool was called with matching args (partial/exact/ignore mode) |
 | `toolCalledAtLeastOnce` | Selection | A tool was called at least once |
 | `toolNeverCalled` | Selection | A forbidden tool was never called |
@@ -189,6 +195,7 @@ The built-in predicate types. **Measures** is the link of the [user-value chain]
 | `firstToolWas` | Selection | The first tool call in the transcript was a specific tool |
 | `responseContains` | User value | The final assistant message contains a substring |
 | `responseMatches` | User value | The final assistant message matches a regex |
+| `responseCloseTo` | User value | Normalized text edit distance from a reference (bounded; not semantic similarity). |
 | `noToolErrors` | Response | No tool produced an error (MCP `isError` or transport failure) |
 | `finalAssistantMessageNonEmpty` | User value | The final assistant message is non-empty |
 | `tokenBudgetUnder` | User value | Total token usage is strictly under a budget |
@@ -196,21 +203,27 @@ The built-in predicate types. **Measures** is the link of the [user-value chain]
 | `widgetRenderLatencyUnder` | User value | Every rendered widget mounted in strictly under a millisecond budget |
 | `widgetNoConsoleErrors` | User value | No widget render captured console errors |
 | `turnCountUnder` | User value | The iteration used strictly fewer than N user turns |
-| `noEndingQuestion` | User value | **Observation.** The final message does not end with a question. Warn/Report only |
+| `noEndingQuestion` | User value | **Observation.** The final message does not end with a question. Advisory only |
 | `toolLatencyUnder` | Response | Every observed call settled under a millisecond ceiling |
 | `toolResultContains` | Response | A tool result contains a substring |
 | `toolResultMatchesSchema` | Response | Every tool result matches an authored JSON Schema (any JSON root) |
 | `toolResultSizeUnder` | Response | Every tool result is under a byte ceiling, measured before our storage cap |
 | `argumentsMatchToolSchema` | Tool call | Every call's arguments validate against the tool's declared inputSchema |
-| `noRepeatedIdenticalCall` | Tool call | **Observation.** No identical call repeated back-to-back. Warn/Report only |
+| `noRepeatedIdenticalCall` | Tool call | **Observation.** No identical call repeated back-to-back. Advisory only |
 | `toolCallCountUnder` | Selection | Strictly fewer than N tool calls |
 | `toolCalledBefore` | Selection | Every call to one tool was preceded by a call to another |
-| `noDeprecatedToolCalled` | Selection | **Observation.** No called tool's description marks it deprecated. Warn/Report only |
+| `noDeprecatedToolCalled` | Selection | **Observation.** No called tool's description marks it deprecated. Advisory only |
 | `noDestructiveToolCalled` | Selection | No called tool declares `destructiveHint` |
-| `toolErrorNamesInput` | Response | **Observation.** Tool errors name an input key or a sent value. Warn/Report only |
-| `fullPageHasContinuation` | Response | **Observation.** Full pages carry continuation metadata. Warn/Report only |
+| `toolErrorNamesInput` | Response | **Observation.** Tool errors name an input key or a sent value. Advisory only |
+| `fullPageHasContinuation` | Response | **Observation.** Full pages carry continuation metadata. Advisory only |
 
 When an iteration records no widget render observations, the three `widget*` predicates fail rather than pass — a missing signal counts as a failure. See [Predicate gate reference](/sdk/reference/eval-reporting#predicate-gate) for the full type definitions and a code example, and [The user-value chain](/sdk/concepts/user-value-chain) for what a set of checks leaves unmeasured.
+
+### Standard checks
+
+Standard checks use the browser-safe `STANDARD_CHECKS` catalog from `@mcpjam/sdk/contract`. Every assertion preset defaults to Advisory. UVC reports these evaluator results without turning advisory failures into failed stages. Scored required discovery failures can fail Discovery; setup failure attribution takes precedence. Empty complete catalogs receive an explicit "no tools advertised" rationale.
+
+Cases can suppress suite check families with `suppressedSuiteStandardCheckIds` (for example, `["response.performance"]`). This filters suite defaults before inherit/extend/replace resolution, preserves explicit case and step assertions, and remains effective after a suite threshold changes. Omitted updates preserve suppression; `[]` clears it. Catalog IDs are authoring references; evaluator reporting keeps its existing content-derived scorer IDs.
 
 ### Suite Results
 

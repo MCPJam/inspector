@@ -127,12 +127,14 @@ describe("the first-run form", () => {
       "spine",
     );
     expect(screen.getByLabelText("What does the user ask?")).toBeTruthy();
-    expect(screen.getByText("Expected Outcome")).toBeTruthy();
+    expect(screen.getByText("Expected Outcome")).toHaveClass("text-primary");
     expect(screen.queryByText("Run test")).toBeNull();
-    expect(screen.getByRole("button", { name: "Add" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Add assertion or action" }),
+    ).toBeInTheDocument();
     // The vocabulary a newcomer has not earned yet.
     const text = screen.getByTestId("case-spine").textContent ?? "";
-    expect(text).not.toMatch(/Scorers|Gate|Warn|Report|Judge · /);
+    expect(text).not.toMatch(/Evaluators|Scorers|Gate|Warn|Report|Judge · /);
     expect(screen.getByTestId("spine-actions")).toBeInTheDocument();
     expect(screen.queryByTestId("spine-after-the-run")).toBeNull();
   });
@@ -142,21 +144,21 @@ describe("the first-run form", () => {
     render(
       <StatefulSpine
         expectedOutput="Shows my email"
-        defaultChecks={<button>Show default assertions</button>}
+        defaultChecks={<button>Show default evaluators</button>}
       />,
     );
     const prompt = screen.getByLabelText("What does the user ask?");
     const outcome = screen.getByLabelText("Expected Outcome");
     await user.type(outcome, " correctly");
-    const add = screen.getByRole("button", { name: "Add" });
+    const add = screen.getByRole("button", { name: "Add assertion or action" });
     expect(add).toHaveClass("w-full");
     expect(
-      screen.getByRole("button", { name: "Show default assertions" })
+      screen.getByRole("button", { name: "Show default evaluators" })
         .parentElement,
     ).toHaveClass("justify-end");
     await user.click(add);
     await user.type(
-      screen.getByLabelText("Filter steps and checks"),
+      screen.getByLabelText("Filter steps and assertions"),
       "element",
     );
     await user.click(screen.getByTestId("add-step-item-widget:elementVisible"));
@@ -170,11 +172,13 @@ describe("the first-run form", () => {
   it("lets the assertion drawer close with Escape and restores trigger focus", async () => {
     const user = userEvent.setup();
     render(<StatefulSpine />);
-    const trigger = screen.getByRole("button", { name: "Add" });
+    const trigger = screen.getByRole("button", {
+      name: "Add assertion or action",
+    });
     await user.click(trigger);
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     expect(
-      screen.getByLabelText("Filter steps and checks"),
+      screen.getByLabelText("Filter steps and assertions"),
     ).toBeInTheDocument();
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -185,9 +189,11 @@ describe("the first-run form", () => {
     const onStepsChange = vi.fn();
     const user = userEvent.setup();
     render(<StatefulSpine steps={[]} onStepsChange={onStepsChange} />);
-    await user.click(screen.getByRole("button", { name: "Add" }));
+    await user.click(
+      screen.getByRole("button", { name: "Add assertion or action" }),
+    );
     await user.type(
-      screen.getByLabelText("Filter steps and checks"),
+      screen.getByLabelText("Filter steps and assertions"),
       "element",
     );
     await user.click(screen.getByTestId("add-step-item-widget:elementVisible"));
@@ -254,6 +260,29 @@ describe("the spine", () => {
     expect(screen.queryByText("Steps")).toBeNull();
   });
 
+  it("keeps one Expected Outcome for the whole case, after the last action, marked as the judge's", async () => {
+    await openSpine({ steps: twoTurn });
+    const outcome = screen.getByLabelText("Expected Outcome");
+    const section = screen.getByTestId("spine-expected-outcome-section");
+    expect(section).toContainElement(outcome);
+    // Not inside any prompt row: under prompt 1 it read as that prompt's
+    // outcome, and prompt 2 then looked broken for having none.
+    for (const row of screen.getAllByTestId("spine-action-row")) {
+      expect(row).not.toContainElement(outcome);
+    }
+    const actions = screen.getByTestId("spine-actions");
+    expect(
+      actions.compareDocumentPosition(section) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      within(section).getByText("Judge").getAttribute("data-provenance"),
+    ).toBe("judge");
+    // The chip is beside the label, not inside it, so the field's name stays
+    // "Expected Outcome".
+    expect(screen.getByLabelText("Expected Outcome")).toBe(outcome);
+  });
+
   it("nests each check under the action it follows", async () => {
     await openSpine({ steps: withClick });
     const [prompt, click] = screen.getAllByTestId("spine-action-row");
@@ -286,8 +315,13 @@ describe("the spine", () => {
     const onStepsChange = vi.fn();
     const user = await openSpine({ steps: golden, onStepsChange });
     const [prompt] = screen.getAllByTestId("spine-action-row");
-    await user.click(within(prompt!).getByRole("button", { name: "Add" }));
-    await user.type(screen.getByLabelText("Filter steps and checks"), "errors");
+    await user.click(
+      within(prompt!).getByRole("button", { name: "Add assertion or action" }),
+    );
+    await user.type(
+      screen.getByLabelText("Filter steps and assertions"),
+      "errors",
+    );
     await user.click(screen.getByTestId("add-step-item-check:noToolErrors"));
     const written = onStepsChange.mock.calls.at(-1)![0] as TestStep[];
     // After the prompt's whole block — behind a1 and a2, never in front of
@@ -303,9 +337,11 @@ describe("the spine", () => {
   it("offers view checks only where a position exists", async () => {
     const user = await openSpine({ steps: withClick });
     const [, click] = screen.getAllByTestId("spine-action-row");
-    await user.click(within(click!).getByRole("button", { name: "Add" }));
+    await user.click(
+      within(click!).getByRole("button", { name: "Add assertion or action" }),
+    );
     await user.type(
-      screen.getByLabelText("Filter steps and checks"),
+      screen.getByLabelText("Filter steps and assertions"),
       "element",
     );
     expect(
@@ -373,7 +409,9 @@ describe("the spine", () => {
     render(<StatefulSpine steps={golden} readOnly />);
     expect(screen.queryByRole("button", { name: /^Remove step/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /^Move step/ })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Add" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Add assertion or action" }),
+    ).toBeNull();
   });
 
   it("omits an empty route question under the first action", async () => {
@@ -614,7 +652,9 @@ describe("historical case layout", () => {
       "readonly",
     );
     expect(screen.queryByRole("button", { name: "Add step" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Add" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Add assertion or action" }),
+    ).toBeNull();
     expect(screen.queryByRole("button", { name: /Remove/ })).toBeNull();
   });
   it("does not fabricate a prompt for an empty historical snapshot", () => {
@@ -645,9 +685,11 @@ it("adds an action from Add after the selected prompt", async () => {
   const onStepsChange = vi.fn();
   const user = userEvent.setup();
   render(<StatefulSpine steps={[]} onStepsChange={onStepsChange} />);
-  await user.click(screen.getByRole("button", { name: "Add" }));
+  await user.click(
+    screen.getByRole("button", { name: "Add assertion or action" }),
+  );
   expect(screen.getByText("Actions")).toBeVisible();
-  expect(screen.getByText("Assertions · Tool selection")).toBeVisible();
+  expect(screen.getByText("Assertions · Selection")).toBeVisible();
   const choice = screen.getByTestId("add-step-item-toolCall");
   expect(choice.querySelector("svg")).not.toBeNull();
   await user.click(choice);
@@ -674,7 +716,10 @@ it("encloses route configuration and keeps one Add entry point per action", asyn
     screen.queryByRole("button", { name: "Add step", exact: true }),
   ).toBeNull();
   expect(
-    screen.getAllByRole("button", { name: "Add", exact: true }),
+    screen.getAllByRole("button", {
+      name: "Add assertion or action",
+      exact: true,
+    }),
   ).toHaveLength(1);
 });
 
@@ -689,7 +734,12 @@ it("routes a whole-run limit to case policy and preserves existing inline steps"
       predicates={{ mode: "replace", list: [] }}
     />,
   );
-  await user.click(screen.getByRole("button", { name: "Add", exact: true }));
+  await user.click(
+    screen.getByRole("button", {
+      name: "Add assertion or action",
+      exact: true,
+    }),
+  );
   await user.click(screen.getByTestId("add-step-item-check:tokenBudgetUnder"));
   expect(onPredicatesChange).toHaveBeenCalledWith(
     expect.objectContaining({
@@ -702,7 +752,12 @@ it("routes a whole-run limit to case policy and preserves existing inline steps"
 it("opens the existing expected outcome from the drawer", async () => {
   const user = userEvent.setup();
   render(<StatefulSpine />);
-  await user.click(screen.getByRole("button", { name: "Add", exact: true }));
+  await user.click(
+    screen.getByRole("button", {
+      name: "Add assertion or action",
+      exact: true,
+    }),
+  );
   await user.click(screen.getByTestId("add-step-item-outcome"));
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(screen.getByLabelText("Expected Outcome")).toHaveFocus();

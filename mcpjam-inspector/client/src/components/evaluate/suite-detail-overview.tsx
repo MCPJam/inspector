@@ -1,8 +1,9 @@
-import {
-  GroupSummaryRow,
-  groupProjectRuns,
-} from "../evals/project-run-suite-groups";
+import { groupProjectRuns } from "../evals/project-run-suite-groups";
 import type { ProjectRunRow } from "../evals/project-runs-table";
+import {
+  EvaluateHistoryHeader,
+  EvaluateHistoryRow,
+} from "./evaluate-history-row";
 import {
   EvalListFilter,
   ALL_EVAL_FILTER_VALUES,
@@ -30,14 +31,17 @@ import {
   MessageSquareText,
   Play,
   Sparkles,
+  Plus,
+  ChevronDown,
 } from "lucide-react";
-import { Button } from "@mcpjam/design-system/button";
 import {
-  TableBody,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@mcpjam/design-system/table";
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@mcpjam/design-system/dropdown-menu";
+import { Button } from "@mcpjam/design-system/button";
+import { TableBody } from "@mcpjam/design-system/table";
 import {
   Tooltip,
   TooltipContent,
@@ -58,7 +62,6 @@ import {
   runHistoryFilterOptions,
   suiteRunBlockedReason,
   runTimestamp,
-  formatRunHistoryDate,
 } from "./suite-detail-model";
 import type {
   EvalCase,
@@ -95,8 +98,6 @@ const EMPTY_CASE_ACTIONS = [
     Icon: FileUp,
   },
 ] as const;
-
-const runHistoryHeadClass = "whitespace-nowrap";
 
 export function SuiteDetailOverview({
   suite,
@@ -531,43 +532,9 @@ export function SuiteDetailOverview({
                   : "No runs yet."}
             </div>
           ) : (
-            <div className="overflow-x-auto bg-card">
+            <div className="@container/run-history overflow-x-auto bg-card">
               <RunHistoryTable aria-label="Suite run history">
-                <TableHeader>
-                  <TableRow className="hover:bg-transparent border-border/30">
-                    <TableHead className={runHistoryHeadClass}>Date</TableHead>
-                    <TableHead className={runHistoryHeadClass}>Run</TableHead>
-                    <TableHead className={runHistoryHeadClass}>
-                      Client : model
-                    </TableHead>
-                    <TableHead className={runHistoryHeadClass}>
-                      Status
-                    </TableHead>
-                    <TableHead
-                      className={cn(runHistoryHeadClass, "text-right")}
-                    >
-                      Iteration pass
-                    </TableHead>
-                    <TableHead
-                      className={cn(runHistoryHeadClass, "text-right")}
-                    >
-                      Latency p50
-                    </TableHead>
-                    <TableHead
-                      className={cn(runHistoryHeadClass, "text-right")}
-                    >
-                      Total tokens
-                    </TableHead>
-                    <TableHead
-                      className={cn(runHistoryHeadClass, "text-right")}
-                    >
-                      Tool calls
-                    </TableHead>
-                    <TableHead className={runHistoryHeadClass}>
-                      Platform
-                    </TableHead>
-                  </TableRow>
-                </TableHeader>
+                <EvaluateHistoryHeader />
                 <TableBody>
                   {visibleRows.map((launch) => {
                     const representative = [...launch.runs].sort(
@@ -575,15 +542,13 @@ export function SuiteDetailOverview({
                         a.runNumber - b.runNumber || a._id.localeCompare(b._id),
                     )[0];
                     return (
-                      <GroupSummaryRow
+                      <EvaluateHistoryRow
                         key={launch.key}
                         testId={`suite-run-row-${representative._id}`}
                         rows={launch.runs}
                         details={details}
                         historyRows={rowMap}
-                        showGitContext={false}
-                        label={`#${representative.runNumber}`}
-                        date={formatRunHistoryDate(representative.createdAt)}
+                        hostNamesById={hostNamesById}
                         onOpen={() => onRunClick(representative._id)}
                       />
                     );
@@ -633,42 +598,40 @@ export function SuiteDetailOverview({
               Test Cases
             </h3>
             {!readOnlyConfig && !configLocked ? (
-              <div className="flex shrink-0 items-center gap-2">
-                {/* Generate lives here as well as in the empty hero. Reaching it
-                  only through the hero would mean a suite loses the affordance
-                  the moment it has its first case, which is exactly when
-                  "generate more from live discovery" is most useful. */}
-                {onGenerateTestCases ? (
-                  <GenerateCasesButton
-                    onGenerate={handleGenerateCases}
-                    canGenerate={canGenerate}
-                    disabledReason={generateTestCasesDisabledReason}
-                    isGenerating={isGeneratingTestCases}
-                  />
-                ) : null}
-                {onImportCases ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-8"
-                    onClick={onImportCases}
-                  >
-                    Import cases
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button type="button" size="sm" className="h-8 gap-1.5">
+                    <Plus className="size-3.5" aria-hidden /> Add case
+                    <ChevronDown className="size-3.5" aria-hidden />
                   </Button>
-                ) : null}
-                {onEditCases ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-8"
-                    onClick={onEditCases}
-                  >
-                    Add case
-                  </Button>
-                ) : null}
-              </div>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="min-w-44">
+                  {(onDescribeCases ?? onEditCases) && (
+                    <DropdownMenuItem onSelect={onDescribeCases ?? onEditCases}>
+                      Describe
+                    </DropdownMenuItem>
+                  )}
+                  {onGenerateTestCases && (
+                    <DropdownMenuItem
+                      disabled={!canGenerate || isGeneratingTestCases}
+                      title={generateTestCasesDisabledReason ?? undefined}
+                      onSelect={() => void handleGenerateCases()}
+                    >
+                      {isGeneratingTestCases ? "Generating…" : "Generate"}
+                    </DropdownMenuItem>
+                  )}
+                  {onImportCases && (
+                    <DropdownMenuItem onSelect={onImportCases}>
+                      Import
+                    </DropdownMenuItem>
+                  )}
+                  {onEditCases && (
+                    <DropdownMenuItem onSelect={onEditCases}>
+                      Add manually
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
             ) : null}
           </div>
           <ul className="divide-y divide-border/40">

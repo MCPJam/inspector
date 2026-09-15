@@ -151,8 +151,9 @@ export function CreateHostDialog({
       // Users opt servers in afterward via the Servers tab on the host.
       //
       // Historical context: this used to guard against an auto-connect
-      // storm. The current auto-connect toggle is project-scoped (see
-      // preferences-store.ts:40), so the original storm risk is gone,
+      // storm. Auto-connect is now a personal per-device preference that
+      // opens the whole project catalog regardless of a host's serverIds
+      // (see preferences-store.ts), so the original storm risk is gone,
       // but the deliberate-creation framing stays.
       const seed = cloneHostTemplateInput(selectedTemplateInput, { themeMode });
       // Capture available-server count for analytics (we don't attach

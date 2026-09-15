@@ -854,7 +854,9 @@ describe("verdict policy — thresholds at 0, 0.5 and 1, equality included", () 
 
 describe("verdict policy — effective thresholds come from the resolved suite file", () => {
   const SUITE: EvalSuiteFile = {
-    schemaVersion: 1,
+    // The dialect the resolver reads `repetitions` from. This fixture bypasses
+    // validation (see the cast), so the version has to be the real string.
+    schemaVersion: "1",
     mode: "local",
     reportingMode: "standard",
     suite: { id: "s_inheritance", name: "inheritance" },
@@ -885,9 +887,9 @@ describe("verdict policy — effective thresholds come from the resolved suite f
     const resolved = resolveEvalSuiteFile(SUITE);
     const [inherited, overridden] = resolved.cases;
     expect(inherited?.passThreshold).toBe(0.5);
-    expect(inherited?.repetitions).toBe(2);
+    expect(inherited?.iterations).toBe(2);
     expect(overridden?.passThreshold).toBe(1);
-    expect(overridden?.repetitions).toBe(1);
+    expect(overridden?.iterations).toBe(1);
 
     // The fixture's two cases carry exactly those resolved values, which is
     // what `effectivePassThreshold` and `configuredTrials` mean: a decision

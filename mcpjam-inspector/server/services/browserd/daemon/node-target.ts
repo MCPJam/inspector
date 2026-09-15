@@ -32,6 +32,7 @@ import type { CdpLike } from "./webmcp-bridge";
 import type { ActPoint } from "./browser-page";
 import type { RefEntry } from "./a11y-refs";
 import { readAxTree } from "./cdp-a11y";
+import { typeByKeystrokes } from "./keyboard";
 import type { A11yNode } from "./observation-budget";
 
 /**
@@ -45,6 +46,16 @@ import type { A11yNode } from "./observation-budget";
 export interface ResolvedRefNode {
   backendNodeId: number;
   recovered: boolean;
+  /**
+   * The session that can resolve this node id, when it is not the page's
+   * (an element in an out-of-process iframe).
+   */
+  cdp?: CdpLike;
+  /**
+   * The frame this node lives in, for translating its box into the top frame's
+   * coordinate space. Absent on the main document.
+   */
+  sessionFrameId?: string;
 }
 
 /**
@@ -218,7 +229,21 @@ export async function replaceTextInNode(
   text: string,
   /** Asked immediately before the keystrokes land. See `resolveRefNode`. */
   guard: () => void = () => {},
+  options: {
+    /**
+     * Send the text as key events (`features.keystrokeTyping`).
+     * @see typeByKeystrokes
+     */
+    keystrokes?: boolean;
+    /**
+     * Session to type on, when it differs from the node's. Input goes to the
+     * browser's focus, which an OOPIF session does not own, so typing must go
+     * to the page session while focus/select stay on the node's session.
+     */
+    inputCdp?: CdpLike;
+  } = {},
 ): Promise<void> {
+  const input = options.inputCdp ?? cdp;
   await focusBackendNodeId(cdp, backendNodeId);
   const objectId = await resolveObjectId(cdp, backendNodeId);
   if (objectId) {
@@ -244,10 +269,15 @@ export async function replaceTextInNode(
   // and what is on the other side of them is an agent's keystrokes going into
   // a page somebody else now has their hands on.
   guard();
-  // Insert even when the selection could not be cleared: typing into a field
+  // Type even when the selection could not be cleared: typing into a field
   // that kept its old value is a visibly wrong result the model can see and
   // correct, and silently doing nothing is not.
-  await cdp.send("Input.insertText", { text });
+  // The keystroke path also takes the guard, since it can be interrupted.
+  if (options.keystrokes) {
+    await typeByKeystrokes(input, text, guard);
+    return;
+  }
+  await input.send("Input.insertText", { text });
 }
 
 /**
@@ -414,4 +444,128 @@ async function resolveObjectId(
     .send("DOM.resolveNode", { backendNodeId })
     .catch(() => undefined)) as { object?: { objectId?: string } } | undefined;
   return resolved?.object?.objectId;
+}
+
+/**
+ * Where to click an element inside an out-of-process iframe.
+ *
+ * An OOPIF session's `DOM.getBoxModel` answers relative to the iframe's own
+ * box, so the point is translated up the chain by each host `<iframe>`'s
+ * content-quad origin, asked on the session containing that host. Same-process
+ * children already answer in top-frame space and never reach here. Refuses
+ * when a link is missing or the point falls outside a host's box.
+ */
+export async function pointForRefAcrossFrames(
+  args: {
+    /** The session the element itself lives in. */
+    cdp: CdpLike;
+    backendNodeId: number;
+    label: string;
+    /** The element's own frame, and the chain up to the page. */
+    sessionFrameId: string;
+    frames: ReadonlyMap<
+      string,
+      {
+        hostBackendNodeId: number;
+        parentSessionFrameId?: string;
+        frameId: string;
+      }
+    >;
+    /** Resolve a session by its frame id; the page session for `undefined`. */
+    sessionFor: (sessionFrameId: string | undefined) => CdpLike | undefined;
+  },
+): Promise<ActPoint> {
+  const local = await pointForBackendNodeId(
+    args.cdp,
+    args.backendNodeId,
+    args.label,
+  );
+  let point = local;
+  let current: string | undefined = args.sessionFrameId;
+  // Bounded so a cyclic `frames` map cannot spin.
+  for (let hop = 0; hop < 16 && current !== undefined; hop += 1) {
+    const frame = args.frames.get(current);
+    if (!frame) {
+      throw new ActError(
+        "stale_ref",
+        `${args.label} is inside a frame this observation no longer describes; ` +
+          "observe again and use a ref from the new tree",
+      );
+    }
+    const parentSession = args.sessionFor(frame.parentSessionFrameId);
+    if (!parentSession) {
+      throw new ActError(
+        "stale_ref",
+        `the frame that held ${args.label} has gone away; observe again and ` +
+          "use a ref from the new tree",
+      );
+    }
+    const host = await hostQuad(parentSession, frame.hostBackendNodeId);
+    if (!host) {
+      throw new ActError(
+        "target_not_found",
+        `${args.label} is inside a frame that has no visible box to aim at; ` +
+          "observe again and pick a target that is showing",
+      );
+    }
+    // A point outside the host's box is scrolled out of view inside the frame;
+    // translating it would aim at whatever is beside the iframe.
+    if (
+      point.x < 0 ||
+      point.y < 0 ||
+      point.x > host.width ||
+      point.y > host.height
+    ) {
+      throw new ActError(
+        "target_not_found",
+        `${args.label} is scrolled out of view inside its frame; scroll the ` +
+          "frame first, then observe again",
+      );
+    }
+    point = { x: Math.round(point.x + host.x), y: Math.round(point.y + host.y) };
+    current = frame.parentSessionFrameId;
+  }
+  // Hop limit hit before the top frame: a partially translated point would
+  // click somewhere plausible and wrong, so refuse.
+  if (current !== undefined) {
+    throw new ActError(
+      "stale_ref",
+      `${args.label} is nested deeper than this browser can aim through; ` +
+        "observe again and pick a target nearer the top of the page",
+    );
+  }
+  return point;
+}
+
+/** A frame host element's content box, in its own session's viewport. */
+async function hostQuad(
+  cdp: CdpLike,
+  backendNodeId: number,
+): Promise<{ x: number; y: number; width: number; height: number } | null> {
+  const box = (await cdp
+    .send("DOM.getBoxModel", { backendNodeId })
+    .catch(() => undefined)) as { model?: { content?: number[] } } | undefined;
+  const quad = box?.model?.content;
+  if (!quad || quad.length < 8) return null;
+  const xs = [quad[0]!, quad[2]!, quad[4]!, quad[6]!];
+  const ys = [quad[1]!, quad[3]!, quad[5]!, quad[7]!];
+  const x = Math.min(...xs);
+  const y = Math.min(...ys);
+  return {
+    x,
+    y,
+    width: Math.max(...xs) - x,
+    height: Math.max(...ys) - y,
+  };
+}
+
+/**
+ * A classified failure, carried in the message prefix the driver parses.
+ * Declared locally because importing `chromium-driver.ts` would be a cycle.
+ */
+class ActError extends Error {
+  constructor(code: string, detail: string) {
+    super(`${code}: ${detail}`);
+    this.name = "ActError";
+  }
 }

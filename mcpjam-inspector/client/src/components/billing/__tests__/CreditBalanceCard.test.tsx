@@ -37,14 +37,26 @@ vi.mock("@/hooks/useCreditBalance", () => ({
   }),
 }));
 
+vi.mock("@/hooks/useAutoTopup", () => ({
+  useAutoTopup: () => ({
+    enrollment: null,
+    isLoading: false,
+    querySkipped: false,
+    error: null,
+    isSaving: false,
+    save: vi.fn(),
+    disable: vi.fn(),
+  }),
+}));
+
 vi.mock("@/hooks/use-eval-iteration-quota", () => ({
   useEvalIterationQuota: () => ({
     quota: evalQuotaState,
     isLoading: evalQuotaLoadingState,
     isAtLimit: Boolean(
       evalQuotaState &&
-        evalQuotaState.allowed !== null &&
-        evalQuotaState.used >= evalQuotaState.allowed
+      evalQuotaState.allowed !== null &&
+      evalQuotaState.used >= evalQuotaState.allowed,
     ),
   }),
 }));
@@ -85,6 +97,31 @@ describe("CreditBalanceCard", () => {
     evalQuotaState = undefined;
     evalQuotaLoadingState = false;
     window.location.hash = "";
+  });
+
+  it("opens enrollment from Auto-reload beneath the balance", async () => {
+    const user = userEvent.setup();
+    render(<CreditBalanceCard canManageCredits />);
+    expect(
+      screen.getByRole("region", { name: "Buy Credits" }),
+    ).toContainElement(screen.getByRole("button", { name: "Buy credits" }));
+    await user.click(screen.getByRole("button", { name: "Manage" }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("Minimum balance");
+  });
+
+  it("lets members review auto-reload without buying credits", async () => {
+    const user = userEvent.setup();
+    render(<CreditBalanceCard />);
+    expect(
+      screen.queryByRole("button", { name: "Buy credits" }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Manage" }));
+    expect(
+      screen.getByLabelText("Maximum monthly spend (optional)"),
+    ).toBeDisabled();
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "Ask an organization admin",
+    );
   });
 
   it("renders a skeleton state while balance is loading", () => {
@@ -158,7 +195,7 @@ describe("CreditBalanceCard", () => {
     expect(paidRow).toHaveTextContent(/0 credits/);
     // The lock notice lives in its own block, not inside the paid row.
     expect(screen.getByTestId("usage-wallet-locked")).toHaveTextContent(
-      /paused pending review/
+      /paused pending review/,
     );
   });
 
@@ -179,7 +216,7 @@ describe("CreditBalanceCard", () => {
 
     expect(screen.queryByTestId("usage-paid")).toBeNull();
     expect(screen.getByTestId("usage-wallet-locked")).toHaveTextContent(
-      /paused pending review/
+      /paused pending review/,
     );
   });
 
@@ -187,7 +224,7 @@ describe("CreditBalanceCard", () => {
     render(<CreditBalanceCard />);
     const dailyRow = screen.getByTestId("usage-daily");
     expect(
-      within(dailyRow).queryByRole("button", { name: /About/i })
+      within(dailyRow).queryByRole("button", { name: /About/i }),
     ).not.toBeInTheDocument();
   });
 
@@ -224,7 +261,7 @@ describe("CreditBalanceCard", () => {
     await user.hover(
       within(screen.getByTestId("usage-eval-iterations")).getByRole("button", {
         name: /About Monthly eval iterations/,
-      })
+      }),
     );
 
     expect((await screen.findAllByText(/^Resets /)).length).toBeGreaterThan(0);
@@ -241,7 +278,7 @@ describe("CreditBalanceCard", () => {
     render(<CreditBalanceCard organizationId="org-1" />);
 
     expect(
-      screen.queryByTestId("usage-eval-iterations")
+      screen.queryByTestId("usage-eval-iterations"),
     ).not.toBeInTheDocument();
   });
 
@@ -249,10 +286,10 @@ describe("CreditBalanceCard", () => {
     render(<CreditBalanceCard organizationId="org-1" />);
 
     expect(
-      screen.queryByRole("button", { name: /Buy credits/i })
+      screen.queryByRole("button", { name: /Buy credits/i }),
     ).not.toBeInTheDocument();
     expect(screen.getByTestId("usage-ask-admin")).toHaveTextContent(
-      /Ask org admin to top up credits/
+      /Ask org admin to top up credits/,
     );
   });
 
@@ -271,7 +308,7 @@ describe("CreditBalanceCard", () => {
     window.history.replaceState(
       {},
       "",
-      "/organizations/org-1/billing?topup=open"
+      "/organizations/org-1/billing?topup=open",
     );
     render(<CreditBalanceCard organizationId="org-1" canManageCredits />);
 
@@ -295,8 +332,8 @@ describe("CreditBalanceCard", () => {
     expect(screen.getByText(/Organization usage/)).toBeInTheDocument();
     expect(
       screen.getByText(
-        /Model credits and eval iterations are shared across this organization/
-      )
+        /Model credits and eval iterations are shared across this organization/,
+      ),
     ).toBeInTheDocument();
   });
 
@@ -341,7 +378,7 @@ describe("CreditBalanceCard", () => {
       };
       render(<CreditBalanceCard canManageCredits />);
       expect(screen.getByTestId("usage-monthly-exhausted")).toHaveTextContent(
-        /Monthly credits used/
+        /Monthly credits used/,
       );
     });
   });

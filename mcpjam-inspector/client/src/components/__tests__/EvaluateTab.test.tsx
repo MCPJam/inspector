@@ -493,8 +493,8 @@ describe("EvaluateTab", () => {
     expect(screen.getByTestId("project-runs-table")).toBeInTheDocument();
     expect(screen.queryByTestId("evals-suites-landing")).toBeNull();
     const tabs = screen.getByRole("navigation", { name: "Evaluate view" });
-    expect(tabs.querySelector("button")).toHaveTextContent("Runs");
-    expect(screen.getByRole("button", { name: /^runs$/i })).toHaveAttribute("aria-current", "page");
+    expect(tabs.querySelector("button")).toHaveTextContent("Overview");
+    expect(screen.getByRole("button", { name: /^overview$/i })).toHaveAttribute("aria-current", "page");
   });
 
   /**
@@ -508,7 +508,7 @@ describe("EvaluateTab", () => {
       mocks.route.current = { type: "list" };
       const user = userEvent.setup();
       render(<EvaluateTab projectId="ws-1" />);
-      await user.click(screen.getByRole("button", { name: /^runs$/i }));
+      await user.click(screen.getByRole("button", { name: /^overview$/i }));
 
       expect(mocks.projectRunsTable.mock.calls.at(-1)?.[0]).toMatchObject({
         decisionSummaryEnabled: false,
@@ -520,7 +520,7 @@ describe("EvaluateTab", () => {
       mocks.route.current = { type: "list" };
       const user = userEvent.setup();
       render(<EvaluateTab projectId="ws-1" />);
-      await user.click(screen.getByRole("button", { name: /^runs$/i }));
+      await user.click(screen.getByRole("button", { name: /^overview$/i }));
 
       expect(mocks.projectRunsTable.mock.calls.at(-1)?.[0]).toMatchObject({
         projectId: "ws-1",
@@ -556,12 +556,12 @@ describe("EvaluateTab", () => {
     await user.click(screen.getByRole("button", { name: /^suites$/i }));
     expect(screen.getByTestId("evals-suites-landing")).toBeInTheDocument();
     expect(screen.queryByTestId("evals-runs-landing")).toBeNull();
-    await user.click(screen.getByRole("button", { name: /^runs$/i }));
+    await user.click(screen.getByRole("button", { name: /^overview$/i }));
 
     expect(screen.getByTestId("evals-runs-landing")).toBeInTheDocument();
     expect(screen.getByTestId("project-runs-table")).toBeInTheDocument();
     expect(screen.queryByTestId("evals-suites-landing")).toBeNull();
-    expect(screen.getByRole("button", { name: /^runs$/i })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: /^overview$/i })).toHaveAttribute(
       "aria-current",
       "page",
     );
@@ -659,7 +659,7 @@ describe("EvaluateTab", () => {
     ).toBeInTheDocument();
     expect(screen.queryByTestId("evals-runs-landing")).toBeNull();
     expect(screen.queryByTestId("project-runs-table")).toBeNull();
-    expect(screen.getByRole("button", { name: /^runs$/i })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: /^overview$/i })).toHaveAttribute(
       "aria-current",
       "page",
     );

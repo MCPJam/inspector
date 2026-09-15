@@ -302,7 +302,7 @@ export interface RunHeaderView {
   materializationLabel: string;
   includedTrials: number;
   totalTrials: number;
-  /** "Trials in this run" — every count names its population. */
+  /** "Iterations in this run" — every count names its population. */
   populationLabel: string;
   completedAt: number | null;
   disclosures: string[];

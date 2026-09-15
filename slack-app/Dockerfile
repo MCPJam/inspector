@@ -30,6 +30,9 @@ COPY soundcheck/package.json soundcheck/
 COPY mcp/package.json mcp/
 COPY surface-core/package.json surface-core/
 COPY slack-app/package.json slack-app/
+COPY evaluators/package.json ./evaluators/package.json
+COPY discord-app/package.json ./discord-app/package.json
+COPY vitest/package.json ./vitest/package.json
 
 # Install ONLY this workspace's runtime subset (~38 MB) instead of the whole
 # monorepo — the bot needs @slack/bolt and dotenv, not the inspector's build

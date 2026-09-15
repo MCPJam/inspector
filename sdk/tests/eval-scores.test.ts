@@ -20,7 +20,10 @@ const generateObjectMock = vi.fn();
 
 vi.mock("ai", async (importOriginal) => {
   const actual = await importOriginal<typeof import("ai")>();
-  return { ...actual, generateObject: (...args: unknown[]) => generateObjectMock(...args) };
+  return {
+    ...actual,
+    generateObject: (...args: unknown[]) => generateObjectMock(...args),
+  };
 });
 
 vi.mock("../src/model-factory.js", async (importOriginal) => {
@@ -38,7 +41,9 @@ vi.mock("../src/predicates/evaluate.js", async (importOriginal) => {
     await importOriginal<typeof import("../src/predicates/evaluate.js")>();
   return {
     ...actual,
-    evaluatePredicates: (...args: Parameters<typeof actual.evaluatePredicates>) => {
+    evaluatePredicates: (
+      ...args: Parameters<typeof actual.evaluatePredicates>
+    ) => {
       evaluatePredicatesSpy(...args);
       return actual.evaluatePredicates(...args);
     },
@@ -50,7 +55,9 @@ vi.mock("../src/matchers.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/matchers.js")>();
   return {
     ...actual,
-    evaluateToolCalls: (...args: Parameters<typeof actual.evaluateToolCalls>) => {
+    evaluateToolCalls: (
+      ...args: Parameters<typeof actual.evaluateToolCalls>
+    ) => {
       evaluateToolCallsSpy(...args);
       return actual.evaluateToolCalls(...args);
     },
@@ -62,21 +69,16 @@ const { PromptResult } = await import("../src/PromptResult.js");
 const { predicateScorer } = await import("../src/scorers/predicate-scorer.js");
 const { judgeScorer } = await import("../src/scorers/judge-scorer.js");
 const { runScorers } = await import("../src/scorers/run.js");
-const { evaluatePredicates: realEvaluatePredicates } = await import(
-  "../src/predicates/evaluate.js"
-);
-const { buildIterationTranscript } = await import(
-  "../src/predicates/transcript.js"
-);
-const { iterationsToEvalResultInputs } = await import(
-  "../src/eval-result-mapping.js"
-);
-const { MAX_RATIONALE_LENGTH, MAX_SCORER_ID_LENGTH } = await import(
-  "../src/contract/types.js"
-);
-const { buildEvaluationConfigSnapshot } = await import(
-  "../src/contract/derive.js"
-);
+const { evaluatePredicates: realEvaluatePredicates } =
+  await import("../src/predicates/evaluate.js");
+const { buildIterationTranscript } =
+  await import("../src/predicates/transcript.js");
+const { iterationsToEvalResultInputs } =
+  await import("../src/eval-result-mapping.js");
+const { MAX_RATIONALE_LENGTH, MAX_SCORER_ID_LENGTH } =
+  await import("../src/contract/types.js");
+const { buildEvaluationConfigSnapshot } =
+  await import("../src/contract/derive.js");
 
 import type { HostRunner } from "../src/HostRunner.js";
 import type { Predicate } from "../src/predicates/types.js";
@@ -114,9 +116,7 @@ function mockPrompt(options: {
   } as never);
 }
 
-function mockAgent(
-  promptFn: () => ReturnType<typeof mockPrompt>
-): HostRunner {
+function mockAgent(promptFn: () => ReturnType<typeof mockPrompt>): HostRunner {
   const create = (): HostRunner => {
     let history: ReturnType<typeof mockPrompt>[] = [];
     return {
@@ -250,7 +250,9 @@ describe("verdict equivalence with the legacy expression", () => {
         (row) => row.passed
       );
       const legacy =
-        entry.testOutcome && predicatePassed && (iteration.toolMatch?.passed ?? true);
+        entry.testOutcome &&
+        predicatePassed &&
+        (iteration.toolMatch?.passed ?? true);
 
       expect(iteration.passed).toBe(legacy);
     });
@@ -541,12 +543,12 @@ describe("judgeScorer", () => {
 
   it("requires an explicit id and exactly one of rubric/prompt", () => {
     expect(() => judgeScorer({ ...options, id: "  " })).toThrow(/explicit/);
-    expect(() =>
-      judgeScorer({ ...options, prompt: "grade it" })
-    ).toThrow(/exactly one/);
-    expect(() =>
-      judgeScorer({ id: "x", model: "m", apiKey: "k" })
-    ).toThrow(/exactly one/);
+    expect(() => judgeScorer({ ...options, prompt: "grade it" })).toThrow(
+      /exactly one/
+    );
+    expect(() => judgeScorer({ id: "x", model: "m", apiKey: "k" })).toThrow(
+      /exactly one/
+    );
   });
 
   it("rejects a threshold outside [0,1] at CONSTRUCTION", () => {
@@ -651,9 +653,10 @@ describe("judgeScorer", () => {
   it("becomes an error when it exceeds its timeout", async () => {
     let release: (() => void) | undefined;
     generateObjectMock.mockImplementation(
-      () => new Promise((resolve) => {
-        release = () => resolve({ object: { score: 1, reason: "late" } });
-      })
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve({ object: { score: 1, reason: "late" } });
+        })
     );
     const [row] = await runScorers(
       [judgeScorer({ ...options, timeoutMs: 30 })],
@@ -700,9 +703,9 @@ describe("gating policy", () => {
         role: "gating",
       })
     );
-    expect(scoreFor(result.iterationDetails[0].scores, "gate-judge")?.status).toBe(
-      "error"
-    );
+    expect(
+      scoreFor(result.iterationDetails[0].scores, "gate-judge")?.status
+    ).toBe("error");
     expect(result.iterationDetails[0].passed).toBe(false);
   });
 
@@ -804,17 +807,17 @@ describe("reserved scorer ids", () => {
     // carrying a definitionHash that joins to nothing — a permanently failing
     // iteration with no message naming the cause.
     for (const reserved of ["legacy:test", "tool-match"]) {
-      const test = new EvalTest({
-        id: "c_score_11",
-        name: "collision",
-        scorers: [
-          predicateScorer({ type: "noToolErrors" }, { id: reserved }),
-        ],
-        test: async () => true,
-      });
-      await expect(
-        test.run(mockAgent(() => mockPrompt({})), { iterations: 1 })
-      ).rejects.toThrow(/already used by this test's built-in scorers/);
+      expect(
+        () =>
+          new EvalTest({
+            id: "c_score_11",
+            name: "collision",
+            scorers: [
+              predicateScorer({ type: "noToolErrors" }, { id: reserved }),
+            ],
+            test: async () => true,
+          })
+      ).toThrow(/already used by this test's built-in scorers/);
     }
   });
 });
@@ -906,7 +909,10 @@ describe("runner-enforced execution bounds", () => {
       },
     });
 
-    const rows = await runScorers([make(0, 20), make(1, 1), make(2, 10)], context);
+    const rows = await runScorers(
+      [make(0, 20), make(1, 1), make(2, 10)],
+      context
+    );
     expect(rows.map((row) => row.scorerId)).toEqual([
       "ordered-0",
       "ordered-1",

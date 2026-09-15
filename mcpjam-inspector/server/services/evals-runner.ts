@@ -18,7 +18,15 @@ import {
   type UsageTotals,
 } from "./evals/types";
 import { buildEvalIterationVerdict } from "./evals/iteration-verdict";
-import { collectToolAnnotations } from "./evals/transcript-evidence";
+import {
+  assessAgentActivity,
+  countModelInvocations,
+} from "./evals/agent-activity.js";
+import { parseBrowserToolPolicy } from "./evals/browser-tool-policy.js";
+import {
+  collectToolAnnotations,
+  collectToolDeclarations,
+} from "./evals/transcript-evidence";
 import { browserApprovalDeliveryFor } from "./evals/browser-tool-policy.js";
 import { evalBoxFilesystemIsReachable } from "./evals/eval-box-access";
 import { needsEphemeralEvalSandbox } from "./evals/needs-ephemeral-sandbox";
@@ -40,7 +48,10 @@ import {
   type ModelVisibleMcpToolResults,
   type ToolExposureSignals,
 } from "@mcpjam/sdk/host-config/internal";
-import { harnessOfHostConfig } from "./evals/harness-admission.js";
+import {
+  harnessOfHostConfig,
+  isModelFreeCase,
+} from "./evals/harness-admission.js";
 import {
   readTasksPolicy,
   type MCPClientManager,
@@ -174,11 +185,15 @@ import {
 import type { BenchmarkWriteGuard } from "./evals/artifact-ledger.js";
 import { buildStageAuthoredCase } from "./evals/stage-inputs.js";
 import { resolveEvalCaseModelDefinition } from "./evals/harness-admission.js";
+import { resolveBrowserSecrets } from "../utils/secrets/browser-secrets.js";
+import { markRuntimeSecretsDelivered } from "../utils/harness/runtime-secrets.js";
 import {
   createRunSetupObserver,
   type RunSetupObserver,
   type SetupPhase,
+  type SetupFailureDetail,
 } from "./evals/run-setup-signals.js";
+import { connectionChallengeFor } from "./connection-failure-context.js";
 import {
   dispatchEvalIterationFinalize,
   finalizeWithBrowserArtifacts,
@@ -1051,31 +1066,55 @@ function throwSetupPhaseError(args: {
   phase: SetupPhase;
   error: unknown;
   environment: RunEvalSuiteOptions["config"]["environment"] | undefined;
+  /** The observer's explanation, when it recorded one for this failure. */
+  detail?: SetupFailureDetail;
 }): never {
   const serverLabel = getServerLabelForEvalError(
     args.serverId,
     args.environment,
   );
   if (isMissingRuntimeServerError(args.error) || args.phase === "connection") {
-    throw new EvalSetupPhaseError({
+    // The "is not connected" clause stays: callers and tests key on it. The
+    // reason follows it, so the run error, every setup_failed row's `error`,
+    // the API and the CLI all carry the explanation.
+    const setupError = new EvalSetupPhaseError({
       status: 409,
       code: ErrorCode.SERVER_UNREACHABLE,
-      message: `Could not start eval because "${serverLabel}" is not connected. Reconnect the server and try again.`,
+      message: args.detail
+        ? `Could not start eval because "${serverLabel}" is not connected: ${args.detail.line}`
+        : `Could not start eval because "${serverLabel}" is not connected. Reconnect the server and try again.`,
       serverId: args.serverId,
       phase: args.phase,
-      details: { serverId: args.serverId, serverName: serverLabel },
+      details: {
+        serverId: args.serverId,
+        serverName: serverLabel,
+        ...(args.detail ? { cause: args.detail.line } : {}),
+      },
     });
+    setupError.cause = args.error;
+    if (args.detail) setupError.normalized = args.detail.normalized;
+    throw setupError;
   }
   const cause =
-    args.error instanceof Error ? args.error.message : String(args.error);
-  throw new EvalSetupPhaseError({
+    args.detail?.line ??
+    (args.error instanceof Error ? args.error.message : String(args.error));
+  const listError = new EvalSetupPhaseError({
     status: 502,
     code: ErrorCode.SERVER_UNREACHABLE,
-    message: `Could not start eval because "${serverLabel}" failed to list tools. Reconnect the server and try again.`,
+    message: args.detail
+      ? `Could not start eval because "${serverLabel}" failed to list tools: ${args.detail.line}`
+      : `Could not start eval because "${serverLabel}" failed to list tools. Reconnect the server and try again.`,
     serverId: args.serverId,
     phase: args.phase,
-    details: { serverId: args.serverId, serverName: serverLabel, cause },
+    details: {
+      serverId: args.serverId,
+      serverName: serverLabel,
+      cause,
+    },
   });
+  listError.cause = args.error;
+  if (args.detail) listError.normalized = args.detail.normalized;
+  throw listError;
 }
 
 async function getEvalToolsForAiSdkOrThrow(args: {
@@ -1156,6 +1195,10 @@ async function getEvalToolsForAiSdkOrThrow(args: {
           observer?.recordConnect(serverId, {
             outcome: "failed",
             error,
+            challenge: connectionChallengeFor(
+              args.mcpClientManager.getServerConfig?.(serverId)?.baseFetch,
+              error,
+            ),
             startedAt,
             endedAt,
           });
@@ -1170,6 +1213,10 @@ async function getEvalToolsForAiSdkOrThrow(args: {
         observer?.recordToolsList(serverId, {
           outcome: "failed",
           error,
+          challenge: connectionChallengeFor(
+            args.mcpClientManager.getServerConfig?.(serverId)?.baseFetch,
+            error,
+          ),
           startedAt: splitAt(endedAt),
           endedAt,
         });
@@ -1196,6 +1243,7 @@ async function getEvalToolsForAiSdkOrThrow(args: {
       phase: chosen.phase,
       error: chosen.error,
       environment: args.environment,
+      detail: observer?.failureDetail(chosen.serverId, chosen.phase),
     });
   }
 
@@ -1259,7 +1307,7 @@ export function resolveConfiguredServerIds(args: {
 
     const normalizedServerId = availableServerIdsSet.has(trimmedServerRef)
       ? trimmedServerRef
-      : (availableServerIdByLowercase.get(trimmedServerRef.toLowerCase()) ??
+      : availableServerIdByLowercase.get(trimmedServerRef.toLowerCase()) ??
         (() => {
           const projectServerId = projectServerIdByName.get(
             trimmedServerRef.toLowerCase(),
@@ -1287,7 +1335,7 @@ export function resolveConfiguredServerIds(args: {
 
           return undefined;
         })() ??
-        trimmedServerRef);
+        trimmedServerRef;
 
     if (seen.has(normalizedServerId)) {
       continue;
@@ -1698,14 +1746,15 @@ async function persistRunSetupFailure(args: {
           typeof row._id === "string"
             ? row._id
             : typeof row.iterationId === "string"
-              ? row.iterationId
-              : undefined;
+            ? row.iterationId
+            : undefined;
         const test = args.tests.find(
           (candidate) =>
             candidate.testCaseId && candidate.testCaseId === row.testCaseId,
         );
         const snapshot = row.testCaseSnapshot as
-          { query?: string; expectedToolCalls?: unknown[] } | undefined;
+          | { query?: string; expectedToolCalls?: unknown[] }
+          | undefined;
         await persistSetupFailedIteration({
           iterationId,
           runStartedAt: args.runStartedAt,
@@ -2829,12 +2878,12 @@ export const runEvalSuiteWithAiSdk = async ({
   const recorder =
     runId === null
       ? null
-      : (providedRecorder ??
+      : providedRecorder ??
         createSuiteRunRecorder({
           convexClient,
           suiteId,
           runId,
-        }));
+        });
 
   const summary = {
     total: 0,
@@ -2871,6 +2920,10 @@ export const runEvalSuiteWithAiSdk = async ({
   const setupObserver = createRunSetupObserver({
     expectedServerIds: serverIds,
     convexHttpUrl,
+    // Labels only; challenge evidence belongs to the failing operation.
+    context: (serverId) => ({
+      serverLabel: getServerLabelForEvalError(serverId, config.environment),
+    }),
   });
   let resolvedToolPolicyWarnings: string[] | undefined;
 
@@ -3479,7 +3532,7 @@ const runLocalIteration = async ({
   const toolPolicyGate = resolveEnforcementGate({
     ...(toolPolicy ? { toolPolicy } : {}),
     ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
-    ...((testCaseId ?? test.testCaseId)
+    ...(testCaseId ?? test.testCaseId
       ? { testCaseId: testCaseId ?? test.testCaseId }
       : {}),
     runIndex,
@@ -4180,6 +4233,7 @@ const runLocalIteration = async ({
     );
     // Single verdict boundary — matcher + case predicates + ordering + all gates.
     const { evaluation, passed, predicateResults } = buildEvalIterationVerdict({
+      ...collectToolDeclarations(mcpClientManager, selectedServers),
       promptTurns,
       toolsCalledByPrompt: toolsCalledByPromptWithWidgets,
       isNegativeTest: test.isNegativeTest,
@@ -4227,6 +4281,27 @@ const runLocalIteration = async ({
         ...browser.scriptedCheckFailures,
         ...stepScriptedFailures,
       ],
+      // Guards against vacuous passes. @see assessAgentActivity
+      agentActivity: assessAgentActivity({
+        modelFree: isModelFreeCase(test),
+        isNegativeTest: test.isNegativeTest === true,
+        // Resolved: steps-authored cases leave the top-level list undefined.
+        expectedToolCalls: resolveEvalTestCase(test).expectedToolCalls.length,
+        toolSurface: {
+          mcpTools: Object.keys(prepared?.allTools ?? {}).length,
+          browserTools:
+            parseBrowserToolPolicy(resolvedExecution.browserToolPolicy, {
+              source: "agent-activity",
+              // The delivery parse above already reported a malformed policy.
+              quiet: true,
+            }) !== undefined,
+        },
+        toolCalls: toolsCalledByPromptWithWidgets.flat().length,
+        modelInvocations: countModelInvocations({
+          spans: traceForGate?.spans,
+          messages: traceForGate?.messages,
+        }),
+      }),
     });
     const promptTraceSummaries = buildPromptTraceSummaries(
       evaluation,
@@ -4697,7 +4772,7 @@ const runHostedIterationWithBrowser = async (
   const toolPolicyGate = resolveEnforcementGate({
     ...(toolPolicy ? { toolPolicy } : {}),
     ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
-    ...((testCaseId ?? test.testCaseId)
+    ...(testCaseId ?? test.testCaseId
       ? { testCaseId: testCaseId ?? test.testCaseId }
       : {}),
     runIndex,
@@ -4938,6 +5013,17 @@ const runHostedIterationWithBrowser = async (
           })
         : undefined,
     );
+    // Secrets the browser may type. They are substituted inside the daemon and
+    // never become env vars; the box itself still receives none.
+    const browserSecrets = browserApprovalDelivery
+      ? await resolveBrowserSecrets({
+          bearer: convexAuthToken,
+          ...(builtInTarget && "projectId" in builtInTarget
+            ? { projectId: builtInTarget.projectId }
+            : {}),
+          ...(projectEnvironmentId ? { environmentId: projectEnvironmentId } : {}),
+        })
+      : [];
     return resolveHostTools(
       { builtInToolIds: resolvedExecution.builtInToolIds },
       builtInTarget && "projectId" in builtInTarget
@@ -4945,6 +5031,20 @@ const runHostedIterationWithBrowser = async (
             authHeader: convexAuthToken,
             projectId: builtInTarget.projectId,
             ...(browserApprovalDelivery ? { browserApprovalDelivery } : {}),
+            ...(browserSecrets.length > 0
+              ? {
+                  browserSecrets,
+                  onBrowserSecretDelivered: () => {
+                    void markRuntimeSecretsDelivered(convexAuthToken, {
+                      projectId: builtInTarget.projectId,
+                      ...(projectEnvironmentId
+                        ? { environmentId: projectEnvironmentId }
+                        : {}),
+                      secretCount: browserSecrets.length,
+                    });
+                  },
+                }
+              : {}),
             // Names THIS iteration, so an unattended browser gets a profile no
             // other iteration of this suite can reach. The suite's project is
             // not enough: iterations run concurrently against it.
@@ -4959,6 +5059,10 @@ const runHostedIterationWithBrowser = async (
                     sessionId: String(iterationId),
                   },
                 }
+              : {}),
+            // Tag browser ledger rows with the iteration they belong to.
+            ...(iterationId
+              ? { browserCorrelation: { iterationId: String(iterationId) } }
               : {}),
             // The trusted binding to THIS iteration's box. It reaches the
             // resolver on `ctx`, never on the host config, so nothing in a
@@ -5659,6 +5763,7 @@ const runHostedIterationWithBrowser = async (
     selectedServers,
   );
   const { evaluation, passed, predicateResults } = buildEvalIterationVerdict({
+    ...collectToolDeclarations(mcpClientManager, selectedServers),
     promptTurns,
     toolsCalledByPrompt: toolsCalledByPromptWithWidgets,
     isNegativeTest: test.isNegativeTest,
@@ -5694,6 +5799,26 @@ const runHostedIterationWithBrowser = async (
       ...browser.scriptedCheckFailures,
       ...hostedStepScriptedFailures,
     ],
+    // Guards against vacuous passes. @see assessAgentActivity
+    agentActivity: assessAgentActivity({
+      modelFree: isModelFreeCase(test),
+      isNegativeTest: test.isNegativeTest === true,
+      // Resolved: steps-authored cases leave the top-level list undefined.
+      expectedToolCalls: resolveEvalTestCase(test).expectedToolCalls.length,
+      toolSurface: {
+        mcpTools: Object.keys(prepared?.allTools ?? {}).length,
+        browserTools:
+        parseBrowserToolPolicy(resolvedExecution.browserToolPolicy, {
+          source: "agent-activity",
+          quiet: true,
+        }) !== undefined,
+      },
+      toolCalls: toolsCalledByPromptWithWidgets.flat().length,
+      modelInvocations: countModelInvocations({
+        spans: traceForGate?.spans,
+        messages: traceForGate?.messages,
+      }),
+    }),
   });
   const promptTraceSummaries = buildPromptTraceSummaries(
     evaluation,

@@ -619,21 +619,10 @@ describe("reportEvalResults", () => {
     ]);
   });
 
-  it("uploads widget snapshots before reporting results", async () => {
-    const fetchMock = jest
+  it("keeps widget evidence inline so retries have identical content before server storage", async () => {
+    const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(
-        okResponse({
-          uploadUrl: "https://upload.example.com/widget-1",
-        })
-      )
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        statusText: "OK",
-        json: async () => ({ storageId: "storage_1" }),
-      })
-      .mockResolvedValueOnce(
+      .mockResolvedValue(
         okResponse({
           suiteId: "suite_1",
           runId: "run_1",
@@ -643,7 +632,6 @@ describe("reportEvalResults", () => {
         })
       );
     global.fetch = fetchMock as any;
-
     await reportEvalResults({
       apiKey: "sk_test_key",
       baseUrl: "https://example.com",
@@ -673,104 +661,13 @@ describe("reportEvalResults", () => {
       ],
     });
 
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(fetchMock.mock.calls[0][0]).toBe(
-      "https://example.com/api/v1/projects/default/eval-ingest/artifacts/upload-url"
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toContain("eval-ingest/report");
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.results[0].widgetSnapshots[0].widgetHtml).toBe(
+      "<html>cached</html>"
     );
-    expect(fetchMock.mock.calls[1][0]).toBe(
-      "https://upload.example.com/widget-1"
-    );
-    expect(fetchMock.mock.calls[2][0]).toBe(
-      "https://example.com/api/v1/projects/default/eval-ingest/report"
-    );
-
-    const requestBody = JSON.parse(fetchMock.mock.calls[2][1].body as string);
-    expect(requestBody.results[0].widgetSnapshots[0]).toEqual(
-      expect.objectContaining({
-        toolCallId: "call-1",
-        widgetHtmlBlobId: "storage_1",
-      })
-    );
-    expect(
-      requestBody.results[0].widgetSnapshots[0].widgetHtml
-    ).toBeUndefined();
-  });
-
-  it("warns and continues when widget snapshot upload fails", async () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const fetchMock = jest
-      .fn()
-      .mockResolvedValueOnce(
-        okResponse({
-          uploadUrl: "https://upload.example.com/widget-1",
-        })
-      )
-      .mockResolvedValueOnce(errorResponse(400, "upload failed"))
-      .mockResolvedValueOnce(
-        okResponse({
-          suiteId: "suite_1",
-          runId: "run_1",
-          status: "completed",
-          result: "passed",
-          summary: successSummary,
-        })
-      );
-    global.fetch = fetchMock as any;
-
-    const result = await reportEvalResults({
-      apiKey: "sk_test_key",
-      baseUrl: "https://example.com",
-      suiteName: "widget-snapshots-best-effort",
-      results: [
-        {
-          caseTitle: "happy-path",
-          passed: true,
-          widgetSnapshots: [
-            {
-              toolCallId: "call-1",
-              toolName: "create_view",
-              protocol: "mcp-apps",
-              serverId: "server-1",
-              resourceUri: "ui://widget/create-view.html",
-              toolMetadata: {
-                ui: { resourceUri: "ui://widget/create-view.html" },
-              },
-              widgetCsp: null,
-              widgetPermissions: null,
-              widgetPermissive: true,
-              prefersBorder: true,
-              widgetHtml: "<html>cached</html>",
-            },
-          ],
-        },
-      ],
-    });
-
-    expect(result.runId).toBe("run_1");
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining(
-        'skipped widget snapshot upload for "create_view"'
-      )
-    );
-
-    const requestBody = JSON.parse(fetchMock.mock.calls[2][1].body as string);
-    expect(requestBody.results[0].widgetSnapshots[0]).toEqual(
-      expect.objectContaining({
-        toolCallId: "call-1",
-        toolName: "create_view",
-        widgetHtml: "<html>cached</html>",
-      })
-    );
-    expect(
-      requestBody.results[0].widgetSnapshots[0].widgetHtmlBlobId
-    ).toBeUndefined();
-    expect(sentryMocks.addBreadcrumb).toHaveBeenCalledWith(
-      expect.objectContaining({
-        category: "eval-reporting.widget-upload",
-        level: "warning",
-      })
-    );
-    expect(sentryMocks.captureEvalReportingFailure).not.toHaveBeenCalled();
+    expect(body.results[0].widgetSnapshots[0].widgetHtmlBlobId).toBeUndefined();
   });
 
   it("wraps reporting failures in EvalReportingError and captures once", async () => {
@@ -1007,32 +904,38 @@ describe("printRunUrl", () => {
 
   it("prints once for a chunked upload, at finalize", async () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    const fetchMock = vi.fn().mockImplementation((url: string) => {
-      if (String(url).endsWith("/runs/start")) {
+    const fetchMock = vi
+      .fn()
+      .mockImplementation((url: string, init: RequestInit) => {
+        if (String(url).endsWith("/runs/start")) {
+          return Promise.resolve(
+            okResponse({
+              suiteId: "suite_chunk",
+              runId: "run_chunk",
+              projectId: "proj_chunk",
+            })
+          );
+        }
+        if (String(url).endsWith("/runs/iterations")) {
+          return Promise.resolve(
+            okResponse({
+              inserted: JSON.parse(init.body as string).results.length,
+              skipped: 0,
+              total: JSON.parse(init.body as string).results.length,
+            })
+          );
+        }
         return Promise.resolve(
           okResponse({
             suiteId: "suite_chunk",
             runId: "run_chunk",
             projectId: "proj_chunk",
+            status: "completed",
+            result: "passed",
+            summary: successSummary,
           })
         );
-      }
-      if (String(url).endsWith("/runs/iterations")) {
-        return Promise.resolve(
-          okResponse({ inserted: 1, skipped: 0, total: 1 })
-        );
-      }
-      return Promise.resolve(
-        okResponse({
-          suiteId: "suite_chunk",
-          runId: "run_chunk",
-          projectId: "proj_chunk",
-          status: "completed",
-          result: "passed",
-          summary: successSummary,
-        })
-      );
-    });
+      });
     global.fetch = fetchMock as any;
 
     // Over the one-shot result limit, so the chunked path is taken.
@@ -1052,22 +955,30 @@ describe("printRunUrl", () => {
 
   it("prints once on the idempotent-reuse short-circuit (the CI-retry path)", async () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    const fetchMock = vi.fn().mockImplementation((url: string) => {
-      if (String(url).endsWith("/runs/start")) {
-        return Promise.resolve(
-          okResponse({
-            suiteId: "suite_reuse",
-            runId: "run_reuse",
-            projectId: "proj_reuse",
-            reused: true,
-            status: "completed",
-            result: "passed",
-            summary: successSummary,
-          })
-        );
-      }
-      throw new Error(`unexpected request to ${url}`);
-    });
+    const fetchMock = vi
+      .fn()
+      .mockImplementation((url: string, init: RequestInit) => {
+        if (String(url).endsWith("/runs/iterations")) {
+          const count = JSON.parse(String(init.body)).results.length;
+          return Promise.resolve(
+            okResponse({ inserted: 0, skipped: count, total: count })
+          );
+        }
+        if (String(url).endsWith("/runs/start")) {
+          return Promise.resolve(
+            okResponse({
+              suiteId: "suite_reuse",
+              runId: "run_reuse",
+              projectId: "proj_reuse",
+              reused: true,
+              status: "completed",
+              result: "passed",
+              summary: successSummary,
+            })
+          );
+        }
+        throw new Error(`unexpected request to ${url}`);
+      });
     global.fetch = fetchMock as any;
 
     await reportEvalResults({

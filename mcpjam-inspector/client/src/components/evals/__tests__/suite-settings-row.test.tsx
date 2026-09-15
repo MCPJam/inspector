@@ -142,7 +142,7 @@ describe("SuiteSettingsRow", () => {
       </SuiteSettingsRow>,
     );
     expect(
-      screen.getByRole("heading", { name: "Scorers and judges" }),
+      screen.getByRole("heading", { name: "Evaluators" }),
     ).toBeTruthy();
   });
 

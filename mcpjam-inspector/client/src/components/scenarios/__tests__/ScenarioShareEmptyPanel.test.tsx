@@ -70,6 +70,43 @@ describe("ScenarioShareEmptyPanel", () => {
     expect(preview).toHaveAttribute("target", "_blank");
   });
 
+  it("calls it a study, never a scenario", () => {
+    // The product renamed it; the component, its props and the Convex tables
+    // under it did not. This asserts the SENTENCES only — a stray identifier
+    // leaking into copy is the failure mode, and reading the rendered text is
+    // the only way to catch it.
+    const { container } = render(
+      <ScenarioShareEmptyPanel scenario={scenario} />,
+    );
+
+    expect(
+      screen.getByText(/Once someone runs this study/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Opens the live study in a new tab/i))
+      .toBeInTheDocument();
+    expect(
+      screen.getByTestId("user-testing-share-empty-preview"),
+    ).toHaveAccessibleName(/study/i);
+    expect(container.textContent ?? "").not.toMatch(/scenario/i);
+  });
+
+  it("calls it a study when the environment will not resolve", () => {
+    render(
+      <ScenarioShareEmptyPanel
+        scenario={
+          {
+            ...scenario,
+            environmentError: { code: "ENV_ARCHIVED", message: "Archived." },
+          } as unknown as ScenarioSettings
+        }
+      />,
+    );
+
+    expect(
+      screen.getByTestId("user-testing-share-empty-blocked"),
+    ).toHaveTextContent(/This study can.t be opened right now/i);
+  });
+
   it("does not restate the header's share headline", () => {
     render(<ScenarioShareEmptyPanel scenario={scenario} />);
 
