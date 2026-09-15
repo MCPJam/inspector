@@ -452,3 +452,41 @@ describe("SwarmTargetComposer — the block's way out", () => {
     expect(navigateAppMock).toHaveBeenCalledWith("/servers");
   });
 });
+
+describe("SwarmTargetComposer — BB-234's production notice", () => {
+  it("stands on the page, unprompted, above the pickers", () => {
+    // The point of the move: it is visible when the section loads, with no
+    // dropdown opened. Previously it only existed inside the popover.
+    render(<Harness />);
+
+    const notice = screen.getByTestId("new-swarm-production-notice");
+    expect(notice).toBeVisible();
+    // "writing AND deleting" as one phrase: matching only the delete half
+    // would let the write claim be dropped, and writing is the half that
+    // surprises people about a run that looks read-only.
+    expect(notice).toHaveTextContent(/real actions/i);
+    expect(notice).toHaveTextContent(/writing and\s+deleting data/i);
+    expect(notice).toHaveTextContent(
+      /Use a development or staging server for Swarms/i
+    );
+
+    // Document order, since "near the server dropdown" was the ask.
+    const composer = screen.getByTestId("new-swarm-clients-picker");
+    expect(
+      notice.compareDocumentPosition(composer) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+  });
+
+  it("is informational, not a warning — no alert role, no amber", () => {
+    // Vig's call: the band loads every time the feature does, so it must not
+    // read as an alarm. `CloudUnreachableNotice` owns amber and the alert
+    // glyph; this one owns `info` and must not drift into that register.
+    render(<Harness />);
+
+    const notice = screen.getByTestId("new-swarm-production-notice");
+    expect(notice.getAttribute("role")).not.toBe("alert");
+    expect(notice.className).toMatch(/bg-info\/10/);
+    expect(notice.className).not.toMatch(/amber|warning|destructive/);
+  });
+});
