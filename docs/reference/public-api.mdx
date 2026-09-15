@@ -582,10 +582,12 @@ curl -s "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/eval-runs/$RUN_ID/it
 The decision summary composes steps 2 and 4 into one versioned object so every
 client reads a run the same way. Four things to know before gating on it:
 
-- **`measurementUnit` ships with every count.** Under verdict policy v2 the
-  counts are case-execution *variants*, with repetitions as trials inside them;
-  on a legacy run they are trials. The same suite reports a different total
-  under each, so a count without its unit is not a fact.
+- **`measurementUnit` ships with every count.** Under per-case grading the
+  counts are case-execution *variants*, with iterations as trials inside them;
+  under a suite-wide accuracy threshold they are trials. The same suite reports
+  a different total under each — 3 against 15 for three cases run five times —
+  so a count without its unit is not a fact, and a rate is never converted
+  across that line.
 - **It explains the verdict; it never re-decides it.** The run's own decision is
   the authority and is carried through on `decision`. The per-trial
   `diagnostics` sit underneath it — a case can pass with a failing trial in it,
