@@ -633,7 +633,7 @@ export function ServerPicker({
        * first, because the panel's catch reports nothing.
        */
       if (writing.current) {
-        toast.error("Still saving the last change — try again in a moment.");
+        toast.error("Still saving the last change. Try again in a moment.");
         throw new Error("A write is already in flight");
       }
       writing.current = true;
@@ -695,7 +695,7 @@ export function ServerPicker({
       // Deleting what the parent stores, with no way to tell it, leaves that
       // id pointing at nothing while the surface keeps launching against it.
       if (value === groupId && !onClearSelection) {
-        toast.error("Pick a different server first — this one is in use here.");
+        toast.error("Pick a different server first: this one is in use here.");
         return;
       }
       writing.current = true;
