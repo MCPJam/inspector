@@ -27,6 +27,7 @@ function baseParams(
   return {
     promptIndex: 0,
     prompt: "hello",
+    turnTimeoutMs: 5 * 60_000,
     browser: browser as unknown as DriveHostedEvalTurnParams["browser"],
     prepared: {
       allTools: {},

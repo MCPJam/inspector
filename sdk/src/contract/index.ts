@@ -1030,6 +1030,35 @@ export {
 export { caseSourceSchema, type CaseSource } from "./case-source.js";
 
 export {
+  EXECUTION_BUDGET_CEILINGS,
+  EXECUTION_BUDGET_DEFAULTS,
+  EXECUTION_BUDGET_EXCEEDS_CEILING,
+  RESOLVED_EXECUTION_BUDGET_FIELDS,
+  UNIT_TIMEOUT_FIELD,
+  evalExecutionBudgetsSchema,
+  executionBudgetCoreShape,
+  lowerExecutionBudgetCeilings,
+  platformExecutionBudgetCeilings,
+  platformExecutionBudgetDefaults,
+  resolveExecutionBudgets,
+  resolveExecutionBudgetsForSurface,
+  resolvedExecutionBudgetsSchema,
+  swarmExecutionBudgetsSchema,
+} from "./execution-budgets.js";
+export type {
+  AuthoredExecutionBudgets,
+  EvalExecutionBudgets,
+  ExecutionBudgetResolution,
+  ExecutionBudgetSource,
+  ExecutionBudgetSurface,
+  ExecutionBudgetViolation,
+  ResolvedExecutionBudgetField,
+  ResolvedExecutionBudgets,
+  ResolvedExecutionBudgetValues,
+  SwarmExecutionBudgets,
+} from "./execution-budgets.js";
+
+export {
   evalBacktestDraftSchema,
   evalBacktestRequestSchema,
   evalBacktestContinuationSchema,
