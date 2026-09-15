@@ -886,12 +886,13 @@ export function ProjectRunsTable({
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" side="bottom">
                 {platformFilters
-                  .filter((filter) =>
-                    (suiteFilter === ALL_SUITES &&
-                      clientFilter === ALL_EVAL_FILTER_VALUES &&
-                      serverFilter === ALL_EVAL_FILTER_VALUES &&
-                      !hasGitFilter) ||
-                    availablePlatforms.includes(filter.value),
+                  .filter(
+                    (filter) =>
+                      (suiteFilter === ALL_SUITES &&
+                        clientFilter === ALL_EVAL_FILTER_VALUES &&
+                        serverFilter === ALL_EVAL_FILTER_VALUES &&
+                        !hasGitFilter) ||
+                      availablePlatforms.includes(filter.value),
                   )
                   .map((filter) => (
                     <DropdownMenuCheckboxItem
@@ -1196,6 +1197,7 @@ export function ProjectRunsTable({
                       highlighted={hoveredHealthRun === launch.key}
                       rows={launch.runs}
                       details={history.details}
+                      loading={history.loading || isLoadingFirstPage}
                       historyRows={historyRows}
                       hostNamesById={hostNamesById}
                       showSuite

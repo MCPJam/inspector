@@ -172,4 +172,66 @@ describe("Evaluate history rows", () => {
     expect(cells[9]).toHaveTextContent("—");
     expect(cells[10]).toHaveTextContent("—");
   });
+
+  it("reports a still-loading measurement as loading, not as absent", () => {
+    const run = row();
+    render(
+      <table>
+        <tbody>
+          <EvaluateHistoryRow
+            rows={[run, row({ _id: "missing", runNumber: 4 })]}
+            historyRows={new Map()}
+            loading
+            details={
+              new Map([
+                [
+                  run._id,
+                  { run: run as unknown as EvalSuiteRun, iterations: [] },
+                ],
+              ])
+            }
+          />
+        </tbody>
+      </table>,
+    );
+    const cells = screen.getByRole("row").querySelectorAll("td");
+    // Model, Rate, Latency, Tokens, Calls — the five the detail read fills in.
+    for (const index of [2, 4, 8, 9, 10]) {
+      expect(
+        cells[index].querySelector('[data-slot="skeleton"]'),
+      ).not.toBeNull();
+      expect(cells[index]).not.toHaveTextContent("—");
+    }
+    // What the row already knows stays readable through the load.
+    expect(cells[0]).toHaveTextContent("#3");
+    expect(cells[3]).toHaveTextContent("Passed");
+  });
+
+  it("keeps the dash once loading is done and the metric is simply absent", () => {
+    const run = row();
+    render(
+      <table>
+        <tbody>
+          <EvaluateHistoryRow
+            rows={[run]}
+            historyRows={new Map()}
+            loading
+            details={
+              new Map([
+                [
+                  run._id,
+                  { run: run as unknown as EvalSuiteRun, iterations: [] },
+                ],
+              ])
+            }
+          />
+        </tbody>
+      </table>,
+    );
+    // Every row in this launch HAS loaded, so the table still loading a later
+    // page says nothing about this row's own missing measurements.
+    const cells = screen.getByRole("row").querySelectorAll("td");
+    expect(cells[8]).toHaveTextContent("—");
+    expect(cells[8].querySelector('[data-slot="skeleton"]')).toBeNull();
+  });
 });
