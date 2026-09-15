@@ -9,6 +9,18 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-09-15
+
+#### Changed
+
+- **Sessions now shows tool payloads in the Playground's collapsible JSON tree** — tool input and output in session transcripts (User Testing, Swarm, cross-surface Sessions) are now displayed in the same interactive tree the Playground uses, instead of a plain preformatted block. Objects and arrays collapse, deep payloads open two levels and stop, long strings truncate with a control to see the rest, and every node has its own copy button — so pulling one id out of a tool result is a click rather than a select-and-trim.
+
+- **Session tool cards now match the Playground's card shell** — a session transcript was showing tool calls differently from the Playground tab. The card in sessions now has the same header row (MCP mark, mono tool name, call state, chevron), and the same `INPUT` / `RESULT` headings over capped payload boxes. The whole card collapses and starts collapsed, so a transcript reads as a conversation rather than a wall of JSON. A **failed** call opens itself automatically — an error is the reason you opened the session, not something to put behind a disclosure.
+
+- **Raw tab scroll edges fade like the Chat tab in User Testing** — the Raw pane in a User Testing session detail now softens its top and bottom edges as you scroll, matching the Chat tab's behavior. A hard edge that cuts a line mid-token no longer reads as a rendering glitch.
+
+- **Detail-page back button is a raised control** — the back link on User Testing study detail and Swarm run detail pages is now a raised pill button (`h-8`, `rounded-lg`) matching the Edit and Open preview controls on the same row. On hover the arrow glides toward the left and the label darkens.
+
 ### 2026-09-14
 
 #### Changed
