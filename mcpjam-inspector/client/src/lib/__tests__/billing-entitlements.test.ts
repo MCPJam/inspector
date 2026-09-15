@@ -633,6 +633,11 @@ describe("getEvalIterationLimitFromError", () => {
     ).toBe("month");
   });
 
+  it("uses a monthly fallback for Pro while preserving an explicit server window", () => {
+    expect(getEvalIterationLimitFromError(evalLimitError({ plan: "pro" }))?.windowKind).toBe("month");
+    expect(getEvalIterationLimitFromError(evalLimitError({ plan: "pro", windowKind: "day" }))?.windowKind).toBe("day");
+  });
+
   it("falls back to the plan when the payload omits the window", () => {
     // One limit NAME, two windows — daily on Free, monthly per seat on Team —
     // and the wall prints the word ("out of eval iterations today" vs "this
