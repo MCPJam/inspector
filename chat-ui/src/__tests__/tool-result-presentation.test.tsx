@@ -219,6 +219,39 @@ describe("tool result presentation", () => {
     expect(container.textContent).toContain("boom: it failed");
   });
 
+  it("opens a call that fails AFTER it was rendered", () => {
+    // A streaming call mounts long before it fails, and `MessageView` keys a
+    // tool part by its `toolCallId`, so the same component is still there when
+    // the error lands. Reading `hasError` once, in a `useState` initialiser,
+    // left the card collapsed over exactly the failure the rule above exists
+    // to surface. Caught in review on #5097.
+    const { container, rerender } = render(
+      <ToolCallPart toolName="broken" toolState="input-available" />,
+    );
+    expect(container.textContent).not.toContain("boom");
+
+    rerender(
+      <ToolCallPart
+        toolName="broken"
+        toolState="output-error"
+        errorText="boom: it failed"
+      />,
+    );
+    expect(container.textContent).toContain("boom: it failed");
+  });
+
+  it("keeps a card the reader closed shut", () => {
+    // Their answer outranks ours. Asserted on the toggle rather than on a
+    // prop, because this is the half of the fix a derived default could have
+    // broken: recomputing on every render would re-open it under them.
+    render(<ToolCallPart toolName="ping" input={{ host: "a" }} defaultOpen />);
+
+    const header = screen.getByTestId("tool-card-header");
+    expect(header).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(header);
+    expect(header).toHaveAttribute("aria-expanded", "false");
+  });
+
   it("lets an explicit defaultOpen win in both directions", () => {
     // A host showing ONE call rather than a transcript of them wants it open;
     // one showing a wall of failures wants them closed. Asserted on the

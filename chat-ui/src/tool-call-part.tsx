@@ -125,7 +125,16 @@ export function ToolCallPart({
   // someone opened the session, and putting it behind a disclosure means the
   // one thing they came to read is the one thing they have to hunt for. An
   // explicit `defaultOpen` still wins, in either direction.
-  const [open, setOpen] = useState(defaultOpen ?? hasError);
+  //
+  // DERIVED, not seeded into `useState`. `MessageView` keys a tool part by its
+  // `toolCallId`, which is stable from the moment the input starts streaming —
+  // so a call that fails LATER keeps the component it mounted with, and a
+  // `useState(… ?? hasError)` initialiser, which runs once, would leave the
+  // card collapsed over exactly the failure this rule exists to surface.
+  // `null` here means the reader has not touched this card; once they have,
+  // their answer outranks ours, including when an error arrives afterwards.
+  const [readerOpen, setReaderOpen] = useState<boolean | null>(null);
+  const open = readerOpen ?? defaultOpen ?? hasError;
   // `PartSwitch` already applies this test via `readTraceDisplayText`; kept
   // here for direct callers of the public component, which reach this prop
   // without passing through the shared reader.
@@ -158,7 +167,7 @@ export function ToolCallPart({
       />
     );
 
-  const toggle = () => setOpen((prev) => !prev);
+  const toggle = () => setReaderOpen(!open);
   const onHeaderKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "Enter" && event.key !== " ") return;
     event.preventDefault();
