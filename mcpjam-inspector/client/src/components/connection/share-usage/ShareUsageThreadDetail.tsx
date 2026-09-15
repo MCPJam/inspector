@@ -554,6 +554,36 @@ export function ShareUsageThreadDetail({
     PROMOTABLE_SOURCE_TYPES.has(thread.sourceType),
   );
 
+  /**
+   * Why the backend would refuse this promote, when we can know it up front.
+   * `null` means "nothing we can see stops it" — never "it will succeed",
+   * since the server re-checks everything (BB-247).
+   *
+   * Only swarm sessions have a run to have finished. Promotion requires their
+   * attempt to have reached 'succeeded', and a failed, rate-limited or
+   * still-running attempt leaves a transcript that reads exactly like a
+   * complete one — so without this the button looked live and the dialog
+   * answered with a server error. A missing status (older backend, or an
+   * attempt row that claims no session) blocks too: we cannot vouch for it,
+   * and offering the action is what produced the bad error in the first place.
+   */
+  const promoteBlockedReason = useMemo((): string | null => {
+    if (!canPromoteThread || thread?.sourceType !== "swarm") return null;
+    switch (thread.runAttemptStatus) {
+      case "succeeded":
+        return null;
+      case "pending":
+      case "running":
+        return "This session is still running. It can be promoted once the run finishes.";
+      case "rate_limited":
+        return "This session's run stopped on a rate limit, so the conversation is incomplete. Only sessions from runs that finished can become test cases.";
+      case "failed":
+        return "This session's run did not finish, so the conversation is incomplete. Only sessions from runs that finished can become test cases.";
+      default:
+        return "This session's run outcome is unknown, so it cannot be promoted to a test case.";
+    }
+  }, [canPromoteThread, thread?.sourceType, thread?.runAttemptStatus]);
+
   // Reset when the viewer switches sessions, so a dialog opened on one thread
   // never lands on the next one — and when the capability goes away, since a
   // parent can withdraw it while this component stays mounted on the same
@@ -626,10 +656,23 @@ export function ShareUsageThreadDetail({
       return (
         <div className="flex h-full flex-col">
           <SwarmJudgeSection threadId={threadId} goalScore={thread.goalScore} />
-          <div className="flex flex-1 items-center justify-center">
+          <div className="flex flex-1 flex-col items-center justify-center gap-1.5 px-6 text-center">
             <p className="text-sm text-muted-foreground">
               No messages in this session
             </p>
+            {/* This branch has no header, so the disabled promote button and
+                its hover reason never render here — and an empty transcript is
+                USUALLY a run that died before it said anything, which is the
+                question the reader has. Say it in the empty state instead of
+                leaving them to guess (BB-247, CodeRabbit on PR 5127). */}
+            {promoteBlockedReason ? (
+              <p
+                className="max-w-sm text-xs text-muted-foreground"
+                data-testid="share-usage-empty-promote-blocked"
+              >
+                {promoteBlockedReason}
+              </p>
+            ) : null}
           </div>
         </div>
       );
@@ -676,16 +719,42 @@ export function ShareUsageThreadDetail({
             </Button>
           )}
           {canPromoteThread ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-8 rounded-lg px-2.5 text-xs"
-              data-testid="share-usage-promote-to-test-case"
-              onClick={() => setPromoteOpen(true)}
-            >
-              Promote to test case
-            </Button>
+            promoteBlockedReason ? (
+              /* Shown disabled rather than hidden: a missing button reads as a
+                 surface that lost a feature, while a disabled one that says why
+                 on hover answers the question the user actually has. The reason
+                 sits on the WRAPPER — a disabled button fires no pointer events
+                 of its own, so a hint attached to it would never appear — and
+                 doubles as the accessible name for the same reason. */
+              <span
+                className="inline-flex"
+                title={promoteBlockedReason}
+                aria-label={promoteBlockedReason}
+                data-testid="share-usage-promote-blocked"
+              >
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 rounded-lg px-2.5 text-xs"
+                  data-testid="share-usage-promote-to-test-case"
+                  disabled
+                >
+                  Promote to test case
+                </Button>
+              </span>
+            ) : (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 rounded-lg px-2.5 text-xs"
+                data-testid="share-usage-promote-to-test-case"
+                onClick={() => setPromoteOpen(true)}
+              >
+                Promote to test case
+              </Button>
+            )
           ) : null}
           {/* Labeled, never icon-only: readers who wanted to send a session to
               a teammate did not recognize the copy icon as the way to do it.
