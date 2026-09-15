@@ -104,14 +104,17 @@ export type GatedFeatureSample =
 export interface GatedFeatureCopy {
   /** Sidebar and tab wording. Swarms' own h1 is the singular "Swarm". */
   readonly navLabel: string;
-  /** The headline. Sourced, never written here. */
-  readonly heroTitle: string;
   /**
-   * Optional supporting line, and optional on purpose: Swarms has none,
-   * because its sourced headline already says the whole thing and padding it
-   * out would mean inventing a second sentence.
+   * NO HEADLINE OR BODY LIVE HERE ANY MORE.
+   *
+   * They used to, and they drifted from the product inside a single
+   * iteration: the User Testing body became a paraphrase that changed three
+   * words, and the Swarms body vanished without failing a test. The preview
+   * now renders `SwarmsEmptyHero` and `UserTestingEmptyState` directly, so a
+   * signed-out visitor and a signed-in member read the same graphic, heading
+   * and sentence by construction. Change that copy where it ships, in those
+   * two components.
    */
-  readonly heroBody?: string;
   /** Divider label above the sample. */
   readonly sampleLabel: string;
   readonly sample: GatedFeatureSample;
@@ -126,19 +129,6 @@ export interface GatedFeatureCopy {
 export const GATED_FEATURE_COPY: Record<GatedFeatureId, GatedFeatureCopy> = {
   swarms: {
     navLabel: "Swarms",
-    // Vig, #coreuxsquad, Sep 9: the headline from the design file, which had
-    // gone missing from the tab. It replaced a line I had written, and it
-    // carries the whole pitch on its own, so there is no body line under it.
-    heroTitle:
-      "No recruiting, no scheduling, no setup. Agents find what breaks in every client.",
-    // `FIRST_SWARM_EMPTY_DESCRIPTION` from `swarms-empty-hero.tsx`, verbatim.
-    // An earlier pass dropped it on the reasoning that the headline carried the
-    // whole pitch; Ozi put it back, and he is right that the headline says what
-    // you are spared while this says what actually happens. It is also the line
-    // a member sees on their own empty Swarms tab, so a visitor who signs up
-    // meets the same sentence on the other side.
-    heroBody:
-      "We invent realistic users, drop them into the clients your users actually use, and report what breaks.",
     sampleLabel: "What a swarm looks like",
     sample: {
       kind: "findings",
@@ -187,12 +177,6 @@ export const GATED_FEATURE_COPY: Record<GatedFeatureId, GatedFeatureCopy> = {
   },
   "user-testing": {
     navLabel: "User Testing",
-    // Sophie, in thread: the previous line made us sound like an observability
-    // platform.
-    heroTitle: "Share your server with QA teams for user testing",
-    // The real empty-state copy from `UserTestingOverviewPanel.tsx`.
-    heroBody:
-      "A study starts with a link you send. Testers open it, use your server inside the client they already know, and every session is recorded here.",
     sampleLabel: "What a study looks like",
     sample: {
       kind: "flow",

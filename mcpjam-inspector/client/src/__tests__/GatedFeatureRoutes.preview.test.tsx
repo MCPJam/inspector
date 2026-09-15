@@ -184,7 +184,7 @@ describe("gated feature routes — hosted", () => {
 
       renderRoute(<Route />);
 
-      expect(screen.getByText(copy.heroTitle)).toBeInTheDocument();
+      expect(screen.getByTestId(`gated-feature-${feature}`)).toBeInTheDocument();
       expect(screen.queryByText(tabText)).not.toBeInTheDocument();
       // The tab must not merely be hidden — mounting it would fire the
       // member-only queries this gate exists to prevent.
@@ -212,7 +212,7 @@ describe("gated feature routes — hosted", () => {
 
       renderRoute(<Route />);
 
-      expect(screen.getByText(copy.heroTitle)).toBeInTheDocument();
+      expect(screen.getByTestId(`gated-feature-${feature}`)).toBeInTheDocument();
       expect(tabMock).not.toHaveBeenCalled();
     });
 
@@ -228,7 +228,7 @@ describe("gated feature routes — hosted", () => {
 
       // Deciding early would flash a sign-up wall at a paying customer on
       // every cold load.
-      expect(screen.queryByText(copy.heroTitle)).not.toBeInTheDocument();
+      expect(screen.queryByTestId(`gated-feature-${feature}`)).not.toBeInTheDocument();
       expect(screen.queryByText(tabText)).not.toBeInTheDocument();
       expect(tabMock).not.toHaveBeenCalled();
     });
@@ -237,7 +237,7 @@ describe("gated feature routes — hosted", () => {
       renderRoute(<Route />);
 
       expect(screen.getByText(tabText)).toBeInTheDocument();
-      expect(screen.queryByText(copy.heroTitle)).not.toBeInTheDocument();
+      expect(screen.queryByTestId(`gated-feature-${feature}`)).not.toBeInTheDocument();
       expect(
         screen.queryByTestId("gated-feature-sample"),
       ).not.toBeInTheDocument();
@@ -292,7 +292,7 @@ describe("gated feature routes — hosted", () => {
       renderRoute(<Route />, path);
 
       expect(
-        screen.getByText(GATED_FEATURE_COPY[feature].heroTitle),
+        screen.getByTestId(`gated-feature-${feature}`),
       ).toBeInTheDocument();
       expect(mockSwarmsTab).not.toHaveBeenCalled();
       expect(mockUserTestingTab).not.toHaveBeenCalled();

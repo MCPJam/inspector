@@ -95,7 +95,6 @@ vi.mock("@codemirror/lint", () => ({
 }));
 
 import { SwarmsRoute } from "../App";
-import { GATED_FEATURE_COPY } from "@/components/guest-preview/feature-highlights";
 
 /**
  * The route's redirect goes through `ScopedNavigate`, which carries the active
@@ -178,9 +177,7 @@ describe("SwarmsRoute member-only gate", () => {
 
     renderRoute(<SwarmsRoute />);
 
-    expect(
-      screen.getByText(GATED_FEATURE_COPY.swarms.heroTitle),
-    ).toBeInTheDocument();
+    expect(screen.getByTestId("gated-feature-swarms")).toBeInTheDocument();
     expect(screen.queryByText("Swarms Tab")).not.toBeInTheDocument();
     expect(
       screen.queryByText("Swarms is available to project members"),
@@ -240,9 +237,7 @@ describe("SwarmsRoute member-only gate", () => {
 
     renderRoute(<SwarmsRoute />);
 
-    expect(
-      screen.getByText(GATED_FEATURE_COPY.swarms.heroTitle),
-    ).toBeInTheDocument();
+    expect(screen.getByTestId("gated-feature-swarms")).toBeInTheDocument();
     expect(mockSwarmsTab).not.toHaveBeenCalled();
   });
 

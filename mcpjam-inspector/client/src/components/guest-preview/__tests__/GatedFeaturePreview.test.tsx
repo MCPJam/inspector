@@ -14,6 +14,8 @@ vi.mock("@/components/swarms/swarm-hero-characters", () => ({
 import { track } from "@/lib/analytics";
 import { GuestFeaturePreview } from "../GatedFeaturePreview";
 import { GATED_FEATURE_COPY } from "../feature-highlights";
+import { SwarmsEmptyHero } from "@/components/swarms/swarms-empty-hero";
+import { UserTestingEmptyState } from "@/components/scenarios/UserTestingOverviewPanel";
 
 const FEATURES = ["swarms", "user-testing"] as const;
 
@@ -22,7 +24,7 @@ describe("GuestFeaturePreview", () => {
     vi.mocked(track).mockReset();
   });
 
-  it.each(FEATURES)("renders %s's own hero copy and sample", (feature) => {
+  it.each(FEATURES)("renders %s's divider and sample", (feature) => {
     const copy = GATED_FEATURE_COPY[feature];
     render(
       <GuestFeaturePreview feature={feature}>
@@ -30,18 +32,79 @@ describe("GuestFeaturePreview", () => {
       </GuestFeaturePreview>,
     );
 
-    expect(screen.getByText(copy.heroTitle)).toBeInTheDocument();
-    // Optional by design: Swarms' sourced headline carries the whole pitch,
-    // so there is no second line under it to invent.
-    // NOT conditional on `copy.heroBody` being set. It used to be, which is
-    // exactly why Swarms losing its body line passed a full green suite: an
-    // `if` around an assertion turns a missing value into a skipped check.
-    // The type keeps the field optional, so this asserts the CURRENT contract,
-    // which is that both surfaces have one.
-    expect(copy.heroBody).toBeTruthy();
-    expect(screen.getByText(copy.heroBody as string)).toBeInTheDocument();
     expect(screen.getByText(copy.sampleLabel)).toBeInTheDocument();
     expect(screen.getByText(copy.sample.title)).toBeInTheDocument();
+  });
+
+  /**
+   * Ozi's requirement, stated directly: the graphic, heading and body must be
+   * IDENTICAL signed in and signed out. Only the control differs.
+   *
+   * These assertions compare the preview against the real empty state rendered
+   * beside it, rather than against a string literal copied into the test. A
+   * literal would pass while both sides drifted together, which is the failure
+   * this is here to catch: the previous preview kept its own `heroTitle` and
+   * `heroBody`, and the User Testing body had already become a paraphrase that
+   * changed three words nobody approved.
+   */
+  describe("shows a member and a visitor the same empty state", () => {
+    const headingAndBody = (container: HTMLElement) => ({
+      heading: container.querySelector("h2, h3")?.textContent,
+      body: container.querySelector("p")?.textContent,
+    });
+
+    it("matches the real Swarms empty state", () => {
+      const real = render(<SwarmsEmptyHero onNewSwarm={() => {}} />);
+      const member = headingAndBody(real.container);
+      real.unmount();
+
+      const guest = render(
+        <GuestFeaturePreview feature="swarms">
+          <button type="button">Create account</button>
+        </GuestFeaturePreview>,
+      );
+
+      expect(member.heading).toBeTruthy();
+      expect(member.body).toBeTruthy();
+      expect(screen.getByText(member.heading as string)).toBeInTheDocument();
+      expect(screen.getByText(member.body as string)).toBeInTheDocument();
+      guest.unmount();
+    });
+
+    it("matches the real User Testing empty state", () => {
+      const real = render(<UserTestingEmptyState onCreateScenario={() => {}} />);
+      const member = headingAndBody(real.container);
+      real.unmount();
+
+      const guest = render(
+        <GuestFeaturePreview feature="user-testing">
+          <button type="button">Create account</button>
+        </GuestFeaturePreview>,
+      );
+
+      expect(member.heading).toBeTruthy();
+      expect(member.body).toBeTruthy();
+      expect(screen.getByText(member.heading as string)).toBeInTheDocument();
+      expect(screen.getByText(member.body as string)).toBeInTheDocument();
+      guest.unmount();
+    });
+
+    // The half that keeps "identical" from meaning "identical including the
+    // button a visitor cannot use".
+    it.each(FEATURES)("replaces %s's create button with the CTA", (feature) => {
+      render(
+        <GuestFeaturePreview feature={feature}>
+          <button type="button">Create account</button>
+        </GuestFeaturePreview>,
+      );
+
+      expect(
+        screen.getByRole("button", { name: "Create account" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: /create (new swarm|your first)/i }),
+      ).not.toBeInTheDocument();
+    });
   });
 
   // Exactly one. The first draft showed three, which crowded the page and

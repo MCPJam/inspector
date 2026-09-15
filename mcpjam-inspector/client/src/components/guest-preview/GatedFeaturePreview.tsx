@@ -14,7 +14,8 @@
  */
 
 import { useEffect, useRef, type ReactNode } from "react";
-import { SwarmHeroCharacters } from "@/components/swarms/swarm-hero-characters";
+import { SwarmsEmptyHero } from "@/components/swarms/swarms-empty-hero";
+import { UserTestingEmptyState } from "@/components/scenarios/UserTestingOverviewPanel";
 import { PersonaPixelAvatar } from "@/components/swarms/persona-pixel-avatar";
 import { cn } from "@/lib/utils";
 import { track } from "@/lib/analytics";
@@ -80,18 +81,13 @@ export function GuestFeaturePreview({
 
   return (
     <GatedFeatureShell feature={feature}>
-      <div className="flex flex-col items-center text-center">
-        <FeatureHero feature={feature} />
-        <h2 className="mt-4 text-lg font-semibold text-balance text-foreground">
-          {copy.heroTitle}
-        </h2>
-        {copy.heroBody ? (
-          <p className="mt-2 max-w-md text-pretty text-sm text-muted-foreground">
-            {copy.heroBody}
-          </p>
-        ) : null}
-        <div className="mt-5 flex flex-col items-center gap-2">{children}</div>
-      </div>
+      {/* THE REAL EMPTY STATE, not a restatement of it (Ozi).
+          Graphic, heading and body are identical for a signed-out visitor and
+          a signed-in member, because both are looking at the same empty tab.
+          Only the control differs, which is the `action` slot. */}
+      <FeatureHero feature={feature}>
+        <div className="flex flex-col items-center gap-2">{children}</div>
+      </FeatureHero>
 
       <div className="flex w-full items-center gap-3">
         <div className="h-px flex-1 bg-border/50" />
@@ -107,25 +103,30 @@ export function GuestFeaturePreview({
 }
 
 /**
- * Swarms reuses the empty state's jumping golems: they ARE the personas a
- * swarm invents, so the graphic previews the product rather than decorating
- * the page. User Testing reuses its own empty-state illustration, so a visitor
- * who signs up recognises the screen they land on.
+ * The feature's own empty state, rendered with the sign-up CTA in place of
+ * its create button.
+ *
+ * WHY THE COMPONENT AND NOT THE WORDS. The previous version kept a `heroTitle`
+ * and `heroBody` in `feature-highlights.ts`, and they drifted from the product
+ * inside one iteration: the User Testing body came out as a paraphrase that
+ * silently changed three words, and the Swarms body went missing entirely
+ * without failing a test. Importing the component makes both impossible —
+ * there is only one copy of each sentence, and it is the one that ships to
+ * members.
  */
-function FeatureHero({ feature }: { feature: GatedFeatureId }) {
+function FeatureHero({
+  feature,
+  children,
+}: {
+  feature: GatedFeatureId;
+  children: ReactNode;
+}) {
   if (feature === "swarms") {
-    return <SwarmHeroCharacters />;
+    // `onNewSwarm` is required by the props but unreachable: `action` replaces
+    // the button that would call it.
+    return <SwarmsEmptyHero onNewSwarm={() => {}} action={children} />;
   }
-  return (
-    <img
-      src="/user-testing-empty.png"
-      alt=""
-      width={196}
-      height={250}
-      aria-hidden
-      className="h-24 w-auto max-w-full object-contain"
-    />
-  );
+  return <UserTestingEmptyState action={children} />;
 }
 
 // ── The sample ───────────────────────────────────────────────────────────────
