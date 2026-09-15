@@ -289,8 +289,21 @@ describe("highlightJson", () => {
   });
 
   it("preserves whitespace between tokens", () => {
-    const html = highlightJson('{ "a": 1 }');
-    expect(html).toContain(" ");
+    // Asserted as the WHOLE string, not `toContain(" ")` — that passed on the
+    // space inside `class="json-key"`, so it held even with the
+    // between-token branch deleted. The editor overlay is positioned over a
+    // textarea and has to line up with it character for character, so dropped
+    // indentation is visible misalignment.
+    expect(highlightJson('{ "a": 1 }')).toBe(
+      '<span class="json-punctuation">{</span>' +
+        '<span class="json-punctuation"> </span>' +
+        '<span class="json-key">"a"</span>' +
+        '<span class="json-punctuation">:</span>' +
+        '<span class="json-punctuation"> </span>' +
+        '<span class="json-number">1</span>' +
+        '<span class="json-punctuation"> </span>' +
+        '<span class="json-punctuation">}</span>'
+    );
   });
 
   it("styles untokenized trailing content as punctuation", () => {

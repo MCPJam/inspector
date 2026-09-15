@@ -96,25 +96,28 @@ them to look like two products, which is what happened to Sessions: a generic
 chat bubble in front of every response and monochrome JSON, beside a Playground
 that had neither.
 
-**The boundary is the provider graph, not read-only vs. interactive.** The
-inspector's renderer (`mcpjam-inspector/client/src/components/chat-v2/thread.tsx`,
-via `thread/transcript-thread.tsx`) is built on inspector stores, contexts and
-the widget runtime. Use it on any surface that has them:
+**Pick by whether the inspector's provider graph is available.** Its renderer
+(`mcpjam-inspector/client/src/components/chat-v2/thread.tsx`, via
+`mcpjam-inspector/client/src/components/chat-v2/thread/transcript-thread.tsx`)
+is built on inspector stores, contexts and the widget runtime. Use it on any
+surface that has them:
 
-- `components/ui-playground/PlaygroundMain.tsx` and `multi-model-playground-card.tsx`
-- `components/ChatTabV2.tsx` and `chat-v2/multi-model-chat-card.tsx`
-- `components/mcpjam-agent/McpjamAgentThread.tsx`
-- `components/evals/trace-viewer.tsx` — **read-only, and still on this
-  renderer.** It replays a finished trace but keeps a live seam
-  (`interactive={threadInteractive}`) for sending a follow-up from the trace.
-  Being read-only is not by itself a reason to move a surface here.
+- `mcpjam-inspector/client/src/components/ui-playground/PlaygroundMain.tsx`
+- `mcpjam-inspector/client/src/components/ui-playground/multi-model-playground-card.tsx`
+- `mcpjam-inspector/client/src/components/ChatTabV2.tsx`
+- `mcpjam-inspector/client/src/components/chat-v2/multi-model-chat-card.tsx`
+- `mcpjam-inspector/client/src/components/mcpjam-agent/McpjamAgentThread.tsx`
+- `mcpjam-inspector/client/src/components/evals/trace-viewer.tsx` — **read-only,
+  and still on this renderer.** It replays a finished trace but keeps a live
+  seam (`interactive={threadInteractive}`) for sending a follow-up from it.
+  Being read-only is not on its own a reason to move a surface across.
 
 Use `@mcpjam/chat-ui` where that graph is absent or unwanted — a transcript that
 must render with no Convex, no stores, no analytics and no side effects:
 
-- `connection/share-usage/ShareUsageThreadDetail.tsx`, which is what Sessions
-  (User Testing and Swarm) and Scenarios all render
-- `connection/share-usage/session-scored-transcript.tsx`
+- `mcpjam-inspector/client/src/components/connection/share-usage/ShareUsageThreadDetail.tsx`,
+  which is what Sessions (User Testing and Swarm) and Scenarios all render
+- `mcpjam-inspector/client/src/components/connection/share-usage/session-scored-transcript.tsx`
 - any embedder outside this repo
 
 Before forking a third renderer, note that `renderTool`, `renderWidget`,
@@ -138,6 +141,6 @@ widget, never edits a payload (the Playground's `JsonEditor` is CodeMirror and
 writable; `JsonView` is a `<pre>`), and folds large tool results by default
 because a review surface is read top-to-bottom while a live chat is watched.
 
-Paths above are repo-root-relative. This file lives in a different workspace
-from most of them, so a rename on the client side will not prompt an edit here
-— they are written to be greppable rather than resolvable.
+Paths above are repo-root-relative, so they resolve. This file still lives in a
+different workspace from most of them, so a client-side rename will not prompt
+an edit here; if one looks stale, grep for the basename.

@@ -111,7 +111,8 @@ export function ToolCallPart({
       {hasInput ? (
         <FoldedBlock label="Input" text={inputText}>
           {/* Coloured only once open: a closed block stays mounted, and a
-              token tree for six clipped lines is the wrong trade. */}
+              token tree for the few clipped lines on show is the wrong
+              trade. */}
           {(open) => <JsonView value={input} text={inputText} highlight={open} />}
         </FoldedBlock>
       ) : null}
@@ -130,7 +131,19 @@ export function ToolCallPart({
           {/* One renderer for both kinds the adapter produces: prose the tool
               returned, and structured output it already fenced as ```json.
               Markdown gives the fence its code treatment, so there is no
-              second branch to keep in step. */}
+              second branch to keep in step.
+
+              NOT converted to the `(open) =>` form that Input and Output use,
+              and this is the block that matters most: under
+              `attached-to-tool` a Result REPLACES Output (see `hasRawOutput`
+              below), and that is the User Testing session path. So a closed
+              Result still mounts Streamdown's full remark/rehype pipeline.
+
+              Left alone deliberately rather than overlooked. The cheap closed
+              mode is raw text, and for a pre-fenced payload that shows literal
+              ``` markers in the preview — a visible downgrade on exactly the
+              surface this renderer exists to make readable. Worth doing with a
+              design call behind it, not folded into a perf change. */}
           <Markdown
             content={readableResult}
             className="max-w-full overflow-auto break-words text-foreground"

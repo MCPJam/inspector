@@ -18,7 +18,9 @@ const pre = (container: HTMLElement) =>
  * Losslessness is the property under test throughout. It is structural — the
  * render loop emits every character the tokenizer did not claim — so these
  * check it on BOTH paths, coloured and plain, rather than trusting the gate to
- * protect it.
+ * protect it. The coloured path's gap emission is pinned by the indentation
+ * and escapes in "shows exactly the text it was given"; delete either gap
+ * branch in `JsonView` and that case fails.
  */
 describe("JsonView", () => {
   it("colours keys, strings, numbers, booleans and null", () => {
@@ -41,14 +43,14 @@ describe("JsonView", () => {
     expect(pre(container).textContent).toBe(text);
   });
 
-  it("is lossless for a payload the tokenizer only partly claims", () => {
-    // Passes the opener check but is not valid JSON, so it renders plain —
-    // and the characters the tokenizer skips (`NaN`, `undefined`, `0x1F`) must
-    // still be on screen. This is the gap-emission path a well-formed payload
-    // never exercises.
+  it("is lossless for a realistic malformed payload", () => {
+    // A tool result with JS-isms in it. Passes the opener check, fails the
+    // parse, so it takes the PLAIN path — and the tokens it would have lost
+    // there (`NaN`, `undefined`, `0x1F`) must still be on screen.
     const text = '{"a": NaN, "b": undefined, "c": 0x1F}';
     const { container } = render(<JsonView value={text} />);
     expect(pre(container).textContent).toBe(text);
+    expect(pre(container).querySelector("span")).toBeNull();
   });
 
   it("leaves structural-looking text that is not JSON uncoloured", () => {
@@ -70,10 +72,12 @@ describe("JsonView", () => {
 
   it("renders a payload one character over the cap complete but uncoloured", () => {
     // The path a multi-megabyte tool result takes. Colour is the thing that is
-    // allowed to go; the payload is not.
-    const padding = "x".repeat(HIGHLIGHT_CHAR_LIMIT);
+    // allowed to go; the payload is not. Sized so the serialised text is
+    // exactly one character over, which is the boundary worth pinning.
+    const envelope = JSON.stringify({ a: "" }).length;
+    const padding = "x".repeat(HIGHLIGHT_CHAR_LIMIT + 1 - envelope);
     const text = JSON.stringify({ a: padding });
-    expect(text.length).toBeGreaterThan(HIGHLIGHT_CHAR_LIMIT);
+    expect(text.length).toBe(HIGHLIGHT_CHAR_LIMIT + 1);
 
     const { container } = render(<JsonView value={text} />);
     expect(pre(container).textContent).toBe(text);

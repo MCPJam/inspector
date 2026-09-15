@@ -94,7 +94,7 @@ export function FoldedBlock({
    * renderer whose cost scales with the payload can stay cheap while closed —
    * the collapsed branch below keeps its children mounted rather than
    * unmounting them, so a syntax-highlighted `JsonView` would build a full
-   * token tree for content clipped to six lines.
+   * token tree for a few clipped lines.
    */
   children: ReactNode | ((open: boolean) => ReactNode);
   className?: string;

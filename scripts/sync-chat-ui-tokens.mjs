@@ -19,8 +19,10 @@
  * are likewise untouched — they are chat-ui's own port of the inspector's
  * waterfall styling, not core palette tokens.
  *
- * Values are emitted as HSL channel triplets because that is what
- * `hsl(var(--token))` consumers expect; the source of truth stays OKLCH.
+ * Most values are emitted as HSL channel triplets because that is what
+ * `hsl(var(--token))` consumers expect; the source of truth stays OKLCH. A
+ * group marked `raw` keeps the canonical OKLCH instead, for tokens read as
+ * `var(--token)` directly — the `--json-*` syntax colours are the case.
  *
  * Usage:
  *   node scripts/sync-chat-ui-tokens.mjs           # rewrite chat-ui/src/styles.css

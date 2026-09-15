@@ -24,16 +24,12 @@ describe("assistant avatar", () => {
 
   it("draws no avatar by default", () => {
     const { container } = render(<ReadOnlyTranscript messages={messages} />);
-    // The bubble is the only `svg` an assistant message with one text part
-    // would carry, so its absence is the assertion.
-    expect(assistant(container).querySelector("svg")).toBeNull();
-  });
-
-  it("gives the message no avatar gutter when there is no avatar", () => {
-    const { container } = render(<ReadOnlyTranscript messages={messages} />);
-    // `gap-4` spaces the text from an avatar that is not there; without it the
-    // response starts at the transcript's own left edge, like the Playground.
-    expect(assistant(container)).not.toHaveClass("gap-4");
+    // The built-in bubble labels itself from the model, so this is the same
+    // query the opt-in case below asserts POSITIVELY — which keeps the two
+    // pinned against each other rather than against a utility class.
+    expect(
+      assistant(container).querySelector("[aria-label='Unknown']")
+    ).toBeNull();
   });
 
   it("shows a host avatar passed WITHOUT showAssistantAvatar", () => {
@@ -50,7 +46,6 @@ describe("assistant avatar", () => {
     const avatar = container.querySelector("img");
     expect(avatar).not.toBeNull();
     expect(avatar).toHaveAttribute("alt", "Unknown");
-    expect(assistant(container)).toHaveClass("gap-4");
   });
 
   it("lets an explicit false suppress a host avatar", () => {
