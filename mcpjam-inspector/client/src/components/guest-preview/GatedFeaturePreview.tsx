@@ -265,10 +265,14 @@ function SampleFlow({
   // `h-20` box the bezier S-curves flattened into straight bars and only the
   // first gap read as a split. Taller box, taller viewBox relative to width,
   // and a narrower bar so the ribbons get the space instead.
+  // SEPARATION IS THE POINT, so the gaps are generous rather than tidy. At
+  // `nodeGap` 3.5 the bands butted against each other and the card read as one
+  // block; the reference on mcpjam.com spends roughly a third of its height on
+  // whitespace between nodes, and that is what gives each ribbon its own lane.
   const width = 100;
-  const height = 74;
-  const barW = 2.5;
-  const nodeGap = 3.5;
+  const height = 120;
+  const barW = 2;
+  const nodeGap = 11;
   const colGap = (width - barW) / (sample.stages.length - 1);
 
   // Each column is stacked independently: its gaps come out of the height
@@ -360,11 +364,11 @@ function SampleFlow({
       </div>
       <svg
         viewBox={`0 0 ${width} ${height}`}
-        className="h-32 w-full"
+        className="h-48 w-full"
         preserveAspectRatio="none"
       >
         {ribbons.map((r) => (
-          <path key={r.key} d={r.d} className={cn(r.tone, "opacity-45")} />
+          <path key={r.key} d={r.d} className={cn(r.tone, "opacity-40")} />
         ))}
         {columns.map((col, i) =>
           col.map((seg, j) => (

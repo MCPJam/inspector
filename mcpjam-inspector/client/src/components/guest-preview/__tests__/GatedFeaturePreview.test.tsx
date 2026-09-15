@@ -205,20 +205,20 @@ describe("GuestFeaturePreview", () => {
       expect(merges.length).toBeGreaterThan(0);
     });
 
-    it("carries the crossing the card exists for: goal reached, still frustrated", () => {
+    it("carries the crossing the card exists for: goal reached, felt nothing", () => {
       const outcome = sample.stages.find((stage) => stage.label === "Outcome");
       const sentiment = sample.stages.find(
         (stage) => stage.label === "Sentiment",
       );
       const reachedIdx =
         outcome?.nodes.findIndex((n) => n.label === "Goal reached") ?? -1;
-      const frustratedIdx =
-        sentiment?.nodes.findIndex((n) => n.label === "Frustrated") ?? -1;
+      const neutralIdx =
+        sentiment?.nodes.findIndex((n) => n.label === "Neutral") ?? -1;
       expect(reachedIdx).toBeGreaterThanOrEqual(0);
-      expect(frustratedIdx).toBeGreaterThanOrEqual(0);
+      expect(neutralIdx).toBeGreaterThanOrEqual(0);
 
       const crossing = outcome?.links?.find(
-        (link) => link.from === reachedIdx && link.to === frustratedIdx,
+        (link) => link.from === reachedIdx && link.to === neutralIdx,
       );
       expect(crossing).toBeDefined();
       expect(crossing?.share).toBeGreaterThan(0);

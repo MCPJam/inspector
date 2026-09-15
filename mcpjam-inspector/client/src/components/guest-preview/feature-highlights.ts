@@ -182,71 +182,80 @@ export const GATED_FEATURE_COPY: Record<GatedFeatureId, GatedFeatureCopy> = {
       kind: "flow",
       title: "Where sessions went",
       subtitle: "Session flow",
-      // The four columns the real Session flow carries, and the same visual
-      // mcpjam.com already leads with for user acceptance testing.
+      // Traced from the Session flow on mcpjam.com's user-acceptance-testing
+      // panel, which Ozi handed over as the sample to match. Its taxonomy, in
+      // its order: two goals, three behaviors, three outcomes, four sentiments.
       //
-      // THE SHAPE IS THE MESSAGE. One goal splits three ways at BEHAVIOR, and
-      // the two goals land in different proportions, so the picture says what
-      // a study is for: the same task is not one path, and the branch that
-      // matters is usually the small one. A card where everything runs
-      // straight across would be advertising a report nobody needs to read.
+      // THE NODE COUNTS ARE DOING THE WORK. The previous version had 2/3/2/2
+      // and read as a solid block, because two nodes in a column means two fat
+      // bars with one gap between them and nowhere for a ribbon to separate.
+      // The reference spreads 2/3/3/4 over the same height, so every ribbon
+      // gets its own lane. That is why this is wider taxonomy rather than just
+      // more padding.
       //
-      // The ribbon worth finding is `O0 -> S1` (0.05): sessions that REACHED
-      // the goal and were still frustrated. It is the smallest band on the
-      // card and the one a researcher would click first, which is the honest
-      // pitch for the product.
-      //
-      // Healthy but not fictional, per Ozi's earlier note: 71% reach the goal,
-      // 66% come away satisfied. A study with no failures would mean the
-      // method found nothing.
+      // Healthy but honest, per Ozi's earlier note: 68% reach the goal and 58%
+      // come away satisfied. The band worth finding is `Goal reached ->
+      // Neutral` at 10%, sessions that succeeded and felt nothing, which is the
+      // kind of thing only a study surfaces.
       stages: [
         {
           label: "Goal",
           nodes: [
-            { label: "Export a diagram", share: 0.55 },
-            { label: "Restore a save", share: 0.45 },
+            { label: "Refund duplicate", share: 0.44 },
+            { label: "Reconcile payout", share: 0.56 },
           ],
           links: [
-            { from: 0, to: 0, share: 0.38 },
-            { from: 0, to: 1, share: 0.13 },
-            { from: 0, to: 2, share: 0.04 },
-            { from: 1, to: 0, share: 0.14 },
-            { from: 1, to: 1, share: 0.17 },
-            { from: 1, to: 2, share: 0.14 },
+            { from: 0, to: 0, share: 0.16 },
+            { from: 0, to: 1, share: 0.08 },
+            { from: 0, to: 2, share: 0.2 },
+            { from: 1, to: 0, share: 0.1 },
+            { from: 1, to: 1, share: 0.08 },
+            { from: 1, to: 2, share: 0.38 },
           ],
         },
         {
           label: "Behavior",
           nodes: [
-            { label: "Found the tool", share: 0.52 },
-            { label: "Retried the same call", share: 0.3 },
-            { label: "Never found it", share: 0.18 },
+            { label: "Repeated calls", share: 0.26 },
+            { label: "Guessed ID", share: 0.16 },
+            { label: "Clean path", share: 0.58 },
           ],
           links: [
-            { from: 0, to: 0, share: 0.52 },
-            { from: 1, to: 0, share: 0.19 },
-            { from: 1, to: 1, share: 0.11 },
-            { from: 2, to: 1, share: 0.18 },
+            { from: 0, to: 0, share: 0.14 },
+            { from: 0, to: 1, share: 0.09 },
+            { from: 0, to: 2, share: 0.03 },
+            { from: 1, to: 0, share: 0.04 },
+            { from: 1, to: 1, share: 0.04 },
+            { from: 1, to: 2, share: 0.08 },
+            { from: 2, to: 0, share: 0.5 },
+            { from: 2, to: 1, share: 0.08 },
           ],
         },
         {
           label: "Outcome",
           nodes: [
-            { label: "Goal reached", share: 0.71 },
-            { label: "Unresolved", share: 0.29 },
+            { label: "Goal reached", share: 0.68 },
+            { label: "Unresolved", share: 0.21 },
+            { label: "Wrong action", share: 0.11 },
           ],
           links: [
-            { from: 0, to: 0, share: 0.66 },
-            // Reached the goal, still unhappy. The band this card exists for.
-            { from: 0, to: 1, share: 0.05 },
-            { from: 1, to: 1, share: 0.29 },
+            { from: 0, to: 0, share: 0.58 },
+            // Reached the goal and felt nothing. The band this card is for.
+            { from: 0, to: 1, share: 0.1 },
+            { from: 1, to: 1, share: 0.07 },
+            { from: 1, to: 2, share: 0.1 },
+            { from: 1, to: 3, share: 0.04 },
+            { from: 2, to: 2, share: 0.05 },
+            { from: 2, to: 3, share: 0.06 },
           ],
         },
         {
           label: "Sentiment",
           nodes: [
-            { label: "Satisfied", share: 0.66 },
-            { label: "Frustrated", share: 0.34 },
+            { label: "Satisfied", share: 0.58 },
+            { label: "Neutral", share: 0.17 },
+            { label: "Frustrated", share: 0.15 },
+            { label: "Gave up", share: 0.1 },
           ],
         },
       ],
