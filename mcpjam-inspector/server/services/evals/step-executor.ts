@@ -1,3 +1,4 @@
+import type { TimeoutMetadata } from "../../utils/run-supervisor/deadline.js";
 /**
  * step-executor.ts — the single sequential executor over a unified `TestStep[]`.
  *
@@ -160,8 +161,22 @@ export interface StepEngineOutcome {
    * server not connected). Stops the executor; the caller's verdict gate reads
    * it via the returned `iterationError`.
    */
+  timeout?: TimeoutMetadata;
   iterationError?: string;
   iterationErrorDetails?: string;
+  /**
+   * This step's engine reported that the turn was CANCELLED — aborted from
+   * outside rather than finished, well or badly.
+   *
+   * Carried across the bridge because it is not an error and not a result:
+   * without it a cancelled turn arrives as an empty delta, indistinguishable
+   * from a turn that simply produced nothing, and the executor marches on to
+   * the next step of a run somebody already stopped. Cancellation used to
+   * survive only because the iteration runner separately re-read the run's
+   * abort signal — true in production, but a second source of truth for a
+   * fact this outcome already knows.
+   */
+  cancelled?: boolean;
   /**
    * WHICH LAYER produced `iterationError`, reported by the catch site that
    * raised it rather than inferred from its text.
@@ -227,12 +242,15 @@ export interface StepExecutorHandlers {
 export interface StepExecutorResult {
   state: StepExecutionState;
   /** Set when a `prompt`/`toolCall` step reported a fatal error. */
+  timeout?: TimeoutMetadata;
   iterationError?: string;
   iterationErrorDetails?: string;
   /** Which layer raised `iterationError` — see `StepEngineOutcome`. */
   errorSource?: "model" | "setup";
   errorCode?: string;
   errorHttpStatus?: number;
+  /** A step's engine reported cancellation — see `StepEngineOutcome`. */
+  cancelled?: boolean;
   /** True when `iterationError` is a setup (not assertion) failure. */
   setupFailure: boolean;
 }
@@ -552,6 +570,7 @@ export async function executeSteps(args: {
     // turn the model happened to fail.
     return {
       state,
+      ...(failed.timeout ? { timeout: failed.timeout } : {}),
       iterationError: failed.iterationError,
       ...(failed.iterationErrorDetails
         ? { iterationErrorDetails: failed.iterationErrorDetails }
@@ -581,6 +600,9 @@ export async function executeSteps(args: {
       emitStatus(stepIndex, "running");
       const outcome = await handlers.onPrompt({ step, stepIndex, turnOrdinal });
       applyOutcome(state, outcome, turnOrdinal);
+      // Before the error check: a cancelled turn has no error to report, and
+      // continuing to the next step of a stopped run is the thing to avoid.
+      if (outcome.cancelled) return { state, cancelled: true, setupFailure: false };
       if (outcome.iterationError) {
         emitStatus(stepIndex, "fail");
         recordSkippedSteps(
@@ -592,6 +614,7 @@ export async function executeSteps(args: {
         emitSkipped(stepIndex + 1);
         return {
           state,
+          ...(outcome.timeout ? { timeout: outcome.timeout } : {}),
           iterationError: outcome.iterationError,
           iterationErrorDetails: outcome.iterationErrorDetails,
           ...(outcome.errorSource ? { errorSource: outcome.errorSource } : {}),
@@ -623,6 +646,7 @@ export async function executeSteps(args: {
         turnOrdinal,
       });
       applyOutcome(state, outcome, turnOrdinal);
+      if (outcome.cancelled) return { state, cancelled: true, setupFailure: false };
       if (outcome.iterationError) {
         emitStatus(stepIndex, "fail");
         recordSkippedSteps(
@@ -634,6 +658,7 @@ export async function executeSteps(args: {
         emitSkipped(stepIndex + 1);
         return {
           state,
+          ...(outcome.timeout ? { timeout: outcome.timeout } : {}),
           iterationError: outcome.iterationError,
           iterationErrorDetails: outcome.iterationErrorDetails,
           ...(outcome.errorSource ? { errorSource: outcome.errorSource } : {}),

@@ -38,6 +38,7 @@ import {
   resolveOpenAiCompatForHostConfig,
 } from "@mcpjam/sdk/host-config/internal";
 import {
+  defaultEvalExecutionBudgets,
   resolveSteps,
   runEvalSuiteWithAiSdk,
   streamTestCase,
@@ -2429,6 +2430,7 @@ export async function prepareEvalRun(
     recorder,
     deduped: runWasDeduped,
     status: existingRunStatus,
+    executionBudgets: runExecutionBudgets,
     githubCredentialPolicy,
     hostConfig: runHostConfigSnapshot,
     pluginVersions: runEnvironmentPluginVersions = [],
@@ -2873,6 +2875,10 @@ export async function prepareEvalRun(
     await runEvalSuiteWithAiSdk({
       suiteId: resolvedSuiteId,
       runId,
+      // The budgets the LAUNCH froze. Omitted when the backend predates the
+      // field, which the runner reads as "resolve the platform defaults" —
+      // same code path, differing only in which rung each field came from.
+      ...(runExecutionBudgets ? { executionBudgets: runExecutionBudgets } : {}),
       config,
       modelApiKeys: resolvedModelApiKeys ?? undefined,
       orgModelConfig: resolvedOrgModelConfig,
@@ -3672,6 +3678,10 @@ export async function streamEvalTestCaseWithManager(
       try {
         const outcomes = await streamTestCase({
           test,
+          // A quick run has no launch response to carry frozen budgets, so it
+          // takes the platform defaults — resolved through the real resolver,
+          // not hand-written, so it matches what a launch would freeze.
+          budgets: defaultEvalExecutionBudgets(),
           tools,
           selectedServers: resolvedServerIds,
           mcpClientManager: clientManager,

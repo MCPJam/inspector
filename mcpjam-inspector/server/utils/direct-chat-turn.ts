@@ -300,6 +300,17 @@ export interface RunDirectChatTurnOptions {
    */
   prepareAdvertisedTools?: PrepareAdvertisedTools;
   abortSignal?: AbortSignal;
+  /**
+   * Per-turn retry budget handed to the AI SDK for its own transient-failure
+   * retries (`ResolvedExecutionBudgets.turnRetries`). Absent ⇒ the SDK's
+   * default, which the eval default deliberately matches, so a caller that
+   * does not thread budgets is byte-identical to before.
+   *
+   * This is the SDK's retry of ONE model call, not the runner's retry of a
+   * turn: it never re-runs tools and never outlives the turn deadline, since
+   * every attempt shares the same composed `abortSignal`.
+   */
+  maxRetries?: number;
   /** Optional bag of trace-event callbacks. Chat passes these; eval/headless omits. */
   traceEvents?: DirectChatTurnTraceEvents;
   /**
@@ -549,6 +560,7 @@ export function runDirectChatTurn(
     discoveryState,
     prepareAdvertisedTools,
     abortSignal,
+    maxRetries,
     traceEvents,
     onLiveTextDelta,
     onStepFinish,
@@ -748,6 +760,7 @@ export function runDirectChatTurn(
       () => shouldPauseAfterStep?.() === true,
     ],
     ...(abortSignal ? { abortSignal } : {}),
+    ...(maxRetries !== undefined ? { maxRetries } : {}),
     ...(toolChoice ? { toolChoice } : {}),
     ...(experimentalTelemetry
       ? { experimental_telemetry: experimentalTelemetry }
