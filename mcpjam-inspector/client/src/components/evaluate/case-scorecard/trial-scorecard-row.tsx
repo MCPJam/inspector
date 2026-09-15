@@ -226,9 +226,10 @@ export function TrialScorecardRow({
                 </p>
               )}
               {row.narrative && !row.narrative.stale && (
-                <p className="mt-1 text-muted-foreground">
-                  AI explanation from cited trace evidence.
-                </p>
+                <details className="mt-1 text-muted-foreground">
+                  <summary>AI explanation · cited trace evidence</summary>
+                  <p>{row.narrative.citations.join(" · ")}</p>
+                </details>
               )}
             </dd>
             <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">

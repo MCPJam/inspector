@@ -235,6 +235,14 @@ export function useUnifiedFindings(args: {
       ? "ai"
       : "deterministic";
 
+  // The branch `onAnalyze` takes: a snapshot that is not stale can only be
+  // enriched, anything else has to be built first. Availability follows the
+  // same split so an enabled button never lands on a silent return.
+  const analyzeCapable =
+    experiment?.snapshot && experiment.snapshot.enrichment?.status !== "stale"
+      ? experiment.canEnrich === true
+      : experiment?.canBuild === true;
+
   // A new enrichment landed for the run this section asked about: the
   // request is settled whether or not `pending` was ever observed.
   useEffect(() => {
@@ -358,7 +366,7 @@ export function useUnifiedFindings(args: {
     provenance,
     analyze: {
       available:
-        (experiment?.canBuild === true || experiment?.canEnrich === true) &&
+        analyzeCapable &&
         experiment?.job?.status !== "pending" &&
         !args.generation.unavailable &&
         args.generation.canRequest,

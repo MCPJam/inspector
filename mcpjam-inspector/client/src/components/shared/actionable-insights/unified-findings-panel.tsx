@@ -318,7 +318,9 @@ export function UnifiedFindingsPanel({
             .filter(([, count]) => count > 0)
             .map(
               ([reason, count]) =>
-                `${count} iterations ${humanExclusion(reason)}`,
+                `${count} ${
+                  count === 1 ? "iteration" : "iterations"
+                } ${humanExclusion(reason)}`,
             )
             .join("; ")}
           .

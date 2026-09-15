@@ -559,13 +559,15 @@ describe("analysis states and provenance", () => {
         total: 16,
         analyzed: 7,
         gradedCount: 7,
-        exclusions: { chainUnverified: 9 },
+        exclusions: { chainUnverified: 9, notTerminal: 1 },
       } as never,
     });
     expect(screen.getByTestId("unified-findings-empty")).toBeVisible();
-    expect(
-      screen.getByTestId("unified-findings-exclusion-summary"),
-    ).toHaveTextContent("9 iterations without a verified stage chain");
+    const summary = screen.getByTestId("unified-findings-exclusion-summary");
+    expect(summary).toHaveTextContent(
+      "9 iterations without a verified stage chain",
+    );
+    expect(summary).toHaveTextContent(/\b1 iteration\b/);
   });
   it("reports backend availability and stale analysis without showing mode tabs", () => {
     renderPanel({
