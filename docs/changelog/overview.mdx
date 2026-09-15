@@ -11,6 +11,10 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ### 2026-09-15
 
+#### Removed
+
+- **Grading card removed from User Testing study Settings** — the Grading card (enable/disable toggle, session sample percentage, and Checks list) no longer appears in a study's Settings. Sharing permissions, Ratings, and Delete remain in place; Ratings now sits directly above Delete with no gap. The backend grading pipeline is unchanged — studies that already have grading configured keep their stored settings.
+
 #### Changed
 
 - **Session transcripts now match the Playground's visual style** — session transcripts (User Testing, Swarm, Scenarios) no longer show a generic chat-bubble icon in front of every assistant response, matching the Playground renderer which has never drawn one. JSON payloads in session transcripts are now syntax-highlighted with the same colors the Playground uses — keys, strings, numbers, booleans, and null each get a distinct color. Plain text, stack traces, and payloads over 100 KB render as uncolored monospace. Both changes apply wherever a session transcript appears; no configuration is required.
