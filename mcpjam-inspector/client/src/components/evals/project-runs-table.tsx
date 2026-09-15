@@ -1030,7 +1030,7 @@ export function ProjectRunsTable({
         )}
         <div
           className={cn(
-            "overflow-x-auto",
+            "@container/run-history overflow-x-auto",
             evaluateLayout && "rounded-lg border border-border",
           )}
         >

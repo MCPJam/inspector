@@ -532,7 +532,7 @@ export function SuiteDetailOverview({
                   : "No runs yet."}
             </div>
           ) : (
-            <div className="overflow-x-auto bg-card">
+            <div className="@container/run-history overflow-x-auto bg-card">
               <RunHistoryTable aria-label="Suite run history">
                 <EvaluateHistoryHeader />
                 <TableBody>
