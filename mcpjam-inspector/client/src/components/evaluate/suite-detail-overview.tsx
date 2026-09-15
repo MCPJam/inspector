@@ -37,6 +37,7 @@ import {
   Sparkles,
   Plus,
   ChevronDown,
+  Trash2,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -45,6 +46,15 @@ import {
   DropdownMenuItem,
 } from "@mcpjam/design-system/dropdown-menu";
 import { Button } from "@mcpjam/design-system/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@mcpjam/design-system/dialog";
+import { toast } from "sonner";
 import { TableBody } from "@mcpjam/design-system/table";
 import {
   Tooltip,
@@ -59,6 +69,7 @@ import {
   evalSurfaceRowHoverClass,
 } from "../evals/eval-surface-chrome";
 import { getEffectiveSuiteServers } from "../evals/helpers";
+import { EVAL_DESTRUCTIVE_BUTTON_CLASS } from "../evals/constants";
 import {
   SUITE_RUN_HISTORY_PAGE_SIZE,
   buildSuiteRunHistoryRows,
@@ -123,6 +134,7 @@ export function SuiteDetailOverview({
   generateTestCasesDisabledReason,
   isGeneratingTestCases = false,
   onImportCases,
+  onDeleteTestCasesBatch,
   onRunClick,
   onTestCaseClick,
   rerunningSuiteId,
@@ -159,6 +171,11 @@ export function SuiteDetailOverview({
   generateTestCasesDisabledReason?: string;
   isGeneratingTestCases?: boolean;
   onImportCases?: () => void;
+  /**
+   * Shared with the cross-host dashboard's row delete — same batch mutation,
+   * same confirm copy. Absent (or suite read-only) hides the row trash button.
+   */
+  onDeleteTestCasesBatch?: (testCaseIds: string[]) => Promise<void>;
   onRunClick: (runId: string) => void;
   onTestCaseClick: (testCaseId: string) => void;
   rerunningSuiteId: string | null;
@@ -190,6 +207,26 @@ export function SuiteDetailOverview({
   const [modelFilter, setModelFilter] = useState(ALL_EVAL_FILTER_VALUES);
   const [showAllRuns, setShowAllRuns] = useState(false);
   const [reviewRun, setReviewRun] = useState(false);
+  const [caseToDelete, setCaseToDelete] = useState<{
+    id: string;
+    title: string;
+  } | null>(null);
+  const [isDeletingCase, setIsDeletingCase] = useState(false);
+
+  const confirmDeleteCase = async () => {
+    if (!caseToDelete || !onDeleteTestCasesBatch) return;
+    setIsDeletingCase(true);
+    try {
+      await onDeleteTestCasesBatch([caseToDelete.id]);
+      toast.success("Test case deleted");
+      setCaseToDelete(null);
+    } catch (error) {
+      console.error("Failed to delete test case:", error);
+      toast.error("Failed to delete test case");
+    } finally {
+      setIsDeletingCase(false);
+    }
+  };
 
   const historyRows = useMemo(
     () =>
@@ -331,6 +368,9 @@ export function SuiteDetailOverview({
   });
   const runDisabled = Boolean(runBlockedReason);
   const hasCases = cases.length > 0;
+  const canDeleteCases = Boolean(
+    onDeleteTestCasesBatch && !readOnlyConfig && !configLocked,
+  );
   /**
    * Hide the card until there is something to put in it. A never-run suite
    * already has Test Cases (or the empty-cases hero) — an empty history table
@@ -401,6 +441,7 @@ export function SuiteDetailOverview({
         suiteId={suite._id}
         suiteName={suite.name}
         onChangeSettings={changeGenerationSettings}
+        onDone={exitGeneration}
       />
     );
 
@@ -680,14 +721,17 @@ export function SuiteDetailOverview({
           </div>
           <ul className="divide-y divide-border/40">
             {testCaseRows.map((row) => (
-              <li key={row.caseId}>
+              <li
+                key={row.caseId}
+                className={cn(
+                  "group flex items-center gap-1 pr-2",
+                  evalSurfaceRowHoverClass,
+                )}
+              >
                 <button
                   type="button"
                   data-testid={`suite-test-case-row-${row.caseId}`}
-                  className={cn(
-                    "flex w-full flex-col items-start gap-0.5 px-4 py-3 text-left",
-                    evalSurfaceRowHoverClass,
-                  )}
+                  className="flex min-w-0 flex-1 flex-col items-start gap-0.5 px-4 py-3 text-left"
                   onClick={() => onTestCaseClick(row.caseId)}
                 >
                   <span className="text-sm font-medium text-foreground">
@@ -699,6 +743,20 @@ export function SuiteDetailOverview({
                     </span>
                   ) : null}
                 </button>
+                {canDeleteCases ? (
+                  <button
+                    type="button"
+                    data-testid={`suite-test-case-delete-${row.caseId}`}
+                    onClick={() =>
+                      setCaseToDelete({ id: row.caseId, title: row.title })
+                    }
+                    title="Delete test case"
+                    aria-label={`Delete test case: ${row.title}`}
+                    className="shrink-0 rounded p-1.5 text-muted-foreground/50 opacity-0 transition-[opacity,colors] group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive focus-visible:opacity-100 focus-visible:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive/40"
+                  >
+                    <Trash2 className="size-3.5" aria-hidden />
+                  </button>
+                ) : null}
               </li>
             ))}
           </ul>

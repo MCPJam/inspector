@@ -25,6 +25,7 @@ export function EvalGenerationWorkspace({
   autoStart = true,
   config,
   onChangeSettings,
+  onDone,
 }: {
   projectId: string;
   suiteId: string;
@@ -33,6 +34,8 @@ export function EvalGenerationWorkspace({
   config?: GenerateCasesConfig;
   /** Reopen the scope dialog, for a failure that retrying cannot fix. */
   onChangeSettings?: () => void;
+  /** Back to the suite, once there is nothing left to do here. */
+  onDone?: () => void;
 }) {
   const generation = useEvalGeneration(
     (s) => s.suites[evalSuiteKey({ projectId, suiteId })],
@@ -101,6 +104,13 @@ export function EvalGenerationWorkspace({
     ? (describeMCPJamLimitMessage(error) ?? error)
     : undefined;
   const scopeIsUnfixableByRetry = isUnretryableGenerationScope(error);
+  /**
+   * An empty list reads as "nothing was generated", but the usual way to
+   * reach it is the opposite: every draft was saved or discarded, and the
+   * list emptied as they went. Remember that a draft was here.
+   */
+  const sawDraft = useRef(false);
+  if (generation?.drafts.length) sawDraft.current = true;
   const running = generation?.status === "running" || (!generation && !error);
   const revealing = Boolean(nextDraftId);
   const busy = running || revealing;
@@ -201,9 +211,20 @@ export function EvalGenerationWorkspace({
           </div>
         )}
         {!busy && !error && !generation?.drafts.length && (
-          <p className="text-sm text-muted-foreground">
-            No generated drafts to review.
-          </p>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              {sawDraft.current
+                ? "Every generated case has been reviewed."
+                : "No cases were generated."}
+            </p>
+            {/* The breadcrumb is the only other way back, and it does not
+                read as the next step once the work here is done. */}
+            {onDone && (
+              <Button variant="outline" size="sm" onClick={onDone}>
+                Back to {suiteName}
+              </Button>
+            )}
+          </div>
         )}
       </div>
     </section>

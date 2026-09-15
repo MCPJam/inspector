@@ -150,6 +150,37 @@ it("keeps the retry when a fresh attempt could still succeed", () => {
   expect(screen.getByRole("button", { name: "Retry generation" })).toBeEnabled();
 });
 
+/**
+ * The list empties as drafts are saved or discarded, so "no drafts" is
+ * normally the END of the work rather than a generation that produced
+ * nothing — and the page said the opposite of what had happened.
+ */
+it("says the work is finished once every draft has been reviewed", () => {
+  const onDone = vi.fn();
+  seed("ready", ["Reviewed case"]);
+  const view = renderWithProviders(
+    <EvalGenerationWorkspace {...target} autoStart={false} onDone={onDone} />,
+  );
+  act(() => seed("ready", []));
+  view.rerender(
+    <EvalGenerationWorkspace {...target} autoStart={false} onDone={onDone} />,
+  );
+  expect(
+    screen.getByText("Every generated case has been reviewed."),
+  ).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: /Back to/ }));
+  expect(onDone).toHaveBeenCalledTimes(1);
+});
+
+/** A run that genuinely produced nothing must not claim a review happened. */
+it("says nothing was generated when no draft ever arrived", () => {
+  seed("ready", []);
+  renderWithProviders(
+    <EvalGenerationWorkspace {...target} autoStart={false} onDone={vi.fn()} />,
+  );
+  expect(screen.getByText("No cases were generated.")).toBeVisible();
+});
+
 it("shows startup failures and retries directly", () => {
   const generate = vi.fn(() => new Promise<void>(() => {}));
   renderWithProviders(<EvalGenerationWorkspace {...target} />);
