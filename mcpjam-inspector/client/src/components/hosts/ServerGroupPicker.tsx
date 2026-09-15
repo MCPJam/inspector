@@ -478,13 +478,13 @@ export function ServerGroupPicker({
               scare-screen that stops people running swarms at all.
             */}
             <div className="flex items-start gap-1.5 px-2 pb-1.5 pt-0.5">
-              <AlertTriangle className="mt-[1px] size-3 shrink-0 text-amber-600 dark:text-amber-500" />
+              <AlertTriangle className="mt-[1px] size-3 shrink-0 text-warning" />
               <p
                 className="text-[11px] leading-snug text-muted-foreground"
                 data-testid="server-group-production-warning"
               >
-                Agents take real actions on these servers, including writing
-                and deleting data. Use development servers, not production.
+                Agents take real actions on these servers, including writing and
+                deleting data. Use development servers, not production.
               </p>
             </div>
             {serverAttachments.length === 0 && !isLoading ? (
