@@ -325,16 +325,6 @@ export function RunResultsMatrix({
     setStatus(ALL_EVAL_FILTER_VALUES);
     onClearExtraFilters?.();
   };
-  const isSdkTarget = (target: RunResultsMatrixData["targets"][number]) =>
-    target.run.source === "sdk" || target.run.client?.source === "sdk";
-  const openSdkCase = (caseKey: string) => {
-    const targets = data.targets.filter(target => isSdkTarget(target) && (target.cells.get(caseKey)?.length ?? 0) > 0);
-    const target = targets[0];
-    if (!target) return;
-    const items = target.cells.get(caseKey) ?? [];
-    setSelectedIterationId(targets.length === 1 && items.length === 1 ? items[0]._id : null);
-    setSelection({ caseKey, targetKey: target.key });
-  };
   const selectedRow = data.rows.find((row) => row.key === selection?.caseKey);
   const selectedTarget = data.targets.find(
     (target) => target.key === selection?.targetKey,
@@ -508,12 +498,10 @@ export function RunResultsMatrix({
                   scope="row"
                   className={cn(
                     "sticky left-0 z-10 bg-card p-0 align-top font-medium",
-                    ((onEditCase && row.testCaseId) || data.targets.some(isSdkTarget)) && "hover:bg-muted/50",
+                    onEditCase && row.testCaseId && "hover:bg-muted/50",
                   )}
                 >
-                  {data.targets.some(target => isSdkTarget(target) && (target.cells.get(row.key)?.length ?? 0) > 0) ? (
-                    <button type="button" className="block min-h-16 w-full break-words p-4 text-left text-[13px] leading-5 text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring" aria-label={`Inspect test case: ${row.title}`} onClick={() => openSdkCase(row.key)}>{row.title}</button>
-                  ) : onEditCase && row.testCaseId ? (
+                  {onEditCase && row.testCaseId ? (
                     <button
                       type="button"
                       className="block min-h-16 w-full break-words p-4 text-left text-[13px] leading-5 text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
@@ -918,7 +906,6 @@ function IterationDrawer({
       <div className="min-h-0 flex-1 overflow-y-auto p-6">
         <IterationDetails
           iteration={iteration}
-          isSdkRun={target.run.source === "sdk" || target.run.client?.source === "sdk"}
           testCase={null}
           layoutMode="full"
           trialVerdictWord={outcomeLabel(result)}
