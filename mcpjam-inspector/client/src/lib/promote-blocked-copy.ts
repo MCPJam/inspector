@@ -1,5 +1,3 @@
-import { convexErrMessage } from "@/lib/convex-error";
-
 /**
  * Codes the backend stamps on the `ConvexError` it throws when a promotion is
  * refused for a reason the user can act on (`convex/lib/promotableChatSessions.ts`,
@@ -20,24 +18,37 @@ const PROMOTION_BLOCKED_COPY: Record<string, string> = {
  * Convex function reaches the browser wrapped in the raw
  * "[CONVEX A(...)] ... Uncaught Error ... at handler (../convex/...)" envelope,
  * and that envelope was rendering verbatim inside the dialog's alert, stack
- * frames and file paths included (BB-247). Anything we do not recognise falls
- * back to `convexErrMessage`, which prefers a `ConvexError` payload's own
- * message and strips the bracketed server prefix from a bare throw.
+ * frames and file paths included (BB-247).
+ *
+ * Unrecognised failures fall back to the payload a `ConvexError` carries — a
+ * string, or its `message` field — because those are written deliberately for
+ * a reader (the content-transfer refusal and the suite-scope mismatch both
+ * arrive that way). `Error.message` itself is NEVER shown: anything that is
+ * not a `ConvexError` is an unexpected fault, and its message is the server
+ * envelope this function exists to keep out of the UI. Callers get `fallback`
+ * instead.
  */
 export function getPromoteBlockedMessage(
   error: unknown,
-  fallback: string,
+  fallback: string
 ): string {
   const data =
     error && typeof error === "object" && "data" in error
       ? (error as { data: unknown }).data
       : null;
-  const code =
-    data && typeof data === "object" && "code" in data
-      ? (data as { code: unknown }).code
-      : null;
-  if (typeof code === "string" && PROMOTION_BLOCKED_COPY[code]) {
-    return PROMOTION_BLOCKED_COPY[code];
+  if (typeof data === "string") {
+    return data.trim() ? data.slice(0, 400) : fallback;
   }
-  return convexErrMessage(error, fallback);
+  if (data && typeof data === "object") {
+    const code = "code" in data ? (data as { code: unknown }).code : null;
+    if (typeof code === "string" && PROMOTION_BLOCKED_COPY[code]) {
+      return PROMOTION_BLOCKED_COPY[code];
+    }
+    const message =
+      "message" in data ? (data as { message: unknown }).message : null;
+    if (typeof message === "string" && message.trim()) {
+      return message.slice(0, 400);
+    }
+  }
+  return fallback;
 }
