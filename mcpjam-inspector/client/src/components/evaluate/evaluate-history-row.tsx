@@ -6,11 +6,15 @@ import {
 } from "@mcpjam/design-system/table";
 import { cn } from "@/lib/utils";
 import { runClientIdentity } from "../evals/helpers";
-import { resolveRunOrigin } from "@/lib/evals/run-origin";
+import {
+  resolveRunOrigin,
+  resolveRunOriginDetail,
+  runOriginTitle,
+  RUN_ORIGIN_META,
+} from "@/lib/evals/run-origin";
 import { RunClientsCell } from "../evals/run-clients-cell";
 import {
   RunCommitCell,
-  RunPlatformBadge,
   readRunGitMetadata,
   type RunGitMetadataValue,
 } from "../evals/run-git-metadata";
@@ -217,11 +221,18 @@ export function EvaluateHistoryRow({
       </TableCell>
       <TableCell>
         <div className="flex flex-wrap items-center gap-2">
-          {/* The badge, not a re-derived label: it carries the tooltip that
-              separates a verified attribution from a client's own claim. */}
-          {platforms.map((row) => (
-            <RunPlatformBadge key={row._id} run={row} neutral />
-          ))}
+          {platforms.map((row) => {
+            const resolved = resolveRunOriginDetail(row);
+            return (
+              <span
+                key={row._id}
+                className="text-muted-foreground"
+                title={runOriginTitle(resolved?.origin, resolved?.basis)}
+              >
+                {RUN_ORIGIN_META[resolved?.origin ?? "ui"].label}
+              </span>
+            );
+          })}
         </div>
       </TableCell>
       <TableCell>

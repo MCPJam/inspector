@@ -39,13 +39,12 @@ export function buildSuiteHealth(
         return [];
       const stats = projectRunRollup(members, details);
       if (!stats || stats.total === 0) return [];
-      // The bar measures the SELECTED client's runs, so the run it names and
-      // opens has to come from those members. Taking it from the whole launch
-      // labelled a Cursor bar with the Claude run beside it and opened that.
-      const representative = [...members].sort(
+      // Match the table row's launch target, even when the chart measures
+      // only one client within that launch.
+      const representative = [...launch.runs].sort(
         (a, b) => a.runNumber - b.runNumber || a._id.localeCompare(b._id),
       )[0];
-      const run = details.get(representative._id)!.run;
+      const run = details.get(members[0]._id)!.run;
       return [
         {
           key: launch.key,

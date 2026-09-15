@@ -58,6 +58,23 @@ function fixture() {
 }
 
 describe("Suite Health", () => {
+  it("opens the launch row's representative when charting a different client", async () => {
+    const data = fixture();
+    data.details.get("old")!.run.runGroupId = "shared-launch";
+    data.details.get("new")!.run.runGroupId = "shared-launch";
+    data.details.get("new")!.run.client = {
+      source: "suite_default", name: "Cursor", hostStyle: "cursor",
+    };
+    const onSelectRun = vi.fn();
+    render(<SuiteHealth {...data} complete failed={false} onRetry={vi.fn()} hostNamesById={new Map()} onSelectRun={onSelectRun} />);
+    // The newest client is Cursor, but both clients share row #1.
+    const point = buildSuiteHealth(data.rows, data.details, "s1", "style:cursor").points[0];
+    expect(point.runNumber).toBe(1);
+    expect(point.rate).toBeCloseTo(100 / 3);
+    await userEvent.setup().click(screen.getByTestId("suite-health-bar"));
+    expect(onSelectRun).toHaveBeenCalledWith({ suiteId: "s1", runId: "old" });
+  });
+
   it("uses the suite's current threshold, including zero", () => {
     render(
       <SuiteHealth
