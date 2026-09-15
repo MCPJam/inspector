@@ -160,6 +160,10 @@ Standalone clients do not appear as options in the Scenarios client picker dropd
 
 A **server attachment** is a named, reusable set of servers drawn from the project pool. Server attachments let you decouple _which servers are active_ from the Client configuration itself, so you can swap the server set without touching the model or prompt settings.
 
+<Warning>
+  Agents take real actions on the servers in the selected group, including writing and deleting data. Use development servers, not production.
+</Warning>
+
 ### Eval suites
 
 When you create an eval suite, you can pick a server attachment in the **Servers** section of the create dialog. All hosts attached to the suite run against that same server set. You can also change the attachment later from the suite header.
