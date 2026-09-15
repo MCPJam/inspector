@@ -1642,13 +1642,19 @@ export type PlatformEvalSuiteGroundednessJudge = {
  */
 export interface PlatformEvalSuiteSettingsBase {
   /**
-   * The LEGACY suite-wide floor, as a percentage in [0, 100].
+   * The SUITE-WIDE accuracy threshold, as a percentage in [0, 100].
+   *
+   * One rate over the whole run must reach this; individual cases have no
+   * threshold of their own. It is not the per-case criterion in other units —
+   * ten cases, nine always passing and one always failing, passes a 90%
+   * suite-wide bar and fails a 0.9 per-case one — so dividing it by 100 moves
+   * the bar for every suite with more than one case.
    *
    * ALWAYS `null` when {@link policy} is `"v2"`, whatever the suite's storage
-   * still holds: a v2 suite is decided by
-   * `verdictPolicyDefaults.passThreshold` (a fraction), and the legacy column
-   * an upgrade leaves behind is read by nothing. Read the threshold from
-   * `verdictPolicyDefaults` for a v2 suite — converting this one would be a
+   * still holds: such a suite is decided by
+   * `verdictPolicyDefaults.passThreshold`, and the percent column left behind
+   * by a criterion change is read by nothing. Read the threshold from
+   * `verdictPolicyDefaults` there — converting this one would report a
    * threshold no run uses.
    */
   minimumAccuracy: number | null;
@@ -1657,6 +1663,10 @@ export interface PlatformEvalSuiteSettingsBase {
    * this many times (`max(case.iterations, minimumIterations)`). `null` means
    * no floor — the suite's real state, not a stand-in for 1. Absent on older
    * API deployments.
+   *
+   * A FLOOR, not a default: it RAISES a case's own count and never lowers it,
+   * where `verdictPolicyDefaults.repetitions` REPLACES it. A case at 7
+   * resolves to 7 under a floor of 3 and to 3 under a default count of 3.
    */
   minimumIterations?: number | null;
   matchOptions: PublicMatchOptions | null;
@@ -1676,29 +1686,40 @@ export interface PlatformEvalSuiteSettingsBase {
     groundedness?: PlatformEvalSuiteGroundednessJudge;
   };
   /**
-   * The verdict policy this suite's runs are decided under.
+   * The stored spelling of which criterion decides this suite's runs.
    *
-   * `2` is the fraction-and-validity policy: each case is graded against a
-   * `passThreshold` FRACTION over its own `repetitions`, and a run is decided
-   * valid-first (an invalid run is `"inconclusive"`, not failed).
+   * `2` is PER-CASE GRADING: each case is graded against a `passThreshold`
+   * FRACTION over its own `repetitions`, and a run is decided valid-first (an
+   * invalid run is `"inconclusive"`, not failed).
    *
-   * ABSENT means legacy: runs are graded by `minimumAccuracy` (a suite-wide
-   * PERCENT) over `max(case.iterations, minimumIterations)`. The two are not
-   * convertible, which is why absence is reported rather than defaulted —
-   * reading a historical percent as a fraction silently moves every bar.
+   * ABSENT means the SUITE-WIDE ACCURACY THRESHOLD: runs are graded by
+   * `minimumAccuracy` (a suite-wide PERCENT) over
+   * `max(case.iterations, minimumIterations)`, and there is no validity phase
+   * at all, so such a run is never `"inconclusive"`. The two criteria differ
+   * in SCOPE as well as units and are not convertible, which is why absence is
+   * reported rather than defaulted — reading a historical percent as a
+   * fraction silently moves every bar.
+   *
+   * The `2` is a WIRE spelling and stays one. It is not a version a caller
+   * upgrades to and not a thing to render in front of a person; use
+   * {@link policy} to branch, and the SDK's grading vocabulary for the words.
    */
   verdictPolicyVersion?: 2;
   /**
-   * Which policy decides this suite's runs, said in one word.
+   * Which criterion decides this suite's runs, said in one word.
    *
    * The same fact `verdictPolicyVersion`'s presence carries, without the
-   * inference — and without the ambiguity, since a v2 suite whose stored
+   * inference — and without the ambiguity, since a per-case suite whose stored
    * defaults fail validation projects no version either. It is also the field
    * that tells a writer which threshold to send: `minimumAccuracy` (a percent)
-   * on `legacy`, `passThreshold` (a fraction) on `v2`. Sending both is refused.
+   * on `legacy`, `passThreshold` (a fraction) on `v2`. Sending both is refused,
+   * because there is no edit that means both.
    *
    * Absent on older API deployments; read absence as `legacy` only after
-   * checking `verdictPolicyVersion`.
+   * checking `verdictPolicyVersion`. When NEITHER is present the deployment
+   * predates both and cannot say which criterion decides ANY suite — the two
+   * are indistinguishable in its response, so the SDK refuses to read a policy
+   * there rather than guessing (`gradingPolicyFromPlatformSuiteSettings`).
    */
   policy?: "legacy" | "v2";
   /**

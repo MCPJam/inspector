@@ -2101,14 +2101,48 @@ Edit an eval suite's settings (only the flags you pass change).
 | `--model <id>` | No | Execution model ID |
 | `--system-prompt <text>` | No | Execution system prompt |
 | `--temperature <n>` | No | Execution temperature |
-| `--min-accuracy <pct>` | No | Minimum accuracy, 0–100 |
-| `--min-iterations <1-10\|off>` | No | Floor on per-case iterations — every case runs at least this many times. `off` removes the floor |
+| `--min-accuracy <pct>` | No | Suite accuracy threshold: one percentage, 0–100, over the whole run. Mutually exclusive with `--pass-threshold` |
+| `--pass-threshold <0-1>` | No | Pass threshold as a fraction, 0–1 (`0.9`, not `90`), preserving the suite’s criterion; suite-wide suites write a percentage. Mutually exclusive with `--min-accuracy` |
+| `--min-iterations <1-10\|off>` | No | Minimum iterations per case: a floor that RAISES a case's own count — every case runs at least this many times, and a case configured for more keeps its count. `off` removes the floor. Mutually exclusive with `--iterations` |
+| `--iterations <n>` | No | Iterations per case: the suite DEFAULT, 1–100, which a case can override. Mutually exclusive with `--min-iterations` |
 | `--tool-call-order <any\|in-order\|exact>` | No | Tool call order |
 | `--arguments <ignore\|partial\|exact>` | No | Argument matching |
 | `--extra-tool-calls <unlimited\|N>` | No | Allowed extra tool calls |
 | `--judge <on\|off>` | No | Turn LLM-as-judge grading on/off. `on` both enables the judge and sets it to grade every run as it completes; `off` stops both |
 | `--judge-model <id>` | No | Judge model ID |
 | `--judge-threshold <0-1>` | No | Judge pass threshold, 0–1 (a case passes when its score is at or above it) |
+
+#### Which grading flags a suite takes
+
+A suite has ONE pass criterion and ONE iteration rule, and
+`mcpjam cloud eval get` reports which under `settings.policy`:
+
+| `settings.policy` | Criterion flag | Iteration flag |
+| --- | --- | --- |
+| `legacy` | `--min-accuracy <pct>` or `--pass-threshold <0-1>` | `--min-iterations <1-10\|off>` |
+| `v2` | `--pass-threshold <0-1>` | `--iterations <n>` |
+
+The two criteria are **not two units of one number.** A suite-wide accuracy
+threshold asks whether one rate across the whole run reaches a percentage; a
+per-case pass rate asks whether each case passes a fraction of its own
+iterations. Ten cases, nine always passing and one always failing, passes a 90%
+suite-wide bar and fails a 0.9 per-case one — so dividing a percentage by 100
+moves the bar for every suite with more than one case.
+
+The iteration flags differ the same way: `--min-iterations` RAISES a case's own
+count and `--iterations` REPLACES it, so a case configured for 7 runs 7 times
+under a floor of 3 and 3 times under a default of 3.
+
+Passing both flags of a pair is a usage error. The CLI and MCP read the suite's
+criterion first and refuse iteration fields that the suite does not use.
+The CLI's `--pass-threshold 0.9` preserves the criterion: on a suite-wide suite
+it writes `settings.minimumAccuracy: 90`; on a per-case suite it writes
+`settings.passThreshold: 0.9`. Grading flag edits carry the revision read from
+the suite, and unchanged edits skip the write.
+
+Changing the criterion is not offered by the app, CLI or MCP today. It requires
+a direct API `PATCH` with both `settings.repetitions` and `settings.passThreshold`.
+An explicit scope-change operation is a follow-up.
 
 ### `cloud eval revisions`
 
