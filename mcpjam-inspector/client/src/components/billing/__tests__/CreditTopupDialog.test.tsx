@@ -4,6 +4,10 @@ import userEvent from "@testing-library/user-event";
 
 import { CreditTopupDialog } from "../CreditTopupDialog";
 
+vi.mock("@/hooks/useCreditTopupPricing", () => ({
+  useCreditTopupPricing: () => (preset: unknown) => preset,
+}));
+
 const startCheckoutMock = vi.fn();
 const trackMock = vi.hoisted(() => vi.fn());
 

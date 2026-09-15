@@ -15,7 +15,7 @@ requested Inspector changes, not unrelated launch outreach or production rollout
   The backend flag is authoritative; a local flag must not expose unauthorized offers.
 - Existing billing/settings reorganization and usage dashboard are present.
 - Checkout intent storage exists but recognizes Team only. Comparison allowances
-  contain hardcoded legacy copy. Credit balance normalization drops flat plans.
+  contain hardcoded legacy copy. Credit balance normalization does not explicitly recognize flat plans; the backend currently provides a per-seat compatibility discriminator to older clients.
 - Saved refill quotes exist; draft quotes, detailed pause reasons, a distinct
   enrollment-enabled field, and month-reset wakeups do not. Do not fabricate them.
 - The backend handoff has no browser publishable-key contract. Supply the matching
@@ -23,21 +23,21 @@ requested Inspector changes, not unrelated launch outreach or production rollout
 
 ## Simple user stories
 
-- [ ] As a customer, I see only plans offered to my organization by the pricing flag.
-- [ ] As a customer, I can choose Pro or Team and monthly or annual billing.
-- [ ] As a customer, I see correct flat or per-seat prices and included credits.
-- [ ] As a customer, I keep my chosen plan and interval through sign-in and checkout returns.
-- [ ] As a customer, I see my current plan and remaining credits without incorrect renewal promises.
-- [ ] As an admin, I can save a refill threshold, credit amount, and monthly dollar limit.
-- [ ] As an admin, I review the server price and explicitly authorize automatic purchases.
-- [ ] As an admin, I securely save a card and see enrollment only after backend confirmation.
-- [ ] As a member, I can see refill status, card summary, and charged/reserved monthly spend.
-- [ ] As an admin, I can turn refills off while preserving my settings and pending payments.
-- [ ] As a customer, I see the correct price for manual Team credit purchases.
-- [ ] As a signed-out visitor, I get a sign-in prompt for Evals, Swarm, and User testing when the separate restriction flag is enabled.
+- [x] As a customer, I see only plans offered to my organization by the pricing flag.
+- [x] As a customer, I can choose Pro or Team and monthly or annual billing.
+- [x] As a customer, I see correct flat or per-seat prices and included credits.
+- [x] As a customer, I keep my chosen plan and interval through sign-in and checkout returns.
+- [x] As a customer, I see my current plan and remaining credits without incorrect renewal promises.
+- [x] As an admin, I can save a refill threshold, credit amount, and monthly dollar limit.
+- [x] As an admin, I review the server price and explicitly authorize automatic purchases.
+- [x] As an admin, I securely save a card and see enrollment only after backend confirmation.
+- [x] As a member, I can see refill status, card summary, and charged/reserved monthly spend.
+- [x] As an admin, I can turn refills off while preserving my settings and pending payments.
+- [x] As a customer, I see the correct price for manual Team credit purchases.
+- [x] As a signed-out visitor, I get a sign-in prompt for Evals, Swarm, and User testing when the separate restriction flag is enabled.
 - [ ] As a customer, I get a relevant prompt when credits or starter iterations run out.
-- [ ] As a hosted visitor, I can find the local Inspector install option.
-- [ ] As a customer, I can estimate costs from the finalized rate card in Billing.
+- [x] As a hosted visitor, I can find the local Inspector install option.
+- [x] As a customer, I can estimate costs from the finalized rate card in Billing.
 - [ ] As a customer, I can see estimated run credits before starting a run.
 
 ## Dependencies and acceptance boundaries
@@ -55,7 +55,69 @@ requested Inspector changes, not unrelated launch outreach or production rollout
   validation. Backend isolated Stripe smoke tests do not establish this.
 - Launch still requires webhook/cron, renewals, failed payments, and canary verification.
 
-## TDD log
+## Implemented behavior and rollout configuration
 
-Record failing behavior tests before each implementation slice, then the passing
-focused suite. Keep unfinished stories unchecked in this document and draft PR.
+- PR: https://github.com/MCPJam/inspector/pull/5104
+- `PRICING_V2_MODE` stays backend-owned. The client renders the returned catalog,
+  checks checkout interval eligibility, and recognizes Pro in stored intent.
+- `pricing-feature-signin-required` is a separate PostHog UI flag, default off.
+  It gates Evals, Evaluate, Swarm, and User testing without changing pricing offers.
+- `AUTO_TOPUP_MODE` remains a separate backend kill switch. The client checks
+  `activationAllowed`; no production configuration was changed.
+- Set `VITE_STRIPE_PUBLISHABLE_KEY` to the publishable key for the same Stripe
+  account/environment as the selected backend before building hosted/local/desktop.
+  Missing/invalid configuration hides enrollment. Never put a secret key here.
+- Card input uses Stripe Elements and [confirmCardSetup](https://docs.stripe.com/js/setup_intents/confirm_card_setup).
+  Only successful Stripe confirmation calls backend finish; only the reactive
+  backend query supplies enrollment/payment status. Secrets stay in memory.
+- Consent resets on preference revision and price changes. Org switching discards
+  stale setup responses. Disable confirmation survives backend revision updates.
+- Manual package prices use matching purchased-catalog terms. If those cannot be
+  verified (including rollback/catalog mismatch), the dialog says price at checkout.
+- Calculator is a scenario estimator using catalog rates, model cost per call,
+  and product unit counts. It does not promise an exact run quote or reserve credits.
+- Current subscription price copy is withheld when the offered catalog describes
+  a different bundle. Existing subscription terms continue to apply.
+
+## Remaining work
+
+1. **Deployed acceptance:** configure the matching publishable key in a test build;
+   exercise hosted, local-browser, and packaged desktop auth/card/3DS flows against
+   the deployed backend. Verify disable during pending payment, failed payments,
+   renewal, webhook/cron recovery, and rollback before enabling automatic charges.
+2. **Run estimate/reservation:** no public pre-run credit quote/reservation contract
+   was identified in the handoff. Define model/harness cost inputs, maximum spend,
+   admission/reservation, cancellation and settlement semantics with the backend.
+   A scenario calculator is not a run authorization guarantee.
+3. **Feature-specific limits:** Pro/flat upgrade copy and one-time starter balance
+   are implemented. Final exhausted-allowance behavior still depends on backend
+   accounting. `getEvalIterationQuota` returns an allowance but does not expose the
+   separate `EVAL_ITERATION_LIMIT_ENFORCED` switch; clients cannot reliably infer
+   whether a non-null allowance is currently enforced. Resolve that contract before
+   removing/replacing frontend iteration gates.
+4. **Manual quotes:** expose numeric package credits and organization-specific
+   quotes so all price displays remain exact when current/offer catalogs differ.
+5. **Automatic-refill gaps:** explicit enabled state, automatic eligibility distinct
+   from manual eligibility, specific pause/limit reasons, and month-reset wakeup.
+6. **Outside Inspector:** finalized website calculator/pricing, accounting/backfills,
+   work-org auto-creation/invites, Slack setup, payment observability/alerts, and the
+   enterprise-invoice launch decision remain backend/marketing launch work.
+
+## TDD and validation
+
+Observed failing contract tests before replacing placeholder refill APIs; failing
+form tests before the dollar/consent UI; failing Stripe adapter test before card
+setup; failing v2/flat-balance/quote/estimate tests before their implementations;
+failing disable-revision test before retaining confirmation across query updates.
+Existing guest-route and meter tests caught regressions and were rerun after fixes.
+
+- Focused npm test run (including pretest bundle freshness): 263 tests passed.
+- Additional catalog integration and consent/org-switch tests: 56 passed.
+- Final disable confirmation/sidebar regression run: 15 passed.
+- Final consolidated pricing regression run: 247 tests passed; card-finish retry regression also passed.
+- Client typecheck passed.
+- Design drift check passed; pinned design lint reports zero errors and 109 existing warnings.
+- Broad client run: 15,387 passed, 34 skipped, 42 initially failed. All failing
+  pricing/meter/route files were subsequently rerun green. The other 20 failures
+  were loopback sandbox restrictions; both OAuth files passed with local server
+  access (40 tests). This was not a deployed payment end-to-end test.

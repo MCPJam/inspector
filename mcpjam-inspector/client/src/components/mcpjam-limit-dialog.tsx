@@ -79,7 +79,7 @@ const GUEST_WALL_ILLUSTRATION = "/guest-credit-wall.png";
 const GUEST_WALL_ILLUSTRATION_SIZE = 582;
 
 const normalizeGuestVariant = (
-  raw: string | boolean | undefined
+  raw: string | boolean | undefined,
 ): "control" | "treatment" => (raw === "treatment" ? "treatment" : "control");
 
 /**
@@ -285,7 +285,7 @@ export function MCPJamLimitDialog() {
   const isOpen = useMCPJamLimitDialogStore((s) => s.isOpen);
   const intent = useMCPJamLimitDialogStore((s) => s.intent);
   const limitOrganizationId = useMCPJamLimitDialogStore(
-    (s) => s.organizationId
+    (s) => s.organizationId,
   );
   const limitSurface = useMCPJamLimitDialogStore((s) => s.surface);
   const limitPeriod = useMCPJamLimitDialogStore((s) => s.period);
@@ -370,7 +370,9 @@ export function MCPJamLimitDialog() {
   // upgrade must not be pitched the upgrade with no way to act on it — they
   // get the buy-credits copy plus a way to ask an owner.
   const showCreditsUpgradeRequest =
-    !isKnownNonManager && isFreeEffectivePlan && !creditsUpgrade.canManageBilling;
+    !isKnownNonManager &&
+    isFreeEffectivePlan &&
+    !creditsUpgrade.canManageBilling;
   const creditsRequestAction =
     isKnownNonManager && !isFreeEffectivePlan ? "buyCredits" : "upgrade";
   // Names owners only, because the one action this wall offers is an email to
@@ -583,7 +585,11 @@ export function MCPJamLimitDialog() {
             isKnownNonManager
               ? memberDescription
               : showCreditsUpgrade
-              ? `Free credits reset daily. The ${creditsUpgrade.teamName} plan replaces the daily cap with a monthly allowance per seat, so usage isn't rationed day to day.`
+              ? `Free credits reset daily. The ${
+                  creditsUpgrade.teamName
+                } plan replaces the daily cap with a monthly allowance${
+                  creditsUpgrade.isFlatPlan ? "" : " per seat"
+                }, so usage isn't rationed day to day.`
               : "Buy credits to keep your team going, or use your own API key."
           }
           isKnownNonManager={isKnownNonManager}
@@ -603,6 +609,7 @@ export function MCPJamLimitDialog() {
           annualDiscountPct={creditsUpgrade.annualDiscountPct}
           annualSupported={creditsUpgrade.annualSupported}
           monthlySupported={creditsUpgrade.monthlySupported}
+          priceUnit={creditsUpgrade.priceUnit}
           teamName={creditsUpgrade.teamName}
           isStarting={creditsUpgrade.isStarting}
           isLoadingPrices={creditsUpgrade.isLoadingPrices}

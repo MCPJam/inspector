@@ -172,8 +172,12 @@ function formatCurrentPlanBillingDetailLine(
   const plan = billingStatus.plan ?? "free";
   const interval = billingStatus.billingInterval ?? "monthly";
   const entry = planCatalog.plans[plan];
-  if (!entry) {
-    return null;
+  if (
+    !entry ||
+    (billingStatus.catalogPlanId &&
+      entry.catalogPlanId !== billingStatus.catalogPlanId)
+  ) {
+    return "Your existing subscription terms apply. View billing details for your price.";
   }
   if (plan === "free" || entry.billingModel === "free") {
     return "No credit card required";
@@ -228,10 +232,10 @@ export function OrganizationCurrentPlanPanel({
   const isTrial = billingStatus.source === "trial";
   const isSimulation = billingStatus.source === "simulation";
   const displayPlan = isTrial
-    ? (billingStatus.trialPlan ?? billingStatus.effectivePlan)
+    ? billingStatus.trialPlan ?? billingStatus.effectivePlan
     : isSimulation
-      ? billingStatus.effectivePlan
-      : currentPlan;
+    ? billingStatus.effectivePlan
+    : currentPlan;
   const billingConfigured = billingStatus.billingConfigured ?? false;
   const canManageBilling = billingStatus.canManageBilling ?? false;
   const formattedPeriodEnd = formatBillingDate(
@@ -273,7 +277,7 @@ export function OrganizationCurrentPlanPanel({
     billingConfigured &&
     canManageBilling &&
     !isTrial &&
-    currentPlan === "team" &&
+    (currentPlan === "team" || currentPlan === "pro") &&
     billingStatus.billingInterval != null &&
     scheduledChangeDetailLine == null &&
     !billingStatus.stripeCancelAtPeriodEnd;
@@ -376,8 +380,8 @@ export function OrganizationCurrentPlanPanel({
               {isTrial
                 ? `${formatPlanName(displayPlan)} Trial`
                 : formatPlanName(displayPlan) === "current"
-                  ? "Paid plan"
-                  : formatPlanName(displayPlan)}
+                ? "Paid plan"
+                : formatPlanName(displayPlan)}
             </p>
             {displayPlan === "free" && !isTrial ? (
               <p className="text-sm text-muted-foreground">

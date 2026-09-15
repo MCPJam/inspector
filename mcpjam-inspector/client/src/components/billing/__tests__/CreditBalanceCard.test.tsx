@@ -39,7 +39,17 @@ vi.mock("@/hooks/useCreditBalance", () => ({
 
 vi.mock("@/hooks/useAutoTopup", () => ({
   useAutoTopup: () => ({
-    enrollment: null,
+    view: {
+      revision: 0,
+      preferences: null,
+      status: "not_configured",
+      eligible: true,
+      activationAllowed: false,
+      refillPriceCents: null,
+      card: null,
+      paymentIssue: null,
+      monthlySpend: { month: "2026-09", chargedCents: 0, reservedCents: 0 },
+    },
     isLoading: false,
     querySkipped: false,
     error: null,
@@ -55,8 +65,8 @@ vi.mock("@/hooks/use-eval-iteration-quota", () => ({
     isLoading: evalQuotaLoadingState,
     isAtLimit: Boolean(
       evalQuotaState &&
-      evalQuotaState.allowed !== null &&
-      evalQuotaState.used >= evalQuotaState.allowed,
+        evalQuotaState.allowed !== null &&
+        evalQuotaState.used >= evalQuotaState.allowed,
     ),
   }),
 }));
@@ -117,7 +127,7 @@ describe("CreditBalanceCard", () => {
     ).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Manage" }));
     expect(
-      screen.getByLabelText("Maximum monthly spend (optional)"),
+      screen.getByLabelText("Maximum monthly spend (USD, optional)"),
     ).toBeDisabled();
     expect(screen.getByRole("dialog")).toHaveTextContent(
       "Ask an organization admin",
@@ -147,7 +157,7 @@ describe("CreditBalanceCard", () => {
     render(<CreditBalanceCard />);
 
     const dailyRow = screen.getByTestId("usage-daily");
-    expect(dailyRow).toHaveTextContent(/27 \/ 300/);
+    expect(dailyRow).toHaveTextContent(/273 \/ 300/);
     expect(dailyRow).toHaveTextContent(/resets/);
     // Regression guard: free credit dollar value must never appear.
     expect(dailyRow.textContent ?? "").not.toMatch(/\$/);
@@ -357,7 +367,7 @@ describe("CreditBalanceCard", () => {
     it("renders the monthly allowance row instead of the daily row", () => {
       render(<CreditBalanceCard />);
       const row = screen.getByTestId("usage-monthly");
-      expect(within(row).getByText(/Monthly team credits/)).toBeInTheDocument();
+      expect(within(row).getByText(/Monthly credits/)).toBeInTheDocument();
       expect(within(row).getByText(/13,950 \/ 18,000/)).toBeInTheDocument();
       expect(within(row).getByText(/resets in 12 days/)).toBeInTheDocument();
       expect(screen.queryByTestId("usage-daily")).not.toBeInTheDocument();

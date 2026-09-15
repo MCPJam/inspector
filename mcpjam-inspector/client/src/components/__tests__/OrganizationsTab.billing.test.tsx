@@ -401,6 +401,82 @@ describe("OrganizationsTab billing", () => {
     });
   });
 
+  it("renders Pro only from a v2 catalog and checks out the selected annual plan", async () => {
+    const legacy = createPlanCatalog();
+    const pro = {
+      ...legacy.plans.team,
+      plan: "pro",
+      displayName: "Pro",
+      billingModel: "flat",
+      catalogPlanId: "pro",
+      prices: { monthly: 2900, annual: 28800 },
+      includedCredits: { model: "monthly_ledger", flat: 3000 },
+      checkout: { plan: "pro", supportedIntervals: ["monthly", "annual"] },
+    };
+    const startPlanChange = vi
+      .fn()
+      .mockResolvedValue({ kind: "updated", subscription: { plan: "pro" } });
+    const catalog = {
+      ...legacy,
+      plans: {
+        ...legacy.plans,
+        free: { ...legacy.plans.free, catalogPlanId: "free" },
+        pro,
+        team: {
+          ...legacy.plans.team,
+          catalogPlanId: "team",
+          billingModel: "flat",
+          prices: { monthly: 24900, annual: 238800 },
+        },
+      },
+    };
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture(),
+        planCatalog: catalog,
+        startPlanChange,
+      }),
+    );
+    render(<OrganizationsTab organizationId="org-1" section="plans" />);
+    const column = within(getPlanColumn("Pro"));
+    expect(column.getByText("$24")).toBeInTheDocument();
+    expect(column.queryByText("/seat/mo")).not.toBeInTheDocument();
+    expect(screen.getByText("3,000").closest("td")).toHaveTextContent(
+      "3,000/ mo",
+    );
+    fireEvent.click(column.getByRole("button", { name: "Upgrade" }));
+    await waitFor(() =>
+      expect(startPlanChange).toHaveBeenCalledWith(
+        expect.any(String),
+        "pro",
+        "annual",
+        { confirmPaidPlanChange: true },
+      ),
+    );
+  });
+
+  it("does not auto-checkout a Pro deep link for a legacy catalog", async () => {
+    const startPlanChange = vi.fn();
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture(),
+        startPlanChange,
+      }),
+    );
+    const consumed = vi.fn();
+    renderAutoCheckoutTab({
+      checkoutIntent: {
+        organizationId: "org-1",
+        plan: "pro",
+        interval: "annual",
+      },
+      onCheckoutIntentConsumed: consumed,
+    });
+    await waitFor(() => expect(consumed).toHaveBeenCalled());
+    expect(startPlanChange).not.toHaveBeenCalled();
+    expect(screen.queryByText("Pro")).not.toBeInTheDocument();
+  });
+
   it("shows the current plan summary in the billing view", () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({

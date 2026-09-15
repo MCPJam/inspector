@@ -54,7 +54,7 @@ function planCatalog(
   prices: { annual: number | null; monthly: number | null } = {
     annual: 36_000,
     monthly: 3_800,
-  }
+  },
 ) {
   return {
     currency: "USD",
@@ -97,7 +97,7 @@ describe("useUpgradeCheckout", () => {
         organizationId: "org-1",
         origin: "evals",
         limitKind: "evalIterations",
-      })
+      }),
     );
 
     expect(view.result.current.interval).toBe("annual");
@@ -116,11 +116,11 @@ describe("useUpgradeCheckout", () => {
       expect.stringContaining("upgrade=return"),
       "team",
       "monthly",
-      { confirmPaidPlanChange: false }
+      { confirmPaidPlanChange: false },
     );
     expect(trackMock).toHaveBeenCalledWith(
       "plan_limit_upgrade_clicked",
-      expect.objectContaining({ billing_interval: "monthly" })
+      expect.objectContaining({ billing_interval: "monthly" }),
     );
   });
 
@@ -131,7 +131,7 @@ describe("useUpgradeCheckout", () => {
         organizationId: "org-1",
         origin: "credits",
         limitKind: "credits",
-      })
+      }),
     );
 
     await act(async () => {
@@ -140,11 +140,11 @@ describe("useUpgradeCheckout", () => {
 
     expect(startPlanChange).not.toHaveBeenCalled();
     expect(toastError).toHaveBeenCalledWith(
-      "Checkout is not available for this plan right now."
+      "Checkout is not available for this plan right now.",
     );
     expect(trackMock).toHaveBeenCalledWith(
       "plan_limit_upgrade_failed",
-      expect.objectContaining({ error_kind: "no_supported_interval" })
+      expect.objectContaining({ error_kind: "no_supported_interval" }),
     );
   });
 
@@ -155,7 +155,7 @@ describe("useUpgradeCheckout", () => {
         organizationId: "org-1",
         origin: "credits",
         limitKind: "credits",
-      })
+      }),
     );
 
     // No interval is offered at all, so the picker renders nothing.
@@ -169,7 +169,7 @@ describe("useUpgradeCheckout", () => {
     expect(startPlanChange).not.toHaveBeenCalled();
     expect(trackMock).toHaveBeenCalledWith(
       "plan_limit_upgrade_failed",
-      expect.objectContaining({ error_kind: "no_supported_interval" })
+      expect.objectContaining({ error_kind: "no_supported_interval" }),
     );
   });
 
@@ -183,7 +183,7 @@ describe("useUpgradeCheckout", () => {
         organizationId: "org-1",
         origin: "evals",
         limitKind: "evalIterations",
-      })
+      }),
     );
 
     expect(view.result.current.annualSupported).toBe(false);
@@ -201,7 +201,7 @@ describe("useUpgradeCheckout", () => {
       expect.stringContaining("upgrade=return"),
       "team",
       "monthly",
-      { confirmPaidPlanChange: false }
+      { confirmPaidPlanChange: false },
     );
   });
 
@@ -213,7 +213,7 @@ describe("useUpgradeCheckout", () => {
         organizationId: "org-1",
         origin: "evals",
         limitKind: "evalIterations",
-      })
+      }),
     );
 
     expect(result.current.isLoadingPrices).toBe(true);
@@ -237,7 +237,7 @@ describe("useUpgradeCheckout", () => {
         organizationId: "org-1",
         origin: "evals",
         limitKind: "evalIterations",
-      })
+      }),
     );
 
     let outcome: Awaited<ReturnType<typeof result.current.start>>;
@@ -268,7 +268,7 @@ describe("useUpgradeCheckout", () => {
           organizationId: "org-1",
           origin: "evals",
           limitKind: "evalIterations",
-        })
+        }),
       );
 
       let outcome: Awaited<ReturnType<typeof result.current.start>>;
@@ -279,7 +279,7 @@ describe("useUpgradeCheckout", () => {
       expect(openSpy).toHaveBeenCalledWith(
         "https://checkout.stripe.com/c/pay/cs_test_123",
         "_blank",
-        "noopener,noreferrer"
+        "noopener,noreferrer",
       );
       // The dialog closes here, unlike the same-tab path where the page is
       // already on its way out.
@@ -287,7 +287,7 @@ describe("useUpgradeCheckout", () => {
       // The return token is only worth writing for a return that can land in
       // this session; checkout finishing in another browser can't use it.
       expect(window.sessionStorage.getItem("mcpjam.upgradeReturnToken")).toBe(
-        null
+        null,
       );
     } finally {
       delete (window as { isElectron?: boolean }).isElectron;
@@ -306,7 +306,7 @@ describe("useUpgradeCheckout", () => {
         organizationId: "org-1",
         origin: "evals",
         limitKind: "evalIterations",
-      })
+      }),
     );
 
     let outcome: Awaited<ReturnType<typeof result.current.start>>;
@@ -321,7 +321,7 @@ describe("useUpgradeCheckout", () => {
       expect.objectContaining({
         result_kind: "updated",
         resulting_plan: "team",
-      })
+      }),
     );
   });
 
@@ -336,7 +336,7 @@ describe("useUpgradeCheckout", () => {
         organizationId: "org-1",
         origin: "credits",
         limitKind: "credits",
-      })
+      }),
     );
 
     let outcome: Awaited<ReturnType<typeof result.current.start>>;
@@ -346,7 +346,7 @@ describe("useUpgradeCheckout", () => {
 
     expect(outcome!).toEqual({ redirected: false, shouldDismiss: true });
     expect(toastSuccess).toHaveBeenCalledWith(
-      "Plan change scheduled for renewal."
+      "Plan change scheduled for renewal.",
     );
   });
 
@@ -357,7 +357,7 @@ describe("useUpgradeCheckout", () => {
         organizationId: "org-1",
         origin: "evals",
         limitKind: "evalIterations",
-      })
+      }),
     );
 
     await waitFor(() => {
@@ -365,7 +365,7 @@ describe("useUpgradeCheckout", () => {
     });
     expect(trackMock).not.toHaveBeenCalledWith(
       "plan_limit_interval_selected",
-      expect.anything()
+      expect.anything(),
     );
 
     act(() => view.result.current.setInterval("monthly"));
@@ -374,7 +374,32 @@ describe("useUpgradeCheckout", () => {
       expect.objectContaining({
         billing_interval: "monthly",
         organization_id: "org-1",
-      })
+      }),
     );
   });
+});
+
+it("offers Pro for v2 Free customers without per-seat price copy", () => {
+  billingState.planCatalog = {
+    currency: "usd",
+    plans: {
+      pro: {
+        plan: "pro",
+        displayName: "Pro",
+        billingModel: "flat",
+        prices: { monthly: 2900, annual: 28800 },
+        checkout: { plan: "pro", supportedIntervals: ["monthly", "annual"] },
+        limits: {},
+      },
+    },
+  };
+  const { result } = renderHook(() =>
+    useUpgradeCheckout({
+      organizationId: "org",
+      origin: "evals",
+      limitKind: "eval_iterations",
+    }),
+  );
+  expect(result.current.teamName).toBe("Pro");
+  expect(result.current.priceUnit).toBe("per month");
 });

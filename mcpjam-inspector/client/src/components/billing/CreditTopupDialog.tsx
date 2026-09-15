@@ -1,3 +1,4 @@
+import { useCreditTopupPricing } from "@/hooks/useCreditTopupPricing";
 import { useEffect, useRef, useState } from "react";
 import { CreditAmountOption } from "./CreditAmountOption";
 import { toast } from "@/lib/toast";
@@ -37,6 +38,7 @@ export function CreditTopupDialog({
 }: CreditTopupDialogProps) {
   const { presets, presetsLoading, startCheckout, isStartingCheckout } =
     useCreditTopup();
+  const quotePreset = useCreditTopupPricing(organizationId, open);
   const [selectedPackageId, setSelectedPackageId] = useState<string | null>(
     null,
   );
@@ -86,6 +88,8 @@ export function CreditTopupDialog({
     (preset) => preset.packageId === selectedPackageId,
   );
 
+  const selectedQuote = selectedPreset ? quotePreset(selectedPreset) : null;
+
   const handleDismiss = (dismissalMethod: "cancel" | "dialog") => {
     onOpenChange(false);
     if (dismissalTrackedRef.current) return;
@@ -123,7 +127,7 @@ export function CreditTopupDialog({
       await startCheckout({
         organizationId,
         packageId: selectedPreset.packageId,
-        priceCents: selectedPreset.priceCents,
+        priceCents: selectedQuote?.priceCents ?? null,
         chatSessionId,
         lastUserMessage,
         source,
@@ -176,7 +180,9 @@ export function CreditTopupDialog({
                   <CreditAmountOption
                     key={preset.packageId}
                     credits={creditsAmount}
-                    price={preset.displayPrice}
+                    price={
+                      quotePreset(preset)?.displayPrice ?? "Price at checkout"
+                    }
                     selected={isSelected}
                     onSelect={() =>
                       handlePackageSelection(preset, packageIndex)
@@ -203,9 +209,9 @@ export function CreditTopupDialog({
           >
             {isStartingCheckout
               ? "Redirecting…"
-              : selectedPreset
-                ? `Continue with ${selectedPreset.displayPrice}`
-                : "Continue"}
+              : selectedQuote
+              ? `Continue with ${selectedQuote.displayPrice}`
+              : "Continue"}
           </Button>
         </DialogFooter>
       </DialogContent>
