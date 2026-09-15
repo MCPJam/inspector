@@ -1,5 +1,4 @@
 ---
-"@mcpjam/design-system": patch
 "@mcpjam/inspector": patch
 ---
 
