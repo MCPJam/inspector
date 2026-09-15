@@ -1211,7 +1211,7 @@ This six-code contract is new and deliberately **different** from `eval gate`'s 
 | `--match-options <json>` | No | Tool-call match options for this run, e.g. `'{"toolCallOrder":"exact"}'` |
 | `--idempotency-key <key>` | No | Retry-safety key: repeating the call returns the run it already started |
 | `--wait` | No | Wait for every launched run to reach a terminal status |
-| `--wait-timeout <ms>` | No | Maximum wait time (default 600000); requires `--wait` |
+| `--wait-timeout <ms>` | No | Maximum wait time (default 2100000); requires `--wait` |
 | `--reporter <json-summary\|junit-xml\|html>` | No | Write the completed structured report to stdout; requires `--wait`. `html` is a self-contained decision summary + failures page — traces/parity/history are not included. |
 | `--out <path>` | No | Atomically write the completed report to a file; defaults to `json-summary`, or uses `--reporter` when present; requires `--wait` |
 | `--compose-client <id-or-name>` | No | Compose a stack to run instead of naming a saved environment (see below). **Ephemeral by default** — pass `--save-targets` to attach it to the suite. |
