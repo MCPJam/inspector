@@ -1284,7 +1284,7 @@ describe("TestTemplateEditor run view from route", () => {
     ).not.toBeInTheDocument();
     expect(screen.getAllByTestId("spine-action-row").length).toBeGreaterThan(0);
     const defaultChecks = screen.getByRole("button", {
-      name: "Show default evaluators",
+      name: "Configure test case evaluators",
     });
     expect(screen.getByTestId("case-spine")).not.toContainElement(
       defaultChecks,
