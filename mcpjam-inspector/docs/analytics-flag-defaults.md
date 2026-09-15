@@ -70,6 +70,25 @@ unresolved identity shows nothing, not a gate.
 The server-side gate of the same name still exists in
 `mcpjam-backend/convex/lib/sandboxesGate.ts` and is unaffected by this row.
 
+**Why removing the client flag does not strand a member the server flag has
+not reached.** The obvious hazard is a signed-in member in a non-flagged
+organization: newly visible tab, then `FEATURE_UNAVAILABLE` on their first
+write. It does not happen, because `SANDBOXES_GATE_MODE` is unset on the
+production deployment and `resolveSandboxesGateMode` defaults to `dark`, which
+emits a `sandboxes_gate_would_block` warning and returns rather than throwing.
+That member's write goes through.
+
+Two things follow, and both are load-bearing. Dark mode is an escape hatch for
+a PostHog outage that happens to cover this case, so **setting
+`SANDBOXES_GATE_MODE=enforce` after REEV-6 ships re-opens the hazard** — the
+flag would then have to be at 100% first. And `sandboxes_gate_would_block`
+volume is now the rollout signal: a rise after launch is exactly this
+population, arriving as telemetry instead of as a support ticket.
+
+None of this reaches the anonymous refusal, which `requireSandboxesEnabled`
+runs before the flag and outside the mode switch. Identity is deliberately not
+the flag.
+
 For every beta/nav/opt-in feature, fail-closed is **correct**: a not-yet-GA
 surface briefly not showing is strictly better than flickering it on for a
 user who shouldn't have it.
