@@ -12,6 +12,14 @@ import {
   useRef,
 } from "react";
 import { useMutation, useConvexAuth, useQuery } from "convex/react";
+import {
+  EVAL_GRADING_VALIDITY_HINTS,
+  EVAL_GRADING_VALIDITY_LABELS,
+  EVAL_ITERATION_RULE_HINTS,
+  EVAL_ITERATION_RULE_LABELS,
+  EVAL_PASS_CRITERION_SCOPE_HINTS,
+  EVAL_PASS_CRITERION_SCOPE_LABELS,
+} from "@mcpjam/sdk/contract";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { useHostList } from "@/hooks/useClients";
 import { useScheduledEvalsEnabled } from "@/hooks/useScheduledEvalsEnabled";
@@ -63,8 +71,8 @@ import { JudgeRubricEditor, isRubricValid } from "./judge-rubric-editor";
 import { JudgeGatePanel } from "./judge-gate-panel";
 import { useGroundedness } from "./use-groundedness";
 import {
-  VerdictPolicyV2Controls,
-  VerdictPolicyUpgradeButton,
+  PerCaseIterationsControl,
+  PerCasePassThresholdControl,
   VerdictValidityControls,
 } from "./suite-policy-controls";
 import { SuiteQualityGateSection } from "./suite-quality-gate-section";
@@ -97,7 +105,6 @@ import { isCiOwnedSuite } from "@/lib/evals/is-ci-owned-suite";
 import {
   CAPABILITY_REASON_COPY,
   CI_OWNED_REASON_COPY,
-  DEPLOYMENT_REASON_COPY,
   featureDisabledReason,
   PERMISSION_REASON_COPY,
 } from "./capability-reasons";
@@ -180,13 +187,20 @@ const ROW_DRAFT_KEYS: Partial<Record<EvalSuiteSettingKey, SuiteSettingsKey[]>> =
   {
     name: ["name"],
     checks: ["defaultPredicates"],
-    policy: [
-      "defaultPassCriteria",
-      "minIterations",
-      "verdictPolicyVersion",
-      "verdictPolicyDefaults",
-      "gatePolicy",
-    ],
+    // Partitioned by ROW, so a dirty badge names the row that is actually
+    // dirty. One `policy` entry used to carry all five keys, which meant
+    // editing the quality gate lit the criterion row's badge and editing the
+    // threshold lit the gate's — invisible while the three were one row, and
+    // wrong the moment they were not.
+    //
+    // `verdictPolicyDefaults` is the one key that genuinely belongs to more
+    // than one row: it is a single stored object holding the threshold, the
+    // count and the validity block. Splitting it here would need a deep diff of
+    // a stored shape, and a badge that under-reports is worse than one that
+    // over-reports — so both rows watch it and say so.
+    policy: ["defaultPassCriteria", "verdictPolicyDefaults"],
+    iterations: ["minIterations", "verdictPolicyDefaults"],
+    qualityGate: ["gatePolicy"],
     validity: ["verdictPolicyDefaults"],
     passOrFail: [
       "defaultMatchOptions",
@@ -646,18 +660,18 @@ export function SuiteIterationsView({
     route.type === "run-detail"
       ? "run-detail"
       : route.type === "test-detail"
-      ? "test-detail"
-      : route.type === "test-edit" && !editingDisabled
-      ? "test-edit"
-      : route.type === "test-edit"
-      ? "test-detail"
-      : "overview";
+        ? "test-detail"
+        : route.type === "test-edit" && !editingDisabled
+          ? "test-edit"
+          : route.type === "test-edit"
+            ? "test-detail"
+            : "overview";
   const runsViewMode: SuiteOverviewView =
     route.type === "suite-overview" && route.view === "test-cases"
       ? "test-cases"
       : route.type === "suite-overview" && route.view === "cross-host"
-      ? "cross-host"
-      : "runs";
+        ? "cross-host"
+        : "runs";
 
   // Local state that's not in the URL
   const [runDetailSortBy, setRunDetailSortBy] = useState<
@@ -794,26 +808,15 @@ export function SuiteIterationsView({
   const passOrFailRowError = !isRubricValid(draft.current.judgeRubric)
     ? { message: "A criterion is missing a label" }
     : !areAllChecksValid(draftDefaultPredicates)
-    ? { message: "An assertion is incomplete" }
-    : undefined;
-  // Which POLICY the sheet is editing. Read from the DRAFT, not the suite, so
-  // the v2 rows appear the moment someone drafts the upgrade rather than only
-  // after they save it — the review dialog is where they confirm, and a page
-  // that still shows the legacy percent while the draft says otherwise is
-  // describing a suite nobody is about to have.
+      ? { message: "An assertion is incomplete" }
+      : undefined;
+  // Which criterion SCOPE the sheet is editing, and therefore which field and
+  // which units each grading row shows. Read from the DRAFT rather than the
+  // suite so the rows follow a scope change the moment it is drafted; this
+  // sheet no longer offers one, but a scope arriving from the API
+  // still has to be reflected rather than leaving the page
+  // describing a suite nobody has.
   const isVerdictPolicyV2 = draft.current.verdictPolicyVersion === 2;
-  // The legacy policy restated in v2 terms. `minIterations` is the suite's
-  // iteration floor and `minimumPassRate` its percent, so the upgrade proposes
-  // the same bar rather than a new one — a migration that silently moved the
-  // threshold would be a policy change wearing a version bump's clothes.
-  const verdictPolicyUpgradeProposal = useMemo(
-    () => ({
-      repetitions: draft.current.minIterations ?? 1,
-      passThreshold:
-        (draft.current.defaultPassCriteria?.minimumPassRate ?? 100) / 100,
-    }),
-    [draft.current.minIterations, draft.current.defaultPassCriteria],
-  );
   const scheduledEvalsEnabled = useScheduledEvalsEnabled();
   const { capable: composeCapable } = useEvalComposeCapable(projectId);
   const settingsScrollRef = useRef<HTMLDivElement>(null);
@@ -1040,7 +1043,7 @@ export function SuiteIterationsView({
   });
 
   const selectedCompareBaseRunId =
-    route.type === "run-detail" ? route.compareToRunId ?? null : null;
+    route.type === "run-detail" ? (route.compareToRunId ?? null) : null;
 
   const previousCompletedRunForSelectedRun = useMemo(() => {
     if (!selectedRunDetails || selectedRunDetails.status !== "completed") {
@@ -1206,10 +1209,10 @@ export function SuiteIterationsView({
 
   // Derive selectedIterationId from route
   const selectedIterationId =
-    route.type === "run-detail" ? route.iteration ?? null : null;
+    route.type === "run-detail" ? (route.iteration ?? null) : null;
 
   const selectedRunTestCaseId =
-    route.type === "run-detail" ? route.testCaseId ?? null : null;
+    route.type === "run-detail" ? (route.testCaseId ?? null) : null;
 
   const handleSelectTestCase = (group: RunCaseGroup) => {
     if (route.type !== "run-detail" || !group.testCaseId) {
@@ -1343,18 +1346,18 @@ export function SuiteIterationsView({
   const ciOwnedReason = configLocked
     ? CI_OWNED_REASON_COPY
     : capabilitiesReady && capabilities.ownership?.ciOwned
-    ? CI_OWNED_REASON_COPY
-    : undefined;
+      ? CI_OWNED_REASON_COPY
+      : undefined;
   // `computerEnvironmentRowVisible` is declared beside the images it gates —
   // see the comment there for why the two share one condition.
   const computerEnvironmentDisabledReason =
     ciOwnedReason ??
     (!capabilitiesReady
       ? undefined
-      : featureDisabledReason(capabilities.features?.computers) ??
+      : (featureDisabledReason(capabilities.features?.computers) ??
         (capabilities.permissions?.["suite.configure"] === false
           ? PERMISSION_REASON_COPY
-          : undefined));
+          : undefined)));
   const subsectionOptions = useMemo(
     () => ({
       isVerdictPolicyV2,
@@ -1369,24 +1372,7 @@ export function SuiteIterationsView({
       canDeleteSuite,
     ],
   );
-  // Offered only when the deployment and the caller can actually perform the
-  // upgrade. The backend refuses otherwise (`EVAL_VERDICT_POLICY_UNAVAILABLE`),
-  // and a button whose only outcome is an error is worse than no button.
-  const verdictPolicyUpgradeDisabledReason: string | undefined =
-    !capabilitiesReady
-      ? // A read that FAILED is not one still in flight; "Checking…" after the
-        // answer came back as "could not ask" described a wait that would
-        // never end.
-        capabilitiesState === "unavailable"
-        ? CAPABILITY_REASON_COPY.flag_unavailable
-        : "Checking whether this deployment allows verdict policy v2…"
-      : // Absent reads as "cannot upgrade", which is what an older deployment
-      // means by not answering — never as permission.
-      capabilities.verdictPolicyV2?.canUpgrade
-      ? undefined
-      : (capabilities.verdictPolicyV2?.deploymentMode ?? "off") === "off"
-      ? DEPLOYMENT_REASON_COPY
-      : "This suite is already on verdict policy v2";
+  // Scope changes are API-only until an explicit operation ships in a follow-up.
   const openSetting = useCallback(
     (key: EvalSuiteSettingKey) => {
       if (key === "name") {
@@ -1883,7 +1869,9 @@ export function SuiteIterationsView({
                     route.type === "test-edit" && Boolean(route.openCompare)
                   }
                   openCompareIterationId={
-                    route.type === "test-edit" ? route.iteration ?? null : null
+                    route.type === "test-edit"
+                      ? (route.iteration ?? null)
+                      : null
                   }
                   onContinueInChat={onContinueInChat}
                   onSelectTab={(tab) =>
@@ -2298,8 +2286,8 @@ export function SuiteIterationsView({
                       runningTestCaseId={runningTestCaseId}
                       blockTestCaseRuns={Boolean(
                         rerunningSuiteId ||
-                          replayingRunId ||
-                          evalRunsDisabledReason,
+                        replayingRunId ||
+                        evalRunsDisabledReason,
                       )}
                       runTestCaseDisabledReason={evalRunsDisabledReason}
                       connectedServerNames={connectedServerNames}
@@ -2378,6 +2366,21 @@ export function SuiteIterationsView({
                 editingDisabled ? "suite-settings-locked" : undefined
               }
             >
+              {/*
+                THREE SECTIONS, in the order a reader asks the questions: what
+                must pass, how many times, and does it regress against a
+                baseline. They were one section titled "Quality gate" holding
+                all three — so the criterion, the count and the gate shared one
+                Edit affordance and one dirty badge, and somebody looking for
+                the threshold their runs are decided against had to open a
+                heading about regressions to find it.
+
+                Within each section the SCOPE picks the control, and the scope's
+                own words come from the shared grading vocabulary. No section
+                offers a switch between the two: the criteria differ in scope as
+                well as units, so converting one into the other re-decides every
+                multi-case suite and is not an edit a threshold field can make.
+              */}
               <SuiteSettingsRow
                 settingKey="policy"
                 className="pr-6"
@@ -2389,10 +2392,14 @@ export function SuiteIterationsView({
                     conflict={rowIsConflict("policy")}
                   />
                 }
-                hint="What a run must meet to pass."
+                hint={
+                  isVerdictPolicyV2
+                    ? EVAL_PASS_CRITERION_SCOPE_HINTS.perCase
+                    : EVAL_PASS_CRITERION_SCOPE_HINTS.suiteWide
+                }
               >
                 {isVerdictPolicyV2 ? (
-                  <VerdictPolicyV2Controls
+                  <PerCasePassThresholdControl
                     aligned
                     defaults={draft.current.verdictPolicyDefaults}
                     onChange={(next) =>
@@ -2404,66 +2411,138 @@ export function SuiteIterationsView({
                     }
                   />
                 ) : (
-                  <>
-                    {/* Stamped by hand, nested inside the Policy row: these are
-                        the legacy policy's two fields, and each stays reachable
-                        from the API on its own. The parity ratchet reads the
-                        attribute, not the component. */}
-                    <div
-                      className="flex items-center justify-between gap-4"
-                      data-setting-key="minimumAccuracy"
-                    >
-                      <span className="text-xs text-muted-foreground">
-                        Minimum accuracy
-                      </span>
-                      <PassCriteriaSelector
-                        aligned
-                        hideLabel
-                        minimumPassRate={defaultMinimumPassRate}
-                        onMinimumPassRateChange={(rate) =>
-                          dispatchDraft({
-                            type: "edit",
-                            key: "defaultPassCriteria",
-                            value: { minimumPassRate: rate },
-                          })
-                        }
-                      />
-                    </div>
-                    <div
-                      className="flex items-center justify-between gap-4"
-                      data-setting-key="minimumIterations"
-                    >
-                      <span
-                        className="text-xs text-muted-foreground"
-                        title="Every case runs at least this many times per run. A case set higher keeps its count; a per-run override still wins."
-                      >
-                        Minimum iterations
-                      </span>
-                      <select
-                        className="h-8 w-40 shrink-0 rounded-md border border-input bg-background px-2 text-xs text-foreground"
-                        value={draft.current.minIterations ?? ""}
-                        aria-label="Minimum iterations per case for every run"
-                        onChange={(e) => {
-                          const raw = e.target.value;
-                          dispatchDraft({
-                            type: "edit",
-                            key: "minIterations",
-                            value: raw === "" ? undefined : Number(raw),
-                          });
-                        }}
-                      >
-                        <option value="">Off</option>
-                        {Array.from({ length: 10 }, (_, i) => i + 1).map(
-                          (n) => (
-                            <option key={n} value={n}>
-                              {n}
-                            </option>
-                          ),
-                        )}
-                      </select>
-                    </div>
-                  </>
+                  /* Stamped by hand, nested inside the criterion section: the
+                     suite-wide threshold stays reachable from the API on its
+                     own. The parity ratchet reads the attribute, not the
+                     component. */
+                  <div
+                    className="flex items-center justify-between gap-4"
+                    data-setting-key="minimumAccuracy"
+                  >
+                    <span className="text-xs text-muted-foreground">
+                      {EVAL_PASS_CRITERION_SCOPE_LABELS.suiteWide}
+                    </span>
+                    <PassCriteriaSelector
+                      aligned
+                      hideLabel
+                      minimumPassRate={defaultMinimumPassRate}
+                      onMinimumPassRateChange={(rate) =>
+                        dispatchDraft({
+                          type: "edit",
+                          key: "defaultPassCriteria",
+                          value: { minimumPassRate: rate },
+                        })
+                      }
+                    />
+                  </div>
                 )}
+                {isVerdictPolicyV2 ? (
+                  <div data-setting-key="validity" className="space-y-2">
+                    <p className="text-xs font-medium text-foreground">
+                      {EVAL_GRADING_VALIDITY_LABELS.enforced}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground/60">
+                      {EVAL_GRADING_VALIDITY_HINTS.enforced}
+                    </p>
+                    <VerdictValidityControls
+                      defaults={draft.current.verdictPolicyDefaults}
+                      onChange={(next) =>
+                        dispatchDraft({
+                          type: "edit",
+                          key: "verdictPolicyDefaults",
+                          value: next,
+                        })
+                      }
+                    />
+                  </div>
+                ) : (
+                  /* NOT an inactive control, and not a blank space: a
+                     suite-wide suite has no validity phase at all, so
+                     `inconclusive` is not among the verdicts its runs can
+                     reach. Showing it a greyed-out 80% completion floor would
+                     describe a rule that has never been applied to it. */
+                  <p className="text-[11px] text-muted-foreground/60">
+                    {EVAL_GRADING_VALIDITY_HINTS.notEnforced}
+                  </p>
+                )}
+              </SuiteSettingsRow>
+
+              <SuiteSettingsRow
+                settingKey="iterations"
+                className="pr-6"
+                chained={false}
+                data-subsection-id="iterations"
+                accessory={
+                  <LedgerRowChips
+                    dirty={rowIsDirty("iterations")}
+                    conflict={rowIsConflict("iterations")}
+                  />
+                }
+                hint={
+                  isVerdictPolicyV2
+                    ? EVAL_ITERATION_RULE_HINTS.defaultCount
+                    : EVAL_ITERATION_RULE_HINTS.caseCountWithFloor
+                }
+              >
+                {isVerdictPolicyV2 ? (
+                  <PerCaseIterationsControl
+                    aligned
+                    defaults={draft.current.verdictPolicyDefaults}
+                    onChange={(next) =>
+                      dispatchDraft({
+                        type: "edit",
+                        key: "verdictPolicyDefaults",
+                        value: next,
+                      })
+                    }
+                  />
+                ) : (
+                  <div
+                    className="flex items-center justify-between gap-4"
+                    data-setting-key="minimumIterations"
+                  >
+                    <span className="text-xs text-muted-foreground">
+                      {EVAL_ITERATION_RULE_LABELS.caseCountWithFloor}
+                    </span>
+                    <select
+                      className="h-8 w-40 shrink-0 rounded-md border border-input bg-background px-2 text-xs text-foreground"
+                      value={draft.current.minIterations ?? ""}
+                      aria-label="Minimum iterations per case for every run"
+                      onChange={(e) => {
+                        const raw = e.target.value;
+                        dispatchDraft({
+                          type: "edit",
+                          key: "minIterations",
+                          value: raw === "" ? undefined : Number(raw),
+                        });
+                      }}
+                    >
+                      {/* "Off" is the suite's real state — no floor — and not a
+                          stand-in for 1. */}
+                      <option value="">Off</option>
+                      {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
+                        <option key={n} value={n}>
+                          {n}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </SuiteSettingsRow>
+
+              <SuiteSettingsRow
+                settingKey="qualityGate"
+                className="pr-6"
+                chained={false}
+                data-subsection-id="qualityGate"
+                accessory={
+                  <LedgerRowChips
+                    dirty={rowIsDirty("qualityGate")}
+                    conflict={rowIsConflict("qualityGate")}
+                  />
+                }
+                hint="Fail a run when it regresses against a baseline run, whatever the pass criteria said."
+              >
                 <SuiteQualityGateSection
                   simplified
                   policy={draft.current.gatePolicy}
@@ -2477,43 +2556,6 @@ export function SuiteIterationsView({
                   capabilities={capabilitiesReady ? capabilities : null}
                   capabilitiesState={capabilitiesState}
                 />
-                {isVerdictPolicyV2 ? (
-                  <div data-setting-key="validity" className="space-y-2">
-                    <p className="text-xs font-medium text-foreground">
-                      Validity
-                    </p>
-                    <p className="text-[11px] text-muted-foreground/60">
-                      Mark the run inconclusive instead of failed when…
-                    </p>
-                    <VerdictValidityControls
-                      defaults={draft.current.verdictPolicyDefaults}
-                      onChange={(next) =>
-                        dispatchDraft({
-                          type: "edit",
-                          key: "verdictPolicyDefaults",
-                          value: next,
-                        })
-                      }
-                    />
-                  </div>
-                ) : verdictPolicyUpgradeDisabledReason === undefined ? (
-                  <VerdictPolicyUpgradeButton
-                    disabledReason={verdictPolicyUpgradeDisabledReason}
-                    proposal={verdictPolicyUpgradeProposal}
-                    onUpgrade={(defaults) => {
-                      dispatchDraft({
-                        type: "edit",
-                        key: "verdictPolicyVersion",
-                        value: 2,
-                      });
-                      dispatchDraft({
-                        type: "edit",
-                        key: "verdictPolicyDefaults",
-                        value: defaults,
-                      });
-                    }}
-                  />
-                ) : null}
               </SuiteSettingsRow>
 
               <SuiteSettingsRow

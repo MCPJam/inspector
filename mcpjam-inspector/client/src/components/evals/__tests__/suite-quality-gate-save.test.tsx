@@ -31,9 +31,8 @@ vi.mock("convex/react", () => ({
 }));
 
 vi.mock("@/hooks/use-suite-capabilities", async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import("@/hooks/use-suite-capabilities")
-  >();
+  const actual =
+    await importOriginal<typeof import("@/hooks/use-suite-capabilities")>();
   return {
     ...actual,
     useSuiteCapabilities: () => mocks.capabilities(),
@@ -299,12 +298,18 @@ describe.skip("the review dialog does not outlive its suite", () => {
  * which is what `DEPLOYMENT_REASON_COPY` already says, and is the same rule
  * applied to a missing `ownership` block elsewhere in this change.
  */
-// SKIPPED: the Evaluate settings sheet no longer renders the verdict policy
-// upgrade control (`VerdictPolicyUpgradeButton`) or its disabled reason, so
-// there is no copy here for this case to read. Re-enable when the upgrade
-// affordance returns to the sheet.
-describe.skip("a capabilities answer with no verdictPolicyV2", () => {
-  it("says the deployment does not offer it, not that the suite is already on it", () => {
+// The skipped case above this line is gone rather than still skipped. It read
+// the disabled reason under the scope-switch button, which no longer exists on
+// this sheet; a `describe.skip` waiting for an affordance we deliberately
+// removed is a to-do disguised as coverage.
+//
+// The rule it was protecting still holds and is now asserted on the sheet
+// itself: absence is not an assertion about the suite. What replaced it is
+// stronger — the sheet renders NO scope copy at all, so there is no sentence
+// left that could claim a suite "is already on" anything on the word of a
+// deployment that never reported a mode.
+describe("a capabilities answer with no verdictPolicyV2", () => {
+  it("makes no claim about the suite's criterion anywhere on the sheet", () => {
     const withoutPolicy = readyCapabilities();
     delete (withoutPolicy.capabilities as Record<string, unknown>)
       .verdictPolicyV2;
@@ -313,7 +318,8 @@ describe.skip("a capabilities answer with no verdictPolicyV2", () => {
     const { container } = renderSettingsSheet();
     openSettingsRow(container, "minimumIterations");
 
-    expect(screen.queryByText(/already on verdict policy v2/i)).toBeNull();
-    expect(container.textContent).toContain("Not available on this deployment");
+    const text = container.textContent?.toLowerCase() ?? "";
+    expect(text).not.toContain("already on verdict policy");
+    expect(text).not.toContain("verdict policy v2");
   });
 });

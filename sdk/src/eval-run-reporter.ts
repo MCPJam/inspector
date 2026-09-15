@@ -1,4 +1,5 @@
 import { reportingReceiptError } from "./eval-reporting-receipt.js";
+import { LEGACY_SUITE_WIDE_THRESHOLD_PERCENT } from "./contract/grading-policy.js";
 import {
   normalizeReportingConfig,
   prepareReportingConfig,
@@ -681,12 +682,27 @@ class EvalRunReporterImpl implements EvalRunReporter {
     return next;
   }
 
+  /**
+   * The summary this reporter produces when the run could not be reported.
+   *
+   * A NAMED legacy adapter, and one of the three suite-wide producers the
+   * grading-policy contract distinguishes: it counts the results it was HANDED,
+   * one per iteration, `failed` is the remainder rather than a classification,
+   * and an empty population rates `0` — where the hosted run finalizer rates
+   * the same empty run `1`. The arithmetic is deliberately unchanged;
+   * `resolveGradingPolicyFromRunReporting({ producer: "localFallback" })` is
+   * how a surface names which rule decided a summary from here, and
+   * `LEGACY_SUITE_WIDE_THRESHOLD_PERCENT` replaces the bare `100` so the
+   * producer fallback is spelled once across the repo.
+   */
   private buildLocalFallbackResult(): ReportEvalResultsOutput {
     const total = this.addedCount;
     const passed = this.passedCount;
     const failed = total - passed;
     const passRate = total > 0 ? passed / total : 0;
-    const minimumPassRate = this.input.passCriteria?.minimumPassRate ?? 100;
+    const minimumPassRate =
+      this.input.passCriteria?.minimumPassRate ??
+      LEGACY_SUITE_WIDE_THRESHOLD_PERCENT;
     const result = passRate * 100 >= minimumPassRate ? "passed" : "failed";
 
     return {

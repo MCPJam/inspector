@@ -24,7 +24,7 @@ import { useCallback, useMemo, type ReactNode } from "react";
 import { useConvexAuth } from "convex/react";
 import { toast } from "@/lib/toast";
 import { EnvironmentPicker } from "@/components/project-environments/environment-picker";
-import { ServerGroupPicker } from "@/components/hosts/ServerGroupPicker";
+import { ServerPicker } from "@/components/hosts/server-picker";
 import { ClientsPill } from "@/components/environment-composer/clients-pill";
 import { ModelsPill } from "@/components/environment-composer/models-pill";
 import { SkillsPill } from "@/components/environment-composer/skills-pill";
@@ -80,8 +80,8 @@ export function EnvironmentComposer({
   className,
   slots = DEFAULT_COMPOSER_SLOTS,
   clientDefaultLabel,
-  emptyServerLabel = "Server group · client default",
-  serverInfoText = "Optional shared server group for every client in this setup.",
+  emptyServerLabel = "Servers · client default",
+  serverOptional = true,
   environmentsVocabulary = "environment",
   showTargetCount = true,
   lockedSlots,
@@ -106,14 +106,10 @@ export function EnvironmentComposer({
    * modelId becomes the pill label; mixed or missing models stay generic.
    */
   clientDefaultLabel?: string | null;
-  /**
-   * Empty-state label and info tooltip for the servers pill. The defaults are
-   * the strip's own wording, where the group is genuinely optional; a surface
-   * that makes it REQUIRED (evals create) must say so itself rather than
-   * offering "client default" for a choice it will then block on.
-   */
+  /** Empty-state label for the servers pill; a surface that REQUIRES one must say so. */
   emptyServerLabel?: string;
-  serverInfoText?: string;
+  /** `false` where submit gates on a server: the clear would only empty a field the form refuses. */
+  serverOptional?: boolean;
   /**
    * Slots this surface refuses to let anyone change, each with the reason.
    *
@@ -147,7 +143,7 @@ export function EnvironmentComposer({
    * Dialog. A portalled popover lands outside the dialog, where the modal
    * overlay's `pointer-events: none` swallows every click — so without this a
    * dialog's environment picker looks present and cannot be used. Same escape
-   * hatch, same name, as `EnvironmentPicker` and `ServerGroupPicker`.
+   * hatch, same name, as `EnvironmentPicker` and `ServerPicker`.
    */
   inModal?: boolean;
   /** Forwarded into the environment picker's popover footer. */
@@ -478,7 +474,7 @@ export function EnvironmentComposer({
         {showServersSlot
           ? withLock(
               "servers",
-              <ServerGroupPicker
+              <ServerPicker
                 projectId={projectId}
                 value={value.stack.serverAttachmentId}
                 onChange={(serverAttachmentId) =>
@@ -486,11 +482,11 @@ export function EnvironmentComposer({
                 }
                 disabled={slotsDisabled || Boolean(lockedSlots?.servers)}
                 emptyTriggerLabel={emptyServerLabel}
-                infoText={serverInfoText}
                 triggerTestId={testId("servers-picker")}
                 onClearSelection={() =>
                   patchStack({ serverAttachmentId: null })
                 }
+                offerClear={serverOptional}
                 inModal={inModal}
               />,
             )

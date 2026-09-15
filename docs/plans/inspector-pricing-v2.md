@@ -121,3 +121,32 @@ Existing guest-route and meter tests caught regressions and were rerun after fix
   pricing/meter/route files were subsequently rerun green. The other 20 failures
   were loopback sandbox restrictions; both OAuth files passed with local server
   access (40 tests). This was not a deployed payment end-to-end test.
+
+
+## Test readiness — September 15 conflict update
+
+The frontend sign-in flag does **not** enable V2 checkout. Offers come from
+`billing:getPlanCatalog` on the selected Convex deployment.
+
+- Use a Stripe **test-mode** backend and the matching frontend publishable key.
+- For an isolated shared-deployment test, use backend `PRICING_V2_MODE=targeted`
+  and enroll the test user through `userOps/pricing:setUserPricingV2Enrollment`.
+  Targeting checks the server-owned `users.pricingV2EnrolledAt`, not PostHog.
+  Existing V2 organizations also receive V2 offers in targeted mode.
+- `PRICING_V2_MODE=on` offers V2 to everyone on that deployment. Keep `off` for
+  legacy offers; toggling only `pricing-feature-signin-required` changes sign-in
+  gating, not plan prices or Stripe checkout authorization.
+- Verify the test catalog with `npm run stripe:catalog:dry-run:test` in the backend.
+  Required V2 lookup keys: `pro_monthly` ($29/month), `pro_annual` ($288/year),
+  `team_v2_monthly` ($249/month), `team_v2_annual` ($2,388/year). Legacy
+  `team_monthly` / `team_annual` retain their existing terms.
+- Test each V2 plan/cadence from a disposable Free organization, confirm hosted
+  checkout uses quantity 1 and the intended price, then verify webhook-driven
+  plan and allowance updates. Test cancellation and a failed payment as well.
+- Automatic refill has separate `AUTO_TOPUP_MODE` and eligibility requirements;
+  a pricing flag does not activate it.
+
+Current blocker: the configured local backend Stripe test API key is expired.
+The read-only catalog dry run failed authentication, so current Stripe catalog
+readiness is **not verified**. Replace the key locally and rerun before checkout
+acceptance. No Stripe products, subscriptions, flags, or deployments were changed.
