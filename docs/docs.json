@@ -76,6 +76,7 @@
             "pages": [
               "inspector/playground",
               "inspector/evals",
+              "inspector/user-testing",
               "inspector/compatibility",
               "inspector/view-origins",
               "inspector/host-templates"
