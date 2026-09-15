@@ -368,7 +368,9 @@ Executes a tool and returns the result.
 executeTool(
   serverId: string,
   toolName: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  options?: ClientRequestOptions,
+  task?: { ttl?: number }
 ): Promise<unknown>
 ```
 
@@ -379,19 +381,32 @@ executeTool(
 | `serverId` | `string` | The server ID |
 | `toolName` | `string` | Name of the tool to execute |
 | `args` | `Record<string, unknown>` | Arguments to pass to the tool |
+| `options` | `ClientRequestOptions` | Optional request options (e.g. timeout) |
+| `task` | `{ ttl?: number }` | Optional. When provided, sends the call as a task-augmented `tools/call` on the 2025-11-25 legacy tasks wire. `ttl` is the task time-to-live in milliseconds. |
 
 #### Returns
 
-`Promise<unknown>` - The tool's return value (type depends on the tool).
+`Promise<unknown>` - The tool's return value. When `task` is provided and the server creates a task, the result is a `CreateTaskResult` containing a `task` object with a `taskId`.
 
 #### Example
 
 ```typescript
+// Plain tool call
 const result = await manager.executeTool("myServer", "add", {
   a: 5,
   b: 3,
 });
 console.log(result); // 8
+
+// Task-augmented call (requires a 2025-11-25 server with tasks capability)
+const taskResult = await manager.executeTool(
+  "myServer",
+  "long_running_tool",
+  {},
+  undefined,
+  { ttl: 60_000 }
+);
+console.log(taskResult.task.taskId);
 ```
 
 #### Throws
@@ -399,6 +414,7 @@ console.log(result); // 8
 - Error if tool doesn't exist
 - Error if arguments are invalid
 - Error if tool execution fails
+- `MCPTasksWireError` if `task` is provided but the server does not speak the 2025-11-25 legacy tasks wire
 
 ---
 
@@ -707,6 +723,139 @@ async function main() {
   }
 }
 ```
+
+---
+
+## Tasks (2025-11-25 legacy wire)
+
+These methods are relevant when connecting to servers that implement the in-core tasks utility from the 2025-11-25 MCP protocol version. The SDK automatically determines which tasks wire (if any) a connection speaks based on the negotiated protocol version and the server's advertised capabilities.
+
+### getTasksWire()
+
+Returns the tasks wire the connection speaks.
+
+```typescript
+getTasksWire(serverId: string): TasksWire
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `serverId` | `string` | The server ID |
+
+#### Returns
+
+`TasksWire` — one of:
+
+| Value | Description |
+|-------|-------------|
+| `"none"` | Tasks are not available on this connection (unknown version, pre-tasks version, or missing capabilities). |
+| `"legacy"` | The 2025-11-25 in-core tasks utility is available (`params.task` on `tools/call`, `tasks/list|get|result|cancel`). |
+| `"extension"` | The `io.modelcontextprotocol/tasks` extension is declared (2026-07-28+). Inert until extension support is fully implemented. |
+
+#### Example
+
+```typescript
+const wire = manager.getTasksWire("myServer");
+if (wire === "legacy") {
+  // Safe to pass task opt-in to executeTool
+}
+```
+
+---
+
+### getNegotiatedProtocolVersion()
+
+Returns the MCP protocol version negotiated during `initialize`.
+
+```typescript
+getNegotiatedProtocolVersion(serverId: string): string | undefined
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `serverId` | `string` | The server ID |
+
+#### Returns
+
+`string | undefined` — the negotiated wire literal (e.g. `"2025-11-25"`), or `undefined` if the connection has not completed initialization.
+
+#### Example
+
+```typescript
+const version = manager.getNegotiatedProtocolVersion("myServer");
+console.log(version); // "2025-11-25"
+```
+
+---
+
+### supportsTasksForToolCalls()
+
+Returns `true` if the server supports task-augmented tool calls on the legacy wire.
+
+```typescript
+supportsTasksForToolCalls(serverId: string): boolean
+```
+
+Returns `false` on any protocol version other than `2025-11-25`, even if the server advertises task capabilities.
+
+---
+
+### supportsTasksList()
+
+Returns `true` if the server supports `tasks/list` on the legacy wire.
+
+```typescript
+supportsTasksList(serverId: string): boolean
+```
+
+---
+
+### supportsTasksCancel()
+
+Returns `true` if the server supports `tasks/cancel` on the legacy wire.
+
+```typescript
+supportsTasksCancel(serverId: string): boolean
+```
+
+---
+
+## Errors
+
+### MCPTasksWireError
+
+Thrown when a tasks operation is attempted against a server whose negotiated protocol version or advertised capabilities do not match the required wire. Nothing is sent to the server when this error is thrown.
+
+```typescript
+import { MCPTasksWireError, isMCPTasksWireError } from "@mcpjam/sdk";
+```
+
+#### Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `wire` | `string` | The resolved wire value at the time of the error (e.g. `"none"`, `"extension"`). |
+| `message` | `string` | Human-readable description of the mismatch. |
+
+#### Example
+
+```typescript
+import { isMCPTasksWireError } from "@mcpjam/sdk";
+
+try {
+  await manager.executeTool("myServer", "tool", {}, undefined, { ttl: 5000 });
+} catch (err) {
+  if (isMCPTasksWireError(err)) {
+    console.error(`Tasks wire mismatch: ${err.wire}`);
+  }
+}
+```
+
+---
 
 ## Related
 
