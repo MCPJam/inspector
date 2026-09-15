@@ -616,7 +616,7 @@ Decision summary: failed (verdict policy v2) — 2/3 case variants passed, 1 fai
 
 Four things about it are worth knowing before you script against it.
 
-**The counts carry the population they count.** `measurementUnit` is `caseVariant` under verdict policy v2 — one case under one provider/model, with repetitions as *iterations inside it* — and `trial` on a legacy percent-threshold run. A 3-case suite with 5 repetitions is legitimately "3" under one unit and "15" under the other, so a count quoted without its unit is not a fact.
+**The counts carry the population they count.** `measurementUnit` is `caseVariant` under verdict policy v2 — one case under one provider/model, with its configured iterations as *trials inside it* — and `trial` on a legacy percent-threshold run. A 3-case suite with 5 iterations is legitimately "3" under one unit and "15" under the other, so a count quoted without its unit is not a fact.
 
 **The summary explains the verdict; it never re-decides it.** Under policy v2 the run's own decision is the authority for the verdict, the rates, the validity phase and the per-case aggregation, and it is carried through on `decision`. The per-iteration diagnostics sit *underneath* that: a case can pass with a failing iteration in it, so tallying the diagnostics gives a different answer than the platform reached.
 

@@ -7,6 +7,7 @@
  */
 
 import {
+  authoredRequiredRole,
   GRADER_PRESENTATION_GROUP,
   PREDICATE_KINDS,
   PREDICATE_STAGE,
@@ -18,12 +19,13 @@ import {
 } from "@mcpjam/sdk/contract";
 import {
   checkRole,
-  checkSeverity,
+  isRequiredRole,
   type Predicate,
 } from "@mcpjam/sdk/predicates";
 import {
   formatCriterion,
   PREDICATE_KIND_LABELS,
+  type ScorerUiRole,
 } from "@/shared/predicate-kinds";
 import {
   STAGE_CHIP_TONE_CLASS,
@@ -101,39 +103,41 @@ export function authorablePredicateKinds(
   );
 }
 
-export type ScorerUiRole = "gate" | "warn" | "report";
+export type { ScorerUiRole };
 
+/**
+ * What each tier means, in the reader's terms: what happens to the test.
+ *
+ * The two entries replace Gate / Warn / Report. Warn and Report said the same
+ * thing about the iteration — neither failed it — and differed only by an
+ * amber highlight, so a reader had to learn a distinction the verdict never
+ * made. `severity: "warn"` is still accepted on the wire and still renders its
+ * highlight where one exists; it no longer names a tier.
+ */
 export const ROLE_LEGEND: Record<
   ScorerUiRole,
   { label: string; meaning: string }
 > = {
-  gate: {
-    label: "Gate",
+  required: {
+    label: "Required",
     meaning: "If this assertion fails, the iteration fails.",
   },
-  warn: {
-    label: "Warn",
-    meaning:
-      "If this assertion fails, a warning is shown without failing the iteration.",
-  },
-  report: {
-    label: "Report",
-    meaning:
-      "Records the result for reference without changing the iteration verdict.",
+  advisory: {
+    label: "Advisory",
+    meaning: "Shown on the result. Never fails the iteration.",
   },
 };
 
 /**
  * Authored role a settings row can write.
  *
- * Gate is the default: both policy fields stripped, so a saved check looks
- * like every check written before roles existed. Warn is the only pairing
- * the schema admits for a highlight (`advisory` + `severity: "warn"`).
- * Report is advisory without a severity.
+ * Required is the default: both policy fields stripped, so a saved check looks
+ * like every check written before roles existed. `severity` is ignored here —
+ * an advisory check reads as Advisory whether or not it carries one, which is
+ * what collapsing Warn into Report means.
  */
 export function roleOfPredicate(predicate: Predicate): ScorerUiRole {
-  if (checkRole(predicate) === "gating") return "gate";
-  return checkSeverity(predicate) === "warn" ? "warn" : "report";
+  return checkRole(predicate) === "advisory" ? "advisory" : "required";
 }
 
 export function withPredicateRole(
@@ -141,10 +145,13 @@ export function withPredicateRole(
   role: ScorerUiRole,
 ): Predicate {
   const { role: _role, severity: _severity, ...rest } = predicate;
-  if (role === "gate") return rest as Predicate;
-  if (role === "warn") {
-    return { ...(rest as Predicate), role: "advisory", severity: "warn" };
-  }
+  // Required writes the stored form Gate always had — both fields absent — so
+  // a row switched to Required is byte-identical to one authored before roles
+  // existed, and its configuration revision does not move.
+  if (role === "required") return rest as Predicate;
+  // A NEW advisory write carries no `severity`: it no longer decides a label,
+  // and the reducer only rewrites rows the author touched, so an untouched
+  // row keeps whatever severity it was stored with.
   return { ...(rest as Predicate), role: "advisory" };
 }
 
@@ -155,22 +162,28 @@ export function roleOfJudgeSlot(
   slot: JudgeSlot,
   judgeConfig: EvalJudgeConfig | undefined,
 ): ScorerUiRole {
-  if (slot === "groundedness") {
-    return judgeConfig?.groundedness?.severity === "warn" ? "warn" : "report";
-  }
-  const goal = judgeConfig?.goalCompletion;
-  if (goal?.role === "gating") return "gate";
-  return goal?.severity === "warn" ? "warn" : "report";
+  if (slot === "groundedness") return "advisory";
+  // Either spelling: a suite configured before the rename stores `"gating"`
+  // and one configured after stores `"required"`, and this table renders both.
+  return isRequiredRole(judgeConfig?.goalCompletion?.role)
+    ? "required"
+    : "advisory";
 }
 
-/** Authored goal-completion role a settings row can write. */
+/**
+ * Authored goal-completion role a settings row can write.
+ *
+ * Writes the spelling this build emits, which is the canonical one now that
+ * the boundary takes it. Deliberately NOT capability-gated: the client and the
+ * server it writes to are one deployment, unlike an SDK runner in somebody's
+ * CI — and a deployment that shipped this build shipped the boundary with it.
+ */
 export function withGoalCompletionRole(
   current: NonNullable<EvalJudgeConfig["goalCompletion"]>,
   role: ScorerUiRole,
 ): NonNullable<EvalJudgeConfig["goalCompletion"]> {
   const { role: _role, severity: _severity, ...rest } = current;
-  if (role === "gate") return { ...rest, role: "gating" };
-  if (role === "warn") return { ...rest, role: "advisory", severity: "warn" };
+  if (role === "required") return { ...rest, role: authoredRequiredRole() };
   return { ...rest, role: "advisory" };
 }
 
@@ -342,24 +355,27 @@ export type ScorerTableView = {
 
 const STAGE_CONFIG_CHIP_LABEL: Record<StageConfigState["state"], string> = {
   runner: "Observed by the runner",
-  gated: "Gated",
+  gated: "Required",
   gap: "No evaluator",
   judgeOnRequest: "Judge on request",
   judgeAutomatic: "Judge automatic",
   judgeOff: "Judge off",
 };
 
-export function formatStageConfigLine(state: StageConfigState): string {
+/**
+ * "N required · M advisory", or "" when nothing is authored.
+ *
+ * Takes the counters structurally rather than a whole {@link StageConfigState}
+ * so a case's `StageCoverage` can be passed directly — the suite card and the
+ * case card render the same sentence, and neither needs a cast to say so.
+ */
+export function formatStageConfigLine(state: {
+  required: number;
+  advisory: number;
+}): string {
   const parts: string[] = [];
-  if (state.gates > 0) {
-    parts.push(`${state.gates} ${state.gates === 1 ? "gate" : "gates"}`);
-  }
-  if (state.warn > 0) {
-    parts.push(`${state.warn} warn`);
-  }
-  if (state.report > 0) {
-    parts.push(`${state.report} ${state.report === 1 ? "report" : "reports"}`);
-  }
+  if (state.required > 0) parts.push(`${state.required} required`);
+  if (state.advisory > 0) parts.push(`${state.advisory} advisory`);
   return parts.join(" · ");
 }
 
@@ -416,16 +432,31 @@ function hasAuthoredThreshold(predicate: Predicate): boolean {
   );
 }
 
+/**
+ * What the runner measures at a stage without any authored assertion: named
+ * like one ("Successful connection"), because that is how it reads beside the
+ * assertions, but never a box — it is on for every iteration and cannot be
+ * turned off.
+ */
+export const RUNNER_MEASUREMENT_LABELS: Record<UserValueStage, string> = {
+  connection: "Successful connection",
+  discovery: "Tools listed by the server",
+  selection: "A tool was selected",
+  call: "Tool call completed",
+  response: "Result returned to the model",
+  userValue: "Observed by the runner",
+};
+
 function observedRow(stage: UserValueStage): ScorerTableRow {
   return {
     id: `observed:${stage}`,
     kind: "observed",
     enabled: true,
-    name: "Observed by the runner",
+    name: RUNNER_MEASUREMENT_LABELS[stage],
     kindLabel: "Runner",
     threshold: "",
     thresholdKind: "none",
-    role: "report",
+    role: "advisory",
     muted: true,
     observedStage: stage,
   };
@@ -440,7 +471,7 @@ function matchTableRow(row: GraderRow): ScorerTableRow {
     kindLabel: matchKindLabel(row.matchField),
     threshold: "1",
     thresholdKind: "fixed",
-    role: "gate",
+    role: "required",
     muted: false,
     matchField: row.matchField,
   };

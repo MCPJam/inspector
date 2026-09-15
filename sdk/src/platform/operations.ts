@@ -5631,10 +5631,10 @@ const updateEvalSuiteInput = z
                 "Advisory pass threshold, 0–1 (passed = score >= threshold)."
               ),
             role: z
-              .enum(["advisory", "gating"])
+              .enum(["advisory", "gating", "required"])
               .optional()
               .describe(
-                "Whether the judge decides the verdict. `gating` is accepted only on a calibrated judge, and only where the deployment allows it."
+                "Whether the judge decides the verdict. `required` (legacy spelling: `gating`) is accepted only on a calibrated judge, and only where the deployment allows it."
               ),
             severity: z
               .literal("warn")

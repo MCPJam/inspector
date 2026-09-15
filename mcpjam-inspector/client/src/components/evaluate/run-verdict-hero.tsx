@@ -69,7 +69,7 @@ function StatDelta({ delta }: { delta: HeroStatDelta }) {
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-0.5 text-[11.5px] font-medium tabular-nums",
+        "inline-flex items-center gap-0.5 text-[13px] font-medium tabular-nums",
         DELTA_TONE_CLASS[delta.tone],
       )}
       aria-label={`${delta.label} vs previous run`}
@@ -94,6 +94,7 @@ function PairingStat({
   delta,
   tone = "neutral",
   unavailable = false,
+  count = false,
 }: {
   label: string;
   value: string;
@@ -101,16 +102,20 @@ function PairingStat({
   tone?: keyof typeof PAIRING_STAT_TONE_CLASS;
   /** Absent is not zero. The dash carries the reason for a screen reader. */
   unavailable?: boolean;
+  count?: boolean;
 }) {
   return (
     <div className="min-w-0" data-testid="run-verdict-pairing-stat">
-      <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
         {label}
       </div>
       <div className="mt-0.5 flex flex-wrap items-baseline gap-x-1">
         <span
           className={cn(
-            "text-[13px] font-semibold tabular-nums",
+            "tabular-nums",
+            count
+              ? "text-[26px] font-medium leading-8"
+              : "text-lg font-semibold leading-6",
             PAIRING_STAT_TONE_CLASS[tone],
           )}
           {...(unavailable ? { "aria-label": `${label} not recorded` } : {})}
@@ -147,27 +152,27 @@ function PairingPassList({ pairings }: { pairings: HeroPairingPass[] }) {
           className="flex min-w-0 flex-wrap items-center gap-x-6 gap-y-3 py-4"
           data-testid="run-verdict-pairing"
         >
-          <div className="flex w-48 min-w-0 shrink-0 items-center gap-2">
+          <div className="flex w-[250px] min-w-0 shrink-0 items-center gap-2">
             <img
               src={resolveHostLogoByName(pairing.client, theme)}
               alt=""
-              className="size-5 shrink-0 object-contain"
+              className="size-6 shrink-0 object-contain"
             />
             <span className="min-w-0">
-              <span className="block truncate text-[13px] font-semibold text-foreground">
+              <span className="block truncate text-base font-semibold text-foreground">
                 {pairing.client}
               </span>
-              <span className="block truncate font-mono text-[11px] text-muted-foreground">
+              <span className="block truncate text-sm text-muted-foreground">
                 {pairing.model}
               </span>
             </span>
           </div>
 
           <div
-            className="flex shrink-0 items-baseline gap-1.5"
+            className="flex min-w-[120px] shrink-0 items-baseline gap-2"
             data-testid="run-verdict-pairing-rate"
           >
-            <span className="text-[26px] font-bold leading-none tabular-nums text-foreground">
+            <span className="text-[34px] font-bold leading-none tabular-nums text-foreground">
               {pairing.passRate == null
                 ? "—"
                 : `${Math.round(pairing.passRate)}%`}
@@ -180,12 +185,14 @@ function PairingPassList({ pairings }: { pairings: HeroPairingPass[] }) {
           <div className="flex shrink-0 items-start gap-5">
             <PairingStat
               label="Passed"
+              count
               value={String(pairing.passed)}
               tone="pass"
               delta={pairing.delta}
             />
             <PairingStat
               label="Failed"
+              count
               value={String(pairing.failed)}
               tone="fail"
             />
@@ -203,7 +210,7 @@ function PairingPassList({ pairings }: { pairings: HeroPairingPass[] }) {
             ) : null}
           </div>
 
-          <div className="flex min-w-0 flex-1 items-start gap-5 border-l border-border/60 pl-5">
+          <div className="flex min-w-0 flex-wrap items-start gap-x-8 gap-y-3 border-l border-border/60 pl-9">
             <PairingStat
               label="P50"
               value={formatRunCaseLatencyMs(pairing.stats.latencyP50Ms)}

@@ -39,7 +39,6 @@ describe("fetchRuntimeServerSecrets", () => {
 
     await expect(
       fetchRuntimeServerSecrets({
-        expectedTargetUrl: "https://example.com/mcp",
         bearerToken: "bearer-token",
         projectId: "project-1",
         serverId: "server-1",

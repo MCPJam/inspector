@@ -325,7 +325,6 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
       authMethod?: "auto" | "oauth" | "xaa" | "bearer" | "none";
       headers?: Record<string, string>;
       hasHeaders?: boolean;
-      secretsBoundOrigin?: string;
     };
     oauthAccessToken: string | null;
   }) {
@@ -619,10 +618,6 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
           serverConfig: {
             transportType: "http",
             url: "https://header.example.com/mcp",
-            // MJ-003: a row whose stored headers are bound to its own origin.
-            // Absent, the connect gate refuses — which is why the backend
-            // backfill gates the deploy that turns this on.
-            secretsBoundOrigin: "https://header.example.com",
             useOAuth: false,
             headers: { Authorization: "Bearer static-token" },
             hasHeaders: true,
@@ -657,10 +652,6 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
           serverConfig: {
             transportType: "http",
             url: "https://hidden-header.example.com/mcp",
-            // MJ-003: bound to its own origin, as a post-backfill row is. The
-            // gate runs before the reveal below, so an unbound row would 403
-            // instead of decrypting.
-            secretsBoundOrigin: "https://hidden-header.example.com",
             useOAuth: false,
             headers: {},
             hasHeaders: true,
@@ -683,7 +674,6 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
             success: true,
             env: null,
             headers: { Authorization: "Bearer revealed-token" },
-            secretsBoundOrigin: "https://hidden-header.example.com",
           }),
           { status: 200, headers: { "Content-Type": "application/json" } }
         );
@@ -1032,10 +1022,6 @@ describe("resolveLocalServerForConnect — backend-resolved XAA identity error",
                 serverConfig: {
                   transportType: "http",
                   url: "https://xaa.example.com/mcp",
-                  // MJ-003: bound to its own origin. Without it the gate
-                  // refuses this preregistered row before the identity check,
-                  // which is not the contract under test here.
-                  secretsBoundOrigin: "https://xaa.example.com",
                   headers: {},
                   useOAuth: false,
                   useXaa: true,

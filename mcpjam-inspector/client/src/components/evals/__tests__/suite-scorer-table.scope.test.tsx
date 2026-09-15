@@ -34,7 +34,7 @@ const allKinds = {
 } as SuiteCapabilities;
 
 const row = (container: HTMLElement, id: string) =>
-  container.querySelector(`tr[data-scorer-id="${id}"]`) as HTMLElement;
+  container.querySelector(`[data-scorer-id="${id}"]`) as HTMLElement;
 
 function renderSuite(predicates: Predicate[], capabilities = allKinds) {
   const onPredicatesChange = vi.fn();
@@ -111,7 +111,8 @@ describe("suite scope", () => {
     expect(screen.getByRole("checkbox", { name: errors.label })).toBeEnabled();
   });
 
-  it("names a family row by its standard check, with the criterion under it", () => {
+  it("names a family row by its standard check, with the criterion under it", async () => {
+    const user = userEvent.setup();
     const { container } = renderSuite([{ type: "toolLatencyUnder", ms: 1234 }]);
     const latencyRow = row(container, "predicate:0");
     expect(latencyRow).toHaveAttribute("data-scorer-enabled", "true");
@@ -119,10 +120,13 @@ describe("suite scope", () => {
     expect(within(latencyRow).getByText(/1,234/)).toBeInTheDocument();
     // On, so no second preset row for the same family.
     expect(row(container, `preset:${latency.id}`)).toBeNull();
-    // Still editable in place.
+    // Still editable: the title opens the assertion's own fields.
+    await user.click(
+      within(latencyRow).getByRole("button", { name: latency.label }),
+    );
     expect(
       within(latencyRow).getByRole("spinbutton", {
-        name: "Tool latency budget in ms",
+        name: "Max time in ms (strictly under)",
       }),
     ).toHaveValue(1234);
   });
@@ -142,7 +146,8 @@ describe("suite scope", () => {
 });
 
 describe("case scope", () => {
-  it("lists inherited rules read-only and the case's own editable, in that order", () => {
+  it("lists inherited rules read-only and the case's own editable, in that order", async () => {
+    const user = userEvent.setup();
     const { container } = renderCase([{ type: "toolLatencyUnder", ms: 1234 }], {
       predicates: {
         mode: "extend",
@@ -152,19 +157,24 @@ describe("case scope", () => {
     const inherited = row(container, "predicate:0");
     expect(inherited).toHaveAttribute("data-scorer-source", "suite");
     expect(within(inherited).getByText("From suite")).toBeInTheDocument();
-    expect(within(inherited).queryByRole("spinbutton")).toBeNull();
-    expect(
-      within(inherited).queryByRole("button", { name: "Warn" }),
-    ).toBeNull();
-    expect(within(inherited).getByText("1234")).toBeInTheDocument();
+    // No title button: an inherited assertion opens no editor here.
+    expect(within(inherited).queryByRole("button")).toBeNull();
+    expect(within(inherited).getByText(/1,234/)).toBeInTheDocument();
     const own = row(container, "predicate:1");
     expect(own).toHaveAttribute("data-scorer-source", "case");
     expect(within(own).getByText("This case")).toBeInTheDocument();
+    await user.click(
+      within(own).getByRole("button", {
+        name: "User turn count stays below the configured limit",
+      }),
+    );
     expect(
-      within(own).getByRole("spinbutton", { name: "Turn budget" }),
+      within(own).getByRole("spinbutton", {
+        name: "User turns (strictly under)",
+      }),
     ).toHaveValue(3);
     expect(
-      within(own).getByRole("button", { name: "Warn" }),
+      within(own).getByRole("button", { name: "Advisory" }),
     ).toBeInTheDocument();
   });
 
@@ -179,7 +189,7 @@ describe("case scope", () => {
     );
     expect(
       within(row(container, "predicate:0")).getByText(
-        "Turns off all 2 suite rules of this kind for this case.",
+        "Turns off all 2 suite assertions of this kind for this case.",
       ),
     ).toBeInTheDocument();
     const boxes = screen.getAllByRole("checkbox", { name: latency.label });
@@ -200,7 +210,7 @@ describe("case scope", () => {
     expect(within(inherited).getByRole("checkbox")).toBeDisabled();
     expect(
       within(inherited).getByText(
-        /Only standard checks can be turned off per case/,
+        /Only standard assertions can be turned off per case/,
       ),
     ).toBeInTheDocument();
   });
@@ -242,18 +252,11 @@ describe("case scope", () => {
       predicates: { mode: "extend", list: [] },
       suppressedSuiteStandardCheckIds: [],
     });
-    await user.click(screen.getByRole("button", { name: "Warn" }));
+    await user.click(screen.getByRole("button", { name: "Advisory" }));
     expect(onDraftChange).toHaveBeenLastCalledWith({
       predicates: {
         mode: "extend",
-        list: [
-          {
-            type: "turnCountUnder",
-            turns: 3,
-            role: "advisory",
-            severity: "warn",
-          },
-        ],
+        list: [{ type: "turnCountUnder", turns: 3, role: "advisory" }],
       },
       suppressedSuiteStandardCheckIds: [],
     });
@@ -285,6 +288,21 @@ describe("case scope", () => {
 
   it("reads the judge as the case's skip flag, and cannot revive a judge the suite turned off", async () => {
     const user = userEvent.setup();
+    const judged = renderCase(
+      [],
+      {},
+      { judgeConfig: { goalCompletion: { threshold: 0.7 } } },
+    );
+    // Read-only threshold and role: the suite's, not the case's to edit.
+    expect(screen.getByText(/threshold 0\.7/i)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Goal completion judge" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("spinbutton", { name: "Judge threshold" }),
+    ).toBeNull();
+    judged.unmount();
+
     const skipped = renderCase(
       [],
       {},
@@ -295,11 +313,8 @@ describe("case scope", () => {
     );
     const box = screen.getByRole("checkbox", { name: "Goal completion judge" });
     expect(box).not.toBeChecked();
-    // Read-only threshold and role: the suite's, not the case's to edit.
-    expect(
-      screen.queryByRole("spinbutton", { name: "Judge threshold" }),
-    ).toBeNull();
-    expect(screen.getByText("0.7")).toBeInTheDocument();
+    // Off says only its name.
+    expect(screen.queryByText(/threshold 0\.7/i)).toBeNull();
     await user.click(box);
     expect(skipped.onJudgeSkippedChange).toHaveBeenCalledWith(false);
     skipped.unmount();

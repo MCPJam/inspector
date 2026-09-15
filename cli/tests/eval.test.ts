@@ -2906,6 +2906,8 @@ test("eval description-experiment start refuses out-of-range flags before any re
   try {
     for (const [flag, value, field] of [
       ["--iterations", "11", "iterationOverride"],
+      ["--repetitions", "11", "iterationOverride"],
+      ["--max-iterations", "401", "maxTrials"],
       ["--max-trials", "401", "maxTrials"],
       ["--case-scope", "some", "caseScope"],
     ] as const) {
@@ -2929,6 +2931,54 @@ test("eval description-experiment start refuses out-of-range flags before any re
         `accepted ${flag} ${value}: ${run.stderr}`
       );
       assert.match(run.stderr, new RegExp(`Invalid input:.*${field}`));
+    }
+    assert.equal(fixture.authHeaders.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("both spellings of a count flag are a usage error, not a precedence rule", async () => {
+  // `--iterations` is canonical and `--repetitions` its legacy spelling; a
+  // script passing both mid-migration must stop, not silently launch with one.
+  const fixture = await startEvalFixture();
+  try {
+    for (const [argv, message] of [
+      [
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--iterations",
+          "1",
+          "--repetitions",
+          "2"
+        ),
+        /Use --iterations or --repetitions, not both — they are two spellings of one flag\./,
+      ],
+      [
+        evalArgv(
+          fixture.baseUrl,
+          "description-experiment",
+          "start",
+          "--experiment",
+          "exp-1",
+          "--max-iterations",
+          "10",
+          "--max-trials",
+          "20"
+        ),
+        /Use --max-iterations or --max-trials, not both — they are two spellings of one flag\./,
+      ],
+    ] as const) {
+      const run = await captureProcessOutput(() =>
+        main(argv, { telemetry: telemetryDisabled })
+      );
+      assert.equal(run.result.exitCode, 2, run.stderr);
+      assert.match(run.stderr, message);
     }
     assert.equal(fixture.authHeaders.length, 0);
   } finally {

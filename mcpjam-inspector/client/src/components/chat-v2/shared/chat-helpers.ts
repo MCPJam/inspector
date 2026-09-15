@@ -30,6 +30,43 @@ export const STARTER_PROMPTS: Array<{ label: string; text: string }> = [
   },
 ];
 
+/**
+ * Whether the composer's empty state offers {@link STARTER_PROMPTS}.
+ *
+ * They are a PLAYGROUND affordance: they get someone who just connected a
+ * server to a first tool call, and every one of them asks the assistant about
+ * its own tooling.
+ *
+ * A published study is the opposite situation. The tester is there to use the
+ * thing; the study's own "What to try" list is what tells them where to start;
+ * and no product a real user opens greets them with three prompts asking the
+ * assistant to describe itself. So the chips both duplicate the study's
+ * instructions and break the illusion the study exists to test.
+ *
+ * `hostedScenarioId` is the exact signal for that surface — only the hosted
+ * study page sets it (the Playground's hosted context carries `hostId`
+ * instead), and it covers BOTH ways that page is reached: a tester's share
+ * link, and the creator's own "Open preview", which has to look like what the
+ * tester sees.
+ *
+ * A predicate rather than an inline `&&` chain because the component that
+ * renders it cannot be mounted in a unit test — the rule would otherwise be
+ * asserted only by tests that mock the component away, which is how the first
+ * version of this shipped with a test that could not fail.
+ */
+export function shouldShowStarterPrompts(input: {
+  hasMessages: boolean;
+  isAuthLoading: boolean;
+  showDisabledCallout: boolean;
+  /** Set only on the hosted study page; `undefined` everywhere else. */
+  hostedScenarioId: string | undefined;
+}): boolean {
+  if (input.hostedScenarioId) return false;
+  return (
+    !input.showDisabledCallout && !input.hasMessages && !input.isAuthLoading
+  );
+}
+
 export interface FormattedError {
   message: string;
   details?: string;

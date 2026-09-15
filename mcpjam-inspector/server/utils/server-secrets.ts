@@ -3,7 +3,6 @@ import {
   WebRouteError,
   parseErrorMessage,
 } from "../routes/web/errors.js";
-import { assertSecretsOriginMatches } from "./secret-origin-binding.js";
 import { logger } from "./logger.js";
 
 // One-shot guard so a misconfigured deployment logs once, not per request.
@@ -175,8 +174,6 @@ export async function fetchRuntimeServerSecrets(args: {
   bearerToken: string;
   projectId: string;
   serverId: string;
-  /** HTTP destination from authorize; null only for stdio. Missing HTTP URLs fail closed. */
-  expectedTargetUrl: string | null | undefined;
   accessScope?: "project_member" | "chat_v2";
   scenarioId?: string;
   accessVersion?: number;
@@ -290,17 +287,9 @@ export async function fetchRuntimeServerSecrets(args: {
     );
   }
 
-  const revealedHeaders = parseRecord(body.headers);
-  if (args.expectedTargetUrl !== null && revealedHeaders) {
-    assertSecretsOriginMatches({
-      boundOrigin: body.secretsBoundOrigin,
-      targetUrl: args.expectedTargetUrl,
-      serverName: args.serverId,
-    });
-  }
   return {
     env: parseRecord(body.env),
-    headers: revealedHeaders,
+    headers: parseRecord(body.headers),
   };
 }
 
