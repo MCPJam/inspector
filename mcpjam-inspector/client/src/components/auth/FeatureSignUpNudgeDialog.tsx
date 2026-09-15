@@ -96,24 +96,14 @@ export function FeatureSignUpNudgeDialog({
       }}
     >
       <DialogContent className="sm:max-w-md">
+        {/* No bullet list any more. It carried three sell lines I had written,
+            including "run your first swarm on us, no card needed", which was a
+            pricing promise nobody had made. The title and one true sentence
+            are what is left; REEV-11 owns whatever replaces them. */}
         <DialogHeader>
           <DialogTitle>{copy.nudge.title}</DialogTitle>
           <DialogDescription>{copy.nudge.body}</DialogDescription>
         </DialogHeader>
-        <ul className="flex flex-col gap-2">
-          {copy.nudge.bullets.map((bullet) => (
-            <li
-              key={bullet}
-              className="flex items-start gap-2.5 text-sm text-foreground"
-            >
-              <span
-                aria-hidden
-                className="mt-1.5 size-1.5 shrink-0 rounded-full bg-primary"
-              />
-              {bullet}
-            </li>
-          ))}
-        </ul>
         {/* Primary first in the DOM so Radix's focus scope lands on it — Enter
             creates the account instead of signing in — and flex-row-reverse
             restores the usual visual order. Same trick, same reason, as

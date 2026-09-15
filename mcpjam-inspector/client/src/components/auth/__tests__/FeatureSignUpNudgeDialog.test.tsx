@@ -26,7 +26,7 @@ describe("FeatureSignUpNudgeDialog", () => {
     window.history.replaceState({}, "", "/swarms");
   });
 
-  it("shows the feature's own nudge copy and its bullets", () => {
+  it("shows the feature's own nudge copy", () => {
     const copy = GATED_FEATURE_COPY.swarms.nudge;
     render(
       <FeatureSignUpNudgeDialog feature="swarms" isOpen onClose={vi.fn()} />,
@@ -34,9 +34,17 @@ describe("FeatureSignUpNudgeDialog", () => {
 
     expect(screen.getByText(copy.title)).toBeInTheDocument();
     expect(screen.getByText(copy.body)).toBeInTheDocument();
-    for (const bullet of copy.bullets) {
-      expect(screen.getByText(bullet)).toBeInTheDocument();
-    }
+  });
+
+  // The bullets are gone, and this is what stops them coming back by habit.
+  // They carried sell lines nobody had signed off, including a "no card
+  // needed" pricing promise, on a product bounded by credits.
+  it("makes no claim about price", () => {
+    render(
+      <FeatureSignUpNudgeDialog feature="swarms" isOpen onClose={vi.fn()} />,
+    );
+
+    expect(screen.queryByText(/no card|free to start|on us/i)).toBeNull();
   });
 
   it("tracks one impression per opening, not per render", () => {

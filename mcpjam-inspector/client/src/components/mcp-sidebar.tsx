@@ -84,13 +84,6 @@ interface NavItem {
   disabledTooltip?: string;
   /** Optional pill shown next to the label, e.g. "New" */
   badge?: string;
-  /**
-   * How loud that pill is. "New" earns the accent; an access marker does not.
-   * `LOG IN` and `UPGRADE` say what STATE you are in rather than asking to be
-   * clicked, and in accent they competed with the real call to action sitting
-   * in the middle of the page they lead to (Sophie, in review).
-   */
-  badgeVariant?: "default" | "secondary" | "outline";
   /** Only show this item when the named feature flag is enabled */
   featureFlag?: string;
   /** Hide this item when the named feature flag is enabled */
@@ -158,42 +151,6 @@ export function filterByFeatureFlags(
       }),
     }))
     .filter((section) => section.items.length > 0);
-}
-
-/**
- * Stamps the access marker onto the two gated Measure items (REEV-6).
- *
- * `LOG IN` for a visitor with no account, `UPGRADE` for one whose plan lacks
- * the feature. Both are `secondary`, which is grey: they report a STATE rather
- * than ask for a click, and in the accent colour they competed with the real
- * call to action on the page they lead to (Sophie, in review).
- *
- * Nobody else is marked. A member sees no pill, and neither does anyone on a
- * surface that was never gated, so the marker means exactly one thing wherever
- * it appears.
- *
- * Exported so `mcp-sidebar-feature-flags.test.ts` can assert against the real
- * nav data rather than a fixture.
- */
-export function applyGatedFeatureMarkers(
-  sections: NavSection[],
-  options: { isGuest: boolean; planLocked: boolean },
-): NavSection[] {
-  const badge = options.isGuest
-    ? "Log in"
-    : options.planLocked
-      ? "Upgrade"
-      : null;
-  if (!badge) return sections;
-
-  return sections.map((section) => ({
-    ...section,
-    items: section.items.map((item) =>
-      item.billingFeature === "scenarios"
-        ? { ...item, badge, badgeVariant: "secondary" as const }
-        : item,
-    ),
-  }));
 }
 
 /**
@@ -299,6 +256,10 @@ export const navigationSections: NavSection[] = [
         title: "Swarms",
         url: "/swarms",
         icon: Network,
+        // Same pill XAA Debugger carries. It marks a NEW feature, not an
+        // access state: the earlier LOG IN / UPGRADE markers described who the
+        // reader was, and there is no longer a plan to report on.
+        badge: "New",
         featureFlag: "sandboxes-enabled",
         billingFeature: "scenarios",
       },
@@ -306,6 +267,7 @@ export const navigationSections: NavSection[] = [
         title: "User Testing",
         url: "/user-testing",
         icon: Users,
+        badge: "New",
         featureFlag: "sandboxes-enabled",
         billingFeature: "scenarios",
       },
@@ -698,21 +660,9 @@ export function MCPSidebar({
     ],
   );
   const hubNavHash = "#servers";
-  const visibleNavigationSections = applyGatedFeatureMarkers(
-    filterByFeatureFlags(
-      HOSTED_MODE ? hostedNavigationSections : navigationSections,
-      featureFlags,
-    ),
-    {
-      // Nothing is marked until WorkOS has answered. `user` is null during
-      // hydrate for signed-in people too, so marking early would flash "Log in"
-      // at a paying customer on every cold load.
-      isGuest: !user && !authResolving && !isConvexAuthLoading,
-      planLocked:
-        billingUiEnabled &&
-        billingGateEnforcementActive &&
-        billingGateDenied.scenarios === true,
-    },
+  const visibleNavigationSections = filterByFeatureFlags(
+    HOSTED_MODE ? hostedNavigationSections : navigationSections,
+    featureFlags,
   );
 
   // Signed-in users reach Settings/Support via the account menu; only

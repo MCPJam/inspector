@@ -12,10 +12,7 @@ vi.mock("@/components/swarms/swarm-hero-characters", () => ({
 }));
 
 import { track } from "@/lib/analytics";
-import {
-  GuestFeaturePreview,
-  PlanLockedFeatureNotice,
-} from "../GatedFeaturePreview";
+import { GuestFeaturePreview } from "../GatedFeaturePreview";
 import { GATED_FEATURE_COPY, SAMPLE_DATA_NOTE } from "../feature-highlights";
 
 const FEATURES = ["swarms", "user-testing"] as const;
@@ -34,7 +31,11 @@ describe("GuestFeaturePreview", () => {
     );
 
     expect(screen.getByText(copy.heroTitle)).toBeInTheDocument();
-    expect(screen.getByText(copy.heroBody)).toBeInTheDocument();
+    // Optional by design: Swarms' sourced headline carries the whole pitch,
+    // so there is no second line under it to invent.
+    if (copy.heroBody) {
+      expect(screen.getByText(copy.heroBody)).toBeInTheDocument();
+    }
     expect(screen.getByText(copy.sampleLabel)).toBeInTheDocument();
     expect(screen.getByText(copy.sample.title)).toBeInTheDocument();
   });
@@ -160,70 +161,6 @@ describe("GuestFeaturePreview", () => {
         location: "swarms_guest_preview",
         feature: "swarms",
       }),
-    );
-  });
-});
-
-describe("PlanLockedFeatureNotice", () => {
-  beforeEach(() => {
-    vi.mocked(track).mockReset();
-  });
-
-  // The whole reason this split from the guest preview. A reader who already
-  // has an account does not need a picture of the product; they need to know
-  // what plan they are on and what it costs to fix that.
-  it.each(FEATURES)("shows no sample card on %s", (feature) => {
-    render(
-      <PlanLockedFeatureNotice feature={feature}>
-        <div>upsell</div>
-      </PlanLockedFeatureNotice>,
-    );
-
-    expect(screen.queryByTestId("gated-feature-sample")).not.toBeInTheDocument();
-    expect(
-      screen.queryByText(GATED_FEATURE_COPY[feature].sampleLabel),
-    ).not.toBeInTheDocument();
-  });
-
-  it("renders the upsell it is handed, under the same title-only header", () => {
-    render(
-      <PlanLockedFeatureNotice feature="swarms">
-        <div>the upsell</div>
-      </PlanLockedFeatureNotice>,
-    );
-
-    expect(screen.getByText("the upsell")).toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", { level: 1, name: "Swarms" }),
-    ).toBeInTheDocument();
-  });
-
-  // Same body line as the guest screen: what the feature does is true for both
-  // readers, and only the way out differs.
-  it("keeps the feature's body copy", () => {
-    render(
-      <PlanLockedFeatureNotice feature="swarms">
-        <div>upsell</div>
-      </PlanLockedFeatureNotice>,
-    );
-
-    expect(
-      screen.getByText(GATED_FEATURE_COPY.swarms.heroBody),
-    ).toBeInTheDocument();
-  });
-
-  // The preview impression belongs to the signed-out funnel. A plan-locked
-  // reader is counted by `billing_upsell_gate_viewed`, which the upsell fires.
-  it("does not fire the guest preview impression", () => {
-    render(
-      <PlanLockedFeatureNotice feature="swarms">
-        <div>upsell</div>
-      </PlanLockedFeatureNotice>,
-    );
-
-    expect(track).not.toHaveBeenCalledWith(
-      "guest_feature_preview_shown",
-      expect.anything(),
     );
   });
 });

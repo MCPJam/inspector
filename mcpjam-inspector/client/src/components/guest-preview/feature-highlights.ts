@@ -1,25 +1,29 @@
 /**
- * Every word a gated visitor reads on Swarms or User Testing (REEV-11).
+ * Every word a signed-out visitor reads on Swarms or User Testing (REEV-11).
  *
  * Copy lives here and layout lives in `GatedFeaturePreview.tsx`, so the words
  * can be rewritten without touching a component. This file is the one product
  * edits.
  *
- * Two rules this file is held to, both from #coreuxsquad:
+ * ONE AUDIENCE, since the plan gate came out: signed out. Swarms and User
+ * Testing are on every plan and limited by credits rather than entitlement, so
+ * there is no plan-locked reader to write for and no upsell to phrase.
  *
- *  - **No em dashes, anywhere.** Standing instruction from Vig, on the grounds
- *    that generated copy is full of them and it is our job to catch it.
- *  - **Nothing invented.** The Swarms headline is the line from the design
- *    file. The User Testing headline is Sophie's, replacing wording she
- *    flagged as making us sound like an observability platform. The sample is
- *    traced from screenshots of the running product, not designed here.
+ * Rules this file is held to:
  *
- * The two audiences that reach this copy, a signed-out visitor and a signed-in
- * one whose plan lacks the feature, read the same body line. Only the way out
- * differs, and that lives with the component that renders it.
+ *  - **No em dashes.** Standing instruction from Vig, on the grounds that
+ *    generated copy is full of them and it is our job to catch it.
+ *  - **Nothing invented, and nothing promised.** Every headline traces to a
+ *    real source, named below. Earlier drafts carried lines I wrote myself and
+ *    a "run your first swarm on us, no card needed" promise, which was a claim
+ *    about pricing that nobody had made. Both are gone. If a line here has no
+ *    source, it should not be here.
+ *  - **Sample data is traced from screenshots of the running product**, not
+ *    designed here. The first draft drew a wave chart and a session funnel,
+ *    neither of which exists anywhere in the app.
  */
 
-/** The two surfaces a gated visitor can land on. */
+/** The two surfaces a signed-out visitor can land on. */
 export type GatedFeatureId = "swarms" | "user-testing";
 
 /** One row of the real Swarms Overview list. */
@@ -43,8 +47,8 @@ export interface SampleTile {
  *
  * Two shapes because the two products genuinely look different: Swarms opens
  * on a list of runs, a study opens on a metric strip. A shared abstraction
- * would have to flatten one of them into the other's frame, which is how the
- * first draft ended up drawing charts that do not exist.
+ * would have to flatten one into the other's frame, which is how the first
+ * draft ended up drawing charts that do not exist.
  */
 export type GatedFeatureSample =
   | {
@@ -63,35 +67,32 @@ export type GatedFeatureSample =
 export interface GatedFeatureCopy {
   /** Sidebar and tab wording. Swarms' own h1 is the singular "Swarm". */
   readonly navLabel: string;
+  /** The headline. Sourced, never written here. */
   readonly heroTitle: string;
-  /** Read by BOTH gated screens, so it must make sense with either call to action. */
-  readonly heroBody: string;
+  /**
+   * Optional supporting line, and optional on purpose: Swarms has none,
+   * because its sourced headline already says the whole thing and padding it
+   * out would mean inventing a second sentence.
+   */
+  readonly heroBody?: string;
   /** Divider label above the sample. */
   readonly sampleLabel: string;
   readonly sample: GatedFeatureSample;
-  /**
-   * What the upsell says this plan cannot run. Sophie's wording, and
-   * deliberately not `navLabel`: "run user testing swarms" reads as a thing
-   * you do, where "run Swarms" reads as a tab you open.
-   */
-  readonly upsellNoun: string;
   /** PostHog `location` tag for every event fired from this surface. */
   readonly analyticsLocation: string;
   readonly nudge: {
     readonly title: string;
     readonly body: string;
-    readonly bullets: readonly string[];
   };
 }
 
 /**
- * Shown under the sample on the signed-out screen.
+ * Shown under the sample.
  *
  * BB-120 removed faked charts from the Swarm empty state because numbers on a
  * page invite the reader to interpret them. The sample brings that risk back
  * deliberately, so the page says out loud that the figures are not theirs. A
- * member never sees the sample at all, and neither does a plan-locked reader,
- * who already knows what the product is.
+ * signed-in member never sees the sample at all.
  */
 export const SAMPLE_DATA_NOTE =
   "A sample of what this tab looks like once it has data. The figures are illustrative, not your project's.";
@@ -99,10 +100,10 @@ export const SAMPLE_DATA_NOTE =
 export const GATED_FEATURE_COPY: Record<GatedFeatureId, GatedFeatureCopy> = {
   swarms: {
     navLabel: "Swarms",
-    heroTitle: "See how your server holds up under a crowd",
     // Vig, #coreuxsquad, Sep 9: the headline from the design file, which had
-    // gone missing from the tab. Not written here.
-    heroBody:
+    // gone missing from the tab. It replaced a line I had written, and it
+    // carries the whole pitch on its own, so there is no body line under it.
+    heroTitle:
       "No recruiting, no scheduling, no setup. Agents find what breaks in every client.",
     sampleLabel: "What a swarm looks like",
     sample: {
@@ -129,22 +130,21 @@ export const GATED_FEATURE_COPY: Record<GatedFeatureId, GatedFeatureCopy> = {
         },
       ],
     },
-    upsellNoun: "user testing swarms",
     analyticsLocation: "swarms_guest_preview",
     nudge: {
-      title: "Create a free account to run swarms",
-      body: "Swarms run on our infrastructure and spend real model credits, so they need an account behind them.",
-      bullets: [
-        "Run your first swarm on us, no card needed",
-        "Keep every run, persona and scorecard in a project",
-        "Invite teammates to read the results",
-      ],
+      title: "Create an account to run swarms",
+      // What is true and checkable: swarms run on our infrastructure and spend
+      // model credits, which is why they need an account. No claim about what
+      // that costs, and no free-run offer.
+      body: "Swarms run on our infrastructure and spend model credits, so they need an account behind them.",
     },
   },
   "user-testing": {
     navLabel: "User Testing",
-    // Sophie, in thread: the previous line made us sound like an o11y platform.
+    // Sophie, in thread: the previous line made us sound like an observability
+    // platform.
     heroTitle: "Share your server with QA teams for user testing",
+    // The real empty-state copy from `UserTestingOverviewPanel.tsx`.
     heroBody:
       "A study starts with a link you send. Testers open it, use your server inside the client they already know, and every session is recorded here.",
     sampleLabel: "What a study looks like",
@@ -162,16 +162,10 @@ export const GATED_FEATURE_COPY: Record<GatedFeatureId, GatedFeatureCopy> = {
         { label: "Tokens", value: "24.6k", unit: "per session" },
       ],
     },
-    upsellNoun: "user testing studies",
     analyticsLocation: "user_testing_guest_preview",
     nudge: {
-      title: "Create a free account to run a study",
+      title: "Create an account to run a study",
       body: "Studies hand out live sandboxes to your testers, so they need an account to attach the sessions to.",
-      bullets: [
-        "Share a study link in minutes",
-        "Every tester session recorded and searchable",
-        "Findings roll up into one report",
-      ],
     },
   },
 };

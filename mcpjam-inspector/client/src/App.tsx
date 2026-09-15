@@ -282,15 +282,9 @@ import {
 } from "@/hooks/useClients";
 import { useSandboxesEnabledState } from "@/hooks/useSandboxesEnabled";
 import { useIsHostedGuest } from "@/hooks/use-hosted-guest";
-import {
-  GuestFeaturePreview,
-  PlanLockedFeatureNotice,
-} from "@/components/guest-preview/GatedFeaturePreview";
+import { GuestFeaturePreview } from "@/components/guest-preview/GatedFeaturePreview";
 import { GuestPreviewCta } from "@/components/guest-preview/GuestPreviewCta";
-import {
-  GATED_FEATURE_COPY,
-  type GatedFeatureId,
-} from "@/components/guest-preview/feature-highlights";
+import type { GatedFeatureId } from "@/components/guest-preview/feature-highlights";
 import { useUnifiedSessionsEnabledState } from "@/hooks/useUnifiedSessionsEnabled";
 import { useEvaluateEnabledState } from "@/hooks/useEvaluateEnabled";
 import {
@@ -650,15 +644,7 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
   }
 }
 
-function ActiveBillingUpsellGate({
-  variant,
-  inlineNoun,
-}: {
-  /** `inline` when this renders inside the gated preview shell. See
-   *  `BillingUpsellGate`'s prop docs for why the two shapes differ. */
-  variant?: "page" | "inline";
-  inlineNoun?: string;
-} = {}) {
+function ActiveBillingUpsellGate() {
   const {
     activeTabBillingFeature,
     shellBillingStatus,
@@ -669,8 +655,6 @@ function ActiveBillingUpsellGate({
 
   return (
     <BillingUpsellGate
-      variant={variant}
-      inlineNoun={inlineNoun}
       feature={activeTabBillingFeature}
       currentPlan={
         shellBillingStatus?.effectivePlan ?? shellBillingStatus?.plan ?? "free"
@@ -1609,30 +1593,26 @@ export function CompatibilityRoute() {
 }
 
 /**
- * The gated-preview decision shared by Swarms and User Testing (REEV-6).
+ * The signed-out preview decision, shared by Swarms and User Testing (REEV-6).
  *
- * Both surfaces answer "may this person run it?" identically, so the answer
+ * Both surfaces answer "is this person signed in?" identically, so the answer
  * lives once. Returns the element to render INSTEAD of the real tab, or `null`
- * to mean "carry on" — deliberately not a boolean, because three of the four
- * outcomes need different markup and a caller reconstructing that from flags
- * is how the two routes would drift apart.
+ * to mean "carry on".
  *
- * Order matters and is not arbitrary:
+ * ONE QUESTION, since the plan gate came out. An earlier pass also asked
+ * whether the reader's plan included the feature and showed an upsell if not.
+ * Both features are on every plan and bounded by credits rather than
+ * entitlement, so there was never a plan-locked reader to catch: the branch
+ * was answering a question nobody was asking.
  *
- *   1. Guest identity unresolved → hold. Rendering anything here flashes a
- *      sign-up wall at signed-in customers on every cold load.
- *   2. Guest → the preview, before billing is consulted at all. A visitor
- *      with no account has no organization and no plan; asking them to
- *      upgrade would be answering a question they haven't reached.
- *   3. Plan-locked → the same preview shell, with the existing upsell in the
- *      slot where a guest sees sign-up.
+ * The one ordering that still matters: an unresolved identity HOLDS. `user` is
+ * null during WorkOS hydrate for signed-in people too, so deciding early
+ * flashes a sign-up screen at customers on every cold load.
  *
  * Callers must invoke this from the top of the component with their other
  * hooks — it calls hooks itself, so it can never sit after an early return.
  */
 function useGatedFeatureGate(feature: GatedFeatureId): ReactElement | null {
-  const { billingUiEnabled, activeTabBillingLocked, activeTabBillingFeature } =
-    useAppRouteContext();
   const isHostedGuest = useIsHostedGuest();
 
   if (isHostedGuest === undefined) {
@@ -1648,17 +1628,6 @@ function useGatedFeatureGate(feature: GatedFeatureId): ReactElement | null {
       <GuestFeaturePreview feature={feature}>
         <GuestPreviewCta feature={feature} />
       </GuestFeaturePreview>
-    );
-  }
-
-  if (billingUiEnabled && activeTabBillingLocked && activeTabBillingFeature) {
-    return (
-      <PlanLockedFeatureNotice feature={feature}>
-        <ActiveBillingUpsellGate
-          variant="inline"
-          inlineNoun={GATED_FEATURE_COPY[feature].upsellNoun}
-        />
-      </PlanLockedFeatureNotice>
     );
   }
 

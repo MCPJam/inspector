@@ -1,23 +1,16 @@
 /**
- * What Swarms and User Testing show a visitor who may look but not run
+ * What Swarms and User Testing show a visitor who is not signed in
  * (REEV-8, REEV-9).
  *
- * TWO components, not one with a variant. The first draft shared a single
- * component because the two audiences differed only in the middle. After the
- * first review they no longer do: a signed-out visitor gets a hero, a sample
- * card and sign-up, while a plan-locked reader gets their plan, one line about
- * it, and a way to pay. Forcing those through one component would mean three
- * booleans deciding what renders, so they split, and share only the shell they
- * genuinely have in common.
+ * ONE audience. An earlier pass had a second component for a plan-locked
+ * reader, with a plan pill and an upsell; that whole branch is gone. Both
+ * features are on every plan and bounded by credits rather than entitlement,
+ * so "signed in" is the only question and there is nobody to sell a plan to.
  *
- * THE HEADER HAS NO CREATE BUTTON on either. The real tabs lead with "Create
- * new swarm" or "Create new study", and neither audience can create anything.
- * A disabled control reads as broken and a live one that opens a wall reads as
- * a trick, so the only control on the page is the one that helps.
- *
- * THE SAMPLE IS SIGNED-OUT ONLY. A plan-locked reader has seen the product;
- * showing them a picture of it answers a question they did not ask, where what
- * they need is their plan and the upgrade.
+ * THE HEADER HAS NO CREATE BUTTON. The real tab leads with "Create new swarm"
+ * or "Create new study", and this reader cannot create anything. A disabled
+ * control reads as broken and a live one that opens a wall reads as a trick,
+ * so the only control on the page is the one that helps.
  */
 
 import { useEffect, useRef, type ReactNode } from "react";
@@ -91,9 +84,11 @@ export function GuestFeaturePreview({
         <h2 className="mt-4 text-lg font-semibold text-balance text-foreground">
           {copy.heroTitle}
         </h2>
-        <p className="mt-2 max-w-md text-pretty text-sm text-muted-foreground">
-          {copy.heroBody}
-        </p>
+        {copy.heroBody ? (
+          <p className="mt-2 max-w-md text-pretty text-sm text-muted-foreground">
+            {copy.heroBody}
+          </p>
+        ) : null}
         <div className="mt-5 flex flex-col items-center gap-2">{children}</div>
       </div>
 
@@ -110,32 +105,6 @@ export function GuestFeaturePreview({
       <p className="max-w-lg text-pretty text-center text-xs text-muted-foreground">
         {SAMPLE_DATA_NOTE}
       </p>
-    </GatedFeatureShell>
-  );
-}
-
-/**
- * The plan-locked screen. Leads with the plan, because "which plan am I on"
- * is the question a reader asks before "what does it cost to fix that", and
- * the answer was previously buried in a sentence.
- */
-export function PlanLockedFeatureNotice({
-  feature,
-  children,
-}: {
-  feature: GatedFeatureId;
-  /** The billing upsell. Supplied by the route, which owns entitlements. */
-  children: ReactNode;
-}) {
-  const copy = GATED_FEATURE_COPY[feature];
-  return (
-    <GatedFeatureShell feature={feature}>
-      <div className="flex flex-col items-center text-center">
-        {children}
-        <p className="mt-3 max-w-md text-pretty text-sm text-muted-foreground">
-          {copy.heroBody}
-        </p>
-      </div>
     </GatedFeatureShell>
   );
 }

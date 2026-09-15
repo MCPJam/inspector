@@ -44,8 +44,7 @@ export function GuestPreviewCta({ feature }: { feature: GatedFeatureId }) {
         {/* "Create account", not "Create free account" (Vig, in review): the
             two buttons here mirror the pair already in the top nav for a
             signed-out visitor, and matching their labels means the page reads
-            as one offer rather than two competing ones. "Free to start" is
-            said underneath instead. */}
+            as one offer rather than two competing ones. */}
         <Button type="button" onClick={() => setNudgeOpen(true)}>
           Create account
         </Button>
@@ -53,7 +52,9 @@ export function GuestPreviewCta({ feature }: { feature: GatedFeatureId }) {
           Sign in
         </Button>
       </div>
-      <p className="text-xs text-muted-foreground">Free to start. No card.</p>
+      {/* "Free to start. No card." removed: another pricing claim nobody
+          made, and now actively misleading, since what bounds these features
+          is credits rather than a plan. */}
       <FeatureSignUpNudgeDialog
         feature={feature}
         isOpen={nudgeOpen}

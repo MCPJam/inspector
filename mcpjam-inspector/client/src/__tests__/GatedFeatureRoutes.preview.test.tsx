@@ -250,28 +250,10 @@ describe("gated feature routes — hosted", () => {
       ).not.toBeInTheDocument();
     });
 
-    it("gives a plan-locked member the upsell, with no sample and no sign-up", () => {
-      mockRouteContext.activeTabBillingLocked = true;
-
-      renderRoute(<Route />);
-
-      // The same body copy, because what the feature does is true for both
-      // readers...
-      expect(screen.getByText(copy.heroBody)).toBeInTheDocument();
-      expect(screen.getByTestId("billing-upsell-gate")).toBeInTheDocument();
-      // ...but no sample: they have seen the product, they need a plan.
-      expect(
-        screen.queryByTestId("gated-feature-sample"),
-      ).not.toBeInTheDocument();
-      expect(
-        screen.queryByRole("button", { name: /create (a )?free account/i }),
-      ).not.toBeInTheDocument();
-      expect(tabMock).not.toHaveBeenCalled();
-    });
-
-    // A guest has no organization and no plan, so an upgrade prompt would be
-    // answering a question they have not reached.
-    it("prefers sign-up over the upsell when a guest is somehow also billing-locked", () => {
+    // Swarms and User Testing are on every plan and bounded by credits, so
+    // entitlement never decides what this route shows. A locked flag on the
+    // shell context must not resurrect an upsell here.
+    it("ignores billing entirely, even when the shell reports the tab locked", () => {
       guest();
       mockRouteContext.activeTabBillingLocked = true;
 
@@ -280,6 +262,17 @@ describe("gated feature routes — hosted", () => {
       expect(
         screen.getByRole("button", { name: "Create account" }),
       ).toBeInTheDocument();
+      expect(
+        screen.queryByTestId("billing-upsell-gate"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("gives a signed-in member the real tab even when billing says locked", () => {
+      mockRouteContext.activeTabBillingLocked = true;
+
+      renderRoute(<Route />);
+
+      expect(screen.getByText(tabText)).toBeInTheDocument();
       expect(
         screen.queryByTestId("billing-upsell-gate"),
       ).not.toBeInTheDocument();

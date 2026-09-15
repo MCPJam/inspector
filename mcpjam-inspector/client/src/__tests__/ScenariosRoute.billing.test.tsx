@@ -112,7 +112,20 @@ describe("ScenariosRoute gates", () => {
     flagState.sandboxesEnabled = true;
   });
 
-  it("shows the billing upsell gate when the active tab is locked", () => {
+  /**
+   * REVERSED by REEV-6, and deliberately.
+   *
+   * User Testing no longer has a billing gate. Both it and Swarms are on every
+   * plan and bounded by CREDITS rather than entitlement, so there is no
+   * plan-locked reader for an upsell to address. The proof that this gate was
+   * already dead: `LEGACY_FREE_FEATURES` in the backend catalog carries
+   * `scenarios: true`, so even free orgs were entitled and this branch could
+   * not fire in production.
+   *
+   * The test is kept, inverted, rather than deleted: a shell that reports the
+   * tab locked must NOT resurrect an upsell here, and that is worth pinning.
+   */
+  it("ignores a locked billing gate and shows the tab anyway", () => {
     mockRouteContext.activeTabBillingLocked = true;
     mockRouteContext.shellBillingStatus = {
       plan: "team",
@@ -123,11 +136,9 @@ describe("ScenariosRoute gates", () => {
 
     render(<ScenariosRoute />);
 
-    expect(screen.getByTestId("billing-upsell-gate")).toHaveTextContent(
-      "scenarios",
-    );
-    expect(screen.queryByText("User Testing Tab")).not.toBeInTheDocument();
-    expect(mockUserTestingTab).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("billing-upsell-gate")).not.toBeInTheDocument();
+    expect(screen.getByText("User Testing Tab")).toBeInTheDocument();
+    expect(mockUserTestingTab).toHaveBeenCalled();
   });
 
   it("renders the surface for team organizations", () => {
