@@ -39,6 +39,26 @@ const buildSsePayload = (events: any[]) =>
     .map((event) => `data: ${JSON.stringify(event)}\n\n`)
     .join("")}data: [DONE]\n\n`;
 
+/**
+ * The hosted /stream reply for a turn that COMPLETES: a text reply, then the
+ * finish chunk. A finish-only stream is the empty-response shape, which the
+ * engine routes to its empty-step failure branch (`describeEmptyStepFailure`)
+ * rather than settling clean, so a fixture for a completed turn must carry
+ * content. (This suite builds the route without `requestLogContextMiddleware`,
+ * so that branch's failure report additionally throws here; production mounts
+ * it on `/api/*` and persists the turn regardless.)
+ */
+const completedStreamEvents = (text = "Hello") => [
+  { type: "text-start", id: "text-1" },
+  { type: "text-delta", id: "text-1", delta: text },
+  { type: "text-end", id: "text-1" },
+  {
+    type: "finish",
+    finishReason: "stop",
+    messageMetadata: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+  },
+];
+
 const createSseResponse = (events: any[]) => {
   const encoder = new TextEncoder();
   const payload = buildSsePayload(events);
@@ -1596,29 +1616,7 @@ describe("POST /api/mcp/chat-v2", () => {
         .mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
           const url = String(input);
           if (url === "https://test-convex.example.com/stream") {
-            return createSseResponse([
-              // A COMPLETED turn needs CONTENT. A finish-only stream is the
-              // EMPTY-RESPONSE shape, which the engine now routes to its
-              // empty-step failure branch (`describeEmptyStepFailure`) rather
-              // than settling clean — so these assertions, which describe what
-              // a finished turn persists, were staged on a turn that never
-              // finished. (This suite builds the route without
-              // `requestLogContextMiddleware`, so that branch's failure report
-              // additionally throws here; production mounts it on `/api/*` and
-              // persists the turn regardless. The fixture is wrong either way.)
-              { type: "text-start", id: "text-1" },
-              { type: "text-delta", id: "text-1", delta: "Hello" },
-              { type: "text-end", id: "text-1" },
-              {
-                type: "finish",
-                finishReason: "stop",
-                messageMetadata: {
-                  inputTokens: 1,
-                  outputTokens: 1,
-                  totalTokens: 2,
-                },
-              },
-            ]);
+            return createSseResponse(completedStreamEvents());
           }
 
           if (url === "https://test-convex.example.com/ingest-chat") {
@@ -1717,21 +1715,7 @@ describe("POST /api/mcp/chat-v2", () => {
         .mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
           const url = String(input);
           if (url === "https://test-convex.example.com/stream") {
-            return createSseResponse([
-              // Content, so this is a COMPLETED turn — see above.
-              { type: "text-start", id: "text-1" },
-              { type: "text-delta", id: "text-1", delta: "Hello" },
-              { type: "text-end", id: "text-1" },
-              {
-                type: "finish",
-                finishReason: "stop",
-                messageMetadata: {
-                  inputTokens: 1,
-                  outputTokens: 1,
-                  totalTokens: 2,
-                },
-              },
-            ]);
+            return createSseResponse(completedStreamEvents());
           }
           if (url === "https://test-convex.example.com/ingest-chat") {
             return new Response(null, { status: 200 });
@@ -1775,21 +1759,7 @@ describe("POST /api/mcp/chat-v2", () => {
         .mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
           const url = String(input);
           if (url === "https://test-convex.example.com/stream") {
-            return createSseResponse([
-              // Content, so this is a COMPLETED turn — see above.
-              { type: "text-start", id: "text-1" },
-              { type: "text-delta", id: "text-1", delta: "Hello" },
-              { type: "text-end", id: "text-1" },
-              {
-                type: "finish",
-                finishReason: "stop",
-                messageMetadata: {
-                  inputTokens: 1,
-                  outputTokens: 1,
-                  totalTokens: 2,
-                },
-              },
-            ]);
+            return createSseResponse(completedStreamEvents());
           }
           if (url === "https://test-convex.example.com/ingest-chat") {
             return new Response(null, { status: 200 });
@@ -1831,21 +1801,7 @@ describe("POST /api/mcp/chat-v2", () => {
         .mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
           const url = String(input);
           if (url === "https://test-convex.example.com/stream") {
-            return createSseResponse([
-              // Content, so this is a COMPLETED turn — see above.
-              { type: "text-start", id: "text-1" },
-              { type: "text-delta", id: "text-1", delta: "Hello" },
-              { type: "text-end", id: "text-1" },
-              {
-                type: "finish",
-                finishReason: "stop",
-                messageMetadata: {
-                  inputTokens: 1,
-                  outputTokens: 1,
-                  totalTokens: 2,
-                },
-              },
-            ]);
+            return createSseResponse(completedStreamEvents());
           }
           if (url === "https://test-convex.example.com/ingest-chat") {
             return new Response(null, { status: 200 });
@@ -1893,17 +1849,7 @@ describe("POST /api/mcp/chat-v2", () => {
         .mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
           const url = String(input);
           if (url === "https://test-convex.example.com/stream") {
-            return createSseResponse([
-              {
-                type: "finish",
-                finishReason: "stop",
-                messageMetadata: {
-                  inputTokens: 1,
-                  outputTokens: 1,
-                  totalTokens: 2,
-                },
-              },
-            ]);
+            return createSseResponse(completedStreamEvents());
           }
           if (url === "https://test-convex.example.com/ingest-chat") {
             return new Response(null, { status: 200 });
@@ -1945,17 +1891,7 @@ describe("POST /api/mcp/chat-v2", () => {
         .mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
           const url = String(input);
           if (url === "https://test-convex.example.com/stream") {
-            return createSseResponse([
-              {
-                type: "finish",
-                finishReason: "stop",
-                messageMetadata: {
-                  inputTokens: 1,
-                  outputTokens: 1,
-                  totalTokens: 2,
-                },
-              },
-            ]);
+            return createSseResponse(completedStreamEvents());
           }
 
           if (url === "https://test-convex.example.com/ingest-chat") {
@@ -1997,17 +1933,7 @@ describe("POST /api/mcp/chat-v2", () => {
         .mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
           const url = String(input);
           if (url === "https://test-convex.example.com/stream") {
-            return createSseResponse([
-              {
-                type: "finish",
-                finishReason: "stop",
-                messageMetadata: {
-                  inputTokens: 1,
-                  outputTokens: 1,
-                  totalTokens: 2,
-                },
-              },
-            ]);
+            return createSseResponse(completedStreamEvents());
           }
 
           if (url === "https://test-convex.example.com/ingest-chat") {
@@ -2064,17 +1990,7 @@ describe("POST /api/mcp/chat-v2", () => {
         .mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
           const url = String(input);
           if (url === "https://test-convex.example.com/stream") {
-            return createSseResponse([
-              {
-                type: "finish",
-                finishReason: "stop",
-                messageMetadata: {
-                  inputTokens: 1,
-                  outputTokens: 1,
-                  totalTokens: 2,
-                },
-              },
-            ]);
+            return createSseResponse(completedStreamEvents());
           }
 
           if (url === "https://test-convex.example.com/ingest-chat") {
@@ -2118,17 +2034,7 @@ describe("POST /api/mcp/chat-v2", () => {
         .mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
           const url = String(input);
           if (url === "https://test-convex.example.com/stream") {
-            return createSseResponse([
-              {
-                type: "finish",
-                finishReason: "stop",
-                messageMetadata: {
-                  inputTokens: 1,
-                  outputTokens: 1,
-                  totalTokens: 2,
-                },
-              },
-            ]);
+            return createSseResponse(completedStreamEvents());
           }
 
           if (url === "https://test-convex.example.com/ingest-chat") {
@@ -2188,17 +2094,7 @@ describe("POST /api/mcp/chat-v2", () => {
           .mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
             const url = String(input);
             if (url === "https://test-convex.example.com/stream") {
-              return createSseResponse([
-                {
-                  type: "finish",
-                  finishReason: "stop",
-                  messageMetadata: {
-                    inputTokens: 1,
-                    outputTokens: 1,
-                    totalTokens: 2,
-                  },
-                },
-              ]);
+              return createSseResponse(completedStreamEvents());
             }
             if (url === "https://test-convex.example.com/ingest-chat") {
               return new Response(null, { status: 200 });
@@ -2267,17 +2163,7 @@ describe("POST /api/mcp/chat-v2", () => {
             providerKey: "openai",
             model: "gpt-4-turbo",
           });
-          return createSseResponse([
-            {
-              type: "finish",
-              finishReason: "stop",
-              messageMetadata: {
-                inputTokens: 1,
-                outputTokens: 1,
-                totalTokens: 2,
-              },
-            },
-          ]);
+          return createSseResponse(completedStreamEvents());
         }
         throw new Error(`Unexpected fetch URL: ${url}`);
       });
@@ -2397,17 +2283,7 @@ describe("POST /api/mcp/chat-v2", () => {
             projectId: "project-1",
             providerKey: "custom:local-one",
           });
-          return createSseResponse([
-            {
-              type: "finish",
-              finishReason: "stop",
-              messageMetadata: {
-                inputTokens: 1,
-                outputTokens: 1,
-                totalTokens: 2,
-              },
-            },
-          ]);
+          return createSseResponse(completedStreamEvents());
         }
         throw new Error(`Unexpected fetch URL: ${url}`);
       });
@@ -2470,17 +2346,7 @@ describe("POST /api/mcp/chat-v2", () => {
             projectId: "project-1",
             providerKey: "custom:local-one",
           });
-          return createSseResponse([
-            {
-              type: "finish",
-              finishReason: "stop",
-              messageMetadata: {
-                inputTokens: 1,
-                outputTokens: 1,
-                totalTokens: 2,
-              },
-            },
-          ]);
+          return createSseResponse(completedStreamEvents());
         }
         throw new Error(`Unexpected fetch URL: ${url}`);
       });
@@ -2648,17 +2514,7 @@ describe("POST /api/mcp/chat-v2", () => {
         const url = String(input);
         if (url === "https://test-convex.example.com/stream/org") {
           dispatched = capturedTaskSeam().onTaskCreated(taskCreatedEvent);
-          return createSseResponse([
-            {
-              type: "finish",
-              finishReason: "stop",
-              messageMetadata: {
-                inputTokens: 1,
-                outputTokens: 1,
-                totalTokens: 2,
-              },
-            },
-          ]);
+          return createSseResponse(completedStreamEvents());
         }
         throw new Error(`Unexpected fetch URL: ${url}`);
       });
@@ -2862,17 +2718,7 @@ describe("POST /api/mcp/chat-v2", () => {
       // Mock fetch for CONVEX_HTTP_URL
       const originalFetch = global.fetch;
       global.fetch = vi.fn().mockResolvedValue(
-        createSseResponse([
-          {
-            type: "finish",
-            finishReason: "stop",
-            messageMetadata: {
-              inputTokens: 1,
-              outputTokens: 1,
-              totalTokens: 2,
-            },
-          },
-        ]),
+        createSseResponse(completedStreamEvents()),
       );
 
       try {
