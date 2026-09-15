@@ -79,10 +79,7 @@ describe("getSubsectionsForGroup", () => {
       validity: "policy",
       minimumIterations: "iterations",
       repetitions: "iterations",
-      qualityGateBaseline: "qualityGate",
-      qualityGateAllowedDrop: "qualityGate",
-      qualityGateNoDeterministicRegressions: "qualityGate",
-      qualityGateMaximumP95LatencyIncreaseMs: "qualityGate",
+      // The baseline keys are no longer on the page, so they own nothing.
       qualityGateNoGatingScoreErrors: "qualityGate",
     };
     for (const [key, expected] of Object.entries(owner)) {

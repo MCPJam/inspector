@@ -135,12 +135,13 @@ export function RunClientsCell({
       )}
       <span
         data-testid={column === "model" ? "expanded-run-models" : undefined}
+        // Both columns sit on ONE line, the way the suites list shows them.
+        // Stacking made a two-client run twice as tall as a one-client run,
+        // so the table's row height read as a result.
         className={
           column === "model"
-            ? "hidden min-w-0 max-w-80 flex-col items-start gap-2 @min-[1100px]/run-history:flex"
-            : column
-              ? "flex min-w-0 max-w-80 flex-col items-start gap-2"
-              : "flex min-w-0 max-w-80 items-center gap-2"
+            ? "hidden min-w-0 max-w-80 items-center gap-2 @min-[1100px]/run-history:flex"
+            : "flex min-w-0 max-w-80 items-center gap-2"
         }
         aria-label={columnLabel}
       >
@@ -149,7 +150,7 @@ export function RunClientsCell({
               <span
                 key={model}
                 title={model}
-                className="min-w-0 truncate text-xs text-muted-foreground"
+                className="min-w-0 shrink truncate text-xs text-muted-foreground"
               >
                 {compactModelIdTail(model)}
               </span>

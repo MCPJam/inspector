@@ -46,13 +46,9 @@ export const NESTED_SETTING_KEYS: Record<
   // a heading that named neither.
   policy: ["minimumAccuracy", "passThreshold", "validity"],
   iterations: ["minimumIterations", "repetitions"],
-  qualityGate: [
-    "qualityGateBaseline",
-    "qualityGateAllowedDrop",
-    "qualityGateNoDeterministicRegressions",
-    "qualityGateMaximumP95LatencyIncreaseMs",
-    "qualityGateNoGatingScoreErrors",
-  ],
+  // The baseline keys left the settings page, so the quality-gate row owns
+  // only the condition that never needed a baseline.
+  qualityGate: ["qualityGateNoGatingScoreErrors"],
   passOrFail: [
     "assertionBacktest",
     "matchOptions",
