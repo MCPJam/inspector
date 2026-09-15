@@ -169,7 +169,6 @@ const LEGACY_EM_DASH_COPY = new Map<string, number>([
   ["components/hosts/redesigned/focus/useHostDraftValidation.ts", 3],
   ["components/hosts/redesigned/HostBuilderViewRedesigned.tsx", 1],
   ["components/hosts/redesigned/HostCanvasSelector.tsx", 1],
-  ["components/hosts/ServerGroupPicker.tsx", 2],
   ["components/HostsTab.tsx", 3],
   ["components/lifecycle/guided-tour-lessons.ts", 20],
   ["components/lifecycle/mcp-lifecycle-guide-data.ts", 2],

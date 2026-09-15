@@ -402,9 +402,15 @@ completion floor the suite has never applied.
 ### Quality gate
 
 A different question from the pass criteria: not "did this run meet the bar"
-but "did it regress against a baseline run". It has its own conditions, its own
-baseline, and it requires a reason on every change, which appears in the
-suite's revision history. See [Quality gates](#ci-tab) for the conditions.
+but "should this run block a merge". It has its own conditions and requires a
+reason on every change, which appears in the suite's revision history.
+
+The settings page lets you toggle **Any required evaluator errored** — the one
+condition that does not need a baseline. Baseline comparison conditions
+(allowed pass-rate drop, deterministic regressions, p95 latency increase) are
+set via the API or CLI only; if a suite carries one, the settings page lists it
+read-only so you can see what the run will enforce. See [Quality gates](#ci-tab)
+for the full condition reference.
 
 ## Suite execution config
 
