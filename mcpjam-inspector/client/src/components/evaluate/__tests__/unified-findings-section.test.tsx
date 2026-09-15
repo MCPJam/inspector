@@ -35,7 +35,7 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("UnifiedFindingsSection recovery", () => {
-  it("shows recorded execution errors before findings are built and clears them on run switch", () => {
+  it("keeps execution-error cards out of findings across run switches", () => {
     mocks.fail = false;
     const iterations = [
       {
@@ -53,16 +53,12 @@ describe("UnifiedFindingsSection recovery", () => {
       <UnifiedFindingsSection
         suiteRunId="run-a"
         iterations={iterations}
-        expectedTotal={1}
         generation={generation}
       />,
     );
-    expect(
-      screen.getByText("MCPJam model limit reached · 1 of 1 iterations"),
-    ).toBeVisible();
-    expect(
-      screen.getByText("Recorded error: Daily MCPJam model limit reached."),
-    ).toBeVisible();
+    expect(screen.queryByTestId("run-execution-issues")).toBeNull();
+    expect(screen.queryByText(/Daily MCPJam model limit reached/)).toBeNull();
+    expect(screen.getByTestId("unified-findings-section")).toBeVisible();
     expect(mocks.mutation).not.toHaveBeenCalled();
     expect(generation.requestInsight).not.toHaveBeenCalled();
     rerender(

@@ -211,6 +211,7 @@
           ],
           "basis": "measured",
           "candidateId": "<findingId>",
+          "classificationBasis": "error_text",
           "groupKind": "tool_failure",
           "mechanismBasis": "complete",
           "proseOrigin": {

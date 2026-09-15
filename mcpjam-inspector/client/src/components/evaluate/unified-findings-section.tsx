@@ -20,16 +20,11 @@ import { useUnifiedFindings } from "@/components/shared/actionable-insights/use-
 import type { BorrowedGenerationController } from "@/components/shared/actionable-insights/use-unified-findings";
 import type { FindingEvidenceLocator } from "@/components/shared/actionable-insights/finding-evidence";
 import type { EvalIteration } from "../evals/types";
-import {
-  RunExecutionIssues,
-  summarizeRunExecutionIssues,
-} from "./run-execution-issues";
 import { affectedRowsById } from "./affected-iteration-rows";
 
 export type UnifiedFindingsSectionProps = {
   suiteRunId: string;
   iterations?: readonly EvalIteration[];
-  expectedTotal?: number;
   scopeControl?: React.ReactNode;
   /** The page's existing serverQuality controller. */
   generation: BorrowedGenerationController;
@@ -44,7 +39,6 @@ export type UnifiedFindingsSectionProps = {
 function UnifiedFindingsBody({
   suiteRunId,
   iterations = [],
-  expectedTotal,
   generation,
   scopeControl,
   onOpenIteration,
@@ -53,11 +47,6 @@ function UnifiedFindingsBody({
 }: UnifiedFindingsSectionProps) {
   const envelope = useInsightsEnvelope({ kind: "eval_run", suiteRunId });
   const state = useUnifiedFindings({ suiteRunId, envelope, generation });
-  const executionIssues = summarizeRunExecutionIssues({
-    suiteRunId,
-    iterations,
-    expectedTotal,
-  });
 
   const onOpenEvidence = onOpenIteration
     ? (locator: FindingEvidenceLocator) => {
@@ -72,15 +61,6 @@ function UnifiedFindingsBody({
     <section data-testid="unified-findings-section">
       <div>
         <UnifiedFindingsPanel
-          executionIssues={
-            executionIssues ? (
-              <RunExecutionIssues
-                summary={executionIssues}
-                onOpenIteration={onOpenIteration}
-                clientLabel={clientLabel}
-              />
-            ) : undefined
-          }
           analysis={state.experiment?.analysis}
           snapshot={state.experiment?.snapshot ?? null}
           findings={state.findings}

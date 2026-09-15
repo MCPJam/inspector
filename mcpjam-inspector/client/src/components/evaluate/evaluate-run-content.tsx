@@ -348,7 +348,6 @@ export function SingleRunContent({
           <UnifiedFindingsSection
             suiteRunId={String(run._id)}
             iterations={iterations}
-            expectedTotal={run.summary?.total}
             clientLabel={view.pairings?.[0]?.client ?? null}
             fallback={<HeroExplanation view={view} />}
             generation={{

@@ -7,7 +7,7 @@
  * "unavailable" must read as three different things, and a server-fix
  * affordance must appear only where the backend promoted the finding.
  */
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { UnifiedFindingsPanel } from "../unified-findings-panel";
 import type {
@@ -115,8 +115,8 @@ function renderPanel(
   );
   return { ...result, analyze };
 }
-const openWhy = () =>
-  fireEvent.click(screen.getByRole("button", { name: "Why this fix?" }));
+const openDetails = () =>
+  fireEvent.click(screen.getByRole("button", { name: "See details" }));
 
 describe("walkthrough findings layout", () => {
   it("shows the problem and fix without experiment controls or expanded diagnostics", () => {
@@ -124,6 +124,8 @@ describe("walkthrough findings layout", () => {
     expect(screen.getByRole("heading", { name: "What broke" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "How to fix" })).toBeVisible();
     expect(screen.getByText(finding().recommendation)).toBeVisible();
+    expect(screen.queryByTestId("affected-iterations")).toBeNull();
+    expect(screen.getByRole("button", { name: "See details" })).toBeVisible();
     expect(screen.queryByRole("tablist")).toBeNull();
     expect(screen.queryByText("Experiment")).toBeNull();
     expect(
@@ -135,7 +137,7 @@ describe("walkthrough findings layout", () => {
     expect(analyze.onRun).toHaveBeenCalledTimes(1);
   });
 
-  it("opens real failed and contrasting evidence in a drawer without generating", () => {
+  it("opens the details sheet without recorded evidence or a successful comparison", () => {
     const { analyze } = renderPanel({
       findings: [
         finding({
@@ -150,62 +152,57 @@ describe("walkthrough findings layout", () => {
         }),
       ],
     });
-    expect(screen.queryByText("Authentication failed (401)")).toBeNull();
-    openWhy();
-    expect(screen.getByRole("dialog", { name: "Why this fix?" })).toBeVisible();
-    expect(screen.getByText("Authentication failed (401)")).toBeVisible();
+    openDetails();
+    const details = screen.getByRole("dialog", { name: "Finding details" });
+    expect(details).toBeVisible();
     expect(
-      screen.getByRole("heading", { name: "Successful comparison" }),
+      within(details).getByRole("heading", { name: "What broke" }),
     ).toBeVisible();
     expect(
-      screen.getByText("Search returned the expected records."),
+      within(details).getByRole("heading", { name: "How to fix" }),
     ).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { name: "Recorded evidence" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("heading", { name: "Successful comparison" }),
+    ).toBeNull();
+    expect(
+      screen.queryByText("Search returned the expected records."),
+    ).toBeNull();
     expect(analyze.onRun).not.toHaveBeenCalled();
-  });
-
-  it("shows readable MCP text while preserving the complete recorded wrapper", () => {
-    const excerpt =
-      'Tool: run_eval_suite; call: c1; outcome: error\nResult: {"_meta":{"version":1},"content":[{"type":"text","text":"Choose a target before running the suite."}]}\nArguments: {}';
-    renderPanel({
-      findings: [
-        finding({
-          evidence: [{ kind: "tool_error", iterationId: "it_fail_1", excerpt }],
-        }),
-      ],
-    });
-    openWhy();
-    expect(
-      screen.getByText("Choose a target before running the suite."),
-    ).toBeVisible();
-    expect(screen.getByText("Full recorded excerpt")).toBeVisible();
-    expect(
-      screen
-        .getByText("Full recorded excerpt")
-        .parentElement?.querySelector("pre")?.textContent,
-    ).toBe(excerpt);
   });
 
   it("restores keyboard focus when the evidence drawer closes", async () => {
     renderPanel();
-    const trigger = screen.getByRole("button", { name: "Why this fix?" });
+    const trigger = screen.getByRole("button", { name: "See details" });
     fireEvent.click(trigger);
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
     await waitFor(() => expect(trigger).toHaveFocus());
   });
 
-  it("does not invent a successful comparison", () => {
-    renderPanel();
-    openWhy();
-    expect(
-      screen.queryByRole("heading", { name: "Successful comparison" }),
-    ).toBeNull();
-  });
-
-  it("routes evidence through typed locators and closes the drawer", async () => {
+  it("routes an affected iteration through a typed locator and closes the drawer", async () => {
     const onOpenEvidence = vi.fn();
-    renderPanel({ onOpenEvidence });
-    openWhy();
-    fireEvent.click(screen.getByTestId("finding-evidence-open"));
+    renderPanel({
+      onOpenEvidence,
+      iterationRows: {
+        it_fail_1: {
+          iterationId: "it_fail_1",
+          caseTitle: "Search contacts",
+          iterationNumber: 3,
+          client: "Claude",
+          model: "gpt-5.4-mini",
+          result: "failed",
+          canOpen: true,
+        },
+      },
+    });
+    openDetails();
+    fireEvent.click(
+      within(screen.getByTestId("affected-iterations")).getByRole("button", {
+        name: /^Open$/,
+      }),
+    );
     expect(onOpenEvidence).toHaveBeenCalledWith({
       kind: "iteration",
       id: "it_fail_1",
@@ -213,7 +210,7 @@ describe("walkthrough findings layout", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
-  it("names every affected iteration inline, including ones this page has not loaded", () => {
+  it("names every affected iteration in the details sheet, including ones this page has not loaded", () => {
     const onOpenEvidence = vi.fn();
     renderPanel({
       provenance: [
@@ -234,8 +231,8 @@ describe("walkthrough findings layout", () => {
         },
       },
     });
-    // Inline, not behind a drawer: the reader decides whether the finding
-    // matters from the case, the recorded iteration number and the outcome.
+    expect(screen.queryByTestId("affected-iterations")).toBeNull();
+    openDetails();
     const list = screen.getByTestId("affected-iterations");
     expect(list).toHaveTextContent("Search contacts");
     expect(list).toHaveTextContent("Iteration 9");
@@ -243,7 +240,7 @@ describe("walkthrough findings layout", () => {
     // The id with no loaded row is listed, never silently dropped.
     expect(list).toHaveTextContent("Iteration not loaded on this page");
     expect(list).toHaveTextContent("Not loaded");
-    fireEvent.click(screen.getByRole("button", { name: /^Open/ }));
+    fireEvent.click(within(list).getByRole("button", { name: /^Open$/ }));
     expect(onOpenEvidence).toHaveBeenCalledWith({
       kind: "iteration",
       id: "it_fail_2",
@@ -252,25 +249,125 @@ describe("walkthrough findings layout", () => {
 
   it("omits navigation links when the host has no evidence route", () => {
     renderPanel();
-    openWhy();
-    expect(screen.queryByTestId("finding-evidence-open")).toBeNull();
+    openDetails();
+    expect(
+      within(screen.getByTestId("affected-iterations")).queryByRole("button", {
+        name: /^Open$/,
+      }),
+    ).toBeNull();
   });
 
-  it("collapses every additional finding behind one disclosure", () => {
+  it("pages every finding from one carousel in the findings header", () => {
+    renderPanel({
+      findings: [
+        finding(),
+        finding({
+          id: "second",
+          title: "Missing confirmation",
+          observed: "The final answer omitted the project name.",
+        }),
+        finding({
+          id: "third",
+          title: "Wrong host",
+          observed: "The model never sent a host.",
+        }),
+      ],
+    });
+    expect(
+      screen.getByTestId("unified-findings-carousel-index"),
+    ).toHaveTextContent("1 of 3");
+    expect(
+      screen.getByRole("button", { name: "Previous finding" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Next finding" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/more findings/i)).toBeNull();
+    expect(screen.getByTestId("unified-finding-lead")).toBeVisible();
+    expect(screen.getAllByTestId("unified-finding")).toHaveLength(2);
+    expect(screen.getByTestId("unified-findings-see-all")).toBeVisible();
+  });
+
+  it("opens every finding as a stacked preview and drills into details", () => {
+    renderPanel({
+      findings: [
+        finding(),
+        finding({
+          id: "second",
+          title: "Missing confirmation",
+          observed: "The final answer omitted the project name.",
+          evidence: [
+            {
+              kind: "tool_error",
+              iterationId: "it_2",
+              excerpt: "No project name in the final answer.",
+            },
+          ],
+        }),
+      ],
+    });
+    fireEvent.click(screen.getByRole("button", { name: "See all" }));
+    const catalog = screen.getByRole("dialog", { name: "All findings" });
+    expect(catalog).toBeVisible();
+    const previews = within(catalog).getAllByTestId(
+      "unified-findings-all-preview",
+    );
+    expect(previews).toHaveLength(2);
+    expect(previews[1]).toHaveTextContent(
+      "The final answer omitted the project name.",
+    );
+    fireEvent.click(previews[1]);
+    const details = screen.getByRole("dialog", { name: "Finding details" });
+    expect(details).toBeVisible();
+    expect(
+      within(details).getByRole("heading", { name: "What broke" }),
+    ).toBeVisible();
+    expect(
+      within(details).getByRole("heading", { name: "How to fix" }),
+    ).toBeVisible();
+    expect(details).toHaveTextContent(
+      "The final answer omitted the project name.",
+    );
+    fireEvent.click(screen.getByTestId("unified-findings-all-back"));
+    expect(screen.getByRole("dialog", { name: "All findings" })).toBeVisible();
+  });
+
+  it("opens the evidence sheet from the current carousel slide", () => {
     const second = finding({
       id: "second",
       title: "Missing confirmation",
       observed: "The final answer omitted the project name.",
+      evidence: [
+        {
+          kind: "tool_error",
+          iterationId: "it_2",
+          excerpt: "No project name in the final answer.",
+        },
+      ],
     });
     renderPanel({ findings: [finding(), second] });
-    expect(screen.queryByTestId("unified-finding")).toBeNull();
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: "1 more finding · Missing confirmation",
-      }),
+    expect(screen.getByTestId("unified-findings-see-all")).toBeVisible();
+    expect(screen.getByTestId("unified-findings-carousel")).toBeVisible();
+    expect(screen.getByRole("region", { name: "Findings" })).toBeVisible();
+    expect(
+      screen.getByTestId("unified-findings-carousel-index"),
+    ).toHaveTextContent("1 of 2");
+    const lead = screen.getByTestId("unified-finding-lead");
+    expect(
+      within(lead).getByRole("heading", { name: "What broke" }),
+    ).toBeVisible();
+    expect(
+      within(lead).getByRole("heading", { name: "How to fix" }),
+    ).toBeVisible();
+    fireEvent.click(within(lead).getByRole("button", { name: "See details" }));
+    const details = screen.getByRole("dialog", { name: "Finding details" });
+    expect(details).toBeVisible();
+    expect(
+      within(details).getByRole("heading", { name: "What broke" }),
+    ).toBeVisible();
+    expect(details).toHaveTextContent(
+      '"search" failed (401) on server acme-crm in 6 of 20 iterations.',
     );
-    expect(screen.getByTestId("unified-finding")).toBeVisible();
-    expect(screen.getByText(second.observed)).toBeVisible();
   });
 
   it("copies an investigation for an unproven fix", async () => {
@@ -307,7 +404,7 @@ describe("walkthrough findings layout", () => {
       "data-server-fix",
       "true",
     );
-    openWhy();
+    openDetails();
     expect(screen.getByTestId("unified-finding-contract")).toHaveTextContent(
       "Search records",
     );
@@ -355,9 +452,11 @@ describe("analysis states and provenance", () => {
     });
     // Backticked tool names render as <code>, so the assertion is on the
     // words the reader sees.
-    expect(screen.getByTestId("unified-finding-observed")).toHaveTextContent(
-      "rejected the arguments in 6 of 40 iterations.",
-    );
+    expect(
+      within(screen.getByTestId("unified-finding-lead")).getByTestId(
+        "unified-finding-observed",
+      ),
+    ).toHaveTextContent("rejected the arguments in 6 of 40 iterations.");
   });
 
   it.each([
@@ -447,10 +546,9 @@ describe("analysis states and provenance", () => {
       screen.getByTestId("unified-findings-unavailable"),
     ).toHaveTextContent("isn’t enough recorded evidence");
   });
-  it("shows exclusions alongside recorded execution errors", () => {
+  it("explains excluded trials when findings are empty", () => {
     renderPanel({
       findings: [],
-      executionIssues: <p>Two trials hit the model limit.</p>,
       observationCoverage: {
         total: 16,
         analyzed: 7,
@@ -458,7 +556,6 @@ describe("analysis states and provenance", () => {
         exclusions: { chainUnverified: 9 },
       } as never,
     });
-    expect(screen.getByText("Two trials hit the model limit.")).toBeVisible();
     expect(screen.getByTestId("unified-findings-empty")).toBeVisible();
     expect(
       screen.getByTestId("unified-findings-exclusion-summary"),
@@ -486,7 +583,7 @@ describe("analysis states and provenance", () => {
     ).toHaveTextContent("Analyze again");
     expect(screen.queryByRole("tablist")).toBeNull();
   });
-  it("labels fallback recommendations accurately even in an AI result", () => {
+  it("does not label the fix as standard guidance or AI explanation", () => {
     renderPanel({
       mode: "ai",
       provenance: [
@@ -500,13 +597,9 @@ describe("analysis states and provenance", () => {
         }),
       ],
     });
-    expect(screen.getByTestId("finding-prose-source")).toHaveTextContent(
-      "Standard guidance",
-    );
-    expect(screen.getByTestId("finding-prose-source")).toHaveAttribute(
-      "data-source",
-      "deterministic",
-    );
+    expect(screen.queryByTestId("finding-prose-source")).toBeNull();
+    expect(screen.queryByText("Standard guidance")).toBeNull();
+    expect(screen.queryByText("AI explanation")).toBeNull();
   });
   it("keeps judge coverage and uncertainty in the evidence drawer", () => {
     renderPanel({
@@ -525,8 +618,7 @@ describe("analysis states and provenance", () => {
         }),
       ],
     });
-    expect(screen.getByText("Judged")).toBeVisible();
-    openWhy();
+    openDetails();
     expect(
       screen.getByTestId("unified-finding-judge-coverage"),
     ).toHaveTextContent("graded 4 of 20 eligible");
@@ -534,7 +626,7 @@ describe("analysis states and provenance", () => {
       "No run-wide rate",
     );
   });
-  it("puts exclusions and rejected proposals behind compact coverage details", () => {
+  it("does not print a coverage footer under the findings panel", () => {
     renderPanel({
       observationState: "partial",
       observationCoverage: {
@@ -545,18 +637,17 @@ describe("analysis states and provenance", () => {
       snapshot: snapshot({ omittedGroups: 2 }),
     });
     expect(
-      screen.getByTestId("unified-findings-coverage-summary"),
-    ).toHaveTextContent(
-      "Evidence covers 14 of 20 iterations. Some evidence is incomplete.",
+      screen.queryByTestId("unified-findings-coverage-summary"),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Coverage details" }),
+    ).toBeNull();
+    expect(screen.getByTestId("unified-findings-panel")).not.toHaveTextContent(
+      "Evidence covers",
     );
-    expect(screen.queryByTestId("unified-findings-exclusions")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Coverage details" }));
-    expect(screen.getByTestId("unified-findings-exclusions")).toHaveTextContent(
-      "6 without a verified stage chain",
-    );
-    expect(screen.getByTestId("unified-findings-omitted")).toHaveTextContent(
-      "2 further groups",
-    );
+    expect(
+      screen.getByTestId("unified-findings-exclusion-summary"),
+    ).toHaveTextContent("6 iterations without a verified stage chain");
   });
   it("shows AI-discovered issues with honest coverage even without stage-chain findings", () => {
     renderPanel({
@@ -604,15 +695,8 @@ describe("analysis states and provenance", () => {
     ).toHaveTextContent("Suite creation gets stuck retrying");
     expect(screen.queryByTestId("unified-findings-unavailable")).toBeNull();
     expect(
-      screen.getByTestId("unified-findings-coverage-summary"),
-    ).toHaveTextContent("Reviewed 8 of 8 failed iterations and 4 passing examples");
-    expect(screen.getByText("AI explanation")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Coverage details" }));
-    expect(
-      screen.getByTestId("unified-findings-enrichment-note"),
-    ).toHaveTextContent("3 evidence records omitted");
-    expect(screen.getByRole("dialog")).toHaveTextContent(
-      "1 proposals rejected",
-    );
+      screen.queryByTestId("unified-findings-coverage-summary"),
+    ).toBeNull();
+    expect(screen.queryByText("AI explanation")).toBeNull();
   });
 });

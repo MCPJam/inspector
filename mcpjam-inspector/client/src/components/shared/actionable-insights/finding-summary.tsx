@@ -1,8 +1,4 @@
-import {
-  USER_VALUE_STAGE_LABELS,
-  STAGE_REASON_CHIP_LABELS,
-} from "@mcpjam/sdk/contract";
-/** A finding's problem and suggested fix, with recorded evidence one click away. */
+/** A finding's problem and suggested fix. */
 import { useRef, useState } from "react";
 import { AlertTriangle, ArrowUpRight, Check, Copy, Wrench } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -25,20 +21,15 @@ import {
   findingPromptLabel,
   type FindingPromptContext,
 } from "./finding-prompts";
-import {
-  FindingEvidenceList,
-  type FindingEvidenceLocator,
-} from "./finding-evidence";
+import { type FindingEvidenceLocator } from "./finding-evidence";
 import {
   AffectedIterationsList,
   type AffectedIterationRow,
 } from "./affected-iterations-list";
 import {
-  basisLabel,
   judgeCoverageLine,
   mechanismCaveat,
   proseSourceOf,
-  PROSE_SOURCE_LABEL,
   type FindingView,
 } from "./finding-provenance";
 
@@ -118,31 +109,51 @@ const OWNERS: Record<string, string> = {
 const linkClass =
   "inline-flex min-h-9 items-center gap-1 text-xs font-medium text-foreground hover:underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-4";
 
-export function FindingSummary({
+function FindingDetailsLink({
+  onOpen,
+}: {
+  onOpen: (event: React.MouseEvent<HTMLButtonElement>) => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={linkClass}
+      onClick={onOpen}
+      data-testid="unified-finding-toggle"
+    >
+      See details
+      <ArrowUpRight className="size-3.5" aria-hidden="true" />
+    </button>
+  );
+}
+
+export function findingTargetLabel(
+  finding: ActionableFinding,
+): string | null {
+  const target = finding.target;
+  if (target) {
+    return [SURFACES[target.surface], target.toolName, target.fieldPath]
+      .filter(Boolean)
+      .join(" · ");
+  }
+  return finding.actionTarget === "investigate"
+    ? null
+    : (OWNERS[finding.actionTarget] ?? null);
+}
+
+export function FindingDetailsContent({
   finding,
   provenance,
   view,
-  lead = false,
-  context,
-  onOpenEvidence,
   iterationRows = {},
+  onOpenEvidence,
 }: {
   finding: ActionableFinding;
   provenance: InsightsFindingProvenance | null;
   view: FindingView;
-  lead?: boolean;
-  context?: FindingPromptContext;
-  onOpenEvidence?: (locator: FindingEvidenceLocator) => void;
-  /** Recorded iterations by id, for the affected list. */
   iterationRows?: Record<string, AffectedIterationRow>;
+  onOpenEvidence?: (locator: FindingEvidenceLocator) => void;
 }) {
-  const [drawer, setDrawer] = useState<"why" | null>(null);
-  const drawerTrigger = useRef<HTMLButtonElement | null>(null);
-  const discovered = view === "ai" && provenance?.groupKind === "ai_discovery";
-  const aiTitle =
-    view === "ai" &&
-    (discovered || proseSourceOf(view, provenance, "title") === "ai");
-  const aiFix = proseSourceOf(view, provenance, "recommendation") === "ai";
   const affectedIds = [
     ...new Set(
       provenance?.affectedIterationIds ??
@@ -163,18 +174,170 @@ export function FindingSummary({
         canOpen: false,
       },
   );
-  const evidence = finding.evidence.filter((e) => e.kind !== "contrast");
-  const contrasts = finding.evidence.filter((e) => e.kind === "contrast");
   const judgeCoverage = judgeCoverageLine(provenance);
   const caveat = mechanismCaveat(provenance);
+  const aiWording = provenance?.proseOrigin?.observed === "ai";
+  const aiUnproven = view === "ai";
+  const notes = aiWording || aiUnproven || Boolean(caveat) || Boolean(judgeCoverage);
   const target = finding.target;
-  const targetLabel = target
-    ? [SURFACES[target.surface], target.toolName, target.fieldPath]
-        .filter(Boolean)
-        .join(" · ")
-    : finding.actionTarget === "investigate"
-      ? null
-      : OWNERS[finding.actionTarget];
+  const targetLabel = findingTargetLabel(finding);
+  const discovered = view === "ai" && provenance?.groupKind === "ai_discovery";
+  const aiTitle =
+    view === "ai" &&
+    (discovered || proseSourceOf(view, provenance, "title") === "ai");
+  return (
+    <div
+      className="space-y-6 px-6 pb-8 text-sm leading-relaxed"
+      data-testid="unified-finding-detail"
+    >
+      <section>
+        <h5 className="mb-3 font-semibold">What broke</h5>
+        <p className="break-words text-[15px] leading-7">
+          {aiTitle && finding.title !== finding.observed ? (
+            <>
+              <strong className="font-semibold">
+                <FindingText text={finding.title} />
+              </strong>
+              {/[.!?]$/.test(finding.title) ? " " : ". "}
+            </>
+          ) : null}
+          <FindingText text={finding.observed} />
+        </p>
+      </section>
+      <section className="border-t border-border/60 pt-5">
+        <h5 className="mb-3 font-semibold">How to fix</h5>
+        <p className="break-words text-[15px] leading-7">
+          <FindingText text={finding.recommendation} />
+        </p>
+        {targetLabel ? (
+          <p className="mt-3 break-words text-xs text-muted-foreground">
+            <span className="font-medium text-foreground">
+              {finding.actionability === "ready" ? "Change" : "Investigate"}:
+            </span>{" "}
+            {targetLabel}
+          </p>
+        ) : null}
+      </section>
+      <section className="border-t border-border/60 pt-5">
+        <h5 className="mb-3 font-semibold">
+          {finding.affected.count === 1
+            ? "Affected iteration"
+            : `Affected iterations · ${finding.affected.count} of ${finding.affected.total}`}
+        </h5>
+        <AffectedIterationsList
+          rows={affectedRows}
+          total={finding.affected.count}
+          ariaLabel="Affected iterations"
+          {...(onOpenEvidence
+            ? {
+                onOpen: (id: string) =>
+                  onOpenEvidence({ kind: "iteration", id }),
+              }
+            : {})}
+        />
+      </section>
+      {finding.rootCause ? (
+        <section className="border-t border-border/60 pt-5">
+          <h5 className="font-semibold">Why this change?</h5>
+          <p className="mt-2">
+            <FindingText
+              text={
+                finding.rootCause === "agent_or_prompt"
+                  ? "Agent or prompt behavior needs investigation."
+                  : finding.rootCause
+              }
+            />
+          </p>
+        </section>
+      ) : null}
+      {finding.acceptanceCriteria.length > 0 ? (
+        <section className="border-t border-border/60 pt-5">
+          <h5 className="font-semibold">How to verify</h5>
+          <ul className="mt-2 list-disc space-y-1 pl-5">
+            {finding.acceptanceCriteria.map((c) => (
+              <li key={c}>
+                <FindingText text={c} />
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+      {isServerReady(finding) && target?.currentDefinition ? (
+        <section
+          className="border-t border-border/60 pt-5"
+          data-testid="unified-finding-contract"
+        >
+          <h5 className="font-semibold">Recorded tool definition</h5>
+          {target.currentDefinition.description ? (
+            <p className="mt-2">{target.currentDefinition.description}</p>
+          ) : null}
+          {[
+            target.currentDefinition.inputSchemaJson,
+            target.currentDefinition.outputSchemaJson,
+          ]
+            .filter(Boolean)
+            .map((json, i) => (
+              <pre
+                key={i}
+                className="mt-3 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded bg-[var(--code-bg)] p-3 font-code text-xs text-[var(--code-text)]"
+              >
+                {json}
+              </pre>
+            ))}
+        </section>
+      ) : null}
+      {notes ? (
+        <div className="space-y-2 border-l-2 border-border pl-3 text-xs text-muted-foreground">
+          {aiWording ? <p>Wording by AI from cited evidence.</p> : null}
+          {aiUnproven ? (
+            <p>
+              Suggested cause, not proven. Rerun the affected iterations to test
+              the change.
+            </p>
+          ) : null}
+          {caveat ? (
+            <p data-testid="unified-finding-caveat">{caveat}</p>
+          ) : null}
+          {judgeCoverage ? (
+            <p data-testid="unified-finding-judge-coverage">
+              {judgeCoverage}. Ungraded iterations are not counted as passing this
+              judge.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export function FindingSummary({
+  finding,
+  provenance,
+  view,
+  lead = false,
+  showCopy = !lead,
+  context,
+  onOpenEvidence,
+  iterationRows = {},
+}: {
+  finding: ActionableFinding;
+  provenance: InsightsFindingProvenance | null;
+  view: FindingView;
+  lead?: boolean;
+  /** Header Copy tracks the current slide; slides omit their own button. */
+  showCopy?: boolean;
+  context?: FindingPromptContext;
+  onOpenEvidence?: (locator: FindingEvidenceLocator) => void;
+  /** Recorded iterations by id, for the affected list. */
+  iterationRows?: Record<string, AffectedIterationRow>;
+}) {
+  const [drawer, setDrawer] = useState<"why" | null>(null);
+  const drawerTrigger = useRef<HTMLButtonElement | null>(null);
+  const discovered = view === "ai" && provenance?.groupKind === "ai_discovery";
+  const aiTitle =
+    view === "ai" &&
+    (discovered || proseSourceOf(view, provenance, "title") === "ai");
+  const targetLabel = findingTargetLabel(finding);
   const openEvidence = onOpenEvidence
     ? (locator: FindingEvidenceLocator) => {
         drawerTrigger.current = null;
@@ -182,6 +345,10 @@ export function FindingSummary({
         onOpenEvidence(locator);
       }
     : undefined;
+  const openWhy = (event: React.MouseEvent<HTMLButtonElement>) => {
+    drawerTrigger.current = event.currentTarget;
+    setDrawer("why");
+  };
 
   return (
     <article
@@ -195,22 +362,13 @@ export function FindingSummary({
         aria-label={lead ? "Primary finding" : "Additional finding"}
       >
         <section className="min-w-0 pb-5 md:pr-7 md:pb-2">
-          <div className="flex items-center justify-between gap-4">
-            <h4 className="flex items-center gap-2 text-sm font-semibold">
-              <AlertTriangle
-                className="size-4 text-muted-foreground"
-                aria-hidden="true"
-              />
-              What broke
-            </h4>
-            <span
-              className="text-right text-xs text-muted-foreground"
-              data-testid="unified-finding-basis"
-              data-basis={provenance?.basis}
-            >
-              {basisLabel(provenance)?.label ?? "Unattributed"}
-            </span>
-          </div>
+          <h4 className="flex items-center gap-2 text-sm font-semibold">
+            <AlertTriangle
+              className="size-4 text-muted-foreground"
+              aria-hidden="true"
+            />
+            What broke
+          </h4>
           <p
             className="mt-3 break-words text-[15px] leading-7 md:min-h-20"
             data-testid="unified-finding-observed"
@@ -232,45 +390,15 @@ export function FindingSummary({
             ) : null}
             <FindingText text={finding.observed} />
           </p>
-          <p
-            className="mt-3 text-xs text-muted-foreground"
-            data-testid="unified-finding-origin"
-          >
-            {provenance?.stage && USER_VALUE_STAGE_LABELS[provenance.stage]
-              ? `${USER_VALUE_STAGE_LABELS[provenance.stage]}${
-                  provenance.reason &&
-                  STAGE_REASON_CHIP_LABELS[provenance.reason]
-                    ? ` · ${STAGE_REASON_CHIP_LABELS[provenance.reason]}`
-                    : ""
-                }`
-              : finding.category.replace(/_/g, " ")}
-          </p>
         </section>
         <section className="min-w-0 border-t border-border/60 pt-5 md:border-t-0 md:border-l md:pt-0 md:pl-7">
-          <div className="flex items-center justify-between gap-4">
-            <h4 className="flex items-center gap-2 text-sm font-semibold">
-              <Wrench
-                className="size-4 text-muted-foreground"
-                aria-hidden="true"
-              />
-              How to fix
-            </h4>
-            <span
-              className="text-xs text-muted-foreground"
-              data-testid="finding-prose-source"
-              data-source={
-                aiFix ? "ai" : proseSourceOf(view, provenance, "recommendation")
-              }
-            >
-              {aiFix
-                ? PROSE_SOURCE_LABEL.ai
-                : view === "deterministic" ||
-                    proseSourceOf(view, provenance, "recommendation") ===
-                      "deterministic"
-                  ? PROSE_SOURCE_LABEL.deterministic
-                  : PROSE_SOURCE_LABEL.unknown}
-            </span>
-          </div>
+          <h4 className="flex items-center gap-2 text-sm font-semibold">
+            <Wrench
+              className="size-4 text-muted-foreground"
+              aria-hidden="true"
+            />
+            How to fix
+          </h4>
           <p className="mt-3 break-words text-[15px] leading-7 md:min-h-20">
             <FindingText text={finding.recommendation} />
           </p>
@@ -283,40 +411,12 @@ export function FindingSummary({
             </p>
           ) : null}
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-            <button
-              type="button"
-              className={linkClass}
-              onClick={(event) => {
-                drawerTrigger.current = event.currentTarget;
-                setDrawer("why");
-              }}
-              data-testid="unified-finding-toggle"
-            >
-              Why this fix?
-              <ArrowUpRight className="size-3.5" aria-hidden="true" />
-            </button>
-            {!lead ? (
+            <FindingDetailsLink onOpen={openWhy} />
+            {showCopy ? (
               <CopyFindingPrompt finding={finding} context={context} />
             ) : null}
           </div>
         </section>
-      </div>
-      <div className="mt-4 border-t border-border/50 pt-3">
-        <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-          {finding.affected.count === 1
-            ? "Affected iteration"
-            : `Affected iterations · ${finding.affected.count} of ${finding.affected.total}`}
-        </p>
-        <AffectedIterationsList
-          rows={affectedRows}
-          total={finding.affected.count}
-          ariaLabel="Affected iterations"
-          {...(openEvidence
-            ? {
-                onOpen: (id: string) => openEvidence({ kind: "iteration", id }),
-              }
-            : {})}
-        />
       </div>
       <Sheet
         open={drawer !== null}
@@ -332,103 +432,16 @@ export function FindingSummary({
           }}
         >
           <SheetHeader className="sticky top-0 z-10 bg-background px-6 pt-6 pb-5 pr-12">
-            <SheetTitle className="text-lg">Why this fix?</SheetTitle>
+            <SheetTitle className="text-lg">Finding details</SheetTitle>
             <SheetDescription>{targetLabel ?? finding.title}</SheetDescription>
           </SheetHeader>
-          <div
-            className="space-y-6 px-6 pb-8 text-sm leading-relaxed"
-            data-testid="unified-finding-detail"
-          >
-            <section>
-              <h5 className="mb-3 font-semibold">Recorded evidence</h5>
-              <FindingEvidenceList
-                evidence={evidence}
-                onOpenEvidence={openEvidence}
-                variant="drawer"
-              />
-            </section>
-            {contrasts.length > 0 ? (
-              <section className="border-t border-border/60 pt-5">
-                <h5 className="mb-3 font-semibold">Successful comparison</h5>
-                <FindingEvidenceList
-                  evidence={contrasts}
-                  onOpenEvidence={openEvidence}
-                  variant="drawer"
-                />
-              </section>
-            ) : null}
-            {finding.rootCause ? (
-              <section className="border-t border-border/60 pt-5">
-                <h5 className="font-semibold">Why this change?</h5>
-                <p className="mt-2">
-                  <FindingText
-                    text={
-                      finding.rootCause === "agent_or_prompt"
-                        ? "Agent or prompt behavior needs investigation."
-                        : finding.rootCause
-                    }
-                  />
-                </p>
-              </section>
-            ) : null}
-            {finding.acceptanceCriteria.length > 0 ? (
-              <section className="border-t border-border/60 pt-5">
-                <h5 className="font-semibold">How to verify</h5>
-                <ul className="mt-2 list-disc space-y-1 pl-5">
-                  {finding.acceptanceCriteria.map((c) => (
-                    <li key={c}>
-                      <FindingText text={c} />
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            ) : null}
-            {isServerReady(finding) && target?.currentDefinition ? (
-              <section
-                className="border-t border-border/60 pt-5"
-                data-testid="unified-finding-contract"
-              >
-                <h5 className="font-semibold">Recorded tool definition</h5>
-                {target.currentDefinition.description ? (
-                  <p className="mt-2">{target.currentDefinition.description}</p>
-                ) : null}
-                {[
-                  target.currentDefinition.inputSchemaJson,
-                  target.currentDefinition.outputSchemaJson,
-                ]
-                  .filter(Boolean)
-                  .map((json, i) => (
-                    <pre
-                      key={i}
-                      className="mt-3 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded bg-[var(--code-bg)] p-3 font-code text-xs text-[var(--code-text)]"
-                    >
-                      {json}
-                    </pre>
-                  ))}
-              </section>
-            ) : null}
-            <div className="space-y-2 border-l-2 border-border pl-3 text-xs text-muted-foreground">
-              <p>{finding.observed}</p>
-              {provenance?.proseOrigin?.observed === "ai" && (
-                <p>Wording by AI from cited evidence.</p>
-              )}
-              {view === "ai" ? (
-                <p>
-                  Suggested cause, not proven. Rerun the affected iterations to
-                  test the change.
-                </p>
-              ) : null}
-              {caveat ? (
-                <p data-testid="unified-finding-caveat">{caveat}</p>
-              ) : null}
-              {judgeCoverage ? (
-                <p data-testid="unified-finding-judge-coverage">
-                  {judgeCoverage}. Ungraded iterations are not counted as
-                  passing this judge.
-                </p>
-              ) : null}
-            </div>
-          </div>
+          <FindingDetailsContent
+            finding={finding}
+            provenance={provenance}
+            view={view}
+            iterationRows={iterationRows}
+            onOpenEvidence={openEvidence}
+          />
         </SheetContent>
       </Sheet>
     </article>

@@ -300,7 +300,6 @@ function SelectedRunFindings({
       scopeControl={scopeControl}
       suiteRunId={run._id}
       iterations={iterations}
-      expectedTotal={run.summary?.total}
       generation={{
         pending: generation.pending,
         failedGeneration: generation.failedGeneration,

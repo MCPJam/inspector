@@ -4255,6 +4255,13 @@ export interface PlatformInsightsFindingProvenance {
   basis: "measured" | "judged" | "mixed" | "unknown";
   /** `sampled` ⇒ tool identity came from inspected exemplars only, so no
    * run-wide mechanism rate is claimed. */
+  /**
+   * How the CATEGORY was decided: `schema` proved it against the tool's
+   * pinned input schema, `error_code` read a standardized JSON-RPC/HTTP code,
+   * `error_text` matched keywords in prose a server author wrote freely,
+   * `none` did not decide. Absent on findings produced before the ladder.
+   */
+  classificationBasis?: "schema" | "error_code" | "error_text" | "none";
   mechanismBasis: "complete" | "sampled" | "none";
   affectedIterationIds: string[];
   /** Per-prose-field origin for the view this provenance accompanies.

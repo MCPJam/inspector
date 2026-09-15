@@ -83,6 +83,29 @@ export function basisLabel(
   }
 }
 
+/**
+ * How much the finding's CATEGORY is worth, in the reader's words.
+ *
+ * A category proved against the pinned schema and one matched from an error
+ * message are not the same claim, and a page that shows them identically
+ * invites a reader to act on the weaker one as if it were the stronger.
+ * Producer-owned, like every other label here — never sniffed from the text.
+ */
+export function classificationLine(
+  provenance: InsightsFindingProvenance | null,
+): string | null {
+  switch (provenance?.classificationBasis) {
+    case "schema":
+      return "Category proved against the tool's pinned input schema.";
+    case "error_code":
+      return "Category read from the standardized error code the server returned.";
+    case "error_text":
+      return "Category matched from the wording of the server's error message — a reading, not a proof.";
+    default:
+      return null;
+  }
+}
+
 /** The caveat a sampled mechanism carries, if any. */
 export function mechanismCaveat(
   provenance: InsightsFindingProvenance | null,
