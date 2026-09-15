@@ -718,7 +718,7 @@ describe("SuiteDetailOverview", () => {
     expect(screen.queryByText("No runs match these filters.")).toBeNull();
   });
 
-  it("names the active filter and releases a value that leaves the option set", async () => {
+  it("keeps a selected client clearable when its last run disappears", async () => {
     const user = userEvent.setup();
     const twoClientHosts = new Map<string, string | null>([
       ["host-1", "Claude"],
@@ -770,8 +770,10 @@ describe("SuiteDetailOverview", () => {
 
     expect(
       screen.getByRole("combobox", { name: "Filter by client" }),
-    ).toHaveTextContent("Client");
-    expect(screen.queryByText("No runs match these filters.")).toBeNull();
+    ).toHaveTextContent("Cursor");
+    await user.click(screen.getByRole("combobox", { name: "Filter by client" }));
+    expect(screen.getByRole("option", { name: "Cursor" })).toBeVisible();
+    await user.click(screen.getByRole("option", { name: "All clients" }));
     expect(screen.getByTestId("suite-run-row-run-1")).toBeTruthy();
   });
 });

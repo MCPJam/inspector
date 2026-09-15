@@ -101,11 +101,6 @@ export type SuiteCapabilities = {
     /** An env-var kill switch, not a per-org flag: no reason vocabulary. */
     scheduledEvals: { enabled: boolean };
   };
-  verdictPolicyV2: {
-    deploymentMode: "off" | "shadow" | "enforce";
-    suiteMode: string | null;
-    canUpgrade: boolean;
-  };
   judge: {
     gating: { enabled: boolean; reason?: "not_enabled_on_deployment" };
     role: "advisory" | "gating";

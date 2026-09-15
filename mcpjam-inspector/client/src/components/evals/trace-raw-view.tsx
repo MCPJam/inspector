@@ -15,6 +15,7 @@ import { Copy, Loader2, ScanSearch } from "lucide-react";
 import type { ModelMessage } from "ai";
 import { toast } from "@/lib/toast";
 import { track } from "@/lib/analytics";
+import { cn } from "@/lib/utils";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -100,11 +101,30 @@ export function TraceRawView({
   requestPayloadHistory,
   growWithContent = false,
   harnessBuiltinTools,
+  fadeScrollEdges = false,
 }: {
   trace: TraceEnvelope | TraceMessage | TraceMessage[] | null;
   requestPayloadHistory?: TraceRawRequestPayloadHistory | null;
   /** Parent owns scroll (e.g. StickToBottom); JSON height grows with payload. */
   growWithContent?: boolean;
+  /**
+   * Soften this view's top and bottom edges as it scrolls (`scroll-fade-y`),
+   * so a cut-off line reads as "there is more" rather than as a pane that
+   * stops mid-token.
+   *
+   * OPT-IN. Raw is rendered on every surface that shows a trace — eval runs,
+   * the Playground's trace pane, a swarm session — and the surface that asked
+   * for this is the session detail. Turning it on everywhere else is a call
+   * their owners should make.
+   *
+   * Applies to the SCROLLING element, not the wrapper around it: the fade is a
+   * scroll-driven animation reading `scroll(self y)`, so on a container that
+   * never scrolls it would simply never animate.
+   *
+   * `growWithContent` branches take no fade — they have no scrollport of their
+   * own, the page around them scrolls instead.
+   */
+  fadeScrollEdges?: boolean;
   /**
    * Harness native built-in tools. When set (a harness host), Raw annotates the
    * request: the harness builds its OWN model request inside the sandbox, so the
@@ -115,6 +135,10 @@ export function TraceRawView({
   harnessBuiltinTools?: HarnessBuiltinToolInfo[];
 }) {
   const jsonHeight = growWithContent ? "auto" : "100%";
+  const scrollerClass = cn(
+    "flex-1 min-h-0 overflow-auto",
+    fadeScrollEdges && "scroll-fade-y",
+  );
   const requestPayloadEntries = requestPayloadHistory?.entries ?? [];
   const hasUiMessages = requestPayloadHistory?.hasUiMessages ?? false;
   const orderedEntries = requestPayloadEntries;
@@ -184,7 +208,7 @@ export function TraceRawView({
           className="flex min-h-0 flex-1 flex-col overflow-hidden w-full"
           data-testid="trace-raw-view"
         >
-          <div className="flex-1 min-h-0 overflow-auto">
+          <div className={scrollerClass}>
             <div className="min-h-0 rounded-lg border border-border bg-muted/20">
               <JsonEditor
                 height={jsonHeight}
@@ -284,7 +308,7 @@ export function TraceRawView({
       className="flex min-h-0 flex-1 flex-col overflow-hidden w-full"
       data-testid="trace-raw-view"
     >
-      <div className="flex-1 min-h-0 overflow-auto">
+      <div className={scrollerClass}>
         <div className="relative min-h-0 rounded-lg border border-border bg-muted/20">
           {copyTraceBtn}
           <JsonEditor

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { EvalSuiteOverviewEntry } from "../types";
 import { OverviewPanel } from "../overview-panel";
 
@@ -59,6 +60,46 @@ function makeOverviewEntry(): EvalSuiteOverviewEntry {
 }
 
 describe("OverviewPanel", () => {
+  it("keeps alternative tags in the selected commit bucket available", async () => {
+    const user = userEvent.setup();
+    const suites = ["red", "blue", "green"].map((tag) => {
+      const entry = makeOverviewEntry();
+      const suiteId = `suite-${tag}`;
+      return {
+        ...entry,
+        suite: { ...entry.suite, _id: suiteId, name: tag, tags: [tag] },
+        recentRuns: entry.recentRuns.map((run) => ({
+          ...run,
+          _id: `run-${tag}`,
+          suiteId,
+          ciMetadata: { commitSha: tag === "green" ? "bbbbbbb" : "aaaaaaa" },
+        })),
+      };
+    });
+    const onFilterTagChange = vi.fn();
+    const view = (filterTag: string | null) => (
+      <OverviewPanel
+        suites={suites}
+        allTags={["red", "blue", "green"]}
+        filterTag={filterTag}
+        onFilterTagChange={onFilterTagChange}
+        onSelectSuite={vi.fn()}
+        onRerunSuite={vi.fn()}
+      />
+    );
+    const { rerender } = render(view(null));
+    await user.click(screen.getByRole("button", { name: /aaaaaaa/ }));
+    await user.click(screen.getByRole("button", { name: "red", exact: true }));
+    rerender(view("red"));
+    expect(screen.getByRole("button", { name: "blue", exact: true })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "green", exact: true })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "blue", exact: true }));
+    expect(onFilterTagChange).toHaveBeenLastCalledWith("blue");
+    rerender(view("blue"));
+    expect(screen.getByRole("button", { name: "red", exact: true })).toBeVisible();
+    expect(screen.getByTitle(/^aaaaaaa /)).toHaveClass("ring-2");
+  });
+
   it("renders suite overview without AI triage summary affordances", () => {
     render(
       <OverviewPanel

@@ -16,6 +16,11 @@
       "import": "./dist/index.js",
       "default": "./dist/index.js"
     },
+    "./json-tokens": {
+      "types": "./dist/json-tokens.d.ts",
+      "import": "./dist/json-tokens.js",
+      "default": "./dist/json-tokens.js"
+    },
     "./thread-helpers": {
       "types": "./dist/thread-helpers.d.ts",
       "import": "./dist/thread-helpers.js",

@@ -55,6 +55,7 @@ import {
   loadRecentMcpjamAgentSessions,
 } from "@/components/mcpjam-agent/recent-sessions";
 import { pendingAgentPromptKey } from "@/lib/mcpjam-agent/pending-prompt";
+import { describeMCPJamLimitMessage } from "@/lib/mcpjam-limit";
 
 export interface McpjamAgentThreadProps {
   sessionId: string;
@@ -520,7 +521,9 @@ export function McpjamAgentThread({
                   isSidebar && "w-full px-3",
                 )}
               >
-                {session.error.message ?? "Something went wrong."}
+                {describeMCPJamLimitMessage(session.error.message) ??
+                  session.error.message ??
+                  "Something went wrong."}
               </p>
             )}
           </div>

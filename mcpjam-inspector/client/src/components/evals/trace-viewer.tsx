@@ -185,6 +185,11 @@ interface TraceViewerProps {
    */
   rawGrowWithContent?: boolean;
   /**
+   * Soften the Raw view's scroll edges. Opt-in, and forwarded verbatim — see
+   * {@link TraceRawView}'s own note for why it is not simply on.
+   */
+  rawFadeScrollEdges?: boolean;
+  /**
    * Active host (resolved by `useAppState`) at the time the trace is
    * being viewed — NOT the host that was active when the trace was
    * recorded. When provided, TraceViewer installs an inner
@@ -385,6 +390,7 @@ export function TraceViewer({
   rawRequestPayloadHistory = null,
   harnessBuiltinTools,
   rawGrowWithContent = false,
+  rawFadeScrollEdges = false,
   activeHost,
   hostStyle,
   mcpToolResultImageRendering,
@@ -861,6 +867,7 @@ export function TraceViewer({
               requestPayloadHistory={rawRequestPayloadHistory}
               harnessBuiltinTools={harnessBuiltinTools}
               growWithContent={rawGrowWithContent}
+              fadeScrollEdges={rawFadeScrollEdges}
             />
           </div>
         )}

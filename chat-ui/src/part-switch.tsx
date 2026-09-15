@@ -29,6 +29,7 @@ import { JsonPart } from "./parts/json-part";
 import { ToolCallPart } from "./tool-call-part";
 import { WidgetPlaceholder } from "./widget-placeholder";
 import type {
+  JsonRenderer,
   ReasoningDisplayMode,
   ToolRenderContext,
   ToolRenderOverride,
@@ -64,6 +65,12 @@ export interface PartSwitchProps {
    * a widget itself.
    */
   renderWidget?: (input: WidgetRenderInput) => ReactNode;
+  /**
+   * Host override for displaying a tool's JSON payloads. Ignored when
+   * `renderTool` is supplied — that host owns the whole block, including how
+   * it shows a payload.
+   */
+  renderJson?: JsonRenderer;
 }
 
 export function PartSwitch({
@@ -76,6 +83,7 @@ export function PartSwitch({
   widgetPolicy = "placeholder",
   renderTool,
   renderWidget,
+  renderJson,
 }: PartSwitchProps) {
   if (isToolPart(part) || isDynamicTool(part)) {
     const toolPart = part as ToolUIPart<UITools> | DynamicToolUIPart;
@@ -149,6 +157,7 @@ export function PartSwitch({
         // a sibling text part read fine. (The inspector's `chat-v2` ToolPart
         // has rendered the same field since #1583; the gap was here.)
         resultText={resultText}
+        renderJson={renderJson}
       />
     );
 
