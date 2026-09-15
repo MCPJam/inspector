@@ -2052,12 +2052,15 @@ export function SuiteIterationsView({
                           iteration: iterationId,
                         })
                       }
+                      // Opening a saved case is navigation, not a configuration
+                      // edit. CI-owned cases still open their read-only definition.
+                      onEditCase={(testCaseId) =>
+                        onEditTestCase
+                          ? onEditTestCase(testCaseId)
+                          : navigation.toTestEdit(suite._id, testCaseId)
+                      }
                       {...(!editingDisabled
                         ? {
-                            onEditCase: (testCaseId: string) =>
-                              onEditTestCase
-                                ? onEditTestCase(testCaseId)
-                                : navigation.toTestEdit(suite._id, testCaseId),
                             onEditEvaluator: (testCaseId: string) =>
                               navigation.toTestEdit(suite._id, testCaseId, {
                                 checks: true,
