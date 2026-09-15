@@ -119,6 +119,167 @@
     }
   ],
   "paths": {
+    "/projects/{projectId}/eval-runs/{runId}/judge/backtest": {
+      "post": {
+        "operationId": "backtestEvalRunJudge",
+        "tags": [
+          "Eval runs"
+        ],
+        "summary": "Preview draft judge grading on one recorded iteration",
+        "description": "Uses model budget and complete recorded evidence without changing the run verdict. Supply rubric.instructions, optional structured criteria, or null for objective-only grading. Continue with the unchanged rubric and returned cursor, sourceHash and reservationId. Completed page retries return cached results. Error cases have a null draft measurement.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/evalVocabularyHeader"
+          },
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/runId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "rubric"
+                ],
+                "properties": {
+                  "rubric": {
+                    "type": [
+                      "object",
+                      "null"
+                    ],
+                    "additionalProperties": false,
+                    "properties": {
+                      "instructions": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 2000
+                      },
+                      "criteria": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 25,
+                        "items": {
+                          "type": "object",
+                          "required": [
+                            "id",
+                            "label"
+                          ],
+                          "additionalProperties": false,
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "pattern": "^[A-Za-z0-9_-]{1,64}$"
+                            },
+                            "label": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "description": {
+                              "type": "string",
+                              "maxLength": 1000
+                            },
+                            "required": {
+                              "type": "boolean"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "continuation": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "cursor",
+                      "sourceHash",
+                      "reservationId"
+                    ],
+                    "properties": {
+                      "cursor": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "sourceHash": {
+                        "type": "string",
+                        "pattern": "^[a-f0-9]{64}$"
+                      },
+                      "reservationId": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "One cached or newly graded page. Errors are unscored; isDone indicates the end of the population.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "cases": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "cursor": {
+                      "type": "integer"
+                    },
+                    "sourceHash": {
+                      "type": "string"
+                    },
+                    "reservationId": {
+                      "type": "string"
+                    },
+                    "isDone": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "409": {
+            "description": "Run is not terminal or source evidence changed."
+          },
+          "504": {
+            "description": "Backtest deadline or cancellation."
+          }
+        }
+      }
+    },
     "/browser-sessions/session": {
       "post": {
         "tags": [
@@ -14804,6 +14965,16 @@
         "required": ["id", "title", "steps", "legacyIterations", "isNegative", "models"],
         "description": "`EvalCase` as projected under `x-mcpjam-eval-vocabulary: 2`: the legacy floor is `legacyIterations`, the exact policy-2 count is `iterations`, the rule override is `assertions`. Every other field is as in `EvalCase`, in the same position.",
         "properties": {
+          "judge": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              }
+            },
+            "description": "Per-case judge override. enabled: false skips goal-completion grading for this case."
+          },
           "id": {
             "type": "string"
           },
@@ -15901,6 +16072,16 @@
         ],
         "description": "A persisted eval case, in the public steps-first shape. Note this is NOT `EvalTestCase`, which is the INLINE authoring shape accepted by suite creation.",
         "properties": {
+          "judge": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              }
+            },
+            "description": "Per-case judge override. enabled: false skips goal-completion grading for this case."
+          },
           "id": {
             "type": "string"
           },
@@ -19161,6 +19342,35 @@
           "cases"
         ],
         "properties": {
+          "progress": {
+            "type": "object",
+            "required": [
+              "total",
+              "completed",
+              "errors",
+              "skipped"
+            ],
+            "properties": {
+              "total": {
+                "type": "number"
+              },
+              "completed": {
+                "type": "number"
+              },
+              "errors": {
+                "type": "number"
+              },
+              "skipped": {
+                "type": "number"
+              }
+            }
+          },
+          "judgeTemplateVersion": {
+            "type": "number"
+          },
+          "judgeTemplateHash": {
+            "type": "string"
+          },
           "status": {
             "type": ["string", "null"],
             "enum": ["pending", "completed", "failed", null],
@@ -19189,7 +19399,7 @@
             "items": {
               "$ref": "#/components/schemas/EvalRunGoalCompletionCase"
             },
-            "description": "Per-case grades. EMPTY unless `status` is `completed` — a pending or failed judge carries no cases, and `status` is what says which."
+            "description": "Per-iteration measurements and unscored error or skipped rows on terminal jobs. Failed jobs retain completed measurements. Pending jobs expose progress and an empty cases array."
           }
         }
       },
@@ -19266,6 +19476,106 @@
         "type": "object",
         "required": ["caseKey", "score", "passed", "reason", "rubricHits"],
         "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "scored",
+              "error",
+              "skipped"
+            ],
+            "description": "Measurement state. Interpret score and passed only for scored rows. Legacy scored rows are projected as scored."
+          },
+          "gradingKey": {
+            "type": "string"
+          },
+          "errorCode": {
+            "type": "string"
+          },
+          "judgeTemplateVersion": {
+            "type": "number"
+          },
+          "judgeTemplateHash": {
+            "type": "string"
+          },
+          "evidenceHash": {
+            "type": "string"
+          },
+          "evidenceManifest": {
+            "type": "object",
+            "required": [
+              "version",
+              "traceComplete",
+              "traceFields",
+              "messageCount",
+              "spanCount",
+              "artifactSources",
+              "uncaptured",
+              "inputBytes"
+            ],
+            "properties": {
+              "version": {
+                "type": "number",
+                "enum": [
+                  1
+                ]
+              },
+              "traceComplete": {
+                "type": "boolean",
+                "enum": [
+                  true
+                ]
+              },
+              "traceFields": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "messageCount": {
+                "type": "number"
+              },
+              "spanCount": {
+                "type": "number"
+              },
+              "artifactSources": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "sourceId",
+                    "mediaType",
+                    "modality"
+                  ],
+                  "properties": {
+                    "sourceId": {
+                      "type": "string"
+                    },
+                    "mediaType": {
+                      "type": "string"
+                    },
+                    "modality": {
+                      "type": "string",
+                      "enum": [
+                        "image",
+                        "audio",
+                        "video",
+                        "file"
+                      ]
+                    }
+                  }
+                }
+              },
+              "uncaptured": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "inputBytes": {
+                "type": "number"
+              }
+            }
+          },
           "caseKey": {
             "type": "string",
             "description": "The stable AUTHORED-case identity, as persisted. NOT a case row id — do not join it against the ids the per-case routes take."

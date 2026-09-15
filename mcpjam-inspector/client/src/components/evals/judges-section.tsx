@@ -1,3 +1,4 @@
+import type { GoalJudgePolicy } from "@/shared/judge-defaults";
 import { useMemo } from "react";
 import { Label } from "@mcpjam/design-system/label";
 import {
@@ -28,6 +29,7 @@ import {
  */
 
 interface JudgesSectionProps {
+  policy?: GoalJudgePolicy;
   value: EvalJudgeConfig | undefined;
   onChange: (next: EvalJudgeConfig | undefined) => void;
   availableModels: ModelDefinition[];

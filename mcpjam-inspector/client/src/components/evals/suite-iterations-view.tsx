@@ -1,3 +1,4 @@
+import { JudgeInstructionsEditor } from "./judge-instructions-editor";
 import { AssertionBacktestPanel } from "./assertion-backtest-panel";
 import { JudgeBacktestPanel } from "./judge-backtest-panel";
 import { ImportDatasetDialog } from "../evaluate/import-dataset-dialog";
@@ -58,7 +59,7 @@ import { TestTemplateEditor } from "./test-template-editor";
 import { useEvalRunIterationChains } from "@/hooks/use-eval-run-iteration-chains";
 import { PassCriteriaSelector } from "./pass-criteria-selector";
 import { SuitePassOrFailSection } from "./suite-pass-or-fail-section";
-import { JudgeRubricEditor, isRubricValid } from "./judge-rubric-editor";
+import { isRubricValid } from "./judge-rubric-editor";
 import { JudgeGatePanel } from "./judge-gate-panel";
 import { useGroundedness } from "./use-groundedness";
 import {
@@ -2685,7 +2686,7 @@ export function SuiteIterationsView({
                     />
                   }
                   rubricEditor={
-                    <JudgeRubricEditor
+                    <JudgeInstructionsEditor
                       value={draft.current.judgeRubric}
                       onChange={(next) =>
                         dispatchDraft({

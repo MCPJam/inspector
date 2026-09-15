@@ -1,3 +1,4 @@
+import type { GoalJudgePolicy } from "@/shared/judge-defaults";
 /**
  * What this person can do with this suite, and why not when they cannot.
  *
@@ -126,6 +127,7 @@ export type SuiteCapabilities = {
    */
   judges?: {
     goalCompletion: {
+      policy?: GoalJudgePolicy;
       role: "advisory" | "gating";
       template: { version: number; hash: string };
       execution: "wired";

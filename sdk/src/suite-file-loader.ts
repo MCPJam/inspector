@@ -1,3 +1,7 @@
+import type {
+  SuiteJudgeSettings,
+  CaseJudgeSettings,
+} from "./contract/judge-settings.js";
 /**
  * Read and write eval **suite files** — the loader the contract module says is
  * a separate concern (`./contract/suite-file.ts:7-9`).
@@ -162,6 +166,7 @@ export type SuiteFileFailureStage = "input" | "parse" | "contract";
 
 /** A case with every suite default resolved onto it. */
 export type ResolvedEvalSuiteFileCase = {
+  judge?: CaseJudgeSettings;
   id: string;
   title: string;
   /** Authored analytics grouping label; absent remains unlabelled. */
@@ -267,6 +272,7 @@ export type ResolvedEvalSuiteFile = {
   suite: EvalSuiteFile["suite"];
   target: EvalSuiteFileTarget;
   defaults: {
+    judge?: SuiteJudgeSettings;
     model: string;
     provider?: string;
     systemPrompt?: string;
@@ -612,6 +618,7 @@ export function resolveEvalSuiteFile(
     suite: authored.suite,
     target: authored.target,
     defaults: {
+      ...(defaults.judge === undefined ? {} : { judge: defaults.judge }),
       model: defaults.model,
       ...(defaults.provider === undefined
         ? {}
@@ -671,6 +678,7 @@ function resolveCase(
   defaults: InheritableDefaults
 ): ResolvedEvalSuiteFileCase {
   return {
+    ...(authoredCase.judge === undefined ? {} : { judge: authoredCase.judge }),
     id: authoredCase.id,
     title: authoredCase.title,
     ...(typeof authoredCase.intent === "string"
@@ -733,6 +741,7 @@ const SERVER_KEY_ORDER = ["name", "id"] as const;
  * order a dialect-1 author already knows.
  */
 const DEFAULTS_KEY_ORDER = [
+  "judge",
   "model",
   "provider",
   "repetitions",
@@ -742,6 +751,7 @@ const DEFAULTS_KEY_ORDER = [
   "validity",
 ] as const;
 const DEFAULTS_KEY_ORDER_V2 = [
+  "judge",
   "model",
   "provider",
   "iterations",
@@ -768,6 +778,7 @@ const PROVENANCE_KEY_ORDER = [
   "importedAt",
 ] as const;
 const CASE_KEY_ORDER = [
+  "judge",
   "id",
   "title",
   "intent",
@@ -788,6 +799,7 @@ const CASE_KEY_ORDER = [
   "import",
 ] as const;
 const CASE_KEY_ORDER_V2 = [
+  "judge",
   "id",
   "title",
   "intent",

@@ -1042,3 +1042,5 @@ export type {
 } from "./eval-backtest.js";
 export * from "./standard-check-ids.js";
 export * from "./standard-checks.js";
+export * from "./goal-completion.js";
+export * from "./judge-settings.js";

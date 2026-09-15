@@ -21,6 +21,10 @@
  */
 
 import { useId } from "react";
+import {
+  judgeRubricSchema,
+  MAX_JUDGE_INSTRUCTIONS_LENGTH,
+} from "@mcpjam/sdk/contract";
 import { Button } from "@mcpjam/design-system/button";
 import { ArrowDown, ArrowUp, Trash2 } from "lucide-react";
 import type { EvalJudgeRubric, EvalJudgeRubricCriterion } from "./types";
@@ -93,12 +97,7 @@ export function criterionError(
 
 /** True when every criterion is saveable. An empty rubric is valid: it clears. */
 export function isRubricValid(rubric: EvalJudgeRubric | undefined): boolean {
-  const criteria = rubric?.criteria ?? [];
-  if (criteria.length > MAX_JUDGE_RUBRIC_CRITERIA) return false;
-  return criteria.every(
-    (criterion, index) =>
-      criterionError(criterion, index, criteria) === undefined,
-  );
+  return rubric === undefined || judgeRubricSchema.safeParse(rubric).success;
 }
 
 export function JudgeRubricEditor({
@@ -121,7 +120,13 @@ export function JudgeRubricEditor({
   const atCap = criteria.length >= MAX_JUDGE_RUBRIC_CRITERIA;
 
   const commit = (next: EvalJudgeRubricCriterion[]) =>
-    onChange(next.length === 0 ? undefined : { criteria: next });
+    onChange(
+      next.length === 0
+        ? value?.instructions
+          ? { instructions: value.instructions }
+          : undefined
+        : { ...value, criteria: next },
+    );
 
   const updateAt = (index: number, patch: Partial<EvalJudgeRubricCriterion>) =>
     commit(
@@ -140,10 +145,38 @@ export function JudgeRubricEditor({
 
   return (
     <div className="space-y-2">
+      <label
+        className="block space-y-1 text-xs"
+        htmlFor={`${fieldId}-instructions`}
+      >
+        <span>Grading instructions (optional)</span>
+        <textarea
+          id={`${fieldId}-instructions`}
+          className="w-full rounded-md border border-input bg-background px-2 py-1 text-xs text-foreground"
+          rows={3}
+          value={value?.instructions ?? ""}
+          disabled={disabled}
+          maxLength={MAX_JUDGE_INSTRUCTIONS_LENGTH}
+          placeholder="For example: check that the answer cites the source of each claim."
+          onChange={(event) => {
+            const instructions = event.target.value;
+            onChange(
+              instructions.trim()
+                ? { ...value, instructions }
+                : criteria.length
+                ? { criteria }
+                : undefined,
+            );
+          }}
+        />
+        <span className="block text-muted-foreground">
+          Additional guidance for judging the case’s task and expected outcome.
+        </span>
+      </label>
       {criteria.length === 0 ? (
         <p className="text-[11px] text-muted-foreground/60">
-          No criteria. The judge grades each case against its own expected
-          output alone.
+          The judge uses each case’s task and expected outcome. Add structured
+          criteria when you need individual requirements to be cited.
         </p>
       ) : null}
       {criteria.map((criterion, index) => {

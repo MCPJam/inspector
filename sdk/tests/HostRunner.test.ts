@@ -17,6 +17,7 @@ vi.mock("ai", () => ({
     type: "dynamic",
   })),
   jsonSchema: vi.fn((schema: any) => schema),
+  asSchema: vi.fn((schema: any) => ({ jsonSchema: schema })),
 }));
 
 // Mock the model factory
@@ -39,8 +40,7 @@ const telemetryEventBase = {
 
 /** Replays `experimental_telemetry.integrations` like real `generateText` (Jest mocks `ai` only). */
 async function replayEvalSpanStepFinish(params: any, stepResult: any) {
-  for (const integration of params.experimental_telemetry?.integrations ??
-    []) {
+  for (const integration of params.experimental_telemetry?.integrations ?? []) {
     await integration.onStepFinish?.(stepResult);
   }
 }
@@ -283,6 +283,17 @@ describe("HostRunner", () => {
 
       expect(result).toBeInstanceOf(PromptResult);
       expect(result.text).toBe("The result is 5");
+      expect(result.recordedContext?.toolDefinitions).toEqual(
+        Object.entries(mockToolSet).map(([name, tool]) => ({
+          name,
+          description: tool.description,
+          inputSchema: tool.inputSchema,
+        }))
+      );
+      expect(result.recordedContext?.systemPrompt).toBe(
+        "You are a helpful assistant."
+      );
+      expect(result.recordedContext?.unavailable).toBeUndefined();
       expect(result.toolsCalled()).toEqual(["add"]);
       expect(result.hasError()).toBe(false);
       expect(result.inputTokens()).toBe(10);
@@ -682,7 +693,7 @@ describe("HostRunner", () => {
           {
             toolCallId: "call-default",
             abortSignal: { throwIfAborted: vi.fn() },
-          },
+          }
         );
         params.onStepFinish?.();
         return {
@@ -1877,9 +1888,7 @@ describe("HostRunner", () => {
         })
       ).toEqual({
         type: "content",
-        value: [
-          { type: "media", data: "aGVsbG8=", mediaType: "image/png" },
-        ],
+        value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
       });
     });
   });

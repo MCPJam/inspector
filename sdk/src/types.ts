@@ -111,6 +111,14 @@ export interface LatencyBreakdown {
  * Raw prompt result data (used internally)
  */
 export interface PromptResultData {
+  /** Model-visible catalog and runtime settings captured at execution time. */
+  recordedContext?: {
+    toolDefinitions: unknown;
+    systemPrompt: string;
+    model: string;
+    temperature?: number;
+    unavailable?: string[];
+  };
   /** The original prompt/query that was sent */
   prompt: string;
   /** The full conversation history (user, assistant, tool messages) */

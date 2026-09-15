@@ -653,10 +653,11 @@ describe("declaredSuiteId reaches the wire", () => {
 
   it("omits the marker entirely on an ordinary edit", async () => {
     const { client, calls } = makeClient();
-    await deleteEvalCaseOperation.execute(
-      { suite: "s1", case: "c2" },
-      { client, signal: undefined, onScopeResolved: undefined } as never
-    );
+    await deleteEvalCaseOperation.execute({ suite: "s1", case: "c2" }, {
+      client,
+      signal: undefined,
+      onScopeResolved: undefined,
+    } as never);
     const write = calls.find((call) => call.method === "DELETE");
     // Not a capability: an app edit sends nothing, and gets the refusal a
     // CI-owned suite is right to give it.
@@ -677,14 +678,40 @@ describe("declaredSuiteId reaches the wire", () => {
 
   it("sends nothing at all when the caller named no id", async () => {
     const { client, calls } = makeClient();
-    await updateEvalSuiteOperation.execute(
-      { suite: "s1", name: "Renamed" },
-      { client, signal: undefined, onScopeResolved: undefined } as never
-    );
+    await updateEvalSuiteOperation.execute({ suite: "s1", name: "Renamed" }, {
+      client,
+      signal: undefined,
+      onScopeResolved: undefined,
+    } as never);
     // An ordinary edit must not carry an empty marker: the route would forward
     // it, and a platform that predates the lock rejects unknown arguments.
     expect(
       calls.find((call) => call.method === "PATCH")?.body
     ).not.toHaveProperty("declaredSuiteId");
+  });
+});
+
+describe("judge rubric parity", () => {
+  it("accepts instructions with the same shape exposed through MCP", () => {
+    const result = updateEvalSuiteOperation.inputSchema.safeParse({
+      suite: "s1",
+      settings: { judge: { rubric: { instructions: "Check evidence" } } },
+    });
+    expect(result.success).toBe(true);
+  });
+  it("rejects an invalid instruction even beside valid criteria", () => {
+    expect(
+      updateEvalSuiteOperation.inputSchema.safeParse({
+        suite: "s1",
+        settings: {
+          judge: {
+            rubric: {
+              instructions: "x".repeat(2001),
+              criteria: [{ id: "a", label: "A" }],
+            },
+          },
+        },
+      }).success
+    ).toBe(false);
   });
 });

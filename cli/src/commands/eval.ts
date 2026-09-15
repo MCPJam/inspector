@@ -27,6 +27,7 @@ import {
   startEvalDescriptionExperimentOperation,
   listEvalSuiteStageAnalyticsOperation,
   backtestEvalRunOperation,
+  backtestEvalRunJudgeOperation,
   requestEvalRunJudgeOperation,
   listEvalGithubReposOperation,
   connectEvalGithubRepoOperation,
@@ -3023,7 +3024,9 @@ async function runEvalExport(
   const schemaVersion = options.schemaVersion ?? EVAL_SUITE_SCHEMA_VERSION;
   if (!isEvalSuiteSchemaVersion(schemaVersion)) {
     throw usageError(
-      `--schema-version must be ${EVAL_SUITE_SCHEMA_VERSIONS.map((v) => `"${v}"`).join(" or ")} (received ${JSON.stringify(schemaVersion)}).`
+      `--schema-version must be ${EVAL_SUITE_SCHEMA_VERSIONS.map(
+        (v) => `"${v}"`
+      ).join(" or ")} (received ${JSON.stringify(schemaVersion)}).`
     );
   }
 
@@ -3698,7 +3701,9 @@ export function registerEvalCommands(program: Command): void {
                     // `iterationOverride`.
                     ...(options.iterations !== undefined ||
                     options.repetitions !== undefined
-                      ? { iterations: options.iterations ?? options.repetitions }
+                      ? {
+                          iterations: options.iterations ?? options.repetitions,
+                        }
                       : {}),
                     ...(options.case?.length ? { cases: options.case } : {}),
                     ...(options.excludeSkills ? { excludeSkills: true } : {}),
@@ -4593,6 +4598,39 @@ export function registerEvalCommands(program: Command): void {
 
   addProjectOption(
     evals
+      .command("judge-backtest")
+      .description(
+        "Preview draft grading instructions on recorded evidence (uses credits)"
+      )
+      .requiredOption("--run <id>", "Terminal eval run ID")
+      .requiredOption(
+        "--json <request>",
+        "JSON or @file with rubric and optional continuation"
+      )
+  ).action(
+    async (
+      options: PlatformOptions & {
+        project?: string;
+        run: string;
+        json: string;
+      },
+      command
+    ) => {
+      const body = new JsonInputContext().parseJsonInputRecord(
+        options.json,
+        "--json"
+      );
+      const input = validateOpInput(
+        backtestEvalRunJudgeOperation,
+        { ...body, runId: options.run, project: options.project },
+        { projectOptional: true }
+      );
+      await executeOp(backtestEvalRunJudgeOperation, input, options, command);
+    }
+  );
+
+  addProjectOption(
+    evals
       .command("backtest")
       .description(
         "Preview assertion changes on stored evidence without changing results"
@@ -4649,6 +4687,7 @@ export function registerEvalCommands(program: Command): void {
       )
       .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
   )
+    .option("--scope <all|failed>", "Regrade all or retry only failed grading")
     .option("--force", "Re-grade a run that already has a judge result")
     .option(
       "--enable",
@@ -4662,6 +4701,7 @@ export function registerEvalCommands(program: Command): void {
           project?: string;
           run: string;
           force?: boolean;
+          scope?: string;
           enable?: boolean;
           judgeModel?: string;
           judgeThreshold?: string;
@@ -4676,6 +4716,7 @@ export function registerEvalCommands(program: Command): void {
           requestEvalRunJudgeOperation,
           {
             runId: options.run,
+            ...(options.scope ? { scope: options.scope } : {}),
             ...(options.project === undefined
               ? {}
               : { project: options.project }),

@@ -109,7 +109,7 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   },
   {
     key: "judgeRubric",
-    label: "Judge criteria",
+    label: "Grading instructions",
     api: "settings.judge.rubric",
   },
   {

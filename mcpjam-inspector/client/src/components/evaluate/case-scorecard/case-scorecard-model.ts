@@ -553,7 +553,7 @@ export function judgeFacts(input: {
   const suiteMode = judgeMode(input.suiteJudgeConfig);
   const skippedForCase =
     input.judgeConfigOverride?.goalCompletion?.enabled === false;
-  const suiteCriteriaCount = input.suiteJudgeRubric?.criteria.length ?? 0;
+  const suiteCriteriaCount = input.suiteJudgeRubric?.criteria?.length ?? 0;
   return {
     suiteMode,
     model: slot?.judgeModel ?? GOAL_COMPLETION_DEFAULTS.judgeModel,

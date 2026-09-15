@@ -1,3 +1,4 @@
+import type { GoalJudgePolicy } from "@/shared/judge-defaults";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, usePaginatedQuery } from "convex/react";
 import { Check, ChevronDown, Info, Layers } from "lucide-react";
@@ -71,6 +72,7 @@ export type JourneyListJourney = {
    * declared here because `autoRun` decides whether the pre-run credit estimate
    * carries a judge line at all. */
   judgeConfig?: GoalJudgeConfig;
+  judgePolicy?: GoalJudgePolicy;
   /** Deterministic criteria. `null` from the wire when the journey has none. */
   rubric?: JourneyCriterion[] | null;
 };
@@ -705,6 +707,7 @@ function JourneyGradingEditor({
         onCloseAutoFocus={(e) => e.preventDefault()}
       >
         <JudgesSection
+          policy={journey.judgePolicy}
           chrome="bare"
           value={judgeConfig}
           onChange={setJudgeConfig}
