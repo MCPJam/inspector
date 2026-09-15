@@ -30,6 +30,7 @@ const {
     synthetic: false as boolean,
     readiness: undefined as unknown,
     goalScore: undefined as unknown,
+    runAttemptStatus: undefined as unknown,
   },
   mockBrowserArtifactsState: {
     artifacts: undefined as unknown,
@@ -73,6 +74,7 @@ vi.mock("@/hooks/useSharedChatThreads", () => ({
       synthetic: mockThreadState.synthetic,
       readiness: mockThreadState.readiness,
       goalScore: mockThreadState.goalScore,
+      runAttemptStatus: mockThreadState.runAttemptStatus,
       messagesBlobUrl: "https://storage.example.com/thread.json",
       modelId: "openai/gpt-oss-120b",
       visitorDisplayName: "Marcelo Jimenez",
@@ -445,6 +447,7 @@ describe("ShareUsageThreadDetail — promote affordance", () => {
     mockThreadState.synthetic = false;
     mockThreadState.readiness = undefined;
     mockThreadState.goalScore = undefined;
+    mockThreadState.runAttemptStatus = undefined;
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => [{ role: "assistant", content: [] }],
@@ -504,6 +507,69 @@ describe("ShareUsageThreadDetail — promote affordance", () => {
     expect(
       screen.queryByTestId("share-usage-promote-to-test-case"),
     ).not.toBeInTheDocument();
+  });
+
+  /**
+   * A swarm session is promotable only when its run attempt SUCCEEDED. The
+   * transcript renders the same either way, so before BB-247 the button was
+   * live on every row and a non-succeeded one answered with a raw Convex
+   * stack trace inside the dialog.
+   */
+  describe("swarm sessions whose run did not succeed", () => {
+    beforeEach(() => {
+      mockThreadState.sourceType = "swarm";
+    });
+
+    it("stays enabled when the attempt succeeded", async () => {
+      mockThreadState.runAttemptStatus = "succeeded";
+      render(<ShareUsageThreadDetail threadId="thread-1" promote={PROMOTE} />);
+
+      expect(
+        await screen.findByTestId("share-usage-promote-to-test-case"),
+      ).toBeEnabled();
+      expect(
+        screen.queryByTestId("share-usage-promote-blocked"),
+      ).not.toBeInTheDocument();
+    });
+
+    it.each([
+      ["failed", /did not finish/i],
+      ["rate_limited", /rate limit/i],
+      ["running", /still running/i],
+    ])("disables the button on a %s attempt", async (status, copy) => {
+      mockThreadState.runAttemptStatus = status;
+      const user = userEvent.setup();
+      render(<ShareUsageThreadDetail threadId="thread-1" promote={PROMOTE} />);
+
+      const button = await screen.findByTestId(
+        "share-usage-promote-to-test-case",
+      );
+      expect(button).toBeDisabled();
+
+      // The dialog must not open — that is the path that rendered the server
+      // error. Clicking a disabled button is a no-op, so assert the state.
+      await user.click(screen.getByTestId("share-usage-promote-blocked"));
+      expect(
+        screen.getByTestId("promote-dialog").getAttribute("data-open"),
+      ).toBe("false");
+
+      // And the reason is reachable, not just an inert grey button.
+      expect(screen.getByTestId("share-usage-promote-blocked")).toHaveAttribute(
+        "title",
+        expect.stringMatching(copy),
+      );
+    });
+
+    it("blocks when the backend reports no status at all", async () => {
+      // Older backend, or an attempt row that claims no session. Absence is
+      // not permission.
+      mockThreadState.runAttemptStatus = undefined;
+      render(<ShareUsageThreadDetail threadId="thread-1" promote={PROMOTE} />);
+
+      expect(
+        await screen.findByTestId("share-usage-promote-to-test-case"),
+      ).toBeDisabled();
+    });
   });
 
   it("opens the dialog on this thread and navigates to the created case", async () => {

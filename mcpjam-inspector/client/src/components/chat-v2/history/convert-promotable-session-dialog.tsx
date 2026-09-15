@@ -1,6 +1,7 @@
 import { useAction, useConvexAuth } from "convex/react";
 import { useEffect, useMemo, useState } from "react";
 import { SWARM_ACTIONS, type SwarmSessionPromoteDetail } from "@/lib/swarm-api";
+import { getPromoteBlockedMessage } from "@/lib/promote-blocked-copy";
 import {
   ConvertSessionDialogCore,
   type PromoteSessionDetailState,
@@ -122,9 +123,14 @@ export function ConvertPromotableSessionDialog({
         if (cancelled) {
           return;
         }
-        const message =
-          error instanceof Error ? error.message : "Failed to load session";
-        setDetail({ ...IDLE_DETAIL, error: message });
+        // NEVER `error.message` here: a refusal thrown inside the Convex
+        // action arrives wrapped in the raw server envelope, and this string
+        // is rendered straight into the dialog's alert — which is how a stack
+        // trace ended up in front of users (BB-247).
+        setDetail({
+          ...IDLE_DETAIL,
+          error: getPromoteBlockedMessage(error, "Failed to load session"),
+        });
       }
     })();
 
