@@ -169,7 +169,7 @@ as one poisons every rate derived from it.
 | `runNotTerminal` | the run has not finished yet |
 | `runStatusNotAVerdict` | the run stopped before it finished, so its recorded counts describe a sample rather than the run |
 | `runResultNotAVerdict` | the run finished without recording a verdict |
-| `verdictSummaryUnavailable` | the run was decided under verdict policy v2 and its decision could not be read |
+| `verdictSummaryUnavailable` | the run was decided by per-case grading and its decision could not be read |
 
 ### What the validity phase found
 
@@ -278,7 +278,7 @@ One run carries **two** derived documents, and they answer different questions.
 Do not use one to check the other.
 
 - **The decision summary decides.** Verdict, counts, the population those
-  counts are in, and per-trial diagnostics. Under verdict policy v2 the run's
+  counts are in, and per-trial diagnostics. Under per-case grading the run's
   own `decision` is the authority; the diagnostics sit *underneath* it as
   evidence. A case can pass with a failing trial in it, so tallying the
   diagnostics gives a different answer than the platform reached.
@@ -290,12 +290,18 @@ Do not use one to check the other.
 
 Getting these wrong produces numbers that look authoritative and mean nothing.
 
-1. **Read `measurementUnit` before quoting any count.** Under verdict policy
-   v2 the counts are `caseVariant` — one case under one provider/model
-   execution variant, with its configured iterations as TRIALS inside it. On a legacy run
-   they are `trial`. A 3-case suite with 5 iterations is legitimately "3"
-   under one unit and "15" under the other, so a count quoted without its unit
-   is not a fact.
+1. **Read `measurementUnit` before quoting any count.** Under PER-CASE
+   GRADING the counts are `caseVariant` — one case under one provider/model
+   execution variant, with its configured iterations as TRIALS inside it.
+   Under a SUITE-WIDE ACCURACY THRESHOLD they are `trial`. A 3-case suite with
+   5 iterations is legitimately "3" under one unit and "15" under the other, so
+   a count quoted without its unit is not a fact.
+
+   The two are not one criterion in two units, so **never convert a rate across
+   that line.** A per-case pass rate is a fraction each case must meet over its
+   own iterations; a suite accuracy threshold is one percentage over the whole
+   run. Ten cases, nine always passing and one always failing, passes a 90%
+   suite-wide bar and fails a 0.9 per-case one.
 2. **A zero denominator is NOT MEASURED, never `0`.** Stage analytics stores
    counts and derives rates; `0/0` rendered as `0%` reads as "everything
    failed" and as `100%` reads as "all green", and neither was observed.

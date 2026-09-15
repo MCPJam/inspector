@@ -14834,7 +14834,7 @@
           "iterations": {
             "type": "integer",
             "minimum": 1,
-            "description": "The exact per-case count under verdict policy 2, when the case overrides the suite default. Absent means the case inherits it. Vocabulary 1 spells this field `repetitions`."
+            "description": "The exact per-case count under per-case grading, when the case overrides the suite default. Absent means the case inherits it. Vocabulary 1 spells this field `repetitions`."
           },
           "passThreshold": {
             "type": "number",
@@ -14964,7 +14964,7 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 10,
-            "description": "The exact number of iterations this case runs under verdict policy 2, overriding the suite default (legacy spelling `repetitions`). VERDICT POLICY 2 ONLY — on a legacy suite this is a VALIDATION_ERROR naming the upgrade. A CREATE that names this but no `legacyIterations` stores the floor at the same value; a CREATE that names neither stores a floor of 1. Capped at 10."
+            "description": "The exact number of iterations this case runs under per-case grading, overriding the suite default (vocabulary 1 spells it `repetitions`). PER-CASE GRADING ONLY — on a suite decided by the suite-wide accuracy threshold this is a VALIDATION_ERROR naming the criterion change that would make it readable, because that criterion takes the count from the case's own `legacyIterations` raised to the suite's `minimumIterations` and would never read this. A CREATE that names this but no `legacyIterations` stores the floor at the same value; a CREATE that names neither stores a floor of 1. Capped at 10."
           },
           "repetitions": {
             "type": "integer",
@@ -14977,7 +14977,7 @@
             "type": "number",
             "minimum": 0,
             "maximum": 1,
-            "description": "Per-case pass threshold fraction. VERDICT POLICY 2 ONLY — on a legacy suite this is a VALIDATION_ERROR naming the upgrade, for the same reason as `repetitions`."
+            "description": "Per-case pass threshold FRACTION: the share of this case's own iterations that must pass. PER-CASE GRADING ONLY — on a suite decided by the suite-wide accuracy threshold this is a VALIDATION_ERROR, for the same reason as the count: that criterion has one percentage over the whole run and no per-case threshold to override."
           },
           "isNegative": {
             "type": "boolean"
@@ -15151,7 +15151,7 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 10,
-            "description": "The exact number of iterations this case runs under verdict policy 2, overriding the suite default (legacy spelling `repetitions`). VERDICT POLICY 2 ONLY — on a legacy suite this is a VALIDATION_ERROR naming the upgrade. A CREATE that names this but no `legacyIterations` stores the floor at the same value; a CREATE that names neither stores a floor of 1. Capped at 10."
+            "description": "The exact number of iterations this case runs under per-case grading, overriding the suite default (vocabulary 1 spells it `repetitions`). PER-CASE GRADING ONLY — on a suite decided by the suite-wide accuracy threshold this is a VALIDATION_ERROR naming the criterion change that would make it readable, because that criterion takes the count from the case's own `legacyIterations` raised to the suite's `minimumIterations` and would never read this. A CREATE that names this but no `legacyIterations` stores the floor at the same value; a CREATE that names neither stores a floor of 1. Capped at 10."
           },
           "repetitions": {
             "type": "integer",
@@ -15164,7 +15164,7 @@
             "type": "number",
             "minimum": 0,
             "maximum": 1,
-            "description": "Per-case pass threshold fraction. VERDICT POLICY 2 ONLY — on a legacy suite this is a VALIDATION_ERROR naming the upgrade, for the same reason as `repetitions`."
+            "description": "Per-case pass threshold FRACTION: the share of this case's own iterations that must pass. PER-CASE GRADING ONLY — on a suite decided by the suite-wide accuracy threshold this is a VALIDATION_ERROR, for the same reason as the count: that criterion has one percentage over the whole run and no per-case threshold to override."
           },
           "isNegative": {
             "type": "boolean"
@@ -15478,7 +15478,7 @@
             "properties": {
               "minimumAccuracy": {
                 "type": ["number", "null"],
-                "description": "The legacy suite-wide floor, as a PERCENT in [0, 100]. ALWAYS `null` when `policy` is `v2`, whatever the suite's storage still holds: a v2 suite is decided by `verdictPolicyDefaults.passThreshold` (a fraction), and the legacy column an upgrade left behind is read by nothing. Reporting the two side by side would leave a reader to guess which one decides."
+                "description": "The SUITE-WIDE accuracy threshold, as a PERCENT in [0, 100]: one rate across the whole run must reach it, and individual cases have no threshold of their own. It is NOT `verdictPolicyDefaults.passThreshold` in other units — ten cases, nine always passing and one always failing, passes a 90% suite-wide bar and fails a 0.9 per-case one, so dividing by 100 moves the bar for every suite with more than one case. ALWAYS `null` when `policy` is `v2`, whatever the suite's storage still holds: such a suite is decided per case, and the percent column left behind by a criterion change is read by nothing. Reporting the two side by side would leave a reader to guess which one decides."
               },
               "minimumIterations": {
                 "type": ["number", "null"],
@@ -15576,7 +15576,7 @@
               },
               "verdictPolicyDefaults": {
                 "type": "object",
-                "description": "Suite defaults a case inherits under policy 2. Present only with `verdictPolicyVersion: 2`, and only as a whole — `repetitions` without `passThreshold` cannot answer what a case is graded against.",
+                "description": "Suite defaults a case inherits under PER-CASE GRADING: the pass threshold, the iteration count, and the evidence requirements that let a run be withheld as `inconclusive`. Present only with `verdictPolicyVersion: 2`, and only as a whole — `repetitions` without `passThreshold` cannot answer what a case is graded against.",
                 "required": ["iterations", "passThreshold"],
                 "properties": {
                   "iterations": {
@@ -15822,7 +15822,7 @@
                 "type": "integer",
                 "minimum": 1,
                 "maximum": 100,
-                "description": "Verdict policy v2 only: iterations per case unless the case overrides it (legacy spelling `repetitions`). On a legacy suite, sending this together with `passThreshold` UPGRADES the suite to policy v2; neither alone is accepted there."
+                "description": "PER-CASE GRADING only: the DEFAULT iterations per case, which a case's own count REPLACES (vocabulary 1 spells it `repetitions`; unlike `minimumIterations`, a floor that raises it). On a suite decided by the suite-wide accuracy threshold, sending this together with `passThreshold` CHANGES which criterion decides the suite; neither alone is accepted there, because neither half answers what a case is graded against."
               },
               "repetitions": {
                 "type": "integer",
@@ -15835,12 +15835,12 @@
                 "type": "number",
                 "minimum": 0,
                 "maximum": 1,
-                "description": "Verdict policy v2 only: FRACTION of a case's trials that must pass, 0-1 (0.8 is eighty percent). The v2 replacement for `minimumAccuracy`, which is a percent; sending both is refused."
+                "description": "PER-CASE GRADING only: the FRACTION of a case's own trials that must pass, 0-1 (0.8 is eighty percent). A DIFFERENT criterion from `minimumAccuracy`, not a unit conversion of it — that one is a single percentage over the whole run — so sending both is refused rather than reconciled."
               },
               "validity": {
                 "type": "object",
                 "additionalProperties": false,
-                "description": "Verdict policy v2 only: when a run's measurement is trustworthy enough to decide. Omitted members keep the contract defaults (`minCompletionRate` 0.8, `maxEvaluatorErrorRate` 0.1); supplied members merge over the suite's stored validity rather than replacing it.",
+                "description": "PER-CASE GRADING only: when a run's measurement is trustworthy enough to decide, so a run that measured too little is `inconclusive` rather than passed or failed. A suite decided by the suite-wide accuracy threshold has no validity phase at all and accepts nothing here. Omitted members keep the contract defaults (`minCompletionRate` 0.8, `maxEvaluatorErrorRate` 0.1, and an omitted `minEligibleTrials` requiring every configured trial attempted plus at least one gradeable — the STRICTER rule, not no minimum); supplied members merge over the suite's stored validity rather than replacing it.",
                 "properties": {
                   "minEligibleTrials": {
                     "type": "integer",
@@ -15930,7 +15930,7 @@
           "repetitions": {
             "type": "integer",
             "minimum": 1,
-            "description": "Trials this case runs under verdict policy 2, overriding the suite default. Absent means the case inherits it. NOT a second spelling of `iterations`: that one is the legacy count, which the legacy resolver reads as a FLOOR (`max(iterations, suite.minimumIterations)`) and which a policy-2 case still reports for compatibility. This one is exact."
+            "description": "Trials this case runs under per-case grading, overriding the suite default. Absent means the case inherits it. NOT a second spelling of `iterations`: that one is read as a FLOOR (`max(iterations, suite.minimumIterations)`) by a suite decided on suite-wide accuracy, and a per-case-graded case still reports it for compatibility. This one REPLACES the count rather than raising it — a case at 7 runs 7 times under a floor of 3 and 3 times under a default of 3."
           },
           "passThreshold": {
             "type": "number",
@@ -16233,13 +16233,13 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 10,
-            "description": "Per-case repetitions; omitted cases inherit the suite default. VERDICT POLICY 2 ONLY — on a legacy suite this is a VALIDATION_ERROR naming the upgrade, because the legacy resolver takes the trial count from `iterations` and the suite's `minimumIterations` and would never read this. Capped at 10, the same hosted ceiling as `iterations`; the suite-file contract's larger `MAX_REPETITIONS` is what a file may DECLARE, not what a hosted run accepts."
+            "description": "Per-case repetitions; omitted cases inherit the suite default. PER-CASE GRADING ONLY — on a suite decided by the suite-wide accuracy threshold this is a VALIDATION_ERROR naming the criterion change that would make it readable, because that criterion takes the trial count from `iterations` raised to the suite's `minimumIterations` and would never read this. Capped at 10, the same hosted ceiling as `iterations`; the suite-file contract's larger `MAX_REPETITIONS` is what a file may DECLARE, not what a hosted run accepts."
           },
           "passThreshold": {
             "type": "number",
             "minimum": 0,
             "maximum": 1,
-            "description": "Per-case pass threshold fraction. VERDICT POLICY 2 ONLY — on a legacy suite this is a VALIDATION_ERROR naming the upgrade, for the same reason as `repetitions`."
+            "description": "Per-case pass threshold FRACTION: the share of this case's own iterations that must pass. PER-CASE GRADING ONLY — on a suite decided by the suite-wide accuracy threshold this is a VALIDATION_ERROR, for the same reason as the count: that criterion has one percentage over the whole run and no per-case threshold to override."
           },
           "isNegative": {
             "type": "boolean"
@@ -16632,13 +16632,13 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 10,
-            "description": "Per-case repetitions; omitted cases inherit the suite default. VERDICT POLICY 2 ONLY — on a legacy suite this is a VALIDATION_ERROR naming the upgrade, because the legacy resolver takes the trial count from `iterations` and the suite's `minimumIterations` and would never read this. Capped at 10, the same hosted ceiling as `iterations`; the suite-file contract's larger `MAX_REPETITIONS` is what a file may DECLARE, not what a hosted run accepts."
+            "description": "Per-case repetitions; omitted cases inherit the suite default. PER-CASE GRADING ONLY — on a suite decided by the suite-wide accuracy threshold this is a VALIDATION_ERROR naming the criterion change that would make it readable, because that criterion takes the trial count from `iterations` raised to the suite's `minimumIterations` and would never read this. Capped at 10, the same hosted ceiling as `iterations`; the suite-file contract's larger `MAX_REPETITIONS` is what a file may DECLARE, not what a hosted run accepts."
           },
           "passThreshold": {
             "type": "number",
             "minimum": 0,
             "maximum": 1,
-            "description": "Per-case pass threshold fraction. VERDICT POLICY 2 ONLY — on a legacy suite this is a VALIDATION_ERROR naming the upgrade, for the same reason as `repetitions`."
+            "description": "Per-case pass threshold FRACTION: the share of this case's own iterations that must pass. PER-CASE GRADING ONLY — on a suite decided by the suite-wide accuracy threshold this is a VALIDATION_ERROR, for the same reason as the count: that criterion has one percentage over the whole run and no per-case threshold to override."
           },
           "isNegative": {
             "type": "boolean"
@@ -18091,7 +18091,7 @@
             "properties": {
               "minimumAccuracy": {
                 "type": ["number", "null"],
-                "description": "The legacy suite-wide floor, as a PERCENT in [0, 100]. ALWAYS `null` when `policy` is `v2`, whatever the suite's storage still holds: a v2 suite is decided by `verdictPolicyDefaults.passThreshold` (a fraction), and the legacy column an upgrade left behind is read by nothing. Reporting the two side by side would leave a reader to guess which one decides."
+                "description": "The SUITE-WIDE accuracy threshold, as a PERCENT in [0, 100]: one rate across the whole run must reach it, and individual cases have no threshold of their own. It is NOT `verdictPolicyDefaults.passThreshold` in other units — ten cases, nine always passing and one always failing, passes a 90% suite-wide bar and fails a 0.9 per-case one, so dividing by 100 moves the bar for every suite with more than one case. ALWAYS `null` when `policy` is `v2`, whatever the suite's storage still holds: such a suite is decided per case, and the percent column left behind by a criterion change is read by nothing. Reporting the two side by side would leave a reader to guess which one decides."
               },
               "minimumIterations": {
                 "type": ["number", "null"],
@@ -18188,7 +18188,7 @@
               },
               "verdictPolicyDefaults": {
                 "type": "object",
-                "description": "Suite defaults a case inherits under policy 2. Present only with `verdictPolicyVersion: 2`, and only as a whole — `repetitions` without `passThreshold` cannot answer what a case is graded against.",
+                "description": "Suite defaults a case inherits under PER-CASE GRADING: the pass threshold, the iteration count, and the evidence requirements that let a run be withheld as `inconclusive`. Present only with `verdictPolicyVersion: 2`, and only as a whole — `repetitions` without `passThreshold` cannot answer what a case is graded against.",
                 "required": ["repetitions", "passThreshold"],
                 "properties": {
                   "repetitions": {
@@ -19002,7 +19002,7 @@
           "verdictPolicyVersion": {
             "type": "integer",
             "enum": [2],
-            "description": "The verdict policy this run was decided under, frozen at run start. ABSENT means legacy percent-threshold grading — `result` cannot then be `inconclusive` and there is no `verdictSummary`. A caller gating on fractions or on validity must read this FIRST rather than assume a missing summary means a clean run."
+            "description": "Which criterion decided this run, frozen at run start. `2` is PER-CASE GRADING; ABSENT means the SUITE-WIDE ACCURACY THRESHOLD — `result` cannot then be `inconclusive`, because that criterion has no validity phase, and there is no `verdictSummary`. The `2` is a wire spelling, not a version a caller upgrades to. A caller gating on fractions or on validity must read this FIRST rather than assume a missing summary means a clean run."
           },
           "verdictSummary": {
             "type": "object",
@@ -22124,18 +22124,18 @@
                 "type": "integer",
                 "minimum": 1,
                 "maximum": 100,
-                "description": "Verdict policy v2 only: trials per case unless the case overrides it. On a legacy suite, sending this together with `passThreshold` UPGRADES the suite to policy v2; neither alone is accepted there."
+                "description": "PER-CASE GRADING only: the DEFAULT trials per case, which a case's own count REPLACES (unlike `minimumIterations`, a floor that raises it). On a suite decided by the suite-wide accuracy threshold, sending this together with `passThreshold` CHANGES which criterion decides the suite; neither alone is accepted there, because neither half answers what a case is graded against. That change re-decides every case in the suite, which is why it takes both fields rather than happening as a side effect of one."
               },
               "passThreshold": {
                 "type": "number",
                 "minimum": 0,
                 "maximum": 1,
-                "description": "Verdict policy v2 only: FRACTION of a case's trials that must pass, 0-1 (0.8 is eighty percent). The v2 replacement for `minimumAccuracy`, which is a percent; sending both is refused."
+                "description": "PER-CASE GRADING only: the FRACTION of a case's own trials that must pass, 0-1 (0.8 is eighty percent). A DIFFERENT criterion from `minimumAccuracy`, not a unit conversion of it — that one is a single percentage over the whole run — so sending both is refused rather than reconciled."
               },
               "validity": {
                 "type": "object",
                 "additionalProperties": false,
-                "description": "Verdict policy v2 only: when a run's measurement is trustworthy enough to decide. Omitted members keep the contract defaults (`minCompletionRate` 0.8, `maxEvaluatorErrorRate` 0.1); supplied members merge over the suite's stored validity rather than replacing it.",
+                "description": "PER-CASE GRADING only: when a run's measurement is trustworthy enough to decide, so a run that measured too little is `inconclusive` rather than passed or failed. A suite decided by the suite-wide accuracy threshold has no validity phase at all and accepts nothing here. Omitted members keep the contract defaults (`minCompletionRate` 0.8, `maxEvaluatorErrorRate` 0.1, and an omitted `minEligibleTrials` requiring every configured trial attempted plus at least one gradeable — the STRICTER rule, not no minimum); supplied members merge over the suite's stored validity rather than replacing it.",
                 "properties": {
                   "minEligibleTrials": {
                     "type": "integer",
@@ -29453,7 +29453,7 @@
         }
       },
       "EvalRunDecisionCounts": {
-        "description": "A tally WITH the population it counted. `measurementUnit` is never omitted and never inferred: under verdict policy v2 the counts are case-execution VARIANTS (repetitions are trials inside one, not members of it), and on a legacy run they are trials. A 3-case suite with 5 repetitions is legitimately 3 under one unit and 15 under the other, so a count reported without its unit is not a fact. On a `caseVariant` count every field is present and the three buckets sum to `total`; on a `trial` count each field is present only if the legacy run recorded it — absence stays absence rather than defaulting to zero.",
+        "description": "A tally WITH the population it counted. `measurementUnit` is never omitted and never inferred: under PER-CASE GRADING the counts are case-execution VARIANTS (iterations are trials inside one, not members of it), and under a SUITE-WIDE ACCURACY THRESHOLD they are trials. A 3-case suite with 5 iterations is legitimately 3 under one unit and 15 under the other, so a count reported without its unit is not a fact. On a `caseVariant` count every field is present and the three buckets sum to `total`; on a `trial` count each field is present only if the run recorded it — absence stays absence rather than defaulting to zero.",
         "oneOf": [
           {
             "type": "object",
@@ -29484,7 +29484,7 @@
               "inconclusive": {
                 "type": "integer",
                 "minimum": 0,
-                "description": "`caseVariant` only. A legacy run has no such bucket."
+                "description": "`caseVariant` only. A run decided by the suite-wide accuracy threshold has no such bucket, because that criterion has no validity phase to withhold a verdict."
               }
             },
             "additionalProperties": false
@@ -29527,7 +29527,7 @@
               "runResultNotAVerdict",
               "verdictSummaryUnavailable"
             ],
-            "description": "`runNotTerminal` — still pending, running, or held in `grading` for its gating judge; poll it. A held run's stored `verdictSummary` predates the judge's rows, so it is never read as that run's verdict. `runStatusNotAVerdict` — a LEGACY run that stopped at cancelled/timed_out/failed, so its stored counts describe the iterations it happened to record and gating on them is fail-open (a policy-v2 run is deliberately not resolved this way: its validity phase is where lifecycle enters the verdict). `runResultNotAVerdict` — completed with no recognizable result. `verdictSummaryUnavailable` — decided under policy v2 with no readable decision; there is no legacy fallback, because re-deciding a v2 run under percent-threshold semantics would answer a question nobody asked."
+            "description": "`runNotTerminal` — still pending, running, or held in `grading` for its gating judge; poll it. A held run's stored `verdictSummary` predates the judge's rows, so it is never read as that run's verdict. `runStatusNotAVerdict` — a run decided on SUITE-WIDE ACCURACY that stopped at cancelled/timed_out/failed, so its stored counts describe the iterations it happened to record and gating on them is fail-open (a per-case-graded run is deliberately not resolved this way: its validity phase is where lifecycle enters the verdict). `runResultNotAVerdict` — completed with no recognizable result. `verdictSummaryUnavailable` — decided by PER-CASE GRADING with no readable decision; there is no fallback to the suite-wide rate, because re-deciding such a run over a different population would answer a question nobody asked."
           },
           "detail": {
             "type": "string",
@@ -29694,7 +29694,7 @@
       },
       "EvalRunDecisionDiagnostic": {
         "type": "object",
-        "description": "One non-passing TRIAL, as evidence beneath the run's verdict. These are never counted as cases and never override the run's or a case's verdict: under policy v2 a case can pass with a failing trial in it, and a reader who tallies these rows instead of reading `decision.cases` has re-derived a different verdict from the same run.",
+        "description": "One non-passing TRIAL, as evidence beneath the run's verdict. These are never counted as cases and never override the run's or a case's verdict: under per-case grading a case can pass with a failing trial in it, and a reader who tallies these rows instead of reading `decision.cases` has re-derived a different verdict from the same run.",
         "required": [
           "iterationId",
           "iterationNumber",
@@ -29795,7 +29795,7 @@
       },
       "EvalRunDecisionSummary": {
         "type": "object",
-        "description": "The canonical run decision contract (schema version 1): what the run decided, in what unit it counted, and what evidence sits under the non-passing trials. START HERE when a run did not pass.\n\nIt EXPLAINS the verdict and never DECIDES it. Under verdict policy v2 the authority is the run's own decision — its verdict, rates, validity phase, reasons, per-case stability and mixed-verdict flags are copied after validation and never recomputed from the trials; `counts` is a tally of `decision.cases[].verdict` and nothing more.\n\n`verdict` has a fourth value the run verdict vocabulary does not: `notEstablished` means no verdict exists at all (the run is unfinished, stopped early, or its decision could not be read). It is not a failure and not `inconclusive` — `inconclusive` is a decision the validity phase reached, and this is the absence of any decision.",
+        "description": "The canonical run decision contract (schema version 1): what the run decided, in what unit it counted, and what evidence sits under the non-passing trials. START HERE when a run did not pass.\n\nIt EXPLAINS the verdict and never DECIDES it. Under per-case grading the authority is the run's own decision — its verdict, rates, validity phase, reasons, per-case stability and mixed-verdict flags are copied after validation and never recomputed from the trials; `counts` is a tally of `decision.cases[].verdict` and nothing more.\n\n`verdict` has a fourth value the run verdict vocabulary does not: `notEstablished` means no verdict exists at all (the run is unfinished, stopped early, or its decision could not be read). It is not a failure and not `inconclusive` — `inconclusive` is a decision the validity phase reached, and this is the absence of any decision.",
         "required": [
           "schemaVersion",
           "runId",
@@ -29823,7 +29823,7 @@
           "verdictSource": {
             "type": "string",
             "enum": ["policyV2", "legacy", "none"],
-            "description": "`policyV2` — the run's own decision, carried on `decision`; `verdict` is its verdict. `legacy` — a percent-threshold run predating policy v2; there is no decision object and any counts are trials. `none` — no verdict; `verdict` is `notEstablished` and `undecided` says why."
+            "description": "Which criterion decided the run, which is also what its counts are in. `policyV2` — PER-CASE GRADING: the run's own decision, carried on `decision`; `verdict` is its verdict and the counts are case-execution variants. `legacy` — the SUITE-WIDE ACCURACY THRESHOLD: one percentage over the whole run, so there is no decision object and any counts are trials. The two are not one criterion in two units, so never convert a rate across this line. `none` — no verdict; `verdict` is `notEstablished` and `undecided` says why."
           },
           "counts": {
             "$ref": "#/components/schemas/EvalRunDecisionCounts"

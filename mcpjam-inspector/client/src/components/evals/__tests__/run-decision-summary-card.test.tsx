@@ -381,8 +381,13 @@ describe("counts and their unit", () => {
       "iteration",
     );
     expect(card).toHaveTextContent("these are iterations, not cases");
+    // The source names WHICH CRITERION decided the run, not which version of
+    // the platform produced it: "legacy" told a reader their run was decided
+    // by something old, which they cannot act on, while hiding the thing they
+    // must act on — that this rate is over iterations and a per-case run's is
+    // not.
     expect(screen.getByTestId("run-decision-verdict-source")).toHaveTextContent(
-      "legacy percent-threshold run",
+      "suite accuracy threshold",
     );
   });
 

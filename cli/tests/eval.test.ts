@@ -2716,12 +2716,13 @@ test("eval status renders an actionable decision summary for failed runs", async
 
     assert.equal(run.result.exitCode, 0);
     // The canonical contract, rendered through its labels. The count carries
-    // the population it counted — this run predates verdict policy v2, so its
+    // the population it counted — this run was decided by the suite-wide
+    // accuracy threshold, so its
     // stored summary counts TRIALS, and saying "cases" would be a different
     // claim about the same numbers.
     assert.match(
       run.stdout,
-      /Decision summary: failed \(legacy percent-threshold run\) — 0\/1 iteration passed/
+      /Decision summary: failed \(suite accuracy threshold\) — 0\/1 iteration passed/
     );
     assert.match(run.stdout, /First failed stage: Tool call/);
     assert.match(run.stdout, /Failure category: call arguments/);
@@ -4636,7 +4637,7 @@ test("eval compare prints the compare side's decision summary to stderr", async 
     assert.doesNotMatch(run.stderr, /\/80 iterations passed/);
     assert.match(
       run.stderr,
-      /Decision summary: failed \(legacy percent-threshold run\) — 1\/2 iterations passed/
+      /Decision summary: failed \(suite accuracy threshold\) — 1\/2 iterations passed/
     );
     // One parseable document on stdout, as every `--format human` command
     // promises.
@@ -5765,6 +5766,173 @@ test("eval update rejects an out-of-range --min-iterations before any write", as
         /--min-iterations must be a whole number from 1 to 10/
       );
     }
+    assert.equal(fixture.createBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval update --pass-threshold sends the per-case fraction", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "update",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--pass-threshold",
+          "0.9"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+    assert.equal(run.result.exitCode, 0);
+    const patchBody = fixture.createBodies.at(-1) as {
+      settings?: { passThreshold?: number; minimumAccuracy?: number };
+    };
+    assert.equal(patchBody.settings?.passThreshold, 0.9);
+    // The suite-wide percent is NOT written alongside it. Sending both is what
+    // the route refuses, and they are different criteria rather than two units
+    // of one number.
+    assert.equal(patchBody.settings?.minimumAccuracy, undefined);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval update --iterations sends the per-case default count", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "update",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--iterations",
+          "5"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+    assert.equal(run.result.exitCode, 0);
+    const patchBody = fixture.createBodies.at(-1) as {
+      settings?: { repetitions?: number; minimumIterations?: number | null };
+    };
+    assert.equal(patchBody.settings?.repetitions, 5);
+    assert.equal(patchBody.settings?.minimumIterations, undefined);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval update rejects a percent typed into --pass-threshold", async () => {
+  // `--pass-threshold 90` would reach the wire as a 9000% per-case bar. The
+  // route refuses it, but only after the request, and its error would name a
+  // field the caller did spell correctly.
+  const fixture = await startEvalFixture();
+  try {
+    for (const value of ["90", "-0.1", "1.5"]) {
+      const run = await captureProcessOutput(() =>
+        main(
+          evalArgv(
+            fixture.baseUrl,
+            "update",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--pass-threshold",
+            value
+          ),
+          { telemetry: telemetryDisabled }
+        )
+      );
+      assert.notEqual(run.result.exitCode, 0);
+      assert.match(
+        run.stderr,
+        /--pass-threshold must be a fraction from 0 to 1 \(0\.9, not 90\)/
+      );
+    }
+    assert.equal(fixture.createBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval update refuses both criterion flags rather than preferring one", async () => {
+  // A precedence rule here is invisible: a script that passes both because
+  // somebody half-finished a migration keeps running, and the suite it edits is
+  // decided by whichever of two DIFFERENT bars this happened to prefer, with
+  // the other flag reported as accepted.
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "update",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--min-accuracy",
+          "90",
+          "--pass-threshold",
+          "0.9"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+    assert.notEqual(run.result.exitCode, 0);
+    assert.match(
+      run.stderr,
+      /Use either --min-accuracy or --pass-threshold, not both/
+    );
+    // And the sentence says WHY, so a reader does not conclude the two are the
+    // same number in different units.
+    assert.match(run.stderr, /different criteria, not two units of one number/);
+    assert.equal(fixture.createBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval update refuses both iteration flags rather than preferring one", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "update",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--min-iterations",
+          "3",
+          "--iterations",
+          "5"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+    assert.notEqual(run.result.exitCode, 0);
+    assert.match(
+      run.stderr,
+      /Use either --min-iterations or --iterations, not both/
+    );
+    // A floor RAISES a case's own count and a default REPLACES it, so a case at
+    // 7 resolves to 7 under a floor of 3 and to 3 under a default of 3.
+    assert.match(run.stderr, /raises a case's own count/);
     assert.equal(fixture.createBodies.length, 0);
   } finally {
     await fixture.close();

@@ -1,5 +1,5 @@
 /**
- * The percent field behind the v2 policy and validity controls.
+ * The percent field behind the per-case criterion and the validity controls.
  *
  * Three ways a field that LOOKS idle can rewrite a suite:
  *
@@ -18,7 +18,7 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
-  VerdictPolicyV2Controls,
+  PerCasePassThresholdControl,
   VerdictValidityControls,
 } from "../suite-policy-controls";
 
@@ -27,7 +27,7 @@ const THRESHOLD = /fraction of a case's iterations that must pass/i;
 function renderThreshold(passThreshold: number) {
   const onChange = vi.fn();
   render(
-    <VerdictPolicyV2Controls
+    <PerCasePassThresholdControl
       defaults={{ repetitions: 3, passThreshold }}
       onChange={onChange}
     />,
@@ -38,7 +38,7 @@ function renderThreshold(passThreshold: number) {
   };
 }
 
-describe("VerdictPolicyV2Controls pass threshold", () => {
+describe("PerCasePassThresholdControl", () => {
   it("reverts a blank to the stored value instead of committing 0", async () => {
     const user = userEvent.setup();
     const { onChange, input } = renderThreshold(0.8);

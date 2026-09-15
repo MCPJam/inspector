@@ -712,6 +712,36 @@ export {
 } from "./decision-labels.js";
 export type { EvalStageCoverageDetailKey } from "./decision-labels.js";
 
+// ── the words for ONE grading policy ─────────────────────────────────────────
+/**
+ * The authoring and rendering vocabulary for `./grading-policy.ts`, exported
+ * next to `decision-labels` rather than merged into it: that module renders
+ * what a run DECIDED, this renders what a suite is CONFIGURED with, and the
+ * second audience is about to edit what it reads. No label here names a policy
+ * version or offers a scope conversion.
+ */
+export {
+  EVAL_EMPTY_POPULATION_RATE_LABELS,
+  EVAL_GRADING_POLICY_ORIGIN_LABELS,
+  EVAL_GRADING_POLICY_READ_REFUSAL_LABELS,
+  EVAL_GRADING_POLICY_REFUSAL_LABELS,
+  EVAL_GRADING_VALIDITY_FIELD_HINTS,
+  EVAL_GRADING_VALIDITY_FIELD_LABELS,
+  EVAL_GRADING_VALIDITY_HINTS,
+  EVAL_GRADING_VALIDITY_LABELS,
+  EVAL_ITERATION_RULE_HINTS,
+  EVAL_ITERATION_RULE_LABELS,
+  EVAL_PASS_CRITERION_SCOPE_HINTS,
+  EVAL_PASS_CRITERION_SCOPE_LABELS,
+  EVAL_PASS_CRITERION_SCOPE_UNITS,
+  EVAL_RUN_REPORTING_PRODUCER_LABELS,
+  EVAL_SUITE_WIDE_POPULATION_HINTS,
+  EVAL_SUITE_WIDE_POPULATION_LABELS,
+  SUITE_GRADING_LABEL_VOCABULARIES,
+  describeEvalIterationRule,
+  describeEvalPassCriterion,
+} from "./suite-grading-labels.js";
+
 // ── the canonical run decision summary ───────────────────────────────────────
 export type {
   EvalRunDecisionAssemblyInput,

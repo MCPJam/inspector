@@ -501,7 +501,11 @@ describe("vocabulary 1 — not widened", () => {
     expect(got).not.toHaveProperty("legacyIterations");
   });
 
-  it("keeps the legacy-policy refusal's wording", async () => {
+  it("keeps naming the count fields in the CALLER's vocabulary", async () => {
+    // The point of this case is the vocabulary, not the criterion's name: a
+    // vocabulary-1 caller is told where the count comes from using the words
+    // it spells them with, so `iterations` here rather than
+    // `legacyIterations`.
     useSuite(LEGACY_SUITE);
     const res = await request("POST", `${SUITE_PATH}/cases`, {
       ...CASE_BODY,
@@ -509,7 +513,7 @@ describe("vocabulary 1 — not widened", () => {
     });
     expect(res.status).toBe(400);
     expect(await message(res)).toContain(
-      "comes from iterations and the suite's minimumIterations",
+      "comes from iterations raised to the suite's minimumIterations",
     );
   });
 });

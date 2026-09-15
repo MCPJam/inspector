@@ -1010,6 +1010,89 @@ async function executeOp<TInput, TOutput>(
   writeResult(result, globalOptions.format);
 }
 
+/**
+ * The four grading flags, and the two refusals that keep them honest.
+ *
+ * ONE SUITE, ONE CRITERION. `--min-accuracy` writes the SUITE-WIDE accuracy
+ * threshold, a percent over the whole run; `--pass-threshold` writes the
+ * PER-CASE criterion, a fraction each case must meet over its own iterations.
+ * They are not two units of one number — ten cases, nine always passing and one
+ * always failing, passes a 90% suite-wide bar and fails a 0.9 per-case one — so
+ * passing both is a usage ERROR rather than a precedence rule. The count flags
+ * are the same shape: `--min-iterations` is a FLOOR that raises a case's own
+ * count, `--iterations` is a DEFAULT that replaces it, and a case at 7 resolves
+ * to 7 under a floor of 3 and to 3 under a default of 3.
+ *
+ * Why refuse rather than prefer one: a precedence rule is invisible. A script
+ * that passes both because someone half-finished a migration keeps running, and
+ * the suite it edits is then decided by whichever of two different bars this
+ * happened to prefer — with the other flag reported as accepted.
+ *
+ * Which pair a suite takes is the API's answer, not this CLI's: the route
+ * refuses `settings.minimumAccuracy` on a per-case suite and refuses a lone
+ * `settings.repetitions` on a suite-wide one, both with a message naming the
+ * field that would work. So these flags forward what the caller asked for and
+ * let that refusal arrive, rather than guessing a suite's criterion from
+ * nothing and silently rewriting the request.
+ */
+function applyGradingFlags(
+  options: Record<string, any>,
+  settings: Record<string, any>
+): void {
+  if (options.minAccuracy !== undefined && options.passThreshold !== undefined) {
+    throw usageError(
+      "Use either --min-accuracy or --pass-threshold, not both: --min-accuracy is one suite-wide percentage over the whole run and --pass-threshold is the fraction each case must pass on its own. They are different criteria, not two units of one number."
+    );
+  }
+  if (options.minIterations !== undefined && options.iterations !== undefined) {
+    throw usageError(
+      "Use either --min-iterations or --iterations, not both: --min-iterations is a floor that raises a case's own count and --iterations is the default that replaces it."
+    );
+  }
+  if (options.minAccuracy !== undefined) {
+    const percent = Number(options.minAccuracy);
+    if (!Number.isFinite(percent) || percent < 0 || percent > 100) {
+      throw usageError("--min-accuracy must be a percentage from 0 to 100.");
+    }
+    settings.minimumAccuracy = percent;
+  }
+  if (options.passThreshold !== undefined) {
+    const fraction = Number(options.passThreshold);
+    // A FRACTION. `--pass-threshold 90` would reach the wire as a 9000%
+    // per-case bar, which the route refuses — but only after the request, and
+    // the error would name a field the caller did spell correctly.
+    if (!Number.isFinite(fraction) || fraction < 0 || fraction > 1) {
+      throw usageError(
+        "--pass-threshold must be a fraction from 0 to 1 (0.9, not 90)."
+      );
+    }
+    settings.passThreshold = fraction;
+  }
+  if (options.minIterations !== undefined) {
+    if (options.minIterations === "off") {
+      // NULL, not undefined. `undefined` is "leave this alone" all the way
+      // down the stack, so writing it here would make `--min-iterations off`
+      // a no-op that reports success.
+      settings.minimumIterations = null;
+    } else {
+      const floor = Number(options.minIterations);
+      if (!Number.isInteger(floor) || floor < 1 || floor > 10) {
+        throw usageError(
+          '--min-iterations must be a whole number from 1 to 10, or "off".'
+        );
+      }
+      settings.minimumIterations = floor;
+    }
+  }
+  if (options.iterations !== undefined) {
+    const count = Number(options.iterations);
+    if (!Number.isInteger(count) || count < 1 || count > 100) {
+      throw usageError("--iterations must be a whole number from 1 to 100.");
+    }
+    settings.repetitions = count;
+  }
+}
+
 /** Merge `eval update` flags onto an optional --file/--json suite-update body. */
 function buildSuiteUpdateInput(
   options: Record<string, any>
@@ -1054,24 +1137,7 @@ function buildSuiteUpdateInput(
   if (Object.keys(exec).length > 0) input.executionConfig = exec;
 
   const settings = { ...(input.settings ?? {}) };
-  if (options.minAccuracy !== undefined)
-    settings.minimumAccuracy = Number(options.minAccuracy);
-  if (options.minIterations !== undefined) {
-    if (options.minIterations === "off") {
-      // NULL, not undefined. `undefined` is "leave this alone" all the way
-      // down the stack, so writing it here would make `--min-iterations off`
-      // a no-op that reports success.
-      settings.minimumIterations = null;
-    } else {
-      const iterations = Number(options.minIterations);
-      if (!Number.isInteger(iterations) || iterations < 1 || iterations > 10) {
-        throw usageError(
-          '--min-iterations must be a whole number from 1 to 10, or "off".'
-        );
-      }
-      settings.minimumIterations = iterations;
-    }
-  }
+  applyGradingFlags(options, settings);
   const mo = { ...(settings.matchOptions ?? {}) };
   if (options.toolCallOrder !== undefined)
     mo.toolCallOrder = options.toolCallOrder;
@@ -2310,9 +2376,11 @@ async function runEvalCompare(
 
         // The compare wire's run sides are a COMPARISON projection: they carry
         // `result` and `summary` but no `status` and no `verdictSummary`, so
-        // assembling a decision from one would report a policy-v2 run as a
-        // legacy percent-threshold run — a claim about where its verdict came
-        // from that would simply be false. One small read gets the real thing;
+        // assembling a decision from one would report a per-case-graded run as
+        // one decided by the suite accuracy threshold — a claim about which
+        // criterion decided it that would simply be false, and one that moves
+        // the population its counts are in from cases to iterations. One small
+        // read gets the real thing;
         // the diagnostics still come from the walk already performed, which is
         // more complete than a single endpoint page.
         const compareRunDetail = await client
@@ -5572,10 +5640,26 @@ export function registerEvalCommands(program: Command): void {
     .option("--model <id>", "Execution model id")
     .option("--system-prompt <text>", "Execution system prompt")
     .option("--temperature <n>", "Execution temperature")
-    .option("--min-accuracy <pct>", "Minimum accuracy, 0–100")
+    // The criterion, in the units its scope takes. A suite has ONE of these,
+    // and `mcpjam evals get` reports which under `settings.policy`; passing
+    // both is refused rather than resolved by precedence.
+    .option(
+      "--min-accuracy <pct>",
+      "Suite accuracy threshold: one percentage, 0–100, over the whole run"
+    )
+    .option(
+      "--pass-threshold <0-1>",
+      "Per-case pass rate: the fraction, 0–1, each case must pass of its own iterations"
+    )
+    // How many times each case runs. Same shape: a floor that RAISES a case's
+    // own count, or a default that REPLACES it.
     .option(
       "--min-iterations <1-10|off>",
-      "Floor on per-case iterations; off removes the floor"
+      "Minimum iterations per case: a floor that raises a case's own count; off removes it"
+    )
+    .option(
+      "--iterations <n>",
+      "Iterations per case: the suite default, which a case can override"
     )
     .option("--tool-call-order <any|in-order|exact>", "Tool call order")
     .option("--arguments <ignore|partial|exact>", "Argument matching")
