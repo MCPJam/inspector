@@ -454,16 +454,13 @@ export function InsightsWorkbench({
   const mapFilter = removeChipsByKeys(flow.filter, flow.flowOwnedKeys);
 
   const clustersBlock = (
-    <div className={cn("flex flex-col", fillBody && "h-full min-h-0")}>
+    <div className="flex min-h-0 flex-1 flex-col">
       {chipRow}
-      {/* The topic map is a canvas that measures its container: it needs a
-          definite height. `flex-1` supplies one in the fill layout; in the
-          scroll layout the column has no bounded height, so give it 36rem —
-          but cap it at 70vh so a short window keeps both the map and the
-          Findings rail on screen instead of pushing the map past the fold. */}
-      <div className={fillBody ? "min-h-0 flex-1" : "h-[min(36rem,70vh)]"}>
-        {/* In the scroll layout the map sits mid-page, so let a bare wheel
-            scroll past it and reserve zoom for Ctrl/Cmd+wheel or pinch. */}
+      {/* The topic map is a canvas that measures its container, so it needs a
+          definite height: `flex-1` in a column the pane bounds. */}
+      <div className="min-h-0 flex-1">
+        {/* The map owns the wheel here, because the page underneath it no
+            longer scrolls in this view. */}
         <TopicMapPanel
           scope={scope}
           {...(journeyRunIds ? { journeyRunIds } : {})}
@@ -474,7 +471,6 @@ export function InsightsWorkbench({
           rebuildBusy={rebuildBusy}
           onOpenSession={handleOpenSessionFromMap}
           headerActions={viewChrome}
-          cooperativeWheelZoom={!fillBody}
         />
       </div>
     </div>
@@ -483,11 +479,29 @@ export function InsightsWorkbench({
   const selectionOpen = flow.flowSelection !== null;
   const hasFindings = Boolean(recommendationsSlot);
 
+  /**
+   * Whether the body takes the pane it is given instead of growing past it.
+   *
+   * Always true in the fill layout. In the scroll layout it is true for the
+   * CLUSTERS VIEW ONLY: that view has nothing of its own to scroll — the map
+   * pans and the cluster rail scrolls itself — so a body taller than the
+   * window would only push the map's own zoom controls below the fold and
+   * leave the viewer scrolling a page to reach a canvas. The scroll layout
+   * exists for the Sankey, whose many themes really do need the page.
+   */
+  const pinBodyToPane = fillBody || flow.view === "clusters";
+
   return (
     <div
       className={cn(
         "flex flex-col gap-2",
-        fillBody && "h-full min-h-0 overflow-hidden",
+        // `h-full` fills the fill layout's `absolute inset-0` box; `flex-1`
+        // fills the scroll layout's column, whose `min-h-full` makes the
+        // pane the scroll viewport. Without `min-h-0` there — the Sankey's
+        // case — `flex-1` only ever adds height, so that diagram still grows
+        // past the pane and the owning container scrolls it.
+        fillBody ? "h-full" : "flex-1",
+        pinBodyToPane && "min-h-0 overflow-hidden",
         className,
       )}
       data-testid={`${testIdPrefix}-panel`}
@@ -504,14 +518,14 @@ export function InsightsWorkbench({
       ) : null}
       <div
         className={cn(
-          "relative flex",
-          fillBody && "min-h-0 flex-1 overflow-hidden",
+          "relative flex flex-1",
+          pinBodyToPane && "min-h-0 overflow-hidden",
         )}
       >
         <div
           className={cn(
             "flex min-w-0 flex-1 flex-col",
-            fillBody && "overflow-hidden",
+            pinBodyToPane && "overflow-hidden",
           )}
         >
           {flow.view === "clusters" ? clustersBlock : sankeyBlock}
