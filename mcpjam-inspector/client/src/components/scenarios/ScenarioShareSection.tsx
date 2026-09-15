@@ -20,8 +20,6 @@ import type { ShareMemberView } from "@/components/sharing/share-types";
 interface ScenarioShareSectionProps {
   scenario: ScenarioSettings;
   onUpdated?: (scenario: ScenarioSettings) => void;
-  /** Shown as the project-wide access option label (e.g. current project name). */
-  projectName?: string | null;
   /** Off in the Share modal — roster management stays on the settings page. */
   showMembers?: boolean;
   /**
@@ -47,7 +45,6 @@ function memberView(member: ScenarioMember): ShareMemberView {
 export function ScenarioShareSection({
   scenario,
   onUpdated,
-  projectName,
   showMembers = true,
   allowRotate = true,
 }: ScenarioShareSectionProps) {
@@ -67,7 +64,6 @@ export function ScenarioShareSection({
     setSettings(scenario);
   }, [scenario]);
 
-  const projectLabel = projectName?.trim() || "Project";
   const accessPreset = scenarioAccessPresetFromSettings(
     settings.mode,
     settings.allowGuestAccess,
@@ -107,14 +103,19 @@ export function ScenarioShareSection({
           },
           {
             value: "project",
-            label: projectLabel,
+            // This option used to be labeled with the project's NAME — a third
+            // way of saying one thing, beside the sidebar's "team members" and
+            // the create flow's "Project members" (BB-203). No caller ever
+            // passed a name, so what actually rendered was the literal word
+            // "Project"; the prop went with it.
+            label: "Team members",
             description:
-              "Signed-in members of this project can open the scenario with the link. Guests cannot.",
+              "Signed-in team members can open the scenario with the link. Guests cannot.",
           },
         ],
         settings.maxShareMode,
       ),
-    [projectLabel, settings.maxShareMode],
+    [settings.maxShareMode],
   );
 
   const updateSettings = (next: ScenarioSettings) => {
