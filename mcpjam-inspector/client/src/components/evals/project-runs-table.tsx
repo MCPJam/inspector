@@ -4,6 +4,7 @@ import { SuiteHealth } from "../evaluate/suite-health";
 import {
   EvaluateHistoryHeader,
   EvaluateHistoryRow,
+  EvaluateHistoryRowSkeleton,
 } from "../evaluate/evaluate-history-row";
 import { Input } from "@mcpjam/design-system/input";
 import {
@@ -1191,13 +1192,22 @@ export function ProjectRunsTable({
                     (a, b) =>
                       a.runNumber - b.runNumber || a._id.localeCompare(b._id),
                   )[0];
+                  // Unread runs make the whole row provisional, not just its
+                  // metrics: the launch this row stands for is still forming.
+                  if (
+                    (history.loading || isLoadingFirstPage) &&
+                    launch.runs.some((row) => !history.details.has(row._id))
+                  ) {
+                    return (
+                      <EvaluateHistoryRowSkeleton key={launch.key} showSuite />
+                    );
+                  }
                   return (
                     <EvaluateHistoryRow
                       key={launch.key}
                       highlighted={hoveredHealthRun === launch.key}
                       rows={launch.runs}
                       details={history.details}
-                      loading={history.loading || isLoadingFirstPage}
                       historyRows={historyRows}
                       hostNamesById={hostNamesById}
                       showSuite

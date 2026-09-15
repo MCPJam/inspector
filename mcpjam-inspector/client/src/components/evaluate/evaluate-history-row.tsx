@@ -85,23 +85,57 @@ export function historyResult(rows: readonly ProjectRunRow[]): string {
 /** One glyph for every absent measurement in the row. */
 const MISSING = "—";
 
-/**
- * A measurement this row does not have yet is NOT a missing one. `MISSING`
- * means "no such value" everywhere else in the table, so showing it while the
- * run's detail is still in flight reports a zero that was never measured.
- */
 function metricCell(
   value: number | null | undefined,
   kind: "number" | "duration",
-  pending: boolean,
-  width: string,
-) {
-  if (value != null) return formatRunHistoryMetric(value, kind);
-  return pending ? <Skeleton className={cn("h-3", width)} /> : MISSING;
+): string {
+  return value == null ? MISSING : formatRunHistoryMetric(value, kind);
 }
 
 function historyTimestamp(value: number): number | null {
   return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+/**
+ * One row, entirely unread.
+ *
+ * A launch is keyed by its runs' `runGroupId`, which is only known once the
+ * run's detail has been read — so before that, a fanned-out launch is split
+ * across one row per run and merges into one as the detail arrives. Rows
+ * therefore appear, merge and renumber under the reader. Drawing a real row
+ * out of half-read data reports run numbers and clients that are about to
+ * change; this reports that the row is not known yet, which is the truth.
+ */
+export function EvaluateHistoryRowSkeleton({
+  showSuite = false,
+}: {
+  showSuite?: boolean;
+}) {
+  // Paired with the header above: one entry per column, sized to what the
+  // loaded cell holds so the columns do not jump when the real row lands.
+  const widths = [
+    "w-6",
+    ...(showSuite ? ["w-24"] : []),
+    "w-16",
+    "w-24",
+    "w-14",
+    "w-11",
+    "w-10",
+    "w-14",
+    "w-28",
+    "w-9",
+    "w-9",
+    "w-5",
+  ];
+  return (
+    <TableRow aria-hidden data-testid="run-history-row-skeleton">
+      {widths.map((width, index) => (
+        <TableCell key={index}>
+          <Skeleton className={cn("h-3", width)} />
+        </TableCell>
+      ))}
+    </TableRow>
+  );
 }
 
 /** One row per launch, preserving fan-out client/model pairs and loaded-data gaps. */
@@ -114,15 +148,9 @@ export function EvaluateHistoryRow({
   onOpen,
   testId,
   highlighted = false,
-  loading = false,
 }: {
   rows: ProjectRunRow[];
   details: Map<string, ProjectRunHistoryDetail>;
-  /**
-   * More run detail is still on its way. Only then is an absent measurement
-   * reported as loading rather than as absent.
-   */
-  loading?: boolean;
   historyRows: Map<string, SuiteRunHistoryRow>;
   /** Current names for named hosts, so a renamed host is not shown stale. */
   hostNamesById?: ReadonlyMap<string, string | null>;
@@ -136,9 +164,6 @@ export function EvaluateHistoryRow({
   )[0];
   if (!representative) return null;
   const rollup = projectRunRollup(rows, details);
-  // This row's own detail, not the table's: a page that has landed is
-  // reported in full even while later pages are still loading.
-  const pending = loading && rows.some((row) => !details.has(row._id));
   const result = historyResult(rows);
   // Parsed once per row and carried: the dedup key and the chips below read
   // the same value rather than re-parsing the CI metadata.
@@ -211,11 +236,7 @@ export function EvaluateHistoryRow({
         <RunClientsCell rows={clientRows} column="client" />
       </TableCell>
       <TableCell>
-        {pending && clientRows.every((row) => !row.models?.length) ? (
-          <Skeleton className="h-3 w-24" />
-        ) : (
-          <RunClientsCell rows={clientRows} column="model" />
-        )}
+        <RunClientsCell rows={clientRows} column="model" />
       </TableCell>
       <TableCell>
         <span
@@ -240,13 +261,7 @@ export function EvaluateHistoryRow({
         }
       >
         <span>
-          {rollup?.passRate != null ? (
-            `${rollup.passRate}%`
-          ) : pending ? (
-            <Skeleton className="h-3 w-11" />
-          ) : (
-            MISSING
-          )}
+          {rollup?.passRate != null ? `${rollup.passRate}%` : MISSING}
         </span>
         {/* Rendered, not just a tooltip: the counts behind the percentage are
             unreachable on touch and to a screen reader when they live in a
@@ -297,13 +312,13 @@ export function EvaluateHistoryRow({
         )}
       </TableCell>
       <TableCell className="tabular-nums text-muted-foreground">
-        {metricCell(rollup?.latencyP50, "duration", pending, "w-9")}
+        {metricCell(rollup?.latencyP50, "duration")}
       </TableCell>
       <TableCell className="tabular-nums text-muted-foreground">
-        {metricCell(rollup?.totalTokens, "number", pending, "w-9")}
+        {metricCell(rollup?.totalTokens, "number")}
       </TableCell>
       <TableCell className="tabular-nums text-muted-foreground">
-        {metricCell(rollup?.toolCalls, "number", pending, "w-5")}
+        {metricCell(rollup?.toolCalls, "number")}
       </TableCell>
     </TableRow>
   );
