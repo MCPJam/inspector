@@ -358,13 +358,19 @@ field you edit and the units it takes.
   one case, and multiplying a fraction by 100 does the same in reverse.
 
   `mcpjam cloud eval get --suite <name>` reports which criterion a suite uses
-  under `settings.policy`. The API refuses the field a suite does not use, with
-  a message naming the one that would work.
+  under `settings.policy`. The API refuses a per-case iteration count on a
+  suite-wide suite, with a message naming the field that would work. It does
+  **not** refuse the reverse: `settings.minimumIterations` sent to a per-case
+  suite is stored and never read, because that suite's counts come from its
+  default rather than from a floor.
 </Warning>
 
-Changing which criterion decides a suite re-decides every case in it, so it is
-a separate, explicit operation rather than a side effect of editing a
-threshold. There is no toggle beside the threshold field.
+Changing which criterion decides a suite re-decides every case in it. There is
+no affordance for it in the app, the CLI or MCP: it takes a hand-written PATCH
+that sends `settings.repetitions` and `settings.passThreshold` together, which
+is the pair the API reads as the switch. A first-class operation for it — with
+a confirmation and a required audit note — has not shipped, so until it does
+the switch is deliberate by being inconvenient rather than by being guarded.
 
 ### Iterations
 

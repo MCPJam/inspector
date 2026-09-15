@@ -1374,9 +1374,11 @@ export function SuiteIterationsView({
   // The four-branch capability ladder that gated the scope-switch button is
   // gone with the button. It read `capabilities.verdictPolicyV2.canUpgrade`
   // and rendered one of four sentences, two of which named a policy version in
-  // front of a customer. The capability itself is untouched and still
-  // consulted by the reviewed operation that performs a scope change; what is
-  // gone is this sheet asking whether it MAY offer one.
+  // front of a customer. The deployment still REPORTS that capability and the
+  // server still enforces it, but no client surface consults it any more —
+  // there is no scope-switch operation in the app, the CLI or MCP for it to
+  // gate. Treat it as a server-side fact awaiting a first-class operation,
+  // not as something this sheet defers to.
   const openSetting = useCallback(
     (key: EvalSuiteSettingKey) => {
       if (key === "name") {

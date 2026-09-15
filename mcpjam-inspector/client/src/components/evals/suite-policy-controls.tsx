@@ -399,5 +399,10 @@ export function VerdictValidityControls({
 // rode along with unrelated edits and required an audit note only if the
 // quality gate happened to be dirty in the same batch.
 //
-// Changing the scope stays possible and stays explicit: it is its own reviewed
-// operation with its own audit trail, not a button under a number field.
+// Changing the scope stays possible, but nothing here offers it and no
+// operation elsewhere does either: it takes a hand-written PATCH sending
+// `settings.repetitions` and `settings.passThreshold` together, which is the
+// pair the route reads as the switch. A first-class operation for it — with a
+// confirmation and a required audit note — has NOT shipped. Removing the
+// button therefore closes the affordance that got the conversion wrong; it
+// does not replace it, and this comment should not be read as claiming it did.

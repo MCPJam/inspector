@@ -279,6 +279,14 @@ interface EvalFixtureOptions {
   suiteDetail?: {
     environmentIds?: string[];
     hosts?: Array<{ id: string; name: string }>;
+    /**
+     * The suite's reported grading settings. Defaults to a SUITE-WIDE suite,
+     * because that is what a suite that never changed criterion looks like and
+     * `eval update` now reads this before it builds a body: which of each
+     * grading flag pair is spellable is a fact about the suite, not about the
+     * flag. A test that wants the per-case flags declares a per-case suite.
+     */
+    settings?: Record<string, unknown>;
   };
   /** Target ids the grouped-launch endpoint should report as failures. */
   groupFailures?: Record<string, { code: string; message: string }>;
@@ -783,7 +791,14 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
           executionConfig: null,
           hosts: options.suiteDetail?.hosts ?? [],
           environmentIds: options.suiteDetail?.environmentIds ?? [],
-          settings: {},
+          settings: options.suiteDetail?.settings ?? {
+            policy: "legacy",
+            minimumAccuracy: 80,
+            minimumIterations: null,
+            checks: [],
+            matchOptions: {},
+            judge: {},
+          },
           schedule: {},
           createdAt: 1,
           updatedAt: 2,
@@ -5773,7 +5788,19 @@ test("eval update rejects an out-of-range --min-iterations before any write", as
 });
 
 test("eval update --pass-threshold sends the per-case fraction", async () => {
-  const fixture = await startEvalFixture();
+  const fixture = await startEvalFixture({
+    suiteDetail: {
+      settings: {
+        policy: "v2",
+        verdictPolicyVersion: 2,
+        minimumAccuracy: null,
+        verdictPolicyDefaults: { repetitions: 3, passThreshold: 0.8 },
+        checks: [],
+        matchOptions: {},
+        judge: {},
+      },
+    },
+  });
   try {
     const run = await captureProcessOutput(() =>
       main(
@@ -5805,7 +5832,19 @@ test("eval update --pass-threshold sends the per-case fraction", async () => {
 });
 
 test("eval update --iterations sends the per-case default count", async () => {
-  const fixture = await startEvalFixture();
+  const fixture = await startEvalFixture({
+    suiteDetail: {
+      settings: {
+        policy: "v2",
+        verdictPolicyVersion: 2,
+        minimumAccuracy: null,
+        verdictPolicyDefaults: { repetitions: 3, passThreshold: 0.8 },
+        checks: [],
+        matchOptions: {},
+        judge: {},
+      },
+    },
+  });
   try {
     const run = await captureProcessOutput(() =>
       main(
@@ -5900,6 +5939,144 @@ test("eval update refuses both criterion flags rather than preferring one", asyn
     // same number in different units.
     assert.match(run.stderr, /different criteria, not two units of one number/);
     assert.equal(fixture.createBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval update refuses to migrate a suite-wide suite into per-case grading", async () => {
+  // THE BUG THIS EXISTS FOR. `--pass-threshold` alone on a suite-wide suite was
+  // refused by the route with a message asking for `--iterations` as well —
+  // and adding it exited 0, because `settings.repetitions` plus
+  // `settings.passThreshold` in one body is exactly how the API spells a
+  // switch BETWEEN criteria. Two flags that each name a threshold re-decided
+  // every case in the suite and left the stored 80% dead, with no confirmation
+  // and no audit note. The CLI never read the suite's own policy.
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "update",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--pass-threshold",
+          "0.9",
+          "--iterations",
+          "3"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+    assert.notEqual(run.result.exitCode, 0);
+    assert.match(run.stderr, /no per-case pass rate to set/);
+    assert.match(run.stderr, /--min-accuracy/);
+    // And nothing was written. A refusal that still sent the PATCH would be
+    // the same migration with a louder exit code.
+    assert.equal(fixture.createBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval update refuses a lone --pass-threshold on a suite-wide suite", async () => {
+  // The single-flag half of the same gap, refused locally and by name rather
+  // than by a route message that names the field which completes the switch.
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "update",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--pass-threshold",
+          "0.9"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+    assert.notEqual(run.result.exitCode, 0);
+    assert.match(run.stderr, /--min-accuracy/);
+    assert.equal(fixture.createBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval update refuses an iteration floor the suite would store and never read", async () => {
+  // The direction the ROUTE does not refuse: it writes `minimumIterations`
+  // onto a per-case suite and nothing reads it, because that suite's counts
+  // come from its default rather than from a floor. Forwarding this reported
+  // success for an edit that changed nothing.
+  const fixture = await startEvalFixture({
+    suiteDetail: {
+      settings: {
+        policy: "v2",
+        verdictPolicyVersion: 2,
+        minimumAccuracy: null,
+        verdictPolicyDefaults: { repetitions: 3, passThreshold: 0.8 },
+        checks: [],
+        matchOptions: {},
+        judge: {},
+      },
+    },
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "update",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--min-iterations",
+          "3"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+    assert.notEqual(run.result.exitCode, 0);
+    assert.match(run.stderr, /no iteration minimum/);
+    assert.match(run.stderr, /--iterations/);
+    assert.equal(fixture.createBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval update reads no suite when no grading flag was passed", async () => {
+  // The gate costs one GET, so it is gated on the flags: a rename must not pay
+  // for a suite read, and a caller who passed no grading flag has no scope to
+  // mismatch.
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "update",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--name",
+          "Renamed"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+    assert.equal(run.result.exitCode, 0);
+    const patchBody = fixture.createBodies.at(-1) as { name?: string };
+    assert.equal(patchBody.name, "Renamed");
   } finally {
     await fixture.close();
   }

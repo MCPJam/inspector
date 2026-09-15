@@ -2134,10 +2134,17 @@ count and `--iterations` REPLACES it, so a case configured for 7 runs 7 times
 under a floor of 3 and 3 times under a default of 3.
 
 Passing both flags of a pair is a usage error rather than a precedence rule,
-and the API refuses the flag a suite does not use with a message naming the one
-that would work. Changing which criterion decides a suite is a separate,
-explicit operation — it re-decides every case, so it is never a side effect of
-editing a threshold.
+and `eval update` reads the suite's own `settings.policy` before it builds a
+body, so a criterion flag the suite does not use is refused locally with a
+message naming the one that would work.
+
+The API's own refusals are narrower than that, which is why the CLI checks
+first: it rejects a per-case iteration count on a suite-wide suite, but stores
+`settings.minimumIterations` on a per-case suite where nothing reads it. And
+`settings.repetitions` plus `settings.passThreshold` in one body is how the
+switch between criteria is spelled, so a caller writing PATCHes by hand can
+change which criterion decides a suite while believing it edited a threshold.
+No CLI flag can reach that pair.
 
 ### `cloud eval revisions`
 

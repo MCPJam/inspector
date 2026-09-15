@@ -109,6 +109,8 @@ import {
   composeSuiteGateWithBaseReport,
   type EvalSuiteSchemaVersion,
 } from "@mcpjam/sdk/contract";
+import type { ResolvedEvalGradingPolicy } from "@mcpjam/sdk/contract";
+import { gradingPolicyFromPlatformSuiteSettings } from "@mcpjam/sdk";
 import type {
   SuiteGateComposedOutcome,
   SuiteGateReportV1,
@@ -1028,16 +1030,29 @@ async function executeOp<TInput, TOutput>(
  * the suite it edits is then decided by whichever of two different bars this
  * happened to prefer — with the other flag reported as accepted.
  *
- * Which pair a suite takes is the API's answer, not this CLI's: the route
- * refuses `settings.minimumAccuracy` on a per-case suite and refuses a lone
- * `settings.repetitions` on a suite-wide one, both with a message naming the
- * field that would work. So these flags forward what the caller asked for and
- * let that refusal arrive, rather than guessing a suite's criterion from
- * nothing and silently rewriting the request.
+ * WHY THIS READS THE SUITE FIRST. An earlier version forwarded the flags and
+ * relied on the route to refuse a criterion the suite does not use. The route's
+ * refusals are narrower than that, and the gap was reachable: `--pass-threshold`
+ * alone on a suite-wide suite is refused with a message asking for
+ * `--iterations` as well, and adding it exits 0 — because
+ * `settings.repetitions` plus `settings.passThreshold` in one body is exactly
+ * how the switch BETWEEN criteria is spelled. Two flags that each name a
+ * threshold silently re-decided every case in the suite and left the stored
+ * percent dead.
+ *
+ * So the suite's own `settings.policy` is resolved before a body is built, and
+ * a flag that names the other scope is refused here, by name, before any
+ * request. The flags cannot express a scope change, and the message says which
+ * flag would work instead. A caller who genuinely wants the switch writes the
+ * PATCH by hand; that stays possible and stays outside these flags.
+ *
+ * `policy` is null only when no grading flag was passed, in which case there is
+ * nothing to check and no fetch was made.
  */
 function applyGradingFlags(
   options: Record<string, any>,
-  settings: Record<string, any>
+  settings: Record<string, any>,
+  policy: ResolvedEvalGradingPolicy | null
 ): void {
   if (options.minAccuracy !== undefined && options.passThreshold !== undefined) {
     throw usageError(
@@ -1091,11 +1106,98 @@ function applyGradingFlags(
     }
     settings.repetitions = count;
   }
+  // The suite's own criterion decides which of each pair is even spellable.
+  // Refused here rather than forwarded: the route stores `minimumIterations`
+  // on a per-case suite without reading it, and reads a `repetitions` +
+  // `passThreshold` pair as a criterion SWITCH rather than as two edits.
+  if (policy !== null) {
+    const suiteWide = policy.passCriterion.scope === "suiteWide";
+    if (suiteWide && options.passThreshold !== undefined) {
+      throw usageError(
+        "This suite is decided by a suite-wide accuracy threshold, so it has no per-case pass rate to set: use --min-accuracy <pct>, which is the percentage its runs are actually measured against. (--pass-threshold together with --iterations is how the API spells a switch to per-case grading, which re-decides every case in the suite and is not something a threshold flag should do.)"
+      );
+    }
+    if (!suiteWide && options.minAccuracy !== undefined) {
+      throw usageError(
+        "This suite is decided per case, so a suite-wide accuracy percentage is not what its runs are measured against: use --pass-threshold <0-1>, the fraction each case must pass of its own iterations."
+      );
+    }
+    if (
+      policy.iterationRule.kind === "caseCountWithFloor" &&
+      options.iterations !== undefined
+    ) {
+      throw usageError(
+        "This suite has no default iteration count: each case runs its own number of times, raised to the suite minimum. Use --min-iterations <1-10|off> to move that minimum, or edit the cases."
+      );
+    }
+    if (
+      policy.iterationRule.kind === "defaultCount" &&
+      options.minIterations !== undefined
+    ) {
+      throw usageError(
+        "This suite has no iteration minimum: it has a default count each case may override. Use --iterations <n> to move that default. (The API stores a minimum here without reading it, so this would report success and change nothing.)"
+      );
+    }
+  }
 }
 
 /** Merge `eval update` flags onto an optional --file/--json suite-update body. */
+/**
+ * Whether this invocation touches the grading policy at all.
+ *
+ * Gates the extra GET: a rename or a judge toggle should not pay for a suite
+ * read, and a caller who passed no grading flag has no scope to mismatch.
+ */
+function touchesGradingPolicy(options: Record<string, any>): boolean {
+  return (
+    options.minAccuracy !== undefined ||
+    options.passThreshold !== undefined ||
+    options.minIterations !== undefined ||
+    options.iterations !== undefined
+  );
+}
+
+/**
+ * The suite's resolved grading policy, read before an update is built.
+ *
+ * Refuses rather than guessing when the deployment does not report which
+ * criterion decides the suite: the two scopes are indistinguishable in that
+ * response, so a flag check against it would be a coin toss on whether the
+ * edit re-decides every case.
+ */
+async function readSuiteGradingPolicy(
+  options: PlatformOptions & Record<string, any>,
+  command: Command
+): Promise<ResolvedEvalGradingPolicy> {
+  const globalOptions = getGlobalOptions(command);
+  const resolved = resolveCloudProjectArgs({
+    ...(options.project !== undefined ? { project: options.project } : {}),
+  });
+  const detail = await runPlatformCommand(
+    platformOptionsOf(command),
+    globalOptions.timeout,
+    ({ client, signal }) =>
+      getEvalSuiteOperation.execute(
+        {
+          ...(resolved.project !== undefined
+            ? { project: resolved.project }
+            : {}),
+          suite: options.suite,
+        },
+        { client, signal }
+      ),
+    { projectScope: resolved.projectScope, quiet: true }
+  );
+  const read = gradingPolicyFromPlatformSuiteSettings(detail.settings);
+  if (!read.ok) {
+    throw usageError(read.message);
+  }
+  return read.policy;
+}
+
 function buildSuiteUpdateInput(
-  options: Record<string, any>
+  options: Record<string, any>,
+  policy: ResolvedEvalGradingPolicy | null = null
 ): Record<string, unknown> {
   const input: Record<string, any> = { ...loadBodyObject(options) };
   input.suite = options.suite;
@@ -1137,7 +1239,7 @@ function buildSuiteUpdateInput(
   if (Object.keys(exec).length > 0) input.executionConfig = exec;
 
   const settings = { ...(input.settings ?? {}) };
-  applyGradingFlags(options, settings);
+  applyGradingFlags(options, settings, policy);
   const mo = { ...(settings.matchOptions ?? {}) };
   if (options.toolCallOrder !== undefined)
     mo.toolCallOrder = options.toolCallOrder;
@@ -5671,9 +5773,16 @@ export function registerEvalCommands(program: Command): void {
     .option("--judge-model <id>", "Judge model id")
     .option("--judge-threshold <0-1>", "Judge pass threshold, 0–1")
     .action(async (options: PlatformOptions & Record<string, any>, command) => {
+      // The suite's criterion first, and only when a grading flag was passed:
+      // which of each flag pair is spellable is a fact about THIS suite, and
+      // forwarding the flags blind is how `--pass-threshold --iterations`
+      // silently switched a suite-wide suite to per-case grading.
+      const policy = touchesGradingPolicy(options)
+        ? await readSuiteGradingPolicy(options, command)
+        : null;
       const input = validateOpInput(
         updateEvalSuiteOperation,
-        buildSuiteUpdateInput(options)
+        buildSuiteUpdateInput(options, policy)
       );
       await executeOp(updateEvalSuiteOperation, input, options, command);
     });
