@@ -20,6 +20,20 @@ import {
 import { PASS_WORDS } from "./pass-words";
 import { EvaluateRunContent } from "../evaluate-run-content";
 import type { EvalIteration, EvalSuiteRun } from "../../evals/types";
+import type { UnifiedFindingsSectionProps } from "../unified-findings-section";
+
+vi.mock("../unified-findings-section", () => ({
+  // The block now occupies the hero's explanation slot, so the mock renders
+  // its fallback: a run with no findings built still says what broke.
+  UnifiedFindingsSection: ({
+    suiteRunId,
+    fallback,
+  }: UnifiedFindingsSectionProps) => (
+    <section data-testid="unified-findings-section" data-run-id={suiteRunId}>
+      {fallback}
+    </section>
+  ),
+}));
 
 const detailState = vi.hoisted(() => ({
   current: {
@@ -261,6 +275,14 @@ afterEach(() => {
 });
 
 describe("EvaluateRunContent", () => {
+  it("mounts findings by default for the displayed run", () => {
+    renderContent();
+    expect(screen.getByTestId("unified-findings-section")).toHaveAttribute(
+      "data-run-id",
+      "run_1",
+    );
+  });
+
   it("leads with the verdict and the failing case in one sentence", () => {
     detailState.current = {
       ...detailState.current,

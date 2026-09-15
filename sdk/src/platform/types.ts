@@ -1282,7 +1282,8 @@ export type PlatformEvalLlmTouchpointId =
   | "groundedness"
   | "serverQuality"
   | "runInsights"
-  | "runGroupQuality";
+  | "runGroupQuality"
+  | "evalFindingsPipeline";
 
 export type PlatformDisclosureFires =
   | "auto-on-completion"
@@ -1293,7 +1294,11 @@ export interface PlatformAnalysisTouchpointDisclosure {
   touchpoint: PlatformEvalLlmTouchpointId;
   label: string;
   model: string;
-  rail: { fixed: "openrouter"; because: string };
+  rail: {
+    fixed: "openrouter" | null;
+    because: string;
+    routing?: "gateway_preferred";
+  };
   destinations: readonly string[];
   evidenceSent: readonly string[];
   fires: PlatformDisclosureFires;
@@ -4219,6 +4224,146 @@ export interface PlatformActionableFinding {
   evidence: PlatformActionableFindingEvidence[];
 }
 
+/**
+ * How much of the population an OBSERVATION describes.
+ *
+ * Additive and separate from `status`, which describes a model GENERATION.
+ * A deployment that predates findings omits it, and a consumer must read
+ * absence as "this server does not report observations", never as
+ * `unavailable`.
+ */
+export type PlatformInsightsObservationState =
+  "ready" | "partial" | "unavailable";
+
+/** Coverage for `currentFindings`, describing its OWN population. */
+export interface PlatformInsightsObservationCoverage {
+  unit: "iterations";
+  analyzed: number;
+  total: number;
+  gradedCount: number;
+  /** Counted reasons an iteration was left out. Open map: a new exclusion
+   * class must not require a consumer change to keep validating. */
+  exclusions: Record<string, number>;
+}
+
+/** Where a finding's observation came from, and how complete it is. */
+export interface PlatformInsightsFindingProvenance {
+  candidateId: string;
+  stage?: import("../contract/chain.js").UserValueStage;
+  reason?: import("../contract/stage-derivation.js").StageReason;
+  groupKind: string;
+  basis: "measured" | "judged" | "mixed" | "unknown";
+  /**
+   * How the CATEGORY was decided: `schema` proved it against the tool's
+   * pinned input schema, `error_code` read a standardized JSON-RPC/HTTP code,
+   * `error_text` matched keywords in prose a server author wrote freely,
+   * `none` did not decide.
+   */
+  classificationBasis?: "schema" | "error_code" | "error_text" | "none";
+  /** `sampled` ⇒ tool identity came from inspected exemplars only, so no
+   * run-wide mechanism rate is claimed. */
+  mechanismBasis: "complete" | "sampled" | "none";
+  affectedIterationIds: string[];
+  /** Per-prose-field origin for the view this provenance accompanies.
+   * Producer-owned: a deterministic fallback sentence and a model that wrote
+   * the same sentence are indistinguishable to a consumer. */
+  proseOrigin?: {
+    observed: "deterministic" | "ai" | "unknown";
+    title: "deterministic" | "ai" | "unknown";
+    rootCause: "deterministic" | "ai" | "unknown";
+    recommendation: "deterministic" | "ai" | "unknown";
+    acceptanceCriteria: "deterministic" | "ai" | "unknown";
+  };
+  judgeCoverage?: {
+    evaluatorId: string;
+    evaluatorLabel: string;
+    graded: number;
+    eligible: number;
+    nonGraded: { pending: number; skipped: number; errored: number };
+  };
+  populationCaveat?: string;
+}
+
+/** One iteration's trace report, as the run page's iteration drawer reads it. */
+export interface PlatformEvalIterationReport {
+  schemaVersion: 1;
+  iterationId: string;
+  runRevision: string;
+  builtAt: number;
+  modelUsed?: string;
+  status: "ready" | "stale" | "failed";
+  reason?: string;
+  rows: Array<{
+    joinKey: string;
+    stage: import("../contract/chain.js").UserValueStage;
+    verdictSeen: string;
+    actual: string;
+    citations: string[];
+  }>;
+  stageNotes?: Array<{
+    stage: import("../contract/chain.js").UserValueStage;
+    actual: string;
+    citations: string[];
+  }>;
+}
+
+/** The trace analysis pipeline's progress, while one exists for the run. */
+export interface PlatformEvalFindingsAnalysis {
+  phase: "reading" | "grouping" | "checking" | "done" | "failed";
+  progress: { done: number; total: number; unit: "iterations" };
+  models: string[];
+  completeness: {
+    iterationReports: number;
+    total: number;
+    missingTraces: number;
+  };
+}
+
+/**
+ * An eval run's findings. Shaped so a consumer can tell an older server
+ * (field absent on the envelope) from a run with no snapshot yet
+ * (`snapshot: null`).
+ */
+export interface PlatformUnifiedFindings {
+  capability: "unified_findings_v1";
+  analysis?: PlatformEvalFindingsAnalysis;
+  snapshot: {
+    builtAt: number;
+    sourceRevision: string;
+    minerVersion: number;
+    omittedGroups: number;
+    /** The zero-AI view, kept reachable after a model succeeds. */
+    deterministicFindings: PlatformActionableFinding[];
+    provenance: PlatformInsightsFindingProvenance[];
+    trim?: { droppedEvidence: number; droppedCandidates: number };
+    enrichment: null | {
+      status: "ready" | "stale";
+      generatedAt: number;
+      modelUsed: string;
+      /** What the pipeline inspected; counts describe inspected evidence. */
+      discovery: {
+        reviewedIterations: number;
+        totalIterations: number;
+        reviewedFailedIterations: number;
+        totalFailedIterations: number;
+        missingTraces: number;
+        truncatedTraces: number;
+        omittedEvidence: number;
+      };
+    };
+  } | null;
+  job: null | {
+    kind: "build" | "enrich";
+    status: "pending" | "completed" | "failed";
+    startedAt: number;
+    updatedAt: number;
+    errorCode?: string;
+    errorMessage?: string;
+  };
+  canBuild: boolean;
+  canEnrich: boolean;
+}
+
 export interface PlatformInsightsEnvelope {
   schemaVersion: 1;
   scope: PlatformInsightScope;
@@ -4239,6 +4384,17 @@ export interface PlatformInsightsEnvelope {
     lowConfidence: boolean;
   };
   findings: PlatformActionableFinding[];
+  /**
+   * The always-available observation view, populated independently of
+   * `status`. Optional: absent on a server that predates it. An explicit `[]`
+   * is a real "nothing here needs a change" and must NOT fall back to
+   * `findings`.
+   */
+  currentFindings?: PlatformActionableFinding[];
+  observationState?: PlatformInsightsObservationState;
+  observationCoverage?: PlatformInsightsObservationCoverage;
+  /** The run's findings; absent on a server that predates them. */
+  unifiedFindings?: PlatformUnifiedFindings;
   /** Swarm only. Launch outcomes never appear as findings. */
   runHealth?: {
     targets: Array<{

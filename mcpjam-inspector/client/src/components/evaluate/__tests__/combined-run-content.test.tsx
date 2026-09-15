@@ -9,6 +9,7 @@ import { EvaluateRunPage } from "../evaluate-run-page";
 import { buildRunVerdictHero } from "../run-verdict-hero-model";
 import type { EvalSuiteRun, EvalIteration } from "../../evals/types";
 import type { ProjectRunHistoryDetail } from "../../evals/use-project-run-history";
+import type { UnifiedFindingsSectionProps } from "../unified-findings-section";
 
 const mocks = vi.hoisted(() => ({
   history: {
@@ -18,6 +19,46 @@ const mocks = vi.hoisted(() => ({
     retry: vi.fn(),
   },
   decision: vi.fn(),
+  generation: vi.fn(),
+  requestInsight: vi.fn(),
+}));
+vi.mock("../../evals/use-server-quality", () => ({
+  useServerQuality: (run: EvalSuiteRun, options: unknown) => {
+    mocks.generation(run._id, options);
+    return {
+      pending: false,
+      failedGeneration: false,
+      error: null,
+      unavailable: false,
+      canRequest: true,
+      requestServerQuality: (...args: unknown[]) =>
+        mocks.requestInsight(run._id, ...args),
+    };
+  },
+}));
+vi.mock("../unified-findings-section", () => ({
+  UnifiedFindingsSection: ({
+    suiteRunId,
+    iterations = [],
+    generation,
+    onOpenIteration,
+    scopeControl,
+  }: UnifiedFindingsSectionProps) => (
+    <section
+      data-testid="findings-section"
+      data-run-id={suiteRunId}
+      data-iteration-ids={iterations.map((row) => row._id).join(",")}
+    >
+      {scopeControl}
+      <button onClick={() => onOpenIteration?.("a")}>Open evidence A</button>
+      <button onClick={() => onOpenIteration?.("c")}>Open evidence C</button>
+      <button
+        onClick={() => generation.requestInsight(true, { mode: "findings" })}
+      >
+        Add AI explanation
+      </button>
+    </section>
+  ),
 }));
 vi.mock("../../evals/use-project-run-history", () => ({
   useProjectRunHistory: () => mocks.history,
@@ -111,6 +152,8 @@ beforeEach(() => {
   mocks.history.loading = false;
   mocks.history.errorCount = 0;
   mocks.decision.mockClear();
+  mocks.generation.mockClear();
+  mocks.requestInsight.mockClear();
 });
 
 describe("combined run report", () => {
@@ -129,6 +172,99 @@ describe("combined run report", () => {
     await user.click(screen.getByRole("button", { name: "Clear filters" }));
     await user.click(screen.getByRole("combobox", { name: "Filter by client" }));
     expect(screen.getByRole("option", { name: "ChatGPT", exact: true })).toBeVisible();
+  });
+
+  it("shows findings by default without requesting AI", () => {
+    render(<CombinedRunContent {...props} />);
+    expect(screen.getByTestId("combined-run-findings")).toBeVisible();
+    expect(screen.getByTestId("findings-section")).toHaveAttribute(
+      "data-iteration-ids",
+      "c",
+    );
+    expect(mocks.generation).toHaveBeenCalledWith("3", { autoRequest: false });
+    expect(mocks.requestInsight).not.toHaveBeenCalled();
+  });
+
+  it("scopes findings, evidence navigation and explicit AI requests to the selected run", async () => {
+    const user = userEvent.setup();
+    const onOpenIteration = vi.fn();
+    render(<CombinedRunContent {...props} onOpenIteration={onOpenIteration} />);
+
+    expect(screen.getAllByTestId("findings-section")).toHaveLength(1);
+    expect(screen.getByTestId("findings-section")).toHaveAttribute(
+      "data-run-id",
+      "3",
+    );
+    expect(screen.queryByTestId("run-verdict-insights")).toBeNull();
+    expect(screen.getAllByTestId("run-verdict-pairing")).toHaveLength(3);
+    expect(mocks.requestInsight).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Open evidence A" }));
+    expect(onOpenIteration).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Open evidence C" }));
+    expect(onOpenIteration).toHaveBeenLastCalledWith({
+      testCaseId: "case",
+      iterationId: "c",
+    });
+
+    await user.click(screen.getByRole("combobox", { name: "Findings for" }));
+    await user.click(
+      screen.getByRole("option", { name: "Cursor · sonnet", exact: true }),
+    );
+    expect(screen.getAllByTestId("findings-section")).toHaveLength(1);
+    expect(screen.getByTestId("findings-section")).toHaveAttribute(
+      "data-run-id",
+      "1",
+    );
+    expect(screen.getByTestId("findings-section")).toHaveAttribute(
+      "data-iteration-ids",
+      "a",
+    );
+    expect(mocks.requestInsight).not.toHaveBeenCalled();
+    expect(
+      mocks.generation.mock.calls.every(
+        ([, options]) => options.autoRequest === false,
+      ),
+    ).toBe(true);
+    await user.click(screen.getByRole("button", { name: "Open evidence C" }));
+    expect(onOpenIteration).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: "Open evidence A" }));
+    expect(onOpenIteration).toHaveBeenLastCalledWith({
+      testCaseId: "case",
+      iterationId: "a",
+    });
+    await user.click(
+      screen.getByRole("button", { name: "Add AI explanation" }),
+    );
+    expect(mocks.requestInsight).toHaveBeenCalledExactlyOnceWith("1", true, {
+      mode: "findings",
+    });
+  });
+
+  it("selects a visible run when pairing filters exclude the current findings run", async () => {
+    const user = userEvent.setup();
+    render(<CombinedRunContent {...props} />);
+    await user.click(
+      screen.getByRole("combobox", { name: "Filter by client" }),
+    );
+    await user.click(
+      screen.getByRole("option", { name: "Cursor", exact: true }),
+    );
+    expect(screen.getByTestId("findings-section")).toHaveAttribute(
+      "data-run-id",
+      "1",
+    );
+    await user.click(screen.getByRole("combobox", { name: "Filter by model" }));
+    await user.click(
+      screen.getByRole("option", { name: "gpt-5.1", exact: true }),
+    );
+    expect(screen.getByTestId("findings-section")).toHaveAttribute(
+      "data-run-id",
+      "2",
+    );
+    expect(
+      screen.getByRole("combobox", { name: "Findings for" }),
+    ).toHaveTextContent("Cursor · gpt-5.1");
+    expect(mocks.requestInsight).not.toHaveBeenCalled();
   });
 
   it("opens all pairings from any member and filters metrics and columns without changing reports", async () => {
