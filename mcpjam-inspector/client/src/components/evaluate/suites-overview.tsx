@@ -568,7 +568,7 @@ function lastRunLabel(entry: EvalSuiteOverviewEntry): string {
 
 /** `null` is a model this view could not resolve; it is shown, never filtered on. */
 function ModelCell({ models }: { models: (string | null)[] }) {
-  const labels = models.map((model) => model ?? "Model unavailable");
+  const labels = models.map((model) => model ?? "-");
   return (
     <span
       className="min-w-0 text-sm text-muted-foreground"
@@ -576,7 +576,7 @@ function ModelCell({ models }: { models: (string | null)[] }) {
     >
       <span className="hidden truncate @min-[1100px]/suites:block">
         {models
-          .map((model) => (model ? compactModelIdTail(model) : "Model unavailable"))
+          .map((model) => (model ? compactModelIdTail(model) : "-"))
           .join(", ")}
       </span>
       <span
@@ -584,7 +584,7 @@ function ModelCell({ models }: { models: (string | null)[] }) {
         data-testid="suite-compact-models"
       >
         <span className="truncate">
-          {models[0] ? compactModelIdTail(models[0]) : "Model unavailable"}
+          {models[0] ? compactModelIdTail(models[0]) : "-"}
         </span>
         {models.length > 1 && (
           <span className="shrink-0" title={labels.slice(1).join(", ")}>

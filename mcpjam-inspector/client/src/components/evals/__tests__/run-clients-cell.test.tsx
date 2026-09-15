@@ -11,6 +11,32 @@ const row = (client: string, models: string[]): SuiteRunHistoryRow =>
   }) as SuiteRunHistoryRow;
 
 describe("RunClientsCell", () => {
+  it.each(["client", "model"] as const)(
+    "shows a dash for the SDK placeholder %s",
+    (column) => {
+      renderWithProviders(
+        <RunClientsCell column={column} rows={[row("SDK harness", ["n/a"])]} />,
+      );
+      expect(screen.getByText("-")).toBeVisible();
+      expect(screen.queryByText("SDK harness")).toBeNull();
+      expect(screen.queryByText("a")).toBeNull();
+      expect(document.querySelector("img")).toBeNull();
+    },
+  );
+
+  it("keeps real models for SDK runs", () => {
+    renderWithProviders(
+      <RunClientsCell
+        column="model"
+        rows={[row("SDK harness", ["n/a", "openai/gpt-5"])]}
+      />,
+    );
+    expect(
+      within(screen.getByTestId("expanded-run-models")).getByText("gpt-5"),
+    ).toBeVisible();
+    expect(screen.queryByText("a")).toBeNull();
+  });
+
   it("shows only clients in the client column", () => {
     renderWithProviders(
       <RunClientsCell
