@@ -254,7 +254,7 @@ export function deriveFailingCases(
   >();
   for (const row of iterations) {
     const variant = row.executionVariant;
-    const key = `${row.caseRef} ${variant?.provider ?? ""} ${
+    const key = `${row.caseRef}\u0000${variant?.provider ?? ""}\u0000${
       variant?.model ?? ""
     }`;
     const entry = groups.get(key) ?? {
