@@ -249,9 +249,17 @@ test("creates and then updates one marked PR comment", async () => {
   assert.equal(calls.at(-1).init.method, "POST");
   const created = JSON.parse(calls.at(-1).init.body).body;
 
-  const updateFetch = async (_url, init = {}) =>
-    response(init.method === "PATCH" ? { id: 7 } : [{ id: 7, body: created }]);
+  const updateFetch = async (url, init = {}) => {
+    calls.push({ url, init });
+    return response(init.method === "PATCH" ? { id: 7 } : [{ id: 7, body: created }]);
+  };
   assert.equal(await publishPullRequestComment("new", env, updateFetch), "updated");
+  assert.equal(calls.length, 4);
+  for (const { init } of calls) {
+    assert.ok(init.signal instanceof AbortSignal);
+    assert.equal(init.signal.aborted, false);
+  }
+  assert.equal(new Set(calls.map(({ init }) => init.signal)).size, calls.length);
 });
 
 test("does not let an older workflow overwrite a newer comment", async () => {

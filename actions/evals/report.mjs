@@ -484,7 +484,10 @@ export async function publishPullRequestComment(body, env, fetchImpl = fetch) {
   };
   let existing;
   for (let page = 1; page <= 10 && !existing; page += 1) {
-    const response = await fetchImpl(`${api}/repos/${repository}/issues/${pull}/comments?per_page=100&page=${page}`, { headers });
+    const response = await fetchImpl(`${api}/repos/${repository}/issues/${pull}/comments?per_page=100&page=${page}`, {
+      headers,
+      signal: AbortSignal.timeout(REPORT_REQUEST_TIMEOUT_MS),
+    });
     if (!response.ok) throw new Error(`GitHub returned ${response.status} while reading comments.`);
     const comments = await response.json();
     existing = comments.find((comment) => comment.body?.includes(`<!-- mcpjam-evals:${markerId} `));
@@ -502,6 +505,7 @@ export async function publishPullRequestComment(body, env, fetchImpl = fetch) {
     : `${api}/repos/${repository}/issues/${pull}/comments`;
   const response = await fetchImpl(url, {
     method: existing ? "PATCH" : "POST",
+    signal: AbortSignal.timeout(REPORT_REQUEST_TIMEOUT_MS),
     headers: { ...headers, "content-type": "application/json" },
     body: JSON.stringify({ body: content }),
   });
