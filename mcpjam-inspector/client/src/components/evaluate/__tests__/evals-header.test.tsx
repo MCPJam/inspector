@@ -112,7 +112,7 @@ describe("EvalsHeader", () => {
 
     const row = screen.getByTestId("evals-header-title-row");
     const suites = screen.getByRole("button", { name: /^suites$/i });
-    const runs = screen.getByRole("button", { name: /^runs$/i });
+    const runs = screen.getByRole("button", { name: /^overview$/i });
     expect(row).toContainElement(
       screen.getByRole("heading", { name: "Evaluate" }),
     );

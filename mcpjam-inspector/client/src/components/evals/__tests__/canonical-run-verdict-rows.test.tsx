@@ -513,7 +513,7 @@ describe("Evaluate suite run history status", () => {
       await Promise.resolve();
       expect(fetchMock).not.toHaveBeenCalled();
       expect(
-        within(screen.getByTestId("suite-run-row-run-1")).getByText("Finished"),
+        within(screen.getByTestId("suite-run-row-run-1")).getByText("Passed"),
       ).toBeVisible();
       expect(
         screen.queryByRole("columnheader", { name: "Verdict" }),
@@ -543,9 +543,7 @@ describe("Evaluate suite run history status", () => {
       [],
     );
     expect(
-      within(screen.getByTestId("suite-run-row-run-1")).getByText(
-        "In progress",
-      ),
+      within(screen.getByTestId("suite-run-row-run-1")).getByText("Running"),
     ).toBeVisible();
     await Promise.resolve();
     expect(fetchMock).not.toHaveBeenCalled();
