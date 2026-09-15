@@ -67,7 +67,8 @@
               "inspector/plugins",
               "inspector/protocol-versions",
               "inspector/host-compat",
-              "inspector/skills"
+              "inspector/skills",
+              "inspector/integrations"
             ]
           },
           {
