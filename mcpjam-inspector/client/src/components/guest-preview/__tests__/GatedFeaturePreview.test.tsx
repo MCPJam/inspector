@@ -52,9 +52,9 @@ describe("GuestFeaturePreview", () => {
     expect(screen.getAllByTestId("gated-feature-sample")).toHaveLength(1);
   });
 
-  it("draws the Swarms sample as run rows, not a chart", () => {
+  it("draws the Swarms sample as the Findings tab, personas and all", () => {
     const sample = GATED_FEATURE_COPY.swarms.sample;
-    if (sample.kind !== "runs") throw new Error("expected runs");
+    if (sample.kind !== "findings") throw new Error("expected findings");
     render(
       <GuestFeaturePreview feature="swarms">
         <button type="button">Create account</button>
@@ -62,21 +62,29 @@ describe("GuestFeaturePreview", () => {
     );
 
     const card = screen.getByTestId("gated-feature-sample");
-    for (const run of sample.runs) {
-      expect(within(card).getByText(run.name)).toBeInTheDocument();
-      expect(within(card).getByText(run.meta)).toBeInTheDocument();
+    expect(within(card).getByText(sample.summary)).toBeInTheDocument();
+    for (const persona of sample.personas) {
+      expect(within(card).getByText(persona.name)).toBeInTheDocument();
     }
-    // One outcome badge per row, the way Vig asked the row to become. A red
-    // FAILED badge or a status dot would put the preview at odds with the
-    // cleanup that is landing on the real list.
-    expect(within(card).getAllByText("Completed")).toHaveLength(
-      sample.runs.length,
-    );
   });
 
-  it("draws the User Testing sample as the session metric strip", () => {
+  // Not every persona is satisfied, deliberately. A swarm where everyone
+  // sailed through has found nothing, and finding something is the product.
+  it("shows the Swarms sample finding a problem, not a clean sweep", () => {
+    const sample = GATED_FEATURE_COPY.swarms.sample;
+    if (sample.kind !== "findings") throw new Error("expected findings");
+
+    expect(
+      sample.personas.some((p) => p.sentiment === "uneasy"),
+    ).toBe(true);
+    expect(
+      sample.personas.some((p) => p.sentiment === "satisfied"),
+    ).toBe(true);
+  });
+
+  it("draws the User Testing sample as the four-column session flow", () => {
     const sample = GATED_FEATURE_COPY["user-testing"].sample;
-    if (sample.kind !== "metrics") throw new Error("expected metrics");
+    if (sample.kind !== "flow") throw new Error("expected flow");
     render(
       <GuestFeaturePreview feature="user-testing">
         <button type="button">Create account</button>
@@ -84,9 +92,15 @@ describe("GuestFeaturePreview", () => {
     );
 
     const card = screen.getByTestId("gated-feature-sample");
-    for (const tile of sample.tiles) {
-      expect(within(card).getByText(tile.label)).toBeInTheDocument();
-      expect(within(card).getByText(tile.value)).toBeInTheDocument();
+    // The real columns, in the real order.
+    expect(sample.stages.map((stage) => stage.label)).toEqual([
+      "Goal",
+      "Behavior",
+      "Outcome",
+      "Sentiment",
+    ]);
+    for (const stage of sample.stages) {
+      expect(within(card).getByText(stage.label)).toBeInTheDocument();
     }
   });
 

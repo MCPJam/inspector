@@ -15,6 +15,8 @@
 
 import { useEffect, useRef, type ReactNode } from "react";
 import { SwarmHeroCharacters } from "@/components/swarms/swarm-hero-characters";
+import { PersonaPixelAvatar } from "@/components/swarms/persona-pixel-avatar";
+import { cn } from "@/lib/utils";
 import { track } from "@/lib/analytics";
 import {
   GATED_FEATURE_COPY,
@@ -156,68 +158,134 @@ function SampleCard({ sample }: { sample: GatedFeatureSample }) {
           {sample.subtitle}
         </div>
       </div>
-      {sample.kind === "runs" ? (
-        <SampleRuns sample={sample} />
+      {sample.kind === "findings" ? (
+        <SampleFindings sample={sample} />
       ) : (
-        <SampleMetrics sample={sample} />
+        <SampleFlow sample={sample} />
       )}
     </div>
   );
 }
 
-function SampleRuns({
+function SampleFindings({
   sample,
 }: {
-  sample: Extract<GatedFeatureSample, { kind: "runs" }>;
+  sample: Extract<GatedFeatureSample, { kind: "findings" }>;
 }) {
   return (
-    <div className="flex flex-col gap-2.5">
-      {sample.runs.map((run) => (
-        <div key={run.name} className="flex items-center gap-2.5">
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-1.5 text-xs font-semibold text-foreground">
-              {run.name}
-              {/* One outcome badge. Drawn the way Vig has asked the row to
-                  become, not the way it renders today: no status dot, no red
-                  FAILED, so the preview and that cleanup land on one design. */}
-              <span className="rounded-full border border-success/40 bg-success/15 px-1.5 py-px text-[9px] uppercase tracking-wide text-success">
-                Completed
-              </span>
-              <span className="text-[10px] font-normal text-muted-foreground">
-                {run.when}
-              </span>
-            </div>
-            <div className="mt-0.5 text-[10px] text-muted-foreground">
-              {run.meta}
-            </div>
+    <div className="flex flex-col gap-3">
+      <div className="text-sm font-semibold text-balance text-foreground">
+        {sample.summary}
+      </div>
+      <div className="flex flex-col gap-2">
+        {sample.personas.map((persona) => (
+          <div key={persona.seed} className="flex items-center gap-2.5">
+            {/* The real avatar, not a stand-in. The Findings tab shows these
+                same golems, so a visitor who signs up meets the characters
+                they were shown. */}
+            <PersonaPixelAvatar
+              seed={persona.seed}
+              shapeIndex={persona.shapeIndex}
+              paletteIndex={persona.paletteIndex}
+              size="sm"
+            />
+            <span className="min-w-0 flex-1 truncate text-xs text-foreground">
+              {persona.name}
+            </span>
+            <span
+              className={cn(
+                "shrink-0 rounded-full border px-1.5 py-px text-[9px] uppercase tracking-wide",
+                persona.sentiment === "satisfied"
+                  ? "border-success/40 bg-success/15 text-success"
+                  : "border-warning/40 bg-warning/15 text-warning",
+              )}
+            >
+              {persona.sentiment}
+            </span>
           </div>
-          <div className="shrink-0 font-mono text-[10px] text-muted-foreground">
-            {run.model}
-          </div>
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   );
 }
 
-function SampleMetrics({
+/**
+ * The four-column session flow, simplified to fit a card.
+ *
+ * Bands connect segment to segment rather than solving a real Sankey layout:
+ * at this size an exact one would be a smudge, and the point is to show that
+ * the product follows a session from goal to sentiment, not to be readable as
+ * data. The columns and their order are the real ones.
+ */
+function SampleFlow({
   sample,
 }: {
-  sample: Extract<GatedFeatureSample, { kind: "metrics" }>;
+  sample: Extract<GatedFeatureSample, { kind: "flow" }>;
 }) {
+  const COLUMN_TONES = [
+    "fill-success/60",
+    "fill-chart-1/60",
+    "fill-primary/60",
+    "fill-warning/60",
+  ];
+  const width = 100;
+  const height = 48;
+  const barW = 5;
+  const gap = (width - barW) / (sample.stages.length - 1);
+
+  const segments = sample.stages.map((stage) => {
+    let y = 0;
+    return stage.nodes.map((node) => {
+      const h = node.share * (height - 4);
+      const top = y;
+      y += h + 4;
+      return { top, h, label: node.label };
+    });
+  });
+
   return (
-    <div className="grid grid-cols-2 gap-px overflow-hidden rounded-md border border-border/50 bg-border/50">
-      {sample.tiles.map((tile) => (
-        <div key={tile.label} className="bg-card p-2.5">
-          <div className="text-[9px] uppercase tracking-wide text-muted-foreground">
-            {tile.label}
-          </div>
-          <div className="mt-0.5 text-base font-semibold tabular-nums text-foreground">
-            {tile.value}
-          </div>
-          <div className="text-[9px] text-muted-foreground">{tile.unit}</div>
-        </div>
-      ))}
+    <div className="flex flex-col gap-2">
+      <div className="flex justify-between text-[8px] uppercase tracking-wide text-muted-foreground">
+        {sample.stages.map((stage) => (
+          <span key={stage.label}>{stage.label}</span>
+        ))}
+      </div>
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        className="h-16 w-full"
+        preserveAspectRatio="none"
+      >
+        {segments.slice(0, -1).map((col, i) =>
+          col.map((seg, j) => {
+            const next = segments[i + 1][j];
+            if (!next) return null;
+            const x1 = i * gap + barW;
+            const x2 = (i + 1) * gap;
+            const mid = (x1 + x2) / 2;
+            return (
+              <path
+                key={`${i}-${j}`}
+                d={`M${x1},${seg.top} C${mid},${seg.top} ${mid},${next.top} ${x2},${next.top} L${x2},${next.top + next.h} C${mid},${next.top + next.h} ${mid},${seg.top + seg.h} ${x1},${seg.top + seg.h} Z`}
+                className={cn(COLUMN_TONES[i], "opacity-30")}
+              />
+            );
+          }),
+        )}
+        {segments.map((col, i) =>
+          col.map((seg, j) => (
+            <rect
+              key={`bar-${i}-${j}`}
+              x={i * gap}
+              y={seg.top}
+              width={barW}
+              height={seg.h}
+              rx={1.5}
+              className={COLUMN_TONES[i]}
+            />
+          )),
+        )}
+      </svg>
     </div>
   );
 }
+

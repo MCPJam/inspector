@@ -26,42 +26,47 @@
 /** The two surfaces a signed-out visitor can land on. */
 export type GatedFeatureId = "swarms" | "user-testing";
 
-/** One row of the real Swarms Overview list. */
-export interface SampleRun {
+/** A persona row on the Findings tab, with how its sessions ended. */
+export interface SampleFindingPersona {
   readonly name: string;
-  readonly when: string;
-  /** The counts line: sessions, goals, personas, findings. */
-  readonly meta: string;
-  readonly model: string;
+  /** Drives `PersonaPixelAvatar`'s procedural detail, as on the real tab. */
+  readonly seed: string;
+  readonly shapeIndex: number;
+  readonly paletteIndex: number;
+  readonly sentiment: "satisfied" | "uneasy";
 }
 
-/** One tile of the real User Testing session metric strip. */
-export interface SampleTile {
+/** One column of the Session flow, which reads GOAL to SENTIMENT. */
+export interface SampleFlowStage {
   readonly label: string;
-  readonly value: string;
-  readonly unit: string;
+  /** Segments top to bottom. `share` is a fraction of the column. */
+  readonly nodes: readonly { readonly label: string; readonly share: number }[];
 }
 
 /**
  * The single example card.
  *
- * Two shapes because the two products genuinely look different: Swarms opens
- * on a list of runs, a study opens on a metric strip. A shared abstraction
- * would have to flatten one into the other's frame, which is how the first
- * draft ended up drawing charts that do not exist.
+ * Two shapes because the two products lead with different screens. Swarms
+ * opens its Findings tab on personas and how their sessions ended; a study
+ * leads with the session flow, which is also the visual mcpjam.com uses for
+ * user acceptance testing. A shared abstraction would flatten one into the
+ * other, which is how the first draft ended up drawing charts that do not
+ * exist.
  */
 export type GatedFeatureSample =
   | {
-      readonly kind: "runs";
+      readonly kind: "findings";
       readonly title: string;
       readonly subtitle: string;
-      readonly runs: readonly SampleRun[];
+      /** The one-line verdict the real Findings tab leads with. */
+      readonly summary: string;
+      readonly personas: readonly SampleFindingPersona[];
     }
   | {
-      readonly kind: "metrics";
+      readonly kind: "flow";
       readonly title: string;
       readonly subtitle: string;
-      readonly tiles: readonly SampleTile[];
+      readonly stages: readonly SampleFlowStage[];
     };
 
 export interface GatedFeatureCopy {
@@ -96,26 +101,38 @@ export const GATED_FEATURE_COPY: Record<GatedFeatureId, GatedFeatureCopy> = {
       "No recruiting, no scheduling, no setup. Agents find what breaks in every client.",
     sampleLabel: "What a swarm looks like",
     sample: {
-      kind: "runs",
-      title: "Every run, and what it found",
-      subtitle: "Swarm overview",
-      // Traced from the real Overview list. The staging rows behind these were
-      // mostly failed runs (2 of 14 sessions, 6 of 30); the shape is theirs and
-      // the numbers are a run that worked, because the first swarm a visitor
-      // ever sees should not be a broken one. FINDINGS stay high on purpose:
-      // they are the deliverable, not the damage.
-      runs: [
+      kind: "findings",
+      title: "Who struggled, and where",
+      subtitle: "Findings",
+      // The real Findings tab leads with exactly this: a one-line verdict over
+      // the run, then the personas underneath with how their sessions ended.
+      //
+      // Not every persona is satisfied, on purpose. A swarm where everyone
+      // sailed through has found nothing, and finding something is the product.
+      // The staging run this is traced from read "14 of 14 goals showed
+      // friction", which is the same screen having a bad day.
+      summary: "12 of 14 goals completed. One persona got stuck.",
+      personas: [
         {
-          name: "Checkout flow · Sep 8",
-          when: "1d ago",
-          meta: "14/14 sessions · 14 goals · 3 personas · 4 findings",
-          model: "gpt-5-nano",
+          name: "MCP Tool Contract Tester",
+          seed: "sample-contract-tester",
+          shapeIndex: 0,
+          paletteIndex: 1,
+          sentiment: "satisfied",
         },
         {
-          name: "deal seekers in e commerce",
-          when: "Sep 4",
-          meta: "30/30 sessions · 15 goals · 3 personas · 6 findings",
-          model: "gpt-5-nano",
+          name: "One-off Explainer Doodler",
+          seed: "sample-explainer-doodler",
+          shapeIndex: 1,
+          paletteIndex: 5,
+          sentiment: "satisfied",
+        },
+        {
+          name: "RFE Author Sketching a Flow",
+          seed: "sample-rfe-author",
+          shapeIndex: 4,
+          paletteIndex: 2,
+          sentiment: "uneasy",
         },
       ],
     },
@@ -138,17 +155,42 @@ export const GATED_FEATURE_COPY: Record<GatedFeatureId, GatedFeatureCopy> = {
       "A study starts with a link you send. Testers open it, use your server inside the client they already know, and every session is recorded here.",
     sampleLabel: "What a study looks like",
     sample: {
-      kind: "metrics",
-      title: "Every session, measured",
-      subtitle: "User testing sessions",
-      // The strip a real study opens with. The study behind the staging
-      // figures had one session at 32.4s p50 across 3 calls, which is a study
-      // nobody used yet; these are a study that ran.
-      tiles: [
-        { label: "Tool errors", value: "0%", unit: "0 of 47 calls" },
-        { label: "Latency p50", value: "4.2s", unit: "per session" },
-        { label: "Tool calls", value: "6", unit: "per session" },
-        { label: "Tokens", value: "24.6k", unit: "per session" },
+      kind: "flow",
+      title: "Where sessions went",
+      subtitle: "Session flow",
+      // The four columns the real Session flow carries, and the same visual
+      // mcpjam.com already leads with for user acceptance testing. Shares are
+      // illustrative but consistent across the columns, so the bands read as
+      // one population moving left to right rather than four unrelated charts.
+      stages: [
+        {
+          label: "Goal",
+          nodes: [
+            { label: "Export a diagram", share: 0.55 },
+            { label: "Restore a save", share: 0.45 },
+          ],
+        },
+        {
+          label: "Behavior",
+          nodes: [
+            { label: "Clean path", share: 0.58 },
+            { label: "Repeated calls", share: 0.42 },
+          ],
+        },
+        {
+          label: "Outcome",
+          nodes: [
+            { label: "Goal reached", share: 0.62 },
+            { label: "Unresolved", share: 0.38 },
+          ],
+        },
+        {
+          label: "Sentiment",
+          nodes: [
+            { label: "Satisfied", share: 0.62 },
+            { label: "Neutral", share: 0.38 },
+          ],
+        },
       ],
     },
     analyticsLocation: "user_testing_guest_preview",
