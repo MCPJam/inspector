@@ -61,6 +61,10 @@ const chatUiThreadHelpersEntry = path.resolve(
   "../chat-ui/src/thread-helpers.ts",
 );
 const chatUiTraceEntry = path.resolve(rootDir, "../chat-ui/src/trace.ts");
+const chatUiJsonTokensEntry = path.resolve(
+  rootDir,
+  "../chat-ui/src/json-tokens.ts",
+);
 // Tier B Phase 3c: resolve @mcpjam/widget-react from source (its published
 // exports point at dist, which a clean checkout hasn't built).
 const widgetReactEntry = path.resolve(rootDir, "../widget-react/src/index.ts");
@@ -141,6 +145,7 @@ export default defineConfig({
   resolve: {
     alias: [
       // More specific subpaths must precede the bare alias (first match wins).
+      { find: "@mcpjam/chat-ui/json-tokens", replacement: chatUiJsonTokensEntry },
       {
         find: "@mcpjam/chat-ui/thread-helpers",
         replacement: chatUiThreadHelpersEntry,
