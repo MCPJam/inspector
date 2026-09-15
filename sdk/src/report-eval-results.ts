@@ -24,7 +24,10 @@ import {
   isEvalRunVerdict,
   evalVerdictDecisionSchema,
 } from "./contract/verdict-policy.js";
-import { resolveServerReplayConfigs } from "./server-replay-configs.js";
+import {
+  resolveServerNames,
+  resolveServerReplayConfigs,
+} from "./server-replay-configs.js";
 import { addBreadcrumb, captureEvalReportingFailure } from "./sentry.js";
 import {
   buildSdkEvalsWireHostConfig,
@@ -1131,6 +1134,10 @@ async function reportEvalResultsInternal(
   const uploadedResults = input.results;
   const externalRunId = input.externalRunId ?? generateExternalRunId();
   const serverReplayConfigs = resolveServerReplayConfigs(input);
+  input = {
+    ...input,
+    serverNames: resolveServerNames(input, serverReplayConfigs),
+  };
   const resultsWithIterationIds = resultsWithFrozenPolicySpelling(
     withExternalIterationIds(uploadedResults, externalRunId)
   );

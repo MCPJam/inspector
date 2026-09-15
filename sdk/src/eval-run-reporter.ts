@@ -31,7 +31,10 @@ import {
 import type { PromptResult } from "./PromptResult.js";
 import type { EvalRunResult } from "./EvalTest.js";
 import { captureEvalReportingFailure } from "./sentry.js";
-import { resolveServerReplayConfigs } from "./server-replay-configs.js";
+import {
+  resolveServerNames,
+  resolveServerReplayConfigs,
+} from "./server-replay-configs.js";
 import { writeGithubActionReceipt } from "./github-action-receipt.js";
 import {
   promptsToEvalResult,
@@ -418,6 +421,7 @@ class EvalRunReporterImpl implements EvalRunReporter {
         await requireReportingCapabilities(this.runtimeConfig, this.input);
         const started = await startEvalRun(this.runtimeConfig, {
           ...buildReportingBody(this.input),
+          serverNames: resolveServerNames(this.input, serverReplayConfigs),
           suiteName: this.input.suiteName,
           serverReplayConfigs,
           externalRunId: this.externalRunId,

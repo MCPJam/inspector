@@ -912,6 +912,7 @@ describe("createEvalRunReporter", () => {
     expect(agent.getServerReplayConfigs).toHaveBeenCalledTimes(1);
     expect(mcpClientManager.getServerReplayConfigs).toHaveBeenCalledTimes(1);
     const startBody = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(startBody.serverNames).toEqual(["manager"]);
     expect(startBody.serverReplayConfigs).toEqual([
       {
         serverId: "manager",
