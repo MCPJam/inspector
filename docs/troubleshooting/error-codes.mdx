@@ -450,6 +450,32 @@ The stored token could not be refreshed because the authorization server was unr
 - Retry in a minute; if it persists, check the authorization server's status.
 - Reconnect the server to obtain a fresh token once the authorization server is reachable.
 
+### Credential origin mismatch
+
+`auth/credential_origin_mismatch`
+
+The server's URL was changed after OAuth credentials were saved, so the stored credential is bound to the old destination and the backend refuses to send it to the new one.
+
+**Likely causes**
+- The server's URL was updated in the project settings after OAuth was authorized.
+- The server was pointed at a different host or path since the last authorization.
+
+**Next steps**
+- Use the **Reconnect** button on the server card to authorize again for the new destination. The previous grant is no longer valid for the current URL.
+
+### OAuth refresh in progress
+
+`auth/oauth_refresh_in_progress`
+
+Another request is already refreshing the OAuth credentials for this server. The inspector returns 429 rather than starting a second concurrent refresh.
+
+**Likely causes**
+- Two connections to the same server were initiated at nearly the same time.
+- A background reconnect is still in flight.
+
+**Next steps**
+- Wait a moment and retry. The error message includes the expected wait time when the backend provides one. No reauthorization is needed — the credentials are valid and the refresh will complete shortly.
+
 ### Proxy rejected
 
 `auth/proxy_rejected`
