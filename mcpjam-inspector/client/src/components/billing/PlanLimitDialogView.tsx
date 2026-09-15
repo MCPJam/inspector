@@ -40,6 +40,7 @@ export interface PlanLimitDialogViewProps {
   annualSupported: boolean;
   monthlySupported: boolean;
   teamName: string;
+  priceUnit?: string;
   isStarting: boolean;
   isLoadingPrices?: boolean;
   onUpgrade: () => void;
@@ -78,6 +79,7 @@ export function PlanLimitDialogView({
   annualSupported,
   monthlySupported,
   teamName,
+  priceUnit = "per seat/month",
   isStarting,
   isLoadingPrices = false,
   onUpgrade,
@@ -110,6 +112,7 @@ export function PlanLimitDialogView({
         </DialogHeader>
         {showUpgrade ? (
           <UpgradeIntervalPicker
+            priceUnit={priceUnit}
             interval={interval}
             onIntervalChange={onIntervalChange}
             annualPriceLabel={annualPriceLabel}

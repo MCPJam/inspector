@@ -3,6 +3,28 @@ import { useQuery, useMutation } from "convex/react";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { shouldQueryProjectId, type RemoteServer } from "./useProjects";
 
+/**
+ * The query has not run YET — as opposed to having run and found nothing.
+ *
+ * A skipped query reports `isLoading: false` with an empty list, which reads
+ * as "answered, and empty". Computed from the same inputs as `enableQuery` so
+ * it is true on the very first render: `isEnsuringUser` is not, since it
+ * starts `false` and is raised inside an effect.
+ */
+function queryWillRunLater(
+  isAuthenticated: boolean,
+  authLoading: boolean,
+  isUserReady: boolean,
+  projectId: string | null,
+): boolean {
+  if (!shouldQueryProjectId(projectId)) return false;
+  // Auth still resolving reads as signed OUT, so without this the first
+  // renders of a signed-in session call the skipped query's empty list an
+  // answer — the same defect one layer further out.
+  if (authLoading) return true;
+  return isAuthenticated && !isUserReady;
+}
+
 // Type definitions matching backend
 export type ViewProtocol = "mcp-apps" | "openai-apps";
 
@@ -175,9 +197,12 @@ export function useViewMutations() {
 // Hook to get servers for a project (for server ID resolution)
 export function useProjectServers({
   isAuthenticated,
+  authLoading = false,
   projectId,
 }: {
   isAuthenticated: boolean;
+  /** Convex auth has not settled yet. Optional: absent means it has. */
+  authLoading?: boolean;
   projectId: string | null;
 }) {
   const isUserReady = useDbUserReady();
@@ -191,6 +216,13 @@ export function useProjectServers({
   ) as RemoteServer[] | undefined;
 
   const isLoading = enableQuery && servers === undefined;
+  /** Told apart by the hook that owns the skip, not by every caller. */
+  const isBootstrapping = queryWillRunLater(
+    isAuthenticated,
+    authLoading,
+    isUserReady,
+    projectId,
+  );
 
   // Create a map for quick lookup by name
   const serversByName = useMemo(() => {
@@ -217,14 +249,18 @@ export function useProjectServers({
     serversByName,
     serversById,
     isLoading,
+    isBootstrapping,
   };
 }
 
 export function useProjectServerAttachments({
   isAuthenticated,
+  authLoading = false,
   projectId,
 }: {
   isAuthenticated: boolean;
+  /** Convex auth has not settled yet. Optional: absent means it has. */
+  authLoading?: boolean;
   projectId: string | null;
 }) {
   const isUserReady = useDbUserReady();
@@ -245,8 +281,19 @@ export function useProjectServerAttachments({
   }> | undefined;
 
   const isLoading = enableQuery && serverAttachments === undefined;
+  /** See `useProjectServers`: a skipped query is not an answer. */
+  const isBootstrapping = queryWillRunLater(
+    isAuthenticated,
+    authLoading,
+    isUserReady,
+    projectId,
+  );
 
-  return { serverAttachments: serverAttachments ?? [], isLoading };
+  return {
+    serverAttachments: serverAttachments ?? [],
+    isLoading,
+    isBootstrapping,
+  };
 }
 
 // Server mutation for creating servers

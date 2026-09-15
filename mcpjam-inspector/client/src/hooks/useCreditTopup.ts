@@ -159,7 +159,7 @@ export type CreditTopupSource = "chat_banner" | "billing_page" | "limit_modal";
 interface StartCheckoutInput {
   organizationId: string;
   packageId: string;
-  priceCents: number;
+  priceCents: number | null;
   chatSessionId: string;
   lastUserMessage: string;
   returnUrl?: string;
@@ -178,7 +178,7 @@ export function useCreditTopupPresets(options?: UseCreditTopupPresetsOptions): {
   const skip = options?.skip === true;
   const presetsRaw = useQuery(
     "billing:getCreditTopupPresets" as any,
-    skip ? "skip" : (undefined as any)
+    skip ? "skip" : (undefined as any),
   ) as unknown | undefined;
   // Memoize on the raw query reference. Convex returns a stable reference
   // when the underlying data is unchanged, so the normalized array stays
@@ -193,7 +193,7 @@ export function useCreditTopup() {
   const { presets, isLoading: presetsLoading } = useCreditTopupPresets();
 
   const createCheckoutSession = useAction(
-    "billing:createCreditCheckoutSession" as any
+    "billing:createCreditCheckoutSession" as any,
   );
 
   const [isStartingCheckout, setIsStartingCheckout] = useState(false);
@@ -269,7 +269,7 @@ export function useCreditTopup() {
         setIsStartingCheckout(false);
       }
     },
-    [createCheckoutSession]
+    [createCheckoutSession],
   );
 
   return {

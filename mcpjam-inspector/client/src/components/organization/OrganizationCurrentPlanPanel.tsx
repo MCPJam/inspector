@@ -7,6 +7,7 @@ import type {
   PlanCatalog,
 } from "@/hooks/useOrganizationBilling";
 import { formatPlanName } from "@/lib/billing-entitlements";
+import { isLegacyTeamEntry } from "@/lib/pricing-catalog";
 
 function formatCurrency(
   amount: number,
@@ -172,8 +173,8 @@ function formatCurrentPlanBillingDetailLine(
   const plan = billingStatus.plan ?? "free";
   const interval = billingStatus.billingInterval ?? "monthly";
   const entry = planCatalog.plans[plan];
-  if (!entry) {
-    return null;
+  if (!entry || entry.catalogPlanId !== billingStatus.catalogPlanId) {
+    return "Your existing subscription terms apply. View billing details for your price.";
   }
   if (plan === "free" || entry.billingModel === "free") {
     return "No credit card required";
@@ -227,11 +228,23 @@ export function OrganizationCurrentPlanPanel({
   const currentPlan = billingStatus.plan ?? "free";
   const isTrial = billingStatus.source === "trial";
   const isSimulation = billingStatus.source === "simulation";
+  const currentEntry = planCatalog?.plans[currentPlan];
+  const isLegacyTeam =
+    currentPlan === "team" &&
+    !isTrial &&
+    !isSimulation &&
+    (billingStatus.pricingVersion === "v1" ||
+      billingStatus.catalogPlanId === "team_v1" ||
+      billingStatus.priceModel === "per_seat" ||
+      (!billingStatus.catalogPlanId &&
+        !billingStatus.pricingVersion &&
+        currentEntry != null &&
+        isLegacyTeamEntry(currentEntry)));
   const displayPlan = isTrial
-    ? (billingStatus.trialPlan ?? billingStatus.effectivePlan)
+    ? billingStatus.trialPlan ?? billingStatus.effectivePlan
     : isSimulation
-      ? billingStatus.effectivePlan
-      : currentPlan;
+    ? billingStatus.effectivePlan
+    : currentPlan;
   const billingConfigured = billingStatus.billingConfigured ?? false;
   const canManageBilling = billingStatus.canManageBilling ?? false;
   const formattedPeriodEnd = formatBillingDate(
@@ -273,7 +286,7 @@ export function OrganizationCurrentPlanPanel({
     billingConfigured &&
     canManageBilling &&
     !isTrial &&
-    currentPlan === "team" &&
+    (currentPlan === "team" || currentPlan === "pro") &&
     billingStatus.billingInterval != null &&
     scheduledChangeDetailLine == null &&
     !billingStatus.stripeCancelAtPeriodEnd;
@@ -339,6 +352,11 @@ export function OrganizationCurrentPlanPanel({
         >
           {isTrial ? "Trial" : "Current"}
         </Badge>
+        {isLegacyTeam ? (
+          <Badge variant="outline" data-testid="current-plan-legacy-badge">
+            Legacy
+          </Badge>
+        ) : null}
         {billingStatus.stripeCancelAtPeriodEnd ? (
           <Badge
             variant="outline"
@@ -348,19 +366,21 @@ export function OrganizationCurrentPlanPanel({
             Will not renew
           </Badge>
         ) : null}
-        <span
-          className="text-sm text-muted-foreground"
-          data-testid="current-plan-renewal"
-        >
-          {isTrial
-            ? `Trial ends ${formattedTrialEnd}`
-            : getCurrentPlanRenewalLine(
-                billingStatus,
-                formattedPeriodEnd,
-                scheduledCancellationDate,
-                scheduledChangeDate,
-              )}
-        </span>
+        {displayPlan !== "free" || isTrial ? (
+          <span
+            className="text-sm text-muted-foreground"
+            data-testid="current-plan-renewal"
+          >
+            {isTrial
+              ? `Trial ends ${formattedTrialEnd}`
+              : getCurrentPlanRenewalLine(
+                  billingStatus,
+                  formattedPeriodEnd,
+                  scheduledCancellationDate,
+                  scheduledChangeDate,
+                )}
+          </span>
+        ) : null}
       </div>
 
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
@@ -376,15 +396,15 @@ export function OrganizationCurrentPlanPanel({
               {isTrial
                 ? `${formatPlanName(displayPlan)} Trial`
                 : formatPlanName(displayPlan) === "current"
-                  ? "Paid plan"
-                  : formatPlanName(displayPlan)}
+                ? "Paid plan"
+                : formatPlanName(displayPlan)}
             </p>
             {displayPlan === "free" && !isTrial ? (
               <p className="text-sm text-muted-foreground">
                 Limited functionality
               </p>
             ) : null}
-            {billingDetailLine ? (
+            {billingDetailLine && (displayPlan !== "free" || isTrial) ? (
               <p className="text-sm text-muted-foreground">
                 {billingDetailLine}
                 {showIntervalPortalLink ? (

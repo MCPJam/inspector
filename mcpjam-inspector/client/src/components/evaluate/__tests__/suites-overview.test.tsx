@@ -114,6 +114,7 @@ describe("SuitesOverview", () => {
       <SuitesOverview
         overview={[
           entry({
+            latestRun: run({ completedAt: 100 }),
             suite: suite({
               _id: "multi",
               name: "Multi",
@@ -121,6 +122,7 @@ describe("SuitesOverview", () => {
             }),
           }),
           entry({
+            latestRun: run({ completedAt: 200 }),
             suite: suite({
               _id: "other",
               name: "Other",
@@ -143,7 +145,11 @@ describe("SuitesOverview", () => {
       />,
     );
     expect(screen.getByRole("columnheader", { name: "Model" })).toBeVisible();
-    const compact = within(screen.getAllByTestId("suite-compact-models")[0]);
+    // Recent activity determines row order; inspect this suite by identity.
+    const multiRow = screen.getAllByTestId("evals-suites-overview-row").find(
+      (row) => row.dataset.suiteId === "multi",
+    )!;
+    const compact = within(within(multiRow).getByTestId("suite-compact-models"));
     expect(compact.getByText("haiku")).toBeVisible();
     expect(compact.getByText("+2")).toHaveAttribute("title", "sonnet, opus");
     const client = screen.getByRole("combobox", { name: "Filter by client" });

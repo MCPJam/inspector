@@ -28,7 +28,8 @@ let evalQuotaState:
     }
   | undefined;
 let billingStatusState:
-  { effectivePlan: "free" | "team" | "enterprise" } | undefined;
+  | { effectivePlan: "free" | "team" | "enterprise" }
+  | undefined;
 
 vi.mock("@/hooks/useCreditBalance", () => ({
   useCreditBalance: () => ({
@@ -118,6 +119,11 @@ describe("SidebarCredits", () => {
     vi.useRealTimers();
   });
 
+  it("keeps the current plan visible in the collapsed hover trigger", () => {
+    renderCredits();
+    expect(screen.getByTestId("sidebar-see-credits")).toHaveTextContent("Free");
+  });
+
   it("renders the footer row and the daily credit bar with reset timing", () => {
     renderCredits();
 
@@ -126,7 +132,7 @@ describe("SidebarCredits", () => {
     );
     const dailyRow = screen.getByTestId("sidebar-usage-daily");
     expect(dailyRow).toHaveTextContent("Free daily credits");
-    expect(dailyRow).toHaveTextContent("36 / 300");
+    expect(dailyRow).toHaveTextContent("264 / 300");
     expect(dailyRow).toHaveTextContent("resets in 3h");
   });
 
@@ -170,10 +176,10 @@ describe("SidebarCredits", () => {
     const daily = screen.getByRole("progressbar", {
       name: "Free daily credits",
     });
-    expect(daily).toHaveAttribute("aria-valuetext", "36 / 300");
+    expect(daily).toHaveAttribute("aria-valuetext", "264 / 300");
     expect(
       screen.getByRole("progressbar", { name: "Daily eval iterations" }),
-    ).toHaveAttribute("aria-valuetext", "12 / 50 used");
+    ).toHaveAttribute("aria-valuetext", "38 / 50 remaining");
   });
 
   it("shows the monthly team allowance without the absolute reset date", () => {
@@ -194,7 +200,7 @@ describe("SidebarCredits", () => {
     renderCredits();
 
     const monthlyRow = screen.getByTestId("sidebar-usage-monthly");
-    expect(monthlyRow).toHaveTextContent("Monthly team credits");
+    expect(monthlyRow).toHaveTextContent("Monthly credits");
     expect(monthlyRow).toHaveTextContent("18,000 / 24,000");
     expect(monthlyRow).toHaveTextContent("resets in 16 days");
     expect(monthlyRow.textContent ?? "").not.toMatch(/resets in 16 days \(/);
@@ -228,7 +234,7 @@ describe("SidebarCredits", () => {
 
     const evalRow = screen.getByTestId("sidebar-usage-eval-iterations");
     expect(evalRow).toHaveTextContent("Daily eval iterations");
-    expect(evalRow).toHaveTextContent("12 / 50 used");
+    expect(evalRow).toHaveTextContent("38 / 50 remaining");
   });
 
   it("offers Explore plans on the free plan", () => {
