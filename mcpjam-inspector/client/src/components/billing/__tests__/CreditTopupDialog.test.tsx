@@ -5,8 +5,10 @@ import userEvent from "@testing-library/user-event";
 import { CreditTopupDialog } from "../CreditTopupDialog";
 
 vi.mock("@/hooks/useCreditTopupPricing", () => ({
-  useCreditTopupPricing: () => (preset: unknown) => preset,
+  useCreditTopupPricing: () => Object.assign((preset: unknown) => preset, { canPurchase: pricingState.canPurchase }),
 }));
+
+const pricingState = vi.hoisted(() => ({ canPurchase: true }));
 
 const startCheckoutMock = vi.fn();
 const trackMock = vi.hoisted(() => vi.fn());
@@ -61,6 +63,7 @@ const DEFAULT_PRESETS = [
 
 describe("CreditTopupDialog", () => {
   beforeEach(() => {
+    pricingState.canPurchase = true;
     startCheckoutMock.mockReset();
     trackMock.mockReset();
     presetsState = DEFAULT_PRESETS;
@@ -68,6 +71,14 @@ describe("CreditTopupDialog", () => {
     isStartingCheckoutState = false;
   });
 
+  it("blocks ineligible manual purchases", async () => {
+    pricingState.canPurchase = false;
+    render(<CreditTopupDialog open onOpenChange={vi.fn()} organizationId="org-1" source="chat_banner" />);
+    const button = screen.getByRole("button", { name: /Continue/ });
+    expect(button).toBeDisabled();
+    await userEvent.click(button);
+    expect(startCheckoutMock).not.toHaveBeenCalled();
+  });
   it("renders three preset chips with the correct labels", () => {
     render(
       <CreditTopupDialog

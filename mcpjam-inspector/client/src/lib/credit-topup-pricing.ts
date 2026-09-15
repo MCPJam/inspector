@@ -2,12 +2,12 @@ import type { CreditTopupPreset } from "@/hooks/useCreditTopup";
 /** The public package list is legacy-priced. Only a matching purchased bundle can reprice it. */
 export function priceTopupPreset(
   preset: CreditTopupPreset,
-  status: { catalogPlanId?: string } | undefined,
+  status: { catalogPlanId?: string; topUpEligible?: boolean } | undefined,
   entry:
-    | { catalogPlanId?: string; topUp?: { centsPerCredit: number } }
+    | { catalogPlanId?: string; topUp?: { centsPerCredit: number; eligible?: boolean } }
     | undefined,
 ): CreditTopupPreset | null {
-  if (!status || !entry) return null;
+  if (!status || !entry || status.topUpEligible === false || entry.topUp?.eligible === false) return null;
   if (!status.catalogPlanId && !entry.catalogPlanId) return preset;
   if (status.catalogPlanId !== entry.catalogPlanId || !entry.topUp) return null;
   const credits = Number(

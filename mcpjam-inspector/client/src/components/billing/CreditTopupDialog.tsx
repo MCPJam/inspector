@@ -122,7 +122,7 @@ export function CreditTopupDialog({
   };
 
   const handleConfirm = async () => {
-    if (!selectedPreset || !organizationId) return;
+    if (!selectedPreset || !organizationId || !quotePreset.canPurchase) return;
     try {
       await startCheckout({
         organizationId,
@@ -205,7 +205,7 @@ export function CreditTopupDialog({
           <Button
             type="button"
             onClick={handleConfirm}
-            disabled={!selectedPreset || !organizationId || isStartingCheckout}
+            disabled={!selectedPreset || !organizationId || !quotePreset.canPurchase || isStartingCheckout}
           >
             {isStartingCheckout
               ? "Redirecting…"

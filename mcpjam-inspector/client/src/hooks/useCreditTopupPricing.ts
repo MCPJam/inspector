@@ -22,10 +22,14 @@ export function useCreditTopupPricing(
   const catalog = useQuery("billing:getPlanCatalog" as any, args) as
     | PlanCatalog
     | undefined;
-  return (preset: CreditTopupPreset) =>
+  const quotePreset = (preset: CreditTopupPreset) =>
     priceTopupPreset(
       preset,
       status,
       status ? catalog?.plans[status.effectivePlan] : undefined,
     );
+  const entry = status ? catalog?.plans[status.effectivePlan] : undefined;
+  return Object.assign(quotePreset, {
+    canPurchase: !!status && !!entry && status.topUpEligible !== false && entry.topUp?.eligible !== false,
+  });
 }
