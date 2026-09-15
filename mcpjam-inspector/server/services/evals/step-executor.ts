@@ -566,7 +566,11 @@ export async function executeSteps(args: {
       state,
       steps,
       sIdx + 1,
-      `widget follow-up turn errored (step ${sIdx}): ${failed.iterationError}`,
+      // A cancelled follow-up has NO error, so the errored wording would
+      // interpolate `undefined` into the reason every skipped step carries.
+      failed.cancelled
+        ? `widget follow-up turn cancelled (step ${sIdx})`
+        : `widget follow-up turn errored (step ${sIdx}): ${failed.iterationError}`,
     );
     emitSkipped(sIdx + 1);
     // The SAME shape the prompt-step failure path returns. A follow-up turn
@@ -575,6 +579,14 @@ export async function executeSteps(args: {
     // turn the model happened to fail.
     return {
       state,
+      // Carried across THIS boundary too. Making `drainAndDriveFollowUps`
+      // return on a cancelled outcome only moved the drop one frame up: a
+      // cancellation has no `iterationError`, so a result built solely from
+      // that field told the callers nothing, and execution continued past a
+      // follow-up the engine had already stopped. The runners recovered only
+      // when their separate abort signal happened to be set — which is the
+      // second-source-of-truth fragility this change set out to remove.
+      ...(failed.cancelled ? { cancelled: true } : {}),
       ...(failed.timeout ? { timeout: failed.timeout } : {}),
       iterationError: failed.iterationError,
       ...(failed.iterationErrorDetails

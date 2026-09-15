@@ -1244,6 +1244,22 @@ async function runJourneyFanOut(
           // run-stop (`sessionSignal.aborted`).
           const abortedBySpendCap =
             spendCapTripped && outcome === "failed" && sessionSignal.aborted;
+          // The run clock is the same kind of abort artifact as the spend cap,
+          // and needs the same reclassification here rather than only at the
+          // run-level finalize.
+          //
+          // `runDeadline` aborts `sessionSignal`, the in-flight session unwinds
+          // and returns `outcome: "failed"`, and `terminalForOutcome` maps that
+          // to a generic `session_failed` BEFORE `reportAttempt` writes it. The
+          // finalizer added alongside this can only reach attempts that are
+          // still `pending` or `running` — it cannot rewrite one that already
+          // reached a terminal. So without this arm, the very sessions the run
+          // budget stopped are the ones recorded as ordinary failures, and a
+          // run that ran out of clock looks like a run whose sessions broke.
+          const abortedByRunDeadline =
+            outcome === "failed" &&
+            sessionSignal.aborted &&
+            runDeadline.firedClock() === "run";
           const terminal = abortedBySpendCap
             ? {
                 status: "rate_limited" as SwarmAttemptStatus,
@@ -1257,7 +1273,17 @@ async function runJourneyFanOut(
                     }
                   : {}),
               }
-            : terminalForOutcome(outcome, errorMessage, errorReason);
+            : abortedByRunDeadline
+              ? {
+                  status: "failed" as SwarmAttemptStatus,
+                  errorCode: "run_timeout",
+                  errorMessage:
+                    `Run exceeded its ${budgets.runTimeoutMs}ms budget`.slice(
+                      0,
+                      MAX_ATTEMPT_ERROR_CHARS,
+                    ),
+                }
+              : terminalForOutcome(outcome, errorMessage, errorReason);
           emit({
             type: "attempt_status",
             status: terminal.status,
