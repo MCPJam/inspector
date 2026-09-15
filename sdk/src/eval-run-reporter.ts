@@ -35,6 +35,7 @@ import {
   resolveServerNames,
   resolveServerReplayConfigs,
 } from "./server-replay-configs.js";
+import { writeGithubActionReceipt } from "./github-action-receipt.js";
 import {
   promptsToEvalResult,
   runToEvalResults,
@@ -614,6 +615,7 @@ class EvalRunReporterImpl implements EvalRunReporter {
           this.input.runEvaluations
         );
       const reported = attachReportingWarnings(this.runtimeConfig, result);
+      await writeGithubActionReceipt(this.runtimeConfig, this.input, reported);
       printRunUrl(this.runtimeConfig, reported);
       this.completedResult = reported;
       this.finalized = true;

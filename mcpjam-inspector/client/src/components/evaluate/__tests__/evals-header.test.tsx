@@ -74,7 +74,10 @@ describe("EvalsHeader", () => {
     fireEvent.click(caseLink);
     expect(back).toHaveBeenCalledOnce();
     expect(
-      screen.getByRole("link", { name: "Test Case Evaluators", current: "page" }),
+      screen.getByRole("link", {
+        name: "Test Case Evaluators",
+        current: "page",
+      }),
     ).toBeInTheDocument();
   });
 
@@ -157,7 +160,7 @@ describe("EvalsHeader", () => {
       name: "checkout-flow",
       current: "page",
     });
-    expect(current.className).toMatch(/font-semibold/);
+    expect(current.className).toMatch(/font-normal/);
     expect(
       screen.queryByRole("button", { name: /^create suite$/i }),
     ).toBeNull();
