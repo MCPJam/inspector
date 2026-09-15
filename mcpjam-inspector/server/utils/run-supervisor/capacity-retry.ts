@@ -38,6 +38,7 @@
 import {
   abortableSleep,
   backoffDelayMs,
+  defaultJitter,
   noJitter,
   type Jitter,
 } from "./backoff.js";
@@ -124,6 +125,36 @@ export const PLAYGROUND_CAPACITY_POLICY = {
   minDelayMs: 30_000,
   totalBudgetMs: 10 * 60_000,
   attemptTimeoutMs: 30_000,
+} as const satisfies CapacityRetryBudget;
+
+/**
+ * Eval-run sandbox capacity.
+ *
+ * Deliberately NOT the Playground numbers, and the differences are the whole
+ * reason this is a second constant rather than a shared one:
+ *
+ *   - **Jitter is ON.** A suite launches its iterations together, so a full
+ *     pool would otherwise be re-polled by every one of them on the same tick
+ *     — the thundering herd the Playground's single waiting user cannot
+ *     produce.
+ *   - **Two minutes, not ten.** This wait is spent INSIDE the iteration's own
+ *     clock (10 minutes by default). A ten-minute capacity wait would eat the
+ *     entire iteration and leave nothing for the work it was waiting to do.
+ *   - **Attempts are capped.** With a wall clock and jitter both in play, a
+ *     try cap is what keeps the worst case legible.
+ *
+ * The floor stays 15s: a queue that is full is not going to clear in under a
+ * second, and re-polling it that fast only adds load to the thing already
+ * short of capacity.
+ */
+export const EVAL_SANDBOX_CAPACITY_POLICY = {
+  maxAttempts: 4,
+  baseDelayMs: 15_000,
+  maxDelayMs: 60_000,
+  minDelayMs: 15_000,
+  totalBudgetMs: 2 * 60_000,
+  attemptTimeoutMs: 30_000,
+  jitter: defaultJitter,
 } as const satisfies CapacityRetryBudget;
 
 /**

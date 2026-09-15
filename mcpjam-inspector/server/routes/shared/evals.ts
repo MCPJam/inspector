@@ -38,6 +38,7 @@ import {
   resolveOpenAiCompatForHostConfig,
 } from "@mcpjam/sdk/host-config/internal";
 import {
+  defaultEvalExecutionBudgets,
   resolveSteps,
   runEvalSuiteWithAiSdk,
   streamTestCase,
@@ -3670,6 +3671,10 @@ export async function streamEvalTestCaseWithManager(
       try {
         const outcomes = await streamTestCase({
           test,
+          // A quick run has no launch response to carry frozen budgets, so it
+          // takes the platform defaults — resolved through the real resolver,
+          // not hand-written, so it matches what a launch would freeze.
+          budgets: defaultEvalExecutionBudgets(),
           tools,
           selectedServers: resolvedServerIds,
           mcpClientManager: clientManager,

@@ -163,6 +163,19 @@ export interface StepEngineOutcome {
   iterationError?: string;
   iterationErrorDetails?: string;
   /**
+   * This step's engine reported that the turn was CANCELLED — aborted from
+   * outside rather than finished, well or badly.
+   *
+   * Carried across the bridge because it is not an error and not a result:
+   * without it a cancelled turn arrives as an empty delta, indistinguishable
+   * from a turn that simply produced nothing, and the executor marches on to
+   * the next step of a run somebody already stopped. Cancellation used to
+   * survive only because the iteration runner separately re-read the run's
+   * abort signal — true in production, but a second source of truth for a
+   * fact this outcome already knows.
+   */
+  cancelled?: boolean;
+  /**
    * WHICH LAYER produced `iterationError`, reported by the catch site that
    * raised it rather than inferred from its text.
    *
@@ -233,6 +246,8 @@ export interface StepExecutorResult {
   errorSource?: "model" | "setup";
   errorCode?: string;
   errorHttpStatus?: number;
+  /** A step's engine reported cancellation — see `StepEngineOutcome`. */
+  cancelled?: boolean;
   /** True when `iterationError` is a setup (not assertion) failure. */
   setupFailure: boolean;
 }
@@ -581,6 +596,9 @@ export async function executeSteps(args: {
       emitStatus(stepIndex, "running");
       const outcome = await handlers.onPrompt({ step, stepIndex, turnOrdinal });
       applyOutcome(state, outcome, turnOrdinal);
+      // Before the error check: a cancelled turn has no error to report, and
+      // continuing to the next step of a stopped run is the thing to avoid.
+      if (outcome.cancelled) return { state, cancelled: true, setupFailure: false };
       if (outcome.iterationError) {
         emitStatus(stepIndex, "fail");
         recordSkippedSteps(
@@ -623,6 +641,7 @@ export async function executeSteps(args: {
         turnOrdinal,
       });
       applyOutcome(state, outcome, turnOrdinal);
+      if (outcome.cancelled) return { state, cancelled: true, setupFailure: false };
       if (outcome.iterationError) {
         emitStatus(stepIndex, "fail");
         recordSkippedSteps(

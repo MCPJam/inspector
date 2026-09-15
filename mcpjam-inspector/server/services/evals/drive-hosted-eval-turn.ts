@@ -35,6 +35,10 @@ import type { EvalToolChoice } from "@/shared/tool-choice";
 import type { ScriptedWidgetCheck } from "@/shared/scripted-steps";
 import { logger } from "../../utils/logger";
 import {
+  withDeadline,
+  type DeadlineHandle,
+} from "../../utils/run-supervisor/deadline.js";
+import {
   reconcileTurnEvidence,
   selectGradedToolCalls,
   type TurnEvidenceResult,
@@ -319,6 +323,12 @@ export interface DriveHostedEvalTurnParams {
   extraHeaders?: Record<string, string>;
   toolChoice: EvalToolChoice | undefined;
   abortSignal: AbortSignal | undefined;
+  /**
+   * This turn's slice of the run's frozen budget
+   * (`ResolvedExecutionBudgets.turnTimeoutMs`). Bounds ONE model call; the
+   * iteration's own clock still bounds the sum of them.
+   */
+  turnTimeoutMs: number;
   maxSteps: number;
   runStartedAt: number;
   isAborted: () => boolean;
@@ -475,6 +485,7 @@ export async function driveHostedEvalTurn(
     acc,
     isAborted,
     abortSignal,
+    turnTimeoutMs,
   } = params;
   const logSuffix = params.logSuffix ?? "";
 
@@ -538,6 +549,58 @@ export async function driveHostedEvalTurn(
   // mapper can always call `sinks.onTurnFailure?.()` safely.
   let sinks: HostedEvalTurnSinks = {};
 
+  /**
+   * This turn's clock. Assigned only just before the engine call, so the turn
+   * budget does not start running during the pre-turn setup (Chromium widget
+   * dismissal and friends) that precedes it.
+   *
+   * Declared HERE rather than there because `mapThrownTurnError` below reads
+   * it, and the pre-turn setup calls that mapper — with a `const` beside the
+   * engine call, a setup throw hit the temporal dead zone and raised a
+   * `ReferenceError` in place of the outcome it was supposed to map.
+   */
+  let turnDeadline: DeadlineHandle | undefined;
+  /**
+   * True once THIS turn's bound tripped — not the run's, not the user's, and
+   * never before the clock is armed.
+   */
+  const turnTimedOut = () => turnDeadline?.firedClock() === "turn";
+  /**
+   * Was this turn cancelled — as opposed to having run out of its own clock?
+   *
+   * Reads the COMPOSED signal as well as the caller's, because the composed
+   * one is what the engine actually observed. The two agree whenever the
+   * caller's fires (composition forwards it), but the engine can also be
+   * handed an abort that never reached the caller's handle, and a turn the
+   * engine saw cancelled is cancelled whatever the parent says.
+   *
+   * Only meaningful AFTER `turnTimedOut()` has been ruled out: the turn clock
+   * aborts this same signal.
+   */
+  const cancelledMidTurn = () =>
+    isAborted() || turnDeadline?.signal.aborted === true;
+  const turnTimeoutFailure = (): HostedEvalTurnOutcome => {
+    acc.capturedSpans.push(...traceCtx.recordedSpans);
+    const failure = {
+      iterationError: truncateError(
+        `Turn exceeded its ${turnTimeoutMs}ms budget (elapsed ${turnDeadline?.elapsedMs() ?? turnTimeoutMs}ms)`
+      ),
+    };
+    logger.error(
+      `[evals] backend iteration${logSuffix} turn exceeded its ${turnTimeoutMs}ms budget`
+    );
+    sinks.onTurnFailure?.(failure);
+    // `failed`, never `cancelled`. A turn that ran out of clock produced a
+    // real result — a failure — and the iteration still deserves its verdict.
+    // Reporting it as cancellation would discard the turn and leave a budget
+    // cut looking like a run that never happened.
+    return {
+      kind: "failed" as const,
+      ...failure,
+      errorSource: "model" as const,
+    };
+  };
+
   // Shared throw → outcome mapping for the pre-turn setup AND the engine
   // call. Cancellation: AbortError can surface either as a thrown exception
   // (fetch aborted mid-flight) or as the engine's internal
@@ -554,8 +617,13 @@ export async function driveHostedEvalTurn(
     error: unknown,
     failedStage: string
   ): HostedEvalTurnOutcome => {
+    // Ahead of the cancellation arm, and that order is the whole point: a
+    // turn-budget abort reaches here as an AbortError on the same composed
+    // signal a user cancel does. `firedClock()` reports only THIS handle's own
+    // clock, which is the only thing that tells the two apart.
+    if (turnTimedOut()) return turnTimeoutFailure();
     if (
-      isAborted() ||
+      cancelledMidTurn() ||
       (error instanceof Error && error.name === "AbortError")
     ) {
       logger.debug(
@@ -652,6 +720,13 @@ export async function driveHostedEvalTurn(
     ...(params.extraBodyFields ?? {}),
     ...(params.toolChoice ? { toolChoice: params.toolChoice } : {}),
   };
+
+  // This turn's own clock, nested under the iteration's. `withDeadline`
+  // COMPOSES rather than replaces: the engine still sees a single signal and
+  // it fires on whichever bound trips first. Without it, one wedged hosted
+  // turn holds the iteration until the ITERATION's budget expires — the whole
+  // remaining allowance spent on a turn that was never coming back.
+  turnDeadline = withDeadline(abortSignal, turnTimeoutMs, "turn");
 
   let turnResult: Awaited<ReturnType<typeof runAssistantTurn>>;
   try {
@@ -770,7 +845,7 @@ export async function driveHostedEvalTurn(
       endpointPath: params.endpointPath,
       extraBodyFields: mergedExtraBodyFields,
       ...(params.extraHeaders ? { extraHeaders: params.extraHeaders } : {}),
-      ...(abortSignal ? { abortSignal } : {}),
+      abortSignal: turnDeadline.signal,
       maxSteps: params.maxSteps,
       progressivePlan: prepared.progressivePlan,
       discoveryState: prepared.discoveryState,
@@ -810,14 +885,23 @@ export async function driveHostedEvalTurn(
     });
   } catch (error) {
     return mapThrownTurnError(error, "runAssistantTurn");
+  } finally {
+    turnDeadline?.dispose();
   }
+
+
+  // The engine's SILENT path: it catches AbortError, omits the `turnTrace` and
+  // returns normally, so a blown turn budget arrives here looking exactly like
+  // a cancel. Same discrimination as in `mapThrownTurnError`, and the same
+  // reason it comes first.
+  if (turnTimedOut()) return turnTimeoutFailure();
 
   // Cancellation that fired DURING `runAssistantTurn` without surfacing as a
   // throw: the engine catches AbortError, sets its internal `aborted` flag,
   // omits the `turnTrace`, and returns normally. Without this check we'd
   // fall through to the silent-cycle-failure branch below and record an
   // aborted run as a verdict failure.
-  if (isAborted()) {
+  if (cancelledMidTurn()) {
     logger.debug(
       `[evals] backend iteration${logSuffix} aborted mid-turn; skipping record`
     );

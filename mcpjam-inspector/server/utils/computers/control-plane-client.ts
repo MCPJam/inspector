@@ -18,6 +18,7 @@
 import { logger } from "../logger.js";
 import { type ExecutionScope } from "../execution-scope.js";
 import {
+  EVAL_SANDBOX_CAPACITY_POLICY,
   PLAYGROUND_CAPACITY_POLICY,
   withCapacityRetry,
 } from "../run-supervisor/capacity-retry.js";
@@ -242,23 +243,90 @@ export interface EvalSandbox {
  *       is written for a human: surface it, do not retry.
  *   503 — at capacity; `resource` says which budget. Retryable with backoff.
  */
+/**
+ * Provision the sandbox for ONE eval iteration.
+ *
+ * Retries `503 at_capacity` rather than failing the iteration on it. A full
+ * pool is a queue, not a verdict: before this, a suite that happened to launch
+ * while the pool was saturated recorded its iterations as genuine failures,
+ * and a capacity blip read as a quality regression on the run's chart.
+ *
+ * The LOOP is `withCapacityRetry`, shared with the Playground path; the POLICY
+ * is {@link EVAL_SANDBOX_CAPACITY_POLICY}, which is deliberately not the
+ * Playground's — see that constant for why a suite needs jitter and a much
+ * shorter ceiling than one waiting user does.
+ *
+ * Every other failure (409, auth, a malformed body) is returned untouched on
+ * the first attempt: only capacity is worth waiting on.
+ */
 export async function provisionEvalSandbox(args: {
   bearer: string;
   runId: string;
   iterationId?: string;
   runtimeKind?: RuntimeKind;
   signal?: AbortSignal;
+  /**
+   * Shorter aggregate wait than the policy's default. The caller knows what is
+   * LEFT of the iteration's clock; this function only knows the policy, and a
+   * capacity wait that outlives the iteration it is blocking is pure waste.
+   */
+  timeoutMs?: number;
+  onWait?: (info: { delayMs: number; resource?: string }) => void;
 }): Promise<ControlPlaneResult<EvalSandbox>> {
-  return postJson<EvalSandbox>(
-    "/evals/sandbox/provision",
-    bearerHeader(args.bearer),
+  type Result = ControlPlaneResult<EvalSandbox>;
+  const atCapacity = (result: Result): boolean =>
+    !result.ok && result.status === 503 && result.code === "at_capacity";
+
+  const outcome = await withCapacityRetry<Result>(
+    // The attempt signal, not `args.signal`: `postJson` sets no timeout of its
+    // own, so a control plane that accepts the connection and then stalls must
+    // cost ONE attempt rather than the whole budget.
+    (_attempt, signal) =>
+      postJson<EvalSandbox>(
+        "/evals/sandbox/provision",
+        bearerHeader(args.bearer),
+        {
+          runId: args.runId,
+          ...(args.iterationId ? { iterationId: args.iterationId } : {}),
+          ...(args.runtimeKind ? { runtimeKind: args.runtimeKind } : {}),
+        },
+        signal,
+      ),
     {
-      runId: args.runId,
-      ...(args.iterationId ? { iterationId: args.iterationId } : {}),
-      ...(args.runtimeKind ? { runtimeKind: args.runtimeKind } : {}),
+      ...EVAL_SANDBOX_CAPACITY_POLICY,
+      totalBudgetMs:
+        args.timeoutMs ?? EVAL_SANDBOX_CAPACITY_POLICY.totalBudgetMs,
+      shouldRetry: atCapacity,
+      retryAfterMsOf: (result) =>
+        !result.ok && typeof result.retryAfterMs === "number"
+          ? result.retryAfterMs
+          : undefined,
+      ...(args.signal ? { signal: args.signal } : {}),
+      onWait: ({ delayMs, result }) => {
+        const resource =
+          result && !result.ok && typeof result.resource === "string"
+            ? result.resource
+            : undefined;
+        args.onWait?.({ delayMs, ...(resource ? { resource } : {}) });
+      },
     },
-    args.signal,
   );
+
+  if (outcome.kind === "settled") return outcome.result;
+  // Out of attempts or out of clock. The LAST result is returned when there is
+  // one, so the caller sees the control plane's own words (and its `resource`)
+  // rather than a message this function invented about a failure it only
+  // relayed.
+  if (outcome.lastResult) return outcome.lastResult;
+  if (outcome.reason === "aborted") {
+    return { ok: false, status: 499, error: "cancelled" };
+  }
+  return {
+    ok: false,
+    status: 503,
+    error: "Eval sandbox capacity did not become available in time",
+    code: "at_capacity",
+  };
 }
 
 export interface ResolvedEvalAttachment {

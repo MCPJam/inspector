@@ -64,7 +64,7 @@ export function buildLocalStepHandlers(
     const totalBefore = acc.accumulatedUsage.totalTokens ?? 0;
     const errorBefore = acc.iterationError;
 
-    await driveLocalEvalTurn({
+    const outcome = await driveLocalEvalTurn({
       ...driverParams,
       promptIndex: turnOrdinal,
       promptTurn,
@@ -92,6 +92,9 @@ export function buildLocalStepHandlers(
       ...(toolCalls.length ? { toolCalls } : {}),
       ...(toolErrors.length ? { toolErrors } : {}),
       usage,
+      // Optional-chained: `driveLocalEvalTurn` always returns an outcome, but
+      // this bridge has no business crashing over one it did not get.
+      ...(outcome?.kind === "cancelled" ? { cancelled: true } : {}),
       ...(newError
         ? {
             iterationError: newError,
@@ -124,7 +127,7 @@ export function buildLocalStepHandlers(
     const totalBefore = acc.accumulatedUsage.totalTokens ?? 0;
     const errorBefore = acc.iterationError;
 
-    await driveLocalEvalTurn({
+    const outcome = await driveLocalEvalTurn({
       ...driverParams,
       promptIndex: turnOrdinal,
       promptTurn,
@@ -153,6 +156,9 @@ export function buildLocalStepHandlers(
       ...(toolCalls.length ? { toolCalls } : {}),
       ...(toolErrors.length ? { toolErrors } : {}),
       usage,
+      // Optional-chained: `driveLocalEvalTurn` always returns an outcome, but
+      // this bridge has no business crashing over one it did not get.
+      ...(outcome?.kind === "cancelled" ? { cancelled: true } : {}),
       ...(newError
         ? {
             iterationError: newError,
@@ -254,6 +260,7 @@ export function buildHostedStepHandlers(
       ...(messages.length ? { messages } : {}),
       ...(toolCalls.length ? { toolCalls } : {}),
       usage,
+      ...(outcome.kind === "cancelled" ? { cancelled: true } : {}),
       ...(outcome.kind === "failed"
         ? {
             iterationError: outcome.iterationError,
@@ -319,6 +326,7 @@ export function buildHostedStepHandlers(
       ...(toolCalls.length ? { toolCalls } : {}),
       ...(toolErrors.length ? { toolErrors } : {}),
       usage,
+      ...(outcome.kind === "cancelled" ? { cancelled: true } : {}),
       ...(outcome.kind === "failed"
         ? {
             iterationError: outcome.iterationError,
