@@ -1,3 +1,4 @@
+import { composeAbortSignals } from "@mcpjam/sdk";
 import { logger } from "../../utils/logger.js";
 import { withDeadline } from "../../utils/run-supervisor/deadline.js";
 import {
@@ -265,23 +266,6 @@ export async function shutdownRunningJourneyRuns(
   ]);
 }
 
-function composeAbortSignals(
-  ...signals: Array<AbortSignal | undefined>
-): AbortSignal {
-  const controller = new AbortController();
-  for (const signal of signals) {
-    if (!signal) continue;
-    if (signal.aborted) {
-      controller.abort(signal.reason);
-      return controller.signal;
-    }
-    signal.addEventListener("abort", () => controller.abort(signal.reason), {
-      once: true,
-    });
-  }
-  return controller.signal;
-}
-
 /**
  * Register the run for graceful shutdown, execute the fan-out loop, and clear
  * the registry on completion. Fire-and-forget from the route (via
@@ -291,7 +275,10 @@ export async function startJourneyRun(
   opts: StartJourneyRunOptions,
 ): Promise<void> {
   const controller = new AbortController();
-  const composed = composeAbortSignals(opts.abortSignal, controller.signal);
+  const composed = composeAbortSignals([
+    ...(opts.abortSignal ? [opts.abortSignal] : []),
+    controller.signal,
+  ]);
   let resolveDone!: () => void;
   const done = new Promise<void>((resolve) => {
     resolveDone = resolve;
@@ -303,7 +290,7 @@ export async function startJourneyRun(
     hub,
   });
   try {
-    await runJourneyFanOut({ ...opts, abortSignal: composed, hub });
+    await runJourneyFanOut({ ...opts, abortSignal: composed.signal, hub });
   } finally {
     // Terminal multiplex event before unregistering so late SSE clients see it.
     hub.emit({
@@ -313,6 +300,7 @@ export async function startJourneyRun(
       chatSessionId: "",
       sessionIndex: -1,
     });
+    composed.dispose();
     runningJourneyRuns.delete(opts.runId);
     resolveDone();
   }
@@ -488,7 +476,11 @@ async function runJourneyFanOut(
   // and its spend.
   const runDeadline = withDeadline(abortSignal, budgets.runTimeoutMs, "run");
   const runStop = new AbortController();
-  const sessionSignal = composeAbortSignals(runDeadline.signal, runStop.signal);
+  const sessionSignals = composeAbortSignals([
+    runDeadline.signal,
+    runStop.signal,
+  ]);
+  const sessionSignal = sessionSignals.signal;
   // Set on an org spend-cap breach — halts scheduling across ALL hosts.
   let spendCapTripped = false;
   let spendCapMessage: string | undefined;
@@ -1620,6 +1612,7 @@ async function runJourneyFanOut(
     });
   } finally {
     clearInterval(heartbeat);
+    sessionSignals.dispose();
     logEvent("run.finish", {
       runId,
       targetCount: hosts.length,

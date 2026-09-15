@@ -157,6 +157,16 @@ export const EVAL_SANDBOX_CAPACITY_POLICY = {
   jitter: defaultJitter,
 } as const satisfies CapacityRetryBudget;
 
+/** Swarm provisioning: preserve the five-attempt, status 503/0 policy. */
+export const SWARM_SANDBOX_CAPACITY_POLICY = {
+  shouldRetry: (result: { status: number }) => result.status === 503 || result.status === 0,
+  maxAttempts: 5,
+  baseDelayMs: 4_000,
+  maxDelayMs: 45_000,
+  attemptTimeoutMs: 30_000,
+  jitter: defaultJitter,
+} as const;
+
 /**
  * Call `op` until it settles, the policy stops retrying, or a bound is hit.
  *
