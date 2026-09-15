@@ -33,7 +33,19 @@ vi.mock("@/components/hosts/HostPicker", () => ({
   ),
 }));
 vi.mock("@/components/hosts/server-picker", () => ({
-  ServerPicker: () => <div />,
+  ServerPicker: ({
+    offerClear,
+    onClearSelection,
+  }: {
+    offerClear?: boolean;
+    onClearSelection?: () => void;
+  }) => (
+    <div
+      data-testid="server-picker"
+      data-offer-clear={String(offerClear ?? true)}
+      data-can-clear={String(Boolean(onClearSelection))}
+    />
+  ),
 }));
 vi.mock("../ProjectEnvironmentSkillsPicker", () => ({
   ProjectEnvironmentSkillsPicker: () => <div />,
@@ -89,6 +101,24 @@ describe("ProjectEnvironmentEditor — initialDraft", () => {
       name: "Claude Code",
       hostId: "host_1",
     });
+  });
+
+  it("keeps its own Clear, and still lets the picker report a deleted row", () => {
+    // This editor paints a Clear button beside the trigger, so the picker's
+    // own X would be a second one; the callback still goes down, or deleting
+    // the selected group in the picker leaves the draft pointing at nothing.
+    render(
+      <ProjectEnvironmentEditor
+        projectId="proj_1"
+        environment={null}
+        canManage
+        initialDraft={{ name: "Claude Code", hostId: "host_1" }}
+      />,
+    );
+
+    const picker = screen.getByTestId("server-picker");
+    expect(picker).toHaveAttribute("data-offer-clear", "false");
+    expect(picker).toHaveAttribute("data-can-clear", "true");
   });
 
   it("is ignored in edit mode — the row wins", () => {

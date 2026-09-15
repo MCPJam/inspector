@@ -401,6 +401,13 @@ export function ProjectEnvironmentEditor({
               setDraft((d) => ({ ...d, serverAttachmentId }))
             }
             disabled={readOnly}
+            // This editor paints its own Clear beside the trigger, so the
+            // picker's X would be a second one; the callback still goes down
+            // for the delete path.
+            onClearSelection={() =>
+              setDraft((d) => ({ ...d, serverAttachmentId: null }))
+            }
+            offerClear={false}
             emptyTriggerLabel="Client default · pick a server or group"
           />
           {draft.serverAttachmentId && !readOnly ? (

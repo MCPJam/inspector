@@ -960,6 +960,11 @@ function ConvertSessionDialogCoreInner({
               value={serverAttachmentId}
               onChange={setServerAttachmentId}
               disabled={isSubmitting}
+              // Required here (`newSuiteRequirementsMet`), so no X — but a
+              // delete inside the picker still has to reach this dialog, or it
+              // keeps an id pointing at a row that is gone.
+              onClearSelection={() => setServerAttachmentId(null)}
+              offerClear={false}
               variant="field"
               triggerId="promote-new-suite-server"
               // The dialog's scroll-lock blocks the wheel on portaled
