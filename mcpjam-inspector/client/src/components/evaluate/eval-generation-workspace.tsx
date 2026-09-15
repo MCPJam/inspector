@@ -48,14 +48,12 @@ export function EvalGenerationWorkspace({
     () => new Set(initialIds.current),
   );
   const [startError, setStartError] = useState<string>();
-  const [expectedCount] = useState(
-    () => {
-      const selected = config ?? loadGenerateConfig(suiteId);
-      // Show placeholders for the lower bound; the final count is model-selected.
-      if (selected.testSet) return selected.testSet === "quick" ? 5 : 20;
-      return totalCases(selected) || totalCases(DEFAULT_GENERATE_CONFIG);
-    },
-  );
+  const [expectedCount] = useState(() => {
+    const selected = config ?? loadGenerateConfig(suiteId);
+    // Show placeholders for the lower bound; the final count is model-selected.
+    if (selected.testSet) return selected.testSet === "quick" ? 5 : 20;
+    return totalCases(selected) || totalCases(DEFAULT_GENERATE_CONFIG);
+  });
   const start = () => {
     initialIds.current = new Set(generation?.drafts.map((draft) => draft.id));
     setVisibleIds(new Set(initialIds.current));
@@ -108,9 +106,18 @@ export function EvalGenerationWorkspace({
    * An empty list reads as "nothing was generated", but the usual way to
    * reach it is the opposite: every draft was saved or discarded, and the
    * list emptied as they went. Remember that a draft was here.
+   *
+   * Cleared when a run starts with nothing carried over: a retry that returns
+   * no cases at all is the "nothing was generated" case again, and a flag that
+   * only ever latched true reported the previous run's drafts as this one's.
    */
-  const sawDraft = useRef(false);
-  if (generation?.drafts.length) sawDraft.current = true;
+  const [sawDraft, setSawDraft] = useState(false);
+  const draftCount = generation?.drafts.length ?? 0;
+  const generationStatus = generation?.status;
+  useEffect(() => {
+    if (draftCount > 0) setSawDraft(true);
+    else if (generationStatus === "running") setSawDraft(false);
+  }, [draftCount, generationStatus]);
   const running = generation?.status === "running" || (!generation && !error);
   const revealing = Boolean(nextDraftId);
   const busy = running || revealing;
@@ -213,7 +220,7 @@ export function EvalGenerationWorkspace({
         {!busy && !error && !generation?.drafts.length && (
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">
-              {sawDraft.current
+              {sawDraft
                 ? "Every generated case has been reviewed."
                 : "No cases were generated."}
             </p>

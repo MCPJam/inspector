@@ -1171,11 +1171,6 @@ function EvaluateTabContent({
 
       if (failedDeletes.length > 0) {
         console.error("Failed to delete some test cases:", failedDeletes);
-        toast.error(
-          `Failed to delete ${failedDeletes.length} test case${
-            failedDeletes.length === 1 ? "" : "s"
-          }.`,
-        );
       }
 
       if (selectedSuiteId && selectedTestId && deletedIds.has(selectedTestId)) {
@@ -1186,6 +1181,18 @@ function EvaluateTabContent({
             view: "test-cases",
           },
           { replace: true },
+        );
+      }
+
+      // Resolving has to mean "every id is gone". Callers report the outcome
+      // — a success toast, closing the confirm, leaving the case editor — and
+      // `allSettled` swallowing the rejection told all of them the delete had
+      // worked while the case was still there.
+      if (failedDeletes.length > 0) {
+        throw new Error(
+          `Failed to delete ${failedDeletes.length} test case${
+            failedDeletes.length === 1 ? "" : "s"
+          }.`,
         );
       }
     },
