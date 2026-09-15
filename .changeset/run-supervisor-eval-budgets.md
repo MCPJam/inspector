@@ -1,5 +1,6 @@
 ---
 "@mcpjam/inspector": minor
+"@mcpjam/cli": patch
 ---
 
 Eval runs now execute under explicit, nested execution budgets — a clock per turn, per iteration, and per run — instead of two module-level constants.
@@ -20,3 +21,7 @@ Eval sandbox provisioning now waits out `503 at_capacity` instead of failing the
 The AI SDK's per-call retry count is now the run's `turnRetries` rather than an implicit default. The default is the same number, so an un-migrated caller is byte-identical.
 
 Budgets are resolved once and carried down frozen. Until the backend writes authored budgets into the run snapshot, every run resolves the platform defaults — the same code path, differing only in which rung each field came from.
+
+A run that previously exited 5 on an iteration timeout may now exit 0, 1, or 5 based on its verdict. The run header's legacy failed count excludes timed-out trials; this summary-count change ships in the backend, which has no changeset of its own. The eval run default cap moves from 20 to 30 minutes, and the turn default is 6 minutes. CLI run and gate waits are 35 minutes to allow grading headroom. `MCPJAM_EVAL_ISOLATED_ITERATION_TIMEOUT=0` restores the previous abort-the-run behavior for one release.
+
+The resolved runtime budget no longer advertises `toolCallTimeoutMs`: MCP request timeouts still come from the existing manager and host pins. The authored field and policy table remain reserved for a later runtime integration; old snapshots remain readable.
