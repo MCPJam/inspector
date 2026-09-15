@@ -127,13 +127,38 @@ function normalizeKey(key: string): string {
  * `proxy-authorization` and `x-api-key` were redacted as object fields but
  * published as quoted JSON in an error string. A second list is a second thing
  * to forget, so there is now only one.
+ *
+ * Exported for `redactCredentialHeaders` below, which the server probe uses on
+ * a path that has nothing to do with conformance reports — for the same reason
+ * the two lists became one.
  */
-function isSecretKeyName(raw: string): boolean {
+export function isSecretKeyName(raw: string): boolean {
   const normalized = normalizeKey(raw);
   if (SECRET_KEYS.has(normalized)) return true;
   // Suffix/substring shapes the explicit set cannot enumerate — vendor-prefixed
   // names like `x_vendor_access_token` or `mytoken`.
   return /(token|secret|password|apikey|signature|credential)/.test(normalized);
+}
+
+/**
+ * A header map safe to record, with the credential VALUES replaced.
+ *
+ * The names stay. "this request carried an Authorization header" is the whole
+ * diagnostic value of the record — it is how someone tells an authenticated
+ * attempt from an anonymous one — and the bearer string beside it carries none.
+ *
+ * Used by `server-probe` on every request it records. A probe result travels
+ * into a JSON response body, browser memory, HAR exports and support bundles,
+ * and a token that never had to leave the server should not be in any of them.
+ */
+export function redactCredentialHeaders(
+  headers: Record<string, string>
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [name, value] of Object.entries(headers)) {
+    out[name] = isSecretKeyName(name) ? REDACTED : value;
+  }
+  return out;
 }
 
 function looksSensitiveParam(name: string): boolean {

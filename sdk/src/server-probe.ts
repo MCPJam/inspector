@@ -9,6 +9,7 @@ import {
   isLoopbackOAuthUrl,
 } from "./oauth/ssrf-guard.js";
 import { resolveRegistrationStrategies } from "./oauth/authorization-plan.js";
+import { redactCredentialHeaders } from "./conformance-redaction.js";
 import {
   type RetryPolicy,
   isRetryableTransientError,
@@ -403,10 +404,19 @@ async function performRequest(
   const startedAt = Date.now();
   const { signal, cleanup, didTimeout } = withTimeoutSignal(timeoutMs);
 
+  // The attempt is BOTH the request to send and the record of it, and the
+  // record ships to the caller inside `transport.attempts[]`. Split the two
+  // here, at the one function that dials: the real headers become a local, and
+  // what stays on the attempt has its credential values replaced. Done before
+  // the fetch rather than after, so an attempt whose request throws is already
+  // safe, and so no later reader of the attempt can find a live token to copy.
+  const outgoingHeaders = attempt.request.headers;
+  attempt.request.headers = redactCredentialHeaders(outgoingHeaders);
+
   try {
     const response = await fetchFn(attempt.request.url, {
       method: attempt.request.method,
-      headers: attempt.request.headers,
+      headers: outgoingHeaders,
       body:
         attempt.request.body === undefined
           ? undefined
@@ -1001,5 +1011,15 @@ export async function probeMcpServer(
     operation: () => probeMcpServerOnce(config, attempts),
     shouldRetryResult: (result) => result.retryable,
   });
+  // `performRequest` already scrubbed every attempt it dialled. This is for the
+  // ones it did not: an attempt is pushed onto the array before its request is
+  // made (the resource-metadata entry is recorded first so a refused
+  // destination still shows up as an attempt), so a run that stops between the
+  // push and the dial would otherwise return headers nothing ever scrubbed.
+  // One sweep at the single exit costs nothing and does not depend on every
+  // future code path reaching the dial.
+  for (const attempt of attempts) {
+    attempt.request.headers = redactCredentialHeaders(attempt.request.headers);
+  }
   return outcome.result;
 }
