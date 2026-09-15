@@ -188,31 +188,38 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   {
     key: "qualityGate",
     // The quality gate answers a DIFFERENT question from the pass criteria: not
-    // "did this run meet the bar" but "did it regress against a baseline run".
-    // It has its own conditions, its own baseline and its own audit
-    // requirement, and folding it under the criterion row is what made one
-    // heading mean both.
+    // "did this run meet the bar" but "should this run block a merge". It has
+    // its own conditions and its own audit requirement, and folding it under
+    // the criterion row is what made one heading mean both.
+    //
+    // Baseline comparison is no longer edited here, so the row holds only the
+    // condition that never needed a baseline. The comparison fields are still
+    // on the API — see `SETTINGS_PAGE_HIDDEN_KEYS`.
     label: "Quality gate",
     excluded:
       "A presentation grouping of the settings.qualityGate conditions, each of which is reachable on its own.",
   },
   {
     key: "qualityGateBaseline",
+    settingsPage: "hidden",
     label: "Baseline",
     api: "settings.qualityGate.baseline",
   },
   {
     key: "qualityGateAllowedDrop",
+    settingsPage: "hidden",
     label: "Allowed drop",
     api: "settings.qualityGate.maximumPassRateDrop",
   },
   {
     key: "qualityGateNoDeterministicRegressions",
+    settingsPage: "hidden",
     label: "Deterministic regressions",
     api: "settings.qualityGate.noDeterministicRegressions",
   },
   {
     key: "qualityGateMaximumP95LatencyIncreaseMs",
+    settingsPage: "hidden",
     label: "p95 latency increase",
     api: "settings.qualityGate.maximumP95LatencyIncreaseMs",
   },
@@ -264,6 +271,15 @@ export type EvalSuiteSettingKey =
  * carrying it. Adding a key here is now a deliberate test change.
  */
 export const SETTINGS_PAGE_HIDDEN_KEYS = {
+  // Baseline comparison was removed from the settings page. The fields are
+  // unchanged on the API and a run still enforces them, so the three
+  // conditions that need a baseline are hidden with it rather than left as
+  // controls nothing could satisfy. A suite that carries one is shown
+  // read-only in the quality-gate section.
+  qualityGateBaseline: "API and CLI only; not edited on the settings page",
+  qualityGateAllowedDrop: "API and CLI only; needs a baseline",
+  qualityGateNoDeterministicRegressions: "API and CLI only; needs a baseline",
+  qualityGateMaximumP95LatencyIncreaseMs: "API and CLI only; needs a baseline",
   schedule: "Triggers group, gated on the scheduled-evals feature flag",
   githubChecks: "Organization settings → GitHub Checks, per repository",
   deleteSuite: "Suite overview header",
