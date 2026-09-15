@@ -97,6 +97,7 @@ import {
   evalRunServerFactsSchema,
   evalStageAnalyticsSchema,
   evalSuiteFileCaseImportSchema,
+  evalExecutionBudgetsSchema,
   IMPORT_MAPPING_STATUSES,
   isEvalVerdictPolicyV2,
   opaqueIdSchema,
@@ -3126,6 +3127,20 @@ function caseResource(c: Context, doc: CaseDoc, status = 200) {
  * vocabulary-2 twin can be built from it (see `eval-case-vocabulary-2.ts`).
  */
 const suiteSettingsShape = {
+  /**
+   * Authored execution budgets — the clocks this suite's runs are bounded by.
+   *
+   * The canonical schema from `@mcpjam/sdk/contract` rather than a restatement
+   * of it: its `max` on each field IS the platform ceiling, so a value the
+   * platform could never run is refused by parsing, before the ladder ever
+   * sees it. A second copy here would be a second place for the ceilings to
+   * drift from §3.2.
+   *
+   * `null` clears back to the platform defaults, matching `minimumIterations`
+   * below and the backend's own `executionBudgets: null` contract — an omitted
+   * field leaves the stored value alone, which is not the same thing.
+   */
+  executionBudgets: evalExecutionBudgetsSchema.nullable().optional(),
   minimumAccuracy: z.number().min(0).max(100).optional(),
   // Suite-level FLOOR on per-case iterations: every case runs at least
   // this many times (`max(case.iterations, minimumIterations)`). `null`

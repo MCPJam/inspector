@@ -43,6 +43,11 @@ const BASE: SuiteSettingsValues = {
   verdictPolicyVersion: undefined,
   verdictPolicyDefaults: undefined,
   gatePolicy: undefined,
+  turnTimeoutMs: undefined,
+  toolCallTimeoutMs: undefined,
+  iterationTimeoutMs: undefined,
+  runTimeoutMs: undefined,
+  turnRetries: undefined,
 };
 
 const SUITE_ID = "suite-a";
@@ -614,5 +619,88 @@ describe("describeChange — verdict policy defaults", () => {
       key: "gatePolicy",
       after: "None",
     });
+  });
+});
+
+describe("execution budgets save as one object", () => {
+  // The mutation REPLACES `executionBudgets`; it does not merge into it. So
+  // the interesting property is not "the edited clock is sent" but "the ones
+  // nobody touched are sent too" — the failure this pins is a save that
+  // silently clears four budgets because someone changed the fifth.
+  test("an edit to one clock resends the four beside it", () => {
+    const draft = edit(
+      draftOf({
+        turnTimeoutMs: 300_000,
+        toolCallTimeoutMs: 45_000,
+        iterationTimeoutMs: 900_000,
+        runTimeoutMs: 2_400_000,
+        turnRetries: 1,
+      }),
+      "turnRetries",
+      3,
+    );
+
+    expect(toUpdateArgs(draft, SUITE_ID).executionBudgets).toEqual({
+      turnTimeoutMs: 300_000,
+      toolCallTimeoutMs: 45_000,
+      iterationTimeoutMs: 900_000,
+      runTimeoutMs: 2_400_000,
+      turnRetries: 3,
+    });
+  });
+
+  test("clearing the last authored clock sends null, not omission", () => {
+    // `null` CLEARS back to the platform defaults, which is what emptying the
+    // field meant. Omitting the key would keep the budget just deleted.
+    const draft = edit(
+      draftOf({ runTimeoutMs: 2_400_000 }),
+      "runTimeoutMs",
+      undefined,
+    );
+    const args = toUpdateArgs(draft, SUITE_ID);
+
+    expect("executionBudgets" in args).toBe(true);
+    expect(args.executionBudgets).toBeNull();
+  });
+
+  test("an untouched suite sends no budgets at all", () => {
+    expect("executionBudgets" in toUpdateArgs(draftOf(), SUITE_ID)).toBe(false);
+  });
+
+  test("reads the stored object into one draft key per clock", () => {
+    const values = readSuiteSettingsValues({
+      name: "Checkout suite",
+      executionBudgets: { turnTimeoutMs: 300_000, turnRetries: 0 },
+    });
+
+    expect(values.turnTimeoutMs).toBe(300_000);
+    // Authored zero survives: `0` retries is a choice, and `?? undefined`
+    // anywhere on this path would turn it back into an inheritance.
+    expect(values.turnRetries).toBe(0);
+    expect(values.iterationTimeoutMs).toBeUndefined();
+  });
+
+  test("describes an un-authored clock as the default, not as a number", () => {
+    const before = { ...BASE };
+    const after = { ...BASE, turnTimeoutMs: 300_000 };
+
+    expect(describeChange("turnTimeoutMs", before, after)).toMatchObject({
+      label: "Per-turn timeout",
+      before: "Platform default",
+      after: "5 minutes",
+    });
+  });
+
+  test("describes each clock in the unit it was authored in", () => {
+    // 45s is not "0.75 minutes", and one retry is not "1 retries".
+    expect(
+      describeChange("toolCallTimeoutMs", BASE, {
+        ...BASE,
+        toolCallTimeoutMs: 45_000,
+      }).after,
+    ).toBe("45 seconds");
+    expect(
+      describeChange("turnRetries", BASE, { ...BASE, turnRetries: 1 }).after,
+    ).toBe("1 retry");
   });
 });

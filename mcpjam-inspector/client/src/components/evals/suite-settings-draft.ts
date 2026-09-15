@@ -92,6 +92,24 @@ export type SuiteSettingsValues = {
    * travels as `null` so the backend can distinguish omit from wipe.
    */
   gatePolicy: SuiteGatePolicyV1 | undefined;
+  /**
+   * AUTHORED execution budgets, one draft key per clock.
+   *
+   * Five keys rather than one object so a dirty badge names the clock that is
+   * actually dirty — the same reason `policy` and `iterations` were split. They
+   * are nonetheless SAVED as one object (see `toUpdateArgs`), because that is
+   * the shape the mutation takes.
+   *
+   * `undefined` means un-authored, which resolves to the platform default. It
+   * is not the same as a number that happens to equal the default: one is a
+   * choice and the other is an inheritance, and the settings surface shows
+   * them differently.
+   */
+  turnTimeoutMs: number | undefined;
+  toolCallTimeoutMs: number | undefined;
+  iterationTimeoutMs: number | undefined;
+  runTimeoutMs: number | undefined;
+  turnRetries: number | undefined;
 };
 
 /** The v2 defaults a case inherits. Fractions in [0,1], never percents. */
@@ -119,6 +137,11 @@ export const SUITE_SETTINGS_KEYS: readonly SuiteSettingsKey[] = [
   "verdictPolicyVersion",
   "verdictPolicyDefaults",
   "gatePolicy",
+  "turnTimeoutMs",
+  "toolCallTimeoutMs",
+  "iterationTimeoutMs",
+  "runTimeoutMs",
+  "turnRetries",
 ];
 
 export type SuiteSettingsDraft = {
@@ -195,6 +218,13 @@ export function readSuiteSettingsValues(suite: {
   verdictPolicyVersion?: 2;
   verdictPolicyDefaults?: SuiteVerdictPolicyDefaults;
   gatePolicy?: SuiteGatePolicyV1;
+  executionBudgets?: {
+    turnTimeoutMs?: number;
+    toolCallTimeoutMs?: number;
+    iterationTimeoutMs?: number;
+    runTimeoutMs?: number;
+    turnRetries?: number;
+  };
 }): SuiteSettingsValues {
   return {
     name: suite.name ?? "",
@@ -214,6 +244,14 @@ export function readSuiteSettingsValues(suite: {
     verdictPolicyVersion: suite.verdictPolicyVersion,
     verdictPolicyDefaults: suite.verdictPolicyDefaults,
     gatePolicy: normalizeDraftGatePolicy(suite.gatePolicy),
+    // Spread flat, deliberately: the stored object is optional and so is every
+    // field in it, so `?.` on each is the only reading that distinguishes "no
+    // budgets authored" from "budgets authored, this clock left to default".
+    turnTimeoutMs: suite.executionBudgets?.turnTimeoutMs,
+    toolCallTimeoutMs: suite.executionBudgets?.toolCallTimeoutMs,
+    iterationTimeoutMs: suite.executionBudgets?.iterationTimeoutMs,
+    runTimeoutMs: suite.executionBudgets?.runTimeoutMs,
+    turnRetries: suite.executionBudgets?.turnRetries,
   };
 }
 
@@ -483,9 +521,50 @@ export function toUpdateArgs(
         // NULL clears the stored policy. Omission would keep the old one.
         args.gatePolicy = value ?? null;
         break;
+      case "turnTimeoutMs":
+      case "toolCallTimeoutMs":
+      case "iterationTimeoutMs":
+      case "runTimeoutMs":
+      case "turnRetries":
+        // WHOLE-OBJECT, however few of the five are dirty. The mutation takes
+        // `executionBudgets` as one value, so sending only the edited clock
+        // would clear the other four — the stored object is replaced, not
+        // merged. Assembling from `draft.current` sends every authored clock
+        // whether or not it was touched this session.
+        //
+        // All five arms share this, and assigning the same object five times
+        // is deliberate rather than guarded: it is idempotent, and a guard
+        // would be one more thing to keep true.
+        //
+        // `null` when nothing is authored: that CLEARS back to the platform
+        // defaults, which is what an author who emptied every field meant.
+        // Omitting it would silently keep the budgets they just deleted.
+        args.executionBudgets = authoredExecutionBudgets(draft.current);
+        break;
     }
   }
   return args;
+}
+
+/**
+ * The five draft clocks as the object the mutation stores, or `null` when the
+ * author has left every one of them empty.
+ */
+function authoredExecutionBudgets(
+  values: SuiteSettingsValues,
+): Record<string, number> | null {
+  const authored: Record<string, number> = {};
+  if (values.turnTimeoutMs !== undefined)
+    authored.turnTimeoutMs = values.turnTimeoutMs;
+  if (values.toolCallTimeoutMs !== undefined)
+    authored.toolCallTimeoutMs = values.toolCallTimeoutMs;
+  if (values.iterationTimeoutMs !== undefined)
+    authored.iterationTimeoutMs = values.iterationTimeoutMs;
+  if (values.runTimeoutMs !== undefined)
+    authored.runTimeoutMs = values.runTimeoutMs;
+  if (values.turnRetries !== undefined)
+    authored.turnRetries = values.turnRetries;
+  return Object.keys(authored).length > 0 ? authored : null;
 }
 
 // ── Describing a change ─────────────────────────────────────────────────────
@@ -500,6 +579,39 @@ export type SuiteSettingsChange = {
   before: string;
   after: string;
 };
+
+/** One label per clock, shared by the ledger and revision history. */
+const EXECUTION_BUDGET_CHANGE_LABELS = {
+  turnTimeoutMs: "Per-turn timeout",
+  toolCallTimeoutMs: "Per-tool-call timeout",
+  iterationTimeoutMs: "Per-iteration timeout",
+  runTimeoutMs: "Whole-run timeout",
+  turnRetries: "Model call retries",
+} as const;
+
+/**
+ * A budget as a reader recognises it.
+ *
+ * "Platform default" rather than a number, because an un-authored clock IS the
+ * default and printing the number would claim somebody chose it. Durations
+ * render in the unit they were authored in — whole minutes stay minutes,
+ * anything else falls back to seconds — so a 45s tool budget does not read as
+ * "0.75 minutes".
+ */
+function describeBudgetValue(
+  key: keyof typeof EXECUTION_BUDGET_CHANGE_LABELS,
+  value: number | undefined,
+): string {
+  if (value === undefined) return "Platform default";
+  if (key === "turnRetries")
+    return `${value} ${value === 1 ? "retry" : "retries"}`;
+  if (value % 60_000 === 0) {
+    const minutes = value / 60_000;
+    return `${minutes} ${minutes === 1 ? "minute" : "minutes"}`;
+  }
+  const seconds = value / 1000;
+  return `${seconds} ${seconds === 1 ? "second" : "seconds"}`;
+}
 
 function describeMatchOptions(value: EvalMatchOptions | undefined): string {
   if (!value) return "Inherited";
@@ -617,6 +729,17 @@ export function describeChange(
         label: "Pass criteria and iterations",
         before: describePolicyDefaults(before.verdictPolicyDefaults),
         after: describePolicyDefaults(after.verdictPolicyDefaults),
+      };
+    case "turnTimeoutMs":
+    case "toolCallTimeoutMs":
+    case "iterationTimeoutMs":
+    case "runTimeoutMs":
+    case "turnRetries":
+      return {
+        key,
+        label: EXECUTION_BUDGET_CHANGE_LABELS[key],
+        before: describeBudgetValue(key, before[key]),
+        after: describeBudgetValue(key, after[key]),
       };
     case "gatePolicy":
       return {
