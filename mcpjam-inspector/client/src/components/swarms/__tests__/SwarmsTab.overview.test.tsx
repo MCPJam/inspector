@@ -17,10 +17,11 @@ import {
   SWARM_COLUMN_HEADER,
   filterAndSortSwarmWaves,
   groupRunsIntoSwarmWaves,
+  swarmWaveRunStateChipClass,
+  swarmWaveRunStateLabel,
   swarmWaveTitle,
   waveLiveProgress,
   waveRunState,
-  waveStatusDotClass,
 } from "../swarm-overview-panel";
 
 /**
@@ -443,12 +444,11 @@ describe("waveLiveProgress", () => {
   });
 });
 
-describe("waveStatusDotClass", () => {
-  // The dot ran its own scan of `status` and tested `failed`/`stale` first,
-  // while `waveRunState` puts `running` first. A wave holding one failed goal
-  // and one still fanning out therefore painted a red dot beside a "Running"
-  // pill on the same row.
-  it("keeps the dot on the state the pill reports", () => {
+describe("waveRunState", () => {
+  // `running` still wins over every terminal status: a wave holding one goal
+  // that settled badly and one still fanning out is running, and sending the
+  // viewer away from a run that is still producing results is the bug.
+  it("reports running while any goal is still going", () => {
     const [newest, second] = overview.runs;
     const runs = [
       { ...newest!, status: "failed" },
@@ -456,15 +456,36 @@ describe("waveStatusDotClass", () => {
     ] as SwarmOverviewRun[];
 
     expect(waveRunState(runs)).toBe("running");
-    expect(waveStatusDotClass(runs)).toBe("bg-primary");
   });
 
-  it("still reds a wave whose goals have all settled badly", () => {
-    const [newest] = overview.runs;
-    const runs = [{ ...newest!, status: "failed" }] as SwarmOverviewRun[];
+  // "Failed" told the viewer nothing ran. It was never true: a `stale` run is
+  // only one the sweeper gave up on, and `partial`/`rate_limited` runs produced
+  // sessions too. All four now say the one honest thing — it did not finish
+  // cleanly — under a single label.
+  it.each(["failed", "stale", "partial", "rate_limited"])(
+    "folds %s into the single not-clean outcome",
+    (status) => {
+      const [newest] = overview.runs;
+      const runs = [{ ...newest!, status }] as SwarmOverviewRun[];
 
-    expect(waveRunState(runs)).toBe("failed");
-    expect(waveStatusDotClass(runs)).toBe("bg-red-500");
+      expect(waveRunState(runs)).toBe("issues");
+      expect(swarmWaveRunStateLabel(waveRunState(runs))).toBe(
+        "Completed with issues"
+      );
+    }
+  );
+
+  it("reports complete when every goal settled cleanly", () => {
+    const [newest] = overview.runs;
+    const runs = [{ ...newest!, status: "completed" }] as SwarmOverviewRun[];
+
+    expect(waveRunState(runs)).toBe("complete");
+  });
+
+  // No caller may paint a not-clean wave red any more: one badge, one neutral
+  // treatment, which is the whole point of collapsing the two buckets.
+  it("gives the not-clean outcome a neutral chip, not a red one", () => {
+    expect(swarmWaveRunStateChipClass("issues")).not.toMatch(/red/);
   });
 });
 
@@ -1300,7 +1321,7 @@ describe("Swarm run state and navigation", () => {
     expect(toast.success).not.toHaveBeenCalled();
   });
 
-  it("says Stopped, not Failed, to the viewer who stopped the run", async () => {
+  it("says Stopped, not Completed with issues, to the viewer who stopped the run", async () => {
     overviewData = runningOverview();
     renderTab("run-2b");
 
@@ -1488,7 +1509,7 @@ describe("Swarm run state and navigation", () => {
     expect(window.location.pathname).toBe(`/swarms/${groupId}`);
   });
 
-  it("says Running on the list row, not just a coloured dot", async () => {
+  it("says Running on the list row, which is now its only liveness signal", async () => {
     overviewData = runningOverview();
     renderTab();
 
@@ -1499,14 +1520,48 @@ describe("Swarm run state and navigation", () => {
     expect(pill.textContent).toBe("Running");
   });
 
-  it("says Complete on a settled list row", async () => {
+  // One badge on the row, and only when the outcome is not clean. A settled run
+  // is the expected case and says nothing — which is what leaves the issues
+  // badge as the only thing on a row that has something to report.
+  it("badges nothing on a cleanly settled list row", async () => {
+    renderTab();
+
+    await screen.findByTestId("swarms-overview-panel");
+    expect(
+      within(waveRow("run-2b")).queryByTestId("swarm-overview-run-state")
+    ).toBeNull();
+  });
+
+  it("badges a failed wave as Completed with issues, not Failed", async () => {
+    // What the ask is really about: `failed` used to earn its own red pill, and
+    // "Failed" read as "nothing ran" about a wave that had sessions in it.
+    overviewData = {
+      ...overview,
+      runs: overview.runs.map((run) =>
+        run.runId === "run-2b" || run.runId === "run-2a"
+          ? { ...run, status: "failed" }
+          : run
+      ),
+    };
     renderTab();
 
     await screen.findByTestId("swarms-overview-panel");
     const pill = within(waveRow("run-2b")).getByTestId(
       "swarm-overview-run-state"
     );
-    expect(pill.getAttribute("data-run-state")).toBe("complete");
-    expect(pill.textContent).toBe("Complete");
+    expect(pill.getAttribute("data-run-state")).toBe("issues");
+    expect(pill.textContent).toBe("Completed with issues");
+    expect(pill.className).not.toMatch(/red/);
+  });
+
+  // The dot, not every round thing on the row — the targets pill is also
+  // `rounded-full` and is staying.
+  it("leaves no coloured status dot on the rows", async () => {
+    renderTab();
+
+    await screen.findByTestId("swarms-overview-panel");
+    const row = waveRow("run-2b");
+    expect(row.querySelectorAll("span.size-2.rounded-full")).toHaveLength(0);
+    expect(row.innerHTML).not.toMatch(/bg-(red|amber|emerald)-500\b/);
   });
 });

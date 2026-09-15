@@ -89,7 +89,7 @@ import { useEvalMutations } from "./evals/use-eval-mutations";
 import { useEvalHandlers } from "./evals/use-eval-handlers";
 import { LaunchedCaseJudge } from "./evaluate/case-scorecard/launched-case-judge";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
-import { SuitesOverview } from "./evaluate/suites-overview";
+import { ConnectedSuitesOverview as SuitesOverview } from "./evaluate/suites-overview";
 import { SuiteListRunReview } from "./evaluate/suite-list-run-review";
 import { ProjectRunsTable } from "./evals/project-runs-table";
 import { stripTimestampSuffix } from "./evals/suite-overview-presentation";
@@ -1352,7 +1352,7 @@ function EvaluateTabContent({
           data-testid="evals-runs-landing"
         >
           <ProjectRunsTable
-            metricBars
+            evaluateLayout
             historyMetricsEnabled
             projectId={projectId}
             onSelectRun={handleSelectRunFromAllRuns}
@@ -1403,6 +1403,7 @@ function EvaluateTabContent({
       >
         <div>
           <SuitesOverview
+            projectId={projectId}
             overview={visibleSuites}
             onSelectSuite={handleSelectSuite}
             onRerun={(suite) => {

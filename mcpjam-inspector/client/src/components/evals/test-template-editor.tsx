@@ -3250,7 +3250,8 @@ export function TestTemplateEditor({
         predicates: resolveCasePredicates(
           (suite?.defaultPredicates ?? []) as Predicate[],
           savePayload.predicates,
-          savePayload.suppressedSuiteStandardCheckIds ?? currentTestCase?.suppressedSuiteStandardCheckIds,
+          savePayload.suppressedSuiteStandardCheckIds ??
+            currentTestCase?.suppressedSuiteStandardCheckIds,
         ),
         matchOptions: savePayload.matchOptions,
         expectedOutput: savePayload.expectedOutput,
@@ -4362,6 +4363,14 @@ export function TestTemplateEditor({
                     </TooltipContent>
                   </Tooltip>
                 )}
+                {useWorkspace &&
+                  useSpine &&
+                  workspaceLeftView.kind !== "inspecting" && (
+                    <DefaultChecksReference
+                      onConfigureSuite={onOpenSuiteSettings}
+                      onOverride={onOpenCaseChecks}
+                    />
+                  )}
                 {useWorkspace ? null : (
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -4658,10 +4667,12 @@ export function TestTemplateEditor({
                   ) : editForm && useSpine ? (
                     <CaseSpine
                       defaultChecks={
-                        <DefaultChecksReference
-                          onConfigureSuite={onOpenSuiteSettings}
-                          onOverride={onOpenCaseChecks}
-                        />
+                        !useWorkspace ? (
+                          <DefaultChecksReference
+                            onConfigureSuite={onOpenSuiteSettings}
+                            onOverride={onOpenCaseChecks}
+                          />
+                        ) : undefined
                       }
                       key={`spine:${currentTestCase?._id ?? "none"}`}
                       steps={editForm.steps}

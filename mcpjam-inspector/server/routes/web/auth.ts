@@ -73,7 +73,6 @@ import {
   buildHostedOAuthUnauthorizedHandler,
   refreshHostedOAuthAccessTokenWithLocalFallback,
 } from "../../utils/hosted-oauth-refresh.js";
-import { assertSecretsOriginMatches } from "../../utils/secret-origin-binding.js";
 import {
   fetchRuntimeServerSecrets,
   fetchServerClientSecret,
@@ -416,15 +415,6 @@ export type ConvexAuthorizeResponse = {
     httpVariant?: "streamable-http" | "sse";
     headers?: Record<string, string>;
     hasHeaders?: boolean;
-    /**
-     * The origin this row's ON-ROW stored credentials were bound to, from the
-     * backend (`convex/webAuthorize.ts`). MJ-003: the connect path must not send
-     * a credential to a URL it was not saved against. Absent on a row with no
-     * on-row credential — including an OAuth-only row, whose token is bound and
-     * refused backend-side instead — and, on an older backend, on one that has
-     * them, which `assertSecretsOriginMatches` treats as a refusal.
-     */
-    secretsBoundOrigin?: string;
     useOAuth?: boolean;
     // Cross-App Access (XAA) discriminator + non-secret config, surfaced by the
     // hosted authorize endpoint. The confidential client secret + token endpoint
@@ -469,18 +459,43 @@ export type ConvexBatchAuthorizeFailure = {
   message: string;
 };
 
+/**
+ * Why there is no `oauthAccessToken`, when the reason is actionable rather
+ * than "nothing stored". Mirrored by hand from the backend
+ * (`BatchAuthorizeSuccess.oauthUnavailableReason` in convex/http.ts); absent
+ * on older backends, which is why every read treats absence as "no idea".
+ *
+ * Each member has its own branch in PASS 1 below. A reason with no branch
+ * falls through to the explicit-OAuth refusal and tells the user to complete
+ * an OAuth flow, which is wrong for every reason here except the credential
+ * that really was cleared — so widening this union without widening that
+ * dispatch is a silent regression.
+ */
+export type ConvexOAuthUnavailableReason =
+  /** The credential is fine; only this machine can reach its authorization server. */
+  | "private_authorization_server"
+  /** The credential is fine; the authorization server never answered usably. */
+  | "authorization_server_unreachable"
+  /** Another refresh holds the lease. Retry after `oauthRetryAfterMs`. */
+  | "refresh_in_progress"
+  /**
+   * The server's URL was repointed, so the backend refuses to hand a
+   * credential bound to the old destination to the new one.
+   */
+  | "credential_origin_mismatch";
+
 export type ConvexBatchAuthorizeSuccess = {
   ok: true;
   role: "owner" | "admin" | "member";
   accessLevel: "project_member" | "shared_chat";
   oauthAccessToken?: string | null;
+  oauthUnavailableReason?: ConvexOAuthUnavailableReason;
   /**
-   * Why there is no `oauthAccessToken`, when the reason is actionable rather
-   * than "nothing stored". Mirrored by hand from the backend
-   * (`BatchAuthorizeSuccess.oauthUnavailableReason` in convex/http.ts); absent
-   * on older backends, which is why every read treats absence as "no idea".
+   * How long to wait before retrying, when the reason is transient. Sent with
+   * `refresh_in_progress` — the lease the other refresh holds expires after
+   * roughly this long.
    */
-  oauthUnavailableReason?: "private_authorization_server";
+  oauthRetryAfterMs?: number | null;
   permissions: {
     chatOnly: boolean;
   };
@@ -1480,21 +1495,76 @@ export async function createAuthorizedManager(
     // Explicit-OAuth server with no stored token: also a synchronous verdict,
     // so it belongs here — leaving it in the concurrent pass let a configured
     // XAA sibling start minting a real token while this one rejected.
+    //
+    // When the backend named a reason for withholding the token, that reason
+    // decides the answer. Only `credential_origin_mismatch` is about the
+    // user's authorization; the default would send the other two off to
+    // complete an OAuth flow that was never the problem.
     if (
       effectiveAuth === "oauth" &&
       !(auth.oauthAccessToken ?? oauthTokens?.[serverId])
     ) {
-      throw new WebRouteError(
-        401,
-        ErrorCode.UNAUTHORIZED,
-        `Server "${displayServerName}" requires OAuth authentication. Please complete the OAuth flow first.`,
-        {
-          oauthRequired: true,
-          serverId,
-          serverName: serverNamesById?.[serverId] ?? null,
-          serverUrl: auth.serverConfig.url,
-        },
-      );
+      const errorDetails = {
+        serverId,
+        serverName: serverNamesById?.[serverId] ?? null,
+        serverUrl: auth.serverConfig.url,
+      };
+      switch (auth.oauthUnavailableReason) {
+        // The server's URL was repointed. The stored credential belongs to the
+        // old destination, so the backend refuses to send it to the new one —
+        // a real reauthorize, but the user has to be told which destination
+        // they are authorizing and why the old grant stopped counting.
+        case "credential_origin_mismatch":
+          throw new WebRouteError(
+            401,
+            ErrorCode.UNAUTHORIZED,
+            `Server "${displayServerName}" now points at a different destination, so its saved credentials no longer apply. Authorize it again for the new destination.`,
+            { oauthRequired: true, ...errorDetails },
+          );
+        // The credential is intact; the authorization server never answered.
+        // Authorizing again means talking to the same unreachable host, so
+        // saying "reconnect" would send the user in a circle.
+        case "authorization_server_unreachable":
+          throw new WebRouteError(
+            503,
+            ErrorCode.SERVER_UNREACHABLE,
+            `The authorization server for "${displayServerName}" did not respond, so its access token could not be refreshed. Authorizing again will not change that. Try again shortly.`,
+            errorDetails,
+          );
+        // Another refresh holds the lease. Refusing here would be a regression
+        // from a retry: the token this connect wants is being minted right
+        // now, and the backend says how long that takes.
+        case "refresh_in_progress": {
+          const retryAfterMs =
+            typeof auth.oauthRetryAfterMs === "number" &&
+            Number.isFinite(auth.oauthRetryAfterMs) &&
+            auth.oauthRetryAfterMs > 0
+              ? auth.oauthRetryAfterMs
+              : null;
+          const retryAfterSeconds =
+            retryAfterMs === null ? null : Math.ceil(retryAfterMs / 1000);
+          const error = new WebRouteError(
+            429,
+            ErrorCode.RATE_LIMITED,
+            `Credentials for "${displayServerName}" are being refreshed by another request.${
+              retryAfterSeconds === null
+                ? " Try again shortly."
+                : ` Try again in ${retryAfterSeconds} second${retryAfterSeconds === 1 ? "" : "s"}.`
+            }`,
+            errorDetails,
+          );
+          throw retryAfterSeconds === null
+            ? error
+            : error.withHeaders({ "Retry-After": String(retryAfterSeconds) });
+        }
+        default:
+          throw new WebRouteError(
+            401,
+            ErrorCode.UNAUTHORIZED,
+            `Server "${displayServerName}" requires OAuth authentication. Please complete the OAuth flow first.`,
+            { oauthRequired: true, ...errorDetails },
+          );
+      }
     }
   }
 
@@ -1745,30 +1815,6 @@ export async function createAuthorizedManager(
       let connectOnUnauthorized = onUnauthorized;
       const useXaa =
         auth.serverConfig.transportType === "http" && effectiveAuth === "xaa";
-      // MJ-003. The XAA mint is not credential-free: `preregistered` and `dcr`
-      // reveal the row's stored client secret and post it to a token endpoint
-      // discovered from the row's CURRENT url (`xaa-mint.ts`
-      // `resolveServerTarget` -> `resolveAuthorizedServerTarget`, which falls
-      // back to the resource URL when no issuer is stored) — the exact repoint
-      // this gate exists to refuse. `cimd` sends no row secret: public client,
-      // or an org-level key whose assertion is audience-bound to the endpoint it
-      // goes to.
-      //
-      // The resulting ACCESS token needs no gate either way: it is minted per
-      // connect with `resource` set to the row's current url, so it is bound by
-      // construction. The gate is about the secret spent to obtain it.
-      if (
-        useXaa &&
-        resolveXaaConnectRegistrationMode(
-          auth.serverConfig.registrationMode,
-        ) !== "cimd"
-      ) {
-        assertSecretsOriginMatches({
-          boundOrigin: auth.serverConfig.secretsBoundOrigin,
-          targetUrl: auth.serverConfig.url,
-          serverName: displayServerName,
-        });
-      }
       if (useXaa) {
         // (`xaaIdentityError` is validated batch-wide in PASS 1 — before any
         // sibling server can mint.)
@@ -1893,17 +1939,6 @@ export async function createAuthorizedManager(
         };
       }
 
-      // Reject an already-stale authorize snapshot before decrypting. The reveal
-      // helper also checks the binding returned with the values: the row may
-      // change between authorize and reveal.
-      if (auth.serverConfig.hasHeaders === true) {
-        assertSecretsOriginMatches({
-          boundOrigin: auth.serverConfig.secretsBoundOrigin,
-          targetUrl: auth.serverConfig.url,
-          serverName: displayServerName,
-        });
-      }
-
       const authForConfig =
         auth.serverConfig.hasHeaders === true &&
         !hasNonEmptyStringRecord(auth.serverConfig.headers)
@@ -1915,7 +1950,6 @@ export async function createAuthorizedManager(
                   ...(auth.serverConfig.headers ?? {}),
                   ...((
                     await fetchRuntimeServerSecrets({
-                      expectedTargetUrl: auth.serverConfig.url,
                       bearerToken,
                       projectId,
                       serverId,

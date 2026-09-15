@@ -137,6 +137,10 @@ import {
   MAX_APPROVAL_REASON_LENGTH,
 } from "../lib/eval-run-file.js";
 import {
+  caseFromWire,
+  negotiateEvalVocabulary,
+} from "../lib/eval-vocabulary.js";
+import {
   CORPUS_DRIFT_EXIT_CODE,
   CORPUS_INCOMPLETE_EXIT_CODE,
   CORPUS_USAGE_EXIT_CODE,
@@ -3040,10 +3044,31 @@ async function runEvalExport(
           : {}),
         suite: options.suite,
       };
-      const [detail, page] = await Promise.all([
-        getEvalSuiteOperation.execute(selector, { client, signal }),
-        listEvalCasesOperation.execute(selector, { client, signal }),
-      ]);
+      // The suite first, on the caller's client: it resolves the project the
+      // selector names, and the project id is what the vocabulary handshake
+      // needs. The cases then come back in whatever vocabulary the deployment
+      // advertised and are settled onto the CLI's model at the boundary, so
+      // `buildSuiteFileFromPlatform` reads one shape whichever it was.
+      const detail = await getEvalSuiteOperation.execute(selector, {
+        client,
+        signal,
+      });
+      const negotiated = detail.projectId
+        ? await negotiateEvalVocabulary(client, {
+            projectId: detail.projectId,
+            signal,
+          })
+        : { vocabulary: 1 as const, client };
+      const wirePage = await listEvalCasesOperation.execute(selector, {
+        client: negotiated.client,
+        signal,
+      });
+      const page = {
+        ...wirePage,
+        items: wirePage.items.map((row) =>
+          caseFromWire(negotiated.vocabulary, row)
+        ),
+      };
 
       // Same guard as `eval pull`, same reason: the cases endpoint returns the
       // whole suite today and the client has no cursor to follow. A truncated
