@@ -146,6 +146,9 @@ describe("CreateSuitePage", () => {
     flagState.environments = true;
     capability.matrix = true;
     environmentsRef.current = [];
+    attachmentsRef.current = [
+      { _id: "att-1", name: "Excalidraw", serverIds: ["srv-a"] },
+    ];
     resolveMock.mockReset();
     resolveMock.mockResolvedValue({
       environmentIds: ["env-1"],
@@ -159,6 +162,30 @@ describe("CreateSuitePage", () => {
       createdIds: ["env-1"],
       reusedIds: [],
     });
+  });
+
+  it("blocks in the same vocabulary the field invites", async () => {
+    // `hasServer` is satisfied by ANY serverAttachments row, including the one
+    // minted for a bare server, so a reason that says "server group" tells the
+    // user to go and do something narrower than what would unblock them —
+    // the split BB-142 exists to remove.
+    attachmentsRef.current = [];
+    render(
+      <CreateSuitePage
+        onCancel={onCancel}
+        onSubmit={onSubmit}
+        hostsEnabled
+        projectId="proj-1"
+      />,
+    );
+
+    // The reason lives in a tooltip, which Radix mounts on focus.
+    fireEvent.focus(screen.getByTestId("create-suite-continue").parentElement!);
+
+    // Radix renders the content twice: the visible tip and its announcement.
+    const [reason] = await screen.findAllByText(/first\.$/);
+    expect(reason).toHaveTextContent(/server or group/);
+    expect(screen.queryAllByText(/Pick a server group/)).toHaveLength(0);
   });
 
   it("renders a full page, not a dialog", () => {

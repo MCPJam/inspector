@@ -214,7 +214,7 @@ export function CreateSuiteDialog({
     if (attachmentsRequired && serverAttachmentId === null) {
       return hostAttachments.length === 0
         ? "Attach a server and at least one client first."
-        : "Pick a server group first.";
+        : "Pick a server or group first.";
     }
     if (attachmentsRequired && hostAttachments.length === 0) {
       return "Attach at least one client first.";

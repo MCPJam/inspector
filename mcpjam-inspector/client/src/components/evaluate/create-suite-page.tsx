@@ -259,8 +259,8 @@ export function CreateSuitePage({
     if (!composerReady) return "Loading this project's clients…";
     if (attachmentsRequired && !hasServer) {
       return target.stack.hostIds.length === 0
-        ? "Pick a server group and a client first."
-        : "Pick a server group first.";
+        ? "Pick a server or group and a client first."
+        : "Pick a server or group first.";
     }
     if (attachmentsRequired && target.stack.hostIds.length === 0) {
       return "Choose a client first.";
