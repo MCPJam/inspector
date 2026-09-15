@@ -11,6 +11,7 @@ import {
 } from "./internal/thread-helpers";
 import type {
   ChatUiModel,
+  JsonRenderer,
   ReasoningDisplayMode,
   ToolRenderContext,
   ToolRenderOverride,
@@ -28,6 +29,8 @@ export interface MessageViewProps {
   reasoningDisplayMode?: ReasoningDisplayMode;
   widgetPolicy?: WidgetPolicy;
   renderTool?: (ctx: ToolRenderContext) => ReactNode;
+  /** Host override for displaying a tool's JSON payloads. */
+  renderJson?: JsonRenderer;
   renderWidget?: (input: WidgetRenderInput) => ReactNode;
   /** Show a generic assistant avatar to the left of assistant messages. */
   showAssistantAvatar?: boolean;
@@ -77,6 +80,7 @@ function MessageViewImpl({
   widgetPolicy = "placeholder",
   renderTool,
   renderWidget,
+  renderJson,
   showAssistantAvatar = true,
   renderAvatar,
   renderTurnFooter,
@@ -95,6 +99,7 @@ function MessageViewImpl({
     widgetPolicy,
     renderTool,
     renderWidget,
+    renderJson,
   };
 
   if (role === "user") {

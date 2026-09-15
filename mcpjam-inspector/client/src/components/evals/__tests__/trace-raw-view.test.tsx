@@ -22,6 +22,57 @@ function makeEntry(stepIndex: number, system: string) {
   };
 }
 
+describe("TraceRawView scroll-edge fade", () => {
+  /**
+   * The session detail asked for it: Raw ended at a hard edge that cut a line
+   * mid-token and said nothing about whether that was the end. The class has
+   * to land on the element that actually SCROLLS — `scroll-fade-y` is a
+   * scroll-driven animation reading `scroll(self y)`, so on the wrapper above
+   * it (which is `overflow-hidden`) it would simply never animate.
+   */
+  function scroller(container: HTMLElement) {
+    return container.querySelector(".overflow-auto");
+  }
+
+  it("fades the scrolling element when asked", () => {
+    const { container } = renderWithProviders(
+      <TraceRawView trace={{ spans: [] } as never} fadeScrollEdges />,
+    );
+
+    const node = scroller(container);
+    expect(node).not.toBeNull();
+    expect(node!.className).toContain("scroll-fade-y");
+  });
+
+  it("leaves every other surface alone by default", () => {
+    // Raw is rendered on eval runs, the Playground's trace pane and swarm
+    // sessions too. Opt-in means those are untouched until their owners ask.
+    const { container } = renderWithProviders(
+      <TraceRawView trace={{ spans: [] } as never} />,
+    );
+
+    expect(scroller(container)!.className).not.toContain("scroll-fade-y");
+  });
+
+  it("does not fade a grow-with-content Raw view", () => {
+    // That branch has no scrollport of its own — the page around it scrolls —
+    // so a mask there would dim edges nothing is moving past.
+    const { container } = renderWithProviders(
+      <TraceRawView
+        trace={null}
+        requestPayloadHistory={{
+          entries: [makeEntry(0, "System 1")],
+          hasUiMessages: true,
+        }}
+        growWithContent
+        fadeScrollEdges
+      />,
+    );
+
+    expect(container.querySelector(".scroll-fade-y")).toBeNull();
+  });
+});
+
 describe("TraceRawView", () => {
   it("shows the latest request payload for live history (no turn/step header)", () => {
     const { rerender } = renderWithProviders(
