@@ -1,3 +1,4 @@
+import { dependentFilterOptions, selectedFilter } from "./filter-options";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
 import { SuiteHealth } from "../evaluate/suite-health";
 import {
@@ -283,9 +284,8 @@ export function ProjectRunsTable({
   const [commitFilter, setCommitFilter] = useState("");
   const [hoveredHealthRun, setHoveredHealthRun] = useState<string | null>(null);
 
-  // Legacy feeds support a server-side origins query. Evaluate history keeps
-  // its query stable: some deployed backends reject that optional argument.
-  // Filter loaded rows locally and retain pagination for older matches.
+  // Keep the loaded feed stable so each facet can offer alternatives excluded
+  // by its own selection. Pagination remains available for older matches.
   const origins = useMemo(
     () => originsForFilters([...sourceFilter]),
     [sourceFilter],
@@ -295,7 +295,6 @@ export function ProjectRunsTable({
     "testSuites:listProjectRuns" as any,
     {
       projectId,
-      ...(!historyMetricsEnabled && origins.length > 0 ? { origins } : {}),
     } as any,
     { initialNumItems: PROJECT_RUNS_PAGE_SIZE },
   );
@@ -309,16 +308,18 @@ export function ProjectRunsTable({
         byId.set(row.suiteId, row.suiteName ?? formatRunId(row.suiteId));
       }
     }
+    if (suiteFilter !== ALL_SUITES && !byId.has(suiteFilter)) {
+      byId.set(suiteFilter, formatRunId(suiteFilter));
+    }
     return [...byId.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-  }, [rows]);
+  }, [rows, suiteFilter]);
 
   const sourceAndSuiteRows = useMemo(
     () =>
       rows.filter(
         (row) =>
           (suiteFilter === ALL_SUITES || row.suiteId === suiteFilter) &&
-          (!historyMetricsEnabled ||
-            origins.length === 0 ||
+          (origins.length === 0 ||
             // Resolve the DISPLAYED origin (verified attribution, then the
             // declared launcher, then the stamp) so a chip matches the badge.
             origins.includes(
@@ -431,6 +432,8 @@ export function ProjectRunsTable({
     serverOptions,
     repositoryOptions,
     branchOptions,
+    availableSuites,
+    availablePlatforms,
     hasGitFilter,
     showGitContext,
     filtered,
@@ -482,39 +485,69 @@ export function ProjectRunsTable({
         ),
       ]),
     );
-    const clientOptions = [
-      ...new Set(
-        rows.map(
-          (row) =>
-            historyRows.get(row._id)?.client ??
-            runClientIdentity(
-              { client: row.client, namedHostId: row.namedHostId ?? undefined },
-              hostNamesById,
-            ).name,
-        ),
-      ),
-    ].sort();
-    const serverOptions = [...new Set([...runServers.values()].flat())].sort();
     const gitByRunId = new Map(
       rows.map((row) => [
         row._id,
         isGithubRun(row) ? readRunGitMetadata(row.ciMetadata) : null,
       ]),
     );
-    const repositoryOptions = [
-      ...new Set(
-        [...gitByRunId.values()].flatMap((git) =>
-          git?.repository ? [git.repository] : [],
-        ),
-      ),
-    ].sort();
-    const branchOptions = [
-      ...new Set(
-        [...gitByRunId.values()].flatMap((git) =>
-          git?.branch ? [git.branch] : [],
-        ),
-      ),
-    ].sort();
+    const optionRows = rows.filter(
+      (row) =>
+        !commitFilter.trim() ||
+        gitByRunId
+          .get(row._id)
+          ?.commitSha?.toLowerCase()
+          .startsWith(commitFilter.trim().toLowerCase()),
+    );
+    const options = dependentFilterOptions(optionRows, {
+      platform: {
+        selected: [...sourceFilter],
+        values: (row) =>
+          platformFilters
+            .filter((filter) =>
+              originsForFilters([filter.value]).includes(
+                resolveRunOrigin(row) ?? "ui",
+              ),
+            )
+            .map((filter) => filter.value),
+      },
+      suite: {
+        selected: suiteFilter === ALL_SUITES ? [] : [suiteFilter],
+        values: (row) => [row.suiteId],
+      },
+      client: {
+        selected: selectedFilter(clientFilter),
+        values: (row) => [
+          historyRows.get(row._id)?.client ??
+            runClientIdentity(
+              { client: row.client, namedHostId: row.namedHostId ?? undefined },
+              hostNamesById,
+            ).name,
+        ],
+      },
+      server: {
+        selected: selectedFilter(serverFilter),
+        values: (row) => runServers.get(row._id) ?? [],
+      },
+      repository: {
+        selected: selectedFilter(repositoryFilter),
+        values: (row) =>
+          gitByRunId.get(row._id)?.repository
+            ? [gitByRunId.get(row._id)!.repository!]
+            : [],
+      },
+      branch: {
+        selected: selectedFilter(branchFilter),
+        values: (row) =>
+          gitByRunId.get(row._id)?.branch
+            ? [gitByRunId.get(row._id)!.branch!]
+            : [],
+      },
+    });
+    const clientOptions = options.client;
+    const serverOptions = options.server;
+    const repositoryOptions = options.repository;
+    const branchOptions = options.branch;
     const hasGitFilter =
       repositoryFilter !== ALL_EVAL_FILTER_VALUES ||
       branchFilter !== ALL_EVAL_FILTER_VALUES ||
@@ -648,6 +681,8 @@ export function ProjectRunsTable({
       serverOptions,
       repositoryOptions,
       branchOptions,
+      availableSuites: options.suite,
+      availablePlatforms: options.platform,
       hasGitFilter,
       showGitContext,
       filtered,
@@ -661,6 +696,7 @@ export function ProjectRunsTable({
   }, [
     rows,
     sourceAndSuiteRows,
+    platformFilters,
     history.details,
     rawRunServers,
     suiteServersById,
@@ -702,7 +738,7 @@ export function ProjectRunsTable({
     serverFilter !== ALL_EVAL_FILTER_VALUES ||
     hasGitFilter;
   const hasClientSideFilter =
-    (historyMetricsEnabled && sourceFilter.size > 0) ||
+    sourceFilter.size > 0 ||
     suiteFilter !== ALL_SUITES ||
     clientFilter !== ALL_EVAL_FILTER_VALUES ||
     serverFilter !== ALL_EVAL_FILTER_VALUES ||
@@ -849,16 +885,18 @@ export function ProjectRunsTable({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                {platformFilters.map((filter) => (
-                  <DropdownMenuCheckboxItem
-                    key={filter.value}
-                    checked={sourceFilter.has(filter.value)}
-                    onCheckedChange={() => toggleSource(filter.value)}
-                    onSelect={(event) => event.preventDefault()}
-                  >
-                    {filter.label}
-                  </DropdownMenuCheckboxItem>
-                ))}
+                {platformFilters
+                  .filter((filter) => availablePlatforms.includes(filter.value))
+                  .map((filter) => (
+                    <DropdownMenuCheckboxItem
+                      key={filter.value}
+                      checked={sourceFilter.has(filter.value)}
+                      onCheckedChange={() => toggleSource(filter.value)}
+                      onSelect={(event) => event.preventDefault()}
+                    >
+                      {filter.label}
+                    </DropdownMenuCheckboxItem>
+                  ))}
               </DropdownMenuContent>
             </DropdownMenu>
             <Select value={suiteFilter} onValueChange={setSuiteFilter}>
@@ -882,16 +920,18 @@ export function ProjectRunsTable({
               </SelectTrigger>
               <SelectContent className="max-w-[min(24rem,calc(100vw-2rem))]">
                 <SelectItem value={ALL_SUITES}>All suites</SelectItem>
-                {suiteOptions.map(([id, name]) => (
-                  <SelectItem
-                    key={id}
-                    value={id}
-                    className="whitespace-normal break-words"
-                    title={name}
-                  >
-                    {name}
-                  </SelectItem>
-                ))}
+                {suiteOptions
+                  .filter(([id]) => availableSuites.includes(id))
+                  .map(([id, name]) => (
+                    <SelectItem
+                      key={id}
+                      value={id}
+                      className="whitespace-normal break-words"
+                      title={name}
+                    >
+                      {name}
+                    </SelectItem>
+                  ))}
               </SelectContent>
             </Select>
             {historyMetricsEnabled && (
@@ -1041,12 +1081,7 @@ export function ProjectRunsTable({
               )}
             </div>
           )}
-        {/*
-          Only for the filters that run over the loaded page. The platform
-          chips are a query argument, so on their own an empty result really
-          does mean the project has no such runs, and this caveat would
-          suggest the opposite.
-        */}
+        {/* Options and results cover loaded pages; older matches may still exist. */}
         {hasClientSideFilter && canLoadMore && (
           <p className="px-[18px] pb-3 text-[11px] text-muted-foreground">
             Filtering the{" "}

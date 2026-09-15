@@ -188,12 +188,11 @@ describe("ProjectRunsTable", () => {
       screen.getByRole("menuitemcheckbox", { name: "SDK", exact: true }),
     );
     await user.keyboard("{Escape}");
-    // Sent to the query, not applied to the loaded page: the backend answers
-    // with the SDK runs alone, so there is no "of the loaded runs" caveat.
-    expect(latestQueryArgs().origins).toEqual(["sdk"]);
-    expect(screen.getByText(/1 of 1 loaded runs/)).toBeInTheDocument();
+    // Filtering keeps the loaded feed stable so other facet options survive.
+    expect(latestQueryArgs()).not.toHaveProperty("origins");
+    expect(screen.getByText(/1 of 2 loaded runs/)).toBeInTheDocument();
     expect(inTable().queryByText("UI")).toBeNull();
-    expect(screen.queryByText(/Filtering the .* most recent runs/)).toBeNull();
+    expect(screen.getByText(/Filtering the .* most recent runs/)).toBeVisible();
     await user.click(screen.getByRole("button", { name: /Load more/ }));
     expect(mocks.paginated.current.loadMore).toHaveBeenCalledWith(
       PROJECT_RUNS_PAGE_SIZE,
@@ -257,7 +256,7 @@ describe("ProjectRunsTable", () => {
     expect(table.queryByText("Accuracy")).not.toBeNull();
   });
 
-  it("filters by origin THROUGH THE QUERY, not over the loaded page", async () => {
+  it("filters loaded origins without changing the feed", async () => {
     const user = userEvent.setup();
     setRows([
       makeRow({ _id: "run_sdk1", source: "sdk", suiteName: "CI suite" }),
@@ -280,14 +279,11 @@ describe("ProjectRunsTable", () => {
       screen.getByRole("menuitemcheckbox", { name: "SDK", exact: true }),
     );
     await user.keyboard("{Escape}");
-    expect(latestQueryArgs().origins).toEqual(["sdk"]);
+    expect(latestQueryArgs()).not.toHaveProperty("origins");
 
-    // …and the rows the query returned are rendered as they came. A second,
-    // client-side predicate would be free to disagree with the one that chose
-    // the page — which is exactly how "No runs match these filters" came to be
-    // shown for a suite whose GitHub runs were simply further down.
+    // Only matching loaded rows render; pagination can reveal older matches.
     expect(inTable().getByText("CI suite")).toBeTruthy();
-    expect(inTable().getByText("Playground suite")).toBeTruthy();
+    expect(inTable().queryByText("Playground suite")).toBeNull();
   });
 
   it("hides the unlaunched platform chips until platform-post-launch is on", async () => {
@@ -302,7 +298,7 @@ describe("ProjectRunsTable", () => {
     const chips = screen
       .getAllByRole("menuitemcheckbox")
       .map((chip) => chip.textContent);
-    expect(chips).toEqual(["SDK", "UI", "API", "CLI"]);
+    expect(chips).toEqual(["SDK"]);
   });
 
   it("drops a selected chip when platform-post-launch goes off mid-session", async () => {
@@ -317,10 +313,7 @@ describe("ProjectRunsTable", () => {
     );
     await user.click(screen.getByRole("menuitemcheckbox", { name: "GitHub" }));
     await user.keyboard("{Escape}");
-    expect(latestQueryArgs().origins).toEqual([
-      "github_check",
-      "github_action",
-    ]);
+    expect(latestQueryArgs()).not.toHaveProperty("origins");
     // The chip leaves the menu, so the filter it stood for has to go with it.
     mocks.platformPostLaunchEnabled = false;
     view.rerender(
@@ -341,10 +334,7 @@ describe("ProjectRunsTable", () => {
     await user.click(screen.getByRole("menuitemcheckbox", { name: "GitHub" }));
     // A PR check and an Actions job are the same thing to the person
     // filtering, and were never distinguishable in the badge either.
-    expect(latestQueryArgs().origins).toEqual([
-      "github_check",
-      "github_action",
-    ]);
+    expect(latestQueryArgs()).not.toHaveProperty("origins");
   });
 
   it("keeps Git columns hidden for non-GitHub platform filters", async () => {
@@ -372,31 +362,22 @@ describe("ProjectRunsTable", () => {
     ).toBeNull();
   });
 
-  it("keeps the chips reachable when a filter matches nothing", async () => {
+  it("keeps a selected platform clearable when its rows disappear", async () => {
     const user = userEvent.setup();
-    mocks.backendFiltersOrigins = true;
     setRows([makeRow({ source: "sdk" })]);
-    render(<ProjectRunsTable projectId="proj_1" onSelectRun={vi.fn()} />);
-
-    await user.click(
-      screen.getByRole("button", { name: "Filter by platform" }),
-    );
-    await user.click(screen.getByRole("menuitemcheckbox", { name: "CLI" }));
-    await user.click(screen.getByRole("menuitemcheckbox", { name: "MCP" }));
+    const view = render(<ProjectRunsTable projectId="proj_1" onSelectRun={vi.fn()} />);
+    await user.click(screen.getByRole("button", { name: "Filter by platform" }));
+    expect(screen.queryByRole("menuitemcheckbox", { name: "CLI" })).toBeNull();
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "SDK" }));
     await user.keyboard("{Escape}");
-
-    // The full-page "No runs yet" would both lie about the project and take
-    // away the control needed to undo the filter.
-    expect(latestQueryArgs().origins).toEqual([
-      "cli",
-      "mcp",
-      "slack",
-      "discord",
-    ]);
-    expect(
-      screen.getByRole("button", { name: "Filter by platform" }),
-    ).toBeTruthy();
-    expect(screen.getByText("No runs match these filters.")).toBeTruthy();
+    setRows([makeRow({ source: "ui" })]);
+    view.rerender(<ProjectRunsTable projectId="proj_1" onSelectRun={vi.fn()} />);
+    expect(screen.getByText("No runs match these filters.")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Filter by platform" }));
+    expect(screen.getByRole("menuitemcheckbox", { name: "SDK" })).toBeChecked();
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "SDK" }));
+    await user.keyboard("{Escape}");
+    expect(screen.queryByText("No runs match these filters.")).toBeNull();
   });
 
   it("uses legacy suite provenance consistently and clears combined filters", async () => {
@@ -424,14 +405,14 @@ describe("ProjectRunsTable", () => {
     expect(inTable().queryByText("Alpha")).toBeNull();
     // The picked suite is the pool, so the other suite's run is not counted.
     expect(screen.getByText("1 of 1 loaded runs")).toBeVisible();
-    // Then the platform: that one is a query argument, and the backend now
-    // answers with the legacy row alone, which the suite filter hides.
+    // The platform choices narrow to the selected suite.
     await user.click(
       screen.getByRole("button", { name: "Filter by platform" }),
     );
-    await user.click(screen.getByRole("menuitemcheckbox", { name: "SDK" }));
+    expect(screen.queryByRole("menuitemcheckbox", { name: "SDK" })).toBeNull();
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "UI" }));
     await user.keyboard("{Escape}");
-    expect(inTable().getByText("No runs match these filters.")).toBeVisible();
+    expect(inTable().getByText("Beta")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Clear filters" }));
     expect(inTable().getByText("Alpha")).toBeVisible();
     expect(inTable().getByText("Beta")).toBeVisible();
@@ -444,7 +425,7 @@ describe("ProjectRunsTable", () => {
     await user.keyboard("{Escape}");
     expect(inTable().getByText("SDK")).toBeVisible();
     expect(inTable().queryByText("Beta")).toBeNull();
-    expect(screen.getByText("1 of 1 loaded runs")).toBeVisible();
+    expect(screen.getByText("1 of 2 loaded runs")).toBeVisible();
   });
 
   it("filters by suite", async () => {
@@ -477,7 +458,7 @@ describe("ProjectRunsTable", () => {
     });
   });
 
-  it("loads more pages, and no longer hedges about what the filter covered", async () => {
+  it("keeps pagination available and explains the loaded filter scope", async () => {
     const user = userEvent.setup();
     setRows([makeRow({ source: "sdk" })], "CanLoadMore");
 
@@ -486,17 +467,15 @@ describe("ProjectRunsTable", () => {
     // Unfiltered: no caveat needed.
     expect(document.body.textContent).not.toContain("loaded so far");
 
-    // Filtered by platform with pages outstanding: the chips are a query
-    // argument, so an empty answer is a fact about the project, and the
-    // "loaded so far" hedge must not appear for them.
+    // Platform filters also cover loaded pages, so show the pagination caveat.
     await user.click(
       screen.getByRole("button", { name: "Filter by platform" }),
     );
     await user.click(
-      screen.getByRole("menuitemcheckbox", { name: "UI", exact: true }),
+      screen.getByRole("menuitemcheckbox", { name: "SDK", exact: true }),
     );
     await user.keyboard("{Escape}");
-    expect(document.body.textContent).not.toContain("loaded so far");
+    expect(document.body.textContent).toContain("loaded so far");
 
     await user.click(screen.getByRole("button", { name: /Load more/ }));
     expect(mocks.paginated.current.loadMore).toHaveBeenCalledWith(
@@ -890,11 +869,8 @@ describe("project run history metrics", () => {
     await user.click(
       screen.getByRole("combobox", { name: "Filter by server" }),
     );
-    await user.click(
-      screen.getByRole("option", { name: "Gamma", exact: true }),
-    );
-    expect(screen.getByText("No runs match these filters.")).toBeVisible();
-    expect(screen.queryByTestId("project-run-history-metrics")).toBeNull();
+    expect(screen.queryByRole("option", { name: "Gamma", exact: true })).toBeNull();
+    await user.keyboard("{Escape}");
     await user.click(screen.getByRole("button", { name: "Clear filters" }));
     expect(screen.getByText(/2 of 2 loaded runs/)).toBeVisible();
     expect(screen.getByTestId("project-run-history-metrics")).toBeVisible();

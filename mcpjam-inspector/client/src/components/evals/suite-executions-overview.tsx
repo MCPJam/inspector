@@ -98,10 +98,7 @@ export function SuiteExecutionsOverview({
     () =>
       annotated.filter((entry) => {
         if (!executionFilterMatches(filter, entry.result)) return false;
-        if (
-          searchLower &&
-          !entry.title.toLowerCase().includes(searchLower)
-        ) {
+        if (searchLower && !entry.title.toLowerCase().includes(searchLower)) {
           return false;
         }
         return true;
@@ -141,9 +138,7 @@ export function SuiteExecutionsOverview({
         <>
           <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-2.5">
             <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs">
-              <span className="font-semibold text-foreground">
-                Today
-              </span>
+              <span className="font-semibold text-foreground">Today</span>
               {todayStats.total > 0 ? (
                 <>
                   <span className="text-muted-foreground">
@@ -200,23 +195,34 @@ export function SuiteExecutionsOverview({
                     { value: "failed", label: "Failed" },
                     { value: "other", label: "Other" },
                   ] as Array<{ value: ExecutionFilter; label: string }>
-                ).map((option) => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    role="tab"
-                    aria-selected={filter === option.value}
-                    onClick={() => setFilter(option.value)}
-                    className={cn(
-                      "rounded px-2 py-0.5 text-[11px] font-medium transition-colors",
-                      filter === option.value
-                        ? "bg-muted text-foreground"
-                        : "text-muted-foreground hover:text-foreground",
-                    )}
-                  >
-                    {option.label}
-                  </button>
-                ))}
+                )
+                  .filter(
+                    (option) =>
+                      option.value === "all" ||
+                      option.value === filter ||
+                      annotated.some(
+                        (entry) =>
+                          entry.title.toLowerCase().includes(searchLower) &&
+                          executionFilterMatches(option.value, entry.result),
+                      ),
+                  )
+                  .map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      role="tab"
+                      aria-selected={filter === option.value}
+                      onClick={() => setFilter(option.value)}
+                      className={cn(
+                        "rounded px-2 py-0.5 text-[11px] font-medium transition-colors",
+                        filter === option.value
+                          ? "bg-muted text-foreground"
+                          : "text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
               </div>
             </div>
           </div>
