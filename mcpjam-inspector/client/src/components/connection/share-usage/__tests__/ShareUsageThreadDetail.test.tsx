@@ -524,9 +524,11 @@ describe("ShareUsageThreadDetail — promote affordance", () => {
       mockThreadState.runAttemptStatus = "succeeded";
       render(<ShareUsageThreadDetail threadId="thread-1" promote={PROMOTE} />);
 
-      expect(
-        await screen.findByTestId("share-usage-promote-to-test-case"),
-      ).toBeEnabled();
+      const button = await screen.findByTestId(
+        "share-usage-promote-to-test-case",
+      );
+      expect(button).toBeEnabled();
+      expect(button).not.toHaveAttribute("aria-disabled");
       expect(
         screen.queryByTestId("share-usage-promote-blocked"),
       ).not.toBeInTheDocument();
@@ -544,20 +546,20 @@ describe("ShareUsageThreadDetail — promote affordance", () => {
       const button = await screen.findByTestId(
         "share-usage-promote-to-test-case",
       );
-      expect(button).toBeDisabled();
+      // `aria-disabled`, not `disabled`: the control keeps focus so keyboard
+      // and touch users can reach its explanation.
+      expect(button).toHaveAttribute("aria-disabled", "true");
 
-      // The dialog must not open — that is the path that rendered the server
-      // error. Clicking a disabled button is a no-op, so assert the state.
-      await user.click(screen.getByTestId("share-usage-promote-blocked"));
+      // Inert all the same — opening the dialog is the path that rendered the
+      // server error.
+      await user.click(button);
       expect(
         screen.getByTestId("promote-dialog").getAttribute("data-open"),
       ).toBe("false");
 
-      // And the reason is reachable, not just an inert grey button.
-      expect(screen.getByTestId("share-usage-promote-blocked")).toHaveAttribute(
-        "title",
-        expect.stringMatching(copy),
-      );
+      // The reason reaches a mouse (title) and assistive tech (description).
+      expect(button).toHaveAttribute("title", expect.stringMatching(copy));
+      expect(button).toHaveAccessibleDescription(copy);
     });
 
     /**
@@ -587,7 +589,7 @@ describe("ShareUsageThreadDetail — promote affordance", () => {
 
       expect(
         await screen.findByTestId("share-usage-promote-to-test-case"),
-      ).toBeDisabled();
+      ).toHaveAttribute("aria-disabled", "true");
     });
   });
 

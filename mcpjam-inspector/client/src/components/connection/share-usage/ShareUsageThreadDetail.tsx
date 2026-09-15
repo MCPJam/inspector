@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { AlertTriangle, Loader2, Share2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
@@ -567,6 +574,9 @@ export function ShareUsageThreadDetail({
    * attempt row that claims no session) blocks too: we cannot vouch for it,
    * and offering the action is what produced the bad error in the first place.
    */
+  // Ties the button to its explanation for assistive tech; see the render.
+  const promoteBlockedReasonId = useId();
+
   const promoteBlockedReason = useMemo((): string | null => {
     if (!canPromoteThread || thread?.sourceType !== "swarm") return null;
     switch (thread.runAttemptStatus) {
@@ -720,28 +730,39 @@ export function ShareUsageThreadDetail({
           )}
           {canPromoteThread ? (
             promoteBlockedReason ? (
-              /* Shown disabled rather than hidden: a missing button reads as a
-                 surface that lost a feature, while a disabled one that says why
-                 on hover answers the question the user actually has. The reason
-                 sits on the WRAPPER — a disabled button fires no pointer events
-                 of its own, so a hint attached to it would never appear — and
-                 doubles as the accessible name for the same reason. */
+              /* Shown inert rather than hidden: a missing button reads as a
+                 surface that lost a feature, while one that says why answers
+                 the question the reader actually has.
+
+                 `aria-disabled` rather than `disabled`, so the control stays
+                 in the tab order and its reason is reachable without a mouse.
+                 A truly disabled button takes no focus and fires no pointer
+                 events, which leaves keyboard and touch users with no path to
+                 an explanation that only exists in a hover hint. The reason is
+                 therefore carried three ways: `title` for the mouse, an
+                 `aria-describedby` target for assistive tech, and the visible
+                 empty-state copy further up for a session with no transcript.
+                 The click handler is what actually makes it inert. */
               <span
                 className="inline-flex"
-                title={promoteBlockedReason}
-                aria-label={promoteBlockedReason}
                 data-testid="share-usage-promote-blocked"
               >
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
-                  className="h-8 rounded-lg px-2.5 text-xs"
+                  className="h-8 rounded-lg px-2.5 text-xs opacity-50"
                   data-testid="share-usage-promote-to-test-case"
-                  disabled
+                  title={promoteBlockedReason}
+                  aria-disabled
+                  aria-describedby={promoteBlockedReasonId}
+                  onClick={(event) => event.preventDefault()}
                 >
                   Promote to test case
                 </Button>
+                <span id={promoteBlockedReasonId} className="sr-only">
+                  {promoteBlockedReason}
+                </span>
               </span>
             ) : (
               <Button
