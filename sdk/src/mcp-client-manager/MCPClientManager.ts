@@ -1,3 +1,4 @@
+import { withEvalToolCapture } from "./eval-tool-capture.js";
 import { ToolDeclarationCapture } from "./tool-declaration-capture.js";
 /**
  * MCPClientManager - Manages multiple MCP server connections
@@ -1154,6 +1155,18 @@ export class MCPClientManager {
     args: ExecuteToolArguments = {},
     options?: ClientRequestOptions | ExecuteToolRequest,
     taskOptions?: TaskOptions
+  ) {
+    return withEvalToolCapture(this, serverId, toolName, args, () =>
+      this.executeToolUnrecorded(serverId, toolName, args, options, taskOptions),
+    );
+  }
+
+  private async executeToolUnrecorded(
+    serverId: string,
+    toolName: string,
+    args: ExecuteToolArguments,
+    options?: ClientRequestOptions | ExecuteToolRequest,
+    taskOptions?: TaskOptions,
   ) {
     const request = this.normalizeExecuteToolRequest(options, taskOptions);
 

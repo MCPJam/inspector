@@ -1,3 +1,4 @@
+import { createEvalRecorder } from "../src/eval-recorder.js";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -54,6 +55,21 @@ describe("MCPClientManager × dual-era fixture over HTTP", () => {
   afterEach(async () => {
     await manager.disconnectAllServers().catch(() => {});
     await served.close();
+  });
+
+  it("records real tool requests and responses through the manager", async () => {
+    await manager.connectToServer("fixture", { url: served.url, mcpProtocolVersion: "2026-07-28", timeout: 10_000 });
+    const recorder = createEvalRecorder({ mcpClientManager: manager });
+    await recorder.runCase({ caseTitle: "echo" }, async () => {
+      const result = await manager.executeTool("fixture", "echo", { message: "coffee" });
+      expect(result.content).toEqual([{ type: "text", text: "coffee" }]);
+    });
+    const [row] = recorder.getResults();
+    expect(row.actualToolCalls).toEqual([{ toolName: "echo", arguments: { message: "coffee" } }]);
+    expect(row.trace).toMatchObject({ messages: [
+      { role: "assistant", content: [{ type: "tool-call", input: { message: "coffee" } }] },
+      { role: "tool", content: [{ type: "tool-result", output: { value: { content: [{ type: "text", text: "coffee" }] } } }] },
+    ] });
   });
 
   it("connects on a modern (2026-07-28) pin and serves the primitive surface", async () => {

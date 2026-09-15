@@ -654,3 +654,51 @@ export DO_NOT_TRACK=1
 # or
 export MCPJAM_TELEMETRY_DISABLED=1
 ```
+
+### Record tool details from any Node.js test framework
+
+Wrap each test callback with `createEvalRecorder` to capture calls made through
+its `MCPClientManager`. The same API works in plain TypeScript, Vitest and Jest;
+no server changes or test-framework plugin is required.
+
+```ts
+import { MCPClientManager, createEvalRecorder, reportEvalResults } from "@mcpjam/sdk";
+import assert from "node:assert/strict";
+
+const manager = new MCPClientManager();
+const recorder = createEvalRecorder({ mcpClientManager: manager });
+await manager.connectToServer("amazon", { url: "http://localhost:3001/mcp" });
+try {
+  await recorder.runCase({ caseId: "coffee", caseTitle: "Search coffee" }, async () => {
+    const result = await manager.executeTool("amazon", "search-products", { query: "coffee" });
+    assert.notEqual(result.isError, true);
+  });
+} finally {
+  try {
+    await reportEvalResults({
+      suiteName: "Amazon smoke", mcpClientManager: manager,
+      results: recorder.getResults(),
+    });
+  } finally {
+    await manager.disconnectAllServers();
+  }
+}
+```
+
+In Vitest/Jest, await `recorder.runCase(...)` inside each `it` callback and report
+`recorder.getResults()` once from `afterAll`. Keep assertions inside the wrapped
+callback and await all calls. A callback error is recorded and rethrown unchanged;
+a caught expected tool error does not fail a successful callback. Framework-only
+hook failures/timeouts are outside the callback boundary and are not detected.
+`getResults()` rejects while cases are active. Nested cases are unsupported;
+concurrent cases on the same manager remain isolated. Separate worker processes
+have separate recorders and must report their own results.
+
+The recorded inputs and full MCP responses become uploaded test evidence. Avoid
+secrets in tool payloads. Connection credentials and transport headers are not
+captured. Capture is limited to 16 MiB per case by default (`maxCapturedBytes`
+overrides this); capture errors preserve the test outcome and display an
+unavailable-evidence reason. Calls left unfinished when the callback ends are
+marked incomplete. Task-creation responses are recorded as returned; later task
+polling and internal transport retries are not individual recorded tool calls.
+Historical runs without recorded responses cannot be backfilled.

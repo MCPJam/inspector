@@ -1709,3 +1709,6 @@ export type {
   PairwiseJudge,
   PairwisePreferenceResult,
 } from "./eval-execution-variants.js";
+
+export { createEvalRecorder } from "./eval-recorder.js";
+export type { EvalRecorder, EvalRecorderOptions, EvalRecorderCaseOptions } from "./eval-recorder.js";
