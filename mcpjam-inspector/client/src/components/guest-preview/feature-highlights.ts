@@ -86,17 +86,6 @@ export interface GatedFeatureCopy {
   };
 }
 
-/**
- * Shown under the sample.
- *
- * BB-120 removed faked charts from the Swarm empty state because numbers on a
- * page invite the reader to interpret them. The sample brings that risk back
- * deliberately, so the page says out loud that the figures are not theirs. A
- * signed-in member never sees the sample at all.
- */
-export const SAMPLE_DATA_NOTE =
-  "A sample of what this tab looks like once it has data. The figures are illustrative, not your project's.";
-
 export const GATED_FEATURE_COPY: Record<GatedFeatureId, GatedFeatureCopy> = {
   swarms: {
     navLabel: "Swarms",

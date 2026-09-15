@@ -13,7 +13,7 @@ vi.mock("@/components/swarms/swarm-hero-characters", () => ({
 
 import { track } from "@/lib/analytics";
 import { GuestFeaturePreview } from "../GatedFeaturePreview";
-import { GATED_FEATURE_COPY, SAMPLE_DATA_NOTE } from "../feature-highlights";
+import { GATED_FEATURE_COPY } from "../feature-highlights";
 
 const FEATURES = ["swarms", "user-testing"] as const;
 
@@ -116,16 +116,6 @@ describe("GuestFeaturePreview", () => {
     expect(
       screen.getByRole("heading", { level: 1, name: copy.navLabel }),
     ).toBeInTheDocument();
-  });
-
-  it("labels the sample figures as illustrative", () => {
-    render(
-      <GuestFeaturePreview feature="user-testing">
-        <button type="button">Create account</button>
-      </GuestFeaturePreview>,
-    );
-
-    expect(screen.getByText(SAMPLE_DATA_NOTE)).toBeInTheDocument();
   });
 
   it("hides the sample from assistive tech", () => {

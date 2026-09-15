@@ -18,7 +18,6 @@ import { SwarmHeroCharacters } from "@/components/swarms/swarm-hero-characters";
 import { track } from "@/lib/analytics";
 import {
   GATED_FEATURE_COPY,
-  SAMPLE_DATA_NOTE,
   type GatedFeatureId,
   type GatedFeatureSample,
 } from "./feature-highlights";
@@ -101,10 +100,6 @@ export function GuestFeaturePreview({
       </div>
 
       <SampleCard sample={copy.sample} />
-
-      <p className="max-w-lg text-pretty text-center text-xs text-muted-foreground">
-        {SAMPLE_DATA_NOTE}
-      </p>
     </GatedFeatureShell>
   );
 }
