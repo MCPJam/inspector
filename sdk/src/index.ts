@@ -395,6 +395,30 @@ export type {
   SuiteFileLoadSuccess,
   SuiteFileLocation,
 } from "./suite-file-loader.js";
+
+// ── the one grading policy: SDK integration seam ────────────────────────────
+/**
+ * How a suite file, a hosted suite read and a reported run each reach the
+ * canonical grading-policy contract, and how an edit gets back to the hosted
+ * API. The model and the pure adapters live in `@mcpjam/sdk/contract`; these
+ * are the functions that connect them to the loader, the platform DTO and the
+ * PATCH body — including the capability refusal for a deployment that cannot
+ * say which criterion decides a suite.
+ */
+export {
+  GRADING_POLICY_READ_REFUSALS,
+  LEGACY_SUITE_WIDE_THRESHOLD_PERCENT,
+  gradingPolicyForReportedRun,
+  gradingPolicyFromLoadedSuiteFile,
+  gradingPolicyFromPlatformSuiteSettings,
+  planPlatformSuiteGradingUpdate,
+} from "./eval-grading-policy.js";
+export type {
+  GradingPolicyReadRefusal,
+  GradingPolicyReadResult,
+  GradingPolicyUpdateBody,
+  GradingPolicyUpdatePlan,
+} from "./eval-grading-policy.js";
 export type { LatencyStats } from "./percentiles.js";
 export {
   validateToolCallEnvelope,
