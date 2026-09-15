@@ -82,6 +82,15 @@ describe("automatic refill contract", () => {
     );
     expect(mocks.action).not.toHaveBeenCalled();
   });
+  it("clears saved preferences even when ineligible", async () => {
+    mocks.raw = { eligible: false, activationAllowed: false };
+    const { result } = renderHook(() => useAutoTopup("org"));
+    await result.current.clear();
+    expect(mocks.mutation).toHaveBeenLastCalledWith(
+      "billing/autoTopupPreferences:clear",
+      { organizationId: "org" },
+    );
+  });
   it("binds consent to the server revision and quote; finish uses setup id", async () => {
     mocks.raw = {
       preferences: {},

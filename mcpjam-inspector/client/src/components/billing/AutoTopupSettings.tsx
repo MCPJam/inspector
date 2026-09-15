@@ -13,11 +13,10 @@ export const refillDollars = (cents: number) =>
     cents / 100,
   );
 const STATUS: Record<AutoTopupView["status"], string> = {
-  not_configured: "Automatic refills are not configured.",
-  not_active:
-    "Saved, not active. Authorize purchases and complete card setup to enable refills.",
+  not_configured: "",
+  not_active: "Saved, not active. Complete card setup to turn on.",
   awaiting_card: "Card setup is awaiting completion.",
-  enrolled: "Automatic refills are enrolled.",
+  enrolled: "Auto-reload is on.",
   paused: "Automatic refills are paused. Check your plan and payment settings.",
   payment_pending:
     "A refill payment is pending. An already-authorized payment can still complete after turning refills off.",
@@ -27,6 +26,8 @@ export interface AutoTopupSettingsProps {
   view?: AutoTopupView;
   canManage: boolean;
   onSave?: (configuration: AutoTopupConfiguration) => Promise<void>;
+  cardSetupConfigured?: boolean;
+  onClear?: () => Promise<void>;
   onDisable?: () => Promise<void>;
   onBegin?: () => Promise<unknown>;
   onClose?: () => void;
@@ -37,6 +38,8 @@ export function AutoTopupSettings({
   canManage,
   onSave,
   onDisable,
+  onClear,
+  cardSetupConfigured = true,
   onBegin,
   onClose,
 }: AutoTopupSettingsProps) {
@@ -60,8 +63,8 @@ export function AutoTopupSettings({
     limit.trim() === ""
       ? null
       : /^\d+(\.\d{1,2})?$/.test(limit)
-      ? Math.round(Number(limit) * 100)
-      : NaN;
+        ? Math.round(Number(limit) * 100)
+        : NaN;
   const dirty =
     !preferences ||
     Number(threshold) !== preferences.thresholdCredits ||
@@ -141,20 +144,34 @@ export function AutoTopupSettings({
     view.status !== "enrolled" &&
     view.status !== "payment_pending" &&
     view.paymentIssue !== "needs_review";
+  const setupUnavailable =
+    view &&
+    canManage &&
+    !["enrolled", "payment_pending", "needs_attention", "paused"].includes(
+      view.status,
+    ) &&
+    (!view.eligible || !view.activationAllowed || !cardSetupConfigured);
+  const statusText = !view
+    ? "Loading settings…"
+    : setupUnavailable
+      ? !view.eligible
+        ? "Auto-reload isn’t available for this organization."
+        : "Auto-reload setup is currently unavailable."
+      : STATUS[view.status];
   return (
     <div className="space-y-5">
-      <p role="status" className="text-sm">
-        {view
-          ? STATUS[view.status] ?? "Automatic refill status is unavailable."
-          : "Loading auto-reload settings…"}
-      </p>
+      {statusText && (
+        <p role="status" className="text-sm">
+          {statusText}
+        </p>
+      )}
       {view?.paymentIssue && (
         <p className="text-sm">
           {view.paymentIssue === "payment_failed"
             ? "The card payment failed. Review your card and authorize again."
             : view.paymentIssue === "balance_still_low"
-            ? "The refill settled existing debt and the balance is still low. Review usage before authorizing again."
-            : "Contact support to review the payment. Pending payments are not retried from this screen."}
+              ? "The refill settled existing debt and the balance is still low. Review usage before authorizing again."
+              : "Contact support to review the payment. Pending payments are not retried from this screen."}
         </p>
       )}
       {view?.card && (
@@ -162,13 +179,15 @@ export function AutoTopupSettings({
           Card: {view.card.brand} ending in {view.card.last4}
         </p>
       )}
-      {view?.monthlySpend && (
-        <p className="text-sm">
-          {view.monthlySpend.month} UTC. Charged:{" "}
-          {refillDollars(view.monthlySpend.chargedCents)} · Reserved:{" "}
-          {refillDollars(view.monthlySpend.reservedCents)}
-        </p>
-      )}
+      {view?.monthlySpend &&
+        (view.monthlySpend.chargedCents > 0 ||
+          view.monthlySpend.reservedCents > 0) && (
+          <p className="text-sm">
+            {view.monthlySpend.month} UTC. Charged:{" "}
+            {refillDollars(view.monthlySpend.chargedCents)} · Reserved:{" "}
+            {refillDollars(view.monthlySpend.reservedCents)}
+          </p>
+        )}
       <form
         noValidate
         className="space-y-4"
@@ -227,17 +246,17 @@ export function AutoTopupSettings({
           </div>
         </fieldset>
         <p className="text-xs text-muted-foreground">
-          Leave the dollar limit blank for unlimited automatic purchases per UTC
-          calendar month. Manual purchases are excluded; refunds do not reduce
-          monthly automatic spend. Saving settings turns off enrollment until
-          you authorize again.
+          Leave blank for no monthly limit.
         </p>
-        {dirty && (
-          <p className="text-sm">
-            Save settings to get the current refill price. Saving does not
-            authorize a charge.
+        <details className="text-xs text-muted-foreground">
+          <summary className="cursor-pointer">How billing works</summary>
+          <p className="mt-2">
+            Limits reset each UTC calendar month. Manual purchases don’t count;
+            refunds don’t reduce monthly spend. Saving settings turns off
+            auto-reload until you authorize again. Saving alone won’t charge
+            you.
           </p>
-        )}
+        </details>
         {canManage && (
           <Button
             type="submit"
@@ -282,11 +301,6 @@ export function AutoTopupSettings({
           </Button>
         </div>
       )}
-      {view && !view.activationAllowed && (
-        <p className="text-sm">
-          New automatic refill enrollment is currently unavailable.
-        </p>
-      )}
       {!canManage && (
         <p className="text-sm">
           Ask an organization admin to manage auto-reload.
@@ -323,6 +337,23 @@ export function AutoTopupSettings({
               Turn off auto-reload
             </Button>
           )}
+        {canManage && preferences && onClear && (
+          <Button
+            variant="outline"
+            disabled={busy}
+            onClick={() =>
+              void perform(async () => {
+                await onClear();
+                setConsent(false);
+                setNotice(
+                  "Saved settings removed. New automatic purchases are off; already-authorized payments can still complete.",
+                );
+              })
+            }
+          >
+            Clear saved settings
+          </Button>
+        )}
         {onClose && (
           <Button variant="outline" disabled={busy} onClick={onClose}>
             Back

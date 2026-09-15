@@ -24,6 +24,43 @@ const view = (overrides: Partial<AutoTopupView> = {}): AutoTopupView => ({
   ...overrides,
 });
 describe("AutoTopupSettings", () => {
+  it("keeps unconfigured setup concise and billing details collapsed", () => {
+    render(
+      <AutoTopupSettings
+        canManage
+        cardSetupConfigured={false}
+        view={view({
+          preferences: null,
+          status: "not_configured",
+          activationAllowed: false,
+          monthlySpend: { month: "2026-09", chargedCents: 0, reservedCents: 0 },
+        })}
+      />,
+    );
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "setup is currently unavailable",
+    );
+    expect(screen.queryByText(/Charged:/)).not.toBeInTheDocument();
+    expect(
+      screen.getByText("How billing works").closest("details"),
+    ).not.toHaveAttribute("open");
+  });
+  it("allows clearing settings after downgrade and surfaces failures", async () => {
+    const clear = vi.fn().mockRejectedValue(new Error("Try again"));
+    render(
+      <AutoTopupSettings
+        view={view({ eligible: false })}
+        canManage
+        onClear={clear}
+      />,
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Clear saved settings" }),
+    );
+    expect(clear).toHaveBeenCalledOnce();
+    expect(screen.getByRole("alert")).toHaveTextContent("Try again");
+  });
   it("does not resave unchanged enrolled preferences but allows edits", async () => {
     const user = userEvent.setup();
     const save = vi.fn();

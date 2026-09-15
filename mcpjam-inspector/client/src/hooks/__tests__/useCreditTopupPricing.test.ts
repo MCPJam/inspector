@@ -11,13 +11,19 @@ vi.mock("convex/react", () => ({
   useQuery: (name: string, args: unknown) => {
     state.query(name, args);
     if (args === "skip") return undefined;
-    return name.endsWith("getPlanCatalog")
-      ? {
-          plans: {
-            team: { catalogPlanId: "team", topUp: { centsPerCredit: 0.9 } },
-          },
-        }
-      : { effectivePlan: "team", catalogPlanId: "team" };
+    return {
+      topUpEligible: true,
+      canPurchase: false,
+      currency: "usd",
+      presets: [
+        {
+          packageId: "credits_1000",
+          credits: 1000,
+          priceCents: 900,
+          displayCredits: "1,000 credits",
+        },
+      ],
+    };
   },
 }));
 import { useCreditTopupPricing } from "../useCreditTopupPricing";
@@ -33,10 +39,13 @@ it("waits for a member and uses the organization's matching catalog", () => {
   );
   expect(result.current(preset)).toBeNull();
   expect(state.query).toHaveBeenLastCalledWith(
-    "billing:getPlanCatalog",
+    "billing:getOrganizationCreditTopupPresets",
     "skip",
   );
   state.member = true;
   rerender();
   expect(result.current(preset)?.priceCents).toBe(900);
+  expect(result.current(preset)?.displayPrice).toBe("$9.00");
+  expect(result.current.canPurchase).toBe(false);
+  expect(result.current({ ...preset, packageId: "unknown" })).toBeNull();
 });

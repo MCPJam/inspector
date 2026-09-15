@@ -13,7 +13,7 @@ function ConnectedAutoTopupSettings({
   canManage,
   onClose,
 }: AutoTopupDialogBodyProps) {
-  const { view, querySkipped, save, disable, begin, finish } =
+  const { view, querySkipped, save, disable, clear, begin, finish } =
     useAutoTopup(organizationId);
   const [setup, setSetup] = useState<AutoTopupSetup | null>(null);
   const [turnedOff, setTurnedOff] = useState(false);
@@ -60,6 +60,7 @@ function ConnectedAutoTopupSettings({
         }
         view={view}
         canManage={canManage}
+        cardSetupConfigured={cardSetupConfigured}
         onSave={async (configuration) => {
           await save(configuration);
           if (mounted.current) setTurnedOff(false);
@@ -67,6 +68,10 @@ function ConnectedAutoTopupSettings({
         onDisable={async () => {
           await disable();
           if (mounted.current) setTurnedOff(true);
+        }}
+        onClear={async () => {
+          await clear();
+          if (mounted.current) setTurnedOff(false);
         }}
         onClose={onClose}
         onBegin={
@@ -79,12 +84,6 @@ function ConnectedAutoTopupSettings({
             : undefined
         }
       />
-      {!cardSetupConfigured && canManage && (
-        <p className="text-sm">
-          Card setup is unavailable in this app environment. Saved settings do
-          not enable automatic purchases.
-        </p>
-      )}
     </>
   );
 }

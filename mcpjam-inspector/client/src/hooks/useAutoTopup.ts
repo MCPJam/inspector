@@ -46,6 +46,9 @@ export function useAutoTopup(organizationId: string | null | undefined) {
     canQuery ? { organizationId } : "skip",
   ) as AutoTopupView | undefined;
   const set = useMutation("billing/autoTopupPreferences:set" as any);
+  const clearPreferences = useMutation(
+    "billing/autoTopupPreferences:clear" as any,
+  );
   const turnOff = useMutation("billing/autoTopupActivation:disable" as any);
   const beginAction = useAction("billing/autoTopupActivationNode:begin" as any);
   const finishAction = useAction(
@@ -70,6 +73,11 @@ export function useAutoTopup(organizationId: string | null | undefined) {
       throw new Error("Select an organization first.");
     await run(() => turnOff({ organizationId }));
   }, [canQuery, organizationId, run, turnOff]);
+  const clear = useCallback(async () => {
+    if (!canQuery || !organizationId)
+      throw new Error("Select an organization first.");
+    await run(() => clearPreferences({ organizationId }));
+  }, [canQuery, organizationId, run, clearPreferences]);
   const begin = async (): Promise<AutoTopupSetup> => {
     const id = requireOrganization();
     if (
@@ -104,6 +112,7 @@ export function useAutoTopup(organizationId: string | null | undefined) {
     isSaving,
     save,
     disable,
+    clear,
     begin,
     finish,
   };
