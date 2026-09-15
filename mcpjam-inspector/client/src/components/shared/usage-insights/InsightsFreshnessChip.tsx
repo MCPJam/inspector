@@ -30,6 +30,20 @@ import { SCENARIO_INSIGHTS_QUERIES } from "@/lib/scenario-insights-api";
  * Specifics live behind the expand, per the minimal-UI norm: the chip is a
  * timestamp, the popover is the run detail plus Rebuild.
  */
+/**
+ * What this chip calls the thing it is reporting on.
+ *
+ * The copy used to say "scenario" everywhere, which is now wrong twice over:
+ * User Testing renamed it to a STUDY, and on Swarm the chip has always been
+ * describing one wave's run, never a scenario at all. (`benchmark` is in
+ * `InsightsScope` but never reaches this chip — that surface renders
+ * `ExplanatoryFlowOptIn`, not the workbench — so it is folded in with Swarm
+ * rather than given copy nobody would read.)
+ */
+function scopeNoun(scope: InsightsScope): string {
+  return scope.kind === "scenario" ? "study" : "run";
+}
+
 export function InsightsFreshnessChip({
   scope,
   latestRun,
@@ -104,7 +118,7 @@ export function InsightsFreshnessChip({
               ? `Last analyzed ${formatDistanceToNow(builtAt, { addSuffix: true })}`
               : failed
                 ? "The last analysis failed"
-                : "This scenario has not been analyzed yet"}
+                : `This ${scopeNoun(scope)} has not been analyzed yet`}
           </div>
           {builtAt ? (
             <div className="text-muted-foreground">

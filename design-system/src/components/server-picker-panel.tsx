@@ -5,7 +5,7 @@
  * `{ label, indicatorClassName }`, so it imports nothing from the app.
  */
 import { useEffect, useId, useMemo, useState } from "react";
-import { Loader2, Plus, Trash2 } from "lucide-react";
+import { AlertTriangle, Loader2, Plus, Trash2 } from "lucide-react";
 import { Badge } from "./badge";
 import { Button } from "./button";
 import { Checkbox } from "./checkbox";
@@ -196,6 +196,21 @@ export function ServerPickerPanel({
           Server Groups
         </TabsTrigger>
       </TabsList>
+
+      {/* BB-234: agents act for real on what is picked here. Above both tabs, so no tab and no form can drop it. */}
+      <div className="flex items-start gap-1.5 px-2 pb-1 pt-0.5">
+        <AlertTriangle
+          className="mt-[1px] size-3 shrink-0 text-warning"
+          aria-hidden
+        />
+        <p
+          className="text-[11px] leading-snug text-muted-foreground"
+          data-testid="server-picker-production-warning"
+        >
+          Agents take real actions on these servers, including writing and
+          deleting data. Use development servers, not production.
+        </p>
+      </div>
 
       <TabsContent value="servers" className="space-y-0.5">
         {servers.length === 0 ? (

@@ -301,4 +301,16 @@ describe("highlightJson", () => {
     const html = highlightJson('{"a": 1}\n');
     expect(html).toContain('<span class="json-punctuation">\n</span>');
   });
+
+  // The editor overlay renders this output through dangerouslySetInnerHTML and
+  // the JSON can come from a connected MCP server, so escaping here is the only
+  // thing standing between a tool result and stored XSS.
+  it("escapes markup in every position it emits", () => {
+    const html = highlightJson(
+      '{"<img src=x onerror=alert(1)>": "<img src=x onerror=alert(1)>"} <img src=x onerror=alert(1)>',
+    );
+
+    expect(html).not.toContain("<img");
+    expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
+  });
 });

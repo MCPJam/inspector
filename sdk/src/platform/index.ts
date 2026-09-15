@@ -18,6 +18,8 @@ export {
 
 export {
   DEFAULT_PLATFORM_API_BASE_URL,
+  DEFAULT_PLATFORM_USER_AGENT,
+  EVAL_VOCABULARY_HEADER,
   PlatformApiClient,
   RUN_LAUNCH_HEADERS,
   type PlatformApiClientOptions,
@@ -100,6 +102,8 @@ export type {
   PlatformImageBlueprintValidation,
   PlatformImageDeleted,
   PlatformEvalCase,
+  PlatformEvalCaseBase,
+  PlatformEvalCaseV2,
   PlatformEvalCaseBatchCreated,
   PlatformEvalCaseBatchFailed,
   PlatformEvalCaseBatchResult,
@@ -110,6 +114,7 @@ export type {
   PlatformEvalStep,
   PlatformEvalStepEvidence,
   PlatformEvalStepResult,
+  PlatformEvalStepsPage,
   PlatformEvalReplayVideoMeta,
   PlatformEvalIteration,
   PlatformOpenAIReadinessStartBody,
@@ -200,11 +205,15 @@ export type {
   PlatformEvalSuiteCreated,
   PlatformEvalSuiteDeleted,
   PlatformEvalSuiteDetail,
+  PlatformEvalSuiteDetailBase,
+  PlatformEvalSuiteDetailV2,
   PlatformEvalSuiteRevision,
   PlatformFileOwnedEvalSuiteSynced,
   PlatformEvalSuiteHost,
   PlatformEvalSuiteSchedule,
   PlatformEvalSuiteSettings,
+  PlatformEvalSuiteSettingsBase,
+  PlatformEvalSuiteSettingsV2,
   PlatformEvalSuiteGoalCompletionJudge,
   PlatformEvalSuiteGroundednessJudge,
   PlatformEvalSuiteComputerEnvironment,
@@ -349,6 +358,7 @@ export {
   createHostOperation,
   createTunnelOperation,
   cancelEvalRunOperation,
+  backtestEvalRunOperation,
   requestEvalRunJudgeOperation,
   listEvalGithubReposOperation,
   connectEvalGithubRepoOperation,
@@ -826,10 +836,36 @@ export {
   type StepScreenshot,
 } from "./step-evidence.js";
 
-export type { PlatformBrowserToolPolicy, PlatformSessionBrowserInput, PlatformBrowserScreenshot, PlatformSessionBrowser, PlatformSessionBrowserOpened, PlatformSessionBrowserCommand, PlatformSessionBrowserResult, PlatformSessionBrowserTrace, PlatformSessionBrowserOperation, PlatformSessionBrowserOperationResult } from "./types.js";
+export type {
+  PlatformBrowserToolPolicy,
+  PlatformSessionBrowserInput,
+  PlatformBrowserScreenshot,
+  PlatformSessionBrowser,
+  PlatformSessionBrowserOpened,
+  PlatformSessionBrowserCommand,
+  PlatformSessionBrowserResult,
+  PlatformSessionBrowserTrace,
+  PlatformSessionBrowserOperation,
+  PlatformSessionBrowserOperationResult,
+} from "./types.js";
 
-export { driveChatSessionBrowserOperation, observeChatSessionBrowserOperation, type DriveChatSessionBrowserInput, type ObserveChatSessionBrowserInput } from "./operations.js";
+export {
+  driveChatSessionBrowserOperation,
+  observeChatSessionBrowserOperation,
+  type DriveChatSessionBrowserInput,
+  type ObserveChatSessionBrowserInput,
+} from "./operations.js";
 export { collectSessionScreenshots } from "./browser-evidence.js";
 
 export { platformBrowserToolPolicySchema } from "./browser-policy.js";
-export type { PlatformSessionBrowserBodies, PlatformSessionBrowserResults } from "./types.js";
+export type {
+  PlatformSessionBrowserBodies,
+  PlatformSessionBrowserResults,
+} from "./types.js";
+
+export type {
+  EvalBacktestDraft,
+  EvalBacktestContinuation,
+  EvalBacktestReport,
+  EvalBacktestDifference,
+} from "../contract/eval-backtest.js";

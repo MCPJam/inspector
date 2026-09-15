@@ -569,7 +569,7 @@ export function describeChange(
     case "defaultPredicates":
       return {
         key,
-        label: "Scorers",
+        label: "Assertions",
         before: describePredicates(before.defaultPredicates),
         after: describePredicates(after.defaultPredicates),
       };
@@ -629,18 +629,18 @@ function describePolicyVersion(values: SuiteSettingsValues): string {
   }
   const defaults = values.verdictPolicyDefaults;
   if (!defaults) return "v2";
-  return `v2: ${defaults.repetitions} repetition${
+  return `v2: ${defaults.repetitions} iteration${
     defaults.repetitions === 1 ? "" : "s"
   }, ${formatFraction(defaults.passThreshold)} threshold`;
 }
 
-/** Repetitions, threshold, and the validity ceilings when any are set. */
+/** Iterations, threshold, and the validity ceilings when any are set. */
 function describePolicyDefaults(
   defaults: SuiteVerdictPolicyDefaults | undefined,
 ): string {
   if (!defaults) return "None";
   const parts = [
-    `${defaults.repetitions} repetition${defaults.repetitions === 1 ? "" : "s"}`,
+    `${defaults.repetitions} iteration${defaults.repetitions === 1 ? "" : "s"}`,
     `${formatFraction(defaults.passThreshold)} threshold`,
   ];
   if (defaults.validity) parts.push(`validity: ${describeValidity(defaults)}`);

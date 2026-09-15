@@ -41,15 +41,21 @@
 import { parseAllDocuments, stringify as stringifyYaml } from "yaml";
 import type { z } from "zod";
 import {
+  EVAL_SUITE_SCHEMA_VERSION,
+  EVAL_SUITE_SCHEMA_VERSION_2,
+  EVAL_SUITE_SCHEMA_VERSIONS,
   evalSuiteFileSchema,
   type EvalSuiteFile,
   type EvalSuiteFileCase,
   type EvalSuiteFileCaseImport,
+  type EvalSuiteFileCaseV2,
   type EvalSuiteFileDefaults,
+  type EvalSuiteFileDefaultsV2,
   type EvalSuiteFileProvenance,
   type EvalSuiteFileTarget,
   type EvalSuiteFileToolPolicy,
   type EvalSuiteFileValidity,
+  type EvalSuiteSchemaVersion,
 } from "./contract/suite-file.js";
 import type { EvalValidityCoverage } from "./contract/verdict-policy.js";
 
@@ -163,15 +169,26 @@ export type ResolvedEvalSuiteFileCase = {
   /** Authored case kind; absent means derive from matchOptions. */
   kind?: "capability" | "regression";
   steps: EvalSuiteFileCase["steps"];
-  /** The case's checks, from `cases[].checks` or its `assertions` alias. */
+  /**
+   * The case's assertions — dialect 2's `cases[].assertions`, or dialect 1's
+   * `cases[].checks` / its `assertions` alias. One canonical name in memory,
+   * whatever the file spelled.
+   */
   assertions: NonNullable<EvalSuiteFileCase["checks"]>;
+  suppressedSuiteStandardCheckIds?: string[];
   expectedOutput?: string;
   isNegativeTest: boolean;
   /** Resolved from `cases[].model`, else `defaults.model`. */
   model: string;
   /** Resolved from `defaults.provider`; cases cannot override it. */
   provider?: string;
-  repetitions: number;
+  /**
+   * The configured count — dialect 2's `iterations`, dialect 1's
+   * `repetitions` — resolved from the case's override, else the suite default.
+   * Canonical spelling only: a reader of the resolved view never sees the
+   * dialect-1 word.
+   */
+  iterations: number;
   passThreshold: number;
   /** `true` when the file asks the loader to skip this case. */
   disabled: boolean;
@@ -254,7 +271,8 @@ export type ResolvedEvalSuiteFile = {
     provider?: string;
     systemPrompt?: string;
     temperature?: number;
-    repetitions: number;
+    /** The configured count under its canonical name, whatever the dialect. */
+    iterations: number;
     passThreshold: number;
     captureLevel: typeof SUITE_FILE_DEFAULT_CAPTURE_LEVEL;
     toolPolicy?: EvalSuiteFileToolPolicy;
@@ -453,7 +471,7 @@ export function loadEvalSuiteFile(
 
   const parsed = evalSuiteFileSchema.safeParse(raw);
   if (!parsed.success) {
-    return failure("contract", findingsFromZodError(parsed.error));
+    return failure("contract", findingsFromZodError(parsed.error, raw));
   }
 
   const authored = parsed.data;
@@ -473,12 +491,75 @@ function locationOfYamlError(error: {
   return { line: start.line, column: start.col };
 }
 
-function findingsFromZodError(error: z.ZodError): SuiteFileFinding[] {
+/**
+ * The fields that exist in both dialects under different names.
+ *
+ * Keyed by the dialect the FILE declared, listing the keys that dialect does
+ * not know and the name it uses instead. A strict object refuses the foreign
+ * spelling as an unknown key, correctly, but zod's "Unrecognized key" alone
+ * sends an author looking for a typo in a word that is spelled right — it is
+ * the dialect that is wrong, so the finding says which one spells it that way.
+ */
+const CROSS_DIALECT_SPELLINGS: Record<
+  EvalSuiteSchemaVersion,
+  Record<string, { canonical: string; ownedBy: EvalSuiteSchemaVersion }>
+> = {
+  [EVAL_SUITE_SCHEMA_VERSION]: {
+    iterations: {
+      canonical: "repetitions",
+      ownedBy: EVAL_SUITE_SCHEMA_VERSION_2,
+    },
+  },
+  [EVAL_SUITE_SCHEMA_VERSION_2]: {
+    repetitions: {
+      canonical: "iterations",
+      ownedBy: EVAL_SUITE_SCHEMA_VERSION,
+    },
+    checks: { canonical: "assertions", ownedBy: EVAL_SUITE_SCHEMA_VERSION },
+  },
+};
+
+function declaredSchemaVersion(
+  raw: unknown
+): EvalSuiteSchemaVersion | undefined {
+  const declared =
+    raw && typeof raw === "object"
+      ? (raw as { schemaVersion?: unknown }).schemaVersion
+      : undefined;
+  return (EVAL_SUITE_SCHEMA_VERSIONS as readonly unknown[]).includes(declared)
+    ? (declared as EvalSuiteSchemaVersion)
+    : undefined;
+}
+
+function crossDialectHint(
+  issue: z.core.$ZodIssue,
+  version: EvalSuiteSchemaVersion | undefined
+): string {
+  if (version === undefined || issue.code !== "unrecognized_keys") return "";
+  const spellings = CROSS_DIALECT_SPELLINGS[version];
+  return issue.keys
+    .filter((key) => key in spellings)
+    .map((key) => {
+      const { canonical, ownedBy } = spellings[key]!;
+      return (
+        ` — schemaVersion "${version}" spells this field \`${canonical}\`; ` +
+        `\`${key}\` is the schemaVersion "${ownedBy}" spelling. Rename the key, ` +
+        `or set schemaVersion "${ownedBy}"`
+      );
+    })
+    .join("");
+}
+
+function findingsFromZodError(
+  error: z.ZodError,
+  raw: unknown
+): SuiteFileFinding[] {
+  const version = declaredSchemaVersion(raw);
   return error.issues.map((issue) =>
     finding(
       "SUITE_FILE_INVALID",
       [...issue.path] as Array<string | number>,
-      issue.message
+      issue.message + crossDialectHint(issue, version)
     )
   );
 }
@@ -494,9 +575,34 @@ function findingsFromZodError(error: z.ZodError): SuiteFileFinding[] {
 export function resolveEvalSuiteFile(
   authored: EvalSuiteFile
 ): ResolvedEvalSuiteFile {
-  const defaults: EvalSuiteFileDefaults = authored.defaults;
-  const cases = authored.cases.map((authoredCase) =>
-    resolveCase(authoredCase, defaults)
+  // The dialects differ in exactly two spellings — the configured count and
+  // the rule list — and this is the ONE place that knows it. Everything below
+  // reads the canonical names off `authoredCases`, so no other line in this
+  // module branches on the dialect.
+  const defaults: EvalSuiteFileDefaults | EvalSuiteFileDefaultsV2 =
+    authored.defaults;
+  const suiteIterations =
+    authored.schemaVersion === EVAL_SUITE_SCHEMA_VERSION
+      ? authored.defaults.repetitions
+      : authored.defaults.iterations;
+  const authoredCases: AuthoredCaseView[] =
+    authored.schemaVersion === EVAL_SUITE_SCHEMA_VERSION
+      ? authored.cases.map((entry) => ({
+          ...entry,
+          // One list, either spelling. `checks` is dialect 1's canonical word;
+          // `assertions` is the original name and still loads. The schema
+          // refuses both at once, so this never has to choose between lists.
+          assertions: entry.checks ?? entry.assertions,
+          iterations: entry.repetitions,
+        }))
+      : authored.cases;
+  const cases = authoredCases.map((authoredCase) =>
+    resolveCase(authoredCase, {
+      model: defaults.model,
+      provider: defaults.provider,
+      iterations: suiteIterations,
+      passThreshold: defaults.passThreshold,
+    })
   );
 
   return {
@@ -516,7 +622,7 @@ export function resolveEvalSuiteFile(
       ...(defaults.temperature === undefined
         ? {}
         : { temperature: defaults.temperature }),
-      repetitions: defaults.repetitions,
+      iterations: suiteIterations,
       passThreshold: defaults.passThreshold,
       captureLevel: defaults.captureLevel ?? SUITE_FILE_DEFAULT_CAPTURE_LEVEL,
       ...(defaults.toolPolicy === undefined
@@ -546,9 +652,23 @@ export function resolveEvalSuiteFile(
   };
 }
 
+/**
+ * A case as the resolver reads it: dialect 2's shape, which is the canonical
+ * one. A dialect-1 case is projected onto it before resolution.
+ */
+type AuthoredCaseView = EvalSuiteFileCaseV2;
+
+/** The suite defaults a case can inherit, already under canonical names. */
+type InheritableDefaults = {
+  model: string;
+  provider: string | undefined;
+  iterations: number;
+  passThreshold: number;
+};
+
 function resolveCase(
-  authoredCase: EvalSuiteFileCase,
-  defaults: EvalSuiteFileDefaults
+  authoredCase: AuthoredCaseView,
+  defaults: InheritableDefaults
 ): ResolvedEvalSuiteFileCase {
   return {
     id: authoredCase.id,
@@ -560,17 +680,20 @@ function resolveCase(
       ? { kind: authoredCase.kind }
       : {}),
     steps: authoredCase.steps,
-    // One list, either spelling. `checks` is canonical; `assertions` is the
-    // original name and still loads. The schema refuses both at once, so this
-    // never has to choose between two lists.
-    assertions: authoredCase.checks ?? authoredCase.assertions ?? [],
+    assertions: authoredCase.assertions ?? [],
+    ...(authoredCase.suppressedSuiteStandardCheckIds !== undefined
+      ? {
+          suppressedSuiteStandardCheckIds:
+            authoredCase.suppressedSuiteStandardCheckIds,
+        }
+      : {}),
     ...(authoredCase.expectedOutput === undefined
       ? {}
       : { expectedOutput: authoredCase.expectedOutput }),
     isNegativeTest: authoredCase.isNegativeTest ?? false,
     model: authoredCase.model ?? defaults.model,
     ...(defaults.provider === undefined ? {} : { provider: defaults.provider }),
-    repetitions: authoredCase.repetitions ?? defaults.repetitions,
+    iterations: authoredCase.iterations ?? defaults.iterations,
     passThreshold: authoredCase.passThreshold ?? defaults.passThreshold,
     disabled: authoredCase.disabled ?? false,
     ...(authoredCase.import === undefined
@@ -603,10 +726,25 @@ const FILE_KEY_ORDER = [
 const SUITE_KEY_ORDER = ["id", "name", "description"] as const;
 const TARGET_KEY_ORDER = ["servers", "environment"] as const;
 const SERVER_KEY_ORDER = ["name", "id"] as const;
+/**
+ * Per-dialect orders for the two objects whose keys differ by dialect. Same
+ * slots, different words: `iterations` sits exactly where `repetitions` did,
+ * and `assertions` where `checks` did, so a dialect-2 export reads in the
+ * order a dialect-1 author already knows.
+ */
 const DEFAULTS_KEY_ORDER = [
   "model",
   "provider",
   "repetitions",
+  "passThreshold",
+  "captureLevel",
+  "toolPolicy",
+  "validity",
+] as const;
+const DEFAULTS_KEY_ORDER_V2 = [
+  "model",
+  "provider",
+  "iterations",
   "passThreshold",
   "captureLevel",
   "toolPolicy",
@@ -642,13 +780,37 @@ const CASE_KEY_ORDER = [
   "expectedOutput",
   "steps",
   "checks",
+  "suppressedSuiteStandardCheckIds",
   // Beside `checks`, its deprecated spelling. A key missing from this list
   // serializes into the remainder AFTER `import`, so an authored `checks`
   // would move on the first write-back and churn the diff.
   "assertions",
   "import",
 ] as const;
+const CASE_KEY_ORDER_V2 = [
+  "id",
+  "title",
+  "intent",
+  "kind",
+  "disabled",
+  "model",
+  "iterations",
+  "passThreshold",
+  "isNegativeTest",
+  "expectedOutput",
+  "steps",
+  "assertions",
+  "suppressedSuiteStandardCheckIds",
+  "import",
+] as const;
 const CASE_IMPORT_KEY_ORDER = ["status", "sourceCaseKey", "note"] as const;
+
+/** The key-order tables a dialect serializes with. */
+function keyOrdersFor(version: EvalSuiteSchemaVersion) {
+  return version === EVAL_SUITE_SCHEMA_VERSION
+    ? { defaults: DEFAULTS_KEY_ORDER, testCase: CASE_KEY_ORDER }
+    : { defaults: DEFAULTS_KEY_ORDER_V2, testCase: CASE_KEY_ORDER_V2 };
+}
 
 type PlainRecord = Record<string, unknown>;
 
@@ -682,13 +844,18 @@ function ordered(
   return out;
 }
 
-function orderedCase(authoredCase: EvalSuiteFileCase): PlainRecord {
-  return ordered(authoredCase as unknown as PlainRecord, CASE_KEY_ORDER, {
+function orderedCase(
+  authoredCase: EvalSuiteFileCase | EvalSuiteFileCaseV2,
+  caseKeys: readonly string[]
+): PlainRecord {
+  return ordered(authoredCase as unknown as PlainRecord, caseKeys, {
     import: (entry) => ordered(entry as PlainRecord, CASE_IMPORT_KEY_ORDER),
   });
 }
 
 function orderedFile(authored: EvalSuiteFile): PlainRecord {
+  // The dialect is the file's own `schemaVersion` — a writer never picks one.
+  const keys = keyOrdersFor(authored.schemaVersion);
   return ordered(authored as unknown as PlainRecord, FILE_KEY_ORDER, {
     suite: (entry) => ordered(entry as PlainRecord, SUITE_KEY_ORDER),
     target: (entry) =>
@@ -699,7 +866,7 @@ function orderedFile(authored: EvalSuiteFile): PlainRecord {
           ),
       }),
     defaults: (entry) =>
-      ordered(entry as PlainRecord, DEFAULTS_KEY_ORDER, {
+      ordered(entry as PlainRecord, keys.defaults, {
         toolPolicy: (policy) =>
           ordered(policy as PlainRecord, TOOL_POLICY_KEY_ORDER),
         validity: (validity) =>
@@ -707,7 +874,9 @@ function orderedFile(authored: EvalSuiteFile): PlainRecord {
       }),
     provenance: (entry) => ordered(entry as PlainRecord, PROVENANCE_KEY_ORDER),
     cases: (cases) =>
-      (cases as EvalSuiteFileCase[]).map((entry) => orderedCase(entry)),
+      (cases as Array<EvalSuiteFileCase | EvalSuiteFileCaseV2>).map((entry) =>
+        orderedCase(entry, keys.testCase)
+      ),
   });
 }
 

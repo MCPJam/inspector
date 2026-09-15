@@ -11,7 +11,7 @@ describe("AddStepPicker", () => {
     await user.click(screen.getByRole("button", { name: /^add/i }));
 
     expect(screen.getByText("Actions")).toBeTruthy();
-    expect(screen.getByText("Checks")).toBeTruthy();
+    expect(screen.getByText("Assertions")).toBeTruthy();
     expect(screen.getByText("Prompt")).toBeTruthy();
     expect(screen.getByText("Interact")).toBeTruthy();
     expect(screen.getByText("Call tool")).toBeTruthy();
@@ -21,7 +21,7 @@ describe("AddStepPicker", () => {
     expect(screen.queryByText("Tool was called at least once")).toBeNull();
     expect(screen.queryByText("Text visible")).toBeNull();
     expect(screen.getByTestId("add-step-expand-more")).toHaveTextContent(
-      `More checks (${secondaryCount()})`,
+      `More assertions (${secondaryCount()})`,
     );
   });
 
@@ -33,7 +33,7 @@ describe("AddStepPicker", () => {
     await user.click(screen.getByRole("button", { name: /^add/i }));
     await user.click(screen.getByTestId("add-step-expand-more"));
 
-    expect(screen.getByText("More conversation checks")).toBeTruthy();
+    expect(screen.getByText("More conversation assertions")).toBeTruthy();
     expect(screen.getByText("Did the view load")).toBeTruthy();
     expect(screen.getByText("What's on screen")).toBeTruthy();
     expect(screen.getByText("Run health")).toBeTruthy();
@@ -107,7 +107,7 @@ describe("AddStepPicker", () => {
 
     await user.click(screen.getByRole("button", { name: /^add/i }));
     await user.type(
-      screen.getByLabelText(/filter steps and checks/i),
+      screen.getByLabelText(/filter steps and assertions/i),
       "input value",
     );
 
@@ -122,7 +122,7 @@ describe("AddStepPicker", () => {
     renderWithProviders(<AddStepPicker onSelect={onSelect} />);
 
     await user.click(screen.getByRole("button", { name: /^add/i }));
-    const search = screen.getByLabelText(/filter steps and checks/i);
+    const search = screen.getByLabelText(/filter steps and assertions/i);
     await user.type(search, "prompt{Enter}");
 
     expect(onSelect).toHaveBeenCalledWith({
@@ -140,7 +140,7 @@ describe("AddStepPicker", () => {
     await user.click(screen.getByRole("button", { name: /^add/i }));
     await user.click(screen.getByTestId("add-step-expand-more"));
 
-    const search = screen.getByLabelText(/filter steps and checks/i);
+    const search = screen.getByLabelText(/filter steps and assertions/i);
     await user.type(search, "at least once{Enter}");
 
     expect(onSelect).toHaveBeenCalledWith({

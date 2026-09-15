@@ -1,3 +1,4 @@
+import { SettingsPageDescription } from "@/components/settings/SettingsPageDescription";
 import { Navigate } from "react-router";
 import { useConvexAuth } from "convex/react";
 import {
@@ -97,6 +98,7 @@ function IntegrationCard({
         href={href}
         target="_blank"
         rel="noreferrer"
+        id={`setting-${testId.replace("integration-card-", "")}`}
         data-testid={testId}
         className={className}
       >
@@ -108,6 +110,7 @@ function IntegrationCard({
     <button
       type="button"
       onClick={onSelect}
+      id={`setting-${testId.replace("integration-card-", "")}`}
       data-testid={testId}
       className={className}
     >
@@ -345,13 +348,15 @@ export function IntegrationsRoute({
   }
 
   return (
-    <SettingsPageShell
-      active="integrations"
-      activeOrganizationId={activeOrganizationId}
-    >
-      <p className="max-w-prose text-sm text-muted-foreground">
-        Connect MCPJam to the services your team already uses.
-      </p>
+    <SettingsPageShell>
+      <header className="space-y-1">
+        <h1 className="text-2xl font-semibold text-accent-foreground">
+          Integrations
+        </h1>
+        <SettingsPageDescription>
+          Connect MCPJam to the services your team already uses.
+        </SettingsPageDescription>
+      </header>
 
       <div className="space-y-2">
         <ErrorBoundary

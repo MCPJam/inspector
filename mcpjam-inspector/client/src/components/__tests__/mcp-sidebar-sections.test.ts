@@ -83,6 +83,19 @@ describe("sidebar section grouping", () => {
     ).not.toContain("Acceptance Testing");
   });
 
+  it("points the New pill at WebMCP and nothing else", () => {
+    // The pill is editorial, not structural: it marks whichever surface is
+    // newest, so it has to be moved by hand as tabs age out of being new.
+    // Nothing type-errors when it is left behind on a long-shipped item, or
+    // when a second item quietly picks one up, so assert the whole set.
+    const badged = navigationSections
+      .flatMap((section) => section.items)
+      .filter((item) => item.badge === "New")
+      .map((item) => item.title);
+
+    expect(badged).toEqual(["WebMCP"]);
+  });
+
   it("never lists the same title twice across sections", () => {
     const titles = navigationSections.flatMap((section) =>
       section.items.map((item) => item.title)

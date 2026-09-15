@@ -64,7 +64,7 @@ import {
 } from "./session-registry.js";
 import { join } from "node:path";
 import { mkdir } from "node:fs/promises";
-import { createServer } from "node:net";
+import { reserveLoopbackPort } from "./bridge-endpoint.js";
 import { createRequire } from "node:module";
 
 /**
@@ -128,26 +128,6 @@ let sharedSupervisor: LocalHarnessSupervisor | null = null;
 export function localHarnessSupervisor(): LocalHarnessSupervisor {
   sharedSupervisor ??= new LocalHarnessSupervisor();
   return sharedSupervisor;
-}
-
-/** A free loopback port for the session's bridge. */
-async function reserveLoopbackPort(): Promise<number> {
-  return new Promise((resolvePromise, reject) => {
-    const probe = createServer();
-    probe.once("error", reject);
-    probe.listen(0, "127.0.0.1", () => {
-      const address = probe.address();
-      if (address === null || typeof address === "string") {
-        probe.close(() => reject(new Error("could not reserve a bridge port")));
-        return;
-      }
-      const { port } = address;
-      // Closed before the bridge binds it. The window between is narrowed
-      // further by `assertBridgePortUnclaimed`, which runs immediately before
-      // the spawn and refuses a port something else has taken.
-      probe.close(() => resolvePromise(port));
-    });
-  });
 }
 
 export interface PrepareLocalHarnessTurnArgs {
@@ -570,7 +550,6 @@ async function abandonLocalSetup(args: {
   await revokeLease(args.runId, args.bearer);
 }
 
-
 async function revokeLease(runId: string, bearer: string): Promise<void> {
   try {
     await revokeHarnessModelBroker({ runId, bearer });
@@ -600,8 +579,7 @@ async function readInstalledAdapterVersion(): Promise<string> {
     const pkg = required("@ai-sdk/harness-claude-code/package.json") as {
       version?: unknown;
     };
-    cachedAdapterVersion =
-      typeof pkg.version === "string" ? pkg.version : "";
+    cachedAdapterVersion = typeof pkg.version === "string" ? pkg.version : "";
   } catch {
     // An adapter we cannot identify fails the compatibility gate's exact-pin
     // check, which is the correct outcome: a runtime whose adapter version is

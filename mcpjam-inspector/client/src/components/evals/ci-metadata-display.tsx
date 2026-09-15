@@ -30,7 +30,9 @@ function safeHttpUrl(value?: string): string | undefined {
   if (!value) return undefined;
   try {
     const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:"
+    return (url.protocol === "http:" || url.protocol === "https:") &&
+      !url.username &&
+      !url.password
       ? value
       : undefined;
   } catch {
@@ -69,17 +71,25 @@ export function CiMetadataDisplay({
   const shortSha = formatCommitSha(fullSha);
   const runUrl = safeHttpUrl(ciMetadata?.runUrl?.trim());
   const repoBaseUrl = getGitHubRepoBaseUrl(runUrl);
-  const branchUrl = branch
-    ? repoBaseUrl
-      ? `${repoBaseUrl}/tree/${encodeURIComponent(branch)}`
-      : runUrl
-    : undefined;
+  const branchUrl =
+    safeHttpUrl(ciMetadata?.branchUrl) ??
+    (branch
+      ? repoBaseUrl
+        ? `${repoBaseUrl}/tree/${encodeURIComponent(branch)}`
+        : runUrl
+      : undefined);
   const commitUrl = shortSha
     ? repoBaseUrl
       ? `${repoBaseUrl}/commit/${encodeURIComponent(fullSha ?? shortSha)}`
       : runUrl
     : undefined;
-  const hasMetadata = !!branch || !!shortSha || !!runUrl;
+  const prUrl = safeHttpUrl(ciMetadata?.prUrl);
+  const hasMetadata =
+    !!branch ||
+    !!shortSha ||
+    !!runUrl ||
+    !!prUrl ||
+    ciMetadata?.dirty !== undefined;
 
   if (!hasMetadata) {
     return null;
@@ -141,6 +151,27 @@ export function CiMetadataDisplay({
 
   const content = (
     <>
+      {ciMetadata?.dirty !== undefined && (
+        <Badge variant="outline">
+          {ciMetadata.dirty ? "Uncommitted changes" : "Clean worktree"}
+        </Badge>
+      )}
+      {prUrl &&
+        (interactive ? (
+          <a
+            href={prUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="text-xs text-primary hover:underline"
+          >
+            Pull request
+            {ciMetadata?.pullRequestNumber
+              ? ` #${ciMetadata.pullRequestNumber}`
+              : ""}
+          </a>
+        ) : (
+          <Badge variant="outline">Pull request</Badge>
+        ))}
       {branch &&
         (interactive && branchUrl ? (
           <a

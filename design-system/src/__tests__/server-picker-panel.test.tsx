@@ -782,3 +782,53 @@ describe("ServerPickerPanel — an unanswered catalog", () => {
     ).toBeInTheDocument();
   });
 });
+
+/**
+ * BB-234: agents write and delete on whatever is picked here. Main put the
+ * warning in the picker it replaced, in both popover branches; here it sits
+ * between the tabs and their content, so no tab and no form can lose it.
+ */
+describe("ServerPickerPanel — production-server warning", () => {
+  const WARNING = "server-picker-production-warning";
+
+  it("warns that agents write and delete, and to avoid production", () => {
+    render(<ServerPickerPanel {...panelProps()} />);
+    const warning = screen.getByTestId(WARNING);
+    // "writing and deleting" as one phrase: the write half is the surprise.
+    expect(warning).toHaveTextContent(/real actions/i);
+    expect(warning).toHaveTextContent(/writing and\s+deleting data/i);
+    expect(warning).toHaveTextContent(/not production/i);
+  });
+
+  it("sits between the tabs and the first row, where no list can push it under the fold", () => {
+    render(<ServerPickerPanel {...panelProps()} />);
+    const warning = screen.getByTestId(WARNING);
+    const tabs = screen.getByRole("tablist");
+    const firstRow = screen.getByText("Excalidraw (App)");
+    expect(
+      tabs.compareDocumentPosition(warning) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      warning.compareDocumentPosition(firstRow) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("still warns when the project has nothing to pick yet", () => {
+    // The first-run path: one create away from aiming a swarm somewhere.
+    render(<ServerPickerPanel {...panelProps({ servers: [], groups: [] })} />);
+    expect(screen.getByTestId(WARNING)).toBeInTheDocument();
+    expect(
+      screen.getByText("No servers in this project yet."),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps warning while the create form has replaced the group list", async () => {
+    const user = userEvent.setup();
+    render(<ServerPickerPanel {...panelProps({ tab: "groups" })} />);
+    await user.click(screen.getByRole("button", { name: /create new group/i }));
+    expect(screen.queryByText("Group 1")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Group name")).toBeInTheDocument();
+    expect(screen.getByTestId(WARNING)).toHaveTextContent(/not production/i);
+  });
+});

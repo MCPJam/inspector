@@ -731,7 +731,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(within(detail).getByText(/use cases & context/i)).toBeVisible();
     // Every field is a control now (BB-122) — the goal and the context read
     // back as values, not as text nodes.
-    expect(within(detail).getByDisplayValue("Reconcile payouts")).toBeVisible();
+    expect(within(detail).getByLabelText("Goal")).toHaveValue("Reconcile");
     expect(
       within(detail).getByDisplayValue(/closes the books monthly/i),
     ).toBeVisible();
@@ -751,7 +751,7 @@ describe("SwarmsTab — New swarm create flow", () => {
       {
         _id: "j-existing",
         name: "Reconcile payouts",
-        goal: "Reconcile",
+        goal: "Reconcile every payout against the ledger and flag mismatches",
         hostIds: ["host-1"],
         environmentIds: ["env-1"],
         config: { sessionsPerTarget: 1, maxTurns: 6 },
@@ -764,9 +764,20 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.click(screen.getByTestId("new-swarm-persona-compact"));
     const detail = await screen.findByTestId("new-swarm-persona-detail");
 
+    // The field carried the journey's card label — its name, or a goal cut to
+    // 48 characters — so editing a named journey wrote text derived from the
+    // name into `goal` and the panel still showed the unchanged name: the edit
+    // read as lost while the real goal was quietly replaced (UTSC-36).
+    const goalField = within(detail).getByLabelText("Goal");
+    expect(goalField).toHaveValue(
+      "Reconcile every payout against the ledger and flag mismatches",
+    );
+
     const save = within(detail).getByTestId("new-swarm-persona-save");
-    fireEvent.change(within(detail).getByDisplayValue("Reconcile payouts"), {
-      target: { value: "Reconcile payouts weekly" },
+    fireEvent.change(goalField, {
+      target: {
+        value: "Reconcile every payout against the ledger and open a ticket",
+      },
     });
     expect(navigateMock).not.toHaveBeenCalledWith("/swarms?persona=p-1");
 
@@ -777,9 +788,84 @@ describe("SwarmsTab — New swarm create flow", () => {
     });
     expect(updateJourneyMock.mock.calls[0][0]).toMatchObject({
       journeyRefId: "j-existing",
-      goal: "Reconcile payouts weekly",
+      goal: "Reconcile every payout against the ledger and open a ticket",
     });
     // The persona row itself did not change, so it is left alone.
+    expect(updatePersonaMock).not.toHaveBeenCalled();
+  });
+
+  it("edits one goal of a multi-goal existing persona and leaves the other", async () => {
+    // Every goal field carries the same `aria-label`, so the fields are only
+    // ever told apart by their journey id. A persona carrying two named
+    // journeys is what catches a `goalText` keyed off anything else: the
+    // single-journey case passes either way.
+    existingPersonas = [
+      {
+        _id: "p-1",
+        personaId: "p1",
+        name: "Ana",
+        role: "Ops",
+        notes: "Closes the books monthly.",
+      },
+    ];
+    personaJourneys = [
+      {
+        _id: "j-first",
+        name: "Reconcile payouts",
+        goal: "Reconcile every payout against the ledger and flag mismatches",
+        hostIds: ["host-1"],
+        environmentIds: ["env-1"],
+        config: { sessionsPerTarget: 1, maxTurns: 6 },
+      },
+      {
+        _id: "j-second",
+        name: "Chase refunds",
+        goal: "Chase every refund older than thirty days and escalate the rest",
+        hostIds: ["host-1"],
+        environmentIds: ["env-1"],
+        config: { sessionsPerTarget: 1, maxTurns: 6 },
+      },
+    ];
+    openDescribe();
+    pickExistingPersona(/include ana/i);
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-reused-personas");
+    fireEvent.click(screen.getByTestId("new-swarm-persona-compact"));
+    const detail = await screen.findByTestId("new-swarm-persona-detail");
+
+    const goalFields = within(detail).getAllByLabelText("Goal");
+    expect(goalFields).toHaveLength(2);
+    expect(goalFields[0]).toHaveValue(
+      "Reconcile every payout against the ledger and flag mismatches",
+    );
+    expect(goalFields[1]).toHaveValue(
+      "Chase every refund older than thirty days and escalate the rest",
+    );
+
+    fireEvent.change(goalFields[1], {
+      target: { value: "Chase every refund older than seven days" },
+    });
+    // Re-read: the first edit seeds a draft for EVERY goal at once, so this is
+    // where a field reading the draft by anything but its own journey id shows
+    // its neighbour's text back to the user.
+    const edited = within(detail).getAllByLabelText("Goal");
+    expect(edited[1]).toHaveValue("Chase every refund older than seven days");
+    expect(edited[0]).toHaveValue(
+      "Reconcile every payout against the ledger and flag mismatches",
+    );
+
+    fireEvent.click(within(detail).getByTestId("new-swarm-persona-save"));
+
+    await vi.waitFor(() => {
+      expect(updateJourneyMock).toHaveBeenCalled();
+    });
+    // Only the edited journey is written — the other is not touched at all,
+    // since it is shared with every other swarm reusing this persona.
+    expect(updateJourneyMock).toHaveBeenCalledTimes(1);
+    expect(updateJourneyMock.mock.calls[0][0]).toMatchObject({
+      journeyRefId: "j-second",
+      goal: "Chase every refund older than seven days",
+    });
     expect(updatePersonaMock).not.toHaveBeenCalled();
   });
 
@@ -1518,13 +1604,14 @@ describe("SwarmsTab — New swarm create flow", () => {
 
     expect(
       screen.getByTestId("new-swarm-launch-session-estimate"),
-    ).toHaveTextContent(/1 session/i);
+    ).toHaveTextContent(/1 conversation/i);
   });
 
-  it("keeps a reused journey's own sessions when the intensity changes", async () => {
-    // SUTB-26: a preset may seed a field, never overwrite one the user set.
-    // This journey was saved at 3 sessions and launch does not rewrite a
-    // shared journey's config, so pushing harder must not re-price it.
+  it("prices a reused persona at its saved sessions, with no counter", async () => {
+    // SUTB-26: a counter sizes the goals this swarm creates, never one the
+    // user already saved. Launch does not rewrite a shared journey's config,
+    // so the card quotes what that journey will really run and offers no
+    // control that would imply otherwise.
     existingPersonas = [
       { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
     ];
@@ -1542,12 +1629,13 @@ describe("SwarmsTab — New swarm create flow", () => {
     await screen.findByTestId("new-swarm-reused-personas");
     expect(
       screen.getByTestId("new-swarm-launch-session-estimate"),
-    ).toHaveTextContent(/3 sessions/i);
-
-    fireEvent.click(screen.getByRole("radio", { name: /launch ready/i }));
+    ).toHaveTextContent(/3 conversations/i);
+    expect(screen.getByTestId("new-swarm-persona-subtotal")).toHaveTextContent(
+      /1 goal at the iterations already saved = 3 conversations/i,
+    );
     expect(
-      screen.getByTestId("new-swarm-launch-session-estimate"),
-    ).toHaveTextContent(/3 sessions/i);
+      screen.queryByTestId("new-swarm-persona-iterations"),
+    ).not.toBeInTheDocument();
 
     fireEvent.click(
       screen.getByRole("button", { name: /^back to describe$/i }),
@@ -1557,7 +1645,7 @@ describe("SwarmsTab — New swarm create flow", () => {
 
     expect(
       screen.getByTestId("new-swarm-launch-session-estimate"),
-    ).toHaveTextContent(/3 sessions/i);
+    ).toHaveTextContent(/3 conversations/i);
   });
 
   it("surfaces a rejected environment override as a failed launch", async () => {
@@ -2127,24 +2215,67 @@ describe("SwarmsTab — Describe step (Production Redesign)", () => {
     openDescribe();
     expect(screen.queryByTestId("new-swarm-name")).not.toBeInTheDocument();
     expect(
-      screen.queryByTestId("new-swarm-push-intensity"),
+      screen.queryByTestId("new-swarm-persona-iterations"),
     ).not.toBeInTheDocument();
   });
 
-  it("asks for session scope on Confirm after generation", async () => {
+  it("gives every persona its own iterations counter on Confirm", async () => {
     openDescribe();
     fillDescribe();
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await screen.findByTestId("new-swarm-proposed-personas");
 
-    expect(screen.getByTestId("new-swarm-push-intensity")).toBeInTheDocument();
+    const counters = screen.getAllByTestId("new-swarm-persona-iterations");
+    expect(counters).toHaveLength(2);
+    for (const counter of counters) expect(counter).toHaveValue(1);
     expect(
-      screen.getByText(/select the total number of sessions for the swarm/i),
-    ).toBeVisible();
-    expect(screen.getByRole("radio", { name: /quick look/i })).toHaveAttribute(
-      "aria-checked",
-      "true",
+      screen.getByTestId("new-swarm-conversation-equation"),
+    ).toHaveTextContent(/across 2 personas/i);
+  });
+
+  it("keeps a usable count when the counter is cleared", async () => {
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+
+    const counter = screen.getAllByTestId(
+      "new-swarm-persona-iterations",
+    )[0];
+    fireEvent.change(counter, { target: { value: "" } });
+
+    expect(counter).toHaveValue(1);
+    expect(
+      screen.getByTestId("new-swarm-launch-session-estimate"),
+    ).toHaveTextContent(/2 conversations/i);
+  });
+  it("moves only the persona whose counter was touched", async () => {
+    // The whole reason the control left the footer: two personas can carry
+    // different goal counts, so one number cannot size both.
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+    expect(
+      screen.getByTestId("new-swarm-launch-session-estimate"),
+    ).toHaveTextContent(/2 conversations/i);
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /more iterations for refund chaser/i,
+      }),
     );
+
+    const subtotals = screen.getAllByTestId("new-swarm-persona-subtotal");
+    expect(subtotals[0]).toHaveTextContent(
+      /1 goal . 2 iterations = 2 conversations/i,
+    );
+    expect(subtotals[1]).toHaveTextContent(
+      /1 goal . 1 iteration = 1 conversation/i,
+    );
+    expect(
+      screen.getByTestId("new-swarm-launch-session-estimate"),
+    ).toHaveTextContent(/3 conversations/i);
   });
 
   it("lists attached personas as removable rows, not as a checklist", () => {
@@ -2216,7 +2347,7 @@ describe("SwarmsTab — Confirm personas (Production Redesign)", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("shows the redesigned title and session scope on Confirm", async () => {
+  it("shows the redesigned title and the swarm total on Confirm", async () => {
     await reachConfirm();
 
     expect(
@@ -2229,7 +2360,7 @@ describe("SwarmsTab — Confirm personas (Production Redesign)", () => {
         /select a user persona for details, or remove anything that doesn.{0,3}t fit/i,
       ),
     ).toBeVisible();
-    expect(screen.getByTestId("new-swarm-push-intensity")).toBeInTheDocument();
+    expect(screen.getByTestId("new-swarm-conversation-total")).toBeInTheDocument();
     expect(
       screen.queryByText(/run \d+ sessions? total in this swarm/i),
     ).not.toBeInTheDocument();
@@ -2474,7 +2605,7 @@ describe("SwarmsTab — a reused persona whose save fails", () => {
     updateJourneyMock.mockRejectedValue(new Error("goal rejected"));
     const detail = await openReusedPersona();
 
-    fireEvent.change(within(detail).getByDisplayValue("Reconcile payouts"), {
+    fireEvent.change(within(detail).getByLabelText("Goal"), {
       target: { value: "Reconcile payouts weekly" },
     });
     fireEvent.click(within(detail).getByTestId("new-swarm-persona-save"));
@@ -2485,9 +2616,9 @@ describe("SwarmsTab — a reused persona whose save fails", () => {
       );
     });
     expect(screen.getByTestId("new-swarm-persona-detail")).toBeInTheDocument();
-    expect(
-      within(detail).getByDisplayValue("Reconcile payouts weekly"),
-    ).toBeInTheDocument();
+    expect(within(detail).getByLabelText("Goal")).toHaveValue(
+      "Reconcile payouts weekly",
+    );
   });
 
   /**

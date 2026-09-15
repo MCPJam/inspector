@@ -1,3 +1,4 @@
+import { filterSuppressedSuiteAssertions } from "@mcpjam/sdk/contract";
 /**
  * One case's scorers, in the order the chain grades them.
  *
@@ -79,7 +80,10 @@ import {
   roleOfPredicate,
   type ScorerUiRole,
 } from "@/components/evals/suite-scorer-table-model";
-import { judgeMode, type JudgeMode } from "@/components/evals/suite-grading-model";
+import {
+  judgeMode,
+  type JudgeMode,
+} from "@/components/evals/suite-grading-model";
 import type {
   EvalJudgeConfig,
   EvalJudgeConfigOverride,
@@ -122,7 +126,7 @@ export const ROUTE_OWNED_KINDS: ReadonlySet<PredicateKind> =
   new Set<PredicateKind>(["toolCalledWith"]);
 
 /**
- * What the case page's "+ Add scorer" library may offer.
+ * What the case page's "+ Add assertion" library may offer.
  *
  * Excludes the route's own kind (offering it twice would let a reader author a
  * route the route row then contradicts) and the opt-in kinds, which are
@@ -312,6 +316,7 @@ export type CaseScorecardInput = {
   suiteDefaultMatchOptions?: EvalMatchOptions;
   predicates?: CasePredicates;
   suiteDefaultPredicates?: Predicate[];
+  suppressedSuiteStandardCheckIds?: string[];
   /**
    * Inspect mode. A frozen trial carries the RESOLVED predicate list only, so
    * suite-vs-case provenance is unknowable there; supplying this replaces both
@@ -362,12 +367,25 @@ const NEGATIVE_CONTRADICTING_KINDS: ReadonlySet<PredicateKind> =
  * arrived from the wire on an older/newer build, never for a known one.
  */
 const PREDICATE_PURPOSE: Record<PredicateKind, string> = {
+  toolDescriptionsPresent:
+    "Check the raw tool catalog captured during discovery",
+  toolAnnotationsPresent:
+    "Check the raw tool catalog captured during discovery",
+  toolNamesUnique: "Check the raw tool catalog captured during discovery",
+  noDeprecatedToolExposed:
+    "Check the raw tool catalog captured during discovery",
+  toolInputSchemasWellFormed:
+    "Check the raw tool catalog captured during discovery",
+  toolOutputSchemasPresent:
+    "Check the raw tool catalog captured during discovery",
+
   toolCalledWith: "Require this tool, with these arguments",
   toolCalledAtLeastOnce: "Require this tool on future runs",
   toolNeverCalled: "Catch this tool being called",
   onlyToolsCalled: "Require that nothing else is called",
   firstToolWas: "Require this tool to be reached first",
   responseContains: "Check what the answer says",
+  responseCloseTo: "Compare the answer to reference text",
   responseMatches: "Check the answer's shape",
   noToolErrors: "Catch tool failures",
   finalAssistantMessageNonEmpty: "Catch an empty answer",
@@ -469,7 +487,9 @@ export function stepScope(
 function rowTooltip(kindLabel: string, role: ScorerUiRole, inline: boolean) {
   const parts = [kindLabel, ROLE_LEGEND[role].meaning];
   if (inline) {
-    parts.push("Graded where it sits in the run, not over the whole trial.");
+    parts.push(
+      "Graded where it sits in the run, not over the whole iteration.",
+    );
   }
   return parts.join(" ");
 }
@@ -486,7 +506,7 @@ export function routeLabel(state: RouteState): string {
     case "noTool":
       return "No tool should be called";
     case "checks":
-      return "Any route — graded by the scorers below";
+      return "Any route — graded by the evaluators below";
     case "unset":
       return "Which tool should handle it?";
     case "locked":
@@ -664,14 +684,14 @@ function stepRows(
         label: kindLabel,
         kindLabel,
         // A DOM assertion carries no check policy — there is no field to
-        // author — so it is a gate and says so rather than inventing a role.
-        role: "gate",
+        // author — so it is required and says so rather than inventing a role.
+        role: "required",
         roleLock: "widget",
         editable: true,
         stepNumber,
         stepId: step.id,
         widgetAssertion: assertion,
-        tooltip: rowTooltip(kindLabel, "gate", true),
+        tooltip: rowTooltip(kindLabel, "required", true),
         join: { kind: "step", stepId: step.id },
       });
       continue;
@@ -727,17 +747,13 @@ export function buildCaseScorecard(input: CaseScorecardInput): CaseScorecard {
     provenance: "route",
     label: routeLabel(route),
     kindLabel: "Route",
-    // The matcher is always a gate: an advisory route is not a route (see
+    // The matcher is always required: an advisory route is not a route (see
     // `isToolCalledWithAssert`), so there is nothing here to lower.
-    role: "gate",
+    role: "required",
     roleLock: "route",
     editable: route.kind !== "locked",
     route,
-    tooltip: rowTooltip(
-      "Tool-call matching",
-      "gate",
-      false,
-    ),
+    tooltip: rowTooltip("Tool-call matching", "required", false),
     ...(route.kind === "tools" || route.kind === "noTool"
       ? {
           join: {
@@ -760,7 +776,7 @@ export function buildCaseScorecard(input: CaseScorecardInput): CaseScorecard {
     editable: true,
     judge: facts,
     tooltip: rowTooltip(
-      "A judge scores trial evidence from 0 to 1.",
+      "A judge scores iteration evidence from 0 to 1.",
       judgeRole,
       false,
     ),
@@ -772,7 +788,10 @@ export function buildCaseScorecard(input: CaseScorecardInput): CaseScorecard {
   };
 
   const envelopeMode = input.predicates?.mode ?? "inherit";
-  const suiteDefaults = input.suiteDefaultPredicates ?? [];
+  const suiteDefaults = filterSuppressedSuiteAssertions(
+    input.suiteDefaultPredicates ?? [],
+    input.suppressedSuiteStandardCheckIds,
+  );
   const frozen = input.snapshotPredicates;
 
   const caseRows: ScorecardRow[] = frozen
@@ -785,7 +804,7 @@ export function buildCaseScorecard(input: CaseScorecardInput): CaseScorecard {
           roleLock: "inherited",
         }),
       )
-    : (envelopeMode === "inherit" ? [] : (input.predicates?.list ?? [])).map(
+    : (envelopeMode === "inherit" ? [] : input.predicates?.list ?? []).map(
         (predicate, index) =>
           predicateRow({
             predicate,
@@ -859,10 +878,17 @@ export function buildCaseScorecard(input: CaseScorecardInput): CaseScorecard {
  * rather than a second copy of its rules.
  */
 export function effectiveCasePredicates(
-  input: Pick<CaseScorecardInput, "predicates" | "suiteDefaultPredicates">,
+  input: Pick<
+    CaseScorecardInput,
+    "predicates" | "suiteDefaultPredicates" | "suppressedSuiteStandardCheckIds"
+  >,
 ): Predicate[] {
   return (
-    resolveCasePredicates(input.suiteDefaultPredicates, input.predicates) ?? []
+    resolveCasePredicates(
+      input.suiteDefaultPredicates,
+      input.predicates,
+      input.suppressedSuiteStandardCheckIds,
+    ) ?? []
   );
 }
 

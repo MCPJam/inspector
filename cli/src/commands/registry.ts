@@ -55,11 +55,18 @@ type RegistryOptions = PlatformOptions & {
  * Convex document ids are exactly 32 lowercase alphanumerics (see the
  * fixture ids in the v1 route tests). Anything looser misroutes long
  * alphanumeric names like `microsoftsharepointserver` onto the id shelf.
- * The v1 route applies the same shape server-side; keep the two in step.
  *
  * Note the shelves only diverge on the wire when `--source` is present —
  * without it, both serialize to the same GET and the server re-applies its
  * own heuristic — so this stays a routing hint, not a correctness gate.
+ *
+ * DELIBERATELY TIGHTER THAN THE SERVER, which is why this no longer claims to
+ * be the same shape. `mcpjam-inspector/server/routes/v1/convex-id-param.ts`
+ * accepts `{30,36}` because there it is a REJECTION gate: a false negative
+ * answers 404, so a future Convex id-format change must not break every
+ * caller. Here a false negative only picks the `name` query parameter instead
+ * of the id one, and the server re-decides anyway — so the exact shape is free
+ * and strictly better at the one job this copy has. Do not "align" them.
  */
 export function looksLikeConvexId(value: string): boolean {
   return /^[a-z0-9]{32}$/.test(value);

@@ -90,6 +90,12 @@ what arrives, never widen it.
 | `egressUnverified` | the connection failed with no evidence that our own network egress works |
 | `lifecycleStopped` | the run was stopped mid-flight |
 
+A `setupAborted`, `egressUnverified`, `connectFailed` or `toolsListFailed` row
+may carry the producer's one-line explanation in `evidence.predicateReasons`
+— "rejected the stored token (invalid_token)", "MCPJam could not reach its
+authorization server" — the same slot judge reasons use. It explains the
+state; it never changes it.
+
 **The stage does not apply**
 
 | Wire value | …because |
@@ -112,7 +118,7 @@ what arrives, never widen it.
 | `toolError` | the server reported a tool error |
 | `protocolError` | the call never produced a result |
 | `renderFailed` | the widget did not render |
-| `predicateFailed` | a check on the result did not hold |
+| `predicateFailed` | an assertion on the result did not hold |
 
 **Measured passes**
 
@@ -236,7 +242,7 @@ signals.
 | `noToolCalls` | no tool calls to look at | The trial made none, so there is no sequence to read. |
 | `resultsUnavailable` | tool results were not retained | At least one call's result was not stored, so what a later call could have used is unknown. |
 | `orderingUnknown` | the calls cannot be placed in a causal order | The trial mixes ordering modes, or carries a call that cannot be placed against the others — so "later" cannot be established. |
-| `evidenceIncomplete` | the evidence for this trial has a known hole | Two causes, and neither is a fact about the run: a gap the producer knows about, or a retained argument that cannot be read canonically. The second is why the whole document is withheld rather than the offending call skipped — dropping one call would renumber every index after it. The call count stays honest either way. |
+| `evidenceIncomplete` | the evidence for this iteration has a known hole | Two causes, and neither is a fact about the run: a gap the producer knows about, or a retained argument that cannot be read canonically. The second is why the whole document is withheld rather than the offending call skipped — dropping one call would renumber every index after it. The call count stays honest either way. |
 | `truncated` | too many tool calls to measure | The trial exceeded the per-trial call cap. |
 
 ## The nine suspected conditions
@@ -286,8 +292,8 @@ Getting these wrong produces numbers that look authoritative and mean nothing.
 
 1. **Read `measurementUnit` before quoting any count.** Under verdict policy
    v2 the counts are `caseVariant` — one case under one provider/model
-   execution variant, with repetitions as TRIALS inside it. On a legacy run
-   they are `trial`. A 3-case suite with 5 repetitions is legitimately "3"
+   execution variant, with its configured iterations as TRIALS inside it. On a legacy run
+   they are `trial`. A 3-case suite with 5 iterations is legitimately "3"
    under one unit and "15" under the other, so a count quoted without its unit
    is not a fact.
 2. **A zero denominator is NOT MEASURED, never `0`.** Stage analytics stores

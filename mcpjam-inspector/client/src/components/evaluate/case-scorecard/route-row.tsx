@@ -181,9 +181,9 @@ export function RouteRow({
             className="text-[11px] text-destructive"
             data-testid="simple-case-negative-contradiction"
           >
-            This case says no tool should be called, but a check that requires a
-            tool call still applies — from the suite, this case, or a step.
-            Those cannot both hold.
+            This case says no tool should be called, but an assertion that
+            requires a tool call still applies — from the suite, this case, or a
+            step. Those cannot both hold.
           </p>
         ) : null}
 
@@ -282,7 +282,7 @@ function AddToolRow({
           onValueChange={(tool) => {
             if (tool) onAdd(tool);
           }}
-          placeholder="+ Add tool to this check"
+          placeholder="+ Add tool to this assertion"
           searchPlaceholder="Search tools…"
           emptyMessage="No matching tools"
           className="h-8 w-full justify-between text-xs"

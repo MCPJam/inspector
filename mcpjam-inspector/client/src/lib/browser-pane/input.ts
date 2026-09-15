@@ -37,8 +37,6 @@ export interface PaneFrame {
    * negotiate `binary` still speaks.
    */
   data?: string;
-  /** Ready-to-load source supplied by a local transport adapter. */
-  src?: string;
   /**
    * A picture already decoded off the main thread, on the binary wire.
    *
