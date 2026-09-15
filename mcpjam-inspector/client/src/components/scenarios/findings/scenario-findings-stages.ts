@@ -21,7 +21,7 @@
  *  - `ok` is EARNED: every eligible session passed. One failure is `warn`.
  */
 
-import { USER_VALUE_STAGES, type UserValueStage } from "@mcpjam/sdk/contract";
+import { USER_VALUE_STAGES } from "@mcpjam/sdk/contract";
 // Type-only: erased at compile time, so the swarm runtime stays out of here.
 import type {
   GoalStageModel,
@@ -30,6 +30,7 @@ import type {
 } from "@/components/swarms/findings/findings-derivation";
 import {
   JOURNEY_STAGES,
+  JOURNEY_STAGE_BY_CHAIN,
   journeyStageTitle,
   type JourneyStageId,
 } from "@/components/swarms/findings/journey-stages";
@@ -39,19 +40,11 @@ import type {
 } from "@/components/shared/user-value-chain/user-value-chain-types";
 
 /**
- * The chain's stage ids to the panel's. Five are identical; the sixth is not.
- * The chain calls the last stage `userValue`, the Findings panel has always
- * called it `value`. A `Record` rather than a cast, so a seventh stage on
- * either side fails the build instead of silently dropping a column.
+ * The chain's stage ids to the panel's, from the one place that owns both
+ * vocabularies. It used to be restated here, which is one more copy than the
+ * two directions need.
  */
-const STAGE_ID: Record<UserValueStage, JourneyStageId> = {
-  connection: "connection",
-  discovery: "discovery",
-  selection: "selection",
-  call: "call",
-  response: "response",
-  userValue: "value",
-};
+const STAGE_ID = JOURNEY_STAGE_BY_CHAIN;
 
 /**
  * A stage's state, from its tally alone.
@@ -178,9 +171,11 @@ export function mapGoalStageFunnel(
   const stages = noStages();
   for (const tally of funnel.stages) {
     const id = STAGE_ID[tally.stage];
-    // A stage id the client does not know is skipped rather than crashing the
-    // tab: this type is a hand-kept mirror, so a backend that grows a stage
-    // reaches here before the mirror does.
+    // NOT dead code, though the build now proves the map total over
+    // `UserValueStage`. That proof is about the SDK this client was built
+    // against; `tally.stage` arrives from a deployed backend, which can be
+    // ahead of it. A stage the running build has never heard of is skipped
+    // rather than crashing the tab, and no type check can cover that gap.
     if (!id) continue;
     stages[id] = {
       state: stageStateFromTally(tally),

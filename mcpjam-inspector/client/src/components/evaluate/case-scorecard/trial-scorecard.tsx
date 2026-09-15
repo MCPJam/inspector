@@ -64,21 +64,19 @@ export function summaryLine(
   summary: ReturnType<typeof summarizeTrialScorecard>,
 ): string {
   const parts: string[] = [];
-  if (summary.gates.counted > 0) {
+  if (summary.required.counted > 0) {
     parts.push(
-      `${summary.gates.passed} of ${summary.gates.counted} ${
-        summary.gates.counted === 1 ? "gate" : "gates"
-      } passed`,
+      `${summary.required.passed} of ${summary.required.counted} required passed`,
     );
-  } else if (summary.warn + summary.report + summary.errors > 0) {
+  } else if (summary.advisory + summary.errors > 0) {
     // Something was measured, but nothing that could fail the trial.
-    parts.push("No gates ran");
+    parts.push("No required assertions ran");
   } else {
-    // Nothing was measured at all. "0 of 0 gates passed" would read like a
+    // Nothing was measured at all. "0 of 0 required passed" would read like a
     // result; this says there is no result to read.
     parts.push("No evaluators ran");
   }
-  if (summary.warn > 0) parts.push(`${summary.warn} warn`);
+  if (summary.advisory > 0) parts.push(`${summary.advisory} advisory`);
   if (summary.errors > 0) {
     parts.push(`${summary.errors} could not be evaluated`);
   }
@@ -335,7 +333,7 @@ export function TrialScorecard({
   }
 
   return (
-    <div className="flex flex-col gap-3 p-3" data-testid="trial-scorecard">
+    <div className="flex flex-col gap-4 p-4" data-testid="trial-scorecard">
       <section
         className="space-y-4"
         aria-label="User value chain — default assertions"
@@ -358,10 +356,11 @@ export function TrialScorecard({
               (group) => group.stage === stage,
             );
             return selected ? (
-              <div className="mt-3 space-y-2" aria-label="Recorded assertions">
+              <ul className="mt-4" aria-label="Recorded assertions">
                 {selected.rows.map((row) => (
                   <TrialScorecardRow
                     key={row.key}
+                    layout="report"
                     row={row}
                     body={row.provenance === "judge" ? judgeSlot : undefined}
                     hideJudgeResult={judgeHidden}
@@ -370,16 +369,16 @@ export function TrialScorecard({
                   />
                 ))}
                 {stage === "userValue" && showUserValueEvidence && (
-                  <div
+                  <li
                     className="text-xs text-muted-foreground"
                     data-testid="user-value-pass-evidence"
                   >
                     {userValueEvidence.length
                       ? userValueEvidence.join(" ")
                       : "This run recorded a pass without supporting evidence."}
-                  </div>
+                  </li>
                 )}
-              </div>
+              </ul>
             ) : null;
           }}
         />

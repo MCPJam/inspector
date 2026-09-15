@@ -27,6 +27,7 @@ import { useUsageInsights } from "@/hooks/useUsageInsights";
 import { EMPTY_USAGE_FILTER } from "@/hooks/scenario-usage-filters";
 import {
   buildUserTestingScenarioPath,
+  defaultUserTestingDetailTab,
   parseUserTestingDetailTab,
   routePaths,
   useAppNavigate,
@@ -457,8 +458,13 @@ export function UserTestingTab({
         detailTab:
           activeView === "edit"
             ? "edit"
-            : parseUserTestingDetailTab(
+            : // Same landing-tab rule the detail view reads, from the same
+              // counter: the snapshot has to name the tab the human is
+              // actually looking at, and on an empty study a bare URL is
+              // Insights, not Findings.
+              parseUserTestingDetailTab(
                 typeof window === "undefined" ? "" : window.location.search,
+                defaultUserTestingDetailTab(scenarioRow?.sessionCount),
               ),
         selectedScenarioId: scenarioId ?? null,
         selectedHostId: scenario?.namedHostId ?? null,

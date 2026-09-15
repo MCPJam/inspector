@@ -29,7 +29,10 @@ import { ScorecardRowView } from "./scorecard-row";
 import { RouteRow } from "./route-row";
 import { JudgeBlock } from "./judge-block";
 
-export const ROLE_LEGEND_LINE = `Gate ${ROLE_LEGEND.gate.meaning.toLowerCase().replace(/\.$/, "")} · Warn ${ROLE_LEGEND.warn.meaning.toLowerCase().replace(/\.$/, "")} · Report ${ROLE_LEGEND.report.meaning.toLowerCase().replace(/\.$/, "")}`;
+const legendMeaning = (role: keyof typeof ROLE_LEGEND) =>
+  ROLE_LEGEND[role].meaning.toLowerCase().replace(/\.$/, "");
+
+export const ROLE_LEGEND_LINE = `Required ${legendMeaning("required")} · Advisory ${legendMeaning("advisory")}`;
 
 export function CaseScorecard({
   input,

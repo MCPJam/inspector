@@ -103,7 +103,7 @@ describe("SuiteQualityGateSection", () => {
     expect(screen.queryByText(/Applied by mcpjam/)).toBeNull();
     expect(onChange).not.toHaveBeenCalled();
     const drop = screen.getByLabelText(
-      "Maximum gating evaluator pass-rate drop",
+      "Maximum required evaluator pass-rate drop",
     );
     fireEvent.change(drop, { target: { value: "10" } });
     fireEvent.blur(drop);
@@ -124,13 +124,13 @@ describe("SuiteQualityGateSection", () => {
     const user = userEvent.setup();
     const { onChange } = renderGate();
     expect(
-      screen.getByRole("switch", { name: "Any gating evaluator errored" }),
+      screen.getByRole("switch", { name: "Any required evaluator errored" }),
     ).toBeEnabled();
     expect(
       screen.getByRole("switch", { name: "No deterministic regressions" }),
     ).toBeDisabled();
     await user.click(
-      screen.getByRole("switch", { name: "Any gating evaluator errored" }),
+      screen.getByRole("switch", { name: "Any required evaluator errored" }),
     );
     expect(onChange).toHaveBeenCalledWith({ noGatingScoreErrors: true });
   });
@@ -182,7 +182,7 @@ describe("SuiteQualityGateSection", () => {
       policy: { baseline: { kind: "run", runId: "run_abc" } },
     });
     const drop = screen.getByLabelText(
-      "Maximum gating evaluator pass-rate drop",
+      "Maximum required evaluator pass-rate drop",
     ) as HTMLInputElement;
     await user.clear(drop);
     await user.type(drop, "0");

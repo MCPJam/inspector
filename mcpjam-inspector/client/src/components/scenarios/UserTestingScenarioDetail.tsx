@@ -18,10 +18,6 @@ import { ScenarioPerTurnFeedbackToggle } from "@/components/scenarios/ScenarioPe
 import { ScenarioTasksSection } from "@/components/scenarios/ScenarioTasksSection";
 import { ScenarioUsagePanel } from "@/components/scenarios/ScenarioUsagePanel";
 import { InsightsWorkbench } from "@/components/shared/usage-insights/InsightsWorkbench";
-import {
-  RunInsightsProvider,
-  RunInsightsRecommendations,
-} from "@/components/shared/usage-insights/run-insights";
 import { withHideSynthetic } from "@/components/scenarios/user-testing-traffic";
 import {
   parseSelectionParam,
@@ -57,6 +53,7 @@ import { ScenarioGradingSection } from "./ScenarioGradingSection";
 import {
   buildUserTestingScenarioEditPath,
   buildUserTestingScenarioPath,
+  defaultUserTestingDetailTab,
   isLegacyUserTestingEditTab,
   parseUserTestingDetailTab,
   type UserTestingDetailTab,
@@ -67,7 +64,6 @@ import {
   withScenarioPreviewSurface,
 } from "@/lib/scenario-session";
 import { toast } from "@/lib/toast";
-import { ActionableFindings } from "@/components/shared/actionable-insights/actionable-findings";
 
 /**
  * One User Testing scenario.
@@ -114,8 +110,9 @@ const TAB_OPTIONS: ReadonlyArray<{
 ];
 
 /**
- * One settings card. Two columns of them need a visible edge each — without
- * one, sections side by side read as a single column with odd gaps.
+ * One settings card. Stacked in a single column, the edge is what keeps a run
+ * of sections from reading as one undifferentiated form — it is the only thing
+ * saying where "Ratings" stops and "Grading" starts.
  */
 const SETTINGS_CARD =
   "space-y-4 rounded-xl border border-border bg-card p-5 shadow-sm";
@@ -443,7 +440,14 @@ export function UserTestingScenarioDetail({
   // The URL is the stash for both the tab and the opened session: the gates
   // above remount this route during a cold boot, so state captured on first
   // mount wouldn't survive to the last one.
-  const tab = parseUserTestingDetailTab(location.search);
+  // The landing tab is a function of the study, not a constant: an empty study
+  // opens on Insights, because Findings summarises tester sessions and renders
+  // as an empty frame when there are none. See `defaultUserTestingDetailTab`.
+  // Both reads below take it, and they must take the SAME one — the parser
+  // falls back to it and the builder omits it, so they disagree at the cost of
+  // a tab that cannot be clicked.
+  const landingTab = defaultUserTestingDetailTab(sessionCount);
+  const tab = parseUserTestingDetailTab(location.search, landingTab);
   const searchParams = new URLSearchParams(location.search);
   const sessionParam = searchParams.get("session");
   const sessionDeepLinkThreadId = sessionParam;
@@ -491,6 +495,7 @@ export function UserTestingScenarioDetail({
     navigate(
       buildUserTestingScenarioPath(scenario.scenarioId, {
         tab: next,
+        defaultTab: landingTab,
         session: sessionParam ?? undefined,
         sel: selParam ?? undefined,
         view,
@@ -627,28 +632,34 @@ export function UserTestingScenarioDetail({
           className="relative min-h-0 flex-1 overflow-hidden"
           data-testid="user-testing-edit-tab"
         >
-          {/* TWO COLUMNS of cards on a wide screen, one below `xl`.
-              Reported: "too much white space… make better use of the full
-              screen". This was a 560px column pinned to the left edge of a
-              pane twice that wide — a readable measure, but the rest of the
-              screen was empty, and reaching the task list meant scrolling past
-              every switch.
+          {/* ONE COLUMN of wide cards, centred.
 
-              The split is by WHAT A SECTION IS, not by what fits: the left
-              column is the study itself (what it says, where it runs, what it
-              asks people to try), the right is the rules it runs under (who
-              may open it, what gets rated, what gets graded). Each column
-              keeps a readable measure; neither stretches on an ultra-wide
-              monitor, because the whole grid is capped and centred.
+              This was two columns from `xl`, which answered an older report
+              ("too much white space") by filling the pane. Settings reads top
+              to bottom now, the way every other settings surface in the app
+              does: two columns made the reading order ambiguous — a second
+              column starting level with the first gives no answer to "what do
+              I look at after Description", and on a study whose sections
+              differ in height it left one side ragged.
 
-              Cards, not bare headings: side by side, sections with no
-              boundary read as one long column that happens to have gaps. */}
+              The cards stay WIDE (this cap, not a reading measure): the
+              complaint the two-column layout was built for is real, and a
+              single column at 560px would bring it straight back.
+
+              Section ORDER is the old column order read down — the study
+              itself (what it says, where it runs, what it asks people to try),
+              then the rules it runs under (who may open it, what gets rated,
+              what gets graded). That is already what every screen below `xl`
+              has been showing, so nothing moves for anyone on a laptop.
+
+              Cards, not bare headings: a run of sections with no boundary
+              reads as one long form that happens to have gaps. */}
           <div className="h-full overflow-y-auto px-6 py-6 sm:px-8">
-            <div className="mx-auto w-full max-w-[1400px] space-y-6">
+            <div className="mx-auto w-full max-w-[960px] space-y-6">
               <h1 className="text-xl font-semibold tracking-tight text-foreground">
                 Settings
               </h1>
-              <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-2">
+              <div className="space-y-6">
                 <div className="min-w-0 space-y-6">
                   {/* Off the header row as of BB-202: a field that grows next to
                   the title crowds the tabs. Still the only editor for it. */}
@@ -749,7 +760,9 @@ export function UserTestingScenarioDetail({
                   </div>
                 </div>
 
-                {/* The rules it runs under. */}
+                {/* The rules it runs under. Its own wrapper, not merged into
+                    the one above: the grouping is still real, it is just read
+                    in sequence now rather than side by side. */}
                 <div className="min-w-0 space-y-6">
                   <section className={SETTINGS_CARD}>
                     <h2 className={SETTINGS_CARD_TITLE}>Sharing permissions</h2>
@@ -776,9 +789,9 @@ export function UserTestingScenarioDetail({
                 </div>
               </div>
 
-              {/* Full width, under both columns and visibly apart from them:
-                  the one control here that cannot be undone should not sit in
-                  a column where a mis-aimed click lives next to a switch. */}
+              {/* Last, and visibly apart from the cards above it: the one
+                  control here that cannot be undone should not sit in a run of
+                  sections where a mis-aimed click lives next to a switch. */}
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/25 bg-destructive/5 px-5 py-4">
                 <div className="min-w-0">
                   <p className="text-sm font-medium text-foreground">
@@ -843,7 +856,7 @@ export function UserTestingScenarioDetail({
           value: tab,
           options: TAB_OPTIONS,
           onChange: goToTab,
-          ariaLabel: "Scenario view",
+          ariaLabel: "Study view",
           indicatorId: "user-testing-detail",
         }}
       />
@@ -891,11 +904,13 @@ export function UserTestingScenarioDetail({
         ) : null}
         {tab === "insights" ? (
           <div className="absolute inset-0">
-            {/* The workbench (empty state, Sankey, sessions) must stay up
-                even when the window-insights rail is missing: those queries
-                throw against an undeployed backend, and wrapping THIS whole
-                tree in `fallback={null}` left a blank `absolute inset-0`.
-                Isolate the rail; if the workbench itself blows up, show the
+            {/* Insights is the Sankey and the clusters, nothing else (BB-230).
+                The recommendations rail that used to sit above them is gone;
+                "read a finding, then open the session it is about" now lives
+                on Findings, via the stage -> sessions link.
+
+                Keep this boundary: `fallback={null}` here would leave a blank
+                `absolute inset-0`, so if the workbench blows up, show the
                 share empty panel rather than nothing. */}
             <ErrorBoundary
               key={scenario.scenarioId}
@@ -954,59 +969,6 @@ export function UserTestingScenarioDetail({
                     { replace: true },
                   );
                 }}
-                recommendationsSlot={
-                  <ErrorBoundary
-                    name="user-testing-insights-rail"
-                    fallback={null}
-                  >
-                    {/* Repair tasks above the pattern rail: what to change,
-                        then what concentrated. The subscription lives inside
-                        this component (not in the page body) so a backend
-                        without the query degrades to nothing instead of
-                        taking the scenario page down, and it only mounts on
-                        the insights tab — never in edit mode. Membership is
-                        enforced at the backend; a non-member simply gets
-                        nothing. */}
-                    <ActionableFindings
-                      boundaryName="user-testing-actionable-findings"
-                      surface={{
-                        kind: "scenario",
-                        scenarioId: scenario.scenarioId,
-                      }}
-                      context={{ rerunLabel: "this user-testing scenario" }}
-                      onOpenSession={(threadId) => {
-                        navigate(
-                          buildUserTestingScenarioPath(scenario.scenarioId, {
-                            tab: "sessions",
-                            session: threadId,
-                            sel: selParam ?? undefined,
-                            view,
-                          }),
-                          { replace: true },
-                        );
-                      }}
-                    />
-                    <RunInsightsProvider
-                      surface={{
-                        kind: "scenario",
-                        scenarioId: scenario.scenarioId,
-                      }}
-                      onOpenSession={(threadId) => {
-                        navigate(
-                          buildUserTestingScenarioPath(scenario.scenarioId, {
-                            tab: "sessions",
-                            session: threadId,
-                            sel: selParam ?? undefined,
-                            view,
-                          }),
-                          { replace: true },
-                        );
-                      }}
-                    >
-                      <RunInsightsRecommendations />
-                    </RunInsightsProvider>
-                  </ErrorBoundary>
-                }
                 autoBackfillTopicMap
                 emptyState={<ScenarioShareEmptyPanel scenario={scenario} />}
                 className="px-8 py-4"

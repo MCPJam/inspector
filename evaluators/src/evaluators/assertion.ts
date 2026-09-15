@@ -17,6 +17,7 @@
 
 import {
   CHECK_POLICY_KEYS,
+  canonicalizeCheckRole,
   checkRole,
   stripCheckPolicy,
   type CheckPolicy,
@@ -107,7 +108,7 @@ export function assertion(
   assertLocallyEvaluable(authored as Assertion);
 
   // The policy invariants live in the authoring schema, and `predicateScorer`
-  // does not check them: it defaults an unroled definition to `role: "gating"`.
+  // does not check them: it defaults an unroled definition to required.
   // Without this, `assertion({ type: "noEndingQuestion" })` type-checks, builds
   // and lets a heuristic fail a release gate — the one thing the observation
   // rule exists to prevent. Severity's rule rides along for the same reason.
@@ -138,7 +139,13 @@ export function assertion(
 
   return {
     kind: "assertion",
-    rule: authored as Assertion,
+    // The CANONICALIZED rule, not the raw input. `EvalTest` clones this object
+    // onto every iteration's `effectiveAssertions[].rule` and uploads it, so a
+    // raw `role: "required"` here would put the canonical spelling on the wire
+    // from the moment an author typed it — ahead of the boundary that accepts
+    // it. Canonicalizing keeps the upload body in the spelling the backend
+    // takes at this point in the rollout, and costs nothing once it takes both.
+    rule: canonicalizeCheckRole(authored) as Assertion,
     ...(named ? { id: named } : {}),
     definition: scorer.definition,
     evaluate(context, signal) {

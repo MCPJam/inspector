@@ -147,11 +147,11 @@ export function SwarmRunDetail({
    *
    * `getSwarmOverview` projects `status` but not the `error` marker that
    * separates a deliberate stop from a failure, so the wave read cannot tell
-   * them apart — it will settle on `failed`. Reporting "Failed" in red to the
-   * person who just pressed Stop says their action broke something. This is the
-   * one piece of positive evidence available, so it is used, and only for as
-   * long as it is trustworthy: a reload has no memory of the click and honestly
-   * falls back to what the data supports.
+   * them apart — it will settle on `issues`. Telling the person who just
+   * pressed Stop that their run "Completed with issues" says their action broke
+   * something. This is the one piece of positive evidence available, so it is
+   * used, and only for as long as it is trustworthy: a reload has no memory of
+   * the click and honestly falls back to what the data supports.
    */
   const [stoppedHere, setStoppedHere] = useState(false);
 

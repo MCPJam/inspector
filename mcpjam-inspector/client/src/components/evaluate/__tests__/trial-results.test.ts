@@ -211,8 +211,8 @@ describe("joinTrialResults — case and suite rows", () => {
   });
 
   it("still joins after the check's role was changed", () => {
-    // Policy is stripped from identity on purpose: a Gate → Warn edit must not
-    // orphan the check's own history.
+    // Policy is stripped from identity on purpose: a Required → Advisory edit
+    // must not orphan the check's own history.
     const warned = { ...finalNonEmpty, role: "advisory", severity: "warn" } as Predicate;
     const rows = join(
       { ...authored, predicates: { mode: "extend", list: [warned] } },
@@ -228,7 +228,7 @@ describe("joinTrialResults — case and suite rows", () => {
       state: "failed",
       reason: "empty answer",
     });
-    expect(rowByKey(rows, "case:0").role).toBe("warn");
+    expect(rowByKey(rows, "case:0").role).toBe("advisory");
   });
 
   it("gives two identical checks the same result, because the server minted one scorer", () => {
@@ -461,38 +461,40 @@ describe("summarizeTrialScorecard", () => {
     },
   ];
 
-  it("counts gates, and only gates", () => {
+  it("counts required rows, and only required rows", () => {
     const summary = summarizeTrialScorecard(
       rowsWith([
-        ["gate", { state: "passed", source: "stepResult" }],
-        ["gate", { state: "passed", source: "stepResult" }],
-        ["warn", { state: "failed", source: "stepResult" }],
-        ["report", { state: "failed", source: "stepResult" }],
+        ["required", { state: "passed", source: "stepResult" }],
+        ["required", { state: "passed", source: "stepResult" }],
+        ["advisory", { state: "failed", source: "stepResult" }],
+        ["advisory", { state: "failed", source: "stepResult" }],
       ]),
     );
-    expect(summary.gates).toEqual({ passed: 2, counted: 2 });
-    expect(summary.warn).toBe(1);
-    expect(summary.report).toBe(1);
+    expect(summary.required).toEqual({ passed: 2, counted: 2 });
+    // One advisory tally, not a warn/report split.
+    expect(summary.advisory).toBe(2);
   });
 
-  it("keeps an unmeasured gate out of the denominator", () => {
+  it("keeps an unmeasured required row out of the denominator", () => {
     // "1 of 2" for a scorer that never ran would claim a failure nobody saw.
     const summary = summarizeTrialScorecard(
       rowsWith([
-        ["gate", { state: "passed", source: "stepResult" }],
-        ["gate", { state: "notMeasured" }],
-        ["gate", { state: "skipped", source: "stepResult" }],
+        ["required", { state: "passed", source: "stepResult" }],
+        ["required", { state: "notMeasured" }],
+        ["required", { state: "skipped", source: "stepResult" }],
       ]),
     );
-    expect(summary.gates).toEqual({ passed: 1, counted: 1 });
+    expect(summary.required).toEqual({ passed: 1, counted: 1 });
     expect(summary.notMeasured).toBe(1);
   });
 
-  it("counts a gating scorer that errored as counted but not passed", () => {
+  it("counts a required scorer that errored as counted but not passed", () => {
     const summary = summarizeTrialScorecard(
-      rowsWith([["gate", { state: "error", source: "scoreRow", reason: "x" }]]),
+      rowsWith([
+        ["required", { state: "error", source: "scoreRow", reason: "x" }],
+      ]),
     );
-    expect(summary.gates).toEqual({ passed: 0, counted: 1 });
+    expect(summary.required).toEqual({ passed: 0, counted: 1 });
     expect(summary.errors).toBe(1);
   });
 });

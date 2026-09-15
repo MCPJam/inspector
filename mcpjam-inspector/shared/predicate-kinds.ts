@@ -15,19 +15,33 @@ export { isObservationPredicateKind, OBSERVATION_PREDICATE_KINDS };
 export type PredicateKind = Predicate["type"];
 
 /**
+ * What a failing assertion does to the iteration, as the UI names it.
+ *
+ * Two tiers, named by consequence rather than by mechanism: `required` fails
+ * the iteration, `advisory` is shown on the result and never fails it. The
+ * wire spells the first one `"gating"` on historical rows and `"required"`
+ * canonically; `severity: "warn"` no longer splits advisory into two tiers.
+ *
+ * Declared here rather than in the authoring model so the two places that
+ * enumerate the set — {@link rolesForPredicateKind} and the scorer table's
+ * `ROLE_LEGEND` — cannot drift apart.
+ */
+export type ScorerUiRole = "required" | "advisory";
+
+/**
  * The roles this kind's authoring control may offer.
  *
  * An observation is a heuristic, and a heuristic must not decide a release —
- * so Gate is not a segment it can reach. The schema refuses a gating
+ * so Required is not a segment it can reach. The schema refuses a gating
  * observation on save; withholding the segment means an author never gets to
  * click a control that is going to be rejected.
  */
 export function rolesForPredicateKind(
   kind: PredicateKind,
-): readonly ("gate" | "warn" | "report")[] {
+): readonly ScorerUiRole[] {
   return isObservationPredicateKind(kind)
-    ? (["warn", "report"] as const)
-    : (["gate", "warn", "report"] as const);
+    ? (["advisory"] as const)
+    : (["required", "advisory"] as const);
 }
 
 export const PREDICATE_KIND_LABELS: Record<PredicateKind, string> = {

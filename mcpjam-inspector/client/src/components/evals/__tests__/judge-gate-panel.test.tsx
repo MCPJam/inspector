@@ -57,7 +57,9 @@ function judge(overrides: Partial<Judge> = {}): Judge {
 function renderPanel(
   overrides: {
     judge?: Judge | undefined;
-    role?: "advisory" | "gating";
+    role?: "advisory" | "gating" | "required";
+    /** A whole stored slot, for the cases where the extra fields matter. */
+    judgeConfig?: { goalCompletion?: Record<string, unknown> };
   } = {},
 ) {
   const onJudgeConfigChange = vi.fn();
@@ -65,7 +67,11 @@ function renderPanel(
     <JudgeGatePanel
       suiteId="suite-1"
       judge={"judge" in overrides ? overrides.judge : judge()}
-      judgeConfig={{ goalCompletion: { role: overrides.role ?? "advisory" } }}
+      judgeConfig={
+        (overrides.judgeConfig ?? {
+          goalCompletion: { role: overrides.role ?? "advisory" },
+        }) as never
+      }
       onJudgeConfigChange={onJudgeConfigChange}
     />,
   );
@@ -166,15 +172,45 @@ describe("JudgeGatePanel", () => {
     );
   });
 
-  it("drafts the role when the switch is usable", async () => {
+  it("drafts the CANONICAL role when the switch is usable", async () => {
     const user = userEvent.setup();
     const { onJudgeConfigChange } = renderPanel();
     await user.click(
       screen.getByRole("switch", { name: "Let the judge decide pass or fail" }),
     );
     expect(onJudgeConfigChange).toHaveBeenCalledWith({
-      goalCompletion: { role: "gating" },
+      goalCompletion: { role: "required" },
     });
+  });
+
+  it("drops a legacy Warn severity when the judge becomes required", async () => {
+    // `severity: "warn"` is legal ONLY beside an advisory role. Carrying it
+    // through made the Required tier unsavable for exactly the suites this
+    // rename exists to move off Warn — the platform refuses the pair.
+    const user = userEvent.setup();
+    const { onJudgeConfigChange } = renderPanel({
+      judgeConfig: {
+        goalCompletion: { role: "advisory", severity: "warn", threshold: 0.7 },
+      } as never,
+    });
+    await user.click(
+      screen.getByRole("switch", { name: "Let the judge decide pass or fail" }),
+    );
+    expect(onJudgeConfigChange).toHaveBeenCalledWith({
+      goalCompletion: { role: "required", threshold: 0.7 },
+    });
+  });
+
+  it("reads a stored `required` judge as gating, not advisory", async () => {
+    // The switch reflects what is stored. A comparator that knew only
+    // `"gating"` would show a required judge as off, and the next save would
+    // silently un-gate it.
+    renderPanel({
+      judgeConfig: { goalCompletion: { role: "required" } } as never,
+    });
+    expect(
+      screen.getByRole("switch", { name: "Let the judge decide pass or fail" }),
+    ).toBeChecked();
   });
 
   it("offers the acknowledgement only when calibration is the blocker", () => {
