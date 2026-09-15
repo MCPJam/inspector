@@ -4466,14 +4466,6 @@ export function TestTemplateEditor({
                     </TooltipContent>
                   </Tooltip>
                 )}
-                {useWorkspace &&
-                  useSpine &&
-                  workspaceLeftView.kind !== "inspecting" && (
-                    <DefaultChecksReference
-                      onConfigureSuite={onOpenSuiteSettings}
-                      onOverride={onOpenCaseChecks}
-                    />
-                  )}
                 {onDeleteCase && !isDraft && (
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -4494,6 +4486,14 @@ export function TestTemplateEditor({
                     </TooltipContent>
                   </Tooltip>
                 )}
+                {useWorkspace &&
+                  useSpine &&
+                  workspaceLeftView.kind !== "inspecting" && (
+                    <DefaultChecksReference
+                      onConfigureSuite={onOpenSuiteSettings}
+                      onOverride={onOpenCaseChecks}
+                    />
+                  )}
                 {useWorkspace ? null : (
                   <Tooltip>
                     <TooltipTrigger asChild>
