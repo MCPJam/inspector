@@ -164,7 +164,7 @@ export function AutoTopupSettings({
       )}
       {view?.monthlySpend && (
         <p className="text-sm">
-          {view.monthlySpend.month} UTC — Charged:{" "}
+          {view.monthlySpend.month} UTC. Charged:{" "}
           {refillDollars(view.monthlySpend.chargedCents)} · Reserved:{" "}
           {refillDollars(view.monthlySpend.reservedCents)}
         </p>
