@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
 import {
+  AlertTriangle,
   ChevronDown,
   ChevronRight,
   Info,
@@ -342,6 +343,34 @@ export function ServerGroupPicker({
     ? `${selectedAttachment.serverIds.length} server${selectedAttachment.serverIds.length === 1 ? "" : "s"}`
     : null;
 
+  /**
+   * Whatever group is picked here is what the agents actually act on, and
+   * they act for real: a swarm's agents read, write, and delete to exercise
+   * the server. This is the warning Vig asked for (BB-234) — deliberately
+   * inline rather than a modal, so it lands at the moment of choice without
+   * reading as a scare-screen that stops people running swarms at all.
+   *
+   * Rendered in BOTH popover branches. The create form replaces the list
+   * wholesale, and it is where a first-run user with no groups yet picks the
+   * servers — a click-away from it commits the group AND selects it, so
+   * warning only the list would miss exactly the user most at risk.
+   */
+  const productionWarning = (
+    <div className="flex items-start gap-1.5 px-2 pb-1.5 pt-0.5">
+      <AlertTriangle
+        className="mt-[1px] size-3 shrink-0 text-warning"
+        aria-hidden
+      />
+      <p
+        className="text-[11px] leading-snug text-muted-foreground"
+        data-testid="server-group-production-warning"
+      >
+        Agents take real actions on these servers, including writing and
+        deleting data. Use development servers, not production.
+      </p>
+    </div>
+  );
+
   return (
     <Popover
       open={open}
@@ -468,6 +497,7 @@ export function ServerGroupPicker({
                 </TooltipContent>
               </Tooltip>
             </div>
+            {productionWarning}
             {serverAttachments.length === 0 && !isLoading ? (
               <p className="px-2 py-1.5 text-xs text-muted-foreground">
                 No server groups yet — create one below.
@@ -631,6 +661,7 @@ export function ServerGroupPicker({
           </div>
         ) : (
           <div className="space-y-3 p-1">
+            {productionWarning}
             <div className="space-y-1">
               <Label htmlFor="server-attachment-name" className="text-[11px]">
                 Group name
