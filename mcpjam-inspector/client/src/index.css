@@ -10,6 +10,8 @@
    read-only transcript relies on the inspector's existing global shadcn tokens
    for color values, so no package stylesheet import is needed here. */
 @source "../../../chat-ui/src/**/*.{ts,tsx}";
+/* Widget renderers are also aliased to source outside client/src. */
+@source "../../../widget-react/src/**/*.{ts,tsx}";
 
 @layer base {
   * {
