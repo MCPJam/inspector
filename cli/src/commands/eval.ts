@@ -1408,7 +1408,8 @@ function collectRepeatable(value: string, previous: string[]): string[] {
   return [...previous, value];
 }
 
-const DEFAULT_RUN_WAIT_TIMEOUT_MS = 600_000;
+// 30-minute eval run default plus grading extension headroom.
+const DEFAULT_RUN_WAIT_TIMEOUT_MS = 35 * 60_000;
 const RUN_POLL_INTERVAL_MS = 3000;
 
 /**
@@ -1587,7 +1588,8 @@ function gateReportCase(
   };
 }
 
-const DEFAULT_GATE_WAIT_TIMEOUT_MS = 600_000;
+// 30-minute eval run default plus grading extension headroom.
+const DEFAULT_GATE_WAIT_TIMEOUT_MS = 35 * 60_000;
 
 async function runEvalGate(
   options: PlatformOptions &

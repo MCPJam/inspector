@@ -805,3 +805,11 @@ describe("buildIterationFinishParams — friction signals", () => {
     expect(JSON.stringify(metadata.scores ?? null)).not.toContain("friction");
   });
 });
+
+
+describe("buildIterationFinishParams — timeout attribution", () => {
+  test("preserves the structured clock on the persisted metadata", () => {
+    const timeout = { clock: "turn", budgetMs: 20, elapsedMs: 20 };
+    expect(build({ iterationMetadataBase: { timeout } }).metadata).toMatchObject({ timeout });
+  });
+});

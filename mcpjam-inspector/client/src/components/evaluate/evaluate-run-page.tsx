@@ -437,7 +437,7 @@ function RunPairingDecisions({
     targets,
     hostNamesById,
     iterations,
-  ).filter((group) => group.tone !== "hold");
+  ).filter((group) => group.tone === "pending");
   if (!groups.length) return null;
   return (
     <span

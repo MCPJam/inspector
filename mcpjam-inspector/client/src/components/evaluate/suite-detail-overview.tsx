@@ -1,3 +1,7 @@
+import {
+  dependentFilterOptions,
+  selectedFilter,
+} from "../evals/filter-options";
 import { groupProjectRuns } from "../evals/project-run-suite-groups";
 import type { ProjectRunRow } from "../evals/project-runs-table";
 import {
@@ -59,7 +63,6 @@ import {
   SUITE_RUN_HISTORY_PAGE_SIZE,
   buildSuiteRunHistoryRows,
   buildSuiteTestCaseRows,
-  runHistoryFilterOptions,
   suiteRunBlockedReason,
   runTimestamp,
 } from "./suite-detail-model";
@@ -190,10 +193,19 @@ export function SuiteDetailOverview({
       ),
     [runs, allIterations, suite, hostNamesById, projectEnvironmentsEnabled],
   );
-  const filterOptions = useMemo(
-    () => runHistoryFilterOptions(historyRows),
-    [historyRows],
-  );
+  const filterOptions = useMemo(() => {
+    const options = dependentFilterOptions(historyRows, {
+      clients: {
+        selected: selectedFilter(clientFilter),
+        values: (row) => (row.client ? [row.client] : []),
+      },
+      models: {
+        selected: selectedFilter(modelFilter),
+        values: (row) => row.models,
+      },
+    });
+    return { clients: options.clients, models: options.models };
+  }, [historyRows, clientFilter, modelFilter]);
   // Derived once per data/filter change. `details` and the filtered launches
   // are passed down as props, so fresh identities on every local state change
   // (opening the review dialog, toggling "show all") defeated the children's

@@ -262,6 +262,11 @@ export {
   normalizeRetryPolicy,
   retryWithPolicy,
 } from "./retry.js";
+// The other half of the retry contract: `isRetryableTransientError` already
+// consults this marker, and a caller composing its own classification on top
+// has to consult it too — the marking is a WeakSet keyed on object IDENTITY,
+// so anything that reshapes an error must check the ORIGINAL first.
+export { isNonRetryableMarkedError } from "./mcp-client-manager/error-utils.js";
 export { EvalReportingError, SdkError } from "./errors.js";
 export { probeMcpServer } from "./server-probe.js";
 export type {
@@ -1413,6 +1418,41 @@ export type {
   EvalVerdictValidity,
   ResolvedEvalValidityPolicy,
 } from "./contract/index.js";
+
+// Execution budgets — the eval/swarm clock contract (§3.1). Re-exported from
+// the main entry because the inspector server and the CLI both resolve budgets,
+// and `@mcpjam/sdk/contract` is the browser-safe subset the client uses.
+export {
+  EXECUTION_BUDGET_CEILINGS,
+  EXECUTION_BUDGET_DEFAULTS,
+  EXECUTION_BUDGET_EXCEEDS_CEILING,
+  RESOLVED_EXECUTION_BUDGET_FIELDS,
+  UNIT_TIMEOUT_FIELD,
+  evalExecutionBudgetsSchema,
+  lowerExecutionBudgetCeilings,
+  platformExecutionBudgetCeilings,
+  platformExecutionBudgetDefaults,
+  resolveExecutionBudgets,
+  resolveExecutionBudgetsForSurface,
+  resolvedExecutionBudgetsSchema,
+  swarmExecutionBudgetsSchema,
+} from "./contract/index.js";
+export type {
+  AuthoredExecutionBudgets,
+  EvalExecutionBudgets,
+  ExecutionBudgetResolution,
+  ExecutionBudgetSource,
+  ExecutionBudgetSurface,
+  ExecutionBudgetViolation,
+  ResolvedExecutionBudgetField,
+  ResolvedExecutionBudgets,
+  ResolvedExecutionBudgetValues,
+  SwarmExecutionBudgets,
+} from "./contract/index.js";
+
+// The run supervisor's signal plumbing. `withDeadline` in the inspector server
+// composes with this, and the swarm runner's hand-rolled twin is replaced by it.
+export { composeAbortSignals } from "./compose-abort-signals.js";
 
 // The scorer runtime. Main-entry only — `judgeScorer` reaches the model
 // factory, which is not browser-safe.

@@ -567,9 +567,9 @@ rather than as a pass.
 
 ### Run view
 
-The run header shows a **HOLD** or **SHIP** pill for each client/model pairing in the launch. All pairings that share the same decision are grouped into one pill — a single **HOLD** pill lists every client that did not pass, and a **SHIP** pill lists every client that did. Intermediate states (**Running**, **Grading**, **Inconclusive**) each get their own pill. The **Compare runs** and **Run again** buttons are visible directly in the header.
+While a run is in progress, the run header shows a **HOLD** or **SHIP** pill for each client/model pairing to indicate the current trajectory. All pairings that share the same decision are grouped into one pill — a single **HOLD** pill lists every client not yet on track to pass, and a **SHIP** pill lists every client on track to pass. Intermediate states (**Running**, **Grading**, **Inconclusive**) each get their own pill. Once a run finishes, these pills are removed from the header. The **Compare runs** and **Run again** buttons are visible directly in the header.
 
-Below the header, the hero section shows a row per client/model pairing with a pass/fail bar and counts, plus P50 and P95 latency, average tokens, and average tool calls for that pairing. When a previous launch exists, each pairing row also shows a delta — how many more or fewer cases passed compared to the equivalent pairing in the prior launch. The first launch of a suite shows no deltas.
+Below the header, the hero section shows a row per client/model pairing with a pass/fail bar and counts, plus P50 and P95 latency, average tokens, and average tool calls for that pairing. When a previous launch exists and the current run has finished, each pairing row also shows a delta — how many more or fewer cases passed compared to the equivalent pairing in the prior launch. Deltas are hidden while a run is still in progress. The first launch of a suite shows no deltas.
 
 The **Test cases** section (formerly the matrix) lists every test case with a search box and **Status**, **Client**, and **Model** filters on one row. There is no master pass/fail bar or "RUN RESULTS" eyebrow label in this section.
 
