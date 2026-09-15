@@ -373,6 +373,9 @@ describe("ProjectRunsTable", () => {
     setRows([makeRow({ source: "ui" })]);
     view.rerender(<ProjectRunsTable projectId="proj_1" onSelectRun={vi.fn()} />);
     expect(screen.getByText("No runs match these filters.")).toBeVisible();
+    await user.click(screen.getByLabelText("Filter by suite"));
+    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual(["All suites"]);
+    await user.keyboard("{Escape}");
     await user.click(screen.getByRole("button", { name: "Filter by platform" }));
     expect(screen.getByRole("menuitemcheckbox", { name: "SDK" })).toBeChecked();
     await user.click(screen.getByRole("menuitemcheckbox", { name: "SDK" }));
