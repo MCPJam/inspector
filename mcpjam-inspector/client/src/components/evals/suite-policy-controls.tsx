@@ -1,23 +1,39 @@
 /**
- * The controls for a suite's verdict policy, and for when a run is valid.
+ * The controls for a suite's grading policy: what must pass, how many times,
+ * and what counts as enough evidence to decide.
  *
- * TWO POLICIES, NEVER BOTH ON SCREEN. A legacy suite is graded by
- * `minimumAccuracy` — one suite-wide PERCENT over `max(case.iterations,
- * minimumIterations)`. A v2 suite is graded per case by a `passThreshold`
- * FRACTION over that case's own `repetitions`, and decides validity first, so
- * an unmeasurable run reports inconclusive rather than failed. The two are not
- * convertible, and showing both would ask a reader to work out which one their
- * runs are actually decided by.
+ * ONE CRITERION ON SCREEN, THE ONE THIS SUITE IS DECIDED BY. Its SCOPE says
+ * which field and which units: a suite-wide criterion is one PERCENT over the
+ * whole run, a per-case criterion is a FRACTION each case must meet over its
+ * own iterations. Ten cases, nine always passing and one always failing: 90%
+ * suite-wide passes that run and 0.9 per-case fails it. So the two are not one
+ * number in two units, showing both would ask a reader to work out which
+ * decides their runs, and there is no control here that converts one into the
+ * other.
  *
- * FRACTIONS IN, PERCENTS ON SCREEN. Everything stored and everything sent is a
- * fraction in [0,1]; the only place a percent exists is in front of a person.
- * The threshold input therefore renders `Math.round(value * 100)` and drafts
- * `entered / 100`, and nothing else on this path divides by anything.
+ * NO VERSION, NO UPGRADE, NO SELECTOR. Every word on these controls comes from
+ * `@mcpjam/sdk/contract`'s grading vocabulary, which has no member naming a
+ * policy version — a suite-wide suite is measured differently, not obsolete.
+ * Changing the scope is not an edit these controls can make; it is API-only
+ * until an explicit scope-change operation ships in a follow-up.
+ *
+ * FRACTIONS IN, PERCENTS ON SCREEN. Everything stored and everything sent on
+ * the per-case path is a fraction in [0,1]; the only place a percent exists is
+ * in front of a person. The threshold input therefore renders
+ * `Math.round(value * 100)` and drafts `entered / 100`, and nothing else on
+ * this path divides by anything. The suite-wide path is the mirror image: the
+ * stored field IS a percent and is never divided at all.
  */
 
 import { useEffect, useId, useRef, useState } from "react";
-import { casePassesNeeded } from "@mcpjam/sdk/contract";
-import { Button } from "@mcpjam/design-system/button";
+import {
+  EVAL_GRADING_VALIDITY_FIELD_LABELS,
+  EVAL_ITERATION_RULE_HINTS,
+  EVAL_ITERATION_RULE_LABELS,
+  EVAL_PASS_CRITERION_SCOPE_HINTS,
+  EVAL_PASS_CRITERION_SCOPE_LABELS,
+  casePassesNeeded,
+} from "@mcpjam/sdk/contract";
 import type { SuiteVerdictPolicyDefaults } from "./suite-settings-draft";
 
 /** The contract's defaults, shown as placeholders rather than written in. */
@@ -145,18 +161,81 @@ export function PercentInput({
 }
 
 /**
- * The case-threshold hint under the v2 quality-gate controls.
+ * The per-case criterion's hint.
  *
- * Exported so the ledger test and later quality-gate rows pin the same
- * sentence. Store a fraction; the field next to this hint renders `%`.
+ * Renamed from `QUALITY_GATE_THRESHOLD_HINT`: this sentence describes the PASS
+ * CRITERION, and the quality gate is the separate comparison against a
+ * baseline run. The old name is why one heading, one hint and one manifest row
+ * all said "quality gate" about three different things.
+ *
+ * The sentence itself now comes from the shared grading vocabulary, so the app,
+ * the CLI's flag help and the docs cannot drift on what a per-case threshold
+ * measures. Store a fraction; the field next to this hint renders `%`.
  */
-export const QUALITY_GATE_THRESHOLD_HINT =
-  "Each case is graded on its own iterations. A case passes when at least this share of them passes.";
+export const PASS_THRESHOLD_HINT = EVAL_PASS_CRITERION_SCOPE_HINTS.perCase;
 
 /**
- * The v2 policy controls: how many trials, and how many of them must pass.
+ * The PER-CASE criterion: the fraction of a case's own iterations that must
+ * pass.
+ *
+ * Only the criterion. The count that used to sit above it moved to
+ * {@link PerCaseIterationsControl}, because "what must pass" and "how many
+ * times" are edited independently — raising the count does not move the bar —
+ * and they are now two rows with two Edit affordances and two dirty badges.
+ * They are still shown together in the arithmetic below, which is the one
+ * place the two facts have to meet: how many passes a case actually needs.
  */
-export function VerdictPolicyV2Controls({
+export function PerCasePassThresholdControl({
+  defaults,
+  onChange,
+  aligned = false,
+}: {
+  defaults: SuiteVerdictPolicyDefaults | undefined;
+  onChange: (next: SuiteVerdictPolicyDefaults) => void;
+  aligned?: boolean;
+}) {
+  const current = perCaseDefaultsOrFallback(defaults);
+  const passesNeeded = casePassesNeeded(
+    current.repetitions,
+    current.passThreshold,
+  );
+  return (
+    <div className="space-y-2">
+      <div data-setting-key="passThreshold">
+        <PercentInput
+          aligned={aligned}
+          label={EVAL_PASS_CRITERION_SCOPE_LABELS.perCase}
+          value={current.passThreshold}
+          ariaLabel="Fraction of a case's iterations that must pass"
+          required
+          onCommit={(fraction) => {
+            // A required field never commits a blank, so `undefined` cannot
+            // reach here; the guard is so it can never be read as a 0 either.
+            if (fraction !== undefined) {
+              onChange({ ...current, passThreshold: fraction });
+            }
+          }}
+        />
+      </div>
+      <p className="text-[11px] text-muted-foreground/60">
+        {PASS_THRESHOLD_HINT} A case with {current.repetitions} iteration
+        {current.repetitions === 1 ? "" : "s"} needs {passesNeeded} pass
+        {passesNeeded === 1 ? "" : "es"}.
+      </p>
+    </div>
+  );
+}
+
+/**
+ * The PER-CASE count: the suite default a case overrides.
+ *
+ * Labelled "Iterations per case", one word away from the suite-wide floor's
+ * "Minimum iterations per case", and both words come from the shared
+ * vocabulary. The difference is the whole point: this REPLACES a case's count
+ * and the floor RAISES it, so a case at 7 resolves to 7 under a floor of 3 and
+ * to 3 under a default of 3.
+ */
+export function PerCaseIterationsControl({
   defaults,
   onChange,
   aligned = false,
@@ -166,17 +245,7 @@ export function VerdictPolicyV2Controls({
   aligned?: boolean;
 }) {
   const repetitionsId = useId();
-  // A v2 suite always HAS defaults; a suite mid-upgrade in the draft may not
-  // yet, so the controls fall back to the same pair the upgrade proposes
-  // rather than rendering blank inputs that write `NaN` on first touch.
-  const current: SuiteVerdictPolicyDefaults = defaults ?? {
-    repetitions: 1,
-    passThreshold: 1,
-  };
-  const passesNeeded = casePassesNeeded(
-    current.repetitions,
-    current.passThreshold,
-  );
+  const current = perCaseDefaultsOrFallback(defaults);
   return (
     <div className="space-y-2">
       <div data-setting-key="repetitions">
@@ -184,7 +253,9 @@ export function VerdictPolicyV2Controls({
           className={`flex items-center gap-2 text-xs text-muted-foreground ${aligned ? "justify-between" : ""}`}
           htmlFor={repetitionsId}
         >
-          <span className="min-w-[9rem]">Iterations</span>
+          <span className="min-w-[9rem]">
+            {EVAL_ITERATION_RULE_LABELS.defaultCount}
+          </span>
           <select
             id={repetitionsId}
             className={`h-8 ${aligned ? "w-40 shrink-0" : ""} rounded-md border border-input bg-background px-2 text-xs text-foreground`}
@@ -202,29 +273,25 @@ export function VerdictPolicyV2Controls({
           </select>
         </label>
       </div>
-      <div data-setting-key="passThreshold">
-        <PercentInput
-          aligned={aligned}
-          label="Pass threshold"
-          value={current.passThreshold}
-          ariaLabel="Fraction of a case's iterations that must pass"
-          required
-          onCommit={(fraction) => {
-            // A required field never commits a blank, so `undefined` cannot
-            // reach here; the guard is so it can never be read as a 0 either.
-            if (fraction !== undefined) {
-              onChange({ ...current, passThreshold: fraction });
-            }
-          }}
-        />
-      </div>
       <p className="text-[11px] text-muted-foreground/60">
-        {QUALITY_GATE_THRESHOLD_HINT} A case with {current.repetitions} iteration
-        {current.repetitions === 1 ? "" : "s"} needs {passesNeeded} pass
-        {passesNeeded === 1 ? "" : "es"}.
+        {EVAL_ITERATION_RULE_HINTS.defaultCount}
       </p>
     </div>
   );
+}
+
+/**
+ * The stored per-case defaults, or the pair a blank draft falls back to.
+ *
+ * A per-case suite always HAS defaults. A draft can be missing them for one
+ * render, and blank inputs there write `NaN` on first touch — so both controls
+ * read through this rather than each inventing its own fallback and disagreeing
+ * about it.
+ */
+function perCaseDefaultsOrFallback(
+  defaults: SuiteVerdictPolicyDefaults | undefined,
+): SuiteVerdictPolicyDefaults {
+  return defaults ?? { repetitions: 1, passThreshold: 1 };
 }
 
 /**
@@ -244,10 +311,7 @@ export function VerdictValidityControls({
   onChange: (next: SuiteVerdictPolicyDefaults) => void;
 }) {
   const trialsId = useId();
-  const current: SuiteVerdictPolicyDefaults = defaults ?? {
-    repetitions: 1,
-    passThreshold: 1,
-  };
+  const current = perCaseDefaultsOrFallback(defaults);
   const validity = current.validity ?? {};
   const setValidity = (
     patch: Partial<NonNullable<SuiteVerdictPolicyDefaults["validity"]>>,
@@ -272,7 +336,9 @@ export function VerdictValidityControls({
         className="flex items-center gap-2 text-xs text-muted-foreground"
         htmlFor={trialsId}
       >
-        <span className="min-w-[9rem]">Minimum eligible iterations</span>
+        <span className="min-w-[9rem]">
+          {EVAL_GRADING_VALIDITY_FIELD_LABELS.minEligibleTrials}
+        </span>
         <input
           id={trialsId}
           className="h-8 w-20 rounded-md border border-input bg-background px-2 text-right text-xs text-foreground"
@@ -293,14 +359,14 @@ export function VerdictValidityControls({
         />
       </label>
       <PercentInput
-        label="Minimum completion"
+        label={EVAL_GRADING_VALIDITY_FIELD_LABELS.minCompletionRate}
         value={validity.minCompletionRate}
         placeholder={VALIDITY_PLACEHOLDERS.minCompletionRate}
         ariaLabel="Minimum share of iterations that must have completed"
         onCommit={(fraction) => setValidity({ minCompletionRate: fraction })}
       />
       <PercentInput
-        label="Maximum evaluator errors"
+        label={EVAL_GRADING_VALIDITY_FIELD_LABELS.maxEvaluatorErrorRate}
         value={validity.maxEvaluatorErrorRate}
         placeholder={VALIDITY_PLACEHOLDERS.maxEvaluatorErrorRate}
         ariaLabel="Maximum share of iterations whose evaluator errored"
@@ -317,43 +383,20 @@ export function VerdictValidityControls({
   );
 }
 
-/**
- * The one-way upgrade.
- *
- * Offered only when the deployment and the caller can actually perform it —
- * the backend refuses otherwise, and a button whose only outcome is an error is
- * worse than no button. The proposed values are the LEGACY ones restated in v2
- * terms, so the review dialog shows a reader the bar they are moving to rather
- * than a version number.
- */
-export function VerdictPolicyUpgradeButton({
-  disabledReason,
-  proposal,
-  onUpgrade,
-}: {
-  /** Why it cannot be used, or `undefined` when it can. */
-  disabledReason?: string;
-  proposal: SuiteVerdictPolicyDefaults;
-  onUpgrade: (defaults: SuiteVerdictPolicyDefaults) => void;
-}) {
-  return (
-    <div className="space-y-1">
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        className="h-8"
-        disabled={disabledReason !== undefined}
-        onClick={() => onUpgrade(proposal)}
-      >
-        Switch to verdict policy v2
-      </Button>
-      <p className="text-[11px] text-muted-foreground/60">
-        {disabledReason ??
-          `Grades each case on its own iterations: ${proposal.repetitions} iteration${
-            proposal.repetitions === 1 ? "" : "s"
-          }, ${Math.round(proposal.passThreshold * 100)}% threshold. One-way.`}
-      </p>
-    </div>
-  );
-}
+// ── Deliberately not here: the scope switch ──────────────────────────────────
+//
+// `VerdictPolicyUpgradeButton` used to sit at the bottom of the criterion row,
+// offering "Switch to verdict policy v2" beside the threshold field. It is
+// gone, and nothing replaces it here.
+//
+// It was the affordance for the one operation that must never look like a
+// threshold edit. `minimumAccuracy` and `passThreshold` differ in SCOPE as well
+// as units, so the switch re-decides every multi-case suite — the button's own
+// proposal divided the stored percent by 100, which moves the bar for every
+// suite with more than one case even though the number looks preserved. And it
+// wrote its two draft fields into the ordinary batched settings save, where it
+// rode along with unrelated edits and required an audit note only if the
+// quality gate happened to be dirty in the same batch.
+//
+// Changing scope is API-only until an explicit scope-change operation ships;
+// see the scope-change follow-up.

@@ -185,16 +185,34 @@ describe("suite settings page", () => {
     );
   });
 
-  it("hides an unavailable policy upgrade and shows an available upgrade without Advanced", () => {
+  it("offers no scope switch, whatever the deployment allows", () => {
+    // #5088 asserted the opposite half of this: that an ALLOWED upgrade
+    // renders an enabled "Switch to verdict policy v2" button. That affordance
+    // is deliberately gone, so the assertion is inverted rather than dropped —
+    // the deployment still reports that capability and the server still
+    // enforces it, but no client surface consults it now: there is no
+    // scope-switch operation anywhere in the app, the CLI or MCP. Changing
+    // scope takes a hand-written PATCH.
+    //
+    // Why it had to go: the button's own proposal divided the stored percent by
+    // 100. That preserves the NUMBER and moves the BAR for every suite with
+    // more than one case, because a suite-wide percent and a per-case fraction
+    // are measured over different populations. It also wrote its two draft
+    // fields into the ordinary batched settings save, so it rode along with
+    // unrelated edits and required an audit note only when the quality gate
+    // happened to be dirty in the same batch.
+    //
+    // Asserted under BOTH capability answers, which is stronger than the
+    // original: there is no wording under which this page proposes a scope
+    // change, not merely none when the deployment forbids it.
     const unavailable = renderSettingsSheet();
     expect(screen.queryByText("Switch to verdict policy v2")).toBeNull();
     unavailable.unmount();
     capability.canUpgrade = true;
     renderSettingsSheet();
     expect(screen.queryByText("Advanced")).toBeNull();
-    expect(
-      screen.getByRole("button", { name: "Switch to verdict policy v2" }),
-    ).toBeEnabled();
+    expect(screen.queryByText("Switch to verdict policy v2")).toBeNull();
+    expect(screen.queryByText(/already on verdict policy v2/i)).toBeNull();
   });
 
   it("keeps CI-owned settings readable with Back and no Save", () => {

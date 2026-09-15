@@ -158,6 +158,7 @@ function baseParams(
   return {
     promptIndex: 0,
     prompt: "list the open issues",
+    turnTimeoutMs: 5 * 60_000,
     browser: browser as unknown as DriveHostedEvalTurnParams["browser"],
     prepared: {
       allTools: {},

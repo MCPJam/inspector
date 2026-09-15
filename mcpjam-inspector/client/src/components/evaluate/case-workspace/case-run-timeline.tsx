@@ -264,7 +264,8 @@ export function CaseRunTimeline({
           ))}
         </div>
       </div>
-      <div className="grid grid-cols-5 rounded-xl border border-border bg-background px-4 py-4 text-foreground">
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,5rem),1fr))] gap-x-2 gap-y-4 rounded-xl border border-border bg-background px-4 py-4 text-foreground"
+        data-testid="case-run-averages">
         {[
           {
             label: "Passed",

@@ -103,7 +103,7 @@ describe("EvaluateRunPage", () => {
         </EvaluateRunPage>,
       );
       const header = screen.getByTestId("evaluate-run-header");
-      if (label === "HOLD") {
+      if (label === "HOLD" || label === "SHIP") {
         expect(
           within(header).queryByTestId("run-header-decision-pill"),
         ).toBeNull();
@@ -124,8 +124,7 @@ describe("EvaluateRunPage", () => {
     },
   );
 
-  it("uses a stable run title and removes individual client report switching", async () => {
-    const user = userEvent.setup();
+  it("uses a stable run title and removes individual client report switching", () => {
     render(
       <EvaluateRunPage
         run={makeRun({
@@ -155,16 +154,9 @@ describe("EvaluateRunPage", () => {
     );
     expect(screen.getByRole("heading", { name: "Run #1" })).toBeVisible();
     expect(screen.queryByText(/client\/model pairing/)).toBeNull();
-    const pairings = screen.getByTestId("run-header-pairings");
-    const pills = within(pairings).getAllByTestId("run-header-decision-pill");
-    expect(pills).toHaveLength(1);
-    expect(pills[0]).toHaveAttribute("data-decision", "ship");
-    expect(within(pills[0]).getByLabelText("Claude · opus")).toBeVisible();
+    expect(screen.queryByTestId("run-header-pairings")).toBeNull();
     expect(screen.queryByText("HOLD")).toBeNull();
-    await user.hover(within(pills[0]).getByLabelText("Claude · opus"));
-    expect(
-      await screen.findByRole("tooltip", { hidden: true }),
-    ).toHaveTextContent("Claude · opus");
+    expect(screen.queryByText("SHIP")).toBeNull();
     expect(screen.queryByRole("button", { name: /Client report/ })).toBeNull();
     expect(screen.queryByRole("button", { name: "Run actions" })).toBeNull();
     expect(screen.queryByRole("menuitem", { name: "Run details" })).toBeNull();
@@ -209,7 +201,7 @@ describe("EvaluateRunPage", () => {
   it("recovers the pairing model from iterations when the run omitted it", () => {
     render(
       <EvaluateRunPage
-        run={makeRun({ _id: "run-1", result: "passed" })}
+        run={makeRun({ _id: "run-1", status: "running", result: "pending" })}
         iterations={
           [
             {
