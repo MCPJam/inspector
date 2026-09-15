@@ -45,7 +45,11 @@ import {
   clampDelay,
   type Jitter,
 } from "./backoff.js";
-import { withDeadline, type DeadlineClock } from "./deadline.js";
+import {
+  deadlineClockOf,
+  withDeadline,
+  type DeadlineClock,
+} from "./deadline.js";
 
 // Re-exported so `withRetry`'s callers need only one import. The definitions
 // live in a leaf module that `withCapacityRetry` can share WITHOUT dragging
@@ -164,11 +168,16 @@ function messageOf(error: unknown): string {
  *
  * `retryAfterMs` is the shape this codebase already produces (`postJson` turns
  * the HTTP header's SECONDS into ms at the boundary; the swarm agent's JSON
- * envelope carries `retryAfter` in ms). A raw `Retry-After` header is read as
- * seconds, per RFC 9110 — the one place the units differ, and the one place
- * getting it wrong turns a 30-second wait into an eight-hour one.
+ * envelope carries `retryAfter` in ms). A raw `Retry-After` header carries
+ * EITHER form RFC 9110 allows: `delay-seconds`, or an HTTP-date to wait until.
+ * Units are the one place getting it wrong turns a 30-second wait into an
+ * eight-hour one, so each form is read on its own terms and anything that is
+ * neither returns `undefined` rather than a guess.
  */
-export function retryAfterMsOf(error: unknown): number | undefined {
+export function retryAfterMsOf(
+  error: unknown,
+  now: () => number = Date.now,
+): number | undefined {
   const record = errorRecord(error);
   if (!record) return undefined;
   for (const key of ["retryAfterMs", "retryAfter"]) {
@@ -185,9 +194,16 @@ export function retryAfterMsOf(error: unknown): number | undefined {
       : undefined;
   if (!raw) return undefined;
   const seconds = Number(raw);
-  return Number.isFinite(seconds) && seconds >= 0
-    ? Math.round(seconds * 1_000)
-    : undefined;
+  if (Number.isFinite(seconds)) {
+    // Numeric but negative is a malformed header, not a date: answering
+    // `undefined` is right, and falling through would let `Date.parse` read
+    // something like "-5" as a year.
+    return seconds >= 0 ? Math.round(seconds * 1_000) : undefined;
+  }
+  const retryAt = Date.parse(raw);
+  if (!Number.isFinite(retryAt)) return undefined;
+  const delayMs = retryAt - now();
+  return delayMs > 0 ? Math.round(delayMs) : undefined;
 }
 
 /**
@@ -205,7 +221,12 @@ export function retryAfterMsOf(error: unknown): number | undefined {
  *     capacity waits in minutes against a shared pool; treating it as an
  *     ordinary 5xx retries it far too fast and makes the queue worse.
  *  4. Rate limits before transient, so 429 waits out its `Retry-After` instead
- *     of taking the generic backoff.
+ *     of taking the generic backoff. PROSE is consulted only when there is no
+ *     status at all: `classifyTurnFailure` exists for the local-BYOK path,
+ *     which "attaches no code or status, so prose is all that survives", and
+ *     letting it outrank a status the failure DID carry reads a 500 that
+ *     mentions a rate limit as `rate_limited` (so it is never retried at all,
+ *     absent a `Retry-After`) and a 403 with the same words as retryable.
  *  5. Everything the SDK calls transient — asked with the status moved into the
  *     field its own extractor reads, so a `fetch`-shaped or control-plane-shaped
  *     5xx is not silently dropped into `terminal`.
@@ -232,7 +253,10 @@ export function classifyRetry(error: unknown): RetryClassification {
     return withWait("capacity");
   }
 
-  if (status === 429 || classifyTurnFailure(message) === "rate_limited") {
+  if (
+    status === 429 ||
+    (status === undefined && classifyTurnFailure(message) === "rate_limited")
+  ) {
     return withWait("rate_limited");
   }
 
@@ -346,7 +370,15 @@ export async function withRetry<T>(
     },
     shouldRetryError: (error, zeroBasedAttempt) => {
       pending = undefined;
-      const classification = classifyRetry(error);
+      const classification = attemptExpired(error, policy, clock)
+        ? // THIS attempt ran out of time — which is the whole reason it had a
+          // deadline of its own. Left as `aborted` it would end the sequence on
+          // the first slow call, so a per-attempt timeout inside a retry loop
+          // would mean "one try, then give up": the opposite of its purpose.
+          // A caller-level cancel is a different thing entirely and still stops
+          // everything, which is what `attemptExpired` checks.
+          ({ class: "transient" } as RetryClassification)
+        : classifyRetry(error);
       if (
         classification.class === "aborted" ||
         classification.class === "terminal"
@@ -383,6 +415,23 @@ export async function withRetry<T>(
       await sleep(decided.delayMs, policy.signal);
     },
   });
+}
+
+/**
+ * True when this error is THIS loop's own per-attempt deadline firing, rather
+ * than the caller asking to stop.
+ *
+ * The caller's signal is checked first and decides: when it has aborted, every
+ * abort below it is that cancellation, whatever clock happens to be on the
+ * reason — a composed signal carries the reason of whichever source fired.
+ */
+function attemptExpired(
+  error: unknown,
+  policy: WithRetryPolicy,
+  clock: DeadlineClock,
+): boolean {
+  if (policy.signal?.aborted) return false;
+  return deadlineClockOf(error) === clock;
 }
 
 /**

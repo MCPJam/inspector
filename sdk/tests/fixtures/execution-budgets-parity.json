@@ -1,5 +1,5 @@
 {
-  "__readme": "Shared parity fixtures for ExecutionBudgets — the eval/swarm clock contract. Loaded by sdk/tests/contract/execution-budgets.test.ts in mcpjam-inspector (the canonical implementation, sdk/src/contract/execution-budgets.ts) AND, VERBATIM, by tests/convex/executionBudgetsParity.test.ts in mcpjam-backend (the hand-mirrored table + resolver in convex/lib/executionBudgets.ts). The backend cannot import @mcpjam/sdk into convex/ default-runtime code, so this file is the only common ground truth — copy it byte for byte, do not re-author it, and register it in convex/lib/mirrors.json. LOAD RULE: strip EVERY key whose name starts with '__' before handing a row to a validator or resolver; they are fixture annotations (__label, __why) and the authored schemas are .strict(). MILLISECONDS EVERYWHERE — minutes exist only in rendering, so every number below is ms. The 'table' block pins the platform defaults and ceilings (§3.2): if an assertion there fails, the two tables have drifted and a run would get different clocks depending on which side resolved it — STOP, do not edit one side to match the other without changing both. The 'resolve' cases each name an 'args' (authored budgets, plus the surface whose defaults/ceilings column to use, plus an optional org ceiling override) and an 'expect' that is either a full resolved object with per-field sources, or a violations list. 'ceilingOverride' cases pin the LOWER-ONLY rule: effective = min(platform, org). When the contract shape changes, edit BOTH implementations AND this fixture in the same PR.",
+  "__readme": "Shared parity fixtures for ExecutionBudgets — the eval/swarm clock contract. Loaded by sdk/tests/contract/execution-budgets.test.ts in mcpjam-inspector (the canonical implementation, sdk/src/contract/execution-budgets.ts) AND, VERBATIM, by tests/convex/executionBudgetsParity.test.ts in mcpjam-backend (the hand-mirrored table + resolver in convex/lib/executionBudgets.ts). The backend cannot import @mcpjam/sdk into convex/ default-runtime code, so this file is the only common ground truth — copy it byte for byte, do not re-author it, and register it in convex/lib/mirrors.json. LOAD RULE: strip EVERY key whose name starts with '__' before handing a row to a validator or resolver; they are fixture annotations (__label, __why) and the authored schemas are .strict(). MILLISECONDS EVERYWHERE — minutes exist only in rendering, so every number below is ms. The 'table' block pins the platform defaults and ceilings (§3.2): if an assertion there fails, the two tables have drifted and a run would get different clocks depending on which side resolved it — STOP, do not edit one side to match the other without changing both. The 'resolve' cases each name an 'args' (authored budgets, plus the surface whose defaults/ceilings column to use, plus an optional org ceiling override) and an 'expect' that is either a full resolved object with per-field sources, or a violations list. 'ceilingOverride' cases pin the LOWER-ONLY rule: effective = min(platform, org) — and, in the 'resolve' block, that the effective ceiling caps a DEFAULTED field too, so an org ceiling below a platform default is not sailed over by a suite that authored nothing. Capping applies to the default rung only: an authored value above the ceiling is still REFUSED, never capped. When the contract shape changes, edit BOTH implementations AND this fixture in the same PR.",
   "table": {
     "__label": "Platform defaults and ceilings, per surface (§3.2)",
     "defaults": {
@@ -200,6 +200,57 @@
             "ceiling": 1800000
           }
         ]
+      }
+    },
+    {
+      "__label": "an org ceiling BELOW the platform default caps the default too",
+      "__why": "The swarm run default is 2h and the platform ceiling 12h, so an org that caps runs at 1h is asking for something no authored value even mentions. Copying the default past it would let every unauthored suite in that org sail over the cap — a ceiling an unauthored run ignores is not a ceiling. This is not the clamping the contract forbids: that rule protects a number a person wrote, and nobody wrote this one, so the source stays 'default'.",
+      "args": {
+        "surface": "swarms",
+        "ceilingOverride": { "runTimeoutMs": 3600000, "unitTimeoutMs": 300000 }
+      },
+      "expect": {
+        "ok": true,
+        "resolved": {
+          "turnTimeoutMs": 300000,
+          "toolCallTimeoutMs": 120000,
+          "unitTimeoutMs": 300000,
+          "runTimeoutMs": 3600000,
+          "turnRetries": 2,
+          "sources": {
+            "turnTimeoutMs": "default",
+            "toolCallTimeoutMs": "default",
+            "unitTimeoutMs": "default",
+            "runTimeoutMs": "default",
+            "turnRetries": "default"
+          }
+        }
+      }
+    },
+    {
+      "__label": "an authored value still wins over a default the ceiling capped",
+      "__why": "Capping applies to the DEFAULT rung only. An authored value at or under the effective ceiling is used as written, and one above it is still refused rather than capped.",
+      "args": {
+        "surface": "swarms",
+        "authored": { "runTimeoutMs": 1800000 },
+        "ceilingOverride": { "runTimeoutMs": 3600000 }
+      },
+      "expect": {
+        "ok": true,
+        "resolved": {
+          "turnTimeoutMs": 300000,
+          "toolCallTimeoutMs": 120000,
+          "unitTimeoutMs": 1200000,
+          "runTimeoutMs": 1800000,
+          "turnRetries": 2,
+          "sources": {
+            "turnTimeoutMs": "default",
+            "toolCallTimeoutMs": "default",
+            "unitTimeoutMs": "default",
+            "runTimeoutMs": "authored",
+            "turnRetries": "default"
+          }
+        }
       }
     },
     {

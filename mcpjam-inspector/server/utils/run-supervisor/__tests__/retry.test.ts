@@ -174,6 +174,35 @@ describe("classifyRetry — one fixture per class", () => {
     expect(classifyRetry({ status: 403 }).class).toBe("terminal");
   });
 
+  it("lets a status the failure carried outrank rate-limit prose", () => {
+    // `classifyTurnFailure` is for the local-BYOK path, which attaches no code
+    // or status, so prose is all that survives there. Letting it outrank a
+    // status the failure DID carry reads a 500 mentioning a rate limit as
+    // `rate_limited` — never retried at all without a `Retry-After` — and a
+    // 403 with the same words as retryable.
+    expect(
+      classifyRetry(
+        Object.assign(new Error("upstream rate limit exceeded"), {
+          status: 500,
+        }),
+      ).class,
+    ).toBe("transient");
+    expect(
+      classifyRetry(
+        Object.assign(new Error("rate limit exceeded"), {
+          status: 403,
+          retryAfterMs: 1_000,
+        }),
+      ).class,
+    ).toBe("terminal");
+    // ...while a 429 is still a rate limit, and prose still decides when the
+    // failure carried no status at all.
+    expect(classifyRetry(httpError(429)).class).toBe("rate_limited");
+    expect(classifyRetry(new Error("429 too many requests")).class).toBe(
+      "rate_limited",
+    );
+  });
+
   it("carries Retry-After onto the classification when the failure sent one", () => {
     expect(
       classifyRetry(
@@ -200,12 +229,36 @@ describe("retryAfterMsOf — units", () => {
     expect(retryAfterMsOf(error)).toBe(30_000);
   });
 
+  it("reads an HTTP-date Retry-After as the wait until that instant", () => {
+    // RFC 9110 allows either `delay-seconds` or an HTTP-date. Returning
+    // `undefined` for the date form means `withRetry` schedules no retry at all
+    // on a 429 that used it.
+    const now = Date.parse("2026-09-15T00:00:00Z");
+    const error = {
+      response: {
+        headers: new Headers({
+          "retry-after": "Tue, 15 Sep 2026 00:00:45 GMT",
+        }),
+      },
+    };
+    expect(retryAfterMsOf(error, () => now)).toBe(45_000);
+    // A date already past is not a wait.
+    expect(retryAfterMsOf(error, () => now + 60_000)).toBeUndefined();
+  });
+
   it("ignores nonsense rather than guessing", () => {
     expect(retryAfterMsOf({ retryAfterMs: -1 })).toBeUndefined();
     expect(retryAfterMsOf({ retryAfterMs: Number.NaN })).toBeUndefined();
     expect(
       retryAfterMsOf({
         response: { headers: new Headers({ "retry-after": "soon" }) },
+      }),
+    ).toBeUndefined();
+    // Numeric but negative is a malformed header, not a date — it must not
+    // fall through to `Date.parse`, which would read "-5" as a year.
+    expect(
+      retryAfterMsOf({
+        response: { headers: new Headers({ "retry-after": "-5" }) },
       }),
     ).toBeUndefined();
     expect(retryAfterMsOf(new Error("plain"))).toBeUndefined();
@@ -290,6 +343,52 @@ describe("withRetry — what it retries", () => {
       name: "AbortError",
     });
     expect(op).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries an attempt that ran out of its OWN time", async () => {
+    // The bug this pins: the per-attempt deadline raises an AbortError, which
+    // classifies `aborted`, which ended the sequence — so a per-attempt timeout
+    // inside a retry loop meant "one try, then give up", the exact opposite of
+    // why it exists.
+    const h = harness({
+      maxAttempts: 3,
+      attemptTimeoutMs: 20,
+      clock: "toolCall",
+    });
+    let calls = 0;
+    const result = await withRetry(async (_attempt, signal) => {
+      calls += 1;
+      if (calls < 3) {
+        // What a well-behaved op does when its own deadline fires.
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        throw signal.reason ?? new Error("no reason");
+      }
+      return "ok";
+    }, h.policy);
+
+    expect(result).toBe("ok");
+    expect(calls).toBe(3);
+    expect(h.waits).toEqual([100, 200]);
+  });
+
+  it("still stops when the CALLER cancels mid-attempt", async () => {
+    // The other half of the same decision: a caller-level cancel is not an
+    // attempt expiry, whatever clock rides on the composed signal's reason.
+    const controller = new AbortController();
+    const h = harness({
+      maxAttempts: 3,
+      attemptTimeoutMs: 20,
+      clock: "toolCall",
+    });
+    const op = vi.fn(async (_attempt: number, signal: AbortSignal) => {
+      controller.abort();
+      throw signal.reason ?? new Error("no reason");
+    });
+    await expect(
+      withRetry(op, { ...h.policy, signal: controller.signal }),
+    ).rejects.toBeDefined();
+    expect(op).toHaveBeenCalledTimes(1);
+    expect(h.waits).toEqual([]);
   });
 
   it("stops retrying once the caller's signal aborts", async () => {

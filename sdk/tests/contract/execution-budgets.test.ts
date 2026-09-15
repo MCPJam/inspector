@@ -103,6 +103,19 @@ describe("execution budgets — platform table", () => {
     }
   });
 
+  it("refuses a write to the exported tables themselves", () => {
+    // Not fixture-driven: freezing has no JSON spelling. These are exported
+    // from a published package, so without this a consumer could assign to
+    // `EXECUTION_BUDGET_DEFAULTS.evals.runTimeoutMs` and move the clocks of
+    // every later run in the process.
+    expect(Object.isFrozen(EXECUTION_BUDGET_DEFAULTS)).toBe(true);
+    expect(Object.isFrozen(EXECUTION_BUDGET_CEILINGS)).toBe(true);
+    for (const surface of SURFACES) {
+      expect(Object.isFrozen(EXECUTION_BUDGET_DEFAULTS[surface])).toBe(true);
+      expect(Object.isFrozen(EXECUTION_BUDGET_CEILINGS[surface])).toBe(true);
+    }
+  });
+
   it("hands out copies, not the live table", () => {
     // Not fixture-driven: a caller that mutated the returned object would
     // rewrite the platform defaults for every later run in the process.
@@ -161,6 +174,32 @@ describe("execution budgets — resolver", () => {
     }
   });
 
+  it("never resolves a value above the effective ceiling, authored or not", () => {
+    // The invariant behind the capped-default fixture rows: whatever rung a
+    // value came from, an `ok` resolution must satisfy the ceiling it was
+    // resolved against — otherwise the ceiling is not one.
+    for (const surface of SURFACES) {
+      const ceilings = lowerExecutionBudgetCeilings(table.ceilings[surface], {
+        runTimeoutMs: 60_000,
+        unitTimeoutMs: 60_000,
+        turnTimeoutMs: 10_000,
+        toolCallTimeoutMs: 1_000,
+        turnRetries: 0,
+      });
+      const result = resolveExecutionBudgets({
+        defaults: table.defaults[surface],
+        ceilings,
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      for (const field of RESOLVED_EXECUTION_BUDGET_FIELDS) {
+        expect(result.resolved[field]).toBeLessThanOrEqual(ceilings[field]);
+        // Capped, not re-labelled: the provenance union is closed.
+        expect(result.resolved.sources[field]).toBe("default");
+      }
+    }
+  });
+
   it("refuses rather than clamping", () => {
     // The review criterion stated as an assertion: an over-ceiling value must
     // never appear in a resolved object, in any form.
@@ -171,6 +210,24 @@ describe("execution budgets — resolver", () => {
     });
     expect(result.ok).toBe(false);
     expect(result).not.toHaveProperty("resolved");
+  });
+
+  it("ignores the other surface's unit word through the bound helper", () => {
+    // TypeScript's discriminated union makes this unreachable, and the
+    // `.strict()` authored schema refuses it at every write boundary. This
+    // pins what a JavaScript caller that reached the resolver without either
+    // gets: the swarm default, NOT an eval field silently running as a swarm
+    // session budget.
+    const resolved = resolveExecutionBudgetsForSurface({
+      surface: "swarms",
+      authored: { iterationTimeoutMs: 61_000 } as never,
+    });
+    expect(resolved.ok && resolved.resolved.unitTimeoutMs).toBe(
+      table.defaults.swarms.unitTimeoutMs
+    );
+    expect(resolved.ok && resolved.resolved.sources.unitTimeoutMs).toBe(
+      "default"
+    );
   });
 
   it("does not read an authored key the other surface owns", () => {

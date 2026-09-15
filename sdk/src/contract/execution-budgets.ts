@@ -139,6 +139,14 @@ export const RESOLVED_EXECUTION_BUDGET_FIELDS = [
 /** A complete column of the defaults/ceilings table. */
 export type ResolvedValues = Record<ResolvedExecutionBudgetField, number>;
 /**
+ * A column nobody can edit. The platform tables are exported from a published
+ * package: without this a consumer could assign to
+ * `EXECUTION_BUDGET_DEFAULTS.evals.runTimeoutMs` and silently move the clocks
+ * of every later run in the process. Readers take this; anything that builds a
+ * column takes {@link ResolvedValues}.
+ */
+export type ReadonlyResolvedValues = Readonly<ResolvedValues>;
+/**
  * The same type under a name that survives a package-level export.
  * `ResolvedValues` is the spelling the contract's own signatures use, and is
  * far too generic to put on `@mcpjam/sdk`'s public surface.
@@ -184,49 +192,47 @@ export const resolvedExecutionBudgetsSchema = z
  * BECAUSE an iteration timeout no longer kills the run. The run cap stops being
  * the working bound and becomes the backstop it was always described as.
  */
-export const EXECUTION_BUDGET_DEFAULTS: Record<
-  ExecutionBudgetSurface,
-  ResolvedValues
-> = {
-  evals: {
+export const EXECUTION_BUDGET_DEFAULTS: Readonly<
+  Record<ExecutionBudgetSurface, ReadonlyResolvedValues>
+> = Object.freeze({
+  evals: Object.freeze({
     turnTimeoutMs: 5 * MINUTE_MS,
     toolCallTimeoutMs: 30_000,
     unitTimeoutMs: 10 * MINUTE_MS,
     runTimeoutMs: 60 * MINUTE_MS,
     turnRetries: 2,
-  },
-  swarms: {
+  }),
+  swarms: Object.freeze({
     turnTimeoutMs: 5 * MINUTE_MS,
     toolCallTimeoutMs: 120_000,
     unitTimeoutMs: 20 * MINUTE_MS,
     runTimeoutMs: 2 * HOUR_MS,
     turnRetries: 2,
-  },
-};
+  }),
+});
 
 /**
  * Platform ceilings, per surface (§3.2). An authored value above these is
  * refused; an org may LOWER them but never raise them.
  */
-export const EXECUTION_BUDGET_CEILINGS: Record<
-  ExecutionBudgetSurface,
-  ResolvedValues
-> = {
-  evals: {
+export const EXECUTION_BUDGET_CEILINGS: Readonly<
+  Record<ExecutionBudgetSurface, ReadonlyResolvedValues>
+> = Object.freeze({
+  evals: Object.freeze({
     turnTimeoutMs: 30 * MINUTE_MS,
     toolCallTimeoutMs: 10 * MINUTE_MS,
     unitTimeoutMs: 2 * HOUR_MS,
     runTimeoutMs: 12 * HOUR_MS,
     turnRetries: 5,
-  },
-  swarms: {
+  }),
+  swarms: Object.freeze({
     turnTimeoutMs: 30 * MINUTE_MS,
     toolCallTimeoutMs: 10 * MINUTE_MS,
     unitTimeoutMs: 2 * HOUR_MS,
     runTimeoutMs: 12 * HOUR_MS,
     turnRetries: 5,
-  },
-};
+  }),
+});
 
 /** The authored spelling of the unit clock, per surface. */
 export const UNIT_TIMEOUT_FIELD = {
@@ -282,8 +288,8 @@ function authoredUnit(
  */
 export function resolveExecutionBudgets(args: {
   authored?: AuthoredExecutionBudgets;
-  defaults: ResolvedValues;
-  ceilings: ResolvedValues;
+  defaults: ReadonlyResolvedValues;
+  ceilings: ReadonlyResolvedValues;
 }): ExecutionBudgetResolution {
   const { authored, defaults, ceilings } = args;
   const unit = authoredUnit(authored);
@@ -312,6 +318,9 @@ export function resolveExecutionBudgets(args: {
   };
 
   const violations: ExecutionBudgetViolation[] = [];
+  // Keys come from RESOLVED_EXECUTION_BUDGET_FIELDS — a fixed tuple of five
+  // string literals — never from the caller's object, so nothing here can be
+  // `__proto__` or any other caller-chosen key.
   const values = {} as ResolvedValues;
   const sources = {} as Record<
     ResolvedExecutionBudgetField,
@@ -321,7 +330,14 @@ export function resolveExecutionBudgets(args: {
   for (const field of RESOLVED_EXECUTION_BUDGET_FIELDS) {
     const supplied = authoredValues[field];
     if (supplied === undefined) {
-      values[field] = defaults[field];
+      // A default is CAPPED by the effective ceiling, not copied past it. An
+      // org that lowered its ceiling below the platform default meant "cap my
+      // runs here", and a suite that authored nothing must not sail over it —
+      // a ceiling an unauthored run ignores is not a ceiling. This is not the
+      // clamping §2.5 forbids: that rule protects a number a PERSON wrote, and
+      // nobody wrote this one. The source stays "default" — that is the rung
+      // it came from, and the union is closed.
+      values[field] = Math.min(defaults[field], ceilings[field]);
       sources[field] = "default";
       continue;
     }
@@ -358,7 +374,7 @@ export function resolveExecutionBudgets(args: {
  * `evalEvidenceRetentionDays`: a column read, not a flag payload.
  */
 export function lowerExecutionBudgetCeilings(
-  platform: ResolvedValues,
+  platform: ReadonlyResolvedValues,
   override?: Partial<ResolvedValues>
 ): ResolvedValues {
   if (!override) return { ...platform };
@@ -391,17 +407,63 @@ export function platformExecutionBudgetCeilings(
 }
 
 /**
- * Surface-bound convenience over {@link resolveExecutionBudgets}, so a caller
- * that just wants "eval budgets, platform table" cannot pick the wrong column.
+ * A surface paired with the budgets THAT surface can author.
+ *
+ * Discriminated, so `{ surface: "swarms", authored: { iterationTimeoutMs } }`
+ * does not compile. `resolveExecutionBudgets` itself detects the unit field by
+ * key presence — it takes no surface — which is right for a resolver that must
+ * serve both, and wrong the moment a caller has already said which one it is.
  */
-export function resolveExecutionBudgetsForSurface(args: {
-  surface: ExecutionBudgetSurface;
-  authored?: AuthoredExecutionBudgets;
-  orgCeilings?: Partial<ResolvedValues>;
-}): ExecutionBudgetResolution {
+export type ResolveExecutionBudgetsForSurfaceArgs =
+  | {
+      surface: "evals";
+      authored?: EvalExecutionBudgets;
+      orgCeilings?: Partial<ResolvedValues>;
+    }
+  | {
+      surface: "swarms";
+      authored?: SwarmExecutionBudgets;
+      orgCeilings?: Partial<ResolvedValues>;
+    };
+
+/**
+ * Surface-bound convenience over {@link resolveExecutionBudgets}, so a caller
+ * that just wants "eval budgets, platform table" cannot pick the wrong column —
+ * or the wrong unit field.
+ */
+export function resolveExecutionBudgetsForSurface(
+  args: ResolveExecutionBudgetsForSurfaceArgs
+): ExecutionBudgetResolution {
+  const authored = args.authored
+    ? withoutForeignUnitField(args.authored, args.surface)
+    : undefined;
   return resolveExecutionBudgets({
-    ...(args.authored ? { authored: args.authored } : {}),
+    ...(authored ? { authored } : {}),
     defaults: platformExecutionBudgetDefaults(args.surface),
     ceilings: platformExecutionBudgetCeilings(args.surface, args.orgCeilings),
   });
+}
+
+/**
+ * Drop the OTHER surface's unit field, so it can never become this surface's
+ * unit budget.
+ *
+ * Belt and braces: the union above makes this unreachable from TypeScript, and
+ * the `.strict()` authored schemas refuse the foreign key outright at every
+ * write boundary — which is where a person actually finds out they used the
+ * wrong word. This only stops a JavaScript caller that reached the resolver
+ * without either, and it drops the field rather than resolving it, because
+ * quietly running a swarm session on a number labelled `iterationTimeoutMs`
+ * is the worse of the two wrongs.
+ */
+function withoutForeignUnitField(
+  authored: AuthoredExecutionBudgets,
+  surface: ExecutionBudgetSurface
+): AuthoredExecutionBudgets {
+  const foreign =
+    surface === "evals" ? UNIT_TIMEOUT_FIELD.swarms : UNIT_TIMEOUT_FIELD.evals;
+  if (!(foreign in authored)) return authored;
+  const copy = { ...authored } as Record<string, unknown>;
+  delete copy[foreign];
+  return copy as AuthoredExecutionBudgets;
 }

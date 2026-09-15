@@ -69,16 +69,35 @@ export interface WithDeadlineOptions {
   now?: () => number;
 }
 
-/** True when `error` is (or wraps) a deadline abort, and names its clock. */
+/**
+ * The clock named by `error`, when it is (or wraps) a deadline abort.
+ *
+ * BOTH marks are required on the same object: the `AbortError` name AND a clock
+ * from the closed set. A `clock` property on something that is not an abort is
+ * not a deadline — it is a coincidence, and labelling an unrelated failure with
+ * a timeout clock would put a wrong `metadata.timeout.clock` on a persisted
+ * outcome. Wrapping still works, because each link is checked before `cause` is
+ * followed.
+ */
 export function deadlineClockOf(error: unknown): DeadlineClock | undefined {
   let current: unknown = error;
   // Depth-capped and self-guarded like `shared/abort-errors.ts`: a `cause`
   // chain is caller-supplied and can be cyclic.
   for (let depth = 0; depth < 8; depth += 1) {
     if (!current || typeof current !== "object") return undefined;
-    const clock = (current as { clock?: unknown }).clock;
-    if (typeof clock === "string" && isDeadlineClock(clock)) return clock;
-    const cause: unknown = (current as { cause?: unknown }).cause;
+    const candidate = current as {
+      name?: unknown;
+      clock?: unknown;
+      cause?: unknown;
+    };
+    if (
+      candidate.name === "AbortError" &&
+      typeof candidate.clock === "string" &&
+      isDeadlineClock(candidate.clock)
+    ) {
+      return candidate.clock;
+    }
+    const cause: unknown = candidate.cause;
     if (cause === undefined || cause === current) return undefined;
     current = cause;
   }

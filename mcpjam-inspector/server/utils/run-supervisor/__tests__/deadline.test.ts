@@ -59,7 +59,16 @@ describe("withDeadline — the abort reason", () => {
     expect(deadlineClockOf(undefined)).toBeUndefined();
     // Free text is not a clock: the union is closed, and a caller must not be
     // able to invent `metadata.timeout.clock` values by throwing an object.
-    expect(deadlineClockOf({ clock: "wall" })).toBeUndefined();
+    expect(
+      deadlineClockOf({ name: "AbortError", clock: "wall" }),
+    ).toBeUndefined();
+    // Nor is a `clock` property on something that is not an abort at all. Both
+    // marks are required on the SAME object, or an unrelated failure that
+    // happens to carry the word would be persisted with a timeout clock.
+    expect(deadlineClockOf({ clock: "turn" })).toBeUndefined();
+    expect(
+      deadlineClockOf(Object.assign(new Error("boom"), { clock: "turn" })),
+    ).toBeUndefined();
     handle.dispose();
   });
 
