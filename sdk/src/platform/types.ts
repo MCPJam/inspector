@@ -1,3 +1,8 @@
+import type { CaseJudgeSettings } from "../contract/judge-settings.js";
+import type {
+  JudgeRubric,
+  JudgeEvidenceManifest,
+} from "../contract/goal-completion.js";
 import type {
   BrowserAgentCommand,
   BrowserAgentResult,
@@ -1120,11 +1125,18 @@ export interface PlatformEvalRunJudgeState {
   threshold: number | null;
 }
 
-export interface PlatformEvalRunGoalCompletionJudge
-  extends PlatformEvalRunJudgeState {
+export interface PlatformEvalRunGoalCompletionJudge extends PlatformEvalRunJudgeState {
+  progress?: {
+    total: number;
+    completed: number;
+    errors: number;
+    skipped: number;
+  };
+  judgeTemplateVersion?: number;
+  judgeTemplateHash?: string;
   /**
-   * Per-case grades. EMPTY unless `status` is `"completed"` — a pending or
-   * failed judge carries no cases, and `status` is what says which.
+   * Per-iteration measurements and unscored errors on terminal jobs.
+   * Pending jobs expose progress; failed jobs retain completed measurements.
    */
   cases: PlatformEvalRunGoalCompletionCase[];
 }
@@ -1157,8 +1169,14 @@ export interface PlatformEvalRunJudgeCase {
   reason: string | null;
 }
 
-export interface PlatformEvalRunGoalCompletionCase
-  extends PlatformEvalRunJudgeCase {
+export interface PlatformEvalRunGoalCompletionCase extends PlatformEvalRunJudgeCase {
+  status?: "scored" | "error" | "skipped";
+  gradingKey?: string;
+  errorCode?: string;
+  judgeTemplateVersion?: number;
+  judgeTemplateHash?: string;
+  evidenceHash?: string;
+  evidenceManifest?: JudgeEvidenceManifest;
   /** Rubric criteria the answer satisfied. */
   rubricHits: string[];
 }
@@ -1607,14 +1625,7 @@ export type PlatformEvalSuiteGoalCompletionJudge = {
    * agreement with a question nobody is asking. Absent on older API
    * deployments and on suites with no criteria.
    */
-  rubric?: {
-    criteria: Array<{
-      id: string;
-      label: string;
-      description?: string;
-      required?: boolean;
-    }>;
-  } | null;
+  rubric?: JudgeRubric | null;
 };
 
 /**
@@ -1664,6 +1675,9 @@ export interface PlatformEvalSuiteSettingsBase {
    * `judgeModel`, which is `null` for a suite that never picked one.
    */
   judge: PlatformEvalSuiteGoalCompletionJudge & {
+    contractVersion?: 4;
+    executionPaused?: boolean;
+    automatic?: boolean;
     /**
      * Stored groundedness, when the suite has a reserved slot. Read-only
      * while execution is unwired — PATCH refuses this key.
@@ -1994,6 +2008,7 @@ export interface PlatformEvalStep {
  * (vocabulary 1) and {@link PlatformEvalCaseV2} (vocabulary 2).
  */
 export interface PlatformEvalCaseBase {
+  judge?: CaseJudgeSettings;
   id: string;
   /**
    * The case's effective DECLARED id — what it answers to in a suite file, an

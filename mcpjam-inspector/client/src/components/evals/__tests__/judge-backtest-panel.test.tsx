@@ -52,7 +52,9 @@ describe("JudgeBacktestPanel", () => {
     expect(mocks.action).toHaveBeenLastCalledWith({
       suiteId: "suite-1",
       runId: "run-1",
-      judgeRubricDraft: [{ id: "cites", label: "Cites a source" }],
+      judgeRubricDraft: {
+        criteria: [{ id: "cites", label: "Cites a source" }],
+      },
     });
 
     rerender(
@@ -175,4 +177,36 @@ describe("describeIncomparable", () => {
     );
     expect(describeIncomparable(undefined)).toBe("Not comparable");
   });
+});
+
+it("continues a bound backtest and accumulates completed pages", async () => {
+  mocks.action.mockReset();
+  const page = {
+    ok: true,
+    comparable: true,
+    draftSuiteRubricHash: "draft",
+    storedSuiteRubricHash: "old",
+    cases: [],
+    summary: { graded: 1, flips: 0, storedMissing: 0 },
+    reservationId: "reservation",
+    sourceHash: "source",
+    cursor: 1,
+    isDone: false,
+  };
+  mocks.action
+    .mockResolvedValueOnce(page)
+    .mockResolvedValueOnce({ ...page, cursor: 2, isDone: true });
+  renderPanel();
+  await userEvent.click(
+    screen.getByRole("button", { name: /Backtest against/ }),
+  );
+  await userEvent.click(
+    await screen.findByRole("button", { name: /Grade next iteration/ }),
+  );
+  expect(mocks.action.mock.calls[1][0]).toMatchObject({
+    cursor: 1,
+    reservationId: "reservation",
+    sourceHash: "source",
+  });
+  expect(await screen.findByText("0 of 2 verdicts would change")).toBeTruthy();
 });

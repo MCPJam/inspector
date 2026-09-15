@@ -162,7 +162,7 @@ describe("SuitePassOrFailSection", () => {
     const rubricRow = container.querySelector(
       '[data-setting-key="judgeRubric"]',
     );
-    expect(rubricRow?.textContent).toContain("Judge criteria");
+    expect(rubricRow?.textContent).toContain("Grading instructions");
   });
 
   it("keeps one Add-scorer affordance for the whole section", () => {

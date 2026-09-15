@@ -4,6 +4,7 @@
 
 import {
   generateText,
+  asSchema,
   hasToolCall,
   stepCountIs,
   dynamicTool,
@@ -30,9 +31,7 @@ import { createModelFromString, parseLLMString } from "./model-factory.js";
  */
 function customProviderNameSet(
   customProviders:
-    | Map<string, CustomProvider>
-    | Record<string, CustomProvider>
-    | undefined
+    Map<string, CustomProvider> | Record<string, CustomProvider> | undefined
 ): Set<string> | undefined {
   if (!customProviders) return undefined;
   return new Set(
@@ -730,6 +729,31 @@ export class HostRunner implements HostExecutor {
    */
   async run(message: string, options?: PromptOptions): Promise<PromptResult> {
     const startTime = Date.now();
+    const unavailable: string[] = [];
+    const toolDefinitions = Object.entries(this.tools).map(([name, tool]) => {
+      try {
+        const rawTool = isToolArray(this.rawTools)
+          ? this.rawTools.find((candidate) => candidate.name === name)
+          : undefined;
+        const { execute: _execute, ...metadata } = rawTool ?? {};
+        return {
+          ...metadata,
+          name,
+          description: tool.description,
+          inputSchema: asSchema(tool.inputSchema).jsonSchema,
+        };
+      } catch {
+        unavailable.push(`toolDefinitions.${name}.inputSchema`);
+        return { name, description: tool.description };
+      }
+    });
+    const recordedContext = {
+      toolDefinitions,
+      systemPrompt: this.systemPrompt,
+      model: this.model,
+      temperature: this.temperature,
+      ...(unavailable.length ? { unavailable } : {}),
+    };
     let totalMcpMs = 0;
     let lastStepEndTime = startTime;
     let totalLlmMs = 0;
@@ -886,6 +910,7 @@ export class HostRunner implements HostExecutor {
       );
 
       this.lastResult = PromptResult.from({
+        recordedContext,
         prompt: message,
         messages,
         text: result.text,
@@ -933,6 +958,7 @@ export class HostRunner implements HostExecutor {
       const totalTokens = partialInputTokens + partialOutputTokens;
 
       this.lastResult = PromptResult.from({
+        recordedContext,
         prompt: message,
         messages: partialMessages,
         text: lastCompletedStepText,

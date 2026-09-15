@@ -1,3 +1,7 @@
+import {
+  suiteJudgeSettingsSchema,
+  caseJudgeSettingsSchema,
+} from "./judge-settings.js";
 import { suppressedSuiteStandardCheckIdsSchema } from "./standard-checks.js";
 /**
  * The versioned eval **suite file** — one declarative document describing a
@@ -356,6 +360,7 @@ function defaultsShape(version: EvalSuiteSchemaVersion) {
       temperature: z.number().optional(),
     },
     tail: {
+      judge: suiteJudgeSettingsSchema.optional(),
       /** Fraction of iterations a case must pass to pass. Never a percent. */
       passThreshold: unitIntervalSchema,
       validity: evalSuiteFileValiditySchema,
@@ -538,6 +543,7 @@ const caseHeadShape = {
   steps: stepsSchema.min(1),
 };
 const caseMiddleShape = {
+  judge: caseJudgeSettingsSchema.optional(),
   /** Reference output for judge scorers. */
   expectedOutput: z.string().optional(),
   /** The case passes only when NO tool was called. */
