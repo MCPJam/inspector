@@ -431,7 +431,11 @@ async function main() {
 
 ## Patterns
 
-### CI Quality Gate
+### CI gate on suite accuracy
+
+`accuracy()` is the suite-wide rate: one number over every iteration the run
+executed. Gating on it asks the same question a hosted suite's **suite accuracy
+threshold** asks.
 
 ```typescript
 await suite.run(agent, { iterations: 30 });
@@ -442,6 +446,29 @@ if (suite.accuracy() < 0.90) {
 }
 
 console.log("✅ All quality gates passed");
+```
+
+### CI gate on per-case pass rates
+
+A per-test threshold asks the OTHER question — the one a hosted suite's
+**per-case pass rate** asks — and the two do not agree. Nine of ten tests
+always passing and one always failing gives a suite accuracy of 0.9, which
+clears the gate above, while the tenth test's own rate is 0. Gate on whichever
+question you actually mean; a fraction is not a percentage of the other one.
+
+```typescript
+await suite.run(agent, { iterations: 30 });
+
+// Every test must clear its own bar, whatever the suite-wide rate says.
+const belowThreshold = suite
+  .getAll()
+  .filter((test) => test.accuracy() < 0.9)
+  .map((test) => test.getName());
+
+if (belowThreshold.length > 0) {
+  console.error(`❌ Below 90% per case: ${belowThreshold.join(", ")}`);
+  process.exit(1);
+}
 ```
 
 ### Per-Test Thresholds

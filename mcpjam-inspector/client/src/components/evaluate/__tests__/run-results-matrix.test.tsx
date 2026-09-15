@@ -144,11 +144,11 @@ describe("run results matrix", () => {
         name: "Inspect Refund order on Claude · sonnet",
       }),
     );
-    expect(screen.queryByRole("button", { name: "Edit evaluator" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Edit evaluators" })).toBeNull();
     await user.click(
       screen.getByRole("button", { name: "Open iteration 1 details" }),
     );
-    await user.click(screen.getByRole("button", { name: "Edit evaluator" }));
+    await user.click(screen.getByRole("button", { name: "Edit evaluators" }));
     expect(onEditEvaluator).toHaveBeenCalledWith("refund");
     expect(screen.queryByRole("dialog")).toBeNull();
   });
@@ -590,7 +590,7 @@ describe("run results matrix", () => {
   });
 
   it.each(["pending", "running", "grading"] as const)(
-    "offers Pending while status is %s",
+    "hides Pending when no pending cases exist while status is %s",
     async (status) => {
       const user = userEvent.setup();
       render(
@@ -603,7 +603,21 @@ describe("run results matrix", () => {
       await user.click(
         screen.getByRole("combobox", { name: "Filter by status" }),
       );
-      expect(screen.getByRole("option", { name: "Pending" })).toBeVisible();
+      expect(screen.queryByRole("option", { name: "Pending" })).toBeNull();
     },
   );
+});
+
+
+describe("test-name navigation", () => {
+  it.each(["sdk", "ui"] as const)("opens the saved definition for %s cases instead of run details", async (source) => {
+    const onEditCase = vi.fn();
+    render(<RunResultsMatrix run={run("one", { source })} iterations={[iteration("only", "one")]} onEditCase={onEditCase} />);
+    await userEvent.click(screen.getByRole("button", { name: "Open test case: Refund order" }));
+    expect(onEditCase).toHaveBeenCalledWith("refund");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: /Inspect Refund order on/ }));
+    expect(screen.getByRole("dialog")).toBeVisible();
+    expect(onEditCase).toHaveBeenCalledTimes(1);
+  });
 });

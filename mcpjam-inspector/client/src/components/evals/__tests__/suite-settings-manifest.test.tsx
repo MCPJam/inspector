@@ -103,7 +103,9 @@ vi.mock("../suite-header", () => ({
 }));
 
 vi.mock("@/components/evals/suite-clients-settings", () => ({
-  SuiteClientsSettings: () => <div data-testid="suite-clients-table">Client table</div>,
+  SuiteClientsSettings: () => (
+    <div data-testid="suite-clients-table">Client table</div>
+  ),
 }));
 vi.mock("@/components/evals/suite-environment-composer-bar", () => ({
   SuiteEnvironmentComposerBar: () => (
@@ -118,8 +120,9 @@ vi.mock("@/state/app-state-context", () => ({
 }));
 
 vi.mock("@/hooks/use-suite-capabilities", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("@/hooks/use-suite-capabilities")>();
+  const actual = await importOriginal<
+    typeof import("@/hooks/use-suite-capabilities")
+  >();
   return {
     ...actual,
     useSuiteCapabilities: () => mocks.capabilities(),
@@ -282,10 +285,7 @@ describe("eval suite settings manifest — render parity", () => {
     // rather than announcing `aria-expanded="false"` at a reader who just
     // asked for it.
     const { container } = renderSettingsSheet();
-    for (const key of [
-      "policy",
-      "environments",
-    ] as const) {
+    for (const key of ["policy", "environments"] as const) {
       showSettingsKey(container, key);
       const row = container.querySelector(`[data-setting-key="${key}"]`);
       expect(row, key).toBeTruthy();
@@ -383,7 +383,8 @@ describe("eval suite settings manifest — render parity", () => {
     const { container } = renderSettingsSheet();
     const legacy = new Set(collectAllSettingKeys(container));
     expect(legacy.has("qualityGateBaseline")).toBe(true);
-    expect(legacy.has("qualityGateAllowedDrop")).toBe(true);
+    // Without a baseline there is nothing to allow a drop against.
+    expect(legacy.has("qualityGateAllowedDrop")).toBe(false);
     expect(legacy.has("qualityGateNoDeterministicRegressions")).toBe(false);
     expect(legacy.has("qualityGateMaximumP95LatencyIncreaseMs")).toBe(false);
     expect(legacy.has("qualityGateNoGatingScoreErrors")).toBe(false);
@@ -428,7 +429,9 @@ describe("eval suite settings manifest — render parity", () => {
     );
     const { container } = renderSettingsSheet();
     expect(container.querySelector('[data-setting-key="schedule"]')).toBeNull();
-    expect(container.querySelector('nav[aria-label="Settings sections"]')?.textContent).not.toContain("Triggers");
+    expect(
+      container.querySelector('nav[aria-label="Settings sections"]'),
+    ).toBeNull();
   });
 
   it("behaves exactly as before when capabilities are unavailable", () => {

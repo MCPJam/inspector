@@ -17,7 +17,6 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ScenarioSettings } from "@/hooks/useScenarios";
 
@@ -164,24 +163,6 @@ vi.mock("@/components/scenarios/ScenarioShareDialog", () => ({
   ScenarioShareDialog: ({ open }: { open: boolean }) =>
     open ? <div data-testid="stub-share-dialog" /> : null,
 }));
-
-// Provider reads Convex for pattern findings; these specs only care that the
-// workbench mounts under it, not the rail lifecycle.
-vi.mock("@/components/shared/usage-insights/run-insights", () => ({
-  RunInsightsProvider: ({ children }: { children: ReactNode }) => (
-    <>{children}</>
-  ),
-  RunInsightsRecommendations: () => null,
-}));
-
-// The envelope hook subscribes to Convex; these specs render without a
-// provider, so it is stubbed exactly like the rail above. `undefined` is the
-// real "still loading / no envelope" value, and the panel renders nothing for
-// it — the mount is what these specs care about.
-vi.mock(
-  "@/components/shared/actionable-insights/use-insights-envelope",
-  () => ({ useInsightsEnvelope: () => undefined }),
-);
 
 vi.mock("@/components/scenarios/ScenarioDeleteConfirmDialog", () => ({
   ScenarioDeleteConfirmDialog: ({ open }: { open: boolean }) =>

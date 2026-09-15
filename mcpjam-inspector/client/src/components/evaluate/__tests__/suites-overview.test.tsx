@@ -159,10 +159,8 @@ describe("SuitesOverview", () => {
     );
     expect(screen.getByText("Multi")).toBeVisible();
     await user.click(screen.getByRole("combobox", { name: "Filter by model" }));
-    await user.click(
-      screen.getByRole("option", { name: "other-model", exact: true }),
-    );
-    expect(screen.getByText("No suites match these filters.")).toBeVisible();
+    expect(screen.queryByRole("option", { name: "other-model", exact: true })).toBeNull();
+    await user.keyboard("{Escape}");
     await user.click(screen.getByRole("button", { name: "Clear filters" }));
     expect(screen.getAllByTestId("evals-suites-overview-row")).toHaveLength(2);
   });
@@ -545,8 +543,8 @@ it("combines client and server filters, including secondary attachments, and cle
   await user.click(screen.getByRole("option", { name: "Beta", exact: true }));
   expect(screen.getByText("Multi-client suite")).toBeVisible();
   await user.click(screen.getByRole("combobox", { name: "Filter by server" }));
-  await user.click(screen.getByRole("option", { name: "Gamma", exact: true }));
-  expect(screen.getByText("No suites match these filters.")).toBeVisible();
+  expect(screen.queryByRole("option", { name: "Gamma", exact: true })).toBeNull();
+  await user.keyboard("{Escape}");
   await user.click(screen.getByRole("button", { name: "Clear filters" }));
   expect(screen.getAllByTestId("evals-suites-overview-row")).toHaveLength(2);
 });

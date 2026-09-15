@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  describeMCPJamLimitMessage,
   isMCPJamModelLimitError,
   isSpendBudgetReachedCode,
   notifyMCPJamLimitError,
@@ -361,5 +362,28 @@ describe("spend budget never reaches the top-up dialog", () => {
         }),
       }),
     ).toBe(false);
+  });
+});
+
+describe("describeMCPJamLimitMessage", () => {
+  it("returns null for errors that are not a limit", () => {
+    expect(describeMCPJamLimitMessage("Server exploded")).toBeNull();
+    expect(describeMCPJamLimitMessage(null)).toBeNull();
+  });
+
+  it("replaces the raw refusal body with the catalog sentence", () => {
+    const described = describeMCPJamLimitMessage(
+      'Failed to generate test cases: {"ok":false,"code":"user_rate_limit","limitKind":"total","error":"Daily MCPJam model limit reached. Use BYOK or try again tomorrow.","isRetryable":true}'
+    );
+    expect(described).toMatch(/MCPJam (model )?limit reached\./);
+    expect(described).not.toContain("user_rate_limit");
+  });
+
+  it("leaves the concurrency throttle to its inline banner", () => {
+    expect(
+      describeMCPJamLimitMessage(
+        '{"code":"user_rate_limit","limitKind":"concurrency","error":"Daily MCPJam model limit reached."}'
+      )
+    ).toBeNull();
   });
 });

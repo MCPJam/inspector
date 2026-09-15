@@ -7,6 +7,7 @@
  */
 
 import {
+  STANDARD_CHECKS,
   authoredRequiredRole,
   GRADER_PRESENTATION_GROUP,
   PREDICATE_KINDS,
@@ -188,7 +189,12 @@ export function withGoalCompletionRole(
 }
 
 export type ScorerLibraryCategoryId =
-  "discovery" | "selection" | "call" | "userValue" | "budget" | "response";
+  | "discovery"
+  | "selection"
+  | "call"
+  | "userValue"
+  | "budget"
+  | "response";
 
 /**
  * `as const satisfies` rather than a `Record<_, string>` annotation: the
@@ -293,7 +299,11 @@ export function scorerLibraryCategories(
 }
 
 export type ScorerTableRowKind =
-  "observed" | "match" | "predicate" | "judge" | "preset";
+  | "observed"
+  | "match"
+  | "predicate"
+  | "judge"
+  | "preset";
 
 /**
  * A standard-check family a row belongs to, when its kind backs one.
@@ -303,6 +313,7 @@ export type ScorerTableRowKind =
  */
 export type ScorerTableFamily = {
   id: AssertionCheck["id"];
+  name: string;
   label: string;
   suiteRules: number;
 };
@@ -439,8 +450,12 @@ function hasAuthoredThreshold(predicate: Predicate): boolean {
  * turned off.
  */
 export const RUNNER_MEASUREMENT_LABELS: Record<UserValueStage, string> = {
-  connection: "Successful connection",
-  discovery: "Tools listed by the server",
+  connection: STANDARD_CHECKS.find(
+    (check) => check.id === "connection.success",
+  )!.name,
+  discovery: STANDARD_CHECKS.find(
+    (check) => check.id === "discovery.toolsList",
+  )!.name,
   selection: "A tool was selected",
   call: "Tool call completed",
   response: "Result returned to the model",
@@ -485,6 +500,7 @@ function familyOf(
   if (!check) return undefined;
   return {
     id: check.id,
+    name: check.name,
     label: check.label,
     suiteRules: rules.filter(
       (rule) =>
@@ -529,7 +545,12 @@ function presetTableRow(check: AssertionCheck): ScorerTableRow {
     id: `preset:${check.id}`,
     kind: "preset",
     enabled: false,
-    family: { id: check.id, label: check.label, suiteRules: 0 },
+    family: {
+      id: check.id,
+      name: check.name,
+      label: check.label,
+      suiteRules: 0,
+    },
     preset,
     name: formatCriterion({ predicate: preset }),
     kindLabel: predicateKindLabel(preset),
@@ -692,12 +713,14 @@ export function buildScorerTable(input: {
   void input.judgeCapabilities;
   const rules =
     input.rules ??
-    input.predicates.map((predicate, index): EffectiveRule => ({
-      predicate,
-      source: "suite",
-      index,
-      suppressed: false,
-    }));
+    input.predicates.map(
+      (predicate, index): EffectiveRule => ({
+        predicate,
+        source: "suite",
+        index,
+        suppressed: false,
+      }),
+    );
   // A case can skip the judge, never switch on one the suite turned off.
   const configuredMode = judgeMode(input.judgeConfig);
   const judgeEnabled = configuredMode !== "off" && (input.judgeEnabled ?? true);

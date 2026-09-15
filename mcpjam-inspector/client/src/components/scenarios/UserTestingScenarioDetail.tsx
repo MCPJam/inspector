@@ -18,10 +18,6 @@ import { ScenarioPerTurnFeedbackToggle } from "@/components/scenarios/ScenarioPe
 import { ScenarioTasksSection } from "@/components/scenarios/ScenarioTasksSection";
 import { ScenarioUsagePanel } from "@/components/scenarios/ScenarioUsagePanel";
 import { InsightsWorkbench } from "@/components/shared/usage-insights/InsightsWorkbench";
-import {
-  RunInsightsProvider,
-  RunInsightsRecommendations,
-} from "@/components/shared/usage-insights/run-insights";
 import { withHideSynthetic } from "@/components/scenarios/user-testing-traffic";
 import {
   parseSelectionParam,
@@ -68,7 +64,6 @@ import {
   withScenarioPreviewSurface,
 } from "@/lib/scenario-session";
 import { toast } from "@/lib/toast";
-import { ActionableFindings } from "@/components/shared/actionable-insights/actionable-findings";
 
 /**
  * One User Testing scenario.
@@ -909,11 +904,13 @@ export function UserTestingScenarioDetail({
         ) : null}
         {tab === "insights" ? (
           <div className="absolute inset-0">
-            {/* The workbench (empty state, Sankey, sessions) must stay up
-                even when the window-insights rail is missing: those queries
-                throw against an undeployed backend, and wrapping THIS whole
-                tree in `fallback={null}` left a blank `absolute inset-0`.
-                Isolate the rail; if the workbench itself blows up, show the
+            {/* Insights is the Sankey and the clusters, nothing else (BB-230).
+                The recommendations rail that used to sit above them is gone;
+                "read a finding, then open the session it is about" now lives
+                on Findings, via the stage -> sessions link.
+
+                Keep this boundary: `fallback={null}` here would leave a blank
+                `absolute inset-0`, so if the workbench blows up, show the
                 share empty panel rather than nothing. */}
             <ErrorBoundary
               key={scenario.scenarioId}
@@ -972,59 +969,6 @@ export function UserTestingScenarioDetail({
                     { replace: true },
                   );
                 }}
-                recommendationsSlot={
-                  <ErrorBoundary
-                    name="user-testing-insights-rail"
-                    fallback={null}
-                  >
-                    {/* Repair tasks above the pattern rail: what to change,
-                        then what concentrated. The subscription lives inside
-                        this component (not in the page body) so a backend
-                        without the query degrades to nothing instead of
-                        taking the scenario page down, and it only mounts on
-                        the insights tab — never in edit mode. Membership is
-                        enforced at the backend; a non-member simply gets
-                        nothing. */}
-                    <ActionableFindings
-                      boundaryName="user-testing-actionable-findings"
-                      surface={{
-                        kind: "scenario",
-                        scenarioId: scenario.scenarioId,
-                      }}
-                      context={{ rerunLabel: "this user-testing study" }}
-                      onOpenSession={(threadId) => {
-                        navigate(
-                          buildUserTestingScenarioPath(scenario.scenarioId, {
-                            tab: "sessions",
-                            session: threadId,
-                            sel: selParam ?? undefined,
-                            view,
-                          }),
-                          { replace: true },
-                        );
-                      }}
-                    />
-                    <RunInsightsProvider
-                      surface={{
-                        kind: "scenario",
-                        scenarioId: scenario.scenarioId,
-                      }}
-                      onOpenSession={(threadId) => {
-                        navigate(
-                          buildUserTestingScenarioPath(scenario.scenarioId, {
-                            tab: "sessions",
-                            session: threadId,
-                            sel: selParam ?? undefined,
-                            view,
-                          }),
-                          { replace: true },
-                        );
-                      }}
-                    >
-                      <RunInsightsRecommendations />
-                    </RunInsightsProvider>
-                  </ErrorBoundary>
-                }
                 autoBackfillTopicMap
                 emptyState={<ScenarioShareEmptyPanel scenario={scenario} />}
                 className="px-8 py-4"

@@ -390,9 +390,11 @@ export function SuiteQualityGateSection({
               <option value="previous_completed">Previous run</option>
             ) : null}
           </select>
-          <p className="break-all text-right text-[11px] text-muted-foreground/60">
-            {baselineResolvedLabel}
-          </p>
+          {choice !== "none" ? (
+            <p className="break-all text-right text-[11px] text-muted-foreground/60">
+              {baselineResolvedLabel}
+            </p>
+          ) : null}
           {hiddenComparativeConditions.length > 0 && choice !== "none" ? (
             <p
               className="text-[11px] text-muted-foreground"
@@ -469,24 +471,26 @@ export function SuiteQualityGateSection({
         </label>
       ) : null}
 
-      <GateRow
-        settingKey="qualityGateAllowedDrop"
-        label="Allowed drop"
-        hint={QUALITY_GATE_ALLOWED_DROP_HINT}
-      >
-        <PercentInput
-          aligned={simplified}
-          value={policy?.maximumPassRateDrop}
-          disabled={disabled || !comparativeEnabled}
-          ariaLabel="Maximum required evaluator pass-rate drop"
-          onCommit={(fraction) =>
-            commitPolicy({
-              ...policy,
-              maximumPassRateDrop: fraction,
-            })
-          }
-        />
-      </GateRow>
+      {choice !== "none" ? (
+        <GateRow
+          settingKey="qualityGateAllowedDrop"
+          label="Allowed drop"
+          hint={QUALITY_GATE_ALLOWED_DROP_HINT}
+        >
+          <PercentInput
+            aligned={simplified}
+            value={policy?.maximumPassRateDrop}
+            disabled={disabled || !comparativeEnabled}
+            ariaLabel="Maximum required evaluator pass-rate drop"
+            onCommit={(fraction) =>
+              commitPolicy({
+                ...policy,
+                maximumPassRateDrop: fraction,
+              })
+            }
+          />
+        </GateRow>
+      ) : null}
 
       {/*
         Under `simplified` these three are not editable here — but a policy set
