@@ -22,7 +22,7 @@ function applyEvaluatePath(route: EvalRoute, options?: { replace?: boolean }) {
 
 export function navigatePlaygroundEvalsRoute(
   route: EvalRoute,
-  options?: { replace?: boolean }
+  options?: { replace?: boolean },
 ) {
   applyEvaluatePath(route, options);
 }
@@ -44,7 +44,7 @@ export function createPlaygroundSuiteNavigation(): SuiteNavigation {
           compareToRunId: options?.compareToRunId,
           comparison: options?.comparison,
         },
-        { replace: options?.replace }
+        { replace: options?.replace },
       );
     },
     toTestDetail: (suiteId, testId, iteration) => {
@@ -68,11 +68,15 @@ export function createPlaygroundSuiteNavigation(): SuiteNavigation {
             ? { fromEvalServer: options.fromEvalServer }
             : {}),
         },
-        { replace: options?.replace }
+        { replace: options?.replace },
       );
     },
-    toSuiteEdit: (suiteId) => {
-      applyEvaluatePath({ type: "suite-edit", suiteId });
+    toSuiteEdit: (suiteId, fromCaseChecks) => {
+      applyEvaluatePath({
+        type: "suite-edit",
+        suiteId,
+        ...(fromCaseChecks ? { fromCaseChecks } : {}),
+      });
     },
   };
 }

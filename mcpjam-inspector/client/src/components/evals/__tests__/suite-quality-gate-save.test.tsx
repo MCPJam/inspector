@@ -72,6 +72,8 @@ vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
 vi.mock("posthog-js/react", () => ({ useFeatureFlagEnabled: () => true }));
 vi.mock("@/hooks/useProjectEnvironments", () => ({
   useProjectEnvironments: () => [],
+  useEnsureAdhocEnvironments: () => vi.fn(),
+  useModelMatrixCapability: () => false,
 }));
 vi.mock("../use-suite-data", () => ({
   useSuiteData: () => ({ runTrendData: [], modelStats: [] }),

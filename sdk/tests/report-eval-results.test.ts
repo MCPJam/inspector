@@ -468,6 +468,7 @@ describe("reportEvalResults", () => {
 
     expect(mcpClientManager.getServerReplayConfigs).toHaveBeenCalledTimes(1);
     const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(requestBody.serverNames).toEqual(["manager"]);
     expect(requestBody.serverReplayConfigs).toEqual([
       {
         serverId: "manager",
@@ -609,6 +610,7 @@ describe("reportEvalResults", () => {
     });
 
     const startBody = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(startBody.serverNames).toEqual(["remote"]);
     expect(startBody.serverReplayConfigs).toEqual([
       {
         serverId: "remote",

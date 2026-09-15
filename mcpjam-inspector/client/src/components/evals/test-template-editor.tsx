@@ -988,7 +988,6 @@ export function TestTemplateEditor({
   onOpenSuiteSettings,
   checksPage = false,
   onOpenCaseChecks,
-  onCloseCaseChecks,
 }: TestTemplateEditorProps) {
   // Resolves the WorkOS token for signed-in users and the guest bearer for
   // guests (project-owning guests included). See use-convex-access-token.
@@ -2751,6 +2750,70 @@ export function TestTemplateEditor({
   // Kept current so `runTest` never awaits a save built from a stale draft.
   handleSaveRef.current = handleSave;
 
+  // Serialize automatic saves so a slower request cannot overwrite a newer edit.
+  const checksSaveQueue = useRef<Promise<unknown>>(Promise.resolve());
+  const checksSaveRevision = useRef(0);
+  const [checksSaveStatus, setChecksSaveStatus] = useState<string | null>(null);
+  useEffect(() => {
+    setChecksSaveStatus(null);
+    return () => {
+      // Toast actions can outlive this editor or the case they were created for.
+      checksSaveRevision.current += 1;
+    };
+  }, [currentTestCase?._id]);
+  const saveCaseChecks = (
+    changes: Partial<Parameters<typeof updateTestCaseMutation>[0]>,
+  ) => {
+    if (!currentTestCase || isDraft || !editForm) return;
+    const testCaseId = currentTestCase._id;
+    const revision = ++checksSaveRevision.current;
+    const payload = {
+      testCaseId,
+      predicates: editForm.predicates ?? null,
+      suppressedSuiteStandardCheckIds:
+        editForm.suppressedSuiteStandardCheckIds ?? [],
+      judgeConfigOverride: editForm.judgeConfigOverride ?? null,
+      ...changes,
+    };
+    const predicates = payload.predicates as typeof editForm.predicates;
+    if (
+      predicates &&
+      predicates.mode !== "inherit" &&
+      !areAllChecksValid(predicates.list)
+    ) {
+      setChecksSaveStatus(
+        "Complete the assertion fields to save your changes.",
+      );
+      return;
+    }
+    const enqueue = (retry = false) => {
+      if (revision !== checksSaveRevision.current) return;
+      setChecksSaveStatus("Saving…");
+      checksSaveQueue.current = checksSaveQueue.current
+        .then(() => {
+          if (retry && revision !== checksSaveRevision.current) return;
+          return updateTestCaseMutation(payload);
+        })
+        .then(() => {
+          if (revision === checksSaveRevision.current)
+            setChecksSaveStatus(null);
+        })
+        .catch((error) => {
+          if (revision !== checksSaveRevision.current) return;
+          setChecksSaveStatus(
+            "Changes could not be saved. Edit again or retry.",
+          );
+          toast.error(
+            getBillingErrorMessage(error, "Failed to save evaluator changes"),
+            {
+              action: { label: "Retry", onClick: () => enqueue(true) },
+            },
+          );
+        });
+    };
+    enqueue();
+  };
+
   const buildSelectedCompareModels = (
     modelValues: string[],
   ): Array<{ provider: string; model: string }> => {
@@ -4014,30 +4077,37 @@ export function TestTemplateEditor({
           suitePredicates={(suite?.defaultPredicates ?? []) as Predicate[]}
           suiteJudgeConfig={suite?.judgeConfig}
           capabilities={caseCapabilities.capabilities}
-          onChecksChange={(next) =>
+          saveStatus={checksSaveStatus}
+          onChecksChange={(next) => {
             setEditForm((current) =>
               current ? { ...current, ...next } : current,
-            )
-          }
+            );
+            saveCaseChecks({
+              predicates: next.predicates ?? null,
+              suppressedSuiteStandardCheckIds:
+                next.suppressedSuiteStandardCheckIds ?? [],
+            });
+          }}
           judgeSkipped={
             editForm.judgeConfigOverride?.goalCompletion?.enabled === false
           }
-          onJudgeSkippedChange={(skipped) =>
+          onJudgeSkippedChange={(skipped) => {
+            const judgeConfigOverride = withCaseJudgeSkipped(
+              editForm.judgeConfigOverride,
+              skipped,
+            );
             setEditForm((current) =>
               current
                 ? {
                     ...current,
-                    judgeConfigOverride: withCaseJudgeSkipped(
-                      current.judgeConfigOverride,
-                      skipped,
-                    ),
+                    judgeConfigOverride,
                   }
                 : current,
-            )
-          }
-          onSave={() => void handleSave()}
-          saveDisabled={savePrimaryDisabled}
-          onBack={onCloseCaseChecks}
+            );
+            saveCaseChecks({
+              judgeConfigOverride: judgeConfigOverride ?? null,
+            });
+          }}
           onConfigureSuite={onOpenSuiteSettings}
         />
       ) : draftKind === "describe" &&

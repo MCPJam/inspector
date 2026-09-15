@@ -94,6 +94,39 @@ afterEach(() => {
 });
 
 describe("the policy role sent in the primary iteration payload", () => {
+  it("preserves nullish definitions while converting valid roles", async () => {
+    stubTarget({ evalsRunMetadata: 1 });
+    const result = resultWithRequiredScorer();
+    const definitions = [
+      null,
+      ...result.metadata.evaluationConfig.definitions,
+      undefined,
+    ];
+    await reportEvalResultsWithReceipt({
+      apiKey: "key",
+      suiteName: "policy",
+      externalRunId: "invocation",
+      baseUrl: "https://legacy.example",
+      results: [
+        {
+          ...result,
+          metadata: { ...result.metadata, evaluationConfig: { definitions } },
+        },
+      ],
+    } as any);
+
+    const sent = requests.flatMap((request) => request.body.results ?? []);
+    expect(sent).toHaveLength(1);
+    expect(sent[0].metadata.evaluationConfig.definitions).toEqual([
+      null,
+      { scorerId: "s1", role: "gating", kind: "assertion" },
+      { scorerId: "s2", role: "advisory", kind: "assertion" },
+      null,
+    ]);
+    expect(definitions[1]?.role).toBe("required");
+    expect(definitions[3]).toBeUndefined();
+  });
+
   it("downgrades to the legacy spelling for a target that does not advertise it", async () => {
     stubTarget({ evalsRunMetadata: 1 });
 

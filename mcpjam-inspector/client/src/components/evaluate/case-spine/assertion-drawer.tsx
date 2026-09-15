@@ -29,6 +29,7 @@ export function EvalAddDrawer({
   kinds,
   className,
   triggerLabel = "Add",
+  primary = false,
   wholeRunOnly = false,
   allowWidgetChecks = true,
   onOutcomeFocus,
@@ -38,6 +39,7 @@ export function EvalAddDrawer({
   kinds?: readonly PredicateKind[];
   className?: string;
   triggerLabel?: string;
+  primary?: boolean;
   wholeRunOnly?: boolean;
   allowWidgetChecks?: boolean;
   onOutcomeFocus?: () => void;
@@ -81,9 +83,9 @@ export function EvalAddDrawer({
       <SheetTrigger asChild>
         <Button
           type="button"
-          variant="outline"
+          variant={primary ? "default" : "outline"}
           size="sm"
-          className={`gap-1.5 border-dashed ${className ?? ""}`}
+          className={`gap-1.5 ${primary ? "" : "border-dashed"} ${className ?? ""}`}
           aria-label={triggerLabel}
         >
           <Plus className="size-3.5" aria-hidden />

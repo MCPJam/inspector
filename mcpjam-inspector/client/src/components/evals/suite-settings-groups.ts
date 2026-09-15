@@ -1,6 +1,6 @@
 import type { EvalSuiteSettingKey } from "@/shared/eval-suite-settings-manifest";
 
-/** Edited in the suite settings header, not a tab group. */
+/** Edited in the suite settings header, outside the page sections. */
 export const SUITE_SETTINGS_HEADER_KEYS = [
   "name",
 ] as const satisfies readonly EvalSuiteSettingKey[];
@@ -22,14 +22,10 @@ export const SUITE_SETTINGS_GROUPS = [
 ] as const;
 
 /**
- * Trigger configuration is retained but hidden from suite settings.
- *
- * This filter is NOT the only thing keeping the schedule off the page: the row
- * inside the `triggers` block is additionally gated on `useScheduledEvalsEnabled`,
- * whose PostHog flag does not exist in the project, so it resolves `false` for
- * everyone and has since before this filter was added. Removing the filter alone
- * would therefore change nothing visible. Whoever restores this group needs the
- * flag first — otherwise the tab renders empty.
+ * Placement manifest for the fixed sections of one settings page. Grading
+ * spans Quality gate and Checks by stage, with Where it runs between them.
+ * Trigger configuration remains hidden; these groups support key lookup and
+ * parity checks, rather than selecting tabs.
  */
 export const VISIBLE_SUITE_SETTINGS_GROUPS = SUITE_SETTINGS_GROUPS.filter(
   (group) => group.id !== "triggers",

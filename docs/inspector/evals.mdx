@@ -41,7 +41,7 @@ Every case opens in this form, however it was authored — in the app, through t
 
 - **User asks** — the prompt the model receives.
 - **In the app** — interact steps (clicks, typing) recorded against a live widget, shown in the order they run.
-- **Scorers** — everything that grades this case, grouped by the link of the user-value chain it measures, in the same vocabulary the suite's **Test Suite Evaluators** section uses.
+- **Scorers** — everything that grades this case, grouped by the link of the user-value chain it measures, in the same vocabulary the suite's **Checks by stage** section uses.
 - **Judge · Goal completion** — the goal sentence, and what the judge will actually do with it.
 
 **Scorers**
@@ -51,9 +51,9 @@ One list, one **Add assertion** menu. Each row says what it checks, who wrote it
 - **Route** — the first row under Selection. It answers "which tool should handle it?" and carries that answer's strictness: *Reach the tool* allows extra calls, *Exact route* requires the exact order with no extras. The route is always Required.
 - **Step N** — an assertion written as a step (what the CLI and the SDK produce). It is graded in place, at its position in the run, and is labelled by that position: a step-level "no tool errors" reads **No tool errors so far**, because it only sees the transcript up to that point. Editing one rewrites that step; it never becomes a case-level assertion.
 - **This case** — an assertion you added here. It is graded once, over the finished transcript.
-- **Suite** — a default the suite applies to every case. Read-only here, with a link to the suite's **Test Suite Evaluators** settings.
+- **Suite** — a default the suite applies to every case. Read-only here, with a link to the suite's **Checks by stage** settings.
 
-The list reads as a checklist with progressive disclosure. An off row shows only its name. Once on, the **Required / Advisory** control appears on the row; an assertion that carries a number (such as a latency budget) shows it under the name. Assertions that have their own fields — thresholds, match criteria — show a chevron next to the name; clicking the name opens the editor in place. Assertions that are nothing but their kind (such as **No tool returns an error**) have no editor to open: the role control is inline and the checkbox removes them.
+The list reads as a checklist with progressive disclosure. An off row shows only its short name. Once on, clicking the name opens an inline editor showing the full criterion, the **Required / Advisory** role control, and any editable fields (thresholds, match criteria). Multiple editors can stay open at once. An assertion that carries a number (such as a latency budget) shows it under the name at rest.
 
 A row's **role** says what a miss does: **Required** fails the trial, **Advisory** shows the miss without failing it. The control appears when your deployment supports assertion policy; otherwise the role chip shows read-only with a tooltip explaining why it cannot be changed — for example, when the assertion is inherited from the suite, or when the backend does not yet support assertion policy.
 
@@ -243,7 +243,7 @@ Each suite has default validator settings controlling how tool calls are matched
 
 | Level | Where | Persists? |
 |-------|-------|-----------|
-| Suite default | Suite settings → **Test Suite Evaluators** → Default validators | Yes |
+| Suite default | Suite settings → **Checks by stage** → Default validators | Yes |
 | Case override | Test case editor → Validators | Yes |
 | Run override | Suite header → validators (sliders) icon | No — one run |
 
