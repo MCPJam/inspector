@@ -3,6 +3,7 @@ import {
   EVAL_SUITE_SETTINGS_MANIFEST,
   type EvalSuiteSettingKey,
 } from "@/shared/eval-suite-settings-manifest";
+import { SUITE_EVALUATORS_HEADING } from "./suite-scorer-table";
 import type { SuiteSettingsGroupId } from "./suite-settings-groups";
 import { NESTED_SETTING_KEYS } from "./suite-settings-groups";
 
@@ -57,7 +58,13 @@ export function getSubsectionsForGroup(
         },
         {
           id: "checks",
-          label: manifestLabel("checks"),
+          // The SECTION's own heading, not the manifest's `checks` row label.
+          // This entry targets a section rather than a settings row, and the
+          // two had drifted: the row still says "Assertions" while the section
+          // renders something else, so the jump link named one thing and
+          // scrolled to another. The manifest label is right where it is used —
+          // on the row and in revision history — and wrong as a heading.
+          label: SUITE_EVALUATORS_HEADING,
           target: { type: "passOrFailChecks" },
         },
       ];

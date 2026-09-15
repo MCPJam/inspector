@@ -92,6 +92,16 @@ export type ScorerTableScope =
 export const BACKEND_SUPPORT_HINT =
   "Requires backend support before this assertion can be changed.";
 
+/**
+ * The heading this section renders, exported so nothing has to guess it.
+ *
+ * The settings rail links to this section, and it derived its label from the
+ * manifest's `checks` row instead — which said "Assertions" while this heading
+ * said something else, so the jump link disagreed with the thing it scrolled
+ * to. One string, two readers.
+ */
+export const SUITE_EVALUATORS_HEADING = "Test Suite Evaluators";
+
 export function SuiteScorerTable({
   scope,
   matchOptions,
@@ -328,7 +338,7 @@ export function SuiteScorerTable({
             <div className="space-y-1">
               <div className="flex items-center gap-1.5">
                 <h3 className="text-lg font-semibold tracking-tight text-foreground">
-                  Test Suite Evaluators
+                  {SUITE_EVALUATORS_HEADING}
                 </h3>
                 <GlobalGatesSectionInfoHint />
               </div>

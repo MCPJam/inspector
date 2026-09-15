@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { SUITE_EVALUATORS_HEADING } from "../suite-scorer-table";
 import {
   getSubsectionsForGroup,
   subsectionForSettingKey,
@@ -23,7 +24,7 @@ describe("getSubsectionsForGroup", () => {
       "Pass criteria",
       "Iterations",
       "Quality gate",
-      "Assertions",
+      "Test Suite Evaluators",
     ]);
     expect(subs.some((sub) => sub.target.type === "stage")).toBe(false);
   });
@@ -40,7 +41,7 @@ describe("getSubsectionsForGroup", () => {
       "Pass criteria",
       "Iterations",
       "Quality gate",
-      "Assertions",
+      "Test Suite Evaluators",
     ]);
   });
 
@@ -50,6 +51,20 @@ describe("getSubsectionsForGroup", () => {
         "checks",
       );
     }
+  });
+
+  it("labels the evaluators rail entry with the heading it scrolls to", () => {
+    // The regression this pins: #5085 renamed the section heading and left the
+    // manifest's `checks` row saying "Assertions", so the rail link named one
+    // thing and scrolled to another. Nothing caught it — the rail read the
+    // manifest and this test asserted the manifest, so the two agreed with each
+    // other while both disagreed with the page. Asserting against the heading's
+    // own exported constant is what makes them unable to drift again.
+    const subs = getSubsectionsForGroup("grading", base);
+    const evaluators = subs.find(
+      (sub) => sub.target.type === "passOrFailChecks",
+    );
+    expect(evaluators?.label).toBe(SUITE_EVALUATORS_HEADING);
   });
 
   it("routes every grading key to the ONE row that owns it", () => {
