@@ -609,17 +609,15 @@ describe("run results matrix", () => {
 });
 
 
-describe("SDK case navigation", () => {
-  it("opens a single SDK iteration directly from its title", async () => {
-    render(<RunResultsMatrix run={run("sdk", { source: "sdk" })} iterations={[iteration("only", "sdk")]} />);
-    await userEvent.click(screen.getByRole("button", { name: "Inspect test case: Refund order" }));
+describe("test-name navigation", () => {
+  it.each(["sdk", "ui"] as const)("opens the saved definition for %s cases instead of run details", async (source) => {
+    const onEditCase = vi.fn();
+    render(<RunResultsMatrix run={run("one", { source })} iterations={[iteration("only", "one")]} onEditCase={onEditCase} />);
+    await userEvent.click(screen.getByRole("button", { name: "Open test case: Refund order" }));
+    expect(onEditCase).toHaveBeenCalledWith("refund");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: /Inspect Refund order on/ }));
     expect(screen.getByRole("dialog")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Back to test case iterations" })).toBeVisible();
-  });
-  it("opens the iteration list for repeated SDK cases", async () => {
-    render(<RunResultsMatrix run={run("sdk", { source: "sdk" })} iterations={[iteration("one", "sdk"), iteration("two", "sdk")]} />);
-    await userEvent.click(screen.getByRole("button", { name: "Inspect test case: Refund order" }));
-    expect(screen.getByText("Test case averages")).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Back to test case iterations" })).toBeNull();
+    expect(onEditCase).toHaveBeenCalledTimes(1);
   });
 });
