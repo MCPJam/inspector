@@ -102,3 +102,20 @@ describe("RunClientsCell", () => {
     expect(tooltip).toHaveTextContent("Cursor · haiku");
   });
 });
+
+it("counts unique clients rather than client-model pairs", () => {
+  renderWithProviders(
+    <RunClientsCell
+      column="client"
+      rows={[
+        row("Claude", ["haiku"]),
+        row("Claude", ["sonnet"]),
+        row("Cursor", ["gpt-5"]),
+        row("Other", ["model"]),
+      ]}
+    />,
+  );
+  expect(screen.getAllByText("Claude")).toHaveLength(1);
+  expect(screen.getByText("Cursor")).toBeVisible();
+  expect(screen.getByLabelText("1 more clients")).toBeVisible();
+});

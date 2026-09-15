@@ -614,12 +614,18 @@ export function SuiteDetailOverview({
                   {onGenerateTestCases && (
                     <DropdownMenuItem
                       disabled={!canGenerate || isGeneratingTestCases}
-                      title={generateTestCasesDisabledReason ?? undefined}
                       onSelect={() => void handleGenerateCases()}
                     >
                       {isGeneratingTestCases ? "Generating…" : "Generate"}
                     </DropdownMenuItem>
                   )}
+                  {onGenerateTestCases &&
+                    (!canGenerate || isGeneratingTestCases) &&
+                    generateTestCasesDisabledReason && (
+                      <p className="max-w-64 px-2 py-1.5 text-xs text-muted-foreground">
+                        {generateTestCasesDisabledReason}
+                      </p>
+                    )}
                   {onImportCases && (
                     <DropdownMenuItem onSelect={onImportCases}>
                       Import
