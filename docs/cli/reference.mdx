@@ -1653,7 +1653,7 @@ run before evaluating it.
 | `--max-cost-usd <usd>` | No | Fail if the run's MCPJam-billed cost exceeded this many dollars. Accepts decimals (`0.05`) |
 | `--max-cost-increase-percent <percent>` | No | Fail if cost rose by more than this percentage of the baseline's; requires `--baseline` or `--baseline-sha`. Values above 100 are allowed — a run costing three times its baseline is a 200% increase |
 | `--wait` | No | Poll until the run reaches a terminal status |
-| `--wait-timeout <ms>` | No | Maximum wait time (default 600000) |
+| `--wait-timeout <ms>` | No | Maximum wait time (default 2100000) |
 | `--reporter <json-summary\|junit-xml\|html>` | No | Write the structured eval and gate report to stdout. `html` is a self-contained decision summary + failures page — traces/parity/history are not included. |
 | `--out <path>` | No | Atomically write the report to a file; defaults to `json-summary`, or uses `--reporter` when present |
 
