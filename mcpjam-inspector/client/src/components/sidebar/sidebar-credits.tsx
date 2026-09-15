@@ -71,7 +71,9 @@ export function SidebarCredits({
     return null;
   }
 
-  const showMonthly = balance?.billingModel === "monthly_per_seat";
+  const showMonthly =
+    balance?.billingModel === "monthly_per_seat" ||
+    balance?.billingModel === "monthly_flat";
   const monthlyTotal = balance?.monthlyAllowanceTotal ?? 0;
   const monthlyRemaining = balance?.monthlyAllowanceRemaining ?? 0;
   const resetText = balance
@@ -115,6 +117,11 @@ export function SidebarCredits({
               <span className="group-data-[collapsible=icon]:hidden">
                 See credits
               </span>
+              {plan && (
+                <span className="ml-auto rounded-full border border-border px-2 py-0.5 text-xs group-data-[collapsible=icon]:hidden">
+                  {formatPlanName(plan)}
+                </span>
+              )}
             </SidebarMenuButton>
           </HoverCardTrigger>
           <HoverCardContent
@@ -142,18 +149,20 @@ export function SidebarCredits({
                 </div>
               ) : null}
 
+              {evalIterationQuota?.starterRemaining != null && (
+                <p className="text-xs">
+                  Starter eval iterations:{" "}
+                  {evalIterationQuota.starterRemaining.toLocaleString()}{" "}
+                  remaining · one-time allowance
+                </p>
+              )}
               <SidebarUsageRow
-                label={
-                  showMonthly ? "Monthly team credits" : "Free daily credits"
-                }
+                label={showMonthly ? "Monthly credits" : "Free daily credits"}
                 percentText={
                   balance
                     ? showMonthly
                       ? `${monthlyRemaining.toLocaleString()} / ${monthlyTotal.toLocaleString()}`
-                      : `${(
-                          balance.freeDailyCreditsTotal -
-                          balance.freeDailyCreditsRemaining
-                        ).toLocaleString()} / ${balance.freeDailyCreditsTotal.toLocaleString()}`
+                      : `${balance.freeDailyCreditsRemaining.toLocaleString()} / ${balance.freeDailyCreditsTotal.toLocaleString()}`
                     : ""
                 }
                 helperText={resetText}
@@ -164,11 +173,10 @@ export function SidebarCredits({
                         ? (monthlyRemaining / monthlyTotal) * 100
                         : 0
                       : balance.freeDailyCreditsTotal > 0
-                        ? ((balance.freeDailyCreditsTotal -
-                            balance.freeDailyCreditsRemaining) /
-                            balance.freeDailyCreditsTotal) *
-                          100
-                        : 0
+                      ? (balance.freeDailyCreditsRemaining /
+                          balance.freeDailyCreditsTotal) *
+                        100
+                      : 0
                     : 0
                 }
                 isLoading={isLoading}
@@ -185,7 +193,10 @@ export function SidebarCredits({
                   )}
                   percentText={
                     evalIterationQuota && evalIterationQuota.allowed !== null
-                      ? `${evalIterationQuota.used.toLocaleString()} / ${evalIterationQuota.allowed.toLocaleString()} used`
+                      ? `${Math.max(
+                          0,
+                          evalIterationQuota.allowed - evalIterationQuota.used,
+                        ).toLocaleString()} / ${evalIterationQuota.allowed.toLocaleString()} remaining`
                       : ""
                   }
                   helperText={null}
@@ -193,7 +204,11 @@ export function SidebarCredits({
                     evalIterationQuota?.allowed
                       ? Math.min(
                           100,
-                          (evalIterationQuota.used /
+                          (Math.max(
+                            0,
+                            evalIterationQuota.allowed -
+                              evalIterationQuota.used,
+                          ) /
                             evalIterationQuota.allowed) *
                             100,
                         )
@@ -280,7 +295,11 @@ function SidebarUsageRow({
           <Skeleton className="h-1.5 w-full rounded-full" />
         ) : (
           <Progress
-            className="h-1.5 bg-primary/15"
+            className={
+              fillPercent <= 10
+                ? "h-1.5 bg-muted [&_[data-slot=progress-indicator]]:bg-destructive"
+                : "h-1.5 bg-muted [&_[data-slot=progress-indicator]]:bg-foreground/60"
+            }
             value={fillPercent}
             aria-label={label}
             aria-valuetext={percentText || undefined}

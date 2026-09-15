@@ -36,6 +36,7 @@ export interface CreditsLimitDialogViewProps {
   annualSupported: boolean;
   monthlySupported: boolean;
   teamName: string;
+  priceUnit?: string;
   isStarting: boolean;
   isLoadingPrices?: boolean;
   onUpgrade: () => void;
@@ -72,6 +73,7 @@ export function CreditsLimitDialogView({
   annualSupported,
   monthlySupported,
   teamName,
+  priceUnit,
   isStarting,
   isLoadingPrices = false,
   onUpgrade,
@@ -112,6 +114,7 @@ export function CreditsLimitDialogView({
           <>
             {showUpgrade ? (
               <UpgradeIntervalPicker
+                priceUnit={priceUnit}
                 interval={interval}
                 onIntervalChange={onIntervalChange}
                 annualPriceLabel={annualPriceLabel}

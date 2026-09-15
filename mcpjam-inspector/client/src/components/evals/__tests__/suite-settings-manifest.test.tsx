@@ -120,9 +120,8 @@ vi.mock("@/state/app-state-context", () => ({
 }));
 
 vi.mock("@/hooks/use-suite-capabilities", async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import("@/hooks/use-suite-capabilities")
-  >();
+  const actual =
+    await importOriginal<typeof import("@/hooks/use-suite-capabilities")>();
   return {
     ...actual,
     useSuiteCapabilities: () => mocks.capabilities(),
@@ -373,21 +372,20 @@ describe("eval suite settings manifest — render parity", () => {
     expect(v2.has("validity")).toBe(true);
     expect(v2.has("minimumAccuracy")).toBe(false);
     expect(v2.has("minimumIterations")).toBe(false);
-    expect(v2.has("qualityGateBaseline")).toBe(true);
-    // Stored on `v2Suite`, so the simplified page lists it read-only. A
-    // condition the page cannot edit is still a condition the run enforces.
+    expect(v2.has("qualityGateBaseline")).toBe(false);
     expect(v2.has("qualityGateNoGatingScoreErrors")).toBe(true);
   });
 
   it("shows quality-gate rows on a legacy suite as well", () => {
     const { container } = renderSettingsSheet();
     const legacy = new Set(collectAllSettingKeys(container));
-    expect(legacy.has("qualityGateBaseline")).toBe(true);
-    // Without a baseline there is nothing to allow a drop against.
+    expect(legacy.has("qualityGateNoGatingScoreErrors")).toBe(true);
+    // Baseline comparison left the page; nothing stored on this suite means
+    // there is no read-only row for it either.
+    expect(legacy.has("qualityGateBaseline")).toBe(false);
     expect(legacy.has("qualityGateAllowedDrop")).toBe(false);
     expect(legacy.has("qualityGateNoDeterministicRegressions")).toBe(false);
     expect(legacy.has("qualityGateMaximumP95LatencyIncreaseMs")).toBe(false);
-    expect(legacy.has("qualityGateNoGatingScoreErrors")).toBe(false);
     expect(legacy.has("validity")).toBe(false);
   });
 

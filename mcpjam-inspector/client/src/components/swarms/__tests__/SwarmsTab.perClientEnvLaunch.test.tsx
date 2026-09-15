@@ -47,8 +47,8 @@ vi.mock("@/hooks/useClients", () => ({
   useHostList: () => ({ hosts: HOSTS, isLoading: false }),
 }));
 
-vi.mock("@/components/hosts/ServerGroupPicker", () => ({
-  ServerGroupPicker: () => <div data-testid="server-group-picker" />,
+vi.mock("@/components/hosts/server-picker", () => ({
+  ServerPicker: () => <div data-testid="server-group-picker" />,
 }));
 
 vi.mock("@/contexts/db-user-ready-context", () => ({

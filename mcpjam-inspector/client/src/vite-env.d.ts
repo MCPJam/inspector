@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
+  readonly VITE_STRIPE_PUBLISHABLE_KEY?: string;
   readonly VITE_DISABLE_POSTHOG_LOCAL: string;
   readonly VITE_DOCKER?: string;
   readonly VITE_RUNTIME?: string;

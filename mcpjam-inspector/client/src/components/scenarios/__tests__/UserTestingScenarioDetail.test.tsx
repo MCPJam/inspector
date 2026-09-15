@@ -1374,3 +1374,11 @@ describe("UserTestingScenarioDetail — the setup of a study with results", () =
     expect(composerProps().lockedSlots).toBeUndefined();
   });
 });
+
+// These tests exercise the settings form after access is granted. The plan and
+// creator matrix is covered by SharedSettingsGate.test.tsx.
+vi.mock("@/components/billing/SharedSettingsGate", () => ({
+  SharedSettingsGate: ({ children }: { children: React.ReactNode }) => (
+    <>{children}</>
+  ),
+}));

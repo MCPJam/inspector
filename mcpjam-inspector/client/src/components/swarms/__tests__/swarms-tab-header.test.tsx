@@ -34,11 +34,13 @@ describe("SwarmsTabHeader", () => {
     expect(onViewModeChange).toHaveBeenCalledWith("journeys");
   });
 
-  it("does not render a header subtitle", () => {
+  // BB-236: the headline is one line for the whole surface, so it holds on
+  // Personas and Sessions too, not just the Overview it pitches.
+  it.each(VIEW_OPTIONS)("renders the headline on $label", ({ value }) => {
     render(
       <SwarmsTabHeader
         projectId="proj-1"
-        viewMode="overview"
+        viewMode={value}
         viewOptions={VIEW_OPTIONS}
         onViewModeChange={vi.fn()}
         onNewSwarm={vi.fn()}
@@ -46,9 +48,10 @@ describe("SwarmsTabHeader", () => {
     );
 
     const header = screen.getByTestId("swarms-tab-header-chrome");
-    expect(header.querySelector("p")).toBeNull();
     expect(
-      within(header).queryByText(/no recruiting, no scheduling/i),
-    ).toBeNull();
+      within(header).getByText(
+        "No recruiting, no scheduling, no setup. Agents find what breaks in every client.",
+      ),
+    ).toBeTruthy();
   });
 });
