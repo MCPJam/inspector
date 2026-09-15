@@ -13,12 +13,16 @@
  * where nothing is actually wrong. The heading carries the instruction; the
  * body says why it matters.
  *
- * Shape mirrors `CloudUnreachableNotice`, its neighbour in the same section,
- * so the two bands read as one system rather than two. Tint plus
- * reading-weight body copy, per DESIGN.md: `info` clears 3:1 for large text
- * only, so the small print stays on `muted-foreground` and never on a fill.
+ * The treatment is `ErrorCard`'s `info` severity — the Figma node Vig linked
+ * (`Design System — MCPJam App`, node 119-2) documents that component by name,
+ * so this reads its palette from `severityStyles` rather than restating the
+ * classes. It does NOT render an `ErrorCard`: that component reports a
+ * `NormalizedError` and carries `role="alert"`, details, copy and a docs link.
+ * Nothing here has failed — this is standing guidance — and minting a fake
+ * error to borrow a colour would put a live alert on a healthy screen.
  */
-import { Info } from "lucide-react";
+import { severityStyles } from "@/components/ui/error-card";
+import { cn } from "@/lib/utils";
 
 export const SWARM_PRODUCTION_NOTICE_HEADING =
   "Use a development or staging server for Swarms";
@@ -31,19 +35,26 @@ export function SwarmProductionNotice({
 }: {
   "data-testid"?: string;
 } = {}) {
+  const styles = severityStyles("info");
+  const Icon = styles.icon;
   return (
     <div
-      className="flex items-start gap-2 rounded-md border border-info/30 bg-info/10 px-4 py-3"
+      className={cn("rounded-md border p-3 text-xs", styles.container)}
       data-testid={testId}
     >
-      <Info className="mt-0.5 size-4 shrink-0 text-info" aria-hidden />
-      <div className="min-w-0 text-sm">
-        <p className="font-medium text-foreground">
-          {SWARM_PRODUCTION_NOTICE_HEADING}
-        </p>
-        <p className="mt-0.5 text-xs text-muted-foreground">
-          {SWARM_PRODUCTION_NOTICE_BODY}
-        </p>
+      <div className="flex items-start gap-2">
+        <Icon
+          className={cn("mt-0.5 h-4 w-4 flex-shrink-0", styles.iconClass)}
+          aria-hidden
+        />
+        <div className="min-w-0 flex-1 space-y-1">
+          <p className="font-medium leading-tight">
+            {SWARM_PRODUCTION_NOTICE_HEADING}
+          </p>
+          <p className="leading-snug text-foreground/80">
+            {SWARM_PRODUCTION_NOTICE_BODY}
+          </p>
+        </div>
       </div>
     </div>
   );

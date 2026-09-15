@@ -112,6 +112,7 @@ vi.mock("@/lib/toast", () => ({
 }));
 
 import { SwarmTargetComposer } from "../swarm-target-composer";
+import { severityStyles } from "@/components/ui/error-card";
 import { listTentativeCastles } from "@/lib/tentative-castle-drafts";
 
 function Harness({
@@ -478,15 +479,25 @@ describe("SwarmTargetComposer — BB-234's production notice", () => {
     ).toBeTruthy();
   });
 
-  it("is informational, not a warning — no alert role, no amber", () => {
-    // Vig's call: the band loads every time the feature does, so it must not
-    // read as an alarm. `CloudUnreachableNotice` owns amber and the alert
-    // glyph; this one owns `info` and must not drift into that register.
+  it("wears ErrorCard's info treatment, and none of its warning or error one", () => {
+    // Vig linked the design system's ErrorCard node (119-2) and asked for its
+    // blue informational variant rather than the yellow warning: the band
+    // loads every time the feature does, so amber would read as an alarm on a
+    // healthy screen. Asserted against `severityStyles("info")` itself, not
+    // against copied class strings, so a palette change in the design system
+    // moves this surface with it instead of silently diverging.
     render(<Harness />);
 
     const notice = screen.getByTestId("new-swarm-production-notice");
+    const info = severityStyles("info");
+    for (const cls of info.container.split(/\s+/)) {
+      expect(notice.className).toContain(cls);
+    }
+    expect(notice.className).not.toMatch(/amber|destructive/);
+
+    // Treatment borrowed, semantics not: nothing has failed here, so the
+    // standing notice must not announce itself as a live alert the way
+    // ErrorCard does.
     expect(notice.getAttribute("role")).not.toBe("alert");
-    expect(notice.className).toMatch(/bg-info\/10/);
-    expect(notice.className).not.toMatch(/amber|warning|destructive/);
   });
 });
