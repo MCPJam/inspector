@@ -27,22 +27,21 @@ import type { JsonRenderer } from "@mcpjam/chat-ui";
  * the same one the Playground gets. A session-specific number here would mean
  * two surfaces disagreeing about how long is too long for one string.
  *
- * No `height` / `maxHeight`. In the Playground this sits in a fixed pane and
- * is told to fill it; here it sits inside a `FoldedBlock` in a scrolling
- * transcript, and a viewer with its own scrollbar inside a page with one is
- * the thing people mean by nested scroll.
+ * No `height` / `maxHeight`, and no border or ground of its own: the card puts
+ * every payload in one capped scroll box, exactly as the Playground does, and
+ * a viewer that drew its own frame inside that would be a box in a box.
  *
- * ## The fold stays
+ * ## What closes a big payload now
  *
- * This renders INSIDE `FoldedBlock`, which still closes a big payload behind a
- * labelled toggle (BB-198: a transcript that inlines every hundred-line result
- * is "a bunch of JSON", not a conversation). The tree does not replace that
- * judgement — it is what you get when you open one.
+ * The CARD, which starts collapsed — one header line per tool call, so a
+ * transcript is a conversation rather than "a bunch of JSON" (BB-198). This
+ * used to be a per-payload fold; the card doing it is both what the Playground
+ * does and the more complete answer, since it hides the header clutter too.
  */
 export const renderSessionJson: JsonRenderer = (value) => (
   <JsonTreeView
     value={value}
     defaultExpandDepth={2}
-    className="rounded-md border border-border bg-muted/30 p-2 text-[11px]"
+    className="p-2 text-[11px]"
   />
 );

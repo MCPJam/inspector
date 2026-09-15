@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ShareUsageThreadDetail } from "../ShareUsageThreadDetail";
@@ -261,6 +261,36 @@ describe("ShareUsageThreadDetail", () => {
           reasoningDisplayMode: "collapsible",
           widgetPolicy: "placeholder",
         }),
+      );
+    });
+  });
+
+  it("fades Raw's scroll edges from the same switch as Chat", async () => {
+    // Both panes of a session scroll, and the complaint that started this was
+    // about the edge, not about what was behind it — so one flag covers both
+    // rather than a caller having to remember two.
+    render(<ShareUsageThreadDetail threadId="thread-1" fadeScrollEdges />);
+
+    // `TraceViewer` only mounts off the Chat tab, so the assertion has to get
+    // there first — asserting on the landing tab would pass for the wrong
+    // reason (a spy that was never called cannot disagree).
+    fireEvent.click(await screen.findByRole("button", { name: "Raw" }));
+
+    await waitFor(() => {
+      expect(mockTraceViewer).toHaveBeenCalledWith(
+        expect.objectContaining({ rawFadeScrollEdges: true }),
+      );
+    });
+  });
+
+  it("leaves Raw alone on a surface that did not ask for the fade", async () => {
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Raw" }));
+
+    await waitFor(() => {
+      expect(mockTraceViewer).toHaveBeenCalledWith(
+        expect.objectContaining({ rawFadeScrollEdges: false }),
       );
     });
   });

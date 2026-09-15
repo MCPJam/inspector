@@ -291,9 +291,9 @@ interface ShareUsageThreadDetailProps {
     onImported?: (result: { suiteId: string; testCaseId: string }) => void;
   };
   /**
-   * Softens the Chat transcript's top and bottom edges as you scroll it
-   * (`scroll-fade-y`), so a cut-off message reads as "there is more" rather
-   * than as a pane that stops mid-sentence.
+   * Softens the top and bottom edges of the panes that scroll — Chat and Raw —
+   * as you scroll them (`scroll-fade-y`), so a cut-off message or line reads
+   * as "there is more" rather than as a pane that stops mid-sentence.
    *
    * OPT-IN, and off by default, because this component is the session detail
    * for FIVE surfaces — User Testing, the two Swarm panels, the cross-surface
@@ -301,10 +301,11 @@ interface ShareUsageThreadDetailProps {
    * suit all of them; turning it on for all of them is a call the people who
    * own those surfaces should make, not a side effect of fixing one.
    *
-   * Chat only. The Trace tab's timeline has sticky column headers, and a mask
-   * on their scroll container would fade the headers as well as the rows.
+   * NOT the Trace tab. Its timeline has sticky column headers, and a mask on
+   * their scroll container would fade the headers along with the rows they are
+   * there to label.
    */
-  fadeTranscriptEdges?: boolean;
+  fadeScrollEdges?: boolean;
 }
 
 /**
@@ -320,7 +321,7 @@ export function ShareUsageThreadDetail({
   threadId,
   sessionLink,
   promote,
-  fadeTranscriptEdges = false,
+  fadeScrollEdges = false,
 }: ShareUsageThreadDetailProps) {
   const { thread } = useSharedChatThread({ threadId });
   const { snapshots } = useSharedChatWidgetSnapshots({ threadId });
@@ -744,7 +745,7 @@ export function ShareUsageThreadDetail({
               // and cuts a message just as flatly there. Each edge only paints
               // when there is something to scroll toward, so a transcript that
               // fits shows neither.
-              fadeTranscriptEdges && "scroll-fade-y",
+              fadeScrollEdges && "scroll-fade-y",
             )}
           >
             {/* Ships dark: `sessionScores:listBySession` reaches production
@@ -811,6 +812,11 @@ export function ShareUsageThreadDetail({
               trace={traceEnvelope}
               model={resolvedModel}
               forcedViewMode={effectiveViewMode === "raw" ? "raw" : "timeline"}
+              // Raw, not the timeline beside it: the same switch, because a
+              // reader who wants softened edges on one scrolling pane of a
+              // session wants them on the other. The timeline is excluded by
+              // `TraceViewer` itself, not here — see the prop's note.
+              rawFadeScrollEdges={fadeScrollEdges}
               hideToolbar
               fillContent
               traceStartedAtMs={traceStartedAtMs}
