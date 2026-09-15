@@ -1850,6 +1850,14 @@ export function SuiteIterationsView({
                 <TestTemplateEditor
                   suiteId={suite._id}
                   selectedTestCaseId={selectedTestId}
+                  onDeleteCase={
+                    onDeleteTestCasesBatch
+                      ? async (testCaseId) => {
+                          await onDeleteTestCasesBatch([testCaseId]);
+                          navigation.toSuiteOverview(suite._id);
+                        }
+                      : undefined
+                  }
                   connectedServerNames={connectedServerNames}
                   projectId={projectId}
                   availableModels={availableModels}
