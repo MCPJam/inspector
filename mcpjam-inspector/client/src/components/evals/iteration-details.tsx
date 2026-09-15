@@ -1248,7 +1248,12 @@ export function IterationDetails({
       {caseInsightFallback}
 
       {showRecordedTools && previewTraceMode === "tools" ? (
-        loading || error ? traceSection : <RecordedToolDetails trace={blob} metadata={iteration.metadata} error={iteration.error} />
+        loading || error ? traceSection : (
+          <div className="space-y-4">
+            <RecordedToolDetails trace={blob} metadata={iteration.metadata} error={iteration.error} />
+            {expectedToolCalls.length > 0 && toolCallsGrids}
+          </div>
+        )
       ) : isProbe && !scorecard ? (
         <>
           {predicatesSection}

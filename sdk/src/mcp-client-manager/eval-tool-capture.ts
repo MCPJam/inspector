@@ -13,9 +13,13 @@ export async function withEvalToolCapture<T>(
   serverId: string,
   toolName: string,
   args: unknown,
-  operation: () => Promise<T>,
+  operation: () => Promise<T>
 ): Promise<T> {
-  const capture = evalToolCaptureResolvers.get(manager)?.(serverId, toolName, args);
+  const capture = evalToolCaptureResolvers.get(manager)?.(
+    serverId,
+    toolName,
+    args
+  );
   try {
     const result = await operation();
     capture?.complete(result);
