@@ -812,8 +812,8 @@ export function SuiteIterationsView({
   // Which criterion SCOPE the sheet is editing, and therefore which field and
   // which units each grading row shows. Read from the DRAFT rather than the
   // suite so the rows follow a scope change the moment it is drafted; this
-  // sheet no longer offers one, but a scope arriving from the reviewed
-  // operation still has to be reflected rather than leaving the page
+  // sheet no longer offers one, but a scope arriving from the API
+  // still has to be reflected rather than leaving the page
   // describing a suite nobody has.
   const isVerdictPolicyV2 = draft.current.verdictPolicyVersion === 2;
   const scheduledEvalsEnabled = useScheduledEvalsEnabled();
@@ -1371,14 +1371,7 @@ export function SuiteIterationsView({
       canDeleteSuite,
     ],
   );
-  // The four-branch capability ladder that gated the scope-switch button is
-  // gone with the button. It read `capabilities.verdictPolicyV2.canUpgrade`
-  // and rendered one of four sentences, two of which named a policy version in
-  // front of a customer. The deployment still REPORTS that capability and the
-  // server still enforces it, but no client surface consults it any more —
-  // there is no scope-switch operation in the app, the CLI or MCP for it to
-  // gate. Treat it as a server-side fact awaiting a first-class operation,
-  // not as something this sheet defers to.
+  // Scope changes are API-only until an explicit operation ships in a follow-up.
   const openSetting = useCallback(
     (key: EvalSuiteSettingKey) => {
       if (key === "name") {

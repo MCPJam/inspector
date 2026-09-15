@@ -1,3 +1,5 @@
+import { gradingPolicyFromPlatformSuiteSettings } from "../eval-grading-policy.js";
+import { planEvalGradingPolicyEdit } from "../contract/grading-policy.js";
 import {
   evalBacktestDraftSchema,
   evalBacktestContinuationSchema,
@@ -5763,7 +5765,7 @@ export const updateEvalSuiteOperation: PlatformOperation<
   name: "update_eval_suite",
   title: "Update MCPJam eval suite",
   description:
-    "Edit an eval suite's settings: name, description, environment servers, computer image, execution config (model/system prompt/temperature), hosts, minimum accuracy, minimum iterations, match options, checks, LLM-as-judge (enabled/model/autoRun/threshold — autoRun is what makes grading happen; enabled alone only makes the judge available), and the per-case grading fields (repetitions/passThreshold/validity — FRACTIONS). minimumAccuracy is the suite-wide accuracy threshold, a PERCENT over the whole run; passThreshold is the per-case criterion, a fraction each case must meet over its own iterations. They are different criteria, not two units of one number — ten cases, nine always passing and one always failing, passes a 90% suite-wide bar and fails a 0.9 per-case one — so send whichever one the suite already uses (settings.policy on a read says which) and never convert between them. Only the fields you pass change.",
+    "Edit an eval suite's settings: name, description, environment servers, computer image, execution config (model/system prompt/temperature), hosts, minimum accuracy, minimum iterations, match options, checks, LLM-as-judge (enabled/model/autoRun/threshold — autoRun is what makes grading happen; enabled alone only makes the judge available), and the per-case grading fields (repetitions/passThreshold/validity — FRACTIONS). minimumAccuracy is the suite-wide accuracy threshold, a PERCENT over the whole run; passThreshold is the per-case criterion, a fraction each case must meet over its own iterations. They are different criteria, not two units of one number — ten cases, nine always passing and one always failing, passes a 90% suite-wide bar and fails a 0.9 per-case one — so send whichever one the suite already uses (settings.policy on a read says which) and never convert between them. The operation reads the current criterion first and refuses repetitions (including the repetitions/passThreshold pair) on a suite-wide suite, and minimumIterations on a per-case suite. Changing criterion is API-only for now. Only the fields you pass change.",
   readOnly: false,
   permalink: derivePermalinks((result) => [
     { type: "eval_suite", id: result.id, ...projectIdOf(result) },
@@ -5793,6 +5795,31 @@ export const updateEvalSuiteOperation: PlatformOperation<
       input.project
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
+    const settings = input.settings;
+    if (
+      settings &&
+      ["passThreshold", "repetitions", "minimumIterations", "validity"].some(
+        (key) => settings[key as keyof typeof settings] !== undefined
+      )
+    ) {
+      const detail = await client.getEvalSuite(
+        { projectId: project.id, suiteId: suite.id },
+        { signal }
+      );
+      const read = gradingPolicyFromPlatformSuiteSettings(detail.settings);
+      if (!read.ok) throw operationInputError(read.message);
+      // Use the canonical refusals without translating the caller's wire fields.
+      // A lone passThreshold on a suite-wide suite is refused by the route.
+      const plan = planEvalGradingPolicyEdit(read.policy, {
+        ...(settings.repetitions !== undefined
+          ? { iterations: settings.repetitions }
+          : {}),
+        ...(settings.minimumIterations !== undefined
+          ? { minimumIterations: settings.minimumIterations }
+          : {}),
+      });
+      if (!plan.ok) throw operationInputError(plan.message);
+    }
     const body: Record<string, unknown> = {};
     for (const key of [
       "name",

@@ -14,9 +14,8 @@
  * NO VERSION, NO UPGRADE, NO SELECTOR. Every word on these controls comes from
  * `@mcpjam/sdk/contract`'s grading vocabulary, which has no member naming a
  * policy version — a suite-wide suite is measured differently, not obsolete.
- * Changing the scope is not an edit these controls can make; it is a separate,
- * audited operation, and offering it beside a threshold field is what made a
- * threshold edit look like a migration.
+ * Changing the scope is not an edit these controls can make; it is API-only
+ * until an explicit scope-change operation ships in a follow-up.
  *
  * FRACTIONS IN, PERCENTS ON SCREEN. Everything stored and everything sent on
  * the per-case path is a fraction in [0,1]; the only place a percent exists is
@@ -399,10 +398,5 @@ export function VerdictValidityControls({
 // rode along with unrelated edits and required an audit note only if the
 // quality gate happened to be dirty in the same batch.
 //
-// Changing the scope stays possible, but nothing here offers it and no
-// operation elsewhere does either: it takes a hand-written PATCH sending
-// `settings.repetitions` and `settings.passThreshold` together, which is the
-// pair the route reads as the switch. A first-class operation for it — with a
-// confirmation and a required audit note — has NOT shipped. Removing the
-// button therefore closes the affordance that got the conversion wrong; it
-// does not replace it, and this comment should not be read as claiming it did.
+// Changing scope is API-only until an explicit scope-change operation ships;
+// see the scope-change follow-up.

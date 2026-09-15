@@ -1,3 +1,5 @@
+import { planPlatformSuiteGradingUpdate } from "@mcpjam/sdk";
+import type { EvalGradingPolicyEdit } from "@mcpjam/sdk/contract";
 import { fetchArtifactBytes } from "../lib/download-screenshot.js";
 import {
   existsSync,
@@ -109,8 +111,6 @@ import {
   composeSuiteGateWithBaseReport,
   type EvalSuiteSchemaVersion,
 } from "@mcpjam/sdk/contract";
-import type { ResolvedEvalGradingPolicy } from "@mcpjam/sdk/contract";
-import { gradingPolicyFromPlatformSuiteSettings } from "@mcpjam/sdk";
 import type {
   SuiteGateComposedOutcome,
   SuiteGateReportV1,
@@ -1009,52 +1009,23 @@ async function executeOp<TInput, TOutput>(
       quiet: globalOptions.quiet,
     }
   );
-  writeResult(result, globalOptions.format);
+  if (result !== undefined) writeResult(result, globalOptions.format);
 }
 
 /**
- * The four grading flags, and the two refusals that keep them honest.
- *
- * ONE SUITE, ONE CRITERION. `--min-accuracy` writes the SUITE-WIDE accuracy
- * threshold, a percent over the whole run; `--pass-threshold` writes the
- * PER-CASE criterion, a fraction each case must meet over its own iterations.
- * They are not two units of one number — ten cases, nine always passing and one
- * always failing, passes a 90% suite-wide bar and fails a 0.9 per-case one — so
- * passing both is a usage ERROR rather than a precedence rule. The count flags
- * are the same shape: `--min-iterations` is a FLOOR that raises a case's own
- * count, `--iterations` is a DEFAULT that replaces it, and a case at 7 resolves
- * to 7 under a floor of 3 and to 3 under a default of 3.
- *
- * Why refuse rather than prefer one: a precedence rule is invisible. A script
- * that passes both because someone half-finished a migration keeps running, and
- * the suite it edits is then decided by whichever of two different bars this
- * happened to prefer — with the other flag reported as accepted.
- *
- * WHY THIS READS THE SUITE FIRST. An earlier version forwarded the flags and
- * relied on the route to refuse a criterion the suite does not use. The route's
- * refusals are narrower than that, and the gap was reachable: `--pass-threshold`
- * alone on a suite-wide suite is refused with a message asking for
- * `--iterations` as well, and adding it exits 0 — because
- * `settings.repetitions` plus `settings.passThreshold` in one body is exactly
- * how the switch BETWEEN criteria is spelled. Two flags that each name a
- * threshold silently re-decided every case in the suite and left the stored
- * percent dead.
- *
- * So the suite's own `settings.policy` is resolved before a body is built, and
- * a flag that names the other scope is refused here, by name, before any
- * request. The flags cannot express a scope change, and the message says which
- * flag would work instead. A caller who genuinely wants the switch writes the
- * PATCH by hand; that stays possible and stays outside these flags.
- *
- * `policy` is null only when no grading flag was passed, in which case there is
- * nothing to check and no fetch was made.
+ * Parse grading flags before any request. The canonical planner maps these
+ * edits to the current scope's fields and units after reading the suite.
+ * --min-accuracy retains its raw suite-wide percentage compatibility field.
  */
 function applyGradingFlags(
   options: Record<string, any>,
-  settings: Record<string, any>,
-  policy: ResolvedEvalGradingPolicy | null
-): void {
-  if (options.minAccuracy !== undefined && options.passThreshold !== undefined) {
+  settings: Record<string, any>
+): EvalGradingPolicyEdit {
+  const edit: EvalGradingPolicyEdit = {};
+  if (
+    options.minAccuracy !== undefined &&
+    options.passThreshold !== undefined
+  ) {
     throw usageError(
       "Use either --min-accuracy or --pass-threshold, not both: --min-accuracy is one suite-wide percentage over the whole run and --pass-threshold is the fraction each case must pass on its own. They are different criteria, not two units of one number."
     );
@@ -1081,14 +1052,14 @@ function applyGradingFlags(
         "--pass-threshold must be a fraction from 0 to 1 (0.9, not 90)."
       );
     }
-    settings.passThreshold = fraction;
+    edit.passThreshold = fraction;
   }
   if (options.minIterations !== undefined) {
     if (options.minIterations === "off") {
       // NULL, not undefined. `undefined` is "leave this alone" all the way
       // down the stack, so writing it here would make `--min-iterations off`
       // a no-op that reports success.
-      settings.minimumIterations = null;
+      edit.minimumIterations = null;
     } else {
       const floor = Number(options.minIterations);
       if (!Number.isInteger(floor) || floor < 1 || floor > 10) {
@@ -1096,7 +1067,7 @@ function applyGradingFlags(
           '--min-iterations must be a whole number from 1 to 10, or "off".'
         );
       }
-      settings.minimumIterations = floor;
+      edit.minimumIterations = floor;
     }
   }
   if (options.iterations !== undefined) {
@@ -1104,101 +1075,16 @@ function applyGradingFlags(
     if (!Number.isInteger(count) || count < 1 || count > 100) {
       throw usageError("--iterations must be a whole number from 1 to 100.");
     }
-    settings.repetitions = count;
+    edit.iterations = count;
   }
-  // The suite's own criterion decides which of each pair is even spellable.
-  // Refused here rather than forwarded: the route stores `minimumIterations`
-  // on a per-case suite without reading it, and reads a `repetitions` +
-  // `passThreshold` pair as a criterion SWITCH rather than as two edits.
-  if (policy !== null) {
-    const suiteWide = policy.passCriterion.scope === "suiteWide";
-    if (suiteWide && options.passThreshold !== undefined) {
-      throw usageError(
-        "This suite is decided by a suite-wide accuracy threshold, so it has no per-case pass rate to set: use --min-accuracy <pct>, which is the percentage its runs are actually measured against. (--pass-threshold together with --iterations is how the API spells a switch to per-case grading, which re-decides every case in the suite and is not something a threshold flag should do.)"
-      );
-    }
-    if (!suiteWide && options.minAccuracy !== undefined) {
-      throw usageError(
-        "This suite is decided per case, so a suite-wide accuracy percentage is not what its runs are measured against: use --pass-threshold <0-1>, the fraction each case must pass of its own iterations."
-      );
-    }
-    if (
-      policy.iterationRule.kind === "caseCountWithFloor" &&
-      options.iterations !== undefined
-    ) {
-      throw usageError(
-        "This suite has no default iteration count: each case runs its own number of times, raised to the suite minimum. Use --min-iterations <1-10|off> to move that minimum, or edit the cases."
-      );
-    }
-    if (
-      policy.iterationRule.kind === "defaultCount" &&
-      options.minIterations !== undefined
-    ) {
-      throw usageError(
-        "This suite has no iteration minimum: it has a default count each case may override. Use --iterations <n> to move that default. (The API stores a minimum here without reading it, so this would report success and change nothing.)"
-      );
-    }
-  }
+  return edit;
 }
 
 /** Merge `eval update` flags onto an optional --file/--json suite-update body. */
-/**
- * Whether this invocation touches the grading policy at all.
- *
- * Gates the extra GET: a rename or a judge toggle should not pay for a suite
- * read, and a caller who passed no grading flag has no scope to mismatch.
- */
-function touchesGradingPolicy(options: Record<string, any>): boolean {
-  return (
-    options.minAccuracy !== undefined ||
-    options.passThreshold !== undefined ||
-    options.minIterations !== undefined ||
-    options.iterations !== undefined
-  );
-}
-
-/**
- * The suite's resolved grading policy, read before an update is built.
- *
- * Refuses rather than guessing when the deployment does not report which
- * criterion decides the suite: the two scopes are indistinguishable in that
- * response, so a flag check against it would be a coin toss on whether the
- * edit re-decides every case.
- */
-async function readSuiteGradingPolicy(
-  options: PlatformOptions & Record<string, any>,
-  command: Command
-): Promise<ResolvedEvalGradingPolicy> {
-  const globalOptions = getGlobalOptions(command);
-  const resolved = resolveCloudProjectArgs({
-    ...(options.project !== undefined ? { project: options.project } : {}),
-  });
-  const detail = await runPlatformCommand(
-    platformOptionsOf(command),
-    globalOptions.timeout,
-    ({ client, signal }) =>
-      getEvalSuiteOperation.execute(
-        {
-          ...(resolved.project !== undefined
-            ? { project: resolved.project }
-            : {}),
-          suite: options.suite,
-        },
-        { client, signal }
-      ),
-    { projectScope: resolved.projectScope, quiet: true }
-  );
-  const read = gradingPolicyFromPlatformSuiteSettings(detail.settings);
-  if (!read.ok) {
-    throw usageError(read.message);
-  }
-  return read.policy;
-}
-
-function buildSuiteUpdateInput(
-  options: Record<string, any>,
-  policy: ResolvedEvalGradingPolicy | null = null
-): Record<string, unknown> {
+function buildSuiteUpdateInput(options: Record<string, any>): {
+  input: Record<string, unknown>;
+  edit: EvalGradingPolicyEdit;
+} {
   const input: Record<string, any> = { ...loadBodyObject(options) };
   input.suite = options.suite;
   if (options.project !== undefined) input.project = options.project;
@@ -1239,7 +1125,16 @@ function buildSuiteUpdateInput(
   if (Object.keys(exec).length > 0) input.executionConfig = exec;
 
   const settings = { ...(input.settings ?? {}) };
-  applyGradingFlags(options, settings, policy);
+  // Compatibility percentage stays on the raw body; other edits use the planner.
+  const edit = applyGradingFlags(options, settings);
+  // Flags override the corresponding body values even when the planned edit
+  // is unchanged and therefore produces no settings patch.
+  if (edit.passThreshold !== undefined) {
+    delete settings.passThreshold;
+    delete settings.minimumAccuracy;
+  }
+  if (edit.iterations !== undefined) delete settings.repetitions;
+  if (edit.minimumIterations !== undefined) delete settings.minimumIterations;
   const mo = { ...(settings.matchOptions ?? {}) };
   if (options.toolCallOrder !== undefined)
     mo.toolCallOrder = options.toolCallOrder;
@@ -1268,8 +1163,9 @@ function buildSuiteUpdateInput(
   }
   if (Object.keys(judge).length > 0) settings.judge = judge;
   if (Object.keys(settings).length > 0) input.settings = settings;
+  else delete input.settings;
 
-  return input;
+  return { input, edit };
 }
 
 /**
@@ -3195,7 +3091,9 @@ async function runEvalExport(
   const schemaVersion = options.schemaVersion ?? EVAL_SUITE_SCHEMA_VERSION;
   if (!isEvalSuiteSchemaVersion(schemaVersion)) {
     throw usageError(
-      `--schema-version must be ${EVAL_SUITE_SCHEMA_VERSIONS.map((v) => `"${v}"`).join(" or ")} (received ${JSON.stringify(schemaVersion)}).`
+      `--schema-version must be ${EVAL_SUITE_SCHEMA_VERSIONS.map(
+        (v) => `"${v}"`
+      ).join(" or ")} (received ${JSON.stringify(schemaVersion)}).`
     );
   }
 
@@ -3870,7 +3768,9 @@ export function registerEvalCommands(program: Command): void {
                     // `iterationOverride`.
                     ...(options.iterations !== undefined ||
                     options.repetitions !== undefined
-                      ? { iterations: options.iterations ?? options.repetitions }
+                      ? {
+                          iterations: options.iterations ?? options.repetitions,
+                        }
                       : {}),
                     ...(options.case?.length ? { cases: options.case } : {}),
                     ...(options.excludeSkills ? { excludeSkills: true } : {}),
@@ -5753,7 +5653,7 @@ export function registerEvalCommands(program: Command): void {
     )
     .option(
       "--pass-threshold <0-1>",
-      "Per-case pass rate: the fraction, 0–1, each case must pass of its own iterations"
+      "Pass threshold, 0–1, preserving the current criterion (suite-wide writes a percentage)"
     )
     // How many times each case runs. Same shape: a floor that RAISES a case's
     // own count, or a default that REPLACES it.
@@ -5775,18 +5675,62 @@ export function registerEvalCommands(program: Command): void {
     .option("--judge-model <id>", "Judge model id")
     .option("--judge-threshold <0-1>", "Judge pass threshold, 0–1")
     .action(async (options: PlatformOptions & Record<string, any>, command) => {
-      // The suite's criterion first, and only when a grading flag was passed:
-      // which of each flag pair is spellable is a fact about THIS suite, and
-      // forwarding the flags blind is how `--pass-threshold --iterations`
-      // silently switched a suite-wide suite to per-case grading.
-      const policy = touchesGradingPolicy(options)
-        ? await readSuiteGradingPolicy(options, command)
-        : null;
-      const input = validateOpInput(
-        updateEvalSuiteOperation,
-        buildSuiteUpdateInput(options, policy)
+      const built = buildSuiteUpdateInput(options);
+      const input = validateOpInput(updateEvalSuiteOperation, built.input);
+      const edit = built.edit;
+      await executeOp(
+        {
+          ...updateEvalSuiteOperation,
+          async execute(input, context) {
+            if (Object.keys(edit).length > 0) {
+              const detail = await getEvalSuiteOperation.execute(
+                input,
+                context
+              );
+              const plan = planPlatformSuiteGradingUpdate({
+                settings: detail.settings,
+                revisionNumber: detail.revisionNumber,
+                edit,
+              });
+              if (!plan.ok) throw usageError(plan.message);
+              input.settings = { ...input.settings, ...plan.body.settings };
+              if (plan.body.expectedRevisionNumber !== undefined) {
+                // Preserve an explicit caller precondition (for example a
+                // reviewed quality-gate body) rather than replacing it.
+                input.expectedRevisionNumber ??=
+                  plan.body.expectedRevisionNumber;
+              }
+              if (plan.noop) {
+                const hasOtherEdits = Object.entries(input).some(
+                  ([key, value]) =>
+                    ![
+                      "project",
+                      "suite",
+                      "expectedRevisionNumber",
+                      "revisionNote",
+                    ].includes(key) &&
+                    value !== undefined &&
+                    (key !== "settings" ||
+                      Object.keys(input.settings ?? {}).length > 0)
+                );
+                const message =
+                  "No grading change: the suite already has these values.";
+                const format = getGlobalOptions(command).format;
+                if (!hasOtherEdits) {
+                  if (format === "human") process.stdout.write(`${message}\n`);
+                  else writeResult({ noop: true, message }, format);
+                  return undefined;
+                }
+                process.stderr.write(`${message}\n`);
+              }
+            }
+            return updateEvalSuiteOperation.execute(input, context);
+          },
+        },
+        input,
+        options,
+        command
       );
-      await executeOp(updateEvalSuiteOperation, input, options, command);
     });
 
   evals

@@ -101,20 +101,6 @@ export type SuiteCapabilities = {
     /** An env-var kill switch, not a per-org flag: no reason vocabulary. */
     scheduledEvals: { enabled: boolean };
   };
-  /**
-   * Reported by the deployment and enforced server-side, but consumed by NO
-   * client surface today. `canUpgrade` gated the scope-switch button in the
-   * suite settings sheet; that button is gone and nothing replaced it, so this
-   * block is a description of the payload rather than an input to any decision
-   * the client makes. Kept typed because the server still sends it and a
-   * first-class scope-change operation would read it again — deleting it would
-   * hide a field that exists. Do not add a caller without that operation.
-   */
-  verdictPolicyV2: {
-    deploymentMode: "off" | "shadow" | "enforce";
-    suiteMode: string | null;
-    canUpgrade: boolean;
-  };
   judge: {
     gating: { enabled: boolean; reason?: "not_enabled_on_deployment" };
     role: "advisory" | "gating";

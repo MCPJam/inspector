@@ -281,5 +281,5 @@ describe("PerCaseIterationsControl", () => {
 // stored percent by 100 — which preserves the NUMBER and moves the BAR for
 // every suite with more than one case, because a suite-wide percent and a
 // per-case fraction are measured over different populations. Changing the
-// scope is now its own reviewed, audited operation rather than a button under a
-// threshold field, so there is no component here to test.
+// scope is API-only until an explicit operation ships in a follow-up, so there
+// is no scope-change component here to test.

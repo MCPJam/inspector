@@ -2102,7 +2102,7 @@ Edit an eval suite's settings (only the flags you pass change).
 | `--system-prompt <text>` | No | Execution system prompt |
 | `--temperature <n>` | No | Execution temperature |
 | `--min-accuracy <pct>` | No | Suite accuracy threshold: one percentage, 0–100, over the whole run. Mutually exclusive with `--pass-threshold` |
-| `--pass-threshold <0-1>` | No | Per-case pass rate: the FRACTION, 0–1, each case must pass of its own iterations (`0.9`, not `90`). Mutually exclusive with `--min-accuracy` |
+| `--pass-threshold <0-1>` | No | Pass threshold as a fraction, 0–1 (`0.9`, not `90`), preserving the suite’s criterion; suite-wide suites write a percentage. Mutually exclusive with `--min-accuracy` |
 | `--min-iterations <1-10\|off>` | No | Minimum iterations per case: a floor that RAISES a case's own count — every case runs at least this many times, and a case configured for more keeps its count. `off` removes the floor. Mutually exclusive with `--iterations` |
 | `--iterations <n>` | No | Iterations per case: the suite DEFAULT, 1–100, which a case can override. Mutually exclusive with `--min-iterations` |
 | `--tool-call-order <any\|in-order\|exact>` | No | Tool call order |
@@ -2119,7 +2119,7 @@ A suite has ONE pass criterion and ONE iteration rule, and
 
 | `settings.policy` | Criterion flag | Iteration flag |
 | --- | --- | --- |
-| `legacy` | `--min-accuracy <pct>` | `--min-iterations <1-10\|off>` |
+| `legacy` | `--min-accuracy <pct>` or `--pass-threshold <0-1>` | `--min-iterations <1-10\|off>` |
 | `v2` | `--pass-threshold <0-1>` | `--iterations <n>` |
 
 The two criteria are **not two units of one number.** A suite-wide accuracy
@@ -2133,18 +2133,16 @@ The iteration flags differ the same way: `--min-iterations` RAISES a case's own
 count and `--iterations` REPLACES it, so a case configured for 7 runs 7 times
 under a floor of 3 and 3 times under a default of 3.
 
-Passing both flags of a pair is a usage error rather than a precedence rule,
-and `eval update` reads the suite's own `settings.policy` before it builds a
-body, so a criterion flag the suite does not use is refused locally with a
-message naming the one that would work.
+Passing both flags of a pair is a usage error. The CLI and MCP read the suite's
+criterion first and refuse iteration fields that the suite does not use.
+The CLI's `--pass-threshold 0.9` preserves the criterion: on a suite-wide suite
+it writes `settings.minimumAccuracy: 90`; on a per-case suite it writes
+`settings.passThreshold: 0.9`. Grading flag edits carry the revision read from
+the suite, and unchanged edits skip the write.
 
-The API's own refusals are narrower than that, which is why the CLI checks
-first: it rejects a per-case iteration count on a suite-wide suite, but stores
-`settings.minimumIterations` on a per-case suite where nothing reads it. And
-`settings.repetitions` plus `settings.passThreshold` in one body is how the
-switch between criteria is spelled, so a caller writing PATCHes by hand can
-change which criterion decides a suite while believing it edited a threshold.
-No CLI flag can reach that pair.
+Changing the criterion is not offered by the app, CLI or MCP today. It requires
+a direct API `PATCH` with both `settings.repetitions` and `settings.passThreshold`.
+An explicit scope-change operation is a follow-up.
 
 ### `cloud eval revisions`
 
