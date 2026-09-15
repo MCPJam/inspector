@@ -290,11 +290,7 @@ export function SuiteHealth({
                         aria-label={`Minimum accuracy: ${threshold}%`}
                         className="pointer-events-none absolute inset-x-0 border-t-2 border-dashed border-ring"
                         style={{ bottom: `${threshold}%` }}
-                      >
-                        <span className="absolute right-0 bottom-0 bg-background px-1 text-[11px] font-semibold text-ring">
-                          {threshold}%
-                        </span>
-                      </div>
+                      />
                     )}
                   </div>
                   <div className="mt-2 flex gap-1.5 text-[11px] text-muted-foreground">
