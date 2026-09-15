@@ -402,7 +402,12 @@ async function drainAndDriveFollowUps(
       remaining -= 1;
       const outcome = await handlers.onFollowUp!({ text, stepIndex, turnOrdinal: turn });
       applyOutcome(state, outcome, turn);
-      if (outcome.iterationError) return outcome;
+      // `cancelled` as well as `iterationError`: a follow-up turn the engine
+      // saw cancelled carries no error, so returning only on `iterationError`
+      // applied the outcome and then dropped the one fact that mattered —
+      // the caller marked the source step `ok` and the run finished without
+      // ever reporting that it had been stopped.
+      if (outcome.cancelled || outcome.iterationError) return outcome;
     }
   }
   return undefined;

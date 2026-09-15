@@ -1583,7 +1583,18 @@ async function runJourneyFanOut(
         }
       : abortSignal?.aborted
         ? { errorCode: "runner_shutdown" }
-        : undefined;
+        : // The run's own clock is a run TERMINAL, exactly like the other two.
+          // Without this arm a deadline-only stop finalizes nothing: every
+          // attempt that never started stays `pending` until the backend's
+          // stale-run cron, and the ones the deadline aborted are recorded as
+          // ordinary session failures — a run that ran out of budget looking
+          // like a run whose sessions went wrong.
+          runDeadline.firedClock() === "run"
+          ? {
+              errorCode: "run_timeout",
+              errorMessage: `Run exceeded its ${budgets.runTimeoutMs}ms budget`,
+            }
+          : undefined;
     if (finalizeTerminal) {
       const finalizeBearer = await getBearer().catch((error: unknown) => {
         logger.error(
@@ -1613,6 +1624,11 @@ async function runJourneyFanOut(
   } finally {
     clearInterval(heartbeat);
     sessionSignals.dispose();
+    // `sessionSignals.dispose()` releases the COMPOSITION; the deadline owns
+    // its own timer and its own listener on the caller's signal, and those
+    // stay armed until the (possibly two-hour) budget expires unless it is
+    // disposed too.
+    runDeadline.dispose();
     logEvent("run.finish", {
       runId,
       targetCount: hosts.length,

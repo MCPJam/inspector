@@ -1063,7 +1063,12 @@ export const startSuiteRunWithRecorder = async ({
      * "resolve the platform defaults" — the same code path, differing only in
      * which rung each field came from.
      */
-    executionBudgets: response?.executionBudgets as
+    // Read from the response's `configSnapshot`, where every other frozen
+    // decision on this surface lives (`gradingEngine`, `pluginVersions`), with
+    // the top-level spelling as a fallback so the two repos can deploy in
+    // either order.
+    executionBudgets: ((response?.configSnapshot as Record<string, unknown>)
+      ?.executionBudgets ?? response?.executionBudgets) as
       | ResolvedExecutionBudgets
       | undefined,
     githubCredentialPolicy: response?.githubCredentialPolicy as

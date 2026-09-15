@@ -2470,12 +2470,44 @@ export async function runIterationUnderBudget<T>(args: {
       whenAborted(handle.signal).then(() => ({ kind: "aborted" as const })),
     ]);
 
+    // The CLOCK is read before the race's winner is honoured, and that
+    // ordering is the whole enforcement.
+    //
+    // It is tempting to take a settled value first — it looks like a trial
+    // that beat the buzzer. It usually is not. A runner that handles its own
+    // abort resolves in the SAME tick the signal fires, and because its
+    // listener was registered before ours (`args.run` is called first), its
+    // promise wins this race. So the value arriving here is typically the
+    // runner's cancellation stub, produced after the budget expired.
+    //
+    // The runners now THROW on a budget abort rather than returning that stub,
+    // which fixed half the problem and created the other half: a throw takes
+    // the `settled.kind === "threw"` arm below and propagates OUT of this
+    // helper. `runSingleIteration` must RESOLVE a timed-out outcome, never
+    // reject — a rejection means iterations `runIndex+1..N` of that case never
+    // start, land `pending`, and block the run's terminal transition until the
+    // stale reaper takes the whole run.
+    //
+    // Reading the clock first covers both shapes at once. There is no way to
+    // tell a cancellation stub from a genuine last-moment result, so the
+    // conservative reading wins: the clock expired, the iteration timed out.
+    // The grace window below is for UNWINDING — letting partial writes land —
+    // not for deciding a verdict.
+    if (handle.firedClock() === "iteration") {
+      await Promise.race([
+        running,
+        delay(args.graceMs).then(() => ({ kind: "grace" as const })),
+      ]);
+      await args.onTimeout(handle.elapsedMs());
+      return args.timedOutOutcome();
+    }
+
     if (settled.kind === "settled") return settled.value;
     if (settled.kind === "threw") throw settled.error;
 
-    // Aborted. WHOSE clock decides everything below: the run being cancelled
-    // is not this iteration's problem to report.
-    if (handle.firedClock() !== "iteration") {
+    // Aborted on someone else's clock. The run being cancelled is not this
+    // iteration's problem to report.
+    {
       const reason = args.runSignal?.reason;
       throw reason instanceof Error ? reason : RUN_CANCELLED_ERROR;
     }
