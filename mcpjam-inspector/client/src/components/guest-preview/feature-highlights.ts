@@ -36,11 +36,43 @@ export interface SampleFindingPersona {
   readonly sentiment: "satisfied" | "uneasy";
 }
 
+/** One band in a column. `share` is a fraction of the whole population. */
+export interface SampleFlowNode {
+  readonly label: string;
+  readonly share: number;
+}
+
+/**
+ * A ribbon from one node in this stage to one in the next.
+ *
+ * THIS IS THE WHOLE POINT OF THE CARD, and the first version did not have it.
+ * That version drew a band from segment `j` to segment `j`, which is four
+ * parallel rails: nothing splits, nothing crosses, and the picture claims the
+ * population moves in lockstep. A study is worth running precisely because it
+ * does not. Ozi caught it.
+ */
+export interface SampleFlowLink {
+  /** Index into this stage's `nodes`. */
+  readonly from: number;
+  /** Index into the NEXT stage's `nodes`. */
+  readonly to: number;
+  readonly share: number;
+}
+
 /** One column of the Session flow, which reads GOAL to SENTIMENT. */
 export interface SampleFlowStage {
   readonly label: string;
-  /** Segments top to bottom. `share` is a fraction of the column. */
-  readonly nodes: readonly { readonly label: string; readonly share: number }[];
+  /** Segments top to bottom. */
+  readonly nodes: readonly SampleFlowNode[];
+  /**
+   * Where this column's population goes next. Omitted on the last stage.
+   *
+   * Shares are conserved: every node's `share` equals the sum of the links
+   * arriving at it, and of those leaving it. `SampleFlow` does not repair a
+   * set that does not add up, it just draws it wrong, so the arithmetic is
+   * pinned by a test.
+   */
+  readonly links?: readonly SampleFlowLink[];
 }
 
 /**
@@ -99,6 +131,14 @@ export const GATED_FEATURE_COPY: Record<GatedFeatureId, GatedFeatureCopy> = {
     // carries the whole pitch on its own, so there is no body line under it.
     heroTitle:
       "No recruiting, no scheduling, no setup. Agents find what breaks in every client.",
+    // `FIRST_SWARM_EMPTY_DESCRIPTION` from `swarms-empty-hero.tsx`, verbatim.
+    // An earlier pass dropped it on the reasoning that the headline carried the
+    // whole pitch; Ozi put it back, and he is right that the headline says what
+    // you are spared while this says what actually happens. It is also the line
+    // a member sees on their own empty Swarms tab, so a visitor who signs up
+    // meets the same sentence on the other side.
+    heroBody:
+      "We invent realistic users, drop them into the clients your users actually use, and report what breaks.",
     sampleLabel: "What a swarm looks like",
     sample: {
       kind: "findings",
@@ -159,9 +199,22 @@ export const GATED_FEATURE_COPY: Record<GatedFeatureId, GatedFeatureCopy> = {
       title: "Where sessions went",
       subtitle: "Session flow",
       // The four columns the real Session flow carries, and the same visual
-      // mcpjam.com already leads with for user acceptance testing. Shares are
-      // illustrative but consistent across the columns, so the bands read as
-      // one population moving left to right rather than four unrelated charts.
+      // mcpjam.com already leads with for user acceptance testing.
+      //
+      // THE SHAPE IS THE MESSAGE. One goal splits three ways at BEHAVIOR, and
+      // the two goals land in different proportions, so the picture says what
+      // a study is for: the same task is not one path, and the branch that
+      // matters is usually the small one. A card where everything runs
+      // straight across would be advertising a report nobody needs to read.
+      //
+      // The ribbon worth finding is `O0 -> S1` (0.05): sessions that REACHED
+      // the goal and were still frustrated. It is the smallest band on the
+      // card and the one a researcher would click first, which is the honest
+      // pitch for the product.
+      //
+      // Healthy but not fictional, per Ozi's earlier note: 71% reach the goal,
+      // 66% come away satisfied. A study with no failures would mean the
+      // method found nothing.
       stages: [
         {
           label: "Goal",
@@ -169,26 +222,47 @@ export const GATED_FEATURE_COPY: Record<GatedFeatureId, GatedFeatureCopy> = {
             { label: "Export a diagram", share: 0.55 },
             { label: "Restore a save", share: 0.45 },
           ],
+          links: [
+            { from: 0, to: 0, share: 0.38 },
+            { from: 0, to: 1, share: 0.13 },
+            { from: 0, to: 2, share: 0.04 },
+            { from: 1, to: 0, share: 0.14 },
+            { from: 1, to: 1, share: 0.17 },
+            { from: 1, to: 2, share: 0.14 },
+          ],
         },
         {
           label: "Behavior",
           nodes: [
-            { label: "Clean path", share: 0.58 },
-            { label: "Repeated calls", share: 0.42 },
+            { label: "Found the tool", share: 0.52 },
+            { label: "Retried the same call", share: 0.3 },
+            { label: "Never found it", share: 0.18 },
+          ],
+          links: [
+            { from: 0, to: 0, share: 0.52 },
+            { from: 1, to: 0, share: 0.19 },
+            { from: 1, to: 1, share: 0.11 },
+            { from: 2, to: 1, share: 0.18 },
           ],
         },
         {
           label: "Outcome",
           nodes: [
-            { label: "Goal reached", share: 0.62 },
-            { label: "Unresolved", share: 0.38 },
+            { label: "Goal reached", share: 0.71 },
+            { label: "Unresolved", share: 0.29 },
+          ],
+          links: [
+            { from: 0, to: 0, share: 0.66 },
+            // Reached the goal, still unhappy. The band this card exists for.
+            { from: 0, to: 1, share: 0.05 },
+            { from: 1, to: 1, share: 0.29 },
           ],
         },
         {
           label: "Sentiment",
           nodes: [
-            { label: "Satisfied", share: 0.62 },
-            { label: "Neutral", share: 0.38 },
+            { label: "Satisfied", share: 0.66 },
+            { label: "Frustrated", share: 0.34 },
           ],
         },
       ],

@@ -33,9 +33,13 @@ describe("GuestFeaturePreview", () => {
     expect(screen.getByText(copy.heroTitle)).toBeInTheDocument();
     // Optional by design: Swarms' sourced headline carries the whole pitch,
     // so there is no second line under it to invent.
-    if (copy.heroBody) {
-      expect(screen.getByText(copy.heroBody)).toBeInTheDocument();
-    }
+    // NOT conditional on `copy.heroBody` being set. It used to be, which is
+    // exactly why Swarms losing its body line passed a full green suite: an
+    // `if` around an assertion turns a missing value into a skipped check.
+    // The type keeps the field optional, so this asserts the CURRENT contract,
+    // which is that both surfaces have one.
+    expect(copy.heroBody).toBeTruthy();
+    expect(screen.getByText(copy.heroBody as string)).toBeInTheDocument();
     expect(screen.getByText(copy.sampleLabel)).toBeInTheDocument();
     expect(screen.getByText(copy.sample.title)).toBeInTheDocument();
   });
@@ -102,6 +106,98 @@ describe("GuestFeaturePreview", () => {
     for (const stage of sample.stages) {
       expect(within(card).getByText(stage.label)).toBeInTheDocument();
     }
+  });
+
+  /**
+   * The bug Ozi caught, pinned so it cannot come back quietly.
+   *
+   * The previous renderer drew segment `j` to segment `j`, which is four
+   * parallel rails: no split, no merge, no crossing. Every assertion here
+   * would have failed against it, and none of the assertions above would.
+   */
+  describe("the User Testing flow shows paths that actually diverge", () => {
+    const sample = GATED_FEATURE_COPY["user-testing"].sample;
+    if (sample.kind !== "flow") throw new Error("expected flow");
+    const linked = sample.stages.filter((stage) => stage.links?.length);
+
+    it("splits at least one node into several destinations", () => {
+      const splits = linked.flatMap((stage) => {
+        const out = new Map<number, number>();
+        for (const link of stage.links ?? []) {
+          out.set(link.from, (out.get(link.from) ?? 0) + 1);
+        }
+        return [...out.values()].filter((n) => n > 1);
+      });
+      expect(splits.length).toBeGreaterThan(0);
+    });
+
+    it("merges several sources into at least one node", () => {
+      const merges = linked.flatMap((stage) => {
+        const into = new Map<number, number>();
+        for (const link of stage.links ?? []) {
+          into.set(link.to, (into.get(link.to) ?? 0) + 1);
+        }
+        return [...into.values()].filter((n) => n > 1);
+      });
+      expect(merges.length).toBeGreaterThan(0);
+    });
+
+    it("carries the crossing the card exists for: goal reached, still frustrated", () => {
+      const outcome = sample.stages.find((stage) => stage.label === "Outcome");
+      const sentiment = sample.stages.find(
+        (stage) => stage.label === "Sentiment",
+      );
+      const reachedIdx =
+        outcome?.nodes.findIndex((n) => n.label === "Goal reached") ?? -1;
+      const frustratedIdx =
+        sentiment?.nodes.findIndex((n) => n.label === "Frustrated") ?? -1;
+      expect(reachedIdx).toBeGreaterThanOrEqual(0);
+      expect(frustratedIdx).toBeGreaterThanOrEqual(0);
+
+      const crossing = outcome?.links?.find(
+        (link) => link.from === reachedIdx && link.to === frustratedIdx,
+      );
+      expect(crossing).toBeDefined();
+      expect(crossing?.share).toBeGreaterThan(0);
+    });
+
+    /**
+     * `SampleFlow` does not repair shares that do not add up; it draws them
+     * wrong, leaving a ribbon overhanging its own bar. Hand-authored numbers
+     * are exactly where that happens, so the arithmetic is checked here
+     * rather than trusted.
+     */
+    it("conserves share across every column", () => {
+      const round = (n: number) => Math.round(n * 1000) / 1000;
+
+      sample.stages.forEach((stage, i) => {
+        if (!stage.links) return;
+        const next = sample.stages[i + 1];
+
+        stage.nodes.forEach((node, j) => {
+          const out = stage.links!
+            .filter((link) => link.from === j)
+            .reduce((sum, link) => sum + link.share, 0);
+          expect(round(out)).toBe(round(node.share));
+        });
+
+        next.nodes.forEach((node, j) => {
+          const into = stage.links!
+            .filter((link) => link.to === j)
+            .reduce((sum, link) => sum + link.share, 0);
+          expect(round(into)).toBe(round(node.share));
+        });
+      });
+    });
+
+    it("keeps every link pointing at a node that exists", () => {
+      sample.stages.forEach((stage, i) => {
+        for (const link of stage.links ?? []) {
+          expect(stage.nodes[link.from]).toBeDefined();
+          expect(sample.stages[i + 1]?.nodes[link.to]).toBeDefined();
+        }
+      });
+    });
   });
 
   it("renders whatever call to action it is handed, and nothing of its own", () => {

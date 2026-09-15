@@ -210,12 +210,26 @@ function SampleFindings({
 }
 
 /**
- * The four-column session flow, simplified to fit a card.
+ * The four-column session flow: a real Sankey, not four parallel rails.
  *
- * Bands connect segment to segment rather than solving a real Sankey layout:
- * at this size an exact one would be a smudge, and the point is to show that
- * the product follows a session from goal to sentiment, not to be readable as
- * data. The columns and their order are the real ones.
+ * WHAT THE FIRST VERSION GOT WRONG. It drew a band from segment `j` to segment
+ * `j`, so every column had to have the same number of segments and nothing
+ * could ever split, merge or cross. That is a picture of a population moving
+ * in lockstep, which is the one thing a user study reliably shows is false.
+ * Ozi's note was that it "does not show diverging paths enough"; it could not
+ * show them at all.
+ *
+ * So the ribbons come from `stage.links` and are laid out properly: each is
+ * stacked within its source node in link order and within its target node in
+ * source order, which is what makes a crossing read as a crossing rather than
+ * as a rendering artifact.
+ *
+ * Two liberties, both deliberate at 100x56. Columns are scaled independently,
+ * so a ribbon tapers slightly when its two columns have different segment
+ * counts and therefore different gap totals — at this size that reads as
+ * perspective, and the alternative is unequal gaps, which reads as a bug.
+ * And labels stay out of the SVG: four columns of legible text does not fit a
+ * card, so the column headings carry the axis and the ribbons carry the shape.
  */
 function SampleFlow({
   sample,
@@ -229,17 +243,68 @@ function SampleFlow({
     "fill-warning/60",
   ];
   const width = 100;
-  const height = 48;
-  const barW = 5;
-  const gap = (width - barW) / (sample.stages.length - 1);
+  const height = 56;
+  const barW = 4;
+  const nodeGap = 3;
+  const colGap = (width - barW) / (sample.stages.length - 1);
 
-  const segments = sample.stages.map((stage) => {
+  // Each column is stacked independently: its gaps come out of the height
+  // first, then the remainder is shared by share. A column with more segments
+  // spends more on gaps, which is why ribbons taper.
+  const columns = sample.stages.map((stage) => {
+    const usable = height - nodeGap * (stage.nodes.length - 1);
     let y = 0;
     return stage.nodes.map((node) => {
-      const h = node.share * (height - 4);
+      const h = node.share * usable;
       const top = y;
-      y += h + 4;
-      return { top, h, label: node.label };
+      y += h + nodeGap;
+      return { top, h, usable, label: node.label };
+    });
+  });
+
+  // Ribbons, with an offset kept per endpoint so two links into the same node
+  // stack instead of overlapping.
+  const ribbons = sample.stages.flatMap((stage, i) => {
+    if (!stage.links) return [];
+    const from = columns[i];
+    const to = columns[i + 1];
+    if (!to) return [];
+
+    const outUsed = from.map(() => 0);
+    const inUsed = to.map(() => 0);
+
+    // Target order is by SOURCE index, so ribbons arrive in the order their
+    // origins sit in the previous column. Sorting by anything else is what
+    // turns a legible crossing into a tangle.
+    const ordered = [...stage.links].sort((a, b) =>
+      a.to === b.to ? a.from - b.from : a.to - b.to,
+    );
+
+    return ordered.flatMap((link) => {
+      const src = from[link.from];
+      const dst = to[link.to];
+      if (!src || !dst) return [];
+
+      const srcH = link.share * src.usable;
+      const dstH = link.share * dst.usable;
+      const y1 = src.top + outUsed[link.from];
+      const y2 = dst.top + inUsed[link.to];
+      outUsed[link.from] += srcH;
+      inUsed[link.to] += dstH;
+
+      const x1 = i * colGap + barW;
+      const x2 = (i + 1) * colGap;
+      const mid = (x1 + x2) / 2;
+
+      return [
+        {
+          key: `${i}-${link.from}-${link.to}`,
+          tone: COLUMN_TONES[i % COLUMN_TONES.length],
+          d:
+            `M${x1},${y1} C${mid},${y1} ${mid},${y2} ${x2},${y2} ` +
+            `L${x2},${y2 + dstH} C${mid},${y2 + dstH} ${mid},${y1 + srcH} ${x1},${y1 + srcH} Z`,
+        },
+      ];
     });
   });
 
@@ -252,35 +317,22 @@ function SampleFlow({
       </div>
       <svg
         viewBox={`0 0 ${width} ${height}`}
-        className="h-16 w-full"
+        className="h-20 w-full"
         preserveAspectRatio="none"
       >
-        {segments.slice(0, -1).map((col, i) =>
-          col.map((seg, j) => {
-            const next = segments[i + 1][j];
-            if (!next) return null;
-            const x1 = i * gap + barW;
-            const x2 = (i + 1) * gap;
-            const mid = (x1 + x2) / 2;
-            return (
-              <path
-                key={`${i}-${j}`}
-                d={`M${x1},${seg.top} C${mid},${seg.top} ${mid},${next.top} ${x2},${next.top} L${x2},${next.top + next.h} C${mid},${next.top + next.h} ${mid},${seg.top + seg.h} ${x1},${seg.top + seg.h} Z`}
-                className={cn(COLUMN_TONES[i], "opacity-30")}
-              />
-            );
-          }),
-        )}
-        {segments.map((col, i) =>
+        {ribbons.map((r) => (
+          <path key={r.key} d={r.d} className={cn(r.tone, "opacity-30")} />
+        ))}
+        {columns.map((col, i) =>
           col.map((seg, j) => (
             <rect
               key={`bar-${i}-${j}`}
-              x={i * gap}
+              x={i * colGap}
               y={seg.top}
               width={barW}
               height={seg.h}
               rx={1.5}
-              className={COLUMN_TONES[i]}
+              className={COLUMN_TONES[i % COLUMN_TONES.length]}
             />
           )),
         )}
