@@ -121,6 +121,10 @@ When the agent pauses, an **Approve / Deny** pill appears in the chat. Denying a
 
 The agent supports MCP Apps widget rendering. When a workspace tool returns an interactive widget — for example, asking "show my servers" — the widget renders inline in the chat, just like widgets in the LLM Playground. You can interact with the widget directly without leaving the panel.
 
+### Out-of-credits state
+
+When your daily MCPJam allowance or credit balance is exhausted, the panel shows the same out-of-credits modal that appears in the Playground — with **Upgrade** and **Buy credits** buttons. Once payment lands, the modal closes and the panel unlocks automatically. Models you access with your own API key (BYOK) are unaffected.
+
 ### Persistence
 
 The panel's open state, width, and active session are saved to your browser's local storage and restored on reload. Conversations persist server-side, so you can close and reopen the panel without losing your chat history.
