@@ -1,3 +1,8 @@
+// The inspector's renderer, for surfaces that have its store/context graph.
+// A transcript without it (Sessions, Scenarios, external embedders) renders
+// through `@mcpjam/chat-ui`; see "Which renderer to use" in chat-ui/README.md
+// before adding a third — and keep anything the two must agree on in shared
+// code, not matching CSS (BB-239).
 import {
   useCallback,
   useEffect,
