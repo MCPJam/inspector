@@ -9,6 +9,12 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-09-14
+
+#### Changed
+
+- **Selecting a stage in Findings now opens that stage's sessions** — on the Findings tab, clicking a stage in the user value chain (Connection → Discovery → Selection → Call → Response → Value) narrows the session list to the sessions that stage is actually about. A passing stage shows the sessions that passed there; a failing or warning stage shows the sessions that failed there. A stage with no verdict leaves the full goal list in place — narrowing there would show an empty list under a header that says the stage was never graded, which would read as "no sessions" rather than "not measured". The persona's sentiment filter and the hide-synthetic policy remain active alongside the stage filter, so the narrowed list stays consistent with the count that opened it.
+
 ### 2026-09-11
 
 #### Added

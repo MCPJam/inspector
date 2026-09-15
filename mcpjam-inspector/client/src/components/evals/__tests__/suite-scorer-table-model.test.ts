@@ -16,6 +16,7 @@ import type { Predicate } from "@mcpjam/sdk/predicates";
 import { groupGradersByStage } from "../suite-grading-model";
 import {
   LEGACY_PREDICATE_KINDS,
+  RUNNER_MEASUREMENT_LABELS,
   ROLE_LEGEND,
   authorablePredicateKinds,
   buildScorerTable,
@@ -169,7 +170,7 @@ describe("buildScorerTable groups", () => {
           kind: "observed",
           muted: true,
           enabled: true,
-          name: "Observed by the runner",
+          name: RUNNER_MEASUREMENT_LABELS[stage],
         }),
       );
       expect(

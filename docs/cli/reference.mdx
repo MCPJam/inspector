@@ -1335,6 +1335,16 @@ conversion refuses rather than approximates. A file count above **10**
 (`repetitions` in a `schemaVersion: "1"` file, `iterations` in `"2"`) is
 refused by name (`REPETITIONS_CAP`) and is not clamped.
 
+**Which vocabulary the sync speaks is the deployment's call.** Before writing
+anything, the CLI reads `GET /capabilities` once. A deployment that advertises
+`vocabulary.version: 2` gets every request with `x-mcpjam-eval-vocabulary: 2`
+and case bodies spelled canonically — `iterations` (the exact count),
+`legacyIterations` (the legacy floor, the same number) and `assertions` —
+instead of `repetitions` / `iterations` / `checks`. A deployment without the
+capability block, or without the capabilities route at all, is spoken to in
+vocabulary 1, byte-for-byte as before. Nothing in the file changes either way:
+the dialect of the file and the vocabulary of the wire are independent.
+
 Cases are synced in batches of at most 100 (`create_eval_cases`). Every
 declared case is created or updated, including `disabled: true` rows. A case
 the file **no longer declares** is deleted from the hosted suite before
@@ -2025,6 +2035,11 @@ Write a hosted eval suite to a local suite file.
 
 The default path uses the suite's **id**, not its display name: an id is stable
 and path-safe, so a rename does not leave a second file behind.
+
+Like `eval run --file`, export reads `GET /capabilities` first and fetches the
+cases in the vocabulary the deployment advertises; the file it writes is the
+same either way. `--schema-version` chooses the file's dialect, the deployment
+chooses the wire's vocabulary, and neither decides the other.
 
 The dialect is the author's choice and is never inferred: a file has no
 handshake with whatever will read it later, so `eval export` keeps writing
