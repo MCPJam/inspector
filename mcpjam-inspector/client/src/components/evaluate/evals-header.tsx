@@ -135,7 +135,7 @@ export function EvalsHeader({
                     </button>
                   </BreadcrumbLink>
                 ) : (
-                  <BreadcrumbPage className="truncate font-semibold text-foreground">
+                  <BreadcrumbPage className="truncate">
                     {children}
                   </BreadcrumbPage>
                 )}

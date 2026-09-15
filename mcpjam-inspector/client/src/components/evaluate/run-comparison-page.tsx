@@ -44,14 +44,14 @@ const RESULT_PILL: Record<
   RunCompareStatus,
   { label: string; className: string }
 > = {
-  passed: { label: "Passed", className: "bg-success/50 text-foreground" },
-  failed: { label: "Failed", className: "bg-destructive/50 text-foreground" },
+  passed: { label: "Passed", className: "bg-success/15 text-foreground" },
+  failed: { label: "Failed", className: "bg-destructive/10 text-destructive" },
   inconclusive: {
     label: "Inconclusive",
-    className: "bg-warning/50 text-foreground",
+    className: "bg-warning/15 text-foreground",
   },
-  timed_out: { label: "Timed out", className: "bg-warning/50 text-foreground" },
-  running: { label: "Running", className: "bg-warning/50 text-foreground" },
+  timed_out: { label: "Timed out", className: "bg-warning/15 text-foreground" },
+  running: { label: "Running", className: "bg-warning/15 text-foreground" },
   // Finished, but nothing judged it — a run older than the `result` field.
   // Neutral rather than dimmed: it ran, it just carries no verdict.
   completed: { label: "Completed", className: "bg-muted text-foreground" },
@@ -72,7 +72,7 @@ function RunResultPill({ status }: { status: RunCompareStatus }) {
   return (
     <span
       className={cn(
-        "inline-block rounded px-1.5 py-0.5 text-[10px] font-medium",
+        "inline-block whitespace-nowrap rounded px-1.5 py-1 text-[10px] font-semibold uppercase",
         pill.className,
       )}
     >
@@ -116,7 +116,7 @@ function MetricCell({
     <td className="whitespace-nowrap px-3 py-2 tabular-nums">
       {cell.value ?? "—"}
       {cell.value != null && detail ? (
-        <span className="block text-[11px] text-muted-foreground">
+        <span className="ml-1 text-[10px] text-muted-foreground">
           {detail}
         </span>
       ) : null}
@@ -134,38 +134,37 @@ function LaneRow({
   const git = readRunGitMetadata(row.run.ciMetadata ?? null);
   return (
     <tr
-      className={cn(
-        "border-b border-border/60",
-        row.isCurrentRun && "bg-muted/40",
-      )}
+      className="border-b border-border/60 transition-colors hover:bg-muted/50"
       {...(row.isCurrentRun ? { "aria-current": "true" as const } : {})}
     >
-      <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">
-        {new Date(row.createdAt).toLocaleString()}
-      </td>
       <td className="whitespace-nowrap px-3 py-2">
         <Button
           variant="link"
-          className="h-auto p-0 font-medium"
+          className="h-auto p-0 text-xs font-semibold text-foreground"
           onClick={() => onOpenRun(row.runId)}
         >
           {row.label}
         </Button>
-        {row.modelTail ? (
-          <span className="block text-[11px] text-muted-foreground">
-            {row.modelTail}
-          </span>
-        ) : null}
-      </td>
-      <td className="whitespace-nowrap px-3 py-2">
-        <RunPlatformBadge run={row.run} />
-        <RunCommitCell git={git} />
       </td>
       <td className="whitespace-nowrap px-3 py-2">
         <RunResultPill status={row.status} />
       </td>
       <MetricCell cell={row.pass} detail={row.passDetail} />
       <DeltaCell delta={row.pass.delta} />
+      <td className="whitespace-nowrap px-3 py-2">
+        <div className="flex items-center gap-2">
+          <RunPlatformBadge run={row.run} neutral />
+          {git?.commitSha ? <RunCommitCell git={git} /> : null}
+        </div>
+      </td>
+      <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">
+        {new Date(row.createdAt).toLocaleString(undefined, {
+          month: "short",
+          day: "numeric",
+          hour: "numeric",
+          minute: "2-digit",
+        })}
+      </td>
       <MetricCell cell={row.p50} />
       <DeltaCell delta={row.p50.delta} />
       <MetricCell cell={row.p95} />
@@ -177,7 +176,7 @@ function LaneRow({
 }
 
 const HEADER_CLASS =
-  "whitespace-nowrap border-b border-border px-3 py-2 text-left text-xs font-medium text-muted-foreground";
+  "whitespace-nowrap border-b border-border px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wide text-muted-foreground";
 
 function LaneSection({
   lane,
@@ -198,7 +197,7 @@ function LaneSection({
   return (
     <Collapsible open={open} onOpenChange={setOpen} asChild>
       <section className="group/lane overflow-hidden rounded-lg border border-border">
-        <div className="flex flex-wrap items-center justify-between gap-3 bg-muted/40 px-3 py-2">
+        <div className="flex flex-wrap items-center justify-between gap-3 bg-muted/50 px-3 py-2">
           <CollapsibleTrigger asChild>
             <Button
               variant="ghost"
@@ -213,6 +212,7 @@ function LaneSection({
                 run={lane.run}
                 hostNamesById={hostNamesById}
                 fallbackName="Suite default"
+                className="border-border bg-background shadow-none"
               />
             </Button>
           </CollapsibleTrigger>
@@ -223,19 +223,19 @@ function LaneSection({
         <CollapsibleContent>
           <div className="overflow-x-auto">
             <table
-              className="w-full border-collapse text-sm"
+              className="w-full border-collapse text-xs"
               aria-label={`Runs for ${lane.label}`}
             >
-              <thead>
+              <thead className="bg-muted/50">
                 <tr>
-                  <th className={HEADER_CLASS}>Date</th>
                   <th className={HEADER_CLASS}>Run</th>
-                  <th className={HEADER_CLASS}>Platform</th>
                   <th className={HEADER_CLASS}>Result</th>
                   <th className={HEADER_CLASS}>Pass</th>
                   <th className={HEADER_CLASS} aria-label="Pass change">
                     Δ
                   </th>
+                  <th className={HEADER_CLASS}>Platform</th>
+                  <th className={HEADER_CLASS}>Date</th>
                   <th className={HEADER_CLASS}>P50</th>
                   <th className={HEADER_CLASS} aria-label="P50 change">
                     Δ

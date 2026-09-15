@@ -225,7 +225,9 @@ describe("SuiteDetailOverview", () => {
     expect(screen.getByTestId("suite-run-history-snapshot")).toHaveTextContent(
       "1/4 passed",
     );
-    await user.click(table.getByRole("button", { name: "Open run #1", exact: true }));
+    await user.click(
+      table.getByRole("button", { name: "Open run #1", exact: true }),
+    );
     expect(onRunClick).toHaveBeenCalledWith("one");
   });
 
@@ -613,6 +615,7 @@ describe("SuiteDetailOverview", () => {
         onEditCases={vi.fn()}
         onGenerateTestCases={vi.fn()}
         canGenerateTestCases
+        generateTestCasesDisabledReason="Generation is in progress"
         isGeneratingTestCases
         onRunClick={vi.fn()}
         onTestCaseClick={vi.fn()}
@@ -626,6 +629,7 @@ describe("SuiteDetailOverview", () => {
     expect(
       screen.getByRole("menuitem", { name: "Generating…" }),
     ).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByText("Generation is in progress")).toBeVisible();
   });
 
   it("hides both case-authoring controls on a read-only suite", () => {

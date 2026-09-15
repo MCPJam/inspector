@@ -64,7 +64,7 @@ describe("CaseRunTimeline", () => {
     );
     expect(screen.getAllByTestId("case-run-row")).toHaveLength(1);
     expect(screen.getByText("1/1")).toBeVisible();
-    expect(screen.getByText("1/1").closest(".grid-cols-5")).toHaveClass(
+    expect(screen.getByTestId("case-run-averages")).toHaveClass(
       "bg-background",
       "text-foreground",
     );

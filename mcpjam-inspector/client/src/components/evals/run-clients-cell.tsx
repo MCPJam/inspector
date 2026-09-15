@@ -19,8 +19,7 @@ type ClientModelPairing = {
 };
 
 function pairingLabel(mapping: ClientModelPairing): string {
-  const models =
-    mapping.models.map(compactModelIdTail).join(", ") || "Model not recorded";
+  const models = mapping.models.map(compactModelIdTail).join(", ") || "-";
   return `${mapping.client} · ${models}`;
 }
 
@@ -38,8 +37,10 @@ export function RunClientsCell({
       rows.map((row) => [
         JSON.stringify([row.client, row.models]),
         {
-          client: row.client ?? "Suite default",
-          models: row.models,
+          client: row.client === "SDK harness" ? "-" : (row.client ?? "-"),
+          models: row.models.filter(
+            (model) => model.trim() && model.trim().toLowerCase() !== "n/a",
+          ),
           hostStyle: row.hostStyle,
         },
       ]),
@@ -47,22 +48,39 @@ export function RunClientsCell({
   ];
   if (!mappings.length) return <span className="text-muted-foreground">—</span>;
 
-  const visible = mappings.slice(0, VISIBLE_RUN_CLIENT_PAIRINGS);
-  const hidden = mappings.slice(VISIBLE_RUN_CLIENT_PAIRINGS);
-  const allLabels = mappings.map(pairingLabel);
+  const entries =
+    column === "client"
+      ? [
+          ...new Map(
+            mappings.map((mapping) => [mapping.client, mapping]),
+          ).values(),
+        ]
+      : mappings;
+  const visible = entries.slice(0, VISIBLE_RUN_CLIENT_PAIRINGS);
+  const hidden = entries.slice(VISIBLE_RUN_CLIENT_PAIRINGS);
+  const allLabels = entries.map((mapping) =>
+    column === "client" ? mapping.client : pairingLabel(mapping),
+  );
   const models = [...new Set(mappings.flatMap((mapping) => mapping.models))];
   // Each column announces ITS OWN values. One shared pairing list made the
   // Client and Model cells read out the same sentence twice per row.
   const columnLabel =
     column === "client"
-      ? mappings.map((mapping) => mapping.client).join(", ")
+      ? entries.map((mapping) => mapping.client).join(", ")
       : column === "model"
-        ? models.map(compactModelIdTail).join(", ") || "Model not recorded"
+        ? models.map(compactModelIdTail).join(", ") || "-"
         : allLabels.join(", ");
   // The expanded model column lists models, so its overflow counts models —
   // the pairing count belongs to the columns that show pairings.
   const visibleModels = models.slice(0, VISIBLE_RUN_CLIENT_PAIRINGS);
   const hiddenModels = models.slice(VISIBLE_RUN_CLIENT_PAIRINGS);
+
+  if (
+    (column === "model" && models.length === 0) ||
+    (column === "client" && mappings.every((mapping) => mapping.client === "-"))
+  ) {
+    return <span className="text-muted-foreground">-</span>;
+  }
 
   const logo = (client: string, hostStyle?: string) => (
     <span className="inline-flex size-4 shrink-0 items-center justify-center overflow-hidden rounded-sm border border-border/50 bg-background">
@@ -89,7 +107,7 @@ export function RunClientsCell({
             className="min-w-0 truncate text-xs text-muted-foreground"
             title={models[0]}
           >
-            {models[0] ? compactModelIdTail(models[0]) : "Model not recorded"}
+            {models[0] ? compactModelIdTail(models[0]) : "-"}
           </span>
           {models.length > 1 && (
             <Tooltip>
@@ -144,10 +162,11 @@ export function RunClientsCell({
                 title={column === "client" ? mapping.client : undefined}
                 className="inline-flex min-w-0 items-center gap-1.5"
               >
-                {logo(mapping.client, mapping.hostStyle)}
+                {mapping.client !== "-" &&
+                  logo(mapping.client, mapping.hostStyle)}
                 <span
                   className={
-                    column === "client"
+                    column === "client" && mapping.client !== "-"
                       ? "hidden truncate text-xs @min-[1100px]/run-history:inline"
                       : "truncate text-xs"
                   }
@@ -156,8 +175,7 @@ export function RunClientsCell({
                   {!column && (
                     <span className="text-muted-foreground">
                       {" · "}
-                      {mapping.models.map(compactModelIdTail).join(", ") ||
-                        "Model not recorded"}
+                      {mapping.models.map(compactModelIdTail).join(", ") || "-"}
                     </span>
                   )}
                 </span>
@@ -174,7 +192,9 @@ export function RunClientsCell({
                 aria-label={
                   column === "model"
                     ? `${hiddenModels.length} more models`
-                    : `${hidden.length} more client and model pairings`
+                    : column === "client"
+                      ? `${hidden.length} more clients`
+                      : `${hidden.length} more client and model pairings`
                 }
               >
                 +{column === "model" ? hiddenModels.length : hidden.length}
@@ -188,9 +208,11 @@ export function RunClientsCell({
               className="max-w-xs text-left"
             >
               <ul className="space-y-1">
-                {(column === "model" ? hiddenModels : allLabels).map((label) => (
-                  <li key={label}>{label}</li>
-                ))}
+                {(column === "model" ? hiddenModels : allLabels).map(
+                  (label) => (
+                    <li key={label}>{label}</li>
+                  ),
+                )}
               </ul>
             </TooltipContent>
           </Tooltip>

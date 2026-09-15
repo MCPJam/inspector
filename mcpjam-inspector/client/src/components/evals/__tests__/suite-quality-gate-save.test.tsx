@@ -31,8 +31,9 @@ vi.mock("convex/react", () => ({
 }));
 
 vi.mock("@/hooks/use-suite-capabilities", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("@/hooks/use-suite-capabilities")>();
+  const actual = await importOriginal<
+    typeof import("@/hooks/use-suite-capabilities")
+  >();
   return {
     ...actual,
     useSuiteCapabilities: () => mocks.capabilities(),
@@ -72,6 +73,8 @@ vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
 vi.mock("posthog-js/react", () => ({ useFeatureFlagEnabled: () => true }));
 vi.mock("@/hooks/useProjectEnvironments", () => ({
   useProjectEnvironments: () => [],
+  useEnsureAdhocEnvironments: () => vi.fn(),
+  useModelMatrixCapability: () => false,
 }));
 vi.mock("../use-suite-data", () => ({
   useSuiteData: () => ({ runTrendData: [], modelStats: [] }),
@@ -310,9 +313,7 @@ describe.skip("a capabilities answer with no verdictPolicyV2", () => {
     const { container } = renderSettingsSheet();
     openSettingsRow(container, "minimumIterations");
 
-    expect(
-      screen.queryByText(/already on verdict policy v2/i),
-    ).toBeNull();
+    expect(screen.queryByText(/already on verdict policy v2/i)).toBeNull();
     expect(container.textContent).toContain("Not available on this deployment");
   });
 });
