@@ -590,7 +590,7 @@ describe("run results matrix", () => {
   });
 
   it.each(["pending", "running", "grading"] as const)(
-    "offers Pending while status is %s",
+    "hides Pending when no pending cases exist while status is %s",
     async (status) => {
       const user = userEvent.setup();
       render(
@@ -603,7 +603,7 @@ describe("run results matrix", () => {
       await user.click(
         screen.getByRole("combobox", { name: "Filter by status" }),
       );
-      expect(screen.getByRole("option", { name: "Pending" })).toBeVisible();
+      expect(screen.queryByRole("option", { name: "Pending" })).toBeNull();
     },
   );
 });
