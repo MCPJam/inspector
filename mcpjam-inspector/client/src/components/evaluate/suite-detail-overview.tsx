@@ -522,7 +522,7 @@ export function SuiteDetailOverview({
               className="h-8"
               onClick={onEditSuite}
             >
-              Edit
+              Configure suite evaluators
             </Button>
           ) : null}
           {configLocked && onDuplicateSuite ? (

@@ -324,7 +324,7 @@ describe("SuiteDetailOverview", () => {
     expect(onTestCaseClick).toHaveBeenCalledWith("case-2");
 
     // "Edit" is the SUITE's (→ settings); the cases card says what it does.
-    await user.click(screen.getByRole("button", { name: "Edit" }));
+    await user.click(screen.getByRole("button", { name: "Configure suite evaluators" }));
     expect(onEditSuite).toHaveBeenCalledTimes(1);
     await user.click(screen.getByRole("button", { name: "Add case" }));
     await user.click(screen.getByRole("menuitem", { name: "Add manually" }));
@@ -884,7 +884,7 @@ describe("SuiteDetailOverview — a CI-managed suite", () => {
   it("replaces Edit with the reason and a way forward", () => {
     renderLocked({ declaredSuiteId: "s_from_file" });
 
-    expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Configure suite evaluators" })).toBeNull();
     // The reason and the remedy TOGETHER. A disabled Edit with a tooltip would
     // make the way out discoverable only by hovering the thing that does not
     // work.
@@ -937,7 +937,7 @@ describe("SuiteDetailOverview — a CI-managed suite", () => {
         rerunningSuiteId={null}
       />,
     );
-    expect(screen.getByRole("button", { name: "Edit" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Configure suite evaluators" })).toBeTruthy();
     expect(screen.queryByTestId("suite-detail-ci-owned")).toBeNull();
     // …and the escape hatch is not offered where there is nothing to escape.
     expect(screen.queryByTestId("suite-detail-duplicate-to-edit")).toBeNull();
