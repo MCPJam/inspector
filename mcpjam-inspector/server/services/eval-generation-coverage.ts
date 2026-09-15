@@ -1,3 +1,7 @@
+import {
+  NO_READ_ONLY_CASES_MESSAGE,
+  NO_READ_ONLY_TOOLS_MESSAGE,
+} from "@/shared/eval-generation-errors";
 import type { ServerToolSnapshot } from "../utils/export-helpers";
 import type { GeneratedTestCase } from "./eval-agent";
 
@@ -21,9 +25,7 @@ export function readOnlyGenerationSnapshot(
     ),
   }));
   if (!servers.some((server) => server.tools.length)) {
-    throw new Error(
-      "No tools are marked read-only on these servers. Choose Read and write or add read-only tool annotations, then try again.",
-    );
+    throw new Error(NO_READ_ONLY_TOOLS_MESSAGE);
   }
   return { ...snapshot, servers };
 }
@@ -59,9 +61,6 @@ export function filterReadOnlyGeneratedCases(
       return true;
     });
   });
-  if (!result.length)
-    throw new Error(
-      "No read-only cases matched the selected scope. Try generating again or choose Read and write.",
-    );
+  if (!result.length) throw new Error(NO_READ_ONLY_CASES_MESSAGE);
   return result;
 }
