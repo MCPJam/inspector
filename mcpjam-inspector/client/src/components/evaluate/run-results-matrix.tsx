@@ -918,7 +918,6 @@ function IterationDrawer({
       <div className="min-h-0 flex-1 overflow-y-auto p-6">
         <IterationDetails
           iteration={iteration}
-          isSdkRun={target.run.source === "sdk" || target.run.client?.source === "sdk"}
           testCase={null}
           layoutMode="full"
           trialVerdictWord={outcomeLabel(result)}
