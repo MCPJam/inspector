@@ -189,8 +189,10 @@ describe("suite settings page", () => {
     // #5088 asserted the opposite half of this: that an ALLOWED upgrade
     // renders an enabled "Switch to verdict policy v2" button. That affordance
     // is deliberately gone, so the assertion is inverted rather than dropped —
-    // the capability is still read by the reviewed operation that performs a
-    // scope change, and this page simply no longer offers one.
+    // the deployment still reports that capability and the server still
+    // enforces it, but no client surface consults it now: there is no
+    // scope-switch operation anywhere in the app, the CLI or MCP. Changing
+    // scope takes a hand-written PATCH.
     //
     // Why it had to go: the button's own proposal divided the stored percent by
     // 100. That preserves the NUMBER and moves the BAR for every suite with

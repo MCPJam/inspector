@@ -189,8 +189,9 @@ describe("suite settings ledger", () => {
   it("offers no scope switch beside the threshold", () => {
     // The switch re-decides every multi-case suite: its own proposal divided
     // the stored percent by 100, which moves the bar even though the number
-    // looks preserved. It is a separate reviewed operation, not a button under
-    // a number field — and no copy on this page names a policy version.
+    // looks preserved. Changing it takes a hand-written PATCH rather than any
+    // affordance this app ships — and no copy on this page names a policy
+    // version.
     const { container } = renderSettingsSheet({ suite: v2Suite });
     const text = container.textContent?.toLowerCase() ?? "";
     expect(text).not.toContain("verdict policy v2");
