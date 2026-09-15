@@ -45,7 +45,11 @@ import {
   MATCH_OPTIONS_DEFAULTS,
   resolveMatchOptions,
 } from "@/shared/eval-matching";
-import { checkRole, checkSeverity, type Predicate } from "@mcpjam/sdk/predicates";
+import {
+  checkRole,
+  checkSeverity,
+  type Predicate,
+} from "@mcpjam/sdk/predicates";
 import {
   formatCriterion,
   PREDICATE_KIND_LABELS,
@@ -145,9 +149,9 @@ function matchRows(matchOptions: EvalMatchOptions | undefined): GraderRow[] {
     {
       id: "match:toolCallOrder",
       kind: "match",
-      label: `Tool call order — ${
+      label: `Tool call order (${
         ORDER_LABEL.get(resolved.toolCallOrder) ?? resolved.toolCallOrder
-      }`,
+      })`,
       role: "gating",
       matchField: "toolCallOrder",
     },
@@ -156,8 +160,8 @@ function matchRows(matchOptions: EvalMatchOptions | undefined): GraderRow[] {
       kind: "match",
       label:
         resolved.maxExtraToolCalls === null
-          ? "Extra tool calls — unlimited"
-          : `Extra tool calls — at most ${resolved.maxExtraToolCalls}`,
+          ? "Extra tool calls (unlimited)"
+          : `Extra tool calls (at most ${resolved.maxExtraToolCalls})`,
       role: "gating",
       matchField: "maxExtraToolCalls",
     },
@@ -171,9 +175,9 @@ function argumentRow(matchOptions: EvalMatchOptions | undefined): GraderRow {
   return {
     id: "match:argumentMatching",
     kind: "match",
-    label: `Arguments — ${
+    label: `Arguments (${
       ARGS_LABEL.get(resolved.argumentMatching) ?? resolved.argumentMatching
-    }`,
+    })`,
     role: "gating",
     matchField: "argumentMatching",
   };
@@ -230,10 +234,9 @@ export function groupGradersByStage(input: {
     id: "judge:goalCompletion",
     kind: "judge",
     label: "Goal completion judge",
-    role:
-      isRequiredRole(input.judgeConfig?.goalCompletion?.role)
-        ? "gating"
-        : "advisory",
+    role: isRequiredRole(input.judgeConfig?.goalCompletion?.role)
+      ? "gating"
+      : "advisory",
     severity: input.judgeConfig?.goalCompletion?.severity,
     judgeSlot: "goalCompletion",
   });

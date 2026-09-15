@@ -2,6 +2,7 @@ import { Button } from "@mcpjam/design-system/button";
 
 /** Sticky draft status with direct save and discard actions. */
 export function SuiteSettingsCommitBar({
+  layout = "sticky",
   changeCount,
   conflictCount,
   canCommit,
@@ -11,6 +12,7 @@ export function SuiteSettingsCommitBar({
   revisionNumber,
   blockingErrors,
 }: {
+  layout?: "sticky" | "inline";
   changeCount: number;
   conflictCount: number;
   canCommit: boolean;
@@ -27,12 +29,16 @@ export function SuiteSettingsCommitBar({
         ? "1 unsaved change"
         : `${changeCount} unsaved changes`
       : changeCount === 1
-        ? `1 setting changed since r${revisionNumber}`
-        : `${changeCount} settings changed since r${revisionNumber}`;
+      ? `1 setting changed since r${revisionNumber}`
+      : `${changeCount} settings changed since r${revisionNumber}`;
   return (
     <div
       data-testid="suite-settings-commit-bar"
-      className="sticky bottom-0 z-10 -mx-6 mt-4 flex items-center justify-between gap-3 border-t border-border bg-background px-6 py-3"
+      className={
+        layout === "inline"
+          ? "flex items-center justify-between gap-3"
+          : "sticky bottom-0 z-10 -mx-6 mt-4 flex items-center justify-between gap-3 border-t border-border bg-background px-6 py-3"
+      }
     >
       {/* The live region is the TEXT, not the bar. Announcing the whole bar
           would re-read Discard and Save settings every time the count

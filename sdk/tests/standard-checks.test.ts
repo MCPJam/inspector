@@ -15,6 +15,10 @@ describe("standard check contract", () => {
     expect(new Set(STANDARD_CHECKS.map((check) => check.id)).size).toBe(
       STANDARD_CHECKS.length
     );
+    expect(new Set(STANDARD_CHECKS.map((check) => check.name)).size).toBe(
+      STANDARD_CHECKS.length
+    );
+    for (const check of STANDARD_CHECKS) expect(check.name.trim()).not.toBe("");
     const assertions = STANDARD_CHECKS.filter(
       (check) => check.kind === "assertion"
     );
@@ -23,6 +27,7 @@ describe("standard check contract", () => {
       assertions.length
     );
     for (const check of assertions) {
+      expect(check.name).not.toBe(check.label);
       expect(predicateSchema.parse(check.preset)).toEqual(check.preset);
       expect(ASSERTION_STAGE[check.preset.type]).toBe(check.stage);
       expect(check.preset).toMatchObject({

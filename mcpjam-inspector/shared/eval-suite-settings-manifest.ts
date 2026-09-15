@@ -79,7 +79,7 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   },
   {
     key: "environments",
-    label: "Clients",
+    label: "Where it runs",
     api: "environmentIds",
   },
   {
@@ -99,7 +99,7 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   },
   {
     key: "checks",
-    label: "Assertions",
+    label: "Checks by stage",
     api: "settings.checks",
   },
   {
@@ -275,15 +275,14 @@ export const SAMPLE_BY_PATH: Readonly<Record<string, unknown>> = {
  * vocabulary-1 sample for the reason stated above — dropping `severity` is a
  * contraction step, not this one.
  */
-export const CANONICAL_ROLE_SAMPLE_BY_PATH: Readonly<
-  Record<string, unknown>
-> = {
-  "settings.checks": [
-    { type: "responseContains", needle: "hi" },
-    { type: "noToolErrors", role: "required" },
-  ],
-  "settings.judge": { enabled: true, role: "required" },
-};
+export const CANONICAL_ROLE_SAMPLE_BY_PATH: Readonly<Record<string, unknown>> =
+  {
+    "settings.checks": [
+      { type: "responseContains", needle: "hi" },
+      { type: "noToolErrors", role: "required" },
+    ],
+    "settings.judge": { enabled: true, role: "required" },
+  };
 
 /**
  * Full PATCH bodies that exercise `settings.qualityGate` against the
