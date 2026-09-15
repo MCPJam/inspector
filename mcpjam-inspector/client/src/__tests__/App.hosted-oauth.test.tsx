@@ -155,10 +155,7 @@ const {
     mockHandleOAuthCallback: vi.fn(),
     mockHostedShellGateState: {
       value: "ready" as
-        | "ready"
-        | "auth-loading"
-        | "project-loading"
-        | "logged-out",
+        "ready" | "auth-loading" | "project-loading" | "logged-out",
     },
     mockListTools: vi.fn().mockResolvedValue({ tools: [] }),
     mockMCPSidebar: vi.fn(() => <div />),
@@ -219,8 +216,8 @@ function mockFreshGuestUser(
           hasSeenOnboarding: false,
         }
       : ref === "projects:getMyProjects"
-      ? allProjects
-      : undefined,
+        ? allProjects
+        : undefined,
   );
 }
 
@@ -3516,6 +3513,36 @@ describe("App hosted OAuth callback handling", () => {
     expect(window.location.pathname).toBe("/");
   });
 
+  it("keeps the active onboarding step open through a readiness flicker", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/");
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+    const appState = createAppStateMock();
+    mockUseAppState.mockReturnValue(appState);
+
+    const view = render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to MCPJam" });
+    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
+    expect(
+      screen.getByRole("heading", { name: "Connect to your MCP server" }),
+    ).toBeInTheDocument();
+
+    window.history.replaceState({}, "", "/tools");
+    view.rerender(<App />);
+
+    expect(
+      screen.getByRole("heading", { name: "Connect to your MCP server" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Welcome to MCPJam" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("shows first-run onboarding from a project-scoped Home route", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
@@ -3611,8 +3638,8 @@ describe("App hosted OAuth callback handling", () => {
             hasSeenOnboarding: false,
           }
         : ref === "projects:getMyProjects"
-        ? []
-        : undefined,
+          ? []
+          : undefined,
     );
 
     render(<App />);
@@ -4672,18 +4699,18 @@ describe("App hosted OAuth callback handling", () => {
       ref === "users:getCurrentUser"
         ? existingConvexUser
         : ref === "hosts:listHosts"
-        ? [
-            {
-              hostId: "m17b6q9xw2tv4kz8p3r5s0dc",
-              name: "Slack",
-              hostConfigId: "host-config-slack",
-              modelId: "claude-sonnet-4",
-              serverCount: 0,
-              createdAt: 0,
-              updatedAt: 0,
-            },
-          ]
-        : undefined,
+          ? [
+              {
+                hostId: "m17b6q9xw2tv4kz8p3r5s0dc",
+                name: "Slack",
+                hostConfigId: "host-config-slack",
+                modelId: "claude-sonnet-4",
+                serverCount: 0,
+                createdAt: 0,
+                updatedAt: 0,
+              },
+            ]
+          : undefined,
     );
     localStorage.setItem(
       "mcp-previewed-host-id",

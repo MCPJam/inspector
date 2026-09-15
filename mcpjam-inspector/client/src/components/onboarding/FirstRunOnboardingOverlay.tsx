@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 import { useReducedMotion } from "framer-motion";
 import { Dialog as DialogPrimitive } from "radix-ui";
 import { Button } from "@mcpjam/design-system/button";
@@ -13,7 +19,14 @@ import {
 } from "@mcpjam/design-system/dialog";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
-import { AlertCircle, Check, ChevronDown, Circle, Loader2 } from "lucide-react";
+import {
+  AlertCircle,
+  Check,
+  ChevronDown,
+  Circle,
+  Loader2,
+  X,
+} from "lucide-react";
 
 /** Time the welcome splash remains visible before it advances to server choice. */
 export const FIRST_RUN_WELCOME_AUTO_ADVANCE_MS = 5_500;
@@ -88,6 +101,7 @@ export function FirstRunOnboardingOverlay({
   onSkip,
 }: FirstRunOnboardingOverlayProps) {
   const prefersReducedMotion = useReducedMotion();
+  const contentRef = useRef<HTMLDivElement>(null);
   const [step, setStep] = useState<FirstRunOverlayStep>(() =>
     skipWelcome ? "choose" : "welcome",
   );
@@ -101,10 +115,6 @@ export function FirstRunOnboardingOverlay({
   );
   const [serverAuthentication, setServerAuthentication] =
     useState<FirstRunServerDraft["authentication"]>("auto");
-
-  useEffect(() => {
-    if (!open) setStep(skipWelcome ? "choose" : "welcome");
-  }, [open, skipWelcome]);
 
   useEffect(() => {
     if (open && step === "welcome") onWelcomeShown();
@@ -233,17 +243,22 @@ export function FirstRunOnboardingOverlay({
         <DialogOverlay
           className={
             step === "welcome"
-              ? "bg-background/95 bg-[radial-gradient(ellipse_at_center,var(--background)_0%,var(--background)_42%,transparent_72%),radial-gradient(circle,var(--primary)_1px,transparent_1px)] bg-[size:auto,24px_24px] backdrop-blur-[32px] backdrop-brightness-50 duration-500 dark:bg-none"
+              ? "dark bg-background bg-[radial-gradient(ellipse_at_center,var(--background)_0%,var(--background)_42%,transparent_72%),radial-gradient(circle,var(--primary)_1px,transparent_1px)] bg-[size:auto,24px_24px] duration-700"
               : "backdrop-blur-sm"
           }
         />
         <DialogPrimitive.Content
+          ref={contentRef}
           className={cn(
-            "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border p-6 shadow-lg duration-200 sm:max-w-lg",
+            "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border p-6 shadow-lg outline-none duration-200 sm:max-w-lg",
             step === "welcome"
-              ? "max-w-[420px] gap-0 border-0 bg-transparent p-1 text-left shadow-none"
+              ? "dark max-w-[420px] gap-0 border-0 bg-transparent p-1 text-left shadow-none"
               : "max-h-[calc(100vh-2rem)] max-w-[408px] gap-0 overflow-y-auto rounded-xl border-border bg-card p-6 shadow-none",
           )}
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            contentRef.current?.focus({ preventScroll: true });
+          }}
           onEscapeKeyDown={(event) => event.preventDefault()}
           onPointerDownOutside={(event) => {
             event.preventDefault();
@@ -253,9 +268,17 @@ export function FirstRunOnboardingOverlay({
           {step === "welcome" ? (
             <>
               <DialogHeader className="gap-0 text-left">
-                <DialogTitle className="max-w-[12ch] pb-0 text-[2rem] leading-[1.12] font-semibold tracking-[-0.038em] text-card-foreground">
-                  Welcome to MCPJam
-                </DialogTitle>
+                <div className="flex items-center gap-4">
+                  <img
+                    src="/mcp_jam.svg"
+                    alt=""
+                    aria-hidden
+                    className="size-14 shrink-0"
+                  />
+                  <DialogTitle className="max-w-[12ch] pb-0 text-[2rem] leading-[1.12] font-semibold tracking-[-0.038em] text-foreground">
+                    Welcome to MCPJam
+                  </DialogTitle>
+                </div>
                 <span
                   className="mt-4 block h-px w-[72px] bg-primary"
                   aria-hidden
@@ -294,6 +317,12 @@ export function FirstRunOnboardingOverlay({
             </>
           ) : step === "choose" ? (
             <>
+              <DialogPrimitive.Close
+                className="ring-offset-background focus:ring-ring absolute top-4 right-4 rounded-xs text-muted-foreground opacity-70 transition-opacity hover:text-foreground hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden"
+                aria-label="Close onboarding"
+              >
+                <X className="size-4" aria-hidden />
+              </DialogPrimitive.Close>
               <DialogHeader className="gap-0 text-left">
                 <DialogTitle className="pb-0 text-[17px] leading-6 font-bold tracking-[-0.02em] text-card-foreground">
                   Connect to your MCP server
@@ -429,7 +458,7 @@ export function FirstRunOnboardingOverlay({
               <DialogHeader className="mt-5 gap-0 !text-center">
                 <DialogTitle className="text-center text-[17px] leading-6 font-bold tracking-[-0.02em] text-card-foreground">
                   Connected to{" "}
-                  <span className="text-success">
+                  <span className="text-card-foreground">
                     {connectionState.serverName}
                   </span>
                 </DialogTitle>

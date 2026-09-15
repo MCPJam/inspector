@@ -3216,6 +3216,7 @@ export default function App() {
     activeMcpProfile,
     activeHost,
     activeHostId,
+    isActiveHostSelectionHydrated,
     setActiveHostId,
   } = useAppState({
     currentUserId: workOsUser?.id ?? null,
@@ -5004,10 +5005,24 @@ export default function App() {
     !firstRunOverlayDismissed &&
     activeTab !== "home" &&
     !hasProjectScopedFirstRunDestination;
+  // Once the first-run overlay is visible, keep that session mounted until
+  // the user explicitly dismisses or completes it. Auth/project readiness can
+  // briefly regress while guest data revalidates; closing and reopening the
+  // dialog in that window produces the visible double-splash flicker and also
+  // resets focus. The route exclusions still win so special full-screen flows
+  // are never covered by onboarding.
+  const shouldKeepFirstRunOverlayOpen =
+    firstRunOverlaySessionStarted &&
+    !firstRunOverlayDismissed &&
+    !isHostedChatRoute &&
+    !isBareCaniuseRoute &&
+    !isLoginInitiationRoute &&
+    !hasHostTemplateVerifyParam;
   const shouldShowFirstRunOverlay =
-    shouldRouteToFirstRunOnboarding &&
-    (activeTab === "home" || hasProjectScopedFirstRunDestination) &&
-    !firstRunOverlayDismissed;
+    shouldKeepFirstRunOverlayOpen ||
+    (shouldRouteToFirstRunOnboarding &&
+      (activeTab === "home" || hasProjectScopedFirstRunDestination) &&
+      !firstRunOverlayDismissed);
 
   useLayoutEffect(() => {
     if (shouldRouteToFirstRunOnboarding) {
@@ -5765,6 +5780,8 @@ export default function App() {
             isAuthenticated={isAuthenticated}
             activeHost={activeHost}
             activeHostId={activeHostId}
+            isActiveHostSelectionHydrated={isActiveHostSelectionHydrated}
+            suspendAutoConnect={shouldShowFirstRunOverlay}
           />
           <AppReadyProvider
             isLoadingAppState={isLoading}

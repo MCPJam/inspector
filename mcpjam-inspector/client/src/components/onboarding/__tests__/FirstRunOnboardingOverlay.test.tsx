@@ -45,6 +45,7 @@ function renderOverlay(
     />,
   );
   return {
+    view,
     onConnectOwnServer,
     onConnectDemo,
     onCancelConnection,
@@ -96,13 +97,14 @@ describe("FirstRunOnboardingOverlay", () => {
   it("advances from the welcome card with Get started", () => {
     renderOverlay();
 
+    expect(
+      document.querySelector('img[src="/mcp_jam.svg"]'),
+    ).toBeInTheDocument();
     expect(document.querySelector('[data-slot="dialog-overlay"]')).toHaveClass(
-      "backdrop-blur-[32px]",
-      "bg-background/95",
+      "bg-background",
       "bg-[radial-gradient(ellipse_at_center,var(--background)_0%,var(--background)_42%,transparent_72%),radial-gradient(circle,var(--primary)_1px,transparent_1px)]",
       "bg-[size:auto,24px_24px]",
-      "dark:bg-none",
-      "duration-500",
+      "duration-700",
     );
     const continueButton = screen.getByRole("button", { name: "Get started" });
     expect(continueButton).toHaveClass("justify-self-start");
@@ -118,6 +120,48 @@ describe("FirstRunOnboardingOverlay", () => {
     expect(document.querySelector('[data-slot="dialog-overlay"]')).toHaveClass(
       "backdrop-blur-sm",
     );
+  });
+
+  it("keeps its current step if eligibility briefly flickers", () => {
+    const {
+      view,
+      onConnectOwnServer,
+      onConnectDemo,
+      onCancelConnection,
+      onReturnToChoice,
+      onOpenPlayground,
+      onWelcomeShown,
+      onSkip,
+    } = renderOverlay();
+
+    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
+    expect(
+      screen.getByRole("heading", { name: "Connect to your MCP server" }),
+    ).toBeInTheDocument();
+
+    const renderWithOpen = (open: boolean) => (
+      <FirstRunOnboardingOverlay
+        open={open}
+        connectionState={{ status: "idle" }}
+        onConnectOwnServer={onConnectOwnServer}
+        onConnectDemo={onConnectDemo}
+        onCancelConnection={onCancelConnection}
+        onReturnToChoice={onReturnToChoice}
+        onOpenPlayground={onOpenPlayground}
+        onWelcomeShown={onWelcomeShown}
+        onSkip={onSkip}
+      />
+    );
+
+    view.rerender(renderWithOpen(false));
+    view.rerender(renderWithOpen(true));
+
+    expect(
+      screen.getByRole("heading", { name: "Connect to your MCP server" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Welcome to MCPJam" }),
+    ).not.toBeInTheDocument();
   });
 
   it("advances from the welcome card with Enter", () => {
@@ -230,6 +274,15 @@ describe("FirstRunOnboardingOverlay", () => {
     expect(onSkip).toHaveBeenCalledOnce();
   });
 
+  it("dismisses the server-choice modal from its close control", () => {
+    const { onSkip } = renderOverlay();
+    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Close onboarding" }));
+
+    expect(onSkip).toHaveBeenCalledOnce();
+  });
+
   it("shows project preparation separately from the MCP handshake", () => {
     const { rerenderWithConnectionState } = renderOverlay();
 
@@ -296,7 +349,7 @@ describe("FirstRunOnboardingOverlay", () => {
     expect(
       screen.getByRole("heading", { name: "Connected to My server" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("My server")).toHaveClass("text-success");
+    expect(screen.getByText("My server")).toHaveClass("text-card-foreground");
     expect(screen.getByTestId("first-run-success-indicator")).toHaveClass(
       "border-success",
       "bg-success",
