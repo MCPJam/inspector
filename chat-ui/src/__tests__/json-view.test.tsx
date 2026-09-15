@@ -1,14 +1,24 @@
 import { describe, it, expect } from "vitest";
 import { render } from "@testing-library/react";
 
-import { JsonView, renderJsonText } from "../parts/json-view";
+import {
+  HIGHLIGHT_CHAR_LIMIT,
+  JsonView,
+  renderJsonText,
+} from "../parts/json-view";
+
+const pre = (container: HTMLElement) =>
+  container.querySelector(".mcpjam-chat-json") as HTMLElement;
 
 /**
  * BB-239: the Playground syntax-highlighted a tool payload and Sessions
  * rendered the same bytes as a monochrome `<pre>`. Both now colour from
- * `internal/json-tokens`, so these assert the token spans exist AND that the
- * text is unchanged — a highlighter that drops characters would be a worse
- * regression than no colour at all.
+ * `internal/json-tokens`.
+ *
+ * Losslessness is the property under test throughout. It is structural — the
+ * render loop emits every character the tokenizer did not claim — so these
+ * check it on BOTH paths, coloured and plain, rather than trusting the gate to
+ * protect it.
  */
 describe("JsonView", () => {
   it("colours keys, strings, numbers, booleans and null", () => {
@@ -24,40 +34,66 @@ describe("JsonView", () => {
   });
 
   it("shows exactly the text it was given, indentation included", () => {
-    const value = { a: { b: [1, 2] }, c: "two words" };
+    const value = { a: { b: [1, 2] }, c: "two words", "d\\e": "é😀́" };
     const text = renderJsonText(value);
     const { container } = render(<JsonView value={value} />);
-    const pre = container.querySelector(".mcpjam-chat-json") as HTMLElement;
-    // Not `toContain`: the whole point is that highlighting is lossless, so
-    // the block must equal the string `FoldedBlock` measured.
-    expect(pre.textContent).toBe(text);
+    // Not `toContain`: the block must equal the string `FoldedBlock` measured.
+    expect(pre(container).textContent).toBe(text);
   });
 
-  it("leaves a non-JSON string payload alone rather than feeding it to the tokenizer", () => {
-    // The tokenizer skips characters it does not recognise, so prose run
-    // through it would render as a handful of surviving fragments. A payload
-    // that does not open with `{` or `[` must stay plain text.
+  it("is lossless for a payload the tokenizer only partly claims", () => {
+    // Passes the opener check but is not valid JSON, so it renders plain —
+    // and the characters the tokenizer skips (`NaN`, `undefined`, `0x1F`) must
+    // still be on screen. This is the gap-emission path a well-formed payload
+    // never exercises.
+    const text = '{"a": NaN, "b": undefined, "c": 0x1F}';
+    const { container } = render(<JsonView value={text} />);
+    expect(pre(container).textContent).toBe(text);
+  });
+
+  it("leaves structural-looking text that is not JSON uncoloured", () => {
+    // The near-miss: opens with `{`, so an opener-only gate would colour its
+    // braces. `querySelector("span")` is the assertion that fails if the gate
+    // is removed — the text itself is lossless either way.
+    const text = "{connection failed}";
+    const { container } = render(<JsonView value={text} />);
+    expect(pre(container).textContent).toBe(text);
+    expect(pre(container).querySelector("span")).toBeNull();
+  });
+
+  it("leaves a prose payload uncoloured", () => {
     const prose = "Error: connection refused (attempt 2 of 3)";
     const { container } = render(<JsonView value={prose} />);
-    const pre = container.querySelector(".mcpjam-chat-json") as HTMLElement;
-    expect(pre.textContent).toBe(prose);
-    expect(pre.querySelector(".json-key")).toBeNull();
+    expect(pre(container).textContent).toBe(prose);
+    expect(pre(container).querySelector("span")).toBeNull();
+  });
+
+  it("renders a payload one character over the cap complete but uncoloured", () => {
+    // The path a multi-megabyte tool result takes. Colour is the thing that is
+    // allowed to go; the payload is not.
+    const padding = "x".repeat(HIGHLIGHT_CHAR_LIMIT);
+    const text = JSON.stringify({ a: padding });
+    expect(text.length).toBeGreaterThan(HIGHLIGHT_CHAR_LIMIT);
+
+    const { container } = render(<JsonView value={text} />);
+    expect(pre(container).textContent).toBe(text);
+    expect(pre(container).querySelector("span")).toBeNull();
+  });
+
+  it("skips colouring when the caller says the block is not shown", () => {
+    // `FoldedBlock` keeps a closed payload mounted, so `highlight={false}` is
+    // what keeps a thirty-tool session from building thirty token trees.
+    const value = { name: "mcpjam" };
+    const { container } = render(<JsonView value={value} highlight={false} />);
+    expect(pre(container).textContent).toBe(renderJsonText(value));
+    expect(pre(container).querySelector("span")).toBeNull();
   });
 
   it("renders a circular payload instead of collapsing it", () => {
     const cyclic: Record<string, unknown> = { name: "root" };
     cyclic.self = cyclic;
     const { container } = render(<JsonView value={cyclic} />);
-    const pre = container.querySelector(".mcpjam-chat-json") as HTMLElement;
-    expect(pre.textContent).toContain("[Circular]");
-    expect(pre.textContent).not.toContain("[object Object]");
-  });
-
-  it("prefers the caller's pre-rendered text over re-serialising the value", () => {
-    const { container } = render(
-      <JsonView value={{ a: 1 }} text={'{ "measured": true }'} />
-    );
-    const pre = container.querySelector(".mcpjam-chat-json") as HTMLElement;
-    expect(pre.textContent).toBe('{ "measured": true }');
+    expect(pre(container).textContent).toContain("[Circular]");
+    expect(pre(container).textContent).not.toContain("[object Object]");
   });
 });

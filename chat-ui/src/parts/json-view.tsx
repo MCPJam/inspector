@@ -42,50 +42,62 @@ export function renderJsonText(value: unknown): string {
 }
 
 /**
- * Past this many characters a payload stops being read and starts being
- * scrolled, and tokenising it on every render costs more than the colour is
- * worth. Beyond the cap the same text renders as plain monospace — still
- * complete, still foldable, just uncoloured.
- *
- * Generous on purpose: a tool result big enough to trip this is already behind
- * a closed `FoldedBlock`, so the uncoloured case is one a reader has to go
- * looking for.
+ * Past this many characters, colouring costs more than it returns: one React
+ * element per token, against a payload nobody reads line by line. Beyond it
+ * the same text renders as plain monospace — complete, foldable, uncoloured.
  */
 export const HIGHLIGHT_CHAR_LIMIT = 100_000;
 
+/** Index of the first non-whitespace character, or -1. */
+function firstNonSpace(text: string): number {
+  for (let i = 0; i < text.length; i += 1) {
+    const code = text.charCodeAt(i);
+    if (code !== 32 && (code < 9 || code > 13)) return i;
+  }
+  return -1;
+}
+
 /**
- * Whether `text` is worth handing to the tokenizer.
+ * Whether `text` is JSON worth colouring.
  *
- * `renderJsonText` passes STRING payloads through verbatim, so plenty of what
- * reaches this view is prose, a stack trace, or a bare log line rather than
- * JSON. The tokenizer skips characters it does not recognise, so feeding it
- * prose does not throw — it silently drops most of the text, which would
- * render a *truncated* payload. Gating on a structural opener is what keeps
- * the uncoloured path lossless.
+ * NOT a losslessness guard. Rendering is lossless for any input — the loop
+ * below emits every character the tokenizer did not claim, and every token's
+ * value is a raw slice — so a payload that slips past this gate is miscoloured
+ * at worst, never truncated. Do not "simplify" that loop to emit only token
+ * spans on the strength of this check.
+ *
+ * What it buys: `renderJsonText` passes STRING payloads through verbatim, so a
+ * lot of what arrives here is prose or a stack trace. The tokenizer ignores
+ * characters it does not recognise, so `{connection failed}` would come back
+ * with coloured braces and `Error: expected null` with a coloured `null`. The
+ * parse is what separates real JSON from text that merely looks structural;
+ * the opener check in front of it keeps prose from paying for a parse at all.
  */
 function shouldHighlight(text: string): boolean {
   if (text.length > HIGHLIGHT_CHAR_LIMIT) return false;
-  const head = text.trimStart()[0];
-  return head === "{" || head === "[";
+  const head = firstNonSpace(text);
+  if (head === -1) return false;
+  const opener = text[head];
+  if (opener !== "{" && opener !== "[") return false;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return typeof parsed === "object" && parsed !== null;
+  } catch {
+    return false;
+  }
 }
 
 /**
  * Read-only JSON display: the payload as monospace text, coloured by the same
  * tokenizer the Playground's `JsonEditor` uses (`internal/json-tokens`).
- *
- * Deliberately NOT the inspector's `@/components/ui/json-editor` — that is
- * CodeMirror-based and editable, and Tier A only needs to *show* a payload.
- * Sharing the tokenizer instead of the component is what gives Sessions the
- * Playground's colours without dragging an editor into a read-only package
- * (BB-239).
- *
- * Anything that is not a JSON object or array — a string payload, a stack
- * trace — renders as plain text rather than being forced through the
- * tokenizer; see `shouldHighlight`.
+ * Sharing the tokenizer rather than the component is what gives Sessions the
+ * Playground's colours without pulling CodeMirror into a read-only package
+ * (BB-239). Anything that is not JSON renders plain; see `shouldHighlight`.
  */
 export function JsonView({
   value,
   text: preRendered,
+  highlight = true,
   className,
 }: {
   value: unknown;
@@ -101,6 +113,16 @@ export function JsonView({
    * string/object branch below and being trusted to keep agreeing.
    */
   text?: string;
+  /**
+   * Set `false` to skip colouring entirely.
+   *
+   * For content that is mounted but not shown: `FoldedBlock` keeps a closed
+   * payload in the DOM (clipped, `inert`) rather than unmounting it, so a
+   * transcript with thirty tool calls would otherwise build a token tree per
+   * hidden payload. One text node is the right cost for something nobody is
+   * reading.
+   */
+  highlight?: boolean;
   className?: string;
 }) {
   const text = preRendered ?? renderJsonText(value);
@@ -108,13 +130,12 @@ export function JsonView({
   /**
    * Tokens, or `null` for "render this as plain text".
    *
-   * Memoised on the text alone: the tokenizer is a full scan of the payload,
-   * and a transcript re-renders on every hover, fold and score that lands
-   * anywhere in it.
+   * Memoised on the text: the tokenizer is a full scan of the payload, and a
+   * transcript re-renders on every hover, fold and score that lands in it.
    */
   const tokens = useMemo(
-    () => (shouldHighlight(text) ? tokenizeJson(text) : null),
-    [text]
+    () => (highlight && shouldHighlight(text) ? tokenizeJson(text) : null),
+    [text, highlight]
   );
 
   const body = useMemo(() => {

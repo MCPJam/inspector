@@ -1,16 +1,8 @@
 /**
- * JSON tokenizer shared by every MCPJam surface that shows a JSON payload.
- *
- * Lives in Tier A (`@mcpjam/chat-ui`) rather than in the inspector because
- * BOTH renderers need it and there must only ever be one of it. The
- * inspector's `ui/json-editor` re-exports this module, so the Playground's
- * `JsonEditor` and the Sessions transcript's `JsonView` colour a payload from
- * the same token stream. That is the BB-239 point: Sessions rendered a
- * monochrome `<pre>` while the Playground syntax-highlighted the same bytes,
- * and the two were free to drift because they shared no code.
- *
- * Pure and dependency-free — no React, no DOM, no provider wiring — which is
- * what lets it sit below both renderers instead of beside one of them.
+ * JSON tokenizer shared by every MCPJam surface that shows a JSON payload:
+ * the transcript's `JsonView` and, via `@mcpjam/chat-ui/json-tokens`, the
+ * inspector's `JsonEditor`. Pure — no React, no DOM — so it can sit below both
+ * renderers rather than beside one of them (BB-239).
  */
 
 export type TokenType =

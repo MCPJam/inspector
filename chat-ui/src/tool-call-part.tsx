@@ -110,7 +110,9 @@ export function ToolCallPart({
 
       {hasInput ? (
         <FoldedBlock label="Input" text={inputText}>
-          <JsonView value={input} text={inputText} />
+          {/* Coloured only once open: a closed block stays mounted, and a
+              token tree for six clipped lines is the wrong trade. */}
+          {(open) => <JsonView value={input} text={inputText} highlight={open} />}
         </FoldedBlock>
       ) : null}
 
@@ -138,7 +140,9 @@ export function ToolCallPart({
 
       {hasRawOutput ? (
         <FoldedBlock label="Output" text={outputText}>
-          <JsonView value={output} text={outputText} />
+          {(open) => (
+            <JsonView value={output} text={outputText} highlight={open} />
+          )}
         </FoldedBlock>
       ) : null}
     </div>

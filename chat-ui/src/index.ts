@@ -42,13 +42,14 @@ export { SourceUrlPart } from "./parts/source-url-part";
 export { SourceDocumentPart } from "./parts/source-document-part";
 export { JsonPart } from "./parts/json-part";
 export { JsonView } from "./parts/json-view";
-// The one JSON tokenizer. Public because the inspector's `ui/json-editor`
-// re-exports it: the Playground's editor and this package's `JsonView` colour
-// a payload from the same token stream, which is what stops the two surfaces
-// drifting apart again (BB-239).
+// The one JSON tokenizer, also on the `@mcpjam/chat-ui/json-tokens` subpath
+// for consumers that want it without the renderer graph (BB-239).
+//
+// `highlightJson` is deliberately NOT re-exported here: it returns a raw HTML
+// string for `dangerouslySetInnerHTML`, and its escaping is element-content
+// only. It stays on the subpath, next to the editor that already feeds it.
 export {
   formatPath,
-  highlightJson,
   tokenizeJson,
   type Token,
   type TokenType,

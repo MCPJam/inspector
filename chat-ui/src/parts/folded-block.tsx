@@ -89,10 +89,19 @@ export function FoldedBlock({
   label: string;
   /** The payload as text — used ONLY to decide whether to fold and to size it. */
   text: string;
-  children: ReactNode;
+  /**
+   * The payload body. As a FUNCTION it is told whether the block is open, so a
+   * renderer whose cost scales with the payload can stay cheap while closed —
+   * the collapsed branch below keeps its children mounted rather than
+   * unmounting them, so a syntax-highlighted `JsonView` would build a full
+   * token tree for content clipped to six lines.
+   */
+  children: ReactNode | ((open: boolean) => ReactNode);
   className?: string;
 }) {
   const folds = shouldFold(text);
+  const body = (isOpen: boolean) =>
+    typeof children === "function" ? children(isOpen) : children;
   // Big blocks start closed. The transcript is the thing being read; a tool
   // result is evidence you open when the conversation makes you curious.
   const [open, setOpen] = useState(false);
@@ -101,7 +110,7 @@ export function FoldedBlock({
     return (
       <div className={cn("space-y-1", className)}>
         <div className="font-medium text-muted-foreground">{label}</div>
-        {children}
+        {body(true)}
       </div>
     );
   }
@@ -135,7 +144,7 @@ export function FoldedBlock({
         </span>
       </button>
       {open ? (
-        children
+        body(true)
       ) : (
         <div
           className="relative max-h-24 overflow-hidden"
@@ -153,7 +162,7 @@ export function FoldedBlock({
           aria-hidden
           inert
         >
-          {children}
+          {body(false)}
           {/* Fades the cut rather than ending it on a hard edge, which reads
               as a rendering glitch instead of "there is more". */}
           <div

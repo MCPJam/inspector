@@ -30,19 +30,12 @@ export interface MessageViewProps {
   renderTool?: (ctx: ToolRenderContext) => ReactNode;
   renderWidget?: (input: WidgetRenderInput) => ReactNode;
   /**
-   * Show an avatar to the left of assistant messages. **Off by default.**
-   *
-   * The default used to be `true`, which put a generic `MessageCircle` bubble
-   * in front of every assistant response in Sessions — the "generic chat icon"
-   * BB-239 was filed about. The Playground and Chat renderer
-   * (`chat-v2/thread/transcript-thread.tsx`) has never drawn one, so the
-   * default was also the single thing making two views of the same
-   * conversation look like two products.
-   *
-   * The prop stays because the *seam* is still right: a host with a real
-   * identity to show — a provider logo, a named persona — opts in and supplies
-   * it via `renderAvatar`. What is wrong is spending a 32px gutter on an icon
-   * that identifies nothing.
+   * Show an avatar to the left of assistant messages. Defaults to whether
+   * `renderAvatar` was supplied — so a host that passes one gets it, and a
+   * host that passes neither gets no gutter (BB-239: the generic
+   * `MessageCircle` this used to default to identified nothing, and the
+   * Playground renderer has never drawn one). Pass `true` without
+   * `renderAvatar` for the built-in placeholder.
    */
   showAssistantAvatar?: boolean;
   /** Host override for the assistant avatar (e.g. provider logos). */
@@ -91,7 +84,7 @@ function MessageViewImpl({
   widgetPolicy = "placeholder",
   renderTool,
   renderWidget,
-  showAssistantAvatar = false,
+  showAssistantAvatar,
   renderAvatar,
   renderTurnFooter,
   turnIndex = 0,
@@ -143,6 +136,11 @@ function MessageViewImpl({
 
   const steps = groupAssistantPartsIntoSteps(message.parts ?? []);
 
+  // A host that supplies `renderAvatar` and nothing else means to show it.
+  // Requiring both props would make that a silent no-op; an explicit `false`
+  // still wins, so a host can pass a renderer and suppress it per surface.
+  const withAvatar = showAssistantAvatar ?? Boolean(renderAvatar);
+
   const avatar = renderAvatar ? (
     renderAvatar(model)
   ) : (
@@ -157,12 +155,12 @@ function MessageViewImpl({
   return (
     <article
       className={
-        showAssistantAvatar
+        withAvatar
           ? "mcpjam-chat-message mcpjam-chat-message-assistant group/assistant-message flex w-full min-w-0 gap-4"
           : "mcpjam-chat-message mcpjam-chat-message-assistant group/assistant-message w-full min-w-0"
       }
     >
-      {showAssistantAvatar ? avatar : null}
+      {withAvatar ? avatar : null}
       <div className="min-w-0 flex-1">
         <div className="space-y-6 text-sm leading-6">
           {steps.map((stepParts, sIdx) => (

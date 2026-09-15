@@ -1,12 +1,15 @@
 /**
- * The JSON tokenizer now lives in `@mcpjam/chat-ui` (Tier A), because the
- * Sessions transcript needs exactly the same token stream this editor does.
+ * The JSON tokenizer now lives in `@mcpjam/chat-ui`, because the Sessions
+ * transcript needs the same token stream this editor does and one of them had
+ * to be the source (BB-239).
  *
- * Kept as a re-export rather than updating ~6 call sites: this path is the
- * json-editor's own internal module boundary, and the point of the move is
- * that there is ONE tokenizer, not that every consumer learns where it now
- * lives. `@mcpjam/chat-ui` resolves to source via the client vite alias, so
- * this costs no build ordering.
+ * Imported from the `json-tokens` subpath, not the package barrel: these are
+ * three pure functions, and the barrel would pull React, lucide and the
+ * markdown tree into the editor's import graph and into its unit tests.
+ *
+ * Kept as a re-export so the editor's own call sites — `json-editor-edit.tsx`,
+ * `json-highlighter.tsx`, `truncatable-string.tsx` — do not have to care where
+ * it went.
  */
 export {
   formatPath,
@@ -14,4 +17,4 @@ export {
   tokenizeJson,
   type Token,
   type TokenType,
-} from "@mcpjam/chat-ui";
+} from "@mcpjam/chat-ui/json-tokens";
