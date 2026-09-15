@@ -31,6 +31,12 @@ interface UseOnboardingOptions {
   isClientConfigSyncPending?: boolean;
   /** False while the Convex servers query is still in flight. */
   areServersHydrated?: boolean;
+  /**
+   * The first-run overlay now owns the explicit server choice. This remains
+   * opt-in for legacy Playground consumers that still need the old guided
+   * Excalidraw experience.
+   */
+  autoConnectFirstRun?: boolean;
 }
 
 interface UseOnboardingReturn {
@@ -70,6 +76,7 @@ function getInitialLocalPhase(
     hasRemoteOnboardingState = false,
     hasSeenOnboarding = false,
     areServersHydrated = true,
+    autoConnectFirstRun = true,
   }: Pick<
     UseOnboardingOptions,
     | "isSignedInWithWorkOs"
@@ -77,10 +84,12 @@ function getInitialLocalPhase(
     | "hasRemoteOnboardingState"
     | "hasSeenOnboarding"
     | "areServersHydrated"
+    | "autoConnectFirstRun"
   >,
 ): OnboardingPhase {
   if (isWorkOsAuthLoading) return "dismissed";
   if (isSignedInWithWorkOs) return "completed";
+  if (!autoConnectFirstRun) return "dismissed";
 
   const persisted = readOnboardingState();
   if (persisted?.status === "completed") return "completed";
@@ -134,6 +143,7 @@ export function useOnboarding({
   isProjectProvisioned = true,
   isClientConfigSyncPending = false,
   areServersHydrated = true,
+  autoConnectFirstRun = true,
 }: UseOnboardingOptions): UseOnboardingReturn {
   const markOnboardingAsShownMutation = useMutation(
     "users:markOnboardingShown" as any,
@@ -150,6 +160,7 @@ export function useOnboarding({
       hasRemoteOnboardingState,
       hasSeenOnboarding,
       areServersHydrated,
+      autoConnectFirstRun,
     }),
   );
 
@@ -213,6 +224,7 @@ export function useOnboarding({
         hasRemoteOnboardingState,
         hasSeenOnboarding,
         areServersHydrated,
+        autoConnectFirstRun,
       });
     });
   }, [
@@ -222,10 +234,12 @@ export function useOnboarding({
     isSignedInWithWorkOs,
     hasRemoteOnboardingState,
     hasSeenOnboarding,
+    autoConnectFirstRun,
   ]);
 
   // First-run guests: auto-connect Excalidraw in the background (no welcome overlay).
   useEffect(() => {
+    if (!autoConnectFirstRun) return;
     if (isWorkOsAuthLoading || isSignedInWithWorkOs) return;
     if (didAutoConnectRef.current) return;
     // A fresh Playground creates its starter clients before onboarding runs.
@@ -286,6 +300,7 @@ export function useOnboarding({
     hasSeenOnboarding,
     onConnect,
     trackingProps,
+    autoConnectFirstRun,
   ]);
 
   // Monitor server connection for Excalidraw after connect is requested
@@ -373,6 +388,7 @@ export function useOnboarding({
         hasRemoteOnboardingState,
         hasSeenOnboarding,
         areServersHydrated: true,
+        autoConnectFirstRun,
       }),
     );
 
