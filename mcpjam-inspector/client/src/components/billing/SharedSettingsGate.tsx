@@ -10,12 +10,16 @@ type Access = "allowed" | "loading" | "unavailable" | "upgrade";
 export function sharedSettingsAccess(
   userId: string | null | undefined,
   creatorId: string | null | undefined,
-  billing: Pick<OrganizationBillingStatus, "effectivePlan"> | undefined,
+  billing:
+    | Pick<OrganizationBillingStatus, "effectivePlan" | "pricingVersion">
+    | undefined,
 ): Access {
   if (userId === undefined) return "loading";
   if (!userId) return "unavailable";
   if (creatorId && userId === creatorId) return "allowed";
   if (
+    // Legacy Free retains its existing role-based collaboration access.
+    (billing?.effectivePlan === "free" && billing.pricingVersion === "v1") ||
     billing?.effectivePlan === "team" ||
     billing?.effectivePlan === "enterprise"
   )
@@ -62,7 +66,7 @@ function SharedSettingsAccess({
       : sharedSettingsAccess(
           isLoading || (isAuthenticated && (!ready || user === undefined))
             ? undefined
-            : user?._id ?? null,
+            : (user?._id ?? null),
           creatorId,
           billing,
         );
@@ -79,8 +83,8 @@ function SharedSettingsAccess({
         {access === "loading"
           ? "Checking access…"
           : access === "upgrade"
-          ? `Editing someone else’s ${resource} requires Basic RBAC, included with Team and Enterprise.`
-          : "We couldn’t verify your access to these settings. Refresh the page or ask a project admin."}
+            ? `Editing someone else’s ${resource} requires Basic RBAC, included with Team and Enterprise.`
+            : "We couldn’t verify your access to these settings. Refresh the page or ask a project admin."}
       </p>
       {access === "upgrade" && organizationId && (
         <>

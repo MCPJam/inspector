@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const state = vi.hoisted(() => ({
   plan: "free",
+  pricingVersion: "v2",
   user: "viewer",
   fail: false,
   projectsMissing: false,
@@ -13,10 +14,10 @@ vi.mock("convex/react", () => ({
     return name === "users:getCurrentUser"
       ? { _id: state.user }
       : name === "projects:getMyProjects"
-      ? state.projectsMissing
-        ? []
-        : [{ _id: "project", organizationId: "org" }]
-      : { effectivePlan: state.plan };
+        ? state.projectsMissing
+          ? []
+          : [{ _id: "project", organizationId: "org" }]
+        : { effectivePlan: state.plan, pricingVersion: state.pricingVersion };
   },
 }));
 vi.mock("@/contexts/db-user-ready-context", () => ({
@@ -30,6 +31,7 @@ beforeEach(() => {
   state.fail = false;
   state.projectsMissing = false;
   state.plan = "free";
+  state.pricingVersion = "v2";
   state.user = "viewer";
 });
 vi.mock("@/lib/error-reporting", () => ({ reportBoundaryError: vi.fn() }));
@@ -78,6 +80,28 @@ describe("shared settings access", () => {
     );
     expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
   });
+
+  it.each(["eval suite", "user-testing study", "swarm settings"])(
+    "preserves legacy Free collaborator access to %s",
+    (resource) => {
+      state.pricingVersion = "v1";
+      render(
+        <SharedSettingsGate
+          projectId="project"
+          creatorId="creator"
+          resource={resource}
+        >
+          <button disabled>Role-restricted save</button>
+        </SharedSettingsGate>,
+      );
+      expect(
+        screen.getByRole("button", { name: "Role-restricted save" }),
+      ).toBeDisabled();
+      expect(
+        screen.queryByRole("link", { name: "View Team plans" }),
+      ).not.toBeInTheDocument();
+    },
+  );
 
   it.each(["free", "pro"])("offers Team for non-creators on %s", (plan) => {
     state.plan = plan;
