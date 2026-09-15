@@ -771,7 +771,9 @@ describe("SuiteDetailOverview", () => {
     expect(
       screen.getByRole("combobox", { name: "Filter by client" }),
     ).toHaveTextContent("Cursor");
-    await user.click(screen.getByRole("combobox", { name: "Filter by client" }));
+    await user.click(
+      screen.getByRole("combobox", { name: "Filter by client" }),
+    );
     expect(screen.getByRole("option", { name: "Cursor" })).toBeVisible();
     await user.click(screen.getByRole("option", { name: "All clients" }));
     expect(screen.getByTestId("suite-run-row-run-1")).toBeTruthy();
@@ -991,4 +993,65 @@ it("opens SDK setup from the suite header", async () => {
     .setup()
     .click(screen.getByRole("button", { name: "Setup SDK" }));
   expect(onSetupSdk).toHaveBeenCalledTimes(1);
+});
+
+it("deletes a test case from its row after confirming", async () => {
+  const onDeleteTestCasesBatch = vi.fn().mockResolvedValue(undefined);
+  const onTestCaseClick = vi.fn();
+  const user = userEvent.setup();
+
+  renderWithProviders(
+    <SuiteDetailOverview
+      suite={makeSuite()}
+      cases={[
+        makeCase({ _id: "case-1" }),
+        makeCase({ _id: "case-2", title: "Refund order" }),
+      ]}
+      runs={[]}
+      runsLoading={false}
+      allIterations={[]}
+      hostNamesById={new Map()}
+      onRerun={vi.fn()}
+      onEditSuite={vi.fn()}
+      onEditCases={vi.fn()}
+      onDeleteTestCasesBatch={onDeleteTestCasesBatch}
+      onRunClick={vi.fn()}
+      onTestCaseClick={onTestCaseClick}
+      rerunningSuiteId={null}
+    />,
+  );
+
+  await user.click(screen.getByTestId("suite-test-case-delete-case-2"));
+  // Opening the confirm is not opening the case.
+  expect(onTestCaseClick).not.toHaveBeenCalled();
+  expect(
+    within(screen.getByRole("dialog")).getByText(/Refund order/),
+  ).toBeTruthy();
+
+  await user.click(screen.getByTestId("suite-test-case-delete-confirm"));
+  expect(onDeleteTestCasesBatch).toHaveBeenCalledWith(["case-2"]);
+});
+
+it("hides the row delete button when the suite config is locked", () => {
+  renderWithProviders(
+    <SuiteDetailOverview
+      suite={makeSuite()}
+      cases={[makeCase({ _id: "case-1" })]}
+      runs={[]}
+      runsLoading={false}
+      allIterations={[]}
+      hostNamesById={new Map()}
+      onRerun={vi.fn()}
+      onEditSuite={vi.fn()}
+      onEditCases={vi.fn()}
+      onDeleteTestCasesBatch={vi.fn()}
+      onRunClick={vi.fn()}
+      onTestCaseClick={vi.fn()}
+      rerunningSuiteId={null}
+      configLocked
+    />,
+  );
+
+  expect(screen.getByTestId("suite-test-case-row-case-1")).toBeTruthy();
+  expect(screen.queryByTestId("suite-test-case-delete-case-1")).toBeNull();
 });

@@ -752,7 +752,7 @@ export function SuiteDetailOverview({
                     }
                     title="Delete test case"
                     aria-label={`Delete test case: ${row.title}`}
-                    className="shrink-0 rounded p-1.5 text-muted-foreground/50 opacity-0 transition-[opacity,colors] group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive focus-visible:opacity-100 focus-visible:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive/40"
+                    className="shrink-0 rounded p-1.5 text-muted-foreground/60 transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive/40"
                   >
                     <Trash2 className="size-3.5" aria-hidden />
                   </button>
@@ -787,6 +787,43 @@ export function SuiteDetailOverview({
           )}
         </div>
       ) : null}
+
+      <Dialog
+        open={caseToDelete != null}
+        onOpenChange={(open) => {
+          if (!open && !isDeletingCase) setCaseToDelete(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Trash2 className="size-5 text-destructive" aria-hidden />
+              Delete test case
+            </DialogTitle>
+            <DialogDescription>
+              Delete “{caseToDelete?.title || "Untitled test case"}”? This
+              cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setCaseToDelete(null)}
+              disabled={isDeletingCase}
+            >
+              Cancel
+            </Button>
+            <Button
+              className={EVAL_DESTRUCTIVE_BUTTON_CLASS}
+              data-testid="suite-test-case-delete-confirm"
+              onClick={confirmDeleteCase}
+              disabled={isDeletingCase}
+            >
+              {isDeletingCase ? "Deleting…" : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

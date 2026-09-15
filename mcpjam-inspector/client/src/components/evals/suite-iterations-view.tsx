@@ -2104,6 +2104,7 @@ export function SuiteIterationsView({
                       ? () => setImportOpen(true)
                       : undefined
                   }
+                  onDeleteTestCasesBatch={onDeleteTestCasesBatch}
                   onGenerateTestCases={onGenerateTestCases}
                   canGenerateTestCases={canGenerateTestCases}
                   generateTestCasesDisabledReason={
