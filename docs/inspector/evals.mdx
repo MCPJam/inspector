@@ -434,12 +434,18 @@ The **Overview / Cases** segmented control switches between the run history list
 
 Client and server filters on the **Suites** tab live in the column headers rather than as separate filter pills.
 
+#### Narrowing filters
+
+All filter menus — platform, suite, client, server, repository, branch, and tag — narrow their available choices based on your other active selections. Each facet shows only the values that coexist with the current filters, so you never see an option that would produce an empty result. Within a single facet, multiple selections are combined with OR; across facets they are combined with AND.
+
+A selected value stays clearable even if the rows that matched it have scrolled out of the loaded page. Filters apply to the loaded rows, so a "no runs match" result may mean older matching runs exist further down the list — use **Load more** to page through them. A note below the table indicates when a filter is active and more pages are available.
+
 #### Where a run came from
 
 Every run carries an origin badge — **UI**, **SDK**, **API**, **CLI**, **MCP**,
 **GitHub**, **Scheduled** — and the Source chips above the Overview table filter on
-it. The filter runs on the server, so an empty result means the project has no
-such runs, not that they were further down the list.
+it. The filter applies to the loaded rows, so an empty result may mean older
+matching runs exist further down the list — use **Load more** to page through them.
 
 Two different things go into that badge, and the distinction matters if you are
 using it as evidence:
