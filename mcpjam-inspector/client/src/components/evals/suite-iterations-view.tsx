@@ -2817,7 +2817,7 @@ export function SuiteIterationsView({
               <BudgetSettingRow
                 settingKey="runTimeoutMs"
                 label="Whole-run timeout"
-                hint="A backstop for the whole run, not the working bound — the per-iteration clock is what usually fires."
+                hint="A backstop for the whole run, not the working bound: the per-iteration clock is what usually fires."
                 unit="minutes"
                 unitMs={60_000}
                 ceilingMs={EXECUTION_BUDGET_CEILINGS.evals.runTimeoutMs}
