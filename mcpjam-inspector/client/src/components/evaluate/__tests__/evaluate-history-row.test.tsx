@@ -124,7 +124,8 @@ describe("Evaluate history rows", () => {
     ).toEqual([
       "Run",
       "Suite",
-      "Client / Model",
+      "Client",
+      "Model",
       "Result",
       "Rate",
       "Platform",
@@ -141,8 +142,8 @@ describe("Evaluate history rows", () => {
     const cells = screen
       .getByRole("button", { name: "Open run #3" })
       .querySelectorAll("td");
-    expect(cells[9]).toHaveTextContent("—");
     expect(cells[10]).toHaveTextContent("—");
+    expect(cells[11]).toHaveTextContent("—");
   });
 
   it("withholds aggregate metrics until every member of a launch has loaded", () => {
@@ -166,8 +167,8 @@ describe("Evaluate history rows", () => {
       </table>,
     );
     const cells = screen.getByRole("row").querySelectorAll("td");
-    expect(cells[3]).toHaveTextContent("—");
-    expect(cells[8]).toHaveTextContent("—");
+    expect(cells[4]).toHaveTextContent("—");
     expect(cells[9]).toHaveTextContent("—");
+    expect(cells[10]).toHaveTextContent("—");
   });
 });

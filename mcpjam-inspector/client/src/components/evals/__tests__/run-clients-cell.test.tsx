@@ -13,6 +13,22 @@ const row = (
   }) as SuiteRunHistoryRow;
 
 describe("RunClientsCell", () => {
+  it("shows only clients in the client column", () => {
+    renderWithProviders(<RunClientsCell column="client" rows={[row("Claude", ["haiku"]), row("Cursor", ["gpt-5"])]} />);
+    expect(screen.getByText("Claude")).toBeVisible();
+    expect(screen.getByText("Cursor")).toBeVisible();
+    expect(screen.queryByText("haiku")).toBeNull();
+    expect(screen.queryByText("gpt-5")).toBeNull();
+  });
+
+  it("shows only models in matching order in the model column", () => {
+    renderWithProviders(<RunClientsCell column="model" rows={[row("Claude", ["haiku"]), row("Cursor", ["gpt-5"])]} />);
+    expect(screen.getByText("haiku")).toBeVisible();
+    expect(screen.getByText("gpt-5")).toBeVisible();
+    expect(screen.queryByText("Claude")).toBeNull();
+    expect(screen.queryByText("Cursor")).toBeNull();
+  });
+
   it("lists pairings inline without an expand control", () => {
     renderWithProviders(
       <RunClientsCell

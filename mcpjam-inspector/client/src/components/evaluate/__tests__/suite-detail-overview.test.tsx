@@ -182,7 +182,8 @@ describe("SuiteDetailOverview", () => {
       .map((header) => header.textContent);
     expect(headers).toEqual([
       "Run",
-      "Client / Model",
+      "Client",
+      "Model",
       "Result",
       "Rate",
       "Platform",
@@ -201,7 +202,7 @@ describe("SuiteDetailOverview", () => {
       .getByTestId("suite-run-row-one")
       .querySelectorAll("td");
     expect(cells[0]).toHaveTextContent("#1");
-    expect(cells[6].querySelector("time")).toHaveAttribute(
+    expect(cells[7].querySelector("time")).toHaveAttribute(
       "dateTime",
       new Date(1000).toISOString(),
     );

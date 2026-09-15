@@ -25,7 +25,8 @@ function pairingLabel(mapping: ClientModelPairing): string {
 }
 
 /** Recorded client/model pairs, never a cross product of two independent lists. */
-export function RunClientsCell({ rows }: { rows: Pick<SuiteRunHistoryRow, "client" | "models" | "hostStyle">[];
+export function RunClientsCell({ rows, column }: { rows: Pick<SuiteRunHistoryRow, "client" | "models" | "hostStyle">[];
+  column?: "client" | "model";
 }) {
   const theme = usePreferencesStoreWithDefaults((state) => state.themeMode);
   const mappings = [
@@ -59,7 +60,7 @@ export function RunClientsCell({ rows }: { rows: Pick<SuiteRunHistoryRow, "clien
 
   return (
     <span
-      className="flex min-w-0 max-w-80 items-center gap-2"
+      className={column ? "flex min-w-0 max-w-80 flex-col items-start gap-2" : "flex min-w-0 max-w-80 items-center gap-2"}
       aria-label={allLabels.join(", ")}
     >
       {visible.map((mapping, index) => (
@@ -67,15 +68,14 @@ export function RunClientsCell({ rows }: { rows: Pick<SuiteRunHistoryRow, "clien
           key={`${mapping.client}-${mapping.models.join(",")}-${index}`}
           className="inline-flex min-w-0 items-center gap-1.5"
         >
-          {logo(mapping.client, mapping.hostStyle)}
+          {column !== "model" && logo(mapping.client, mapping.hostStyle)}
           <span className="truncate text-xs">
-            {mapping.client}
-            <span className="text-muted-foreground">
-              {" "}
-              ·{" "}
+            {column !== "model" && mapping.client}
+            {column !== "client" && <span className="text-muted-foreground">
+              {!column && " · "}
               {mapping.models.map(compactModelIdTail).join(", ") ||
                 "Model not recorded"}
-            </span>
+            </span>}
           </span>
         </span>
       ))}

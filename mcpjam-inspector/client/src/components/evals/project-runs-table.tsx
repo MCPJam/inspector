@@ -1090,7 +1090,7 @@ export function ProjectRunsTable({
                   <TableCell
                     colSpan={
                       evaluateLayout
-                        ? 10
+                        ? 12
                         : (historyMetricsEnabled ? 9 : 7) +
                           (showGitContext ? 3 : 0)
                     }
@@ -1104,7 +1104,7 @@ export function ProjectRunsTable({
                   <TableCell
                     colSpan={
                       evaluateLayout
-                        ? 10
+                        ? 12
                         : (historyMetricsEnabled ? 9 : 7) +
                           (showGitContext ? 3 : 0)
                     }

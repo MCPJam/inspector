@@ -33,7 +33,8 @@ export function EvaluateHistoryHeader({
         {[
           "Run",
           ...(showSuite ? ["Suite"] : []),
-          "Client / Model",
+          "Client",
+          "Model",
           "Result",
           "Rate",
           "Platform",
@@ -135,6 +136,11 @@ export function EvaluateHistoryRow({
     ).values(),
   ];
   const createdAt = historyTimestamp(representative.createdAt);
+  const clientRows = rows.map((row) => historyRows.get(row._id) ?? {
+    client: runClientIdentity({ client: row.client, namedHostId: row.namedHostId ?? undefined }, hostNamesById).name,
+    hostStyle: row.client?.hostStyle,
+    models: row.client?.modelId ? [row.client.modelId] : [],
+  });
   return (
     <TableRow
       data-testid={testId}
@@ -165,22 +171,10 @@ export function EvaluateHistoryRow({
         </TableCell>
       )}
       <TableCell>
-        <RunClientsCell
-          rows={rows.map(
-            (row) =>
-              historyRows.get(row._id) ?? {
-                client: runClientIdentity(
-                  {
-                    client: row.client,
-                    namedHostId: row.namedHostId ?? undefined,
-                  },
-                  hostNamesById,
-                ).name,
-                hostStyle: row.client?.hostStyle,
-                models: row.client?.modelId ? [row.client.modelId] : [],
-              },
-          )}
-        />
+        <RunClientsCell rows={clientRows} column="client" />
+      </TableCell>
+      <TableCell>
+        <RunClientsCell rows={clientRows} column="model" />
       </TableCell>
       <TableCell>
         <span

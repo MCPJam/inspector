@@ -592,7 +592,8 @@ describe("project run history metrics", () => {
     ).toEqual([
       "Run",
       "Suite",
-      "Client / Model",
+      "Client",
+      "Model",
       "Result",
       "Rate",
       "Platform",
