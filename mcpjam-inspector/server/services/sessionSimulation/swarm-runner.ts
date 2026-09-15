@@ -1,4 +1,9 @@
 import { logger } from "../../utils/logger.js";
+import { withDeadline } from "../../utils/run-supervisor/deadline.js";
+import {
+  resolveExecutionBudgetsForSurface,
+  type ResolvedExecutionBudgets,
+} from "@mcpjam/sdk/contract";
 import { buildSyntheticModelDefinition } from "../../utils/org-model-config.js";
 import {
   captureAndPersistWidgetSnapshotsForSession,
@@ -82,6 +87,24 @@ import type {
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5_000;
+
+/**
+ * The swarm platform defaults, taken from the contract's own resolver rather
+ * than written out here. A second copy of these numbers is a second thing to
+ * keep in step with the ceilings and the settings surface.
+ */
+function defaultSwarmExecutionBudgets(): ResolvedExecutionBudgets {
+  const resolution = resolveExecutionBudgetsForSurface({ surface: "swarms" });
+  if (!resolution.ok) {
+    // Unreachable: the platform defaults are the thing ceilings are defined
+    // against. Thrown rather than silently patched, because a violation here
+    // means the two tables have drifted and every run is mis-bounded.
+    throw new Error(
+      `platform swarm budgets must resolve: ${JSON.stringify(resolution.violations)}`,
+    );
+  }
+  return resolution.resolved;
+}
 
 /**
  * Deadline on the attempt-terminal artifact flush that carries a hosted
@@ -191,6 +214,13 @@ export interface StartJourneyRunOptions {
   managerFactory: JourneyManagerFactory;
   /** Aborts the run mid-fan-out on inspector shutdown / user cancel. */
   abortSignal?: AbortSignal;
+  /**
+   * The run's FROZEN execution budgets. Absent ⇒ the platform defaults, which
+   * is every run until the backend writes authored budgets into the launch
+   * snapshot. Resolved through the real resolver either way, so a defaulted
+   * run and a frozen one take the same code path.
+   */
+  budgets?: ResolvedExecutionBudgets;
 }
 
 interface RunningJourneyHandle {
@@ -446,13 +476,28 @@ async function runJourneyFanOut(
 
   // Run-level stop controller. Aborting it cancels every in-flight session's
   // turns; composed with the incoming abort so a shutdown/cancel does the same.
+  const budgets = opts.budgets ?? defaultSwarmExecutionBudgets();
+
+  // The RUN's clock. Nested under the caller's abort (shutdown / cancel) and
+  // composed with `runStop`, the spend-cap short-circuit — so every session's
+  // turns are cancelled by whichever of the three trips first.
+  //
+  // A swarm run had no wall-clock bound at all before this: `maxTurns` bounds
+  // how many turns a session takes, never how long they take, so a fan-out
+  // against a wedged host could sit open indefinitely, holding its sandboxes
+  // and its spend.
+  const runDeadline = withDeadline(abortSignal, budgets.runTimeoutMs, "run");
   const runStop = new AbortController();
-  const sessionSignal = composeAbortSignals(abortSignal, runStop.signal);
+  const sessionSignal = composeAbortSignals(runDeadline.signal, runStop.signal);
   // Set on an org spend-cap breach — halts scheduling across ALL hosts.
   let spendCapTripped = false;
   let spendCapMessage: string | undefined;
 
-  const stopScheduling = () => spendCapTripped || abortSignal?.aborted === true;
+  // Reads the RUN deadline's signal, not the raw abort: a run that spent its
+  // budget must stop handing out new sessions, and the raw signal knows
+  // nothing about that bound.
+  const stopScheduling = () =>
+    spendCapTripped || runDeadline.signal.aborted === true;
 
   // Independent heartbeat: an interval timer (NOT gated on turn/attempt
   // completion) started before the first attempt and stopped in `finally`.
@@ -1143,6 +1188,7 @@ async function runJourneyFanOut(
             // Thread the run-level stop signal (composed with shutdown/cancel) so a
             // spend-cap short-circuit cancels this host's in-flight turns.
             abortSignal: sessionSignal,
+            budgets,
             nextPersonaTurn: (transcriptSoFar) =>
               swarmPersonaNextTurn(convexHttpUrl, sessionBearer, {
                 projectId,
