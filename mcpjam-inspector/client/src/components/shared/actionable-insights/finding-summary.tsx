@@ -1,21 +1,14 @@
-/**
- * One finding, as three answers.
- *
- *   1. What happened?      the deterministic observation and its population
- *   2. What supports that? the exact evidence, one disclosure away
- *   3. What next?          a justified fix when attribution permits one, and
- *                          otherwise a specific investigation
- *
- * The observation renders FIRST and always: it is the sentence that survives
- * when narration fails, and it is the one a reader can check. Model prose sits
- * under it, labelled, and never replaces it.
- *
- * Nothing here re-derives a promotion. `isServerReady` is the backend's gate
- * and the only thing that unlocks the pinned contract or a server-fix prompt.
- */
-import { useState } from "react";
-import { Check, ChevronRight, Copy } from "lucide-react";
-import { cn } from "@/lib/utils";
+/** A finding's problem and suggested fix, with recorded evidence one click away. */
+import { useRef, useState } from "react";
+import { AlertTriangle, ArrowUpRight, Check, Copy, Wrench } from "lucide-react";
+import { Button } from "@mcpjam/design-system/button";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+} from "@mcpjam/design-system/sheet";
 import { copyToClipboard } from "@/lib/clipboard";
 import {
   isServerReady,
@@ -33,69 +26,37 @@ import {
   type FindingEvidenceLocator,
 } from "./finding-evidence";
 import {
-  basisLabel,
-  isInvestigation,
   judgeCoverageLine,
   mechanismCaveat,
   proseSourceOf,
-  PROSE_SOURCE_LABEL,
   type FindingView,
-  type ProseSource,
 } from "./finding-provenance";
 
-/** Ownership badge. The label answers "whose work is this?". */
-const OWNER_BADGE: Record<string, { label: string; className: string }> = {
-  server_ready: {
-    label: "MCP server · ready to fix",
-    className: "border-destructive/40 bg-destructive/10 text-destructive",
-  },
-  server_investigate: {
-    label: "MCP server · needs investigation",
-    className: "border-warning/40 bg-warning/10 text-foreground",
-  },
-  agent_configuration: {
-    label: "Agent / prompt",
-    className: "border-info/30 bg-info/10 text-foreground",
-  },
-  eval_case: {
-    label: "Test design",
-    className: "border-border/60 bg-muted/50 text-muted-foreground",
-  },
-  environment: {
-    label: "Environment",
-    className: "border-border/60 bg-muted/40 text-muted-foreground",
-  },
-  investigate: {
-    label: "Investigate",
-    className: "border-border/60 bg-muted/40 text-muted-foreground",
-  },
-};
-
-function ownerKey(finding: ActionableFinding): string {
-  if (isServerReady(finding)) return "server_ready";
-  if (finding.actionTarget === "mcp_server") return "server_investigate";
-  if (finding.actionability === "informational") return "environment";
-  return finding.actionTarget;
-}
-
-function SourceTag({ source }: { source: ProseSource }) {
+/** Limited inline formatting; recorded/model text never becomes HTML or links. */
+function FindingText({ text }: { text: string }) {
   return (
-    <span
-      className={cn(
-        "rounded border px-1 py-0 text-[10px] font-medium",
-        source === "ai"
-          ? "border-info/40 bg-info/10 text-foreground"
-          : "border-border/60 bg-muted/40 text-muted-foreground",
+    <>
+      {text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g).map((part, i) =>
+        part.startsWith("`") ? (
+          <code
+            key={i}
+            className="rounded bg-muted px-1 font-code text-[0.85em]"
+          >
+            {part.slice(1, -1)}
+          </code>
+        ) : part.startsWith("**") ? (
+          <strong key={i} className="font-semibold">
+            {part.slice(2, -2)}
+          </strong>
+        ) : (
+          part
+        ),
       )}
-      data-testid="finding-prose-source"
-      data-source={source}
-    >
-      {PROSE_SOURCE_LABEL[source]}
-    </span>
+    </>
   );
 }
 
-function CopyPromptButton({
+export function CopyFindingPrompt({
   finding,
   context,
 }: {
@@ -105,30 +66,47 @@ function CopyPromptButton({
   const [copied, setCopied] = useState(false);
   if (!findingOffersPrompt(finding)) return null;
   return (
-    <button
-      type="button"
-      className="inline-flex shrink-0 items-center gap-1 rounded border border-border/60 px-2 py-1 text-[12px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+    <Button
+      variant="outline"
+      size="sm"
+      className="h-9 shadow-none"
+      title={findingPromptLabel(finding)}
       data-testid="finding-copy-prompt"
       data-server-fix={isServerReady(finding) ? "true" : "false"}
       onClick={() => {
         void copyToClipboard(buildFindingPrompt(finding, context)).then(
           (ok) => {
-            if (!ok) return;
-            setCopied(true);
-            setTimeout(() => setCopied(false), 2000);
+            if (ok) {
+              setCopied(true);
+              setTimeout(() => setCopied(false), 2000);
+            }
           },
         );
       }}
     >
-      {copied ? (
-        <Check className="size-3.5" aria-hidden="true" />
-      ) : (
-        <Copy className="size-3.5" aria-hidden="true" />
-      )}
-      {copied ? "Copied" : findingPromptLabel(finding)}
-    </button>
+      {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+      {copied ? "Copied" : "Copy fix prompt"}
+    </Button>
   );
 }
+
+const SURFACES: Record<string, string> = {
+  description: "Tool description",
+  input_schema: "Input schema",
+  output_schema: "Output schema",
+  handler: "Tool handler",
+  server_instructions: "Server instructions",
+  capability: "Server capability",
+};
+const OWNERS: Record<string, string> = {
+  mcp_server: "MCP server",
+  agent_configuration: "Agent / prompt",
+  eval_case: "Test design",
+  environment: "Environment",
+  investigate: "Investigation",
+};
+const linkClass =
+  "inline-flex min-h-9 items-center gap-1 text-xs font-medium text-foreground hover:underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-4";
 
 export function FindingSummary({
   finding,
@@ -137,218 +115,327 @@ export function FindingSummary({
   lead = false,
   context,
   onOpenEvidence,
+  iterationLabels = {},
 }: {
   finding: ActionableFinding;
   provenance: InsightsFindingProvenance | null;
   view: FindingView;
-  /** The lead finding renders open, with its evidence already expanded. */
   lead?: boolean;
   context?: FindingPromptContext;
   onOpenEvidence?: (locator: FindingEvidenceLocator) => void;
+  iterationLabels?: Record<string, string>;
 }) {
-  const [open, setOpen] = useState(lead);
-  const owner = OWNER_BADGE[ownerKey(finding)] ?? OWNER_BADGE.investigate;
-  const basis = basisLabel(provenance);
-  const caveat = mechanismCaveat(provenance);
+  const [drawer, setDrawer] = useState<"why" | "affected" | null>(null);
+  const drawerTrigger = useRef<HTMLButtonElement | null>(null);
+  const discovered = view === "ai" && provenance?.groupKind === "ai_discovery";
+  const aiTitle =
+    view === "ai" &&
+    (discovered || proseSourceOf(view, provenance, "title") === "ai");
+  const aiFix = proseSourceOf(view, provenance, "recommendation") === "ai";
+  const affectedIds = [
+    ...new Set(
+      provenance?.affectedIterationIds ??
+        finding.evidence
+          .filter((e) => e.kind !== "contrast" && e.iterationId)
+          .map((e) => e.iterationId!),
+    ),
+  ];
+  const evidence = finding.evidence.filter((e) => e.kind !== "contrast");
+  const contrasts = finding.evidence.filter((e) => e.kind === "contrast");
   const judgeCoverage = judgeCoverageLine(provenance);
-  const investigation = isInvestigation(finding);
-  const titleSource = proseSourceOf(view, provenance, "title");
-  const causeSource = proseSourceOf(view, provenance, "rootCause");
-  const nextSource = proseSourceOf(view, provenance, "recommendation");
-  const criteriaSource = proseSourceOf(view, provenance, "acceptanceCriteria");
+  const caveat = mechanismCaveat(provenance);
+  const target = finding.target;
+  const targetLabel = target
+    ? [SURFACES[target.surface], target.toolName, target.fieldPath]
+        .filter(Boolean)
+        .join(" · ")
+    : finding.actionTarget === "investigate"
+    ? null
+    : OWNERS[finding.actionTarget];
+  const openEvidence = onOpenEvidence
+    ? (locator: FindingEvidenceLocator) => {
+        drawerTrigger.current = null;
+        setDrawer(null);
+        onOpenEvidence(locator);
+      }
+    : undefined;
 
   return (
     <article
-      className={cn(
-        "rounded-lg border bg-card",
-        lead ? "border-border" : "border-border/60",
-      )}
       data-testid={lead ? "unified-finding-lead" : "unified-finding"}
+      data-finding-id={finding.id}
       data-action-target={finding.actionTarget}
       data-actionability={finding.actionability}
-      data-finding-id={finding.id}
     >
-      <div className="flex flex-wrap items-start gap-x-3 gap-y-2 px-4 pt-3.5">
-        <span
-          className={cn(
-            "rounded border px-1.5 py-0.5 text-[11px] font-medium",
-            owner.className,
-          )}
-          data-testid="unified-finding-owner"
-        >
-          {owner.label}
-        </span>
-        {basis ? (
-          <span
-            className="rounded border border-border/60 bg-muted/40 px-1.5 py-0.5 text-[11px] text-muted-foreground"
-            title={basis.detail}
-            data-testid="unified-finding-basis"
-            data-basis={provenance?.basis}
-          >
-            {basis.label}
-          </span>
-        ) : null}
-        <span className="ml-auto text-[11px] tabular-nums text-muted-foreground">
-          {finding.affected.count} of {finding.affected.total}{" "}
-          {finding.affected.unit}
-        </span>
-      </div>
-
-      {/* 1. What happened — the deterministic sentence, never model prose. */}
-      <p
-        className="px-4 pt-2 text-[13.5px] font-medium leading-relaxed text-foreground"
-        data-testid="unified-finding-observed"
+      <div
+        className="grid grid-cols-1 md:grid-cols-2"
+        aria-label={lead ? "Primary finding" : "Additional finding"}
       >
-        {finding.observed}
-      </p>
-
-      {caveat ? (
-        <p
-          className="px-4 pt-1 text-[12px] leading-relaxed text-muted-foreground"
-          data-testid="unified-finding-caveat"
-        >
-          {caveat}
-        </p>
-      ) : null}
-      {judgeCoverage ? (
-        <p
-          className="px-4 pt-1 text-[12px] text-muted-foreground"
-          data-testid="unified-finding-judge-coverage"
-        >
-          {judgeCoverage}
-        </p>
-      ) : null}
-
-      {/* The headline a model proposed, clearly secondary to the observation
-          and clearly labelled.
-          Suppressed entirely in the deterministic view: there, the finalizer
-          sets the title to the observation CLAMPED to 120 characters, so a
-          long observation produced a truncated echo of the sentence directly
-          above it — the same claim twice, the second copy cut off mid-word. */}
-      {view === "ai" && finding.title && finding.title !== finding.observed ? (
-        <p
-          className="flex flex-wrap items-baseline gap-2 px-4 pt-2 text-[12.5px] text-muted-foreground"
-          data-testid="unified-finding-title"
-        >
-          <SourceTag source={titleSource} />
-          <span>{finding.title}</span>
-        </p>
-      ) : null}
-
-      <div className="px-4 pb-3 pt-2.5">
-        <button
-          type="button"
-          className="flex items-center gap-1 text-[12px] text-muted-foreground transition-colors hover:text-foreground"
-          aria-expanded={open}
-          onClick={() => setOpen((value) => !value)}
-          data-testid="unified-finding-toggle"
-        >
-          <ChevronRight
-            className={cn("size-3.5 transition-transform", open && "rotate-90")}
-            aria-hidden="true"
-          />
-          {open ? "Hide the evidence and next step" : "What supports this?"}
-        </button>
-      </div>
-
-      {open ? (
-        <div
-          className="space-y-3 border-t border-border/50 bg-muted/20 px-4 py-3"
-          data-testid="unified-finding-detail"
-        >
-          {/* 2. What supports that? */}
-          <section>
-            <h5 className="text-[12px] font-semibold text-foreground/80">
-              Evidence
-            </h5>
-            <div className="mt-1.5">
-              <FindingEvidenceList
-                evidence={finding.evidence}
-                {...(onOpenEvidence ? { onOpenEvidence } : {})}
+        <section className="min-w-0 pb-5 md:pr-7 md:pb-2">
+          <div className="flex items-center justify-between gap-4">
+            <h4 className="flex items-center gap-2 text-sm font-semibold">
+              <AlertTriangle
+                className="size-4 text-muted-foreground"
+                aria-hidden="true"
               />
-            </div>
-          </section>
-
-          {finding.rootCause ? (
-            <section>
-              <h5 className="flex flex-wrap items-center gap-2 text-[12px] font-semibold text-foreground/80">
-                Proposed cause
-                <SourceTag source={causeSource} />
-              </h5>
-              <p className="mt-1 text-[12.5px] leading-relaxed text-muted-foreground">
-                {finding.rootCause}
-              </p>
-            </section>
-          ) : null}
-
-          {/* 3. What should I do next? The heading says which kind of work
-              this is; an unproven mechanism never reads as "change this". */}
-          <section>
-            <h5 className="flex flex-wrap items-center gap-2 text-[12px] font-semibold text-foreground/80">
-              {investigation ? "What to investigate" : "What to change"}
-              <SourceTag source={nextSource} />
-            </h5>
-            <p className="mt-1 text-[12.5px] leading-relaxed text-muted-foreground">
-              {finding.recommendation}
-            </p>
-          </section>
-
-          {finding.acceptanceCriteria.length > 0 ? (
-            <section>
-              <h5 className="flex flex-wrap items-center gap-2 text-[12px] font-semibold text-foreground/80">
-                {investigation ? "Resolved when" : "Done when"}
-                <SourceTag source={criteriaSource} />
-              </h5>
-              <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[12.5px] text-muted-foreground">
-                {finding.acceptanceCriteria.map((criterion) => (
-                  <li key={criterion}>{criterion}</li>
-                ))}
-              </ul>
-            </section>
-          ) : null}
-
-          {/* The pinned contract, only for a promoted finding: on an unproven
-              one it reads as "here is the code to change". */}
-          {isServerReady(finding) && finding.target ? (
-            <section
-              className="rounded-md border border-border/50 bg-background/70 p-2.5"
-              data-testid="unified-finding-contract"
+              What broke
+            </h4>
+            <span
+              className="text-right text-xs text-muted-foreground"
+              data-testid="unified-finding-basis"
+              data-basis={provenance?.basis}
             >
-              <h5 className="font-code text-[11px] text-foreground/80">
-                {finding.target.toolName
-                  ? `${finding.target.toolName} · ${finding.target.surface}`
-                  : finding.target.surface}
-                {finding.target.fieldPath
-                  ? ` · ${finding.target.fieldPath}`
-                  : ""}
-              </h5>
-              {finding.target.currentDefinition?.description ? (
-                <p className="mt-1 text-[12px] text-muted-foreground">
-                  {finding.target.currentDefinition.description}
+              {aiTitle
+                ? "AI analysis · cited evidence"
+                : provenance?.basis === "judged"
+                ? "Recorded judge results"
+                : provenance?.basis === "mixed"
+                ? "Traces + judge results"
+                : "From trial traces"}
+            </span>
+          </div>
+          <p
+            className="mt-3 break-words text-[15px] leading-7 md:min-h-20"
+            data-testid="unified-finding-observed"
+          >
+            {aiTitle && finding.title !== finding.observed ? (
+              <>
+                <strong
+                  className="font-semibold"
+                  data-testid={
+                    discovered
+                      ? "unified-finding-discovered-title"
+                      : "unified-finding-title"
+                  }
+                >
+                  <FindingText text={finding.title} />
+                </strong>
+                {/[.!?]$/.test(finding.title) ? " " : ". "}
+              </>
+            ) : null}
+            <FindingText text={finding.observed} />
+          </p>
+          <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1">
+            <button
+              type="button"
+              className={linkClass}
+              onClick={(event) => {
+                drawerTrigger.current = event.currentTarget;
+                setDrawer("affected");
+              }}
+            >
+              {affectedIds.length
+                ? `View ${affectedIds.length} affected ${
+                    affectedIds.length === 1 ? "trial" : "trials"
+                  }`
+                : "View evidence"}
+              <ArrowUpRight className="size-3.5" aria-hidden="true" />
+            </button>
+            <span className="text-xs text-muted-foreground">
+              {finding.category.replace(/_/g, " ")}
+            </span>
+          </div>
+        </section>
+        <section className="min-w-0 border-t border-border/60 pt-5 md:border-t-0 md:border-l md:pt-0 md:pl-7">
+          <div className="flex items-center justify-between gap-4">
+            <h4 className="flex items-center gap-2 text-sm font-semibold">
+              <Wrench
+                className="size-4 text-muted-foreground"
+                aria-hidden="true"
+              />
+              How to fix
+            </h4>
+            <span
+              className="text-xs text-muted-foreground"
+              data-testid="finding-prose-source"
+              data-source={
+                aiFix ? "ai" : proseSourceOf(view, provenance, "recommendation")
+              }
+            >
+              {aiFix
+                ? "AI suggestion"
+                : view === "deterministic" ||
+                  proseSourceOf(view, provenance, "recommendation") ===
+                    "deterministic"
+                ? "Suggested next step"
+                : "Source not recorded"}
+            </span>
+          </div>
+          <p className="mt-3 break-words text-[15px] leading-7 md:min-h-20">
+            <FindingText text={finding.recommendation} />
+          </p>
+          {targetLabel ? (
+            <p className="mt-3 break-words text-xs text-muted-foreground">
+              <span className="font-medium text-foreground">
+                {finding.actionability === "ready" ? "Change" : "Investigate"}:
+              </span>{" "}
+              {targetLabel}
+            </p>
+          ) : null}
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+            <button
+              type="button"
+              className={linkClass}
+              onClick={(event) => {
+                drawerTrigger.current = event.currentTarget;
+                setDrawer("why");
+              }}
+              data-testid="unified-finding-toggle"
+            >
+              Why this fix?
+              <ArrowUpRight className="size-3.5" aria-hidden="true" />
+            </button>
+            {!lead ? (
+              <CopyFindingPrompt finding={finding} context={context} />
+            ) : null}
+          </div>
+        </section>
+      </div>
+      <Sheet
+        open={drawer !== null}
+        onOpenChange={(open) => {
+          if (!open) setDrawer(null);
+        }}
+      >
+        <SheetContent
+          className="w-full gap-0 overflow-y-auto sm:max-w-[620px]"
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            drawerTrigger.current?.focus();
+          }}
+        >
+          <SheetHeader className="sticky top-0 z-10 bg-background px-6 pt-6 pb-5 pr-12">
+            <SheetTitle className="text-lg">
+              {drawer === "affected" ? "Affected trials" : "Why this fix?"}
+            </SheetTitle>
+            <SheetDescription>{targetLabel ?? finding.title}</SheetDescription>
+          </SheetHeader>
+          <div
+            className="space-y-6 px-6 pb-8 text-sm leading-relaxed"
+            data-testid="unified-finding-detail"
+          >
+            {drawer === "affected" && affectedIds.length > 0 ? (
+              <section>
+                <p className="mb-3 text-muted-foreground">
+                  {affectedIds.length} linked{" "}
+                  {affectedIds.length === 1 ? "trial" : "trials"}.{" "}
+                  {affectedIds.length < finding.affected.count
+                    ? "Only the recorded examples are listed."
+                    : ""}
+                </p>
+                <ul className="divide-y divide-border/60">
+                  {affectedIds.map((id, index) => (
+                    <li key={id} className="py-2">
+                      {openEvidence ? (
+                        <button
+                          type="button"
+                          className={linkClass}
+                          onClick={() =>
+                            openEvidence({ kind: "iteration", id })
+                          }
+                        >
+                          {iterationLabels[id] ?? `Trial ${index + 1}`}
+                          <ArrowUpRight className="size-3.5" />
+                        </button>
+                      ) : (
+                        <span>
+                          {iterationLabels[id] ?? `Trial ${index + 1}`}
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
+            <section>
+              <h5 className="mb-3 font-semibold">Recorded evidence</h5>
+              <FindingEvidenceList
+                evidence={evidence}
+                onOpenEvidence={openEvidence}
+                variant="drawer"
+              />
+            </section>
+            {contrasts.length > 0 ? (
+              <section className="border-t border-border/60 pt-5">
+                <h5 className="mb-3 font-semibold">Successful comparison</h5>
+                <FindingEvidenceList
+                  evidence={contrasts}
+                  onOpenEvidence={openEvidence}
+                  variant="drawer"
+                />
+              </section>
+            ) : null}
+            {finding.rootCause ? (
+              <section className="border-t border-border/60 pt-5">
+                <h5 className="font-semibold">Why this change?</h5>
+                <p className="mt-2">
+                  <FindingText
+                    text={
+                      finding.rootCause === "agent_or_prompt"
+                        ? "Agent or prompt behavior needs investigation."
+                        : finding.rootCause
+                    }
+                  />
+                </p>
+              </section>
+            ) : null}
+            {finding.acceptanceCriteria.length > 0 ? (
+              <section className="border-t border-border/60 pt-5">
+                <h5 className="font-semibold">How to verify</h5>
+                <ul className="mt-2 list-disc space-y-1 pl-5">
+                  {finding.acceptanceCriteria.map((c) => (
+                    <li key={c}>
+                      <FindingText text={c} />
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
+            {isServerReady(finding) && target?.currentDefinition ? (
+              <section
+                className="border-t border-border/60 pt-5"
+                data-testid="unified-finding-contract"
+              >
+                <h5 className="font-semibold">Recorded tool definition</h5>
+                {target.currentDefinition.description ? (
+                  <p className="mt-2">{target.currentDefinition.description}</p>
+                ) : null}
+                {[
+                  target.currentDefinition.inputSchemaJson,
+                  target.currentDefinition.outputSchemaJson,
+                ]
+                  .filter(Boolean)
+                  .map((json, i) => (
+                    <pre
+                      key={i}
+                      className="mt-3 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded bg-[var(--code-bg)] p-3 font-code text-xs text-[var(--code-text)]"
+                    >
+                      {json}
+                    </pre>
+                  ))}
+              </section>
+            ) : null}
+            <div className="space-y-2 border-l-2 border-border pl-3 text-xs text-muted-foreground">
+              <p>{finding.observed}</p>
+              {view === "ai" ? (
+                <p>
+                  Suggested cause, not proven. Rerun affected trials to test the
+                  change.
                 </p>
               ) : null}
-              {finding.target.currentDefinition?.inputSchemaJson ? (
-                <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all font-code text-[11px] text-muted-foreground">
-                  {finding.target.currentDefinition.inputSchemaJson}
-                </pre>
+              {caveat ? (
+                <p data-testid="unified-finding-caveat">{caveat}</p>
               ) : null}
-              {finding.target.currentDefinition?.outputSchemaJson ? (
-                <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all font-code text-[11px] text-muted-foreground">
-                  {finding.target.currentDefinition.outputSchemaJson}
-                </pre>
+              {judgeCoverage ? (
+                <p data-testid="unified-finding-judge-coverage">
+                  {judgeCoverage}. Ungraded trials are not counted as passing
+                  this judge.
+                </p>
               ) : null}
-              <p className="mt-1 font-code text-[10px] text-muted-foreground/70">
-                snapshot {finding.target.snapshotHash}
-              </p>
-            </section>
-          ) : null}
-
-          <CopyPromptButton
-            finding={finding}
-            {...(context ? { context } : {})}
-          />
-        </div>
-      ) : null}
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
     </article>
   );
 }

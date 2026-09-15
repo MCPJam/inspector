@@ -20,6 +20,7 @@ import {
   type InsightsFindingProvenance,
 } from "@/lib/insights-envelope-api";
 import type { UnifiedFindingsMode } from "./unified-findings-panel";
+import type { FindingsAnalysisAction } from "./unified-findings-panel";
 
 export const BUILD_FINDINGS_MUTATION = "evalFindings:requestEvalFindingsBuild";
 
@@ -44,6 +45,7 @@ export type UnifiedFindingsState = {
   setMode: (mode: UnifiedFindingsMode) => void;
   findings: ActionableFinding[];
   provenance: InsightsFindingProvenance[];
+  analyze: FindingsAnalysisAction;
   build: {
     available: boolean;
     pending: boolean;
@@ -61,7 +63,7 @@ export type UnifiedFindingsState = {
 };
 
 const BACKEND_MISSING_NOTE =
-  "This Inspector has the unified-findings experiment, but the connected backend does not serve it. Deploy the paired backend branch (and set UNIFIED_FINDINGS_EXPERIMENT=1) to build findings for this run.";
+  "The connected backend does not support findings yet. Update the backend to build findings for this run.";
 
 /**
  * Why the enrich button can be dead while the backend serves the experiment.
@@ -75,10 +77,10 @@ const BACKEND_MISSING_NOTE =
  * explanation is not. This names the likely cause without asserting it.
  */
 const GENERATION_UNAVAILABLE_NOTE =
-  "The AI explanation cannot be requested for this run right now. The shared generation controller reports it unavailable without distinguishing a workspace insights-limit rejection from a genuine outage, so check the workspace's daily insights limit first. The observations below are unaffected.";
+  "AI analysis is unavailable right now. Check your workspace’s daily insights limit or try again later.";
 
 const WRITES_DISABLED_NOTE =
-  "The connected backend serves the experiment but its write gate is off (UNIFIED_FINDINGS_EXPERIMENT is not set to 1), so findings cannot be built here. Anything already built still reads.";
+  "The connected backend cannot build findings yet. Update the backend to enable builds. Existing findings are still available.";
 
 export function useUnifiedFindings(args: {
   suiteRunId: string | null | undefined;
@@ -99,6 +101,10 @@ export function useUnifiedFindings(args: {
    * button's spinner renders from.
    */
   const buildInFlight = useRef(false);
+  const [awaitingBuild, setAwaitingBuild] = useState(false);
+  const analysisInFlight = useRef(false);
+  const analysisBuildStamp = useRef<number | null>(null);
+  const analysisPreviousJob = useRef<number | null>(null);
 
   /**
    * The same guard for the ENRICH path, which needs it more.
@@ -114,6 +120,7 @@ export function useUnifiedFindings(args: {
   /** The controller's error as it stood at the click, so a request that fails
    *  without ever going pending still hands authority back. */
   const enrichErrorAtRequest = useRef<string | null>(null);
+  const enrichmentAtRequest = useRef<number | null>(null);
   /**
    * Monotonic build token, because the run id alone has an ABA hole.
    *
@@ -161,6 +168,8 @@ export function useUnifiedFindings(args: {
     enrichInFlight.current = false;
     setEnrichRequested(false);
     setEnrichAttempted(false);
+    setAwaitingBuild(false);
+    analysisInFlight.current = false;
   }
 
   useEffect(() => {
@@ -208,6 +217,8 @@ export function useUnifiedFindings(args: {
       .catch((error: unknown) => {
         if (stale()) return;
         setBuildError(error instanceof Error ? error.message : String(error));
+        setAwaitingBuild(false);
+        analysisInFlight.current = false;
       })
       .finally(() => {
         if (stale()) return;
@@ -221,9 +232,26 @@ export function useUnifiedFindings(args: {
     experiment?.snapshot,
   ]);
 
+  useEffect(() => {
+    const result = experiment?.snapshot?.enrichment;
+    setMode(result?.status === "ready" ? "ai" : "deterministic");
+    if (
+      enrichAttempted &&
+      result?.status === "ready" &&
+      result.generatedAt !== enrichmentAtRequest.current
+    ) {
+      setMode("ai");
+      setEnrichAttempted(false);
+      setEnrichRequested(false);
+      enrichInFlight.current = false;
+    }
+  }, [enrichAttempted, experiment?.snapshot?.enrichment]);
+
   const onEnrich = useCallback(() => {
     if (enrichInFlight.current || args.generation.pending) return;
     enrichInFlight.current = true;
+    enrichmentAtRequest.current =
+      experiment?.snapshot?.enrichment?.generatedAt ?? null;
     enrichErrorAtRequest.current = args.generation.error;
     setEnrichRequested(true);
     setEnrichAttempted(true);
@@ -232,7 +260,63 @@ export function useUnifiedFindings(args: {
     // refused as "already completed" — the metering and the job-id guard are
     // unchanged either way.
     args.generation.requestInsight(true, { mode: "findings" });
-  }, [args.generation]);
+  }, [args.generation, experiment?.snapshot?.enrichment?.generatedAt]);
+
+  // A single explicit click can prepare missing/stale evidence, then request
+  // AI once the subscription confirms the new snapshot. Never runs on mount.
+  const onAnalyze = useCallback(() => {
+    if (
+      analysisInFlight.current ||
+      buildInFlight.current ||
+      enrichInFlight.current ||
+      args.generation.pending ||
+      experiment?.job?.status === "pending" ||
+      args.generation.unavailable ||
+      !args.generation.canRequest
+    )
+      return;
+    if (
+      experiment?.snapshot &&
+      experiment.snapshot.enrichment?.status !== "stale"
+    ) {
+      if (experiment.canEnrich) onEnrich();
+      return;
+    }
+    if (!experiment?.canBuild) return;
+    analysisInFlight.current = true;
+    analysisBuildStamp.current = experiment.snapshot?.builtAt ?? null;
+    analysisPreviousJob.current = experiment.job?.updatedAt ?? null;
+    setAwaitingBuild(true);
+    onBuild();
+  }, [args.generation, experiment, onBuild, onEnrich]);
+
+  useEffect(() => {
+    if (!awaitingBuild) return;
+    if (
+      experiment?.job?.status === "failed" &&
+      experiment.job.updatedAt !== analysisPreviousJob.current
+    ) {
+      setAwaitingBuild(false);
+      analysisInFlight.current = false;
+      return;
+    }
+    if (
+      !experiment?.snapshot ||
+      experiment.snapshot.builtAt === analysisBuildStamp.current ||
+      !experiment.canEnrich ||
+      experiment.job?.status === "pending"
+    )
+      return;
+    setAwaitingBuild(false);
+    analysisInFlight.current = false;
+    if (!args.generation.unavailable && args.generation.canRequest) onEnrich();
+  }, [
+    awaitingBuild,
+    experiment,
+    args.generation.unavailable,
+    args.generation.canRequest,
+    onEnrich,
+  ]);
 
   const findings = useMemo(() => {
     if (!args.envelope || !experiment?.snapshot) return [];
@@ -255,15 +339,15 @@ export function useUnifiedFindings(args: {
     args.envelope === undefined || args.envelope === null
       ? null
       : experiment === null
-        ? BACKEND_MISSING_NOTE
-        : !experiment.writesEnabled
-          ? WRITES_DISABLED_NOTE
-          : // The backend serves the experiment, yet the borrowed controller
-            // says no. Without this the button is simply dead and the reader
-            // is told nothing at all.
-            args.generation.unavailable
-            ? GENERATION_UNAVAILABLE_NOTE
-            : null;
+      ? BACKEND_MISSING_NOTE
+      : !experiment.writesEnabled
+      ? WRITES_DISABLED_NOTE
+      : // The backend serves the experiment, yet the borrowed controller
+      // says no. Without this the button is simply dead and the reader
+      // is told nothing at all.
+      args.generation.unavailable
+      ? GENERATION_UNAVAILABLE_NOTE
+      : null;
 
   return {
     envelope: args.envelope,
@@ -272,15 +356,42 @@ export function useUnifiedFindings(args: {
     setMode,
     findings,
     provenance,
+    analyze: {
+      available:
+        (experiment?.canBuild === true || experiment?.canEnrich === true) &&
+        experiment?.job?.status !== "pending" &&
+        !args.generation.unavailable &&
+        args.generation.canRequest,
+      pending:
+        awaitingBuild ||
+        buildRequested ||
+        jobPending ||
+        enrichRequested ||
+        args.generation.pending,
+      error:
+        buildError ??
+        (jobFailed
+          ? experiment?.job?.errorMessage ??
+            experiment?.job?.errorCode ??
+            "Evidence could not be prepared."
+          : null) ??
+        (enrichAttempted
+          ? args.generation.error ??
+            (args.generation.failedGeneration
+              ? "AI analysis did not complete."
+              : null)
+          : null),
+      onRun: onAnalyze,
+    },
     build: {
       available: experiment?.canBuild === true,
       pending: buildRequested || jobPending,
       error:
         buildError ??
         (jobFailed
-          ? (experiment?.job?.errorMessage ??
+          ? experiment?.job?.errorMessage ??
             experiment?.job?.errorCode ??
-            "The build failed.")
+            "The build failed."
           : null),
       onRun: onBuild,
     },
@@ -300,8 +411,8 @@ export function useUnifiedFindings(args: {
       // than guessing which one it was.
       error: enrichAttempted
         ? args.generation.failedGeneration
-          ? (args.generation.error ??
-            "The AI explanation did not complete. The observations below are unaffected.")
+          ? args.generation.error ??
+            "The AI explanation did not complete. The observations below are unaffected."
           : args.generation.error
         : null,
       onRun: onEnrich,

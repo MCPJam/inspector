@@ -1,31 +1,14 @@
-/**
- * The unified-findings panel (EXPERIMENT).
- *
- * One lead finding, a short list of secondary ones, and a comparison control
- * that exists for this branch only — it is how the experiment is judged, not
- * a proposal for the shipped product.
- *
- * PURE PRESENTATION. Every piece of state arrives as a prop, so the same
- * component renders from a live Convex subscription in the app and from a
- * replay artifact in the offline preview. If those two ever disagree it is
- * because a component differs, never because the lab computed findings its
- * own way.
- *
- * The two operations are deliberately different words:
- *  - **Build findings** is deterministic and free. It says so on the button's
- *    own line, because "analyze" reads as "spend money" to anyone who has
- *    used the old insights.
- *  - **Add AI explanation** is metered. It never runs on mount, never on a
- *    view switch, and never when evidence is opened.
- *
- * Their loading and error states are separate. A model failure leaves every
- * observation on screen — that is the property the whole experiment is
- * testing, so it is not allowed to be incidental.
- */
-import { useMemo, useState } from "react";
-import { Loader2, Sparkles, Hammer, AlertTriangle } from "lucide-react";
+/** Product findings view: one analysis action, a lead problem/fix, and evidence drawers. */
+import { useMemo, useRef, useState } from "react";
+import { Loader2, Sparkles, ChevronRight } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
-import { cn } from "@/lib/utils";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+} from "@mcpjam/design-system/sheet";
 import {
   sortFindingsForDisplay,
   type ActionableFinding,
@@ -35,42 +18,30 @@ import {
   type UnifiedFindingsExperiment,
 } from "@/lib/insights-envelope-api";
 import type { FindingPromptContext } from "./finding-prompts";
-import { FindingSummary } from "./finding-summary";
+import { FindingSummary, CopyFindingPrompt } from "./finding-summary";
 import type { FindingEvidenceLocator } from "./finding-evidence";
-import type { FindingView } from "./finding-provenance";
-
-const SECONDARY_VISIBLE = 4;
 
 export type UnifiedFindingsMode = "deterministic" | "ai" | "baseline";
-
+export type FindingsAnalysisAction = {
+  available: boolean;
+  pending: boolean;
+  error: string | null;
+  onRun: () => void;
+};
 export type UnifiedFindingsPanelProps = {
-  /** `null` ⇒ no snapshot has been built for this run yet. */
   snapshot: UnifiedFindingsExperiment["snapshot"];
-  /** The current view's findings. The caller owns the selection so the panel
-   * never re-derives which array a mode means. */
   findings: readonly ActionableFinding[];
   provenance: readonly InsightsFindingProvenance[];
   observationState: InsightsObservationState | null;
   observationCoverage: InsightsObservationCoverage | null;
   mode: UnifiedFindingsMode;
-  onModeChange: (mode: UnifiedFindingsMode) => void;
-  /** Separate lifecycle per operation — never one shared spinner. */
-  build: {
-    available: boolean;
-    pending: boolean;
-    error: string | null;
-    onRun: () => void;
-  };
-  enrich: {
-    available: boolean;
-    pending: boolean;
-    error: string | null;
-    onRun: () => void;
-  };
-  /** Set when the paired backend branch is not deployed. */
+  analyze: FindingsAnalysisAction;
   backendUnavailableNote?: string | null;
+  executionIssues?: React.ReactNode;
+  scopeControl?: React.ReactNode;
   context?: FindingPromptContext;
   onOpenEvidence?: (locator: FindingEvidenceLocator) => void;
+  iterationLabels?: Record<string, string>;
 };
 
 function StateNote({
@@ -84,91 +55,18 @@ function StateNote({
 }) {
   return (
     <p
-      className={cn(
-        "rounded-md border px-3 py-2 text-[12.5px] leading-relaxed",
+      className={`border-l-2 py-1 pl-3 text-sm leading-relaxed ${
         tone === "destructive"
-          ? "border-destructive/40 bg-destructive/10 text-destructive"
+          ? "border-destructive"
           : tone === "warning"
-            ? "border-warning/40 bg-warning/10 text-foreground"
-            : "border-border/60 bg-muted/30 text-muted-foreground",
-      )}
+          ? "border-warning"
+          : "border-border"
+      }`}
+      role={tone === "destructive" ? "alert" : undefined}
       data-testid={testId}
     >
       {children}
     </p>
-  );
-}
-
-function ModeTabs({
-  mode,
-  onModeChange,
-  hasAi,
-  hasBaseline,
-}: {
-  mode: UnifiedFindingsMode;
-  onModeChange: (mode: UnifiedFindingsMode) => void;
-  hasAi: boolean;
-  hasBaseline: boolean;
-}) {
-  const tabs: Array<{
-    value: UnifiedFindingsMode;
-    label: string;
-    enabled: boolean;
-    hint: string;
-  }> = [
-    {
-      value: "deterministic",
-      label: "Observations",
-      enabled: true,
-      hint: "Built from recorded evidence. No AI.",
-    },
-    {
-      value: "ai",
-      label: "With AI explanation",
-      enabled: hasAi,
-      hint: hasAi
-        ? "The same observations, with model-written prose layered on."
-        : "No AI explanation has been generated for this snapshot.",
-    },
-    {
-      value: "baseline",
-      label: "Previous analysis",
-      enabled: hasBaseline,
-      hint: hasBaseline
-        ? "The analysis that existed before this snapshot was built."
-        : "No previous analysis was recorded for this run.",
-    },
-  ];
-  return (
-    <div
-      className="flex flex-wrap gap-1 rounded-md border border-border/60 bg-muted/30 p-1"
-      role="tablist"
-      aria-label="Findings comparison view"
-      data-testid="unified-findings-modes"
-    >
-      {tabs.map((tab) => (
-        <button
-          key={tab.value}
-          type="button"
-          role="tab"
-          aria-selected={mode === tab.value}
-          disabled={!tab.enabled}
-          title={tab.hint}
-          onClick={() => onModeChange(tab.value)}
-          className={cn(
-            "rounded px-2.5 py-1 text-[12px] transition-colors",
-            mode === tab.value
-              ? "bg-background text-foreground shadow-2xs"
-              : "text-muted-foreground hover:text-foreground",
-            !tab.enabled &&
-              "cursor-not-allowed opacity-50 hover:text-muted-foreground",
-          )}
-          data-testid={`unified-findings-mode-${tab.value}`}
-        >
-          {tab.label}
-        </button>
-      ))}
-    </div>
   );
 }
 
@@ -233,7 +131,7 @@ const EXCLUSION_WORDS: Record<string, string> = {
   notTerminal: "still running",
   cancelled: "cancelled",
   chainMissing: "with no recorded contract chain",
-  chainUnverified: "whose reported chain failed integrity",
+  chainUnverified: "without a verified stage chain",
   chainVersionAhead: "stamped by a newer analyzer than this backend reads",
   evaluatorErrored: "where the evaluator itself errored",
   judgePending: "still awaiting a grade",
@@ -285,211 +183,273 @@ function BaselineView({
   );
 }
 
-export function UnifiedFindingsPanel(props: UnifiedFindingsPanelProps) {
-  const {
-    snapshot,
-    findings,
-    provenance,
-    observationState,
-    observationCoverage,
-    mode,
-    onModeChange,
-    build,
-    enrich,
-    backendUnavailableNote,
+export function UnifiedFindingsPanel({
+  snapshot,
+  findings,
+  provenance,
+  observationState,
+  observationCoverage,
+  mode,
+  analyze,
+  backendUnavailableNote,
+  executionIssues,
+  scopeControl,
+  context,
+  onOpenEvidence,
+  iterationLabels,
+}: UnifiedFindingsPanelProps) {
+  const [showMore, setShowMore] = useState(false);
+  const [coverageOpen, setCoverageOpen] = useState(false);
+  const coverageTrigger = useRef<HTMLButtonElement>(null);
+  const sorted = useMemo(() => sortFindingsForDisplay(findings), [findings]);
+  const provenanceById = useMemo(
+    () => new Map(provenance.map((p) => [p.candidateId, p])),
+    [provenance],
+  );
+  const [lead, ...secondary] = sorted;
+  const enrichment = snapshot?.enrichment;
+  const discovery =
+    mode === "ai" && enrichment?.status === "ready"
+      ? enrichment.discovery
+      : null;
+  const incomplete = discovery
+    ? discovery.missingTraces > 0 ||
+      discovery.truncatedTraces > 0 ||
+      discovery.omittedEvidence > 0 ||
+      discovery.reviewedFailedIterations < discovery.totalFailedIterations
+    : observationState === "partial" || observationState === "unavailable";
+  const coverageText = discovery
+    ? `Reviewed ${discovery.reviewedFailedIterations} of ${
+        discovery.totalFailedIterations
+      } failed trials and ${
+        discovery.reviewedIterations - discovery.reviewedFailedIterations
+      } passing examples.`
+    : observationCoverage
+    ? `Evidence covers ${observationCoverage.analyzed} of ${
+        observationCoverage.total
+      } trials.${
+        observationCoverage.gradedCount > 0
+          ? ` ${observationCoverage.gradedCount} graded.`
+          : ""
+      }`
+    : null;
+  const summaryProps = {
+    view: mode === "ai" ? ("ai" as const) : ("deterministic" as const),
     context,
     onOpenEvidence,
-  } = props;
-  const [showAll, setShowAll] = useState(false);
-
-  const provenanceById = useMemo(() => {
-    const map = new Map<string, InsightsFindingProvenance>();
-    for (const row of provenance) map.set(row.candidateId, row);
-    return map;
-  }, [provenance]);
-
-  const sorted = useMemo(() => sortFindingsForDisplay(findings), [findings]);
-
-  const view: FindingView = mode === "ai" ? "ai" : "deterministic";
-  const [lead, ...secondary] = sorted;
-  const visibleSecondary = showAll
-    ? secondary
-    : secondary.slice(0, SECONDARY_VISIBLE);
+    iterationLabels,
+  };
 
   return (
-    <div className="space-y-3" data-testid="unified-findings-panel">
-      {backendUnavailableNote ? (
-        <StateNote tone="warning" testId="unified-findings-backend-missing">
-          <AlertTriangle
-            className="mr-1 inline size-3.5 align-[-2px]"
-            aria-hidden="true"
-          />
-          {backendUnavailableNote}
-        </StateNote>
-      ) : null}
-
-      <div className="flex flex-wrap items-center gap-2">
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          className="h-8"
-          disabled={!build.available || build.pending}
-          onClick={build.onRun}
-          data-testid="unified-findings-build"
-        >
-          {build.pending ? (
-            <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
-          ) : (
-            <Hammer className="size-3.5" aria-hidden="true" />
-          )}
-          {snapshot ? "Rebuild findings" : "Build findings"}
-        </Button>
-        <span className="text-[12px] text-muted-foreground">
-          Reads this run&apos;s recorded evidence. Does not use AI.
-        </span>
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost"
-          className="ml-auto h-8"
-          disabled={!enrich.available || enrich.pending || !snapshot}
-          onClick={enrich.onRun}
-          data-testid="unified-findings-enrich"
-        >
-          {enrich.pending ? (
-            <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
-          ) : (
-            <Sparkles className="size-3.5" aria-hidden="true" />
-          )}
-          Add AI explanation
-        </Button>
+    <div data-testid="unified-findings-panel">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-x-5 gap-y-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <h3 className="text-sm font-semibold">Findings</h3>
+          {scopeControl}
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-9"
+            disabled={!analyze.available || analyze.pending}
+            onClick={analyze.onRun}
+            data-testid="unified-findings-analyze"
+          >
+            {analyze.pending ? (
+              <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+            ) : (
+              <Sparkles className="size-3.5" aria-hidden="true" />
+            )}
+            {analyze.pending
+              ? "Analyzing…"
+              : enrichment?.status === "ready"
+              ? "Analyze again"
+              : "Analyze findings"}
+          </Button>
+          {lead ? (
+            <CopyFindingPrompt key={lead.id} finding={lead} context={context} />
+          ) : null}
+        </div>
       </div>
-
-      {build.error ? (
-        <StateNote tone="destructive" testId="unified-findings-build-error">
-          Building findings failed: {build.error}
-        </StateNote>
+      {executionIssues || backendUnavailableNote || analyze.error ? (
+        <div className="mb-5 space-y-3">
+          {executionIssues}
+          {backendUnavailableNote ? (
+            <StateNote tone="warning" testId="unified-findings-backend-missing">
+              {backendUnavailableNote}
+            </StateNote>
+          ) : null}
+          {analyze.error ? (
+            <StateNote
+              tone="destructive"
+              testId="unified-findings-analysis-error"
+            >
+              Analysis could not finish: {analyze.error}
+              {lead ? " Existing findings are still available below." : ""}
+            </StateNote>
+          ) : null}
+        </div>
       ) : null}
-      {enrich.error ? (
-        <StateNote tone="destructive" testId="unified-findings-enrich-error">
-          The AI explanation failed: {enrich.error}
-          {snapshot
-            ? " The observations below are unaffected — they were never produced by a model."
-            : ""}
-        </StateNote>
+      {enrichment?.status === "stale" ? (
+        <div className="mb-5">
+          <StateNote tone="warning" testId="unified-findings-stale-enrichment">
+            The evidence changed. Analyze again to update the suggested fixes.
+          </StateNote>
+        </div>
       ) : null}
-
       {!snapshot ? (
         <StateNote testId="unified-findings-no-snapshot">
-          {build.pending
-            ? "Building findings from this run's recorded evidence…"
-            : "Findings have not been built for this run. Use Build findings above — it reads the recorded evidence and does not use AI."}
+          {analyze.pending
+            ? "Reviewing this run’s evidence and looking for fixes…"
+            : "Analyze this run to see what broke, suggested fixes, and supporting evidence."}
         </StateNote>
-      ) : null}
-
-      {snapshot ? (
-        <>
-          <ModeTabs
-            mode={mode}
-            onModeChange={onModeChange}
-            hasAi={snapshot.enrichment?.status === "ready"}
-            hasBaseline={snapshot.baseline !== null}
+      ) : lead ? (
+        <div data-testid="unified-findings-list">
+          <FindingSummary
+            key={lead.id}
+            finding={lead}
+            provenance={provenanceById.get(lead.id) ?? null}
+            lead
+            {...summaryProps}
           />
-
-          {snapshot.enrichment?.status === "stale" ? (
-            <StateNote
-              tone="warning"
-              testId="unified-findings-stale-enrichment"
-            >
-              A previous AI explanation was written against older evidence and
-              is not being shown. Rebuilding changed what these findings
-              describe, so the old advice is not reattached to the new counts.
-            </StateNote>
-          ) : null}
-
-          {mode === "baseline" && snapshot.baseline ? (
-            <BaselineView baseline={snapshot.baseline} />
-          ) : mode === "baseline" ? (
-            <StateNote testId="unified-findings-no-baseline">
-              No previous analysis. This run had no stored analysis when these
-              findings were built.
-            </StateNote>
-          ) : observationState === "unavailable" ? (
-            <StateNote tone="warning" testId="unified-findings-unavailable">
-              Nothing in this run could be measured. Every iteration was
-              excluded — see the coverage below — so there is no honest finding
-              to show, which is different from finding nothing wrong.
-            </StateNote>
-          ) : sorted.length === 0 ? (
-            <StateNote testId="unified-findings-empty">
-              No findings.{" "}
-              {observationState === "partial"
-                ? "Part of this run could not be measured, so treat this as incomplete rather than clean."
-                : "The evidence this run recorded does not justify one."}
-            </StateNote>
-          ) : (
-            <div className="space-y-2.5" data-testid="unified-findings-list">
-              {lead ? (
-                <FindingSummary
-                  finding={lead}
-                  provenance={provenanceById.get(lead.id) ?? null}
-                  view={view}
-                  lead
-                  {...(context ? { context } : {})}
-                  {...(onOpenEvidence ? { onOpenEvidence } : {})}
-                />
-              ) : null}
-              {visibleSecondary.map((finding) => (
-                <FindingSummary
-                  key={finding.id}
-                  finding={finding}
-                  provenance={provenanceById.get(finding.id) ?? null}
-                  view={view}
-                  {...(context ? { context } : {})}
-                  {...(onOpenEvidence ? { onOpenEvidence } : {})}
-                />
+        </div>
+      ) : executionIssues ? null : (
+        <StateNote
+          tone={
+            observationState === "unavailable" && !discovery
+              ? "warning"
+              : "muted"
+          }
+          testId={
+            observationState === "unavailable" && !discovery
+              ? "unified-findings-unavailable"
+              : "unified-findings-empty"
+          }
+        >
+          {observationState === "unavailable" && !discovery
+            ? "There isn’t enough recorded evidence to explain this run. See coverage details below."
+            : incomplete
+            ? "No supported finding yet. Evidence is incomplete; this does not mean the run passed."
+            : mode === "ai"
+            ? "Analysis found no supported issue to report. This does not change the run’s results."
+            : "No issue found in the recorded checks. Analyze findings to look for patterns and suggested fixes."}
+        </StateNote>
+      )}
+      {snapshot && coverageText ? (
+        <p
+          className="mt-5 text-xs leading-6 text-muted-foreground"
+          data-testid="unified-findings-coverage-summary"
+        >
+          {coverageText}
+          {incomplete ? " Some evidence is incomplete." : ""}{" "}
+          <button
+            type="button"
+            className="min-h-8 font-medium text-foreground underline-offset-4 hover:underline"
+            onClick={() => setCoverageOpen(true)}
+            ref={coverageTrigger}
+          >
+            Coverage details
+          </button>
+        </p>
+      ) : null}
+      {secondary.length > 0 ? (
+        <div className="mt-5 border-t border-border/60">
+          <button
+            type="button"
+            className="flex min-h-11 w-full items-center gap-2 py-3 text-left text-xs hover:text-foreground/80 focus-visible:outline-2 focus-visible:outline-ring"
+            onClick={() => setShowMore(!showMore)}
+            aria-expanded={showMore}
+            data-testid="unified-findings-toggle-all"
+          >
+            <ChevronRight
+              className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${
+                showMore ? "rotate-90" : ""
+              }`}
+              aria-hidden="true"
+            />
+            <span>
+              {secondary.length} more{" "}
+              {secondary.length === 1 ? "finding" : "findings"}
+              {secondary.length === 1 ? ` · ${secondary[0].title}` : ""}
+            </span>
+          </button>
+          {showMore ? (
+            <div className="divide-y divide-border/60">
+              {secondary.map((f) => (
+                <div key={f.id} className="py-5">
+                  <FindingSummary
+                    finding={f}
+                    provenance={provenanceById.get(f.id) ?? null}
+                    {...summaryProps}
+                  />
+                </div>
               ))}
-              {secondary.length > SECONDARY_VISIBLE ? (
-                <button
-                  type="button"
-                  className="text-[12px] text-muted-foreground transition-colors hover:text-foreground"
-                  onClick={() => setShowAll((value) => !value)}
-                  data-testid="unified-findings-toggle-all"
-                >
-                  {showAll
-                    ? "Show fewer"
-                    : `Show all ${sorted.length} findings`}
-                </button>
-              ) : null}
             </div>
-          )}
-
-          {mode === "ai" && snapshot.enrichment?.status === "ready" ? (
-            <StateNote testId="unified-findings-enrichment-note">
-              AI explanation generated{" "}
-              {new Date(snapshot.enrichment.generatedAt).toLocaleString()} by{" "}
-              <code className="font-code">{snapshot.enrichment.modelUsed}</code>
-              . {snapshot.enrichment.acceptedCount} explanation
-              {snapshot.enrichment.acceptedCount === 1 ? "" : "s"} matched a
-              finding
-              {snapshot.enrichment.rejectedCount > 0
-                ? `; ${snapshot.enrichment.rejectedCount} row${
-                    snapshot.enrichment.rejectedCount === 1 ? " was" : "s were"
-                  } rejected for naming a finding that does not exist or naming one twice`
-                : ""}
-              . Counts, evidence and targets above are unchanged by it.
-            </StateNote>
           ) : null}
-
-          <CoverageLine
-            state={observationState}
-            coverage={observationCoverage}
-            omittedGroups={snapshot.omittedGroups}
-            trim={snapshot.trim ?? null}
-          />
-        </>
+        </div>
       ) : null}
+      <Sheet open={coverageOpen} onOpenChange={setCoverageOpen}>
+        <SheetContent
+          className="w-full overflow-y-auto sm:max-w-[620px]"
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            coverageTrigger.current?.focus();
+          }}
+        >
+          <SheetHeader className="px-6 pt-6 pr-12">
+            <SheetTitle className="text-lg">Analysis coverage</SheetTitle>
+            <SheetDescription>
+              What this analysis used from the selected run.
+            </SheetDescription>
+          </SheetHeader>
+          <div className="space-y-6 px-6 pb-8 text-sm leading-relaxed">
+            {discovery ? (
+              <div data-testid="unified-findings-enrichment-note">
+                <p>{coverageText}</p>
+                <p className="mt-3">
+                  {discovery.missingTraces} transcripts unavailable or outside
+                  the read limit; {discovery.truncatedTraces} transcripts
+                  shortened; {discovery.omittedEvidence} evidence records
+                  omitted for size.
+                </p>
+                <p className="mt-3 text-muted-foreground">
+                  Counts come from distinct cited trials. Grouping and suggested
+                  causes are AI interpretations, not a proven cause or a
+                  run-wide failure rate.
+                </p>
+              </div>
+            ) : snapshot ? (
+              <CoverageLine
+                state={observationState}
+                coverage={observationCoverage}
+                omittedGroups={snapshot.omittedGroups}
+                trim={snapshot.trim ?? null}
+              />
+            ) : null}
+            {enrichment?.status === "ready" ? (
+              <p className="text-xs text-muted-foreground">
+                Generated {new Date(enrichment.generatedAt).toLocaleString()} ·{" "}
+                {enrichment.modelUsed}. {enrichment.acceptedCount} findings with
+                verified citations.{" "}
+                {enrichment.rejectedCount > 0
+                  ? `${enrichment.rejectedCount} proposals rejected for invalid or duplicate citations or missing guidance.`
+                  : ""}
+              </p>
+            ) : null}
+            {snapshot?.baseline ? (
+              <details className="border-t border-border/60 pt-4">
+                <summary className="cursor-pointer font-medium">
+                  Previous analysis
+                </summary>
+                <div className="mt-4">
+                  <BaselineView baseline={snapshot.baseline} />
+                </div>
+              </details>
+            ) : null}
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

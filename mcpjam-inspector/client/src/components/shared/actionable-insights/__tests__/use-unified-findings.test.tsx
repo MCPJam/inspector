@@ -166,7 +166,7 @@ describe("enrich", () => {
 });
 
 describe("view selection", () => {
-  it("shows the deterministic findings by default", () => {
+  it("shows existing AI findings immediately on reload", () => {
     const { result } = renderHook(() =>
       useUnifiedFindings({
         suiteRunId: "run_1",
@@ -174,10 +174,8 @@ describe("view selection", () => {
         generation: generation(),
       }),
     );
-    expect(result.current.mode).toBe("deterministic");
-    expect(result.current.findings).toBe(
-      ENVELOPE.unifiedFindings!.snapshot!.deterministicFindings,
-    );
+    expect(result.current.mode).toBe("ai");
+    expect(result.current.findings).toBe(ENVELOPE.currentFindings);
   });
 
   it("switching to AI selects the current view through the shared selector", () => {
@@ -205,13 +203,13 @@ describe("an older backend", () => {
       }),
     );
     expect(result.current.backendUnavailableNote).toContain(
-      "does not serve it",
+      "does not support findings yet",
     );
     expect(result.current.build.available).toBe(false);
     expect(mutation.fn).not.toHaveBeenCalled();
   });
 
-  it("distinguishes a gate that is off from a backend that is missing", () => {
+  it("explains when an older backend serves findings but cannot build them", () => {
     const gateOff: InsightsEnvelope = {
       ...ENVELOPE,
       unifiedFindings: {
@@ -229,7 +227,7 @@ describe("an older backend", () => {
       }),
     );
     expect(result.current.backendUnavailableNote).toContain(
-      "write gate is off",
+      "Update the backend to enable builds",
     );
     // Reads still work: the snapshot that exists is still on screen.
     expect(result.current.findings.length).toBeGreaterThan(0);
@@ -427,7 +425,9 @@ describe("the borrowed controller's state is not this section's to claim", () =>
       }),
     );
     expect(result.current.enrich.available).toBe(false);
-    expect(result.current.backendUnavailableNote).toContain("insights-limit");
+    expect(result.current.backendUnavailableNote).toContain(
+      "daily insights limit",
+    );
   });
 
   it("says nothing extra when the controller is healthy", () => {
@@ -481,5 +481,144 @@ describe("a stale build callback cannot reach a live request", () => {
       settlers[1]?.(new Error("the live request failed"));
     });
     expect(result.current.build.error).toContain("the live request failed");
+  });
+});
+
+it("opens the completed AI analysis and clears the request guard even if pending was missed", () => {
+  const controller = generation();
+  const before = structuredClone(ENVELOPE);
+  before.unifiedFindings!.snapshot!.enrichment = null;
+  const { result, rerender } = renderHook(
+    ({ envelope }) =>
+      useUnifiedFindings({
+        suiteRunId: "run_1",
+        envelope,
+        generation: controller,
+      }),
+    { initialProps: { envelope: before } },
+  );
+  act(() => result.current.enrich.onRun());
+  const completed = structuredClone(before);
+  completed.unifiedFindings!.snapshot!.enrichment = {
+    status: "ready",
+    generatedAt: 99,
+    modelUsed: "test",
+    summary: "s",
+    acceptedCount: 1,
+    rejectedCount: 0,
+  };
+  rerender({ envelope: completed });
+  expect(result.current.mode).toBe("ai");
+  expect(result.current.enrich.pending).toBe(false);
+  act(() => result.current.enrich.onRun());
+  expect(controller.requestInsight).toHaveBeenCalledTimes(2);
+});
+
+describe("one Analyze findings action", () => {
+  function unbuilt() {
+    const envelope = structuredClone(ENVELOPE);
+    envelope.unifiedFindings!.snapshot = null;
+    envelope.unifiedFindings!.canBuild = true;
+    envelope.unifiedFindings!.canEnrich = false;
+    envelope.unifiedFindings!.job = null;
+    return envelope;
+  }
+  it("prepares evidence and invokes AI once after the subscribed build completes", async () => {
+    const borrowed = generation();
+    const { result, rerender } = renderHook(
+      ({ envelope }) =>
+        useUnifiedFindings({
+          suiteRunId: "run_1",
+          envelope,
+          generation: borrowed,
+        }),
+      { initialProps: { envelope: unbuilt() } },
+    );
+    expect(result.current.analyze.available).toBe(true);
+    expect(borrowed.requestInsight).not.toHaveBeenCalled();
+    await act(async () => {
+      result.current.analyze.onRun();
+      result.current.analyze.onRun();
+    });
+    expect(mutation.fn).toHaveBeenCalledTimes(1);
+    expect(result.current.analyze.pending).toBe(true);
+    expect(borrowed.requestInsight).not.toHaveBeenCalled();
+    const completed = structuredClone(ENVELOPE);
+    completed.unifiedFindings!.snapshot!.enrichment = null;
+    completed.unifiedFindings!.canEnrich = true;
+    completed.unifiedFindings!.job = null;
+    rerender({ envelope: completed });
+    rerender({ envelope: structuredClone(completed) });
+    expect(borrowed.requestInsight).toHaveBeenCalledTimes(1);
+    expect(borrowed.requestInsight).toHaveBeenCalledWith(true, {
+      mode: "findings",
+    });
+  });
+  it("never invokes AI after a build refusal", async () => {
+    mutation.fn.mockRejectedValueOnce(new Error("Evidence unavailable"));
+    const borrowed = generation();
+    const { result } = renderHook(() =>
+      useUnifiedFindings({
+        suiteRunId: "run_1",
+        envelope: unbuilt(),
+        generation: borrowed,
+      }),
+    );
+    await act(async () => result.current.analyze.onRun());
+    expect(result.current.analyze.error).toContain("Evidence unavailable");
+    expect(result.current.analyze.pending).toBe(false);
+    expect(borrowed.requestInsight).not.toHaveBeenCalled();
+  });
+  it("cancels queued analysis on a run switch", async () => {
+    const borrowed = generation();
+    const { result, rerender } = renderHook(
+      ({ id, envelope }) =>
+        useUnifiedFindings({ suiteRunId: id, envelope, generation: borrowed }),
+      { initialProps: { id: "a", envelope: unbuilt() } },
+    );
+    await act(async () => result.current.analyze.onRun());
+    rerender({ id: "b", envelope: structuredClone(ENVELOPE) });
+    expect(borrowed.requestInsight).not.toHaveBeenCalled();
+    expect(result.current.analyze.pending).toBe(false);
+  });
+  it("waits for a new snapshot when replacing stale analysis", async () => {
+    const envelope = structuredClone(ENVELOPE);
+    envelope.unifiedFindings!.snapshot!.enrichment!.status = "stale";
+    const borrowed = generation();
+    const { result, rerender } = renderHook(
+      ({ envelope }) =>
+        useUnifiedFindings({
+          suiteRunId: "run_1",
+          envelope,
+          generation: borrowed,
+        }),
+      { initialProps: { envelope } },
+    );
+    await act(async () => result.current.analyze.onRun());
+    rerender({ envelope: structuredClone(envelope) });
+    expect(borrowed.requestInsight).not.toHaveBeenCalled();
+    const ready = structuredClone(envelope);
+    ready.unifiedFindings!.snapshot!.builtAt += 1;
+    ready.unifiedFindings!.snapshot!.enrichment = null;
+    ready.unifiedFindings!.canEnrich = true;
+    ready.unifiedFindings!.job = null;
+    rerender({ envelope: ready });
+    expect(borrowed.requestInsight).toHaveBeenCalledTimes(1);
+  });
+  it("reuses a ready snapshot and coalesces duplicate analysis clicks", () => {
+    const borrowed = generation();
+    const { result } = renderHook(() =>
+      useUnifiedFindings({
+        suiteRunId: "run_1",
+        envelope: ENVELOPE,
+        generation: borrowed,
+      }),
+    );
+    act(() => {
+      result.current.analyze.onRun();
+      result.current.analyze.onRun();
+    });
+    expect(mutation.fn).not.toHaveBeenCalled();
+    expect(borrowed.requestInsight).toHaveBeenCalledTimes(1);
   });
 });

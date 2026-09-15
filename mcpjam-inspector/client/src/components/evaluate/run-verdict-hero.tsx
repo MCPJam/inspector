@@ -128,17 +128,6 @@ function PairingStat({
   );
 }
 
-function AiGeneratedLabel() {
-  return (
-    <span
-      className="shrink-0 text-[10.5px] font-medium text-muted-foreground"
-      data-testid="run-verdict-ai-insight"
-    >
-      AI generated
-    </span>
-  );
-}
-
 function PairingPassList({ pairings }: { pairings: HeroPairingPass[] }) {
   const theme = usePreferencesStoreWithDefaults((state) => state.themeMode);
   return (
@@ -247,12 +236,15 @@ export function RunVerdictHero({
   headerVerdict = view.verdict,
   onOpenFailingTrace,
   actions,
+  showExplanation = true,
 }: {
   view: RunVerdictHeroView;
   headerVerdict?: RunVerdictHeroView["verdict"];
   onOpenFailingTrace?: () => void;
   /** The primary action slot, so the copy-prompt button can land here later. */
   actions?: React.ReactNode;
+  /** The unified findings panel supplies the explanation when enabled. */
+  showExplanation?: boolean;
 }) {
   const inHeader = useRunHeaderVerdict(headerVerdict);
   const showVerdict = !inHeader && view.verdict.word !== "Running";
@@ -297,7 +289,7 @@ export function RunVerdictHero({
           </div>
         ) : null}
 
-        {summaryLoading ? (
+        {!showExplanation ? null : summaryLoading ? (
           <div
             className="grid divide-y divide-border/40 border-t border-border/60 pt-3 lg:grid-cols-2 lg:divide-x lg:divide-y-0"
             role="status"
@@ -346,7 +338,6 @@ export function RunVerdictHero({
                       ? "What broke"
                       : "What happened"}
                 </h4>
-                <AiGeneratedLabel />
               </div>
               {hasSentence ? (
                 <p
@@ -373,7 +364,6 @@ export function RunVerdictHero({
                   )}
                   {remedy ? "How to fix" : "Next step"}
                 </h4>
-                <AiGeneratedLabel />
               </div>
               <p
                 className="mt-2 text-sm leading-relaxed text-foreground"

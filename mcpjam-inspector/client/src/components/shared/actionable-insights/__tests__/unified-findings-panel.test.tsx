@@ -7,7 +7,7 @@
  * "unavailable" must read as three different things, and a server-fix
  * affordance must appear only where the backend promoted the finding.
  */
-import { render, screen, fireEvent, within } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { UnifiedFindingsPanel } from "../unified-findings-panel";
 import type {
@@ -95,8 +95,13 @@ const coverage = {
 function renderPanel(
   props: Partial<Parameters<typeof UnifiedFindingsPanel>[0]> = {},
 ) {
-  const onModeChange = vi.fn();
-  const view = render(
+  const analyze = {
+    available: true,
+    pending: false,
+    error: null,
+    onRun: vi.fn(),
+  };
+  const result = render(
     <UnifiedFindingsPanel
       snapshot={snapshot()}
       findings={[finding()]}
@@ -104,279 +109,261 @@ function renderPanel(
       observationState="ready"
       observationCoverage={coverage}
       mode="deterministic"
-      onModeChange={onModeChange}
-      build={{ available: true, pending: false, error: null, onRun: vi.fn() }}
-      enrich={{ available: true, pending: false, error: null, onRun: vi.fn() }}
+      analyze={analyze}
       {...props}
     />,
   );
-  return { ...view, onModeChange };
+  return { ...result, analyze };
 }
+const openWhy = () =>
+  fireEvent.click(screen.getByRole("button", { name: "Why this fix?" }));
 
-describe("the two operations are distinguishable and independent", () => {
-  it("says the deterministic operation does not use AI", () => {
-    renderPanel();
+describe("walkthrough findings layout", () => {
+  it("shows the problem and fix without experiment controls or expanded diagnostics", () => {
+    const { analyze } = renderPanel();
+    expect(screen.getByRole("heading", { name: "What broke" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "How to fix" })).toBeVisible();
+    expect(screen.getByText(finding().recommendation)).toBeVisible();
+    expect(screen.queryByRole("tablist")).toBeNull();
+    expect(screen.queryByText("Experiment")).toBeNull();
     expect(
-      screen.getByText(
-        /Reads this run's recorded evidence\. Does not use AI\./,
-      ),
-    ).toBeTruthy();
+      screen.queryByRole("button", { name: /Build findings/i }),
+    ).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(analyze.onRun).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Analyze findings" }));
+    expect(analyze.onRun).toHaveBeenCalledTimes(1);
   });
 
-  it("never runs anything on mount", () => {
-    const build = {
-      available: true,
-      pending: false,
-      error: null,
-      onRun: vi.fn(),
-    };
-    const enrich = {
-      available: true,
-      pending: false,
-      error: null,
-      onRun: vi.fn(),
-    };
-    renderPanel({ build, enrich });
-    expect(build.onRun).not.toHaveBeenCalled();
-    expect(enrich.onRun).not.toHaveBeenCalled();
-  });
-
-  it("does not generate when the comparison view changes", () => {
-    const enrich = {
-      available: true,
-      pending: false,
-      error: null,
-      onRun: vi.fn(),
-    };
-    const { onModeChange } = renderPanel({
-      enrich,
-      snapshot: snapshot({
-        enrichment: {
-          status: "ready",
-          generatedAt: 1,
-          modelUsed: "m",
-          summary: "s",
-          acceptedCount: 1,
-          rejectedCount: 0,
-        },
-      }),
-    });
-    fireEvent.click(screen.getByTestId("unified-findings-mode-ai"));
-    expect(onModeChange).toHaveBeenCalledWith("ai");
-    expect(enrich.onRun).not.toHaveBeenCalled();
-  });
-
-  it("does not generate when evidence is opened", () => {
-    const enrich = {
-      available: true,
-      pending: false,
-      error: null,
-      onRun: vi.fn(),
-    };
-    renderPanel({ enrich });
-    fireEvent.click(screen.getByTestId("unified-finding-toggle"));
-    expect(enrich.onRun).not.toHaveBeenCalled();
-  });
-
-  it("keeps a model failure out of the deterministic operation's state", () => {
-    renderPanel({
-      enrich: {
-        available: true,
-        pending: false,
-        error: "provider returned 503",
-        onRun: vi.fn(),
-      },
-    });
-    expect(screen.getByTestId("unified-findings-enrich-error")).toBeTruthy();
-    expect(screen.queryByTestId("unified-findings-build-error")).toBeNull();
-    // The observation is still on screen — the property the experiment tests.
-    expect(
-      screen.getByTestId("unified-finding-observed").textContent,
-    ).toContain('"search" failed (401)');
-  });
-
-  it("shows a build failure without claiming the model failed", () => {
-    renderPanel({
-      build: {
-        available: true,
-        pending: false,
-        error: "Evidence changed; rebuild findings.",
-        onRun: vi.fn(),
-      },
-    });
-    expect(
-      screen.getByTestId("unified-findings-build-error").textContent,
-    ).toContain("Evidence changed");
-    expect(screen.queryByTestId("unified-findings-enrich-error")).toBeNull();
-  });
-});
-
-describe("the states are four different sentences", () => {
-  it("a missing snapshot says findings have not been built", () => {
-    renderPanel({ snapshot: null, findings: [], provenance: [] });
-    expect(
-      screen.getByTestId("unified-findings-no-snapshot").textContent,
-    ).toContain("Findings have not been built for this run");
-  });
-
-  it("a known-empty result is not the same as unavailable", () => {
-    renderPanel({
-      findings: [],
-      snapshot: snapshot({ deterministicFindings: [] }),
-    });
-    expect(screen.getByTestId("unified-findings-empty")).toBeTruthy();
-    expect(screen.queryByTestId("unified-findings-unavailable")).toBeNull();
-  });
-
-  it("unavailable says nothing could be measured", () => {
-    renderPanel({
-      findings: [],
-      observationState: "unavailable",
-      snapshot: snapshot({ deterministicFindings: [] }),
-    });
-    expect(
-      screen.getByTestId("unified-findings-unavailable").textContent,
-    ).toContain("different from finding nothing wrong");
-  });
-
-  it("a partial empty result refuses to read as clean", () => {
-    renderPanel({
-      findings: [],
-      observationState: "partial",
-      snapshot: snapshot({ deterministicFindings: [] }),
-    });
-    expect(screen.getByTestId("unified-findings-empty").textContent).toContain(
-      "incomplete rather than clean",
-    );
-  });
-
-  it("an older backend explains the pairing instead of failing silently", () => {
-    renderPanel({
-      snapshot: null,
-      findings: [],
-      backendUnavailableNote: "the connected backend does not serve it",
-    });
-    expect(
-      screen.getByTestId("unified-findings-backend-missing").textContent,
-    ).toContain("does not serve it");
-  });
-});
-
-describe("provenance labelling", () => {
-  it("labels deterministic fallback prose as standard guidance", () => {
-    // The lead finding renders expanded — its evidence and next step are the
-    // first thing a reader needs, not a disclosure they have to find.
-    renderPanel();
-    const sources = screen
-      .getAllByTestId("finding-prose-source")
-      .map((node) => node.getAttribute("data-source"));
-    expect(sources.every((source) => source === "deterministic")).toBe(true);
-    expect(screen.getAllByText("Standard guidance").length).toBeGreaterThan(0);
-  });
-
-  it("labels a model-written field as an AI explanation, field by field", () => {
-    renderPanel({
-      mode: "ai",
+  it("opens real failed and contrasting evidence in a drawer without generating", () => {
+    const { analyze } = renderPanel({
       findings: [
         finding({
-          title: "Expired service credential on the CRM connector",
-          rootCause: "The pinned token expired mid-run.",
+          evidence: [
+            ...finding().evidence,
+            {
+              iterationId: "pass",
+              kind: "contrast",
+              excerpt: "Search returned the expected records.",
+            },
+          ],
         }),
       ],
+    });
+    expect(screen.queryByText("Authentication failed (401)")).toBeNull();
+    openWhy();
+    expect(screen.getByRole("dialog", { name: "Why this fix?" })).toBeVisible();
+    expect(screen.getByText("Authentication failed (401)")).toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: "Successful comparison" }),
+    ).toBeVisible();
+    expect(
+      screen.getByText("Search returned the expected records."),
+    ).toBeVisible();
+    expect(analyze.onRun).not.toHaveBeenCalled();
+  });
+
+  it("shows readable MCP text while preserving the complete recorded wrapper", () => {
+    const excerpt =
+      'Tool: run_eval_suite; call: c1; outcome: error\nResult: {"_meta":{"version":1},"content":[{"type":"text","text":"Choose a target before running the suite."}]}\nArguments: {}';
+    renderPanel({
+      findings: [
+        finding({
+          evidence: [{ kind: "tool_error", iterationId: "it_fail_1", excerpt }],
+        }),
+      ],
+    });
+    openWhy();
+    expect(
+      screen.getByText("Choose a target before running the suite."),
+    ).toBeVisible();
+    expect(screen.getByText("Full recorded excerpt")).toBeVisible();
+    expect(
+      screen
+        .getByText("Full recorded excerpt")
+        .parentElement?.querySelector("pre")?.textContent,
+    ).toBe(excerpt);
+  });
+
+  it("restores keyboard focus when the evidence drawer closes", async () => {
+    renderPanel();
+    const trigger = screen.getByRole("button", { name: "Why this fix?" });
+    fireEvent.click(trigger);
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
+
+  it("does not invent a successful comparison", () => {
+    renderPanel();
+    openWhy();
+    expect(
+      screen.queryByRole("heading", { name: "Successful comparison" }),
+    ).toBeNull();
+  });
+
+  it("routes evidence through typed locators and closes the drawer", async () => {
+    const onOpenEvidence = vi.fn();
+    renderPanel({ onOpenEvidence });
+    openWhy();
+    fireEvent.click(screen.getByTestId("finding-evidence-open"));
+    expect(onOpenEvidence).toHaveBeenCalledWith({
+      kind: "iteration",
+      id: "it_fail_1",
+    });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("lists distinct affected trials, with all recorded links rather than only excerpts", () => {
+    const onOpenEvidence = vi.fn();
+    renderPanel({
       provenance: [
         provenance({
-          proseOrigin: {
-            title: "ai",
-            rootCause: "ai",
-            recommendation: "deterministic",
-            acceptanceCriteria: "deterministic",
-          },
+          affectedIterationIds: ["it_fail_1", "it_fail_2", "it_fail_2"],
         }),
       ],
-      snapshot: snapshot({
-        enrichment: {
-          status: "ready",
-          generatedAt: 1_757_800_000_000,
-          modelUsed: "openai/gpt-5.4-mini",
-          summary: "s",
-          acceptedCount: 1,
-          rejectedCount: 2,
-        },
+      onOpenEvidence,
+      iterationLabels: { it_fail_2: "Trial 9 · Search contacts" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "View 2 affected trials" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Trial 9 · Search contacts" }),
+    );
+    expect(onOpenEvidence).toHaveBeenCalledWith({
+      kind: "iteration",
+      id: "it_fail_2",
+    });
+  });
+
+  it("omits navigation links when the host has no evidence route", () => {
+    renderPanel();
+    openWhy();
+    expect(screen.queryByTestId("finding-evidence-open")).toBeNull();
+  });
+
+  it("collapses every additional finding behind one disclosure", () => {
+    const second = finding({
+      id: "second",
+      title: "Missing confirmation",
+      observed: "The final answer omitted the project name.",
+    });
+    renderPanel({ findings: [finding(), second] });
+    expect(screen.queryByTestId("unified-finding")).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "1 more finding · Missing confirmation",
       }),
-    });
-    const detail = screen.getByTestId("unified-finding-detail");
-    const cause = within(detail).getByText("Proposed cause").parentElement!;
-    expect(
-      within(cause)
-        .getByTestId("finding-prose-source")
-        .getAttribute("data-source"),
-    ).toBe("ai");
-    const next = within(detail).getByText("What to investigate").parentElement!;
-    expect(
-      within(next)
-        .getByTestId("finding-prose-source")
-        .getAttribute("data-source"),
-    ).toBe("deterministic");
+    );
+    expect(screen.getByTestId("unified-finding")).toBeVisible();
+    expect(screen.getByText(second.observed)).toBeVisible();
   });
 
-  it("reports rejected model rows rather than celebrating nonempty output", () => {
-    renderPanel({
-      mode: "ai",
-      snapshot: snapshot({
-        enrichment: {
-          status: "ready",
-          generatedAt: 1_757_800_000_000,
-          modelUsed: "openai/gpt-5.4-mini",
-          summary: "s",
-          acceptedCount: 1,
-          rejectedCount: 2,
-        },
-      }),
-    });
-    expect(
-      screen.getByTestId("unified-findings-enrichment-note").textContent,
-    ).toContain("2 rows were rejected");
-  });
-
-  it("says a judged claim is a judgment, with its recorded coverage", () => {
-    renderPanel({
-      provenance: [
-        provenance({
-          basis: "judged",
-          judgeCoverage: {
-            evaluatorId: "rubric:abc",
-            evaluatorLabel: "the pinned rubric abc",
-            graded: 12,
-            eligible: 14,
-            nonGraded: { pending: 1, skipped: 1, errored: 0 },
-          },
-        }),
-      ],
-    });
-    expect(
-      screen.getByTestId("unified-finding-basis").getAttribute("data-basis"),
-    ).toBe("judged");
-    expect(
-      screen.getByTestId("unified-finding-judge-coverage").textContent,
-    ).toContain("graded 12 of 14 eligible");
-  });
-
-  it("repeats a sampled-mechanism caveat instead of implying a run-wide rate", () => {
-    renderPanel({
-      provenance: [
-        provenance({
-          mechanismBasis: "sampled",
-          populationCaveat: "no run-wide rate is claimed",
-        }),
-      ],
-    });
-    expect(screen.getByTestId("unified-finding-caveat").textContent).toContain(
-      "no run-wide rate is claimed",
+  it("copies an investigation for an unproven fix", async () => {
+    renderPanel();
+    fireEvent.click(screen.getByRole("button", { name: "Copy fix prompt" }));
+    await waitFor(() => expect(screen.getByText("Copied")).toBeVisible());
+    expect(copied.text).toContain("Investigate a problem");
+    expect(screen.getByTestId("finding-copy-prompt")).toHaveAttribute(
+      "data-server-fix",
+      "false",
     );
   });
 
-  it("marks a stale enrichment as withheld rather than showing it", () => {
+  it("only exposes a server repair and pinned contract for a promoted finding", () => {
     renderPanel({
+      findings: [
+        finding({
+          actionTarget: "mcp_server",
+          actionability: "ready",
+          target: {
+            serverId: "crm",
+            toolName: "search",
+            surface: "description",
+            snapshotHash: "hash",
+            currentDefinition: {
+              description: "Search records",
+              truncated: false,
+            },
+          },
+        }),
+      ],
+    });
+    expect(screen.getByTestId("finding-copy-prompt")).toHaveAttribute(
+      "data-server-fix",
+      "true",
+    );
+    openWhy();
+    expect(screen.getByTestId("unified-finding-contract")).toHaveTextContent(
+      "Search records",
+    );
+  });
+
+  it("does not offer a repository fix for an environment problem", () => {
+    renderPanel({
+      findings: [
+        finding({
+          actionTarget: "environment",
+          actionability: "informational",
+        }),
+      ],
+    });
+    expect(screen.queryByTestId("finding-copy-prompt")).toBeNull();
+  });
+});
+
+describe("analysis states and provenance", () => {
+  it("keeps recorded findings visible after a failed analysis", () => {
+    renderPanel({
+      analyze: {
+        available: true,
+        pending: false,
+        error: "Provider returned 503",
+        onRun: vi.fn(),
+      },
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Provider returned 503",
+    );
+    expect(screen.getByTestId("unified-finding-observed")).toHaveTextContent(
+      finding().observed,
+    );
+  });
+  it("uses a single pending action and retains the current finding", () => {
+    renderPanel({
+      analyze: { available: true, pending: true, error: null, onRun: vi.fn() },
+    });
+    expect(screen.getByRole("button", { name: "Analyzing…" })).toBeDisabled();
+    expect(screen.getByTestId("unified-finding-observed")).toBeVisible();
+  });
+  it("distinguishes not analyzed, incomplete, and known-empty results", () => {
+    const { unmount } = renderPanel({ snapshot: null, findings: [] });
+    expect(
+      screen.getByTestId("unified-findings-no-snapshot"),
+    ).toHaveTextContent("Analyze this run");
+    unmount();
+    renderPanel({ findings: [], observationState: "partial" });
+    expect(screen.getByTestId("unified-findings-empty")).toHaveTextContent(
+      "does not mean the run passed",
+    );
+  });
+  it("explains unavailable evidence", () => {
+    renderPanel({ findings: [], observationState: "unavailable" });
+    expect(
+      screen.getByTestId("unified-findings-unavailable"),
+    ).toHaveTextContent("isn’t enough recorded evidence");
+  });
+  it("does not obscure recorded execution errors with a generic empty finding", () => {
+    renderPanel({
+      findings: [],
+      executionIssues: <p>Two trials hit the model limit.</p>,
+    });
+    expect(screen.getByText("Two trials hit the model limit.")).toBeVisible();
+    expect(screen.queryByTestId("unified-findings-empty")).toBeNull();
+  });
+  it("reports backend availability and stale analysis without showing mode tabs", () => {
+    renderPanel({
+      backendUnavailableNote: "Findings temporarily unavailable",
       snapshot: snapshot({
         enrichment: {
           status: "stale",
@@ -389,114 +376,140 @@ describe("provenance labelling", () => {
       }),
     });
     expect(
-      screen.getByTestId("unified-findings-stale-enrichment").textContent,
-    ).toContain("not being shown");
+      screen.getByTestId("unified-findings-backend-missing"),
+    ).toBeVisible();
     expect(
-      screen.getByTestId("unified-findings-mode-ai").hasAttribute("disabled"),
-    ).toBe(true);
+      screen.getByTestId("unified-findings-stale-enrichment"),
+    ).toHaveTextContent("Analyze again");
+    expect(screen.queryByRole("tablist")).toBeNull();
   });
-});
-
-describe("actions stay behind the backend's own gate", () => {
-  it("an unproven finding offers an investigation, not a server fix", () => {
-    renderPanel();
-    const button = screen.getByTestId("finding-copy-prompt");
-    expect(button.getAttribute("data-server-fix")).toBe("false");
-    expect(button.textContent).toContain("Copy investigation prompt");
-    expect(screen.queryByTestId("unified-finding-contract")).toBeNull();
-  });
-
-  it("a promoted finding offers the server fix and shows the pinned contract", () => {
-    const promoted = finding({
-      actionTarget: "mcp_server",
-      actionability: "ready",
-      attribution: "server_runtime",
-      confidence: "high",
-      recommendation: "Refresh the pinned credential before the run starts.",
-      acceptanceCriteria: ["search returns 200 for the same query"],
-      target: {
-        serverId: "acme-crm",
-        toolName: "search",
-        surface: "handler",
-        snapshotHash: "sha256:snap",
-        currentDefinition: { truncated: false, description: "Search records." },
-      },
-    });
-    renderPanel({ findings: [promoted] });
-    expect(
-      screen.getByTestId("finding-copy-prompt").getAttribute("data-server-fix"),
-    ).toBe("true");
-    expect(screen.getByTestId("unified-finding-contract")).toBeTruthy();
-    fireEvent.click(screen.getByTestId("finding-copy-prompt"));
-  });
-
-  it("an environment row offers no prompt at all", () => {
+  it("labels fallback recommendations accurately even in an AI result", () => {
     renderPanel({
-      findings: [
-        finding({
-          actionTarget: "environment",
-          actionability: "informational",
+      mode: "ai",
+      provenance: [
+        provenance({
+          proseOrigin: {
+            title: "ai",
+            rootCause: "ai",
+            recommendation: "deterministic",
+            acceptanceCriteria: "deterministic",
+          },
         }),
       ],
     });
-    expect(screen.queryByTestId("finding-copy-prompt")).toBeNull();
+    expect(screen.getByTestId("finding-prose-source")).toHaveTextContent(
+      "Suggested next step",
+    );
+    expect(screen.getByTestId("finding-prose-source")).toHaveAttribute(
+      "data-source",
+      "deterministic",
+    );
   });
-
-  it("routes evidence through a TYPED locator, never a raw id", () => {
-    const onOpenEvidence = vi.fn();
-    renderPanel({ onOpenEvidence });
-    fireEvent.click(screen.getByTestId("finding-evidence-open"));
-    expect(onOpenEvidence).toHaveBeenCalledWith({
-      kind: "iteration",
-      id: "it_fail_1",
-    });
-  });
-
-  it("omits the evidence link entirely when no callback is supplied", () => {
-    renderPanel();
-    expect(screen.queryByTestId("finding-evidence-open")).toBeNull();
-  });
-});
-
-describe("lead and secondary presentation", () => {
-  it("opens the lead finding and leaves the secondary ones folded", () => {
-    const second = finding({
-      id: "rf_aaaa000000000002",
-      observed: '8 of 10 iterations that reached "connection" failed there.',
-    });
+  it("keeps judge coverage and uncertainty in the evidence drawer", () => {
     renderPanel({
-      findings: [finding(), second],
-      provenance: [provenance(), provenance({ candidateId: second.id })],
-      snapshot: snapshot({ deterministicFindings: [finding(), second] }),
+      provenance: [
+        provenance({
+          basis: "judged",
+          mechanismBasis: "sampled",
+          populationCaveat: "No run-wide rate is claimed.",
+          judgeCoverage: {
+            evaluatorId: "judge",
+            evaluatorLabel: "Completion",
+            graded: 4,
+            eligible: 20,
+            nonGraded: { pending: 16, skipped: 0, errored: 0 },
+          },
+        }),
+      ],
     });
-    expect(screen.getByTestId("unified-finding-lead")).toBeTruthy();
-    // One detail block open: the lead's.
-    expect(screen.getAllByTestId("unified-finding-detail")).toHaveLength(1);
-    fireEvent.click(screen.getAllByTestId("unified-finding-toggle")[1]!);
-    expect(screen.getAllByTestId("unified-finding-detail")).toHaveLength(2);
+    expect(screen.getByText("Recorded judge results")).toBeVisible();
+    openWhy();
+    expect(
+      screen.getByTestId("unified-finding-judge-coverage"),
+    ).toHaveTextContent("graded 4 of 20 eligible");
+    expect(screen.getByTestId("unified-finding-caveat")).toHaveTextContent(
+      "No run-wide rate",
+    );
   });
-});
-
-describe("coverage is reported, not implied", () => {
-  it("names the exclusions and the omitted groups", () => {
+  it("puts exclusions and rejected proposals behind compact coverage details", () => {
     renderPanel({
       observationState: "partial",
       observationCoverage: {
         ...coverage,
-        analyzed: 2,
-        total: 8,
-        exclusions: { chainMissing: 2, chainVersionAhead: 2 },
+        analyzed: 14,
+        exclusions: { chainUnverified: 6 },
       },
-      snapshot: snapshot({ omittedGroups: 6 }),
+      snapshot: snapshot({ omittedGroups: 2 }),
     });
-    const text = screen.getByTestId("unified-findings-coverage").textContent;
-    expect(text).toContain("Analyzed 2 of 8 iterations");
-    expect(text).toContain("does not describe the whole run");
     expect(
-      screen.getByTestId("unified-findings-exclusions").textContent,
-    ).toContain("2 with no recorded contract chain");
+      screen.getByTestId("unified-findings-coverage-summary"),
+    ).toHaveTextContent(
+      "Evidence covers 14 of 20 trials. Some evidence is incomplete.",
+    );
+    expect(screen.queryByTestId("unified-findings-exclusions")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Coverage details" }));
+    expect(screen.getByTestId("unified-findings-exclusions")).toHaveTextContent(
+      "6 without a verified stage chain",
+    );
+    expect(screen.getByTestId("unified-findings-omitted")).toHaveTextContent(
+      "2 further groups",
+    );
+  });
+  it("shows AI-discovered issues with honest coverage even without stage-chain findings", () => {
+    renderPanel({
+      mode: "ai",
+      observationState: "unavailable",
+      findings: [
+        finding({
+          title: "Suite creation gets stuck retrying",
+          observed: "Supporting evidence cited in 2 of 12 reviewed iterations.",
+        }),
+      ],
+      provenance: [
+        provenance({
+          groupKind: "ai_discovery",
+          proseOrigin: {
+            title: "ai",
+            rootCause: "ai",
+            recommendation: "ai",
+            acceptanceCriteria: "ai",
+          },
+        }),
+      ],
+      snapshot: snapshot({
+        enrichment: {
+          status: "ready",
+          generatedAt: 123,
+          modelUsed: "test-model",
+          summary: "s",
+          acceptedCount: 1,
+          rejectedCount: 1,
+          discovery: {
+            reviewedIterations: 12,
+            totalIterations: 16,
+            reviewedFailedIterations: 8,
+            totalFailedIterations: 8,
+            missingTraces: 1,
+            truncatedTraces: 2,
+            omittedEvidence: 3,
+          },
+        },
+      }),
+    });
     expect(
-      screen.getByTestId("unified-findings-omitted").textContent,
-    ).toContain("6 further groups");
+      screen.getByTestId("unified-finding-discovered-title"),
+    ).toHaveTextContent("Suite creation gets stuck retrying");
+    expect(screen.queryByTestId("unified-findings-unavailable")).toBeNull();
+    expect(
+      screen.getByTestId("unified-findings-coverage-summary"),
+    ).toHaveTextContent("Reviewed 8 of 8 failed trials and 4 passing examples");
+    expect(screen.getByText("AI suggestion")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Coverage details" }));
+    expect(
+      screen.getByTestId("unified-findings-enrichment-note"),
+    ).toHaveTextContent("3 evidence records omitted");
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "1 proposals rejected",
+    );
   });
 });

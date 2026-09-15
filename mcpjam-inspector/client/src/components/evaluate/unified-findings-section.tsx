@@ -13,14 +13,23 @@
  * click cannot become two billable requests.
  */
 import { ErrorBoundary } from "@/components/ui/error-boundary";
+import { Button } from "@mcpjam/design-system/button";
 import { useInsightsEnvelope } from "@/components/shared/actionable-insights/use-insights-envelope";
 import { UnifiedFindingsPanel } from "@/components/shared/actionable-insights/unified-findings-panel";
 import { useUnifiedFindings } from "@/components/shared/actionable-insights/use-unified-findings";
 import type { BorrowedGenerationController } from "@/components/shared/actionable-insights/use-unified-findings";
 import type { FindingEvidenceLocator } from "@/components/shared/actionable-insights/finding-evidence";
+import type { EvalIteration } from "../evals/types";
+import {
+  RunExecutionIssues,
+  summarizeRunExecutionIssues,
+} from "./run-execution-issues";
 
 export type UnifiedFindingsSectionProps = {
   suiteRunId: string;
+  iterations?: readonly EvalIteration[];
+  expectedTotal?: number;
+  scopeControl?: React.ReactNode;
   /** The page's existing serverQuality controller. */
   generation: BorrowedGenerationController;
   /** Focus one iteration's evidence through the app's own routing. */
@@ -29,11 +38,19 @@ export type UnifiedFindingsSectionProps = {
 
 function UnifiedFindingsBody({
   suiteRunId,
+  iterations = [],
+  expectedTotal,
   generation,
+  scopeControl,
   onOpenIteration,
 }: UnifiedFindingsSectionProps) {
   const envelope = useInsightsEnvelope({ kind: "eval_run", suiteRunId });
   const state = useUnifiedFindings({ suiteRunId, envelope, generation });
+  const executionIssues = summarizeRunExecutionIssues({
+    suiteRunId,
+    iterations,
+    expectedTotal,
+  });
 
   const onOpenEvidence = onOpenIteration
     ? (locator: FindingEvidenceLocator) => {
@@ -49,34 +66,38 @@ function UnifiedFindingsBody({
       className="border-t border-border/40"
       data-testid="unified-findings-section"
     >
-      <div className="px-5 py-4">
-        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-          <h3 className="text-[13px] font-semibold text-foreground">
-            What broke, and what to do about it
-          </h3>
-          <span className="rounded border border-border/60 bg-muted/40 px-1.5 py-0.5 text-[11px] text-muted-foreground">
-            Experiment
-          </span>
-          <span className="text-[12.5px] text-muted-foreground">
-            Built from this run&apos;s recorded evidence.
-          </span>
-        </div>
-        <div className="mt-3">
-          <UnifiedFindingsPanel
-            snapshot={state.experiment?.snapshot ?? null}
-            findings={state.findings}
-            provenance={state.provenance}
-            observationState={state.envelope?.observationState ?? null}
-            observationCoverage={state.envelope?.observationCoverage ?? null}
-            mode={state.mode}
-            onModeChange={state.setMode}
-            build={state.build}
-            enrich={state.enrich}
-            backendUnavailableNote={state.backendUnavailableNote}
-            context={{ rerunLabel: "this eval suite" }}
-            {...(onOpenEvidence ? { onOpenEvidence } : {})}
-          />
-        </div>
+      <div className="px-5 py-6">
+        <UnifiedFindingsPanel
+          executionIssues={
+            executionIssues ? (
+              <RunExecutionIssues
+                summary={executionIssues}
+                onOpenIteration={onOpenIteration}
+              />
+            ) : undefined
+          }
+          snapshot={state.experiment?.snapshot ?? null}
+          findings={state.findings}
+          provenance={state.provenance}
+          observationState={state.envelope?.observationState ?? null}
+          observationCoverage={state.envelope?.observationCoverage ?? null}
+          mode={state.mode}
+          analyze={state.analyze}
+          scopeControl={scopeControl}
+          iterationLabels={Object.fromEntries(
+            iterations.map((iteration, index) => [
+              iteration._id,
+              `Trial ${index + 1}${
+                iteration.testCaseSnapshot?.title
+                  ? ` · ${iteration.testCaseSnapshot.title}`
+                  : ""
+              }`,
+            ]),
+          )}
+          backendUnavailableNote={state.backendUnavailableNote}
+          context={{ rerunLabel: "this eval suite" }}
+          {...(onOpenEvidence ? { onOpenEvidence } : {})}
+        />
       </div>
     </section>
   );
@@ -84,7 +105,18 @@ function UnifiedFindingsBody({
 
 export function UnifiedFindingsSection(props: UnifiedFindingsSectionProps) {
   return (
-    <ErrorBoundary name="evaluate-unified-findings" fallback={null}>
+    <ErrorBoundary
+      key={props.suiteRunId}
+      name="evaluate-unified-findings"
+      fallback={({ reset }) => (
+        <div role="alert" className="border-t border-border/40 px-5 py-4">
+          <p className="text-sm">Findings could not be loaded for this run.</p>
+          <Button variant="outline" size="sm" className="mt-2" onClick={reset}>
+            Retry findings
+          </Button>
+        </div>
+      )}
+    >
       <UnifiedFindingsBody {...props} />
     </ErrorBoundary>
   );

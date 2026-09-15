@@ -4293,6 +4293,16 @@ export interface PlatformUnifiedFindingsExperiment {
       summary: string;
       acceptedCount: number;
       rejectedCount: number;
+      /** Present for AI-discovered groups; counts describe inspected evidence. */
+      discovery?: {
+        reviewedIterations: number;
+        totalIterations: number;
+        reviewedFailedIterations: number;
+        totalFailedIterations: number;
+        missingTraces: number;
+        truncatedTraces: number;
+        omittedEvidence: number;
+      };
     };
     baseline: null | {
       source: "serverQuality";

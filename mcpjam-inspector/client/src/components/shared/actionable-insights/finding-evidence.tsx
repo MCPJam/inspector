@@ -17,7 +17,8 @@ import type { ActionableFindingEvidence } from "@/lib/insights-envelope-api";
 import { EVIDENCE_KIND_LABEL } from "./finding-provenance";
 
 export type FindingEvidenceLocator =
-  { kind: "iteration"; id: string } | { kind: "session"; id: string };
+  | { kind: "iteration"; id: string }
+  | { kind: "session"; id: string };
 
 export function locatorFor(
   evidence: ActionableFindingEvidence,
@@ -29,13 +30,48 @@ export function locatorFor(
   return null;
 }
 
+/** Show the MCP result text first; the exact recorded wrapper remains available. */
+function readableResult(excerpt: string): string | null {
+  const resultStart = excerpt.indexOf("Result: ");
+  if (resultStart < 0) return null;
+  const argsStart = excerpt.lastIndexOf("Arguments: ");
+  const json = excerpt
+    .slice(resultStart + 8, argsStart > resultStart ? argsStart : undefined)
+    .trim();
+  try {
+    const result: unknown = JSON.parse(json);
+    if (
+      !result ||
+      typeof result !== "object" ||
+      !("content" in result) ||
+      !Array.isArray(result.content)
+    )
+      return null;
+    const text = result.content
+      .filter(
+        (part): part is { type: string; text: string } =>
+          part !== null &&
+          typeof part === "object" &&
+          part.type === "text" &&
+          typeof part.text === "string",
+      )
+      .map((part) => part.text)
+      .join("\n\n");
+    return text || null;
+  } catch {
+    return null;
+  }
+}
+
 export function FindingEvidenceList({
   evidence,
   onOpenEvidence,
+  variant = "card",
 }: {
   evidence: readonly ActionableFindingEvidence[];
   /** Absent ⇒ the rows render without a link rather than with a dead one. */
   onOpenEvidence?: (locator: FindingEvidenceLocator) => void;
+  variant?: "card" | "drawer";
 }) {
   if (evidence.length === 0) {
     return (
@@ -53,10 +89,18 @@ export function FindingEvidenceList({
       {evidence.map((row, index) => {
         const locator = locatorFor(row);
         const contrast = row.kind === "contrast";
+        const preview =
+          variant === "drawer" ? readableResult(row.excerpt) : null;
         return (
           <li
             key={`${row.iterationId ?? row.sessionId ?? "e"}-${index}`}
-            className="rounded-md border border-border/50 bg-background/60 px-2.5 py-2"
+            className={
+              variant === "drawer"
+                ? `border-l-2 py-1 pl-4 ${
+                    contrast ? "border-success" : "border-destructive"
+                  }`
+                : "rounded-md border border-border/50 bg-background/60 px-2.5 py-2"
+            }
             data-testid="finding-evidence"
             data-evidence-kind={row.kind}
           >
@@ -96,9 +140,25 @@ export function FindingEvidenceList({
             {/* Untrusted, server-authored text. Rendered as data: no markdown,
                 no links made from it, and wrapped so a long line cannot push
                 the panel sideways. */}
-            <p className="mt-1 break-words text-[12px] leading-relaxed text-muted-foreground">
-              {row.excerpt}
+            <p
+              className={
+                variant === "drawer"
+                  ? "mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded bg-[var(--code-bg)] p-3 font-code text-xs leading-relaxed text-[var(--code-text)]"
+                  : "mt-1 break-words text-[12px] leading-relaxed text-muted-foreground"
+              }
+            >
+              {preview ?? row.excerpt}
             </p>
+            {preview ? (
+              <details className="mt-2 text-xs text-muted-foreground">
+                <summary className="cursor-pointer py-1">
+                  Full recorded excerpt
+                </summary>
+                <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap break-words font-code text-xs">
+                  {row.excerpt}
+                </pre>
+              </details>
+            ) : null}
           </li>
         );
       })}

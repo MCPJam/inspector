@@ -40,7 +40,6 @@ import {
 import { useEvalRunCompare } from "./use-eval-run-compare";
 import { FailureGroupsCard } from "./failure-groups-card";
 import { UnifiedFindingsSection } from "./unified-findings-section";
-import { useUnifiedFindingsEnabled } from "@/hooks/useUnifiedFindingsEnabled";
 import { RunResultsMatrix } from "./run-results-matrix";
 import { RunDescriptionExperimentCard } from "./run-description-experiment-card";
 import { useEvalDescriptionExperiment } from "./use-eval-description-experiment";
@@ -222,7 +221,6 @@ export function SingleRunContent({
   // deliberately: mounting a second would give the page two lifecycles for the
   // same lease and let one click become two billable requests.
   const serverQuality = useServerQuality(run, { autoRequest: false });
-  const unifiedFindingsEnabled = useUnifiedFindingsEnabled();
 
   /**
    * Every failing case's prompt, measured failures first.
@@ -413,26 +411,20 @@ export function SingleRunContent({
         />
       ) : null}
 
-      {/* EXPERIMENT. Flag off ⇒ not mounted at all, so a flag-off page issues
-          no extra query and renders no extra DOM. The previous presentation
-          below stays exactly where it was; this branch duplicates nothing and
-          removes nothing, which is what makes the comparison possible. */}
-      {unifiedFindingsEnabled ? (
-        <UnifiedFindingsSection
-          suiteRunId={String(run._id)}
-          generation={{
-            pending: serverQuality.pending,
-            failedGeneration: serverQuality.failedGeneration,
-            error: serverQuality.error,
-            unavailable: serverQuality.unavailable,
-            canRequest: serverQuality.canRequest,
-            requestInsight: serverQuality.requestServerQuality,
-          }}
-          {...(onOpenIteration
-            ? { onOpenIteration: openEvidenceIteration }
-            : {})}
-        />
-      ) : null}
+      <UnifiedFindingsSection
+        suiteRunId={String(run._id)}
+        iterations={iterations}
+        expectedTotal={run.summary?.total}
+        generation={{
+          pending: serverQuality.pending,
+          failedGeneration: serverQuality.failedGeneration,
+          error: serverQuality.error,
+          unavailable: serverQuality.unavailable,
+          canRequest: serverQuality.canRequest,
+          requestInsight: serverQuality.requestServerQuality,
+        }}
+        {...(onOpenIteration ? { onOpenIteration: openEvidenceIteration } : {})}
+      />
 
       {failureGroupsEnabled && run.suiteId ? (
         <FailureGroupsCard suiteId={String(run.suiteId)} />
