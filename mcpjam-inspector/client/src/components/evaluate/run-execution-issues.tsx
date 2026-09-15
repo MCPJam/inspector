@@ -1,8 +1,9 @@
 import { AlertTriangle } from "lucide-react";
-import { sanitizeTraceErrorMessage } from "@mcpjam/sdk/browser";
-import { Button } from "@mcpjam/design-system/button";
+import { describeError, sanitizeTraceErrorMessage } from "@mcpjam/sdk/browser";
 import { isMCPJamModelLimitError } from "@/lib/mcpjam-limit";
 import type { EvalIteration } from "../evals/types";
+import { affectedRowFor, sortAffectedRows } from "./affected-iteration-rows";
+import { AffectedIterationsList } from "@/components/shared/actionable-insights/affected-iterations-list";
 
 const ISSUE_COPY = {
   model_limit: {
@@ -14,6 +15,16 @@ const ISSUE_COPY = {
     title: "Worker heartbeat lost",
     nextStep:
       "Rerun the affected cases. If this happens again, check the worker's connection and logs.",
+  },
+  mcpjam_model_error: {
+    title: "MCPJam model request failed",
+    nextStep:
+      "MCPJam’s model request failed mid-turn. This is not a fault in your MCP server. Rerun the affected cases; if it recurs, tell us.",
+  },
+  model_unknown: {
+    title: "Model request failed",
+    nextStep:
+      "Rerun the affected cases. The recorded error does not identify whether MCPJam or your own model key was used.",
   },
   model_error: {
     title: "Model request failed",
@@ -59,9 +70,24 @@ function issueKind(iteration: EvalIteration): IssueKind | null {
   ) {
     return "model_limit";
   }
-  if (modelError) return "model_error";
+  if (modelError) {
+    if (metadata?.modelSource === "mcpjam") return "mcpjam_model_error";
+    if (
+      metadata?.modelSource === "byok" ||
+      metadata?.modelSource === "local_byok"
+    )
+      return "model_error";
+    return "model_unknown";
+  }
   if (setupError) return "setup_error";
   return null;
+}
+
+function describeExecutionError(error: string): string {
+  const described = describeError(error);
+  return described.slug === "provider/empty_response"
+    ? described.oneLine
+    : sanitizeTraceErrorMessage(error, { maxLength: 500 });
 }
 
 /** Summarize recorded execution errors, independently of the findings build. */
@@ -118,9 +144,11 @@ export function summarizeRunExecutionIssues({
 export function RunExecutionIssues({
   summary,
   onOpenIteration,
+  clientLabel,
 }: {
   summary: RunExecutionIssueSummary;
   onOpenIteration?: (iterationId: string) => void;
+  clientLabel?: string | null;
 }) {
   return (
     <section
@@ -136,8 +164,8 @@ export function RunExecutionIssues({
       </h4>
       {summary.noModelOrToolActivity ? (
         <p className="mt-1 text-sm">
-          Zero model tokens and zero tool calls were recorded. Resolve the
-          execution errors and rerun to measure model and tool behavior.
+          Zero model tokens and zero tool calls were recorded. Rerun the
+          affected cases to measure model and tool behavior.
         </p>
       ) : null}
       {!summary.complete ? (
@@ -157,50 +185,28 @@ export function RunExecutionIssues({
             {group.iterations[0].error ? (
               <p className="mt-1 break-words text-xs text-muted-foreground">
                 Recorded error:{" "}
-                {sanitizeTraceErrorMessage(group.iterations[0].error, {
-                  maxLength: 500,
-                })}
+                {describeExecutionError(group.iterations[0].error)}
               </p>
             ) : null}
-            <details className="mt-2 rounded-md border border-border/60 bg-background/60 px-2.5 py-2">
-              <summary className="cursor-pointer text-xs font-medium">
-                Recorded error and affected iterations (
-                {group.iterations.length})
-              </summary>
-              <ul className="mt-2 max-h-64 space-y-2 overflow-y-auto">
-                {group.iterations.map((iteration) => (
-                  <li
-                    key={iteration._id}
-                    className="border-t border-border/40 pt-2"
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="text-xs font-medium">
-                        {iteration.testCaseSnapshot?.title ?? "Test case"} ·
-                        Iteration {iteration.iterationNumber}
-                      </span>
-                      {onOpenIteration && iteration.testCaseId ? (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-7 text-xs"
-                          onClick={() => onOpenIteration(iteration._id)}
-                        >
-                          Open iteration
-                        </Button>
-                      ) : null}
-                    </div>
-                    <p className="mt-1 whitespace-pre-wrap break-words text-xs text-muted-foreground">
-                      {iteration.error
-                        ? sanitizeTraceErrorMessage(iteration.error, {
-                            maxLength: 500,
-                          })
-                        : "Recorded stop reason: stale_worker. No error message was stored."}
-                    </p>
-                  </li>
-                ))}
-              </ul>
-            </details>
+            <div className="mt-2">
+              <AffectedIterationsList
+                rows={sortAffectedRows(
+                  group.iterations.map((iteration) =>
+                    affectedRowFor(iteration, clientLabel),
+                  ),
+                )}
+                ariaLabel={`Iterations affected by ${ISSUE_COPY[group.kind].title}`}
+                {...(onOpenIteration ? { onOpen: onOpenIteration } : {})}
+                detail={(row) => {
+                  const iteration = group.iterations.find(
+                    (candidate) => candidate._id === row.iterationId,
+                  );
+                  return iteration?.error
+                    ? describeExecutionError(iteration.error)
+                    : "Recorded stop reason: stale_worker. No error message was stored.";
+                }}
+              />
+            </div>
           </li>
         ))}
       </ul>

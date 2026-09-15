@@ -4329,6 +4329,7 @@ const runLocalIteration = async ({
     // `trace_snapshot` events for the test-runner UI (different
     // consumer than the stored transcript).
     const finishParams = buildIterationFinishParams({
+      modelSource: "local_byok",
       iterationId,
       // The layer that failed, when this driver could tell — the local twin of
       // the hosted path's `stepError`. Without it a local-BYOK trial that died
@@ -4586,6 +4587,7 @@ const runLocalIteration = async ({
     // `appendEvalTurnTrace.systemPrompt`. Same threading as the
     // success path.
     const failParams = buildIterationFinishParams({
+      modelSource: "local_byok",
       iterationId,
       // Same as the success path: carry the layer when the driver could tell.
       // This branch is the one a model-call failure most often ends on, so
@@ -5840,6 +5842,7 @@ const runHostedIterationWithBrowser = async (
   // for the test-runner UI (different consumer than the stored
   // transcript).
   const finishParams = buildIterationFinishParams({
+    modelSource: endpointPath === "/stream/org" ? "byok" : "mcpjam",
     iterationId,
     ...(runId !== null ? { runId: String(runId) } : {}),
     ...(gradingMode ? { gradingMode } : {}),

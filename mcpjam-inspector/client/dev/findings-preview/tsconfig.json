@@ -2,12 +2,33 @@
   "extends": "../../tsconfig.json",
   "compilerOptions": {
     "baseUrl": "../..",
-    "types": ["vite/client"],
+    "types": [
+      "vite/client"
+    ],
     "paths": {
-      "@/*": ["./src/*"],
-      "@mcpjam/sdk/platform": ["../../sdk/src/platform/index.ts"],
-      "@mcpjam/sdk/*": ["../../sdk/src/*"]
+      "@/*": [
+        "./src/*"
+      ],
+      "@mcpjam/sdk/platform": [
+        "../../sdk/src/platform/index.ts"
+      ],
+      "@mcpjam/sdk/*": [
+        "../../sdk/src/*"
+      ],
+      "@/shared/*": [
+        "../shared/*"
+      ],
+      "@mcpjam/chat-ui/trace": [
+        "../../chat-ui/src/trace.ts"
+      ],
+      "@mcpjam/chat-ui": [
+        "../../chat-ui/src/index.ts"
+      ]
     }
   },
-  "include": ["./**/*.ts", "./**/*.tsx"]
+  "include": [
+    "./**/*.ts",
+    "./**/*.tsx",
+    "../../src/vite-env.d.ts"
+  ]
 }

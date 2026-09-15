@@ -1282,7 +1282,8 @@ export type PlatformEvalLlmTouchpointId =
   | "groundedness"
   | "serverQuality"
   | "runInsights"
-  | "runGroupQuality";
+  | "runGroupQuality"
+  | "evalFindingsPipeline";
 
 export type PlatformDisclosureFires =
   | "auto-on-completion"
@@ -1293,7 +1294,11 @@ export interface PlatformAnalysisTouchpointDisclosure {
   touchpoint: PlatformEvalLlmTouchpointId;
   label: string;
   model: string;
-  rail: { fixed: "openrouter"; because: string };
+  rail: {
+    fixed: "openrouter" | null;
+    because: string;
+    routing?: "gateway_preferred";
+  };
   destinations: readonly string[];
   evidenceSent: readonly string[];
   fires: PlatformDisclosureFires;
@@ -4244,6 +4249,8 @@ export interface PlatformInsightsObservationCoverage {
 /** Where a finding's observation came from, and how complete it is. */
 export interface PlatformInsightsFindingProvenance {
   candidateId: string;
+  stage?: import("../contract/chain.js").UserValueStage;
+  reason?: import("../contract/stage-derivation.js").StageReason;
   groupKind: string;
   basis: "measured" | "judged" | "mixed" | "unknown";
   /** `sampled` ⇒ tool identity came from inspected exemplars only, so no
@@ -4254,6 +4261,7 @@ export interface PlatformInsightsFindingProvenance {
    * Producer-owned: a deterministic fallback sentence and a model that wrote
    * the same sentence are indistinguishable to a consumer. */
   proseOrigin?: {
+    observed?: "deterministic" | "ai" | "unknown";
     title: "deterministic" | "ai" | "unknown";
     rootCause: "deterministic" | "ai" | "unknown";
     recommendation: "deterministic" | "ai" | "unknown";
@@ -4275,7 +4283,42 @@ export interface PlatformInsightsFindingProvenance {
  * an older server (field absent) from a resource with no snapshot yet
  * (`snapshot: null`).
  */
+export interface PlatformEvalIterationReport {
+  schemaVersion: 1;
+  iterationId: string;
+  runRevision: string;
+  builtAt: number;
+  modelUsed?: string;
+  status: "ready" | "stale" | "failed";
+  reason?: string;
+  rows: Array<{
+    joinKey: string;
+    stage: import("../contract/chain.js").UserValueStage;
+    verdictSeen: string;
+    actual: string;
+    citations: string[];
+  }>;
+  stageNotes?: Array<{
+    stage: import("../contract/chain.js").UserValueStage;
+    actual: string;
+    citations: string[];
+  }>;
+}
+
+export interface PlatformEvalFindingsAnalysis {
+  phase: "reading" | "grouping" | "checking" | "done" | "failed";
+  progress: { done: number; total: number; unit: "iterations" };
+  models: string[];
+  spend?: { inputTokens: number; outputTokens: number };
+  completeness: {
+    iterationReports: number;
+    total: number;
+    missingTraces: number;
+  };
+}
+
 export interface PlatformUnifiedFindingsExperiment {
+  analysis?: PlatformEvalFindingsAnalysis;
   capability: "unified_findings_v1";
   snapshot: {
     builtAt: number;

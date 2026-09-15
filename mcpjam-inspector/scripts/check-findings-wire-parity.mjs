@@ -82,3 +82,17 @@ if (ours !== backendCopy) {
 console.log(
   `check:findings-wire-parity: the fixtures match (${ours.length} bytes).`,
 );
+
+for (const name of [
+  "trace-report-envelope.json",
+  "trace-report-iteration.json",
+]) {
+  const local = resolve(dirname(OURS), name);
+  const remote = resolve(dirname(theirs), name);
+  if (
+    !existsSync(local) ||
+    !existsSync(remote) ||
+    readFileSync(local, "utf8") !== readFileSync(remote, "utf8")
+  )
+    fail(`the paired trace-report fixture differs or is missing: ${name}`);
+}

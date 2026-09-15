@@ -73,17 +73,13 @@ describe("recorded execution issues", () => {
     expect(
       screen.getByText(/use your own model API key \(BYOK\)/),
     ).toBeVisible();
+    // The affected iterations are named on the card, not hidden in a
+    // disclosure: an execution error a reader cannot locate is not evidence.
+    const lists = screen.getAllByTestId("affected-iterations");
+    const workerList = lists[lists.length - 1]!;
+    expect(within(workerList).getByText("Worker heartbeat lost.")).toBeVisible();
     await user.click(
-      screen.getByText("Recorded error and affected iterations (1)"),
-    );
-    const workerEvidence = screen
-      .getByText("Recorded error and affected iterations (1)")
-      .closest("details")!;
-    expect(
-      within(workerEvidence).getByText("Worker heartbeat lost."),
-    ).toBeVisible();
-    await user.click(
-      within(workerEvidence).getByRole("button", { name: "Open iteration" }),
+      within(workerList).getByRole("button", { name: /^Open/ }),
     );
     expect(onOpenIteration).toHaveBeenCalledExactlyOnceWith("worker");
   });
@@ -155,7 +151,7 @@ describe("recorded execution issues", () => {
       noModelOrToolActivity: false,
     });
     expect(summary.groups.map((group) => group.kind)).toEqual([
-      "model_error",
+      "model_unknown",
       "setup_error",
     ]);
   });
@@ -188,12 +184,33 @@ describe("recorded execution issues", () => {
     const { container } = render(
       <RunExecutionIssues summary={summary} onOpenIteration={vi.fn()} />,
     );
-    await user.click(
-      screen.getByText("Recorded error and affected iterations (1)"),
-    );
     expect(container.querySelector("script")).toBeNull();
     expect(container.textContent).not.toContain("secret-canary-value");
     expect(container.textContent).not.toContain("x".repeat(501));
-    expect(screen.queryByRole("button", { name: "Open iteration" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Open/ })).toBeNull();
   });
+});
+
+it.each([
+  ["mcpjam", "mcpjam_model_error"],
+  ["byok", "model_error"],
+  ["local_byok", "model_error"],
+  [undefined, "model_unknown"],
+])("attributes model ownership %s", (modelSource, kind) => {
+  const summary = summarizeRunExecutionIssues({
+    suiteRunId: "run-a",
+    iterations: [
+      iteration("empty", {
+        error:
+          "Backend step returned no content (stream error or empty response)",
+        metadata: { stageStepErrorSource: "model", modelSource },
+      }),
+    ],
+  })!;
+  expect(summary.groups[0].kind).toBe(kind);
+  render(<RunExecutionIssues summary={summary} />);
+  expect(
+    screen.getAllByText(/The model returned no response/).length,
+  ).toBeGreaterThan(0);
+  expect(screen.queryByText(/Backend step returned/)).toBeNull();
 });

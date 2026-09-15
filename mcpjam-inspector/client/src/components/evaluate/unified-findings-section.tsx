@@ -24,6 +24,7 @@ import {
   RunExecutionIssues,
   summarizeRunExecutionIssues,
 } from "./run-execution-issues";
+import { affectedRowsById } from "./affected-iteration-rows";
 
 export type UnifiedFindingsSectionProps = {
   suiteRunId: string;
@@ -34,6 +35,10 @@ export type UnifiedFindingsSectionProps = {
   generation: BorrowedGenerationController;
   /** Focus one iteration's evidence through the app's own routing. */
   onOpenIteration?: (iterationId: string) => void;
+  /** The run's client, shown on each affected iteration row. */
+  clientLabel?: string | null;
+  /** Shown when no findings have been built, so the slot is never empty. */
+  fallback?: React.ReactNode;
 };
 
 function UnifiedFindingsBody({
@@ -43,6 +48,8 @@ function UnifiedFindingsBody({
   generation,
   scopeControl,
   onOpenIteration,
+  clientLabel,
+  fallback,
 }: UnifiedFindingsSectionProps) {
   const envelope = useInsightsEnvelope({ kind: "eval_run", suiteRunId });
   const state = useUnifiedFindings({ suiteRunId, envelope, generation });
@@ -62,20 +69,19 @@ function UnifiedFindingsBody({
     : undefined;
 
   return (
-    <section
-      className="border-t border-border/40"
-      data-testid="unified-findings-section"
-    >
-      <div className="px-5 py-6">
+    <section data-testid="unified-findings-section">
+      <div>
         <UnifiedFindingsPanel
           executionIssues={
             executionIssues ? (
               <RunExecutionIssues
                 summary={executionIssues}
                 onOpenIteration={onOpenIteration}
+                clientLabel={clientLabel}
               />
             ) : undefined
           }
+          analysis={state.experiment?.analysis}
           snapshot={state.experiment?.snapshot ?? null}
           findings={state.findings}
           provenance={state.provenance}
@@ -83,17 +89,10 @@ function UnifiedFindingsBody({
           observationCoverage={state.envelope?.observationCoverage ?? null}
           mode={state.mode}
           analyze={state.analyze}
+          build={state.build}
           scopeControl={scopeControl}
-          iterationLabels={Object.fromEntries(
-            iterations.map((iteration, index) => [
-              iteration._id,
-              `Trial ${index + 1}${
-                iteration.testCaseSnapshot?.title
-                  ? ` · ${iteration.testCaseSnapshot.title}`
-                  : ""
-              }`,
-            ]),
-          )}
+          iterationRows={affectedRowsById(iterations, clientLabel)}
+          {...(fallback !== undefined ? { fallback } : {})}
           backendUnavailableNote={state.backendUnavailableNote}
           context={{ rerunLabel: "this eval suite" }}
           {...(onOpenEvidence ? { onOpenEvidence } : {})}
@@ -109,7 +108,7 @@ export function UnifiedFindingsSection(props: UnifiedFindingsSectionProps) {
       key={props.suiteRunId}
       name="evaluate-unified-findings"
       fallback={({ reset }) => (
-        <div role="alert" className="border-t border-border/40 px-5 py-4">
+        <div role="alert" className="py-3">
           <p className="text-sm">Findings could not be loaded for this run.</p>
           <Button variant="outline" size="sm" className="mt-2" onClick={reset}>
             Retry findings

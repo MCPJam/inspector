@@ -207,6 +207,7 @@ function buildStageEvidence(args: {
  */
 export function buildStageMetadata(args: {
   stageCase?: StageAuthoredCase;
+  modelSource?: "mcpjam" | "byok" | "local_byok";
   spans?: EvalTraceSpan[];
   prompts?: PromptTraceSummary[];
   messages?: ModelMessage[];
@@ -263,7 +264,10 @@ export function buildStageMetadata(args: {
    */
   const stepErrorSource =
     args.stepError?.source === "model"
-      ? { stageStepErrorSource: "model" as const }
+      ? {
+          stageStepErrorSource: "model" as const,
+          ...(args.modelSource ? { modelSource: args.modelSource } : {}),
+        }
       : {};
   const metadata = stageDerivationToMetadata(
     deriveStageResults({
@@ -607,6 +611,7 @@ export function buildIterationFinishParams(args: {
   messages: ModelMessage[];
   /** The model selected for this iteration, used for session attribution. */
   modelId?: string;
+  modelSource?: "mcpjam" | "byok" | "local_byok";
   systemPrompt?: string;
   spans?: EvalTraceSpan[];
   prompts?: PromptTraceSummary[];
@@ -784,6 +789,7 @@ export function buildIterationFinishParams(args: {
   const gradingMode = args.gradingMode ?? resolveGradingEngineMode();
   const persistedSpans = [...(setupSpans ?? []), ...(spans ?? [])];
   const stageMetadata = buildStageMetadata({
+    modelSource: args.modelSource,
     ...(stageCase ? { stageCase } : {}),
     spans,
     prompts,
@@ -921,6 +927,7 @@ export function buildIterationFinishParams(args: {
     usage,
     messages,
     ...(modelId ? { modelId } : {}),
+    ...(args.modelSource ? { modelSource: args.modelSource } : {}),
     ...(systemPrompt ? { systemPrompt } : {}),
     ...(persistedSpans.length ? { spans: persistedSpans } : {}),
     ...(prompts?.length ? { prompts } : {}),
@@ -989,6 +996,7 @@ export type FinalizeEvalIterationParams = {
   messages: ModelMessage[];
   /** Effective model used by the iteration; persisted on the eval session. */
   modelId?: string;
+  modelSource?: "mcpjam" | "byok" | "local_byok";
   spans?: EvalTraceSpan[];
   prompts?: PromptTraceSummary[];
   widgetSnapshots?: EvalTraceWidgetSnapshot[];
@@ -1221,6 +1229,7 @@ export async function finalizeEvalIteration(
     iterationId,
     iterationStartedAt: startedAt,
     messages,
+    modelSource: params.modelSource,
     ...(modelId ? { modelId } : {}),
     spans,
     prompts,

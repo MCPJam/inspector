@@ -23,8 +23,15 @@ import type { EvalIteration, EvalSuiteRun } from "../../evals/types";
 import type { UnifiedFindingsSectionProps } from "../unified-findings-section";
 
 vi.mock("../unified-findings-section", () => ({
-  UnifiedFindingsSection: ({ suiteRunId }: UnifiedFindingsSectionProps) => (
-    <section data-testid="unified-findings-section" data-run-id={suiteRunId} />
+  // The block now occupies the hero's explanation slot, so the mock renders
+  // its fallback: a run with no findings built still says what broke.
+  UnifiedFindingsSection: ({
+    suiteRunId,
+    fallback,
+  }: UnifiedFindingsSectionProps) => (
+    <section data-testid="unified-findings-section" data-run-id={suiteRunId}>
+      {fallback}
+    </section>
   ),
 }));
 

@@ -261,6 +261,8 @@ export type {
   PlatformInsightsObservationCoverage,
   PlatformInsightsObservationState,
   PlatformInsightsFindingProvenance,
+  PlatformEvalIterationReport,
+  PlatformEvalFindingsAnalysis,
   PlatformUnifiedFindingsExperiment,
   PlatformInsightsStatus,
   PlatformWaveInsights,

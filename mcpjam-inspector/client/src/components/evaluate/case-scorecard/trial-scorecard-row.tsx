@@ -1,3 +1,4 @@
+import { expectationOf } from "./case-scorecard-model";
 /**
  * One scorer, with what happened to it.
  *
@@ -176,8 +177,8 @@ export function TrialScorecardRow({
                     row.result.state === "passed"
                       ? "bg-success/15"
                       : row.result.state === "failed" && row.role === "required"
-                        ? "bg-destructive/10"
-                        : "bg-muted",
+                      ? "bg-destructive/10"
+                      : "bg-muted",
                     // Success stays in the tint; small text needs the reading
                     // foreground rather than the low-contrast icon colour.
                     row.result.state === "passed"
@@ -198,13 +199,37 @@ export function TrialScorecardRow({
           </p>
         ) : (
           <dl className="grid grid-cols-[6rem_minmax(0,1fr)] gap-x-3 gap-y-2 text-xs leading-relaxed sm:grid-cols-[7rem_minmax(0,1fr)]">
-            {/* No "Looks for" term: its only value was `row.label`, which is
-                the heading directly above it. */}
             <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-              Observed
+              Expected
             </dt>
             <dd className="min-w-0 whitespace-pre-wrap break-words">
-              {observed}
+              {expectationOf(row)}
+            </dd>
+            <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Actual
+            </dt>
+            <dd className="min-w-0 whitespace-pre-wrap break-words">
+              <span
+                data-narrative-source={
+                  row.narrative && !row.narrative.stale ? "ai" : "recorded"
+                }
+              >
+                {row.narrative && !row.narrative.stale
+                  ? row.narrative.text
+                  : evidence.length || value
+                  ? observed
+                  : reason || observed}
+              </span>
+              {row.narrative?.stale && (
+                <p className="mt-1 text-muted-foreground">
+                  Narrative predates the latest grade.
+                </p>
+              )}
+              {row.narrative && !row.narrative.stale && (
+                <p className="mt-1 text-muted-foreground">
+                  AI explanation from cited trace evidence.
+                </p>
+              )}
             </dd>
             <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
               {whyLabel}
@@ -220,8 +245,8 @@ export function TrialScorecardRow({
         {row.evidence?.frozenRole && !withheld && (
           <p className="text-xs text-muted-foreground">
             Graded as{" "}
-            {isRequiredRole(row.evidence.frozenRole) ? "required" : "advisory"} — this
-            scorer's role has changed since the run.
+            {isRequiredRole(row.evidence.frozenRole) ? "required" : "advisory"}{" "}
+            — this scorer's role has changed since the run.
           </p>
         )}
         {body && <div className="pt-2">{body}</div>}

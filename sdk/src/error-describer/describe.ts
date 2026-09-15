@@ -446,6 +446,13 @@ function resolveSlug(error: unknown): {
 
   // (a) Inspector sentinel sniff first — these are SDK-thrown Errors whose
   // class identity is lost across realm boundaries; match on stable text.
+  if (
+    /Backend step returned no (?:content|messages).*empty response/i.test(
+      message
+    )
+  ) {
+    return { slug: "provider/empty_response" };
+  }
   const sentinel = inspectorSentinelSlug(message);
   if (sentinel) return { slug: sentinel };
 

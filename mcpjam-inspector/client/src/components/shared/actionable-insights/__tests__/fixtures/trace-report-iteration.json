@@ -1,0 +1,18 @@
+{
+  "builtAt": 1789450991159,
+  "iterationId": "0000000000000010005testIteration",
+  "modelUsed": "google/gemini-3.1-flash-lite",
+  "rows": [],
+  "runRevision": "sha256:3b8d2d113b273b1a1f3d16063c9307810f86ccb5b43c1d6a410223e81f56bc8a",
+  "schemaVersion": 1,
+  "stageNotes": [
+    {
+      "actual": "The tool rejected the project name.",
+      "citations": [
+        "tc:one"
+      ],
+      "stage": "response"
+    }
+  ],
+  "status": "ready"
+}

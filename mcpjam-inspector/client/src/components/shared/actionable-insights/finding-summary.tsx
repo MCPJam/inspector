@@ -1,3 +1,7 @@
+import {
+  USER_VALUE_STAGE_LABELS,
+  STAGE_REASON_CHIP_LABELS,
+} from "@mcpjam/sdk/contract";
 /** A finding's problem and suggested fix, with recorded evidence one click away. */
 import { useRef, useState } from "react";
 import { AlertTriangle, ArrowUpRight, Check, Copy, Wrench } from "lucide-react";
@@ -26,9 +30,15 @@ import {
   type FindingEvidenceLocator,
 } from "./finding-evidence";
 import {
+  AffectedIterationsList,
+  type AffectedIterationRow,
+} from "./affected-iterations-list";
+import {
+  basisLabel,
   judgeCoverageLine,
   mechanismCaveat,
   proseSourceOf,
+  PROSE_SOURCE_LABEL,
   type FindingView,
 } from "./finding-provenance";
 
@@ -115,7 +125,7 @@ export function FindingSummary({
   lead = false,
   context,
   onOpenEvidence,
-  iterationLabels = {},
+  iterationRows = {},
 }: {
   finding: ActionableFinding;
   provenance: InsightsFindingProvenance | null;
@@ -123,9 +133,10 @@ export function FindingSummary({
   lead?: boolean;
   context?: FindingPromptContext;
   onOpenEvidence?: (locator: FindingEvidenceLocator) => void;
-  iterationLabels?: Record<string, string>;
+  /** Recorded iterations by id, for the affected list. */
+  iterationRows?: Record<string, AffectedIterationRow>;
 }) {
-  const [drawer, setDrawer] = useState<"why" | "affected" | null>(null);
+  const [drawer, setDrawer] = useState<"why" | null>(null);
   const drawerTrigger = useRef<HTMLButtonElement | null>(null);
   const discovered = view === "ai" && provenance?.groupKind === "ai_discovery";
   const aiTitle =
@@ -140,6 +151,18 @@ export function FindingSummary({
           .map((e) => e.iterationId!),
     ),
   ];
+  const affectedRows: AffectedIterationRow[] = affectedIds.map(
+    (id) =>
+      iterationRows[id] ?? {
+        iterationId: id,
+        caseTitle: "Iteration not loaded on this page",
+        iterationNumber: null,
+        client: null,
+        model: null,
+        result: "unknown",
+        canOpen: false,
+      },
+  );
   const evidence = finding.evidence.filter((e) => e.kind !== "contrast");
   const contrasts = finding.evidence.filter((e) => e.kind === "contrast");
   const judgeCoverage = judgeCoverageLine(provenance);
@@ -150,8 +173,8 @@ export function FindingSummary({
         .filter(Boolean)
         .join(" · ")
     : finding.actionTarget === "investigate"
-    ? null
-    : OWNERS[finding.actionTarget];
+      ? null
+      : OWNERS[finding.actionTarget];
   const openEvidence = onOpenEvidence
     ? (locator: FindingEvidenceLocator) => {
         drawerTrigger.current = null;
@@ -185,13 +208,7 @@ export function FindingSummary({
               data-testid="unified-finding-basis"
               data-basis={provenance?.basis}
             >
-              {aiTitle
-                ? "AI analysis · cited evidence"
-                : provenance?.basis === "judged"
-                ? "Recorded judge results"
-                : provenance?.basis === "mixed"
-                ? "Traces + judge results"
-                : "From trial traces"}
+              {basisLabel(provenance)?.label ?? "Unattributed"}
             </span>
           </div>
           <p
@@ -215,26 +232,19 @@ export function FindingSummary({
             ) : null}
             <FindingText text={finding.observed} />
           </p>
-          <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1">
-            <button
-              type="button"
-              className={linkClass}
-              onClick={(event) => {
-                drawerTrigger.current = event.currentTarget;
-                setDrawer("affected");
-              }}
-            >
-              {affectedIds.length
-                ? `View ${affectedIds.length} affected ${
-                    affectedIds.length === 1 ? "trial" : "trials"
-                  }`
-                : "View evidence"}
-              <ArrowUpRight className="size-3.5" aria-hidden="true" />
-            </button>
-            <span className="text-xs text-muted-foreground">
-              {finding.category.replace(/_/g, " ")}
-            </span>
-          </div>
+          <p
+            className="mt-3 text-xs text-muted-foreground"
+            data-testid="unified-finding-origin"
+          >
+            {provenance?.stage && USER_VALUE_STAGE_LABELS[provenance.stage]
+              ? `${USER_VALUE_STAGE_LABELS[provenance.stage]}${
+                  provenance.reason &&
+                  STAGE_REASON_CHIP_LABELS[provenance.reason]
+                    ? ` · ${STAGE_REASON_CHIP_LABELS[provenance.reason]}`
+                    : ""
+                }`
+              : finding.category.replace(/_/g, " ")}
+          </p>
         </section>
         <section className="min-w-0 border-t border-border/60 pt-5 md:border-t-0 md:border-l md:pt-0 md:pl-7">
           <div className="flex items-center justify-between gap-4">
@@ -253,12 +263,12 @@ export function FindingSummary({
               }
             >
               {aiFix
-                ? "AI suggestion"
+                ? PROSE_SOURCE_LABEL.ai
                 : view === "deterministic" ||
-                  proseSourceOf(view, provenance, "recommendation") ===
-                    "deterministic"
-                ? "Suggested next step"
-                : "Source not recorded"}
+                    proseSourceOf(view, provenance, "recommendation") ===
+                      "deterministic"
+                  ? PROSE_SOURCE_LABEL.deterministic
+                  : PROSE_SOURCE_LABEL.unknown}
             </span>
           </div>
           <p className="mt-3 break-words text-[15px] leading-7 md:min-h-20">
@@ -291,6 +301,23 @@ export function FindingSummary({
           </div>
         </section>
       </div>
+      <div className="mt-4 border-t border-border/50 pt-3">
+        <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+          {finding.affected.count === 1
+            ? "Affected iteration"
+            : `Affected iterations · ${finding.affected.count} of ${finding.affected.total}`}
+        </p>
+        <AffectedIterationsList
+          rows={affectedRows}
+          total={finding.affected.count}
+          ariaLabel="Affected iterations"
+          {...(openEvidence
+            ? {
+                onOpen: (id: string) => openEvidence({ kind: "iteration", id }),
+              }
+            : {})}
+        />
+      </div>
       <Sheet
         open={drawer !== null}
         onOpenChange={(open) => {
@@ -305,48 +332,13 @@ export function FindingSummary({
           }}
         >
           <SheetHeader className="sticky top-0 z-10 bg-background px-6 pt-6 pb-5 pr-12">
-            <SheetTitle className="text-lg">
-              {drawer === "affected" ? "Affected trials" : "Why this fix?"}
-            </SheetTitle>
+            <SheetTitle className="text-lg">Why this fix?</SheetTitle>
             <SheetDescription>{targetLabel ?? finding.title}</SheetDescription>
           </SheetHeader>
           <div
             className="space-y-6 px-6 pb-8 text-sm leading-relaxed"
             data-testid="unified-finding-detail"
           >
-            {drawer === "affected" && affectedIds.length > 0 ? (
-              <section>
-                <p className="mb-3 text-muted-foreground">
-                  {affectedIds.length} linked{" "}
-                  {affectedIds.length === 1 ? "trial" : "trials"}.{" "}
-                  {affectedIds.length < finding.affected.count
-                    ? "Only the recorded examples are listed."
-                    : ""}
-                </p>
-                <ul className="divide-y divide-border/60">
-                  {affectedIds.map((id, index) => (
-                    <li key={id} className="py-2">
-                      {openEvidence ? (
-                        <button
-                          type="button"
-                          className={linkClass}
-                          onClick={() =>
-                            openEvidence({ kind: "iteration", id })
-                          }
-                        >
-                          {iterationLabels[id] ?? `Trial ${index + 1}`}
-                          <ArrowUpRight className="size-3.5" />
-                        </button>
-                      ) : (
-                        <span>
-                          {iterationLabels[id] ?? `Trial ${index + 1}`}
-                        </span>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            ) : null}
             <section>
               <h5 className="mb-3 font-semibold">Recorded evidence</h5>
               <FindingEvidenceList
@@ -417,10 +409,13 @@ export function FindingSummary({
             ) : null}
             <div className="space-y-2 border-l-2 border-border pl-3 text-xs text-muted-foreground">
               <p>{finding.observed}</p>
+              {provenance?.proseOrigin?.observed === "ai" && (
+                <p>Wording by AI from cited evidence.</p>
+              )}
               {view === "ai" ? (
                 <p>
-                  Suggested cause, not proven. Rerun affected trials to test the
-                  change.
+                  Suggested cause, not proven. Rerun the affected iterations to
+                  test the change.
                 </p>
               ) : null}
               {caveat ? (
@@ -428,8 +423,8 @@ export function FindingSummary({
               ) : null}
               {judgeCoverage ? (
                 <p data-testid="unified-finding-judge-coverage">
-                  {judgeCoverage}. Ungraded trials are not counted as passing
-                  this judge.
+                  {judgeCoverage}. Ungraded iterations are not counted as
+                  passing this judge.
                 </p>
               ) : null}
             </div>

@@ -48,7 +48,7 @@ describe("UnifiedFindingsSection recovery", () => {
         actualToolCalls: [],
         tokensUsed: 0,
       },
-    ] as EvalIteration[];
+    ] as unknown as EvalIteration[];
     const { rerender } = render(
       <UnifiedFindingsSection
         suiteRunId="run-a"

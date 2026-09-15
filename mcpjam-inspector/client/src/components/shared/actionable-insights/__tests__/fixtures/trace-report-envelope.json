@@ -1,0 +1,271 @@
+{
+  "coverage": {
+    "analyzed": 40,
+    "gradedCount": 40,
+    "lowConfidence": false,
+    "total": 40,
+    "truncated": false,
+    "unit": "iterations"
+  },
+  "currentFindings": [
+    {
+      "acceptanceCriteria": [],
+      "actionTarget": "investigate",
+      "actionability": "investigate",
+      "affected": {
+        "count": 6,
+        "total": 40,
+        "unit": "iterations"
+      },
+      "attribution": "unknown",
+      "category": "tool_runtime",
+      "confidence": "low",
+      "evidence": [
+        {
+          "excerpt": "Unknown project ID",
+          "iterationId": "0000000000000010005testIteration",
+          "kind": "tool_error",
+          "toolName": "save_project_servers"
+        },
+        {
+          "excerpt": "Unknown project ID",
+          "iterationId": "0000000000000010006testIteration",
+          "kind": "tool_error",
+          "toolName": "save_project_servers"
+        },
+        {
+          "excerpt": "Unknown project ID",
+          "iterationId": "0000000000000010007testIteration",
+          "kind": "tool_error",
+          "toolName": "save_project_servers"
+        },
+        {
+          "excerpt": "Iteration in the same host/model partition completed every contract stage and passed.",
+          "iterationId": "0000000000000010011testIteration",
+          "kind": "contrast"
+        }
+      ],
+      "id": "rf_de5ba3a509ad3c62",
+      "observed": "6 of 40 trials that reached Tool call reported an error from `save_project_servers` on server crm on test.",
+      "recommendation": "Open the exemplar sessions and identify the mechanism before changing anything.",
+      "severity": "high",
+      "signalFingerprint": "sha256:88ca6ebcebc755df15d8c3ad5b914ff70b26cfbcdd078a8f9c30b3dcf96424bb",
+      "title": "6 of 40 trials that reached Tool call reported an error from `save_project_servers` on server crm on test."
+    },
+    {
+      "acceptanceCriteria": [
+        "Repeat the request with a resolved project ID."
+      ],
+      "actionTarget": "agent_configuration",
+      "actionability": "investigate",
+      "affected": {
+        "count": 6,
+        "total": 40,
+        "unit": "iterations"
+      },
+      "attribution": "agent_or_prompt",
+      "category": "tool_runtime",
+      "confidence": "medium",
+      "evidence": [
+        {
+          "excerpt": "Tool: save_project_servers\nArguments: {\"project_id\":\"project-name\"}\nResult: {\"isError\":true,\"message\":\"Unknown project ID\"}",
+          "iterationId": "0000000000000010005testIteration",
+          "kind": "transcript"
+        }
+      ],
+      "id": "rf_de5ba3a509ad3c62:mechanism:fec3b12c9bc523c0",
+      "observed": "6 of 40 trials failed to save the server.",
+      "recommendation": "Call search_projects first, then use the returned ID as project_id.",
+      "rootCause": "`save_project_servers` received a project name instead of a project ID.",
+      "severity": "high",
+      "signalFingerprint": "rf_de5ba3a509ad3c62:mechanism:fec3b12c9bc523c0",
+      "title": "6 of 40 trials failed to save the server."
+    }
+  ],
+  "error": {
+    "code": "unknown",
+    "message": "Generation failed."
+  },
+  "findings": [],
+  "generatedAt": null,
+  "observationCoverage": {
+    "analyzed": 40,
+    "exclusions": {
+      "cancelled": 0,
+      "chainMissing": 0,
+      "chainUnverified": 0,
+      "chainVersionAhead": 0,
+      "evaluatorErrored": 0,
+      "judgePending": 0,
+      "judgeSkipped": 0,
+      "notTerminal": 0
+    },
+    "gradedCount": 0,
+    "total": 40,
+    "unit": "iterations"
+  },
+  "observationState": "ready",
+  "reasonCode": "unknown",
+  "retryable": true,
+  "schemaVersion": 1,
+  "scope": {
+    "id": "00000000000000010002testSuiteRun",
+    "kind": "eval_run"
+  },
+  "status": "failed",
+  "summary": null,
+  "truncation": {
+    "contractTruncated": false,
+    "omittedEvidence": 0,
+    "omittedFindings": 0,
+    "truncated": false
+  },
+  "unifiedFindings": {
+    "analysis": {
+      "completeness": {
+        "iterationReports": 6,
+        "missingTraces": 0,
+        "total": 40
+      },
+      "models": [
+        "google/gemini-3.1-flash-lite",
+        "z-ai/glm-5.3-flash"
+      ],
+      "phase": "done",
+      "progress": {
+        "done": 40,
+        "total": 40,
+        "unit": "iterations"
+      },
+      "spend": {
+        "inputTokens": 4200,
+        "outputTokens": 1260
+      }
+    },
+    "canBuild": true,
+    "canEnrich": true,
+    "capability": "unified_findings_v1",
+    "job": {
+      "kind": "enrich",
+      "startedAt": 1789450991159,
+      "status": "completed",
+      "updatedAt": 1789450991159
+    },
+    "snapshot": {
+      "baseline": null,
+      "builtAt": 1789450991159,
+      "deterministicFindings": [
+        {
+          "acceptanceCriteria": [],
+          "actionTarget": "investigate",
+          "actionability": "investigate",
+          "affected": {
+            "count": 6,
+            "total": 40,
+            "unit": "iterations"
+          },
+          "attribution": "unknown",
+          "category": "tool_runtime",
+          "confidence": "low",
+          "evidence": [
+            {
+              "excerpt": "Unknown project ID",
+              "iterationId": "0000000000000010005testIteration",
+              "kind": "tool_error",
+              "toolName": "save_project_servers"
+            },
+            {
+              "excerpt": "Unknown project ID",
+              "iterationId": "0000000000000010006testIteration",
+              "kind": "tool_error",
+              "toolName": "save_project_servers"
+            },
+            {
+              "excerpt": "Unknown project ID",
+              "iterationId": "0000000000000010007testIteration",
+              "kind": "tool_error",
+              "toolName": "save_project_servers"
+            },
+            {
+              "excerpt": "Iteration in the same host/model partition completed every contract stage and passed.",
+              "iterationId": "0000000000000010011testIteration",
+              "kind": "contrast"
+            }
+          ],
+          "id": "rf_de5ba3a509ad3c62",
+          "observed": "6 of 40 trials that reached Tool call reported an error from `save_project_servers` on server crm on test.",
+          "recommendation": "Open the exemplar sessions and identify the mechanism before changing anything.",
+          "severity": "high",
+          "signalFingerprint": "sha256:88ca6ebcebc755df15d8c3ad5b914ff70b26cfbcdd078a8f9c30b3dcf96424bb",
+          "title": "6 of 40 trials that reached Tool call reported an error from `save_project_servers` on server crm on test."
+        }
+      ],
+      "enrichment": {
+        "acceptedCount": 1,
+        "discovery": {
+          "missingTraces": 0,
+          "omittedEvidence": 0,
+          "reviewedFailedIterations": 6,
+          "reviewedIterations": 6,
+          "totalFailedIterations": 6,
+          "totalIterations": 40,
+          "truncatedTraces": 0
+        },
+        "generatedAt": 1789450991159,
+        "modelUsed": "z-ai/glm-5.3-flash",
+        "rejectedCount": 0,
+        "status": "ready",
+        "summary": ""
+      },
+      "minerVersion": 1,
+      "omittedGroups": 0,
+      "provenance": [
+        {
+          "affectedIterationIds": [
+            "0000000000000010005testIteration",
+            "0000000000000010006testIteration",
+            "0000000000000010007testIteration",
+            "0000000000000010008testIteration",
+            "0000000000000010009testIteration",
+            "0000000000000010010testIteration"
+          ],
+          "basis": "measured",
+          "candidateId": "rf_de5ba3a509ad3c62",
+          "groupKind": "tool_failure",
+          "mechanismBasis": "complete",
+          "proseOrigin": {
+            "acceptanceCriteria": "deterministic",
+            "observed": "deterministic",
+            "recommendation": "deterministic",
+            "rootCause": "deterministic",
+            "title": "deterministic"
+          }
+        },
+        {
+          "affectedIterationIds": [
+            "0000000000000010005testIteration",
+            "0000000000000010006testIteration",
+            "0000000000000010007testIteration",
+            "0000000000000010008testIteration",
+            "0000000000000010009testIteration",
+            "0000000000000010010testIteration"
+          ],
+          "basis": "measured",
+          "candidateId": "rf_de5ba3a509ad3c62:mechanism:fec3b12c9bc523c0",
+          "groupKind": "ai_discovery",
+          "mechanismBasis": "sampled",
+          "proseOrigin": {
+            "acceptanceCriteria": "ai",
+            "observed": "ai",
+            "recommendation": "ai",
+            "rootCause": "ai",
+            "title": "ai"
+          }
+        }
+      ],
+      "sourceRevision": "sha256:3b8d2d113b273b1a1f3d16063c9307810f86ccb5b43c1d6a410223e81f56bc8a"
+    },
+    "writesEnabled": true
+  },
+  "updatedAt": null
+}

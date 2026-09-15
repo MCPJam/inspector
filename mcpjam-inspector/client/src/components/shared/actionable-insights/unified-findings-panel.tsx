@@ -20,6 +20,7 @@ import {
 import type { FindingPromptContext } from "./finding-prompts";
 import { FindingSummary, CopyFindingPrompt } from "./finding-summary";
 import type { FindingEvidenceLocator } from "./finding-evidence";
+import type { AffectedIterationRow } from "./affected-iterations-list";
 
 export type UnifiedFindingsMode = "deterministic" | "ai" | "baseline";
 export type FindingsAnalysisAction = {
@@ -29,6 +30,7 @@ export type FindingsAnalysisAction = {
   onRun: () => void;
 };
 export type UnifiedFindingsPanelProps = {
+  analysis?: UnifiedFindingsExperiment["analysis"];
   snapshot: UnifiedFindingsExperiment["snapshot"];
   findings: readonly ActionableFinding[];
   provenance: readonly InsightsFindingProvenance[];
@@ -36,12 +38,31 @@ export type UnifiedFindingsPanelProps = {
   observationCoverage: InsightsObservationCoverage | null;
   mode: UnifiedFindingsMode;
   analyze: FindingsAnalysisAction;
+  /**
+   * The FREE deterministic build.
+   *
+   * Separate from `analyze` because it spends nothing: it reads recorded
+   * evidence and groups it. A run that settled without one (an older run, or
+   * one the stale-worker sweeper finalized) must not be told to "Analyze" —
+   * that word means the metered model, and the observations do not need it.
+   */
+  build?: FindingsAnalysisAction;
   backendUnavailableNote?: string | null;
   executionIssues?: React.ReactNode;
   scopeControl?: React.ReactNode;
   context?: FindingPromptContext;
   onOpenEvidence?: (locator: FindingEvidenceLocator) => void;
-  iterationLabels?: Record<string, string>;
+  /** Recorded iterations by id, for each finding's affected list. */
+  iterationRows?: Record<string, AffectedIterationRow>;
+  /**
+   * What to show instead of a "nothing here yet" note.
+   *
+   * The block now occupies the hero's explanation slot, so a run with no
+   * built findings must still say what broke. The run page passes the hero's
+   * own contract-derived columns; a surface with nothing to fall back to
+   * passes nothing and keeps the note.
+   */
+  fallback?: React.ReactNode;
 };
 
 function StateNote({
@@ -59,8 +80,8 @@ function StateNote({
         tone === "destructive"
           ? "border-destructive"
           : tone === "warning"
-          ? "border-warning"
-          : "border-border"
+            ? "border-warning"
+            : "border-border"
       }`}
       role={tone === "destructive" ? "alert" : undefined}
       data-testid={testId}
@@ -184,6 +205,7 @@ function BaselineView({
 }
 
 export function UnifiedFindingsPanel({
+  analysis,
   snapshot,
   findings,
   provenance,
@@ -191,16 +213,21 @@ export function UnifiedFindingsPanel({
   observationCoverage,
   mode,
   analyze,
+  build,
   backendUnavailableNote,
   executionIssues,
   scopeControl,
   context,
   onOpenEvidence,
-  iterationLabels,
+  iterationRows,
+  fallback,
 }: UnifiedFindingsPanelProps) {
   const [showMore, setShowMore] = useState(false);
   const [coverageOpen, setCoverageOpen] = useState(false);
   const coverageTrigger = useRef<HTMLButtonElement>(null);
+  // Ordering is a MEASURED fact (actionability, severity, affected count).
+  // Whether a model happened to narrate a finding is not, and must not move
+  // a bigger problem below a smaller one.
   const sorted = useMemo(() => sortFindingsForDisplay(findings), [findings]);
   const provenanceById = useMemo(
     () => new Map(provenance.map((p) => [p.candidateId, p])),
@@ -221,27 +248,30 @@ export function UnifiedFindingsPanel({
   const coverageText = discovery
     ? `Reviewed ${discovery.reviewedFailedIterations} of ${
         discovery.totalFailedIterations
-      } failed trials and ${
+      } failed iterations and ${
         discovery.reviewedIterations - discovery.reviewedFailedIterations
       } passing examples.`
     : observationCoverage
-    ? `Evidence covers ${observationCoverage.analyzed} of ${
-        observationCoverage.total
-      } trials.${
-        observationCoverage.gradedCount > 0
-          ? ` ${observationCoverage.gradedCount} graded.`
-          : ""
-      }`
-    : null;
+      ? `Evidence covers ${observationCoverage.analyzed} of ${
+          observationCoverage.total
+        } iterations.${
+          observationCoverage.gradedCount > 0
+            ? ` ${observationCoverage.gradedCount} graded.`
+            : ""
+        }`
+      : null;
   const summaryProps = {
     view: mode === "ai" ? ("ai" as const) : ("deterministic" as const),
     context,
     onOpenEvidence,
-    iterationLabels,
+    iterationRows,
   };
 
   return (
-    <div data-testid="unified-findings-panel">
+    <div
+      data-testid="unified-findings-panel"
+      data-analysis-phase={analysis?.phase}
+    >
       <div className="mb-6 flex flex-wrap items-center justify-between gap-x-5 gap-y-3">
         <div className="flex flex-wrap items-center gap-3">
           <h3 className="text-sm font-semibold">Findings</h3>
@@ -262,16 +292,32 @@ export function UnifiedFindingsPanel({
               <Sparkles className="size-3.5" aria-hidden="true" />
             )}
             {analyze.pending
-              ? "Analyzing…"
+              ? analysis?.phase === "reading"
+                ? `Reading iterations ${analysis.progress.done}/${analysis.progress.total}`
+                : analysis?.phase === "grouping"
+                  ? "Grouping problems…"
+                  : analysis?.phase === "checking"
+                    ? "Checking evidence…"
+                    : "Analyzing…"
               : enrichment?.status === "ready"
-              ? "Analyze again"
-              : "Analyze findings"}
+                ? "Analyze again"
+                : "Analyze findings"}
           </Button>
           {lead ? (
             <CopyFindingPrompt key={lead.id} finding={lead} context={context} />
           ) : null}
         </div>
       </div>
+      {analysis && (
+        <p className="mb-4 text-xs text-muted-foreground" role="status">
+          Trace reports available for {analysis.completeness.iterationReports}{" "}
+          of {analysis.completeness.total} iterations.
+          {analysis.phase === "done" &&
+          analysis.completeness.iterationReports < analysis.completeness.total
+            ? " Some iterations could not be analyzed; recorded results remain available."
+            : ""}
+        </p>
+      )}
       {executionIssues || backendUnavailableNote || analyze.error ? (
         <div className="mb-5 space-y-3">
           {executionIssues}
@@ -299,11 +345,38 @@ export function UnifiedFindingsPanel({
         </div>
       ) : null}
       {!snapshot ? (
-        <StateNote testId="unified-findings-no-snapshot">
-          {analyze.pending
-            ? "Reviewing this run’s evidence and looking for fixes…"
-            : "Analyze this run to see what broke, suggested fixes, and supporting evidence."}
-        </StateNote>
+        fallback !== undefined && !analyze.pending && !build?.pending ? (
+          fallback
+        ) : (
+          <div className="space-y-2">
+            <StateNote testId="unified-findings-no-snapshot">
+              {analyze.pending || build?.pending
+                ? "Reading this run’s recorded evidence…"
+                : build?.available
+                  ? "Findings have not been built for this run yet. Building reads the recorded evidence; it does not call a model."
+                  : "Analyze this run to see what broke, suggested fixes, and supporting evidence."}
+            </StateNote>
+            {build?.available && !build.pending && !analyze.pending ? (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8"
+                onClick={build.onRun}
+                data-testid="unified-findings-build"
+              >
+                Build findings
+              </Button>
+            ) : null}
+            {build?.error ? (
+              <StateNote
+                tone="destructive"
+                testId="unified-findings-build-error"
+              >
+                Findings could not be built: {build.error}
+              </StateNote>
+            ) : null}
+          </div>
+        )
       ) : lead ? (
         <div data-testid="unified-findings-list">
           <FindingSummary
@@ -314,7 +387,10 @@ export function UnifiedFindingsPanel({
             {...summaryProps}
           />
         </div>
-      ) : executionIssues ? null : (
+      ) : fallback !== undefined &&
+        !(observationState === "unavailable" && !discovery) ? (
+        fallback
+      ) : (
         <StateNote
           tone={
             observationState === "unavailable" && !discovery
@@ -330,12 +406,31 @@ export function UnifiedFindingsPanel({
           {observationState === "unavailable" && !discovery
             ? "There isn’t enough recorded evidence to explain this run. See coverage details below."
             : incomplete
-            ? "No supported finding yet. Evidence is incomplete; this does not mean the run passed."
-            : mode === "ai"
-            ? "Analysis found no supported issue to report. This does not change the run’s results."
-            : "No issue found in the recorded checks. Analyze findings to look for patterns and suggested fixes."}
+              ? "No supported finding yet. Evidence is incomplete; this does not mean the run passed."
+              : mode === "ai"
+                ? "Analysis found no supported issue to report. This does not change the run’s results."
+                : "No issue found in the recorded checks. Analyze findings to look for patterns and suggested fixes."}
         </StateNote>
       )}
+      {observationCoverage &&
+      Object.values(observationCoverage.exclusions ?? {}).some(
+        (count) => count > 0,
+      ) ? (
+        <p
+          className="mt-3 text-xs text-muted-foreground"
+          data-testid="unified-findings-exclusion-summary"
+        >
+          Not analyzed:{" "}
+          {Object.entries(observationCoverage.exclusions ?? {})
+            .filter(([, count]) => count > 0)
+            .map(
+              ([reason, count]) =>
+                `${count} iterations ${humanExclusion(reason)}`,
+            )
+            .join("; ")}
+          .
+        </p>
+      ) : null}
       {snapshot && coverageText ? (
         <p
           className="mt-5 text-xs leading-6 text-muted-foreground"
@@ -414,9 +509,9 @@ export function UnifiedFindingsPanel({
                   omitted for size.
                 </p>
                 <p className="mt-3 text-muted-foreground">
-                  Counts come from distinct cited trials. Grouping and suggested
-                  causes are AI interpretations, not a proven cause or a
-                  run-wide failure rate.
+                  Counts come from distinct cited iterations. Grouping and
+                  suggested causes are AI interpretations, not a proven cause or
+                  a run-wide failure rate.
                 </p>
               </div>
             ) : snapshot ? (

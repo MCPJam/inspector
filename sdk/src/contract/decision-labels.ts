@@ -581,3 +581,21 @@ export const DECISION_LABEL_VOCABULARIES = Object.freeze({
   // would be a second declaration of the same thing, and the one that goes
   // stale silently.
 });
+
+/** Short presentation labels for a recorded stage reason; these do not diagnose a cause. */
+export const STAGE_REASON_CHIP_LABELS = Object.freeze({
+  noSpanChannel: "No evidence channel", noEvidenceCaptured: "No evidence captured",
+  matchVerdictUnavailable: "Match result unavailable", traceAbsent: "No trace",
+  executorEmitsNoSpans: "No spans", blockedByPolicy: "Blocked by policy",
+  evaluatorError: "Evaluator error", providerError: "Model provider error",
+  setupAborted: "Setup stopped", connectFailed: "Connection failed",
+  toolsListFailed: "Tool discovery failed", egressUnverified: "Network unverified",
+  lifecycleStopped: "Run stopped", notAuthored: "No check configured",
+  earlierStageFailed: "Earlier stage failed", missingToolCall: "Missing tool call",
+  unexpectedToolCall: "Unexpected tool call", argumentMismatch: "Argument mismatch",
+  toolError: "Tool error", protocolError: "Protocol error", renderFailed: "Render failed",
+  predicateFailed: "Assertion failed", observed: "Measured",
+  impliedByLaterEvidence: "Inferred from later evidence", judgeObserved: "Judge passed",
+  judgePartial: "Judge partial", judgeFailed: "Judge failed", judgePending: "Judge pending",
+  judgeNotRequested: "Judge not requested",
+} satisfies Record<StageReason, string>);

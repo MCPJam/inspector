@@ -45,7 +45,7 @@ import {
   type RunResultsMatrixData,
 } from "./run-results-matrix-model";
 import { IterationDetails } from "../evals/iteration-details";
-import { TrialScorecard } from "./case-scorecard/trial-scorecard";
+import { IterationReportScorecard } from "./case-scorecard/iteration-report-subscriber";
 import { authoredForTrial } from "./case-scorecard/trial-authored";
 
 type StatusFilter = "failed" | "passed" | "pending" | "cancelled";
@@ -888,8 +888,8 @@ function IterationDrawer({
               result === "passed"
                 ? "border-success/30 bg-success/10 text-success"
                 : result === "failed" || result === "timed_out"
-                  ? "border-destructive/30 bg-destructive/10 text-destructive"
-                  : "border-border bg-muted text-muted-foreground",
+                ? "border-destructive/30 bg-destructive/10 text-destructive"
+                : "border-border bg-muted text-muted-foreground",
             )}
           >
             {outcomeLabel(result)}
@@ -912,7 +912,7 @@ function IterationDrawer({
           scorecard={{
             render: (context) => (
               <>
-                <TrialScorecard
+                <IterationReportScorecard
                   authored={authored}
                   iteration={iteration}
                   steps={authored.steps}
@@ -923,9 +923,7 @@ function IterationDrawer({
                 />
                 {onEditEvaluator && (
                   <div className="mt-4 flex justify-end">
-                    <Button onClick={onEditEvaluator}>
-                      Edit evaluator
-                    </Button>
+                    <Button onClick={onEditEvaluator}>Edit evaluator</Button>
                   </div>
                 )}
               </>

@@ -24,8 +24,10 @@ export default defineConfig({
   // and served from the Vite root, so nothing has to be imported at build time
   // and the preview starts even before an artifact exists (it says so).
   plugins: [react(), tailwindcss()],
+  define: { __APP_VERSION__: JSON.stringify("findings-preview") },
   resolve: {
     alias: {
+      "@/shared": path.resolve(clientDir, "../shared"),
       "@": path.resolve(clientDir, "src"),
       "@mcpjam/sdk/platform": path.resolve(
         repoRoot,

@@ -680,6 +680,17 @@ This environment's server group is gone.
 
 ---
 
+## Model empty response
+
+`provider/empty_response`
+
+The model request ended without usable content, so the turn could not complete.
+This error alone does not identify whether MCPJam or your own model key was used.
+The run's execution-error card uses the recorded model source to provide that context.
+
+Rerun the affected cases. If the error recurs on an MCPJam model, report it with
+those run details. For BYOK, check the recorded provider error and account configuration.
+
 ## Unknown error
 
 `internal/unknown`

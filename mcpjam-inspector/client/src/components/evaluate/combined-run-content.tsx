@@ -215,7 +215,7 @@ export function CombinedRunContent({
           <RunVerdictHero
             view={view}
             headerVerdict={fullVerdict}
-            showExplanation={false}
+            explanation={null}
           />
           {findingsRun ? (
             <div data-testid="combined-run-findings">

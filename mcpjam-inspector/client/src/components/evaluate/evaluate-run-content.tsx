@@ -48,7 +48,7 @@ import {
   buildStageFixPrompt,
 } from "./stage-fix-prompt";
 import { remedyForDiagnostic } from "./stage-remedy";
-import { RunVerdictHero } from "./run-verdict-hero";
+import { HeroExplanation, RunVerdictHero } from "./run-verdict-hero";
 import { buildRunVerdictHero } from "./run-verdict-hero-model";
 import {
   buildHeroPairings,
@@ -344,6 +344,26 @@ export function SingleRunContent({
     >
       <RunVerdictHero
         view={view}
+        explanation={
+          <UnifiedFindingsSection
+            suiteRunId={String(run._id)}
+            iterations={iterations}
+            expectedTotal={run.summary?.total}
+            clientLabel={view.pairings?.[0]?.client ?? null}
+            fallback={<HeroExplanation view={view} />}
+            generation={{
+              pending: serverQuality.pending,
+              failedGeneration: serverQuality.failedGeneration,
+              error: serverQuality.error,
+              unavailable: serverQuality.unavailable,
+              canRequest: serverQuality.canRequest,
+              requestInsight: serverQuality.requestServerQuality,
+            }}
+            {...(onOpenIteration
+              ? { onOpenIteration: openEvidenceIteration }
+              : {})}
+          />
+        }
         {...(!inRunPageHeader && canOpenFailingTrace
           ? { onOpenFailingTrace: openFailingTrace }
           : {})}
@@ -410,21 +430,6 @@ export function SingleRunContent({
           }
         />
       ) : null}
-
-      <UnifiedFindingsSection
-        suiteRunId={String(run._id)}
-        iterations={iterations}
-        expectedTotal={run.summary?.total}
-        generation={{
-          pending: serverQuality.pending,
-          failedGeneration: serverQuality.failedGeneration,
-          error: serverQuality.error,
-          unavailable: serverQuality.unavailable,
-          canRequest: serverQuality.canRequest,
-          requestInsight: serverQuality.requestServerQuality,
-        }}
-        {...(onOpenIteration ? { onOpenIteration: openEvidenceIteration } : {})}
-      />
 
       {failureGroupsEnabled && run.suiteId ? (
         <FailureGroupsCard suiteId={String(run.suiteId)} />

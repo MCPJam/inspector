@@ -99,7 +99,7 @@ describe("RunVerdictHero", () => {
     render(
       <RunVerdictHero
         view={view({ pairings: [pairing()] })}
-        showExplanation={false}
+        explanation={null}
       />,
     );
     expect(screen.getByTestId("run-verdict-pairing")).toHaveTextContent(

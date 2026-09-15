@@ -14,6 +14,7 @@
 import { StrictMode, useCallback, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./preview.css";
+import { StageReportPreview } from "./stage-report-preview";
 
 import { UnifiedFindingsPanel } from "@/components/shared/actionable-insights/unified-findings-panel";
 import type { UnifiedFindingsMode } from "@/components/shared/actionable-insights/unified-findings-panel";
@@ -322,6 +323,7 @@ function Preview({ artifact }: { artifact: ReplayArtifact }) {
           </div>
         </section>
 
+        <StageReportPreview />
         <UnifiedFindingsPanel
           snapshot={snapshot}
           findings={findings}
@@ -332,20 +334,7 @@ function Preview({ artifact }: { artifact: ReplayArtifact }) {
           observationState={replayCase.observationState}
           observationCoverage={replayCase.coverage}
           mode={mode}
-          onModeChange={setMode}
-          build={{
-            available: simulated !== "backend-missing",
-            pending: simulated === "build-pending",
-            error:
-              simulated === "build-error"
-                ? "Evidence changed; rebuild findings."
-                : null,
-            onRun: () =>
-              window.alert(
-                "Offline preview: Build findings runs against a live backend. Use the replay command to change what is shown here.",
-              ),
-          }}
-          enrich={{
+          analyze={{
             available: simulated !== "backend-missing",
             pending: simulated === "enrich-pending",
             error:

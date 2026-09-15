@@ -22,6 +22,7 @@
  *
  * Matching TypeScript names would prove nothing. The fixture is the proof.
  */
+import { USER_VALUE_STAGES, STAGE_REASONS } from "@mcpjam/sdk/contract";
 import { describe, expect, test } from "vitest";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -176,6 +177,20 @@ function validateEnvelope(raw: unknown): InsightsEnvelope {
         `unifiedFindings.${field} is not a boolean`,
       );
     }
+    if (row.analysis !== undefined) {
+      must(isRecord(row.analysis), "analysis is not an object");
+      const analysis = row.analysis as Record<string, unknown>;
+      must(
+        ["reading", "grouping", "checking", "done", "failed"].includes(
+          String(analysis.phase),
+        ),
+        "unknown analysis phase",
+      );
+      must(
+        isRecord(analysis.progress) && analysis.progress.unit === "iterations",
+        "analysis progress has no unit",
+      );
+    }
     if (row.snapshot !== null && row.snapshot !== undefined) {
       must(isRecord(row.snapshot), "unifiedFindings.snapshot is not an object");
       const snapshot = row.snapshot as Record<string, unknown>;
@@ -197,6 +212,21 @@ function validateEnvelope(raw: unknown): InsightsEnvelope {
       );
       for (const entry of snapshot.provenance as unknown[]) {
         must(isRecord(entry), "snapshot.provenance holds a non-object");
+        const provenance = entry as Record<string, unknown>;
+        if (provenance.stage !== undefined)
+          must(
+            (USER_VALUE_STAGES as readonly string[]).includes(
+              String(provenance.stage),
+            ),
+            "unknown provenance stage",
+          );
+        if (provenance.reason !== undefined)
+          must(
+            (STAGE_REASONS as readonly string[]).includes(
+              String(provenance.reason),
+            ),
+            "unknown provenance reason",
+          );
         const judgeCoverage = (entry as Record<string, unknown>).judgeCoverage;
         if (judgeCoverage === undefined || judgeCoverage === null) continue;
         must(
@@ -307,4 +337,37 @@ describe("the eval envelope as the backend actually sends it", () => {
     expect(serialized).not.toMatch(/sk-[a-z]+-[A-Za-z0-9]{8,}/);
     expect(serialized).not.toContain("Bearer ");
   });
+});
+
+test("trace-report golden fixture has code-owned counts and AI-owned wording", () => {
+  const golden = validateEnvelope(
+    JSON.parse(
+      readFileSync(
+        join(dirname(FIXTURE), "trace-report-envelope.json"),
+        "utf8",
+      ),
+    ),
+  );
+  const finding = golden.currentFindings?.find(
+    (row) => row.observed === "6 of 40 trials failed to save the server.",
+  );
+  expect(finding?.affected).toMatchObject({
+    count: 6,
+    total: 40,
+    unit: "iterations",
+  });
+  expect(golden.unifiedFindings?.analysis?.phase).toBe("done");
+  const report = JSON.parse(
+    readFileSync(join(dirname(FIXTURE), "trace-report-iteration.json"), "utf8"),
+  );
+  expect(report.schemaVersion).toBe(1);
+  expect(report.status).toBe("ready");
+  for (const note of report.stageNotes ?? []) {
+    expect(USER_VALUE_STAGES).toContain(note.stage);
+    expect(note.citations.length).toBeGreaterThan(0);
+  }
+  for (const row of report.rows)
+    expect(row.joinKey).toMatch(
+      /^(predicate:|toolCalls:match$|judge:goalCompletion$)/,
+    );
 });

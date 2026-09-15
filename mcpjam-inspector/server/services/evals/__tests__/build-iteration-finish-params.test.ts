@@ -495,9 +495,11 @@ describe("buildStageMetadata — the seam a setup abort finalizes through", () =
       stageCase: authoredCase,
       status: "failed",
       error: "provider outage",
+      modelSource: "mcpjam",
       stepError: { source: "model" },
     });
     expect(metadata.stageStepErrorSource).toBe("model");
+    expect(metadata.modelSource).toBe("mcpjam");
   });
 
   test("writes no classification marker when the failure was not the model's", () => {

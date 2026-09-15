@@ -20,26 +20,26 @@
         "unit": "iterations"
       },
       "attribution": "environment",
-      "category": "tool_runtime",
+      "category": "environment",
       "confidence": "medium",
       "evidence": [
         {
           "errorCode": "-32001",
-          "excerpt": "Authentication failed (-32001)",
+          "excerpt": "Tool: search Error: Authentication failed (-32001)",
           "iterationId": "<iterationId>",
           "kind": "tool_error",
           "toolName": "search"
         },
         {
           "errorCode": "-32001",
-          "excerpt": "Authentication failed (-32001)",
+          "excerpt": "Tool: search Error: Authentication failed (-32001)",
           "iterationId": "<iterationId>",
           "kind": "tool_error",
           "toolName": "search"
         },
         {
           "errorCode": "-32001",
-          "excerpt": "Authentication failed (-32001)",
+          "excerpt": "Tool: search Error: Authentication failed (-32001)",
           "iterationId": "<iterationId>",
           "kind": "tool_error",
           "toolName": "search"
@@ -51,10 +51,10 @@
         }
       ],
       "id": "<findingId>",
-      "observed": "\"search\" failed (-32001) on server acme-crm in 3 of 8 iterations that reached the \"call\" stage on gpt-5.4-mini.",
+      "observed": "`search` refused the call for lack of authorization in 3 of 8 iterations: \"Authentication failed (-32001)\"",
       "recommendation": "Refresh the acme-crm credential in the run environment and re-run the suite.",
       "rootCause": "The pinned token expired mid-run.",
-      "severity": "high",
+      "severity": "medium",
       "signalFingerprint": "<fingerprint>",
       "title": "Expired CRM credential"
     }
@@ -154,26 +154,26 @@
             "unit": "iterations"
           },
           "attribution": "unknown",
-          "category": "tool_runtime",
+          "category": "environment",
           "confidence": "low",
           "evidence": [
             {
               "errorCode": "-32001",
-              "excerpt": "Authentication failed (-32001)",
+              "excerpt": "Tool: search Error: Authentication failed (-32001)",
               "iterationId": "<iterationId>",
               "kind": "tool_error",
               "toolName": "search"
             },
             {
               "errorCode": "-32001",
-              "excerpt": "Authentication failed (-32001)",
+              "excerpt": "Tool: search Error: Authentication failed (-32001)",
               "iterationId": "<iterationId>",
               "kind": "tool_error",
               "toolName": "search"
             },
             {
               "errorCode": "-32001",
-              "excerpt": "Authentication failed (-32001)",
+              "excerpt": "Tool: search Error: Authentication failed (-32001)",
               "iterationId": "<iterationId>",
               "kind": "tool_error",
               "toolName": "search"
@@ -185,11 +185,11 @@
             }
           ],
           "id": "<findingId>",
-          "observed": "\"search\" failed (-32001) on server acme-crm in 3 of 8 iterations that reached the \"call\" stage on gpt-5.4-mini.",
-          "recommendation": "Open the exemplar sessions and identify the mechanism before changing anything.",
-          "severity": "high",
+          "observed": "`search` refused the call for lack of authorization in 3 of 8 iterations: \"Authentication failed (-32001)\"",
+          "recommendation": "The server required authorization the run did not have. Fix the credentials or OAuth setup for `search`'s server in this environment, then rerun.",
+          "severity": "medium",
           "signalFingerprint": "<fingerprint>",
-          "title": "\"search\" failed (-32001) on server acme-crm in 3 of 8 iterations that reached the \"call\" stage on gpt-5.4-mini."
+          "title": "`search` refused the call for lack of authorization in 3 of 8 iterations: \"Authentication failed (-32001)\""
         }
       ],
       "enrichment": {
@@ -215,6 +215,7 @@
           "mechanismBasis": "complete",
           "proseOrigin": {
             "acceptanceCriteria": "ai",
+            "observed": "deterministic",
             "recommendation": "ai",
             "rootCause": "ai",
             "title": "ai"

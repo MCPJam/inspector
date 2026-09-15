@@ -30,7 +30,7 @@ describe("Scorecard report", () => {
     );
     // Named once, as the heading — not repeated under a "Looks for" term.
     expect(screen.getAllByText("End-to-end latency ≤ 30s")).toHaveLength(1);
-    expect(screen.getByText("Observed")).toBeVisible();
+    expect(screen.getByText("Actual")).toBeVisible();
     expect(screen.getByText("Passed")).toHaveClass(
       "bg-success/15",
       "text-foreground",
@@ -79,4 +79,74 @@ describe("Scorecard report", () => {
       screen.getByRole("button", { name: "Label iteration" }),
     ).toBeVisible();
   });
+  it("uses a cited narrative without changing the recorded verdict or reason", () => {
+    render(
+      <ul>
+        <TrialScorecardRow
+          row={{
+            ...check,
+            narrative: {
+              text: "The request finished within the configured time budget.",
+              stale: false,
+              citations: ["s:duration"],
+            },
+          }}
+          layout="report"
+        />
+      </ul>,
+    );
+    expect(screen.getByText("Expected")).toBeVisible();
+    expect(
+      screen.getByText(
+        "The request finished within the configured time budget.",
+      ),
+    ).toHaveAttribute("data-narrative-source", "ai");
+    expect(screen.getByText("Passed")).toBeVisible();
+    expect(screen.getByText("Finished within the budget.")).toBeVisible();
+  });
+  it("falls back to measured evidence when the narrative is stale", () => {
+    render(
+      <ul>
+        <TrialScorecardRow
+          row={{
+            ...check,
+            narrative: {
+              text: "An outdated claim.",
+              stale: true,
+              citations: ["s:duration"],
+            },
+          }}
+          layout="report"
+        />
+      </ul>,
+    );
+    expect(screen.queryByText("An outdated claim.")).toBeNull();
+    expect(screen.getByText("10.2s end to end.")).toBeVisible();
+    expect(
+      screen.getByText("Narrative predates the latest grade."),
+    ).toBeVisible();
+  });
+  it("does not leak a judge narrative during blind review", () => {
+    render(
+      <ul>
+        <TrialScorecardRow
+          row={{
+            ...check,
+            provenance: "judge",
+            narrative: {
+              text: "The judge found the outcome incomplete.",
+              stale: false,
+              citations: ["e:judge"],
+            },
+          }}
+          layout="report"
+          hideJudgeResult
+        />
+      </ul>,
+    );
+    expect(
+      screen.queryByText("The judge found the outcome incomplete."),
+    ).toBeNull();
+  });
+
 });
