@@ -1,3 +1,4 @@
+import { SharedSettingsGate } from "@/components/billing/SharedSettingsGate";
 import { AssertionBacktestPanel } from "./assertion-backtest-panel";
 import { JudgeBacktestPanel } from "./judge-backtest-panel";
 import { ImportDatasetDialog } from "../evaluate/import-dataset-dialog";
@@ -645,18 +646,18 @@ export function SuiteIterationsView({
     route.type === "run-detail"
       ? "run-detail"
       : route.type === "test-detail"
-        ? "test-detail"
-        : route.type === "test-edit" && !editingDisabled
-          ? "test-edit"
-          : route.type === "test-edit"
-            ? "test-detail"
-            : "overview";
+      ? "test-detail"
+      : route.type === "test-edit" && !editingDisabled
+      ? "test-edit"
+      : route.type === "test-edit"
+      ? "test-detail"
+      : "overview";
   const runsViewMode: SuiteOverviewView =
     route.type === "suite-overview" && route.view === "test-cases"
       ? "test-cases"
       : route.type === "suite-overview" && route.view === "cross-host"
-        ? "cross-host"
-        : "runs";
+      ? "cross-host"
+      : "runs";
 
   // Local state that's not in the URL
   const [runDetailSortBy, setRunDetailSortBy] = useState<
@@ -793,8 +794,8 @@ export function SuiteIterationsView({
   const passOrFailRowError = !isRubricValid(draft.current.judgeRubric)
     ? { message: "A criterion is missing a label" }
     : !areAllChecksValid(draftDefaultPredicates)
-      ? { message: "An assertion is incomplete" }
-      : undefined;
+    ? { message: "An assertion is incomplete" }
+    : undefined;
   // Which POLICY the sheet is editing. Read from the DRAFT, not the suite, so
   // the v2 rows appear the moment someone drafts the upgrade rather than only
   // after they save it — the review dialog is where they confirm, and a page
@@ -1039,7 +1040,7 @@ export function SuiteIterationsView({
   });
 
   const selectedCompareBaseRunId =
-    route.type === "run-detail" ? (route.compareToRunId ?? null) : null;
+    route.type === "run-detail" ? route.compareToRunId ?? null : null;
 
   const previousCompletedRunForSelectedRun = useMemo(() => {
     if (!selectedRunDetails || selectedRunDetails.status !== "completed") {
@@ -1205,10 +1206,10 @@ export function SuiteIterationsView({
 
   // Derive selectedIterationId from route
   const selectedIterationId =
-    route.type === "run-detail" ? (route.iteration ?? null) : null;
+    route.type === "run-detail" ? route.iteration ?? null : null;
 
   const selectedRunTestCaseId =
-    route.type === "run-detail" ? (route.testCaseId ?? null) : null;
+    route.type === "run-detail" ? route.testCaseId ?? null : null;
 
   const handleSelectTestCase = (group: RunCaseGroup) => {
     if (route.type !== "run-detail" || !group.testCaseId) {
@@ -1342,18 +1343,18 @@ export function SuiteIterationsView({
   const ciOwnedReason = configLocked
     ? CI_OWNED_REASON_COPY
     : capabilitiesReady && capabilities.ownership?.ciOwned
-      ? CI_OWNED_REASON_COPY
-      : undefined;
+    ? CI_OWNED_REASON_COPY
+    : undefined;
   // `computerEnvironmentRowVisible` is declared beside the images it gates —
   // see the comment there for why the two share one condition.
   const computerEnvironmentDisabledReason =
     ciOwnedReason ??
     (!capabilitiesReady
       ? undefined
-      : (featureDisabledReason(capabilities.features?.computers) ??
+      : featureDisabledReason(capabilities.features?.computers) ??
         (capabilities.permissions?.["suite.configure"] === false
           ? PERMISSION_REASON_COPY
-          : undefined)));
+          : undefined));
   const subsectionOptions = useMemo(
     () => ({
       isVerdictPolicyV2,
@@ -1380,12 +1381,12 @@ export function SuiteIterationsView({
         ? CAPABILITY_REASON_COPY.flag_unavailable
         : "Checking whether this deployment allows verdict policy v2…"
       : // Absent reads as "cannot upgrade", which is what an older deployment
-        // means by not answering — never as permission.
-        capabilities.verdictPolicyV2?.canUpgrade
-        ? undefined
-        : (capabilities.verdictPolicyV2?.deploymentMode ?? "off") === "off"
-          ? DEPLOYMENT_REASON_COPY
-          : "This suite is already on verdict policy v2";
+      // means by not answering — never as permission.
+      capabilities.verdictPolicyV2?.canUpgrade
+      ? undefined
+      : (capabilities.verdictPolicyV2?.deploymentMode ?? "off") === "off"
+      ? DEPLOYMENT_REASON_COPY
+      : "This suite is already on verdict policy v2";
   const openSetting = useCallback(
     (key: EvalSuiteSettingKey) => {
       if (key === "name") {
@@ -1731,7 +1732,7 @@ export function SuiteIterationsView({
         !selectedCompareBaseRunId &&
         !selectedRunTestCaseId));
 
-  return (
+  const content = (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       {projectId && !editingDisabled && (
         <ImportDatasetDialog
@@ -1882,9 +1883,7 @@ export function SuiteIterationsView({
                     route.type === "test-edit" && Boolean(route.openCompare)
                   }
                   openCompareIterationId={
-                    route.type === "test-edit"
-                      ? (route.iteration ?? null)
-                      : null
+                    route.type === "test-edit" ? route.iteration ?? null : null
                   }
                   onContinueInChat={onContinueInChat}
                   onSelectTab={(tab) =>
@@ -2299,8 +2298,8 @@ export function SuiteIterationsView({
                       runningTestCaseId={runningTestCaseId}
                       blockTestCaseRuns={Boolean(
                         rerunningSuiteId ||
-                        replayingRunId ||
-                        evalRunsDisabledReason,
+                          replayingRunId ||
+                          evalRunsDisabledReason,
                       )}
                       runTestCaseDisabledReason={evalRunsDisabledReason}
                       connectedServerNames={connectedServerNames}
@@ -2786,5 +2785,16 @@ export function SuiteIterationsView({
         </ShareDialog>
       ) : null}
     </div>
+  );
+  return isEditMode ? (
+    <SharedSettingsGate
+      projectId={projectId}
+      creatorId={suite.createdBy}
+      resource="eval suite"
+    >
+      {content}
+    </SharedSettingsGate>
+  ) : (
+    content
   );
 }
