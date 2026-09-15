@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   useEvalQueries: vi.fn(),
   navigatePlaygroundEvalsRoute: vi.fn(),
   toSuiteOverview: vi.fn(),
+  toTestEdit: vi.fn(),
   createTestSuiteMutation: vi.fn(),
   createSuitePage: vi.fn(() => null),
   suiteIterationsView: vi.fn(),
@@ -162,7 +163,7 @@ vi.mock("../evaluate/create-suite-navigation", () => ({
     toSuiteOverview: (...args: unknown[]) => mocks.toSuiteOverview(...args),
     toRunDetail: vi.fn(),
     toTestDetail: vi.fn(),
-    toTestEdit: vi.fn(),
+    toTestEdit: mocks.toTestEdit,
     toSuiteEdit: vi.fn(),
   }),
 }));
@@ -407,6 +408,13 @@ describe("EvaluateTab", () => {
     await userEvent.click(screen.getByRole("button", { name: "Close run review" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
+  });
+
+  it("opens a test definition without selecting the run comparison view", () => {
+    render(<EvaluateTab projectId="ws-1" />);
+    const props = mocks.suiteIterationsView.mock.calls.at(-1)?.[0];
+    props.onEditTestCase("case-a");
+    expect(mocks.toTestEdit).toHaveBeenCalledWith("suite-a", "case-a");
   });
 
   it("renders from suite-driven route state without depending on an active server", () => {

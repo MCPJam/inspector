@@ -1462,9 +1462,7 @@ function EvaluateTabContent({
           onDuplicateSuite={() => handlers.handleDuplicateSuite(selectedSuite)}
           alwaysShowEditIterationRows
           onEditTestCase={(testCaseId) =>
-            playgroundNavigation.toTestEdit(selectedSuite._id, testCaseId, {
-              openCompare: true,
-            })
+            playgroundNavigation.toTestEdit(selectedSuite._id, testCaseId)
           }
           onCreateTestCase={async () =>
             handlers.handleCreateTestCase(selectedSuite._id)
