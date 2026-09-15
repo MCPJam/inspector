@@ -102,7 +102,7 @@ export function EvalAddDrawer({
         }}
       >
         <SheetHeader className="shrink-0 pr-12">
-          <SheetTitle>Add actions and assertions</SheetTitle>
+          <SheetTitle>Add actions or assertions</SheetTitle>
           <SheetDescription>
             Choose what happens next or what this test verifies.
           </SheetDescription>
@@ -111,7 +111,7 @@ export function EvalAddDrawer({
           <Input
             autoFocus
             aria-label="Filter steps and assertions"
-            placeholder="Search all actions and assertions…"
+            placeholder="Search all actions or assertions…"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             className="bg-popover"

@@ -144,11 +144,11 @@ describe("run results matrix", () => {
         name: "Inspect Refund order on Claude · sonnet",
       }),
     );
-    expect(screen.queryByRole("button", { name: "Edit evaluator" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Edit evaluators" })).toBeNull();
     await user.click(
       screen.getByRole("button", { name: "Open iteration 1 details" }),
     );
-    await user.click(screen.getByRole("button", { name: "Edit evaluator" }));
+    await user.click(screen.getByRole("button", { name: "Edit evaluators" }));
     expect(onEditEvaluator).toHaveBeenCalledWith("refund");
     expect(screen.queryByRole("dialog")).toBeNull();
   });

@@ -45,7 +45,7 @@ describe("Default checks navigation and page", () => {
     const { container } = render(<Page />);
     // The same numbered table the suite settings page renders.
     expect(
-      screen.getByRole("heading", { name: "User value chain evaluators" }),
+      screen.getByRole("heading", { name: "Test Case Evaluators" }),
     ).toBeInTheDocument();
     expect(
       screen.queryByText("Show default evaluators"),
