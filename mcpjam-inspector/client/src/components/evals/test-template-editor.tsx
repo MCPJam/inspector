@@ -2754,6 +2754,13 @@ export function TestTemplateEditor({
   const checksSaveQueue = useRef<Promise<unknown>>(Promise.resolve());
   const checksSaveRevision = useRef(0);
   const [checksSaveStatus, setChecksSaveStatus] = useState<string | null>(null);
+  useEffect(() => {
+    setChecksSaveStatus(null);
+    return () => {
+      // Toast actions can outlive this editor or the case they were created for.
+      checksSaveRevision.current += 1;
+    };
+  }, [currentTestCase?._id]);
   const saveCaseChecks = (
     changes: Partial<Parameters<typeof updateTestCaseMutation>[0]>,
   ) => {
@@ -2779,11 +2786,14 @@ export function TestTemplateEditor({
       );
       return;
     }
-    const enqueue = () => {
+    const enqueue = (retry = false) => {
       if (revision !== checksSaveRevision.current) return;
       setChecksSaveStatus("Saving…");
       checksSaveQueue.current = checksSaveQueue.current
-        .then(() => updateTestCaseMutation(payload))
+        .then(() => {
+          if (retry && revision !== checksSaveRevision.current) return;
+          return updateTestCaseMutation(payload);
+        })
         .then(() => {
           if (revision === checksSaveRevision.current)
             setChecksSaveStatus(null);
@@ -2796,7 +2806,7 @@ export function TestTemplateEditor({
           toast.error(
             getBillingErrorMessage(error, "Failed to save evaluator changes"),
             {
-              action: { label: "Retry", onClick: enqueue },
+              action: { label: "Retry", onClick: () => enqueue(true) },
             },
           );
         });
