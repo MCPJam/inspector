@@ -113,11 +113,10 @@ export function EvalGenerationWorkspace({
       data-testid="suite-case-generation-workspace"
       className="flex min-h-0 flex-1 flex-col gap-4"
     >
-      <header className="flex items-center justify-between gap-3">
-        <div>
-          <h2 className="text-sm font-semibold">Generate test cases</h2>
-          <p className="text-xs text-muted-foreground">{suiteName}</p>
-        </div>
+      {/* No title here: the breadcrumb above reads
+          Evaluate / <suite> / Generate test cases, and repeating both lines
+          under it said the same thing twice. */}
+      <header className="flex items-center justify-end gap-3">
         <div
           role="status"
           className="flex items-center gap-2 text-xs text-muted-foreground"

@@ -351,6 +351,7 @@ export function SuiteIterationsView({
   evaluateDecisionSummary = false,
   evaluateCaseEditor = false,
   evaluateObserveFirst = false,
+  onGeneratingChange,
   alwaysShowEditIterationRows = false,
   onEditTestCase,
   onDeleteTestCasesBatch: onDeleteTestCasesBatchProp,
@@ -498,6 +499,8 @@ export function SuiteIterationsView({
   evaluateCaseEditor?: boolean;
   /** Observe-first authoring: the spine, Run test, and run-derived checks. */
   evaluateObserveFirst?: boolean;
+  /** Passed through to {@link SuiteDetailOverview}; see its prop doc. */
+  onGeneratingChange?: (state: { exit: () => void } | null) => void;
   /** Playground run detail: show edit affordance on every row that has a test case id. */
   alwaysShowEditIterationRows?: boolean;
   /** Override default test edit navigation (e.g. playground hash navigation). */
@@ -2120,6 +2123,7 @@ export function SuiteIterationsView({
                   onDuplicateSuite={onDuplicateSuite}
                   projectId={projectId}
                   decisionSummaryEnabled={evaluateDecisionSummary}
+                  onGeneratingChange={onGeneratingChange}
                 />
               </motion.div>
             ) : showFoldedUnifiedDashboard ? (

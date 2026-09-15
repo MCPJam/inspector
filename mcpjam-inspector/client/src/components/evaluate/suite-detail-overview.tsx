@@ -27,7 +27,7 @@ import { GenerateCasesDialog } from "./generate-cases-dialog";
 import type { GenerateCasesConfig } from "@/lib/evals/eval-generation-config";
 import { EvalGenerationWorkspace } from "./eval-generation-workspace";
 import { EvalGeneratedDrafts } from "./eval-generated-drafts";
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Code2,
   FileUp,
@@ -132,6 +132,7 @@ export function SuiteDetailOverview({
   readOnlyConfig = false,
   configLocked = false,
   projectId = null,
+  onGeneratingChange,
 }: {
   suite: EvalSuite;
   runReviewRequested?: boolean;
@@ -175,6 +176,14 @@ export function SuiteDetailOverview({
   projectId?: string | null;
   /** Retained for callers; verdicts are read in the report, not history rows. */
   decisionSummaryEnabled?: boolean;
+  /**
+   * Reports the case-generation view opening and closing, with the way back
+   * out of it. Generation is local state rather than a route, so the header —
+   * which builds the breadcrumb from the route alone — cannot otherwise know
+   * the page changed under it, and its "Generate test cases" crumb would have
+   * nothing to return to.
+   */
+  onGeneratingChange?: (state: { exit: () => void } | null) => void;
 }) {
   const projectEnvironmentsEnabled = useProjectEnvironmentsEnabled();
   const [clientFilter, setClientFilter] = useState(ALL_EVAL_FILTER_VALUES);
@@ -347,6 +356,14 @@ export function SuiteDetailOverview({
   // Generation needs a project to run against; without one the button can
   // only fail silently.
   const canGenerate = canGenerateTestCases && Boolean(projectId);
+
+  const generating = Boolean(generationConfig && projectId);
+  const exitGeneration = useCallback(() => setGenerationConfig(undefined), []);
+  useEffect(() => {
+    if (!generating) return;
+    onGeneratingChange?.({ exit: exitGeneration });
+    return () => onGeneratingChange?.(null);
+  }, [generating, exitGeneration, onGeneratingChange]);
 
   const runButton = (
     <Button
