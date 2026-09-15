@@ -337,6 +337,9 @@ export function ProjectRunsTable({
   // before requesting the next; legacy tables remain manual throughout.
   const autoLoadedPages = useRef(0);
   useEffect(() => {
+    autoLoadedPages.current = 0;
+  }, [projectId]);
+  useEffect(() => {
     if (
       evaluateLayout &&
       status === "CanLoadMore" &&
@@ -346,7 +349,7 @@ export function ProjectRunsTable({
       autoLoadedPages.current += 1;
       loadMore(PROJECT_RUNS_PAGE_SIZE);
     }
-  }, [evaluateLayout, status, history.loading, loadMore]);
+  }, [projectId, evaluateLayout, status, history.loading, loadMore]);
   const projectEnvironmentsEnabled = useProjectEnvironmentsEnabled();
   const platformPostLaunchEnabled = usePlatformPostLaunchEnabled();
   const platformFilters = useMemo(

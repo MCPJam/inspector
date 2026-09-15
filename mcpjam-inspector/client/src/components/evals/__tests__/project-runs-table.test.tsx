@@ -81,6 +81,7 @@ function latestQueryArgs(): Record<string, unknown> {
 import {
   ProjectRunsTable,
   PROJECT_RUNS_PAGE_SIZE,
+  SUITE_HEALTH_AUTO_PAGES,
 } from "../project-runs-table";
 import { GroupSummaryRow } from "../project-run-suite-groups";
 import {
@@ -138,6 +139,34 @@ beforeEach(() => {
 });
 
 describe("ProjectRunsTable", () => {
+  it("gives each project a fresh auto-loading budget without remounting", () => {
+    setRows([makeRow()], "CanLoadMore");
+    const loadMore = mocks.paginated.current.loadMore;
+    const onSelectRun = vi.fn();
+    const view = (projectId: string) => (
+      <ProjectRunsTable projectId={projectId} onSelectRun={onSelectRun} evaluateLayout />
+    );
+    const { rerender } = render(view("project-a"));
+    for (let page = 1; page < SUITE_HEALTH_AUTO_PAGES; page += 1) {
+      mocks.paginated.current.status = "LoadingMore";
+      rerender(view("project-a"));
+      mocks.paginated.current.status = "CanLoadMore";
+      rerender(view("project-a"));
+    }
+    expect(loadMore).toHaveBeenCalledTimes(SUITE_HEALTH_AUTO_PAGES);
+    mocks.paginated.current.status = "LoadingMore";
+    rerender(view("project-a"));
+    mocks.paginated.current.status = "CanLoadMore";
+    rerender(view("project-a"));
+    expect(loadMore).toHaveBeenCalledTimes(SUITE_HEALTH_AUTO_PAGES);
+
+    // Readiness stays the same: projectId itself must trigger the reset/load.
+    rerender(view("project-b"));
+    expect(latestQueryArgs().projectId).toBe("project-b");
+    expect(loadMore).toHaveBeenCalledTimes(SUITE_HEALTH_AUTO_PAGES + 1);
+    expect(loadMore).toHaveBeenLastCalledWith(PROJECT_RUNS_PAGE_SIZE);
+  });
+
   it("filters embedded history and keeps pagination available for more matches", async () => {
     const user = userEvent.setup();
     mocks.backendFiltersOrigins = true;
