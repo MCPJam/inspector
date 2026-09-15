@@ -162,6 +162,11 @@ describe("RunVerdictHero", () => {
     expect(within(row).getByText("64s")).toBeVisible();
     expect(within(row).getByText("980k")).toBeVisible();
     expect(within(row).getByText("68")).toBeVisible();
+    expect(within(row).getByText("88%")).toHaveClass("text-[34px]");
+    expect(within(row).getByText("21")).toHaveClass("text-[26px]");
+    expect(within(row).getByText("21s")).toHaveClass("text-lg");
+    expect(within(row).getByText("Cursor")).toHaveClass("text-base");
+    expect(within(row).getByText("sonnet")).toHaveClass("text-sm");
     expect(screen.queryByTestId("run-verdict-stats")).toBeNull();
 
     const delta = within(pairings).getByTestId("run-verdict-stat-delta");

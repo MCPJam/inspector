@@ -76,22 +76,7 @@ describe("EvaluateRunPage", () => {
     expect(screen.queryByRole("menuitem", { name: "New run" })).toBeNull();
     expect(within(header).queryByText("Failed")).toBeNull();
     expect(within(header).queryByText("Passed")).toBeNull();
-    const pill = screen.getByTestId("run-header-decision-pill");
-    expect(pill).toHaveAttribute("data-decision", "hold");
-    expect(within(header).queryByText(/\d+ of \d+/)).toBeNull();
-    expect(pill).toHaveClass("h-8", "rounded-full");
-    expect(pill).toHaveClass(
-      "border-warning/30",
-      "bg-warning/10",
-      "text-warning",
-    );
-    expect(pill).not.toHaveClass("border-destructive/30", "text-destructive");
-    expect(
-      within(pill).getByTestId("run-header-pairing-decision"),
-    ).toHaveTextContent("HOLD");
-    const mark = within(pill).getByLabelText("Claude · Client default");
-    expect(mark).toHaveClass("bg-background", "rounded-full");
-    expect(mark.querySelector("img")).toHaveAttribute("alt", "");
+    expect(screen.queryByTestId("run-header-decision-pill")).toBeNull();
     expect(screen.queryByTestId("run-header-pairing")).toBeNull();
   });
 
@@ -118,6 +103,12 @@ describe("EvaluateRunPage", () => {
         </EvaluateRunPage>,
       );
       const header = screen.getByTestId("evaluate-run-header");
+      if (label === "HOLD") {
+        expect(
+          within(header).queryByTestId("run-header-decision-pill"),
+        ).toBeNull();
+        return;
+      }
       const pill = within(header).getByTestId("run-header-decision-pill");
       expect(pill).toHaveClass("h-8", "rounded-full");
       expect(
@@ -166,36 +157,14 @@ describe("EvaluateRunPage", () => {
     expect(screen.queryByText(/client\/model pairing/)).toBeNull();
     const pairings = screen.getByTestId("run-header-pairings");
     const pills = within(pairings).getAllByTestId("run-header-decision-pill");
-    expect(pills).toHaveLength(2);
-    expect(pills[0]).toHaveAttribute("data-decision", "hold");
-    expect(pills[1]).toHaveAttribute("data-decision", "ship");
-    expect(pills[0]).toHaveClass("h-8", "rounded-full");
-    expect(pills[1]).toHaveClass("h-8", "rounded-full");
-    expect(pills[0]).toHaveClass(
-      "border-warning/30",
-      "bg-warning/10",
-      "text-warning",
-    );
-    expect(pills[0]).not.toHaveClass("text-destructive");
-    expect(pills[1]).toHaveClass("border-success/30", "bg-success/10");
-    expect(
-      within(pills[0]).getByTestId("run-header-pairing-decision"),
-    ).toHaveTextContent("HOLD");
-    expect(
-      within(pills[1]).getByTestId("run-header-pairing-decision"),
-    ).toHaveTextContent("SHIP");
-    expect(within(pills[0]).getByLabelText("Claude · sonnet")).toBeVisible();
-    expect(within(pills[0]).getByLabelText("Claude · sonnet")).toHaveClass(
-      "bg-background",
-      "rounded-full",
-    );
-    expect(within(pills[1]).getByLabelText("Claude · opus")).toBeVisible();
-    expect(within(pills[0]).queryByLabelText("Claude · opus")).toBeNull();
-    expect(within(pills[1]).queryByLabelText("Claude · sonnet")).toBeNull();
-    await user.hover(within(pills[0]).getByLabelText("Claude · sonnet"));
+    expect(pills).toHaveLength(1);
+    expect(pills[0]).toHaveAttribute("data-decision", "ship");
+    expect(within(pills[0]).getByLabelText("Claude · opus")).toBeVisible();
+    expect(screen.queryByText("HOLD")).toBeNull();
+    await user.hover(within(pills[0]).getByLabelText("Claude · opus"));
     expect(
       await screen.findByRole("tooltip", { hidden: true }),
-    ).toHaveTextContent("Claude · sonnet");
+    ).toHaveTextContent("Claude · opus");
     expect(screen.queryByRole("button", { name: /Client report/ })).toBeNull();
     expect(screen.queryByRole("button", { name: "Run actions" })).toBeNull();
     expect(screen.queryByRole("menuitem", { name: "Run details" })).toBeNull();
@@ -203,7 +172,7 @@ describe("EvaluateRunPage", () => {
     expect(screen.queryByText("opus")).toBeNull();
   });
 
-  it("stacks every Hold client in one pill and omits an empty Ship pill", () => {
+  it("omits Hold badges for all failed pairings", () => {
     render(
       <EvaluateRunPage
         run={makeRun({
@@ -233,22 +202,14 @@ describe("EvaluateRunPage", () => {
         body
       </EvaluateRunPage>,
     );
-    const pills = screen.getAllByTestId("run-header-decision-pill");
-    expect(pills).toHaveLength(1);
-    expect(pills[0]).toHaveAttribute("data-decision", "hold");
-    expect(within(pills[0]).getAllByLabelText(/ · /)).toHaveLength(2);
-    expect(screen.queryByText("SHIP")).toBeNull();
-    expect(screen.queryByText("Hold:")).toBeNull();
-    expect(screen.queryByText("HOLD:")).toBeNull();
-    expect(
-      within(pills[0]).getByTestId("run-header-pairing-decision"),
-    ).toHaveTextContent("HOLD");
+    expect(screen.queryByTestId("run-header-pairings")).toBeNull();
+    expect(screen.queryByText("HOLD")).toBeNull();
   });
 
   it("recovers the pairing model from iterations when the run omitted it", () => {
     render(
       <EvaluateRunPage
-        run={makeRun({ _id: "run-1" })}
+        run={makeRun({ _id: "run-1", result: "passed" })}
         iterations={
           [
             {
