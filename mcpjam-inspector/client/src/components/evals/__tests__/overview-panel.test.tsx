@@ -97,7 +97,7 @@ describe("OverviewPanel", () => {
     expect(onFilterTagChange).toHaveBeenLastCalledWith("blue");
     rerender(view("blue"));
     expect(screen.getByRole("button", { name: "red", exact: true })).toBeVisible();
-    expect(screen.getByTitle(/^aaaaaaa\n/)).toHaveClass("ring-2");
+    expect(screen.getByTitle(/^aaaaaaa /)).toHaveClass("ring-2");
   });
 
   it("renders suite overview without AI triage summary affordances", () => {
