@@ -908,6 +908,7 @@ export {
   reportEvalResultsSafely,
 } from "./report-eval-results.js";
 export { createEvalRunReporter } from "./eval-run-reporter.js";
+export { reportEvalResultsWithReceipt } from "./eval-reporting-receipt.js";
 export type {
   CreateEvalRunReporterInput,
   EvalRunReporter,
@@ -920,6 +921,8 @@ export type {
 export type {
   EvalExpectedToolCall,
   EvalCiMetadata,
+  EvalReportingReceipt,
+  EvalReportingWarning,
   EvalTraceInput,
   EvalTraceSpanCategory,
   EvalTraceSpanInput,
@@ -1048,8 +1051,11 @@ export {
   ERROR_CATALOG,
   extractNodeErrno,
   RETRYABLE_NODE_ERROR_CODES,
+  summarizeBearerChallenge,
+  bodyKindFromContentType,
 } from "./error-describer/index.js";
 export type {
+  BearerChallengeSummary,
   DescribeContext,
   ErrorOrigin,
   NormalizedError,
@@ -1302,6 +1308,47 @@ export type {
   ScorerRole,
 } from "./contract/index.js";
 
+// The same contract under the canonical evaluator vocabulary — an evaluator is
+// an assertion or a judge, and both report one result shape. Additive: every
+// name above keeps working, and the definitions underneath are the same objects
+// with the same hash payload, so nothing an author already wrote changes
+// identity by adopting these. See `docs/evals-vocabulary-consolidation.md`.
+export {
+  EVALUATOR_KINDS,
+  EVALUATOR_RESULT_SCHEMA_VERSION,
+  allGatingEvaluatorsPassed,
+  errorEvaluatorResult,
+  evaluatorDefinitionHash,
+  evaluatorKindOf,
+  evaluatorKindSchema,
+  evaluatorResultArraySchema,
+  evaluatorResultSchema,
+  evaluatorStatusSchema,
+  finalizeEvaluatorResult,
+  fromEvaluatorResult,
+  notApplicableEvaluatorResult,
+  resolveEvaluatorDefinition,
+  skippedEvaluatorResult,
+  toEvaluatorResult,
+  toScoreRawOutcome,
+} from "./contract/index.js";
+export type {
+  Assertion,
+  AssertionResult,
+  AssertionScope,
+  EvaluatorConfigSnapshot,
+  EvaluatorContextV1,
+  EvaluatorDefinition,
+  EvaluatorErrorPolicy,
+  EvaluatorIdSource,
+  EvaluatorKind,
+  EvaluatorRawOutcome,
+  EvaluatorResult,
+  EvaluatorRole,
+  EvaluatorStatus,
+  ResolvedEvaluatorDefinition,
+} from "./contract/index.js";
+
 // The v2 run verdict policy (browser-safe; exported in full from
 // `@mcpjam/sdk/contract`). Re-exported here for the same reason as the scoring
 // contract above: a code-first author reading a decision should not need a
@@ -1361,6 +1408,30 @@ export type {
   Scorer,
   ScorerRunOptions,
 } from "./scorers/index.js";
+
+// The evaluator runtime (main entry only — `judge()` reaches the model factory,
+// which is not browser-safe). `assertion()` and `judge()` build their
+// definitions through the same functions `predicateScorer` and `judgeScorer`
+// use, so a case migrated one rule at a time keeps every evaluator identity it
+// had. See `docs/evals-vocabulary-consolidation.md`.
+export {
+  DEFAULT_EVALUATOR_CONCURRENCY,
+  DEFAULT_EVALUATOR_TIMEOUT_MS,
+  assertion,
+  evaluatorsPassed,
+  judge,
+  runEvaluators,
+  runEvaluatorsProjected,
+  toEvaluatorRawOutcome,
+} from "./evaluators/index.js";
+export type {
+  AnyEvaluator,
+  AssertionEvaluator,
+  Evaluator,
+  EvaluatorRunOptions,
+  JudgeEvaluator,
+  JudgeOptions,
+} from "./evaluators/index.js";
 
 // The gate engine. ONE evaluator behind `assertGate` (code-first) and
 // `mcpjam cloud eval gate` (hosted), so a CI gate cannot be green on one path and
@@ -1598,3 +1669,43 @@ export {
   collapseImmediateRepeats,
   toolNamesFromPathKey,
 } from "./contract/tool-path.js";
+
+export { evalTestVariants } from "./eval-variants.js";
+export type { EvalVariantEntry } from "./eval-variants.js";
+export type { EvalSelectionManifest } from "./eval-selection.js";
+export { formatRunSummaryTable } from "./eval-summary.js";
+export { buildRunUrl } from "./report-eval-results.js";
+export type { EvaluatorOverride } from "./EvalTest.js";
+export type {
+  EvalExecutionContext,
+  ReportedMeasurement,
+  ReportedEvidence,
+} from "./eval-reported.js";
+export {
+  buildRunEvaluatorContext,
+  runEvaluatorContextFromIterations,
+  selectionStability,
+  argumentConsistency,
+  evaluateCaseRun,
+} from "./run-evaluators.js";
+export type {
+  CaseRunEvaluation,
+  RunEvaluator,
+  RunEvaluatorContextV1,
+  RunIterationEvidence,
+  RunEvaluatorObservation,
+} from "./run-evaluators.js";
+
+export { detectEvalGitMetadata } from "./eval-git.js";
+
+export {
+  runVariants,
+  compareVariantPreferences,
+} from "./eval-execution-variants.js";
+export type {
+  EvalExecutionVariantInput,
+  EvalExecutionVariantResult,
+  EvalExecutionVariantsResult,
+  PairwiseJudge,
+  PairwisePreferenceResult,
+} from "./eval-execution-variants.js";

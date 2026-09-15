@@ -1,7 +1,9 @@
 import type { EvalSuiteSettingKey } from "@/shared/eval-suite-settings-manifest";
 
 /** Edited in the suite settings header, not a tab group. */
-export const SUITE_SETTINGS_HEADER_KEYS = ["name"] as const satisfies readonly EvalSuiteSettingKey[];
+export const SUITE_SETTINGS_HEADER_KEYS = [
+  "name",
+] as const satisfies readonly EvalSuiteSettingKey[];
 
 export const SUITE_SETTINGS_GROUPS = [
   { id: "grading", label: "Grading", rows: ["policy", "passOrFail"] },
@@ -27,7 +29,10 @@ export type SuiteSettingsGroupId = (typeof SUITE_SETTINGS_GROUPS)[number]["id"];
 
 export type SuiteSettingsTabId = SuiteSettingsGroupId;
 
-export const NESTED_SETTING_KEYS: Record<string, readonly EvalSuiteSettingKey[]> = {
+export const NESTED_SETTING_KEYS: Record<
+  string,
+  readonly EvalSuiteSettingKey[]
+> = {
   policy: [
     "minimumAccuracy",
     "minimumIterations",
@@ -41,6 +46,7 @@ export const NESTED_SETTING_KEYS: Record<string, readonly EvalSuiteSettingKey[]>
     "qualityGateNoGatingScoreErrors",
   ],
   passOrFail: [
+    "assertionBacktest",
     "matchOptions",
     "judge",
     "judgeRubric",

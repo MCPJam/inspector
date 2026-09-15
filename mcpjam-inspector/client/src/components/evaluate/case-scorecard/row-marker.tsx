@@ -25,11 +25,11 @@ import { cn } from "@/lib/utils";
 import type { ScorecardRow } from "./case-scorecard-model";
 
 const WHEN: Record<string, string> = {
-  route: "Graded over the trial's tool calls, after the run",
+  route: "Graded over the iteration's tool calls, after the run",
   case: "Graded once, over the finished transcript",
   suite: "Graded once, over the finished transcript",
   snapshot: "Graded once, over the finished transcript",
-  judge: "Runs last, after every check",
+  judge: "Runs last, after every assertion",
 };
 
 export function whenLabel(

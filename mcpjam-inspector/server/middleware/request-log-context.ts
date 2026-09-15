@@ -34,6 +34,34 @@ function isHealthPath(path: string): boolean {
 // mint a fresh UUID.
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
 
+/**
+ * Make a caller-supplied user-agent safe to put in a log row.
+ *
+ * Two hazards and a distinction, the same shape as the `x-request-id` guard
+ * above. An unbounded string bloats every row and the backend's index with it —
+ * real agents send a few dozen characters, and a four-kilobyte tail is either a
+ * bug or an attempt. Tabs and whitespace runs make one agent read as several in
+ * a group-by, which is the whole reason to record the field. And an empty
+ * header is not a user-agent; it is a caller who sent none, which the row says
+ * by omitting the field rather than by carrying a blank one.
+ *
+ * The control-character strip is the SECOND line, not the only one: NUL and
+ * CRLF — the characters that would let a caller forge a log line — are rejected
+ * by the HTTP parser before this middleware ever runs. It stays because a
+ * sanitizer that depends on an upstream layer staying strict is one deploy away
+ * from being wrong.
+ */
+function sanitizeUserAgent(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  const cleaned = raw
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 256);
+  return cleaned.length > 0 ? cleaned : undefined;
+}
+
 function isStreaming(c: Context): boolean {
   const ct = c.res.headers.get("content-type") ?? "";
   if (ct.includes("text/event-stream")) return true;
@@ -48,6 +76,7 @@ export async function requestLogContextMiddleware(c: Context, next: Next) {
   }
 
   const startedAt = Date.now();
+  const userAgent = sanitizeUserAgent(c.req.header("user-agent"));
   const inboundRequestId = c.req.header("x-request-id");
   const requestId =
     inboundRequestId && REQUEST_ID_PATTERN.test(inboundRequestId)
@@ -65,6 +94,7 @@ export async function requestLogContextMiddleware(c: Context, next: Next) {
     route: "pending",
     method: c.req.method,
     authType: "unknown",
+    ...(userAgent ? { userAgent } : {}),
   };
 
   c.set("requestLogContext", baseContext);

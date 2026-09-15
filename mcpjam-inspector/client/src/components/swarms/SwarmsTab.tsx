@@ -1999,8 +1999,8 @@ function NewJourneyForm({
           role="alert"
           className="mb-2.5 rounded-md bg-destructive/10 px-2.5 py-2 text-xs leading-snug text-destructive"
         >
-          {joinLabels(target.noServers.labels)} has no servers assigned. Turn on
-          Auto-connect on the Servers tab.
+          {joinLabels(target.noServers.labels)} has no servers assigned. Pick a
+          server group for it.
         </p>
       ) : null}
 

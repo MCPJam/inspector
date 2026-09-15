@@ -17,6 +17,10 @@ const sdkPredicatesEntry = path.resolve(
   rootDir,
   "../sdk/src/predicates/index.ts",
 );
+const sdkAssertionsEntry = path.resolve(
+  rootDir,
+  "../sdk/src/assertions/index.ts",
+);
 // Same rationale as sdkBrowserEntry: the workspace-linked @mcpjam/sdk advertises
 // ./host-config/internal via its package exports, but a clean checkout has no
 // dist/host-config/internal.* until `npm run build -w @mcpjam/sdk` runs. The
@@ -152,6 +156,7 @@ export default defineConfig({
       { find: "@mcpjam/sdk/matchers", replacement: sdkMatchersEntry },
       { find: "@mcpjam/sdk/contract", replacement: sdkContractEntry },
       { find: "@mcpjam/sdk/predicates", replacement: sdkPredicatesEntry },
+      { find: "@mcpjam/sdk/assertions", replacement: sdkAssertionsEntry },
       {
         find: "@mcpjam/sdk/widget-runtime",
         replacement: sdkWidgetRuntimeEntry,

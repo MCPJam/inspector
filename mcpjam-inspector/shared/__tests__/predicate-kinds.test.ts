@@ -43,12 +43,12 @@ describe("PREDICATE_KIND_ORDER", () => {
 });
 
 describe("observation kinds", () => {
-  it("offer Warn and Report but never Gate", () => {
+  it("offer Advisory but never Required", () => {
     for (const kind of PREDICATE_KIND_ORDER) {
       expect(rolesForPredicateKind(kind)).toEqual(
         isObservationPredicateKind(kind)
-          ? ["warn", "report"]
-          : ["gate", "warn", "report"],
+          ? ["advisory"]
+          : ["required", "advisory"],
       );
     }
   });

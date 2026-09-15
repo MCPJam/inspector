@@ -23,6 +23,7 @@ import {
   dispatchInspectorCommand,
 } from "../ui-actions";
 import {
+  PUBLISH_NATIVE_UNTRUSTED,
   asOptionalString,
   asStringRecord,
   errorResult,
@@ -62,6 +63,7 @@ export function buildResourcesUiTools(): UiToolDefinition[] {
         idempotentHint: true,
         openWorldHint: true,
       },
+      nativePublication: PUBLISH_NATIVE_UNTRUSTED,
       execute: async (args) => {
         const resource = asOptionalString(args.resource);
         if (!resource) {

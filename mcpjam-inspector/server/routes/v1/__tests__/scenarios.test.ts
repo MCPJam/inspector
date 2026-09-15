@@ -53,9 +53,9 @@ function makeApp() {
   return app;
 }
 
-function call(method: "PUT" | "DELETE", body?: unknown) {
+function call(method: "PUT" | "DELETE", body?: unknown, query = "") {
   return makeApp().request(
-    `/api/v1/projects/${PROJECT}/environments/${ENV}/scenario`,
+    `/api/v1/projects/${PROJECT}/environments/${ENV}/scenario${query}`,
     {
       method,
       ...(body !== undefined
@@ -323,6 +323,40 @@ describe("DELETE .../scenario", () => {
     expect((await res.json()) as Record<string, unknown>).toMatchObject({
       deleted: false,
     });
+  });
+
+  // An environment may back several studies, so "the scenario of this
+  // environment" stops naming one thing. `?scenarioId=` is how a caller says
+  // which; the backend refuses to guess rather than deleting whichever row an
+  // index yields first, so what reaches it has to be exactly what was asked.
+  it("names which study to take down when asked to", async () => {
+    mutationMock.mockResolvedValue({ deleted: true, scenarioId: "cb_2" });
+
+    await call("DELETE", undefined, "?scenarioId=cb_2");
+
+    expect(mutationMock).toHaveBeenCalledWith(
+      "scenarios:unpublishEnvironmentScenario",
+      { environmentId: ENV, scenarioId: "cb_2" }
+    );
+  });
+
+  it("sends no scenarioId at all when none was given", async () => {
+    // Not `undefined`, not "": the single-study contract is the ABSENCE of the
+    // key, and an empty one would be an id that matches nothing.
+    mutationMock.mockResolvedValue({ deleted: true, scenarioId: "cb_1" });
+
+    await call("DELETE");
+    expect(mutationMock).toHaveBeenCalledWith(
+      "scenarios:unpublishEnvironmentScenario",
+      { environmentId: ENV }
+    );
+
+    mutationMock.mockClear();
+    await call("DELETE", undefined, "?scenarioId=");
+    expect(mutationMock).toHaveBeenCalledWith(
+      "scenarios:unpublishEnvironmentScenario",
+      { environmentId: ENV }
+    );
   });
 
   it("enforces the same cross-project preflight as publish", async () => {

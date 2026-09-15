@@ -134,6 +134,25 @@ export function composedSetupHasServers(args: {
 }
 
 /**
+ * Whether a failed publish is "that study name is taken".
+ *
+ * The backend answers with `{code: 'CONFLICT', field: 'name'}` so a client can
+ * put the message where the problem is instead of in a toast the reader then
+ * has to act on from memory. Matched on the STRUCTURE, not the copy: the
+ * sentence is the backend's to word, and a client that greps it breaks the
+ * next time someone improves it.
+ */
+export function isStudyNameTakenError(error: unknown): boolean {
+  const data =
+    error && typeof error === "object" && "data" in error
+      ? (error as { data?: unknown }).data
+      : undefined;
+  if (!data || typeof data !== "object") return false;
+  const shape = data as { code?: unknown; field?: unknown };
+  return shape.code === "CONFLICT" && shape.field === "name";
+}
+
+/**
  * `/user-testing/new` — create a scenario by publishing an ENVIRONMENT behind
  * a share link, in TWO steps: **Study**, then an optional **Tasks** list.
  *
@@ -454,6 +473,14 @@ export function UserTestingScenarioCreateFlow({
    * missing beats scanning a form for whatever keeps a grey button grey.
    */
   const [continueAttempted, setContinueAttempted] = useState(false);
+  /**
+   * The name the backend refused as already taken.
+   *
+   * Held rather than only toasted: the fix is one field away, and a message
+   * that names the problem should sit next to the input that carries it.
+   * Cleared by typing, so it cannot outlive the name it was about.
+   */
+  const [nameTaken, setNameTaken] = useState<string | null>(null);
   const showClientError = continueAttempted && continueBlocker === "client";
   const showServersError = continueAttempted && continueBlocker === "servers";
 
@@ -531,15 +558,15 @@ export function UserTestingScenarioCreateFlow({
         mode: settingsFromScenarioAccessPreset(accessPreset).mode,
       });
 
-      // Nothing was created: this client and server already carry a study
-      // (publishing is idempotent per environment). This used to report it as
-      // a success and open that other study — which reads as "your study was
-      // created" while the screen fills with someone else's tasks, name and
-      // access. It is a refusal, so it stops here: the draft stays on screen,
-      // untouched and re-submittable once the setup changes.
+      // Nothing was created. On a CURRENT backend this cannot happen — a
+      // setup may back as many studies as you like, and the only refusal is a
+      // taken name (handled in the catch below). Against an older deployment
+      // publishing is still idempotent per environment, and the two repos ship
+      // separately, so this stays: reporting someone else's study as the one
+      // just created is the bug this whole path exists to stop.
       if (!created) {
         toast.error(
-          "This client and server already have a study. Change the setup, or open the existing study from User Testing.",
+          "This client and server already have a study on this deployment. Change the setup, or open the existing study from User Testing.",
         );
         savingRef.current = false;
         setIsSaving(false);
@@ -574,10 +601,29 @@ export function UserTestingScenarioCreateFlow({
         toast.success("Study created");
       }
     } catch (err) {
-      // Surface the backend's copy verbatim: publishing is project-admin
-      // gated, and "you need admin" is a different problem than "it failed".
-      // `ComposerResolveError` is an Error too, and its message already tells a
-      // user on an older backend to pick a saved environment instead.
+      // A taken name is not a failure to report and walk away from — it is one
+      // input to change. The message goes ON the field, the draft stays whole,
+      // and the step with the field is the one we land on: refusing from step 2
+      // while the name lives on step 1 would be a correction nobody can reach.
+      if (isStudyNameTakenError(err)) {
+        setNameTaken(effectiveName);
+        setStep("study");
+        // Put the refused name IN the field. An empty field publishes under the
+        // placeholder, and quoting that name back at a blank input leaves
+        // nothing to correct — pressing Create again would send the same name
+        // and fail the same way. Where the field already held it this only
+        // trims, which is what was submitted anyway.
+        setName(effectiveName);
+        userEditedNameRef.current = true;
+        savingRef.current = false;
+        setIsSaving(false);
+        return;
+      }
+      // Otherwise surface the backend's copy verbatim: publishing is
+      // project-admin gated, and "you need admin" is a different problem than
+      // "it failed". `ComposerResolveError` is an Error too, and its message
+      // already tells a user on an older backend to pick a saved environment
+      // instead.
       toast.error(
         err instanceof Error ? err.message : "Failed to create the study",
       );
@@ -667,9 +713,20 @@ export function UserTestingScenarioCreateFlow({
                   }}
                   onChange={(e) => {
                     userEditedNameRef.current = true;
+                    setNameTaken(null);
                     setName(e.target.value);
                   }}
                 />
+                {nameTaken ? (
+                  <p
+                    className="text-xs text-destructive"
+                    role="alert"
+                    data-testid="user-testing-create-name-taken"
+                  >
+                    A study named &ldquo;{nameTaken}&rdquo; already exists in
+                    this project. Give this one a different name.
+                  </p>
+                ) : null}
               </div>
 
               <div className="space-y-2">

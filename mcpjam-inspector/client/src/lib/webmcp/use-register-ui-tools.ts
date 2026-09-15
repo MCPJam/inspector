@@ -1,11 +1,13 @@
 /**
- * Mount-scoped registration of the WebMCP UI tool catalog.
+ * Mount-scoped registration of the always-on `ui_*` tool catalog.
  *
  * Mounted once near the App root (beside the inspector command handlers, in
- * BOTH local and hosted modes). Registration feeds a single consumer: the UI
- * tools registry, whose snapshot/executor serve the in-app "Ask MCPJam"
- * agent. Tools are never exposed to browser-native agents. Cleanup aborts
- * everything.
+ * BOTH local and hosted modes). Registration feeds ONE destination: the UI
+ * tools registry. Who reads the registry is not this hook's business — today
+ * that is Ask MCPJam's snapshot/executor and the native publisher
+ * (`use-publish-native-ui-tools.ts`), which mirrors the publishable entries
+ * onto `document.modelContext`. Cleanup aborts everything, which removes the
+ * tools from both.
  *
  * Pass `enabled: false` on surfaces whose end user is not the inspector
  * operator (the standalone scenario chat route): inspector-driving tools must

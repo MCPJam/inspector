@@ -89,7 +89,7 @@ import { useEvalMutations } from "./evals/use-eval-mutations";
 import { useEvalHandlers } from "./evals/use-eval-handlers";
 import { LaunchedCaseJudge } from "./evaluate/case-scorecard/launched-case-judge";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
-import { SuitesOverview } from "./evaluate/suites-overview";
+import { ConnectedSuitesOverview as SuitesOverview } from "./evaluate/suites-overview";
 import { SuiteListRunReview } from "./evaluate/suite-list-run-review";
 import { ProjectRunsTable } from "./evals/project-runs-table";
 import { stripTimestampSuffix } from "./evals/suite-overview-presentation";
@@ -1200,6 +1200,15 @@ function EvaluateTabContent({
   const suiteBreadcrumbLabel = selectedSuite
     ? stripTimestampSuffix(selectedSuite.name || "") || "Untitled suite"
     : null;
+  // Breadcrumb for a run: number it like the run list does ("Run #6") when the
+  // run row is loaded, so the crumb and the page heading agree.
+  const runBreadcrumbNumber =
+    route.type === "run-detail"
+      ? (runsForSelectedSuite.find((run) => run._id === route.runId)
+          ?.runNumber ?? null)
+      : null;
+  const runBreadcrumbLabel =
+    runBreadcrumbNumber != null ? `Run #${runBreadcrumbNumber}` : "Run";
   const isNestedDetail =
     route.type === "test-edit" ||
     route.type === "test-detail" ||
@@ -1215,7 +1224,7 @@ function EvaluateTabContent({
       : route.type === "suite-edit"
         ? "Settings"
         : route.type === "run-detail"
-          ? "Run"
+          ? runBreadcrumbLabel
           : null;
 
   const renderPlaygroundBreadcrumb = () => {
@@ -1343,7 +1352,7 @@ function EvaluateTabContent({
           data-testid="evals-runs-landing"
         >
           <ProjectRunsTable
-            metricBars
+            evaluateLayout
             historyMetricsEnabled
             projectId={projectId}
             onSelectRun={handleSelectRunFromAllRuns}
@@ -1394,6 +1403,7 @@ function EvaluateTabContent({
       >
         <div>
           <SuitesOverview
+            projectId={projectId}
             overview={visibleSuites}
             onSelectSuite={handleSelectSuite}
             onRerun={(suite) => {

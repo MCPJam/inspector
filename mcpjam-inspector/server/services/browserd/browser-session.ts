@@ -98,11 +98,26 @@ export const BROWSERD_PROFILE_ARCHIVE_PATH =
  * person the browser (the rail, the panel) require them; a fake that only
  * needs `sendCommand` still satisfies this.
  */
+/**
+ * Everything that rides beside a command rather than inside it. A shared type
+ * makes a wrapper that drops a new option a compile error.
+ */
+export interface SessionCommandOptions {
+  timeoutMs?: number;
+  signal?: AbortSignal;
+  /**
+   * Values for the command's `{{secret:NAME}}` placeholders. Never a command
+   * field: the command is echoed into the ledger, trace and durable mirror.
+   */
+  secrets?: ReadonlyArray<{ name: string; value: string }>;
+}
+
 export interface SessionClient {
   status(options?: { signal?: AbortSignal }): Promise<BrowserdStatus>;
   sendCommand(
     command: BrowserCommand,
     expectedBootId?: string,
+    options?: SessionCommandOptions,
   ): Promise<BrowserdCommandResponse>;
   /**
    * Read the lease. The signal is what lets the handoff poll be cancelled;
@@ -583,6 +598,8 @@ async function tryReuse(
   contextMode: BrowserContextMode,
   signal?: AbortSignal,
   logicalContext?: LogicalSessionContext,
+  /** Written when this gate is the one that refused. @see EnsureDiagnostics */
+  diagnostics?: EnsureDiagnostics,
 ): Promise<ComputerHostedBrowserSessionHandle | null> {
   const session = lookup.session;
   if (!session) return null;
@@ -601,9 +618,22 @@ async function tryReuse(
   // THE WIRE, NOT THE BYTES. A daemon whose protocol number differs (or which
   // is too old to announce one) cannot be proven compatible, and continuing
   // would produce wrong answers rather than merely old ones.
-  if (lazyUpgradeEnabled()) {
+  // Checked regardless of the lazy-upgrade flag: only the bundle hash below
+  // can wait for an idle session.
+  {
     const running = status.protocolVersion ?? session.protocolVersion;
-    if (running !== BROWSERD_PROTOCOL_VERSION) return null;
+    if (running !== BROWSERD_PROTOCOL_VERSION) {
+      noteProtocolMismatch(
+        diagnostics,
+        {
+          expected: BROWSERD_PROTOCOL_VERSION,
+          running,
+          source: "reuse",
+        },
+        { sessionId: session.sessionId, bootId: session.bootId },
+      );
+      return null;
+    }
   }
   // Best-effort: losing the touch costs an earlier sweep, never this turn.
   void deps.store
@@ -687,6 +717,8 @@ async function trySandboxReuse(
   sandboxId: string,
   signal?: AbortSignal,
   logicalContext?: LogicalSessionContext,
+  /** Written when this gate is the one that refused. @see EnsureDiagnostics */
+  diagnostics?: EnsureDiagnostics,
 ): Promise<SandboxHostedBrowserSessionHandle | null> {
   const session = lookup.session;
   if (!session) return null;
@@ -695,6 +727,23 @@ async function trySandboxReuse(
   const status = await client.status().catch(() => null);
   if (!status || status.kind !== "ok" || status.bootId !== session.bootId) {
     return null;
+  }
+  // Same wire check as `tryReuse`. Without it every command is refused with
+  // `protocol_mismatch` but the incompatible daemon is never relaunched.
+  {
+    const running = status.protocolVersion ?? session.protocolVersion;
+    if (running !== BROWSERD_PROTOCOL_VERSION) {
+      noteProtocolMismatch(
+        diagnostics,
+        {
+          expected: BROWSERD_PROTOCOL_VERSION,
+          running,
+          source: "reuse",
+        },
+        { sessionId: session.sessionId, bootId: session.bootId },
+      );
+      return null;
+    }
   }
   void deps.store
     .touch({ sessionId: session.sessionId, kind: "command", signal })
@@ -891,6 +940,108 @@ async function fenceForRelaunch(
   );
 }
 
+/**
+ * Why the reuse gates refused a running daemon. The gates return `null` and
+ * trigger a silent relaunch; this lets a relaunch that also fails name the
+ * protocol mismatch instead of a boot timeout. One per `ensure`.
+ */
+interface EnsureDiagnostics {
+  protocolMismatch?: {
+    expected: number;
+    /** What the daemon announced, or `undefined` when it announced nothing. */
+    running: number | undefined;
+    /** The control plane's own word for it, when the lookup is what refused. */
+    stale?: string;
+    source: "reuse" | "adopt" | "lookup";
+  };
+  /**
+   * A replacement daemon came up speaking this build's wire. Set by
+   * `bootAndPublish`. @see namingProtocolMismatch
+   */
+  protocolRecovered?: boolean;
+}
+
+/**
+ * Record a protocol refusal. Warn level: a daemon is about to be killed and
+ * replaced under whatever was using it.
+ */
+function noteProtocolMismatch(
+  diagnostics: EnsureDiagnostics | undefined,
+  mismatch: NonNullable<EnsureDiagnostics["protocolMismatch"]>,
+  context: Record<string, unknown> = {},
+): void {
+  if (diagnostics) diagnostics.protocolMismatch = mismatch;
+  logger.warn("[browser-session] browser.protocol_mismatch", {
+    ...context,
+    ...mismatch,
+  });
+}
+
+/**
+ * A relaunch triggered by a protocol mismatch failed before the replacement
+ * reached the expected protocol. The message is code-prefixed so
+ * `parseBrowserdErrorCode` can read it back.
+ */
+export class BrowserProtocolMismatchError extends Error {
+  readonly code = "protocol_mismatch";
+  readonly expected: number;
+  readonly running: number | undefined;
+  readonly stale: string | undefined;
+  readonly hint: string;
+  constructor(mismatch: NonNullable<EnsureDiagnostics["protocolMismatch"]>) {
+    const running =
+      mismatch.running === undefined
+        ? "a version it did not announce"
+        : `version ${mismatch.running}`;
+    const hint =
+      "This browser needs to be restarted onto the current build; the " +
+      "automatic restart did not succeed. Try again, and if it persists the " +
+      "box itself needs replacing.";
+    super(
+      formatBrowserdError(
+        "protocol_mismatch",
+        `the running browser daemon speaks ${running}, this server speaks ` +
+          `version ${mismatch.expected}. ${hint}`,
+      ),
+    );
+    this.name = "BrowserProtocolMismatchError";
+    this.expected = mismatch.expected;
+    this.running = mismatch.running;
+    this.stale = mismatch.stale;
+    this.hint = hint;
+  }
+}
+
+/**
+ * Run the relaunch; if it fails and a gate recorded a mismatch, throw
+ * `BrowserProtocolMismatchError`. Errors are rethrown unchanged when no
+ * mismatch was recorded, or when the replacement already reached our protocol
+ * and a later publication step failed.
+ */
+async function namingProtocolMismatch<T>(
+  diagnostics: EnsureDiagnostics,
+  relaunch: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await relaunch();
+  } catch (error) {
+    const mismatch = diagnostics.protocolMismatch;
+    if (!mismatch) throw error;
+    if (diagnostics.protocolRecovered) {
+      logger.warn("[browser-session] browser.protocol_mismatch_recovered", {
+        ...mismatch,
+        publishError: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+    logger.warn("[browser-session] browser.protocol_mismatch_unrecovered", {
+      ...mismatch,
+      bootError: error instanceof Error ? error.message : String(error),
+    });
+    throw new BrowserProtocolMismatchError(mismatch);
+  }
+}
+
 /** The relaunch was refused because a person holds the browser. */
 export class BrowserSessionInUseError extends Error {
   readonly code = "browser_in_use";
@@ -933,7 +1084,7 @@ function withActivityTouches(
   // not survive `{ ...client }`.
   return {
     status: (options) => client.status(options),
-    sendCommand: (command, expectedBootId) => {
+    sendCommand: (command, expectedBootId, options) => {
       // UNTHROTTLED on purpose: this one is load-bearing. It advances the
       // browser session's own clock and, for a sandbox box, that box's
       // `lastUsedAt` in the SAME backend transaction — which is what keeps the
@@ -987,7 +1138,8 @@ function withActivityTouches(
       if (deps.touchActivity && computerId && shouldTouchActivity(computerId)) {
         void deps.touchActivity({ computerId }).catch(() => {});
       }
-      return client.sendCommand(command, expectedBootId);
+      // Options forwarded: dropping them loses `secrets` and the abort signal.
+      return client.sendCommand(command, expectedBootId, options);
     },
     // ARGUMENTS FORWARDED, not just the call. A wrapper that took none
     // silently dropped the abort signal the handoff poll passes, so a
@@ -1091,6 +1243,8 @@ async function tryAdoptPrelaunched(
     logicalContext?: LogicalSessionContext;
   },
   signal?: AbortSignal,
+  /** Written when this gate is the one that refused. @see EnsureDiagnostics */
+  diagnostics?: EnsureDiagnostics,
 ): Promise<ComputerHostedBrowserSessionHandle | null> {
   if (process.env.MCPJAM_BROWSER_PRELAUNCH_ADOPT === "false") return null;
   const token = await sandbox
@@ -1108,7 +1262,19 @@ async function tryAdoptPrelaunched(
   // row of its own, and adopting it here would write a second row for the same
   // process under a token the first row does not know.
   if (status.startedBy !== "prelaunch") return null;
-  if (status.protocolVersion !== BROWSERD_PROTOCOL_VERSION) return null;
+  if (status.protocolVersion !== BROWSERD_PROTOCOL_VERSION) {
+    // An image-baked daemon goes stale as the server rolls forward.
+    noteProtocolMismatch(
+      diagnostics,
+      {
+        expected: BROWSERD_PROTOCOL_VERSION,
+        running: status.protocolVersion,
+        source: "adopt",
+      },
+      { computerId: target.computerId, bootId: status.bootId },
+    );
+    return null;
+  }
   // A daemon in the wrong profile mode is never adoptable: its browser state
   // is the wrong kind (a persistent profile's cookies for an eval, or an
   // ephemeral one's blank slate for a signed-in user).
@@ -1312,6 +1478,8 @@ async function bootAndPublish<THandle>(
     publish: (booted: BrowserdHandle) => Promise<BrowserSessionRecordResult>;
     /** Stop the daemon we booted, on the way to adopting somebody else's. */
     onAdopt?: () => void;
+    /** Receives `protocolRecovered`. @see EnsureDiagnostics */
+    diagnostics?: EnsureDiagnostics;
   },
 ): Promise<BootOutcome<THandle>> {
   if (args.profileArchive) {
@@ -1344,6 +1512,13 @@ async function bootAndPublish<THandle>(
     const raced = await args.reuseAgain();
     if (raced) return { kind: "adopted", handle: raced };
     throw bootError;
+  }
+  // Before publication, which can fail for reasons unrelated to the wire.
+  if (
+    args.diagnostics &&
+    booted.protocolVersion === BROWSERD_PROTOCOL_VERSION
+  ) {
+    args.diagnostics.protocolRecovered = true;
   }
 
   const recorded = await args.publish(booted);
@@ -1405,6 +1580,7 @@ async function ensureOnSandbox(
 ): Promise<SandboxHostedBrowserSessionHandle> {
   const bundleHash = deps.bundleHash();
   const logicalContext = logicalContextFromArgs(args);
+  const diagnostics: EnsureDiagnostics = {};
   if (!args.expectedExistingBootId)
     await bindLogicalBox(deps, args, { sandboxRowId: target.sandboxRowId });
   const lookupArgs = {
@@ -1427,6 +1603,21 @@ async function ensureOnSandbox(
       "this control plane does not support a per-run browser session yet",
     );
   }
+  if (lookup.stale === "protocol_changed") {
+    noteProtocolMismatch(
+      diagnostics,
+      {
+        expected: BROWSERD_PROTOCOL_VERSION,
+        running: lookup.session?.protocolVersion,
+        stale: lookup.stale,
+        source: "lookup",
+      },
+      {
+        sandboxRowId: target.sandboxRowId,
+        sessionId: lookup.observedSessionId,
+      },
+    );
+  }
   const reusedHandle = await trySandboxReuse(
     deps,
     lookup,
@@ -1434,6 +1625,7 @@ async function ensureOnSandbox(
     target.sandboxId,
     args.signal,
     logicalContext,
+    diagnostics,
   );
   if (reusedHandle) {
     if (
@@ -1454,6 +1646,10 @@ async function ensureOnSandbox(
       lookup.stale ||
       !lookup.reachable)
   ) {
+    // Retrying cannot fix a protocol mismatch, so name it.
+    if (diagnostics.protocolMismatch) {
+      throw new BrowserProtocolMismatchError(diagnostics.protocolMismatch);
+    }
     throw new Error(
       "The existing browser is not ready. Retry connecting; it has not been restarted or replaced.",
     );
@@ -1476,6 +1672,7 @@ async function ensureOnSandbox(
       target.sandboxId,
       args.signal,
       logicalContext,
+      diagnostics,
     );
   let releaseClaim: () => Promise<void> = async () => {};
   let fence: RelaunchFence | null = null;
@@ -1555,11 +1752,11 @@ async function ensureOnSandbox(
     }
 
     await sandbox.killBrowserd();
-    const outcome = await bootAndPublish<SandboxHostedBrowserSessionHandle>(
-      deps,
-      {
+    const outcome = await namingProtocolMismatch(diagnostics, () =>
+      bootAndPublish<SandboxHostedBrowserSessionHandle>(deps, {
         sandbox,
         contextMode,
+        diagnostics,
         ...(args.profileArchive ? { profileArchive: args.profileArchive } : {}),
         reuseAgain,
         publish: async (booted) => {
@@ -1602,7 +1799,7 @@ async function ensureOnSandbox(
         onAdopt: () => {
           handle = undefined;
         },
-      },
+      }),
     );
     if (outcome.kind === "adopted") return outcome.handle;
 
@@ -1660,6 +1857,7 @@ async function ensureOnComputer(
 ): Promise<ComputerHostedBrowserSessionHandle> {
   const bundleHash = deps.bundleHash();
   const logicalContext = logicalContextFromArgs(args);
+  const diagnostics: EnsureDiagnostics = {};
   await bindLogicalBox(deps, args, { computerId });
   const lookupArgs = {
     computerId,
@@ -1675,12 +1873,26 @@ async function ensureOnComputer(
   };
 
   const lookup = await deps.store.lookup(lookupArgs);
+  // The control plane refused the row before we reached the daemon.
+  if (lookup.stale === "protocol_changed") {
+    noteProtocolMismatch(
+      diagnostics,
+      {
+        expected: BROWSERD_PROTOCOL_VERSION,
+        running: lookup.session?.protocolVersion,
+        stale: lookup.stale,
+        source: "lookup",
+      },
+      { computerId, sessionId: lookup.observedSessionId },
+    );
+  }
   const reusedHandle = await tryReuse(
     deps,
     lookup,
     contextMode,
     args.signal,
     logicalContext,
+    diagnostics,
   );
   if (reusedHandle) return reusedHandle;
 
@@ -1804,6 +2016,7 @@ async function ensureOnComputer(
         ...(logicalContext ? { logicalContext } : {}),
       },
       args.signal,
+      diagnostics,
     ).catch((error: unknown) => {
       logger.warn("[browser-session] prelaunch adoption failed; relaunching", {
         computerId,
@@ -1858,11 +2071,11 @@ async function ensureOnComputer(
     // The stream, started INSIDE `publish` so its ordering relative to the
     // record cannot drift: the password exists nowhere else, so the row must
     // be written from the same start that minted it.
-    const outcome = await bootAndPublish<ComputerHostedBrowserSessionHandle>(
-      deps,
-      {
+    const outcome = await namingProtocolMismatch(diagnostics, () =>
+      bootAndPublish<ComputerHostedBrowserSessionHandle>(deps, {
         sandbox,
         contextMode,
+        diagnostics,
         ...(args.profileArchive ? { profileArchive: args.profileArchive } : {}),
         reuseAgain: async () =>
           tryReuse(
@@ -1909,7 +2122,7 @@ async function ensureOnComputer(
         onAdopt: () => {
           handle = undefined;
         },
-      },
+      }),
     );
     if (outcome.kind === "adopted") return outcome.handle;
 

@@ -452,6 +452,25 @@ export const ANALYTICS_EVENTS = {
   ui_tool_call_completed: { source: "client" },
   ui_tool_call_started: { source: "client" },
 
+  // --- The same `ui_*` tools, published to browser-native WebMCP agents ---
+  // Diagnostics for `native-tool-publisher.ts`. Same hard rule as the events
+  // above and then some: a native call is made by software MCPJam does not
+  // control, so its ARGUMENTS AND RESULTS NEVER RIDE AN EVENT — only tool
+  // names (first-party, curated), statuses, counts and durations.
+  // ui_tool_native_published: one page's publication landed. Props: api_home
+  //   (document | navigator), tool_count. The adoption signal — how many
+  //   sessions actually have a browser with the WebMCP API.
+  // ui_tool_native_registration_failed: one tool the browser refused. Props:
+  //   tool_name, error_code (the DOMException NAME only, e.g.
+  //   InvalidStateError — never its message).
+  // ui_tool_native_call_completed: one native invocation settled. Props:
+  //   tool_name, status (the shared execution status: ok | error |
+  //   unavailable | invalid_input | cancelled | threw), duration_ms, and the
+  //   structured error_code when there is one.
+  ui_tool_native_published: { source: "client" },
+  ui_tool_native_registration_failed: { source: "client" },
+  ui_tool_native_call_completed: { source: "client" },
+
   // --- Home: shared Slack Connect channel card ---
   // Flag-dark (`shared-slack-channel-enabled`). Props: location ("home"),
   // state (none | provisioning | invite_sent | pending_admin_approval |

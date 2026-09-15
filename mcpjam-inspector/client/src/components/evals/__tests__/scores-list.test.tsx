@@ -108,7 +108,7 @@ describe("parseEvaluationConfig / parseScoreIntegrity", () => {
 describe("gate helpers", () => {
   it("treats an unjoinable row as gating AND failing", () => {
     // Fails closed everywhere else; if the chip excluded it from the
-    // denominator, a failed iteration would show "2 / 2 checks passed".
+    // denominator, a failed iteration would show "2 / 2 assertions passed".
     const orphan: ScoreResult = {
       ...finalizeScoreResult(gate, { kind: "scored", value: 1 }),
       definitionHash: "0".repeat(64),
@@ -125,18 +125,20 @@ describe("gate helpers", () => {
 
   it("honors onError on a gating row", () => {
     expect(scoreFailsGate(errorScoreResult(gate, "boom"), snapshot)).toBe(true);
-    expect(
-      scoreFailsGate(errorScoreResult(tolerant, "boom"), snapshot),
-    ).toBe(false);
+    expect(scoreFailsGate(errorScoreResult(tolerant, "boom"), snapshot)).toBe(
+      false,
+    );
   });
 
   it("never gates on not_applicable", () => {
-    expect(scoreFailsGate(notApplicableScoreResult(gate), snapshot)).toBe(false);
+    expect(scoreFailsGate(notApplicableScoreResult(gate), snapshot)).toBe(
+      false,
+    );
   });
 
   it("excludes a not_applicable row from the gate DENOMINATOR", () => {
-    // Counting it would render "1 / 1 checks passed" for an iteration whose
-    // only gating scorer was never in scope — the exact conflation
+    // Counting it would render "1 / 1 assertions passed" for an iteration whose
+    // only required evaluator was never in scope — the exact conflation
     // `not_applicable` exists to prevent.
     expect(isGatingScore(notApplicableScoreResult(gate), snapshot)).toBe(false);
     // …while an UNJOINABLE row still counts, because it fails closed.
@@ -165,9 +167,7 @@ describe("ScoresList", () => {
       skippedScoreResult(gate, "iteration errored before scoring"),
       notApplicableScoreResult(advisory, "no expectations configured"),
     ];
-    render(
-      <ScoresList scores={scores} evaluationConfig={snapshot} />,
-    );
+    render(<ScoresList scores={scores} evaluationConfig={snapshot} />);
   }
 
   it("renders every status", () => {
@@ -183,7 +183,7 @@ describe("ScoresList", () => {
     renderAll();
     // The single most misleading thing this view could do is let a red
     // advisory judge read as the reason a run failed.
-    expect(screen.getByText("Gating")).toBeInTheDocument();
+    expect(screen.getByText("Required")).toBeInTheDocument();
     expect(screen.getByText("Advisory")).toBeInTheDocument();
   });
 
@@ -198,7 +198,7 @@ describe("ScoresList", () => {
       />,
     );
     expect(
-      screen.getByText("1 / 1 gating scores passed"),
+      screen.getByText("1 / 1 required evaluators passed"),
     ).toBeInTheDocument();
   });
 
@@ -218,7 +218,9 @@ describe("ScoresList", () => {
         evaluationConfig={snapshot}
       />,
     );
-    expect(screen.getByText("1 / 1 gating scores passed")).toBeInTheDocument();
+    expect(
+      screen.getByText("1 / 1 required evaluators passed"),
+    ).toBeInTheDocument();
     expect(screen.getByText("N/A")).toBeInTheDocument();
     expect(isGatingScore(notApplicable, snapshot)).toBe(false);
   });
@@ -231,13 +233,18 @@ describe("ScoresList", () => {
     };
     render(
       <ScoresList
-        scores={[finalizeScoreResult(gate, { kind: "scored", value: 1 }), orphan]}
+        scores={[
+          finalizeScoreResult(gate, { kind: "scored", value: 1 }),
+          orphan,
+        ]}
         evaluationConfig={snapshot}
       />,
     );
     // It renders in its own section, but "1 / 1 passed" beside a row nobody can
     // verify is the reassurance this view must never give.
-    expect(screen.getByText("1 / 2 gating scores passed")).toBeInTheDocument();
+    expect(
+      screen.getByText("1 / 2 required evaluators passed"),
+    ).toBeInTheDocument();
   });
 
   it("stays NEUTRAL when there was nothing to gate on", () => {
@@ -250,10 +257,10 @@ describe("ScoresList", () => {
     // Neither verdict is available to claim here: a green check would say a
     // threshold was cleared, a red cross would report a regression that never
     // happened. "0 / 0 passed" under either badge is the version to avoid.
-    const badge = screen.getByText("no gating scores");
+    const badge = screen.getByText("no required evaluators");
     expect(badge.className).not.toContain(EVAL_PASSED_BADGE_STRONG_CLASS);
     expect(badge.className).not.toContain(EVAL_FAILED_BADGE_STRONG_CLASS);
-    expect(screen.queryByText(/gating scores passed/)).toBeNull();
+    expect(screen.queryByText(/required evaluators passed/)).toBeNull();
   });
 
   it("renders a row with no matching definition as unresolved, not a crash", () => {
@@ -309,9 +316,9 @@ describe("ScoresList", () => {
       />,
     );
     expect(
-      screen.getByText("score evidence did not verify"),
+      screen.getByText("evaluator evidence did not verify"),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/gating scores passed/)).toBeNull();
+    expect(screen.queryByText(/required evaluators passed/)).toBeNull();
   });
 
   it("renders an integrity-only payload with no surviving rows", () => {
@@ -396,13 +403,52 @@ describe("ScoresList", () => {
       />,
     );
     expect(screen.getByTestId("score-row-hidden").textContent).toBe(
-      "Judge score hidden until you label this trial",
+      "Judge score hidden until you label this iteration",
     );
     expect(screen.queryByText("0.42 / 0.7")).toBeNull();
     expect(screen.queryByText(/The answer never named the file/)).toBeNull();
     expect(
-      screen.getByText("1 / 1 gating scores passed"),
+      screen.getByText("1 / 1 required evaluators passed"),
     ).toBeInTheDocument();
     expect(screen.getByText(/judge hidden/i)).toBeInTheDocument();
+  });
+});
+
+/**
+ * The backend stamps the role two ways and the vocabulary-2 projection serves
+ * the canonical one, so every gate computation here reads BOTH spellings. A
+ * comparator that knew only `"gating"` would quietly drop a required evaluator
+ * out of the grouping, the denominator and the failure logic — a run would
+ * read "0 / 0 required evaluators passed" beside a failing required check.
+ */
+describe("the canonical role spelling counts exactly like the legacy one", () => {
+  const REQUIRED: ScoreDefinition = { ...GATING, role: "required" };
+
+  it("groups, counts and fails a `required` definition as a gate", () => {
+    const resolved = resolveScoreDefinition(REQUIRED);
+    const snapshot = buildEvaluationConfigSnapshot([REQUIRED]);
+    const failed = finalizeScoreResult(resolved, { kind: "scored", value: 0 });
+
+    expect(isGatingScore(failed, snapshot)).toBe(true);
+    expect(scoreFailsGate(failed, snapshot)).toBe(true);
+
+    render(<ScoresList scores={[failed]} evaluationConfig={snapshot} />);
+    expect(
+      screen.getByText("0 / 1 required evaluators passed"),
+    ).toBeInTheDocument();
+  });
+
+  it("reads a passing `required` definition exactly like a passing `gating` one", () => {
+    const snapshot = buildEvaluationConfigSnapshot([REQUIRED]);
+    const passed = finalizeScoreResult(resolveScoreDefinition(REQUIRED), {
+      kind: "scored",
+      value: 1,
+    });
+    expect(scoreFailsGate(passed, snapshot)).toBe(false);
+
+    render(<ScoresList scores={[passed]} evaluationConfig={snapshot} />);
+    expect(
+      screen.getByText("1 / 1 required evaluators passed"),
+    ).toBeInTheDocument();
   });
 });

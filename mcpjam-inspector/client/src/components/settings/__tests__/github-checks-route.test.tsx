@@ -61,16 +61,14 @@ const {
   mockConnectVerifiedRepo: vi.fn(async (_args?: Record<string, unknown>) => ({
     configId: "cfg-new",
   })),
-  mockListInstallationRepos: vi.fn(
-    async (): Promise<unknown[]> => [
-      {
-        repositoryId: 2,
-        fullName: "mcpjam/other-repo",
-        installationRef: "bind-1",
-        accountLogin: "mcpjam",
-      },
-    ],
-  ),
+  mockListInstallationRepos: vi.fn(async (): Promise<unknown[]> => [
+    {
+      repositoryId: 2,
+      fullName: "mcpjam/other-repo",
+      installationRef: "bind-1",
+      accountLogin: "mcpjam",
+    },
+  ]),
   mockBindings: { value: undefined as unknown[] | undefined },
   mockStartInstallation: vi.fn(async () => ({
     installUrl: "https://github.com/apps/mcpjam/installations/new?state=abc",
@@ -152,9 +150,6 @@ vi.mock("@/hooks/useOrganizations", () => ({
 }));
 
 // The nav resolves availability itself now; it is not what this file tests.
-vi.mock("../SettingsNav", () => ({
-  SettingsNav: () => <nav data-testid="settings-nav" />,
-}));
 
 import { toast } from "@/lib/toast";
 import { GithubChecksRoute } from "../GithubChecksRoute";

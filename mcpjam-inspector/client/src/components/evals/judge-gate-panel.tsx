@@ -20,6 +20,8 @@
  */
 
 import { useState } from "react";
+import { isRequiredRole } from "@mcpjam/sdk/predicates";
+import { authoredRequiredRole } from "@mcpjam/sdk/contract";
 import { Switch } from "@mcpjam/design-system/switch";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -50,9 +52,9 @@ export function describeAgreement(
   agreement: SuiteCapabilities["judge"]["agreement"] | undefined,
 ): string {
   if (!agreement || agreement.rate === null) return "No reviewer labels yet";
-  const base = `Agrees with reviewers ${agreement.agreements}/${agreement.reviews} · ${Math.round(
-    agreement.rate * 100,
-  )}%`;
+  const base = `Agrees with reviewers ${agreement.agreements}/${
+    agreement.reviews
+  } · ${Math.round(agreement.rate * 100)}%`;
   const withBound =
     agreement.lowerBound === null
       ? base
@@ -89,7 +91,9 @@ export function gateSwitchDisabledReason(
   if (judge.agreement.eligible || judge.acknowledgement?.current) {
     return undefined;
   }
-  return `Needs ${judge.agreement.minReviews} blind reviewer labels agreeing at ${Math.round(
+  return `Needs ${
+    judge.agreement.minReviews
+  } blind reviewer labels agreeing at ${Math.round(
     judge.agreement.threshold * 100,
   )}% or better`;
 }
@@ -127,7 +131,7 @@ export function JudgeGatePanel({
   // From the DRAFT, so the switch reflects what a save would write rather than
   // what the server currently holds — the same rule every other control here
   // follows.
-  const isGating = judgeConfig?.goalCompletion?.role === "gating";
+  const isGating = isRequiredRole(judgeConfig?.goalCompletion?.role);
   // The acknowledgement escape hatch is offered whenever calibration is the
   // blocker. There is no permission bit for it: the backend refuses a caller
   // who is not an organization owner, and rendering that refusal is more
@@ -167,7 +171,7 @@ export function JudgeGatePanel({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="text-xs text-foreground">
-            {isGating ? "Gate" : "Advisory"}
+            {isGating ? "Required" : "Advisory"}
           </div>
           <p className="text-[11px] text-muted-foreground/60">
             {isGating
@@ -196,15 +200,23 @@ export function JudgeGatePanel({
           // gate off) must still be able to come back down to advisory.
           disabled={disabledReason !== undefined && !isGating}
           aria-label="Let the judge decide pass or fail"
-          onCheckedChange={(checked) =>
+          onCheckedChange={(checked) => {
+            const { severity: _legacySeverity, ...goalCompletion } =
+              judgeConfig?.goalCompletion ?? {};
             onJudgeConfigChange({
               ...judgeConfig,
-              goalCompletion: {
-                ...(judgeConfig?.goalCompletion ?? {}),
-                role: checked ? "gating" : "advisory",
-              },
-            })
-          }
+              goalCompletion: checked
+                ? // A legacy Warn judge carries `severity: "warn"`, which is
+                  // legal ONLY beside an advisory role. Spreading it through
+                  // made the required tier unsavable for exactly the suites
+                  // the rename is meant to move off Warn.
+                  { ...goalCompletion, role: authoredRequiredRole() }
+                : {
+                    ...(judgeConfig?.goalCompletion ?? {}),
+                    role: "advisory" as const,
+                  },
+            });
+          }}
         />
       </div>
       {canOfferAcknowledgement ? (

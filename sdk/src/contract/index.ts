@@ -92,6 +92,14 @@ export {
 } from "./derive.js";
 
 export {
+  EMIT_CANONICAL_ROLE,
+  authoredRequiredRole,
+  capabilityAcceptsCanonicalRole,
+  definitionsForDeployment,
+  roleForDeployment,
+} from "./policy-spelling.js";
+
+export {
   LEGACY_TEST_SCORER_ID,
   LEGACY_TEST_VERSION,
   TOOL_MATCH_SCORER_ID,
@@ -193,6 +201,76 @@ export {
   isSelectionStagePredicateKind,
   type PredicateKind,
 } from "./grader-stage.js";
+
+/**
+ * The same tables under the canonical vocabulary. Same objects, not copies —
+ * `EVALUATOR_STAGE === GRADER_STAGE` is an identity a test pins, because two
+ * tables that merely agree today are two tables that can stop agreeing.
+ */
+export {
+  ASSERTION_KINDS,
+  ASSERTION_STAGE,
+  EVALUATOR_PRESENTATION_GROUP,
+  EVALUATOR_STAGE,
+  isSelectionStageAssertionKind,
+  type AssertionKind,
+} from "./evaluator-stage.js";
+
+/**
+ * The seed under its canonical name. Declared in `grader-stage.ts` and
+ * re-exported here rather than moved — the backend pins the literal through a
+ * whole-file capture, and a capture that matches nothing passes forever. See
+ * the note on the declaration.
+ */
+export {
+  RECOMMENDED_DEFAULT_PREDICATES as RECOMMENDED_DEFAULT_ASSERTIONS,
+  isRecommendedDefaultPredicateKind as isRecommendedDefaultAssertionKind,
+} from "./grader-stage.js";
+
+/**
+ * The canonical evaluator contract: one word per concept, and one result shape
+ * for assertions and judges alike. See
+ * `docs/evals-vocabulary-consolidation.md`.
+ */
+export {
+  EVALUATOR_KINDS,
+  EVALUATOR_RESULT_SCHEMA_VERSION,
+  evaluatorKindOf,
+} from "./evaluator-types.js";
+export type {
+  Assertion,
+  AssertionResult,
+  AssertionScope,
+  EvaluatorConfigSnapshot,
+  EvaluatorContextV1,
+  EvaluatorDefinition,
+  EvaluatorErrorPolicy,
+  EvaluatorIdSource,
+  EvaluatorKind,
+  EvaluatorRawOutcome,
+  EvaluatorResult,
+  EvaluatorRole,
+  EvaluatorStatus,
+  ResolvedEvaluatorDefinition,
+} from "./evaluator-types.js";
+export {
+  allGatingEvaluatorsPassed,
+  errorEvaluatorResult,
+  evaluatorDefinitionHash,
+  finalizeEvaluatorResult,
+  fromEvaluatorResult,
+  notApplicableEvaluatorResult,
+  resolveEvaluatorDefinition,
+  skippedEvaluatorResult,
+  toEvaluatorResult,
+  toScoreRawOutcome,
+} from "./evaluator-derive.js";
+export {
+  evaluatorKindSchema,
+  evaluatorResultArraySchema,
+  evaluatorResultSchema,
+  evaluatorStatusSchema,
+} from "./evaluator-schemas.js";
 
 // ── server facts (F1) ────────────────────────────────────────────────────────
 /**
@@ -415,13 +493,18 @@ export type {
   EvalSuiteFile,
   EvalSuiteFileCase,
   EvalSuiteFileCaseImport,
+  EvalSuiteFileCaseV2,
   EvalSuiteFileDefaults,
+  EvalSuiteFileDefaultsV2,
   EvalSuiteFileHost,
   EvalSuiteFileProvenance,
   EvalSuiteFileServer,
   EvalSuiteFileTarget,
   EvalSuiteFileToolPolicy,
+  EvalSuiteFileV1,
+  EvalSuiteFileV2,
   EvalSuiteFileValidity,
+  EvalSuiteSchemaVersion,
 } from "./suite-file.js";
 export type {
   ToolPolicyDecision,
@@ -439,11 +522,15 @@ export {
 } from "./tool-policy.js";
 export {
   EVAL_SUITE_SCHEMA_ID,
+  EVAL_SUITE_SCHEMA_ID_V2,
   EVAL_SUITE_SCHEMA_VERSION,
+  EVAL_SUITE_SCHEMA_VERSION_2,
+  EVAL_SUITE_SCHEMA_VERSIONS,
   MAX_BATCH_CREATE_CASES,
   MAX_CASE_ASSERTIONS,
   MAX_IMPORT_NOTE_CHARS,
   MAX_IMPORT_SOURCE_CASE_KEY_CHARS,
+  MAX_ITERATIONS,
   MAX_REPETITIONS,
   MAX_SUITE_FILE_CASES,
   MAX_SUITE_FILE_TITLE_CHARS,
@@ -452,7 +539,9 @@ export {
   RESERVED_REPORTING_MODES,
   evalSuiteFileCaseImportSchema,
   evalSuiteFileCaseSchema,
+  evalSuiteFileCaseV2Schema,
   evalSuiteFileDefaultsSchema,
+  evalSuiteFileDefaultsV2Schema,
   evalSuiteFileHostSchema,
   evalSuiteFileProvenanceSchema,
   evalSuiteFileSchema,
@@ -460,19 +549,21 @@ export {
   evalSuiteFileStructuralSchema,
   evalSuiteFileTargetSchema,
   evalSuiteFileToolPolicySchema,
+  evalSuiteFileV2StructuralSchema,
   evalSuiteFileValiditySchema,
 } from "./suite-file.js";
 
 /**
- * The generated JSON Schema (draft 2020-12) for the suite file.
+ * The generated JSON Schema (draft 2020-12) for each suite-file dialect.
  *
- * Re-exported from the generated `.ts` twin rather than the `.json` artifact:
- * the contract subpath is consumed by three toolchains and only Node-only code
- * in this repo uses JSON import attributes. The `.json` file is the artifact
- * published at the schema's `$id`; the two are byte-identical documents and a
- * test proves it.
+ * Re-exported from the generated `.ts` twins rather than the `.json`
+ * artifacts: the contract subpath is consumed by three toolchains and only
+ * Node-only code in this repo uses JSON import attributes. Each `.json` file
+ * is the artifact published at its dialect's `$id`; the pairs are
+ * byte-identical documents and a test proves it.
  */
 export { evalSuiteFileJsonSchema } from "./eval-suite.schema.generated.js";
+export { evalSuiteFileV2JsonSchema } from "./eval-suite.v2.schema.generated.js";
 
 // ── the run verdict policy (v2) ──────────────────────────────────────────────
 export type {
@@ -937,3 +1028,17 @@ export {
 } from "./scorer-rollup.js";
 
 export { caseSourceSchema, type CaseSource } from "./case-source.js";
+
+export {
+  evalBacktestDraftSchema,
+  evalBacktestRequestSchema,
+  evalBacktestContinuationSchema,
+} from "./eval-backtest.js";
+export type {
+  EvalBacktestDraft,
+  EvalBacktestContinuation,
+  EvalBacktestDifference,
+  EvalBacktestReport,
+} from "./eval-backtest.js";
+export * from "./standard-check-ids.js";
+export * from "./standard-checks.js";

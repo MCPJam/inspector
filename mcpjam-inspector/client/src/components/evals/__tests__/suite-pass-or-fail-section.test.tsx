@@ -1,11 +1,11 @@
 /**
- * The "Scorers and judges" section, and the policy controls beside it.
+ * The "Evaluators" section, and the policy controls beside it.
  *
  * Two properties are worth a test rather than a reading:
  *
  *   - an EMPTY stage says the right kind of nothing. `connection`, `discovery`
  *     and `call` have no authorable grader on this page — the runner measures
- *     them on every trial — so "No grader" there would read as a gap somebody
+ *     them on every iteration — so "No evaluator" there would read as a gap somebody
  *     should close. And neither answer may borrow `notMeasured`, which is a
  *     RUN-state word for a stage nobody observed.
  *   - the threshold field is a PERCENT over a stored FRACTION. Typing 80 must
@@ -14,7 +14,7 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SuitePassOrFailSection } from "../suite-pass-or-fail-section";
 import {
@@ -81,45 +81,59 @@ describe("SuitePassOrFailSection", () => {
     }
   });
 
-  it("says 'No grader' for an unconfigured response stage", () => {
+  it("says 'No evaluator' for an unconfigured response stage", () => {
     const { container } = renderSection();
-    expect(emptyCopy(container, "response")).toBe("No grader");
+    // The stage lists its standard assertions as off rows, none of them on.
+    const rows = Array.from(
+      container.querySelectorAll(
+        '[data-stage-group="response"] [data-scorer-row]',
+      ),
+    );
+    expect(rows.length).toBeGreaterThan(0);
+    expect(
+      rows.every(
+        (row) =>
+          row.getAttribute("data-scorer-row") === "preset" &&
+          row.getAttribute("data-scorer-enabled") === "false",
+      ),
+    ).toBe(true);
   });
 
   it("never tells a reader connection or discovery is ungraded", () => {
     const { container } = renderSection();
     for (const stage of ["connection", "discovery"]) {
       const copy = emptyCopy(container, stage) ?? "";
-      expect(copy, stage).toContain("Observed by the runner");
-      expect(copy.toLowerCase(), stage).not.toContain("no grader");
+      expect(copy, stage).toContain("Measured by the runner");
+      expect(copy.toLowerCase(), stage).not.toContain("no evaluator");
       // The run-state word. Settings has observed nothing, so claiming a
       // measurement did not happen states something nobody looked at.
       expect(copy.toLowerCase(), stage).not.toContain("not measured");
     }
   });
 
-  it("marks the judge advisory by default and gating when the role says so", () => {
+  it("marks the judge advisory by default and required when the role says so", () => {
     const advisory = renderSection();
     expect(
-      advisory.container.querySelector(
-        '[data-testid="stage-chain-card-userValue"]',
-      )?.textContent,
-    ).toContain("Judge on request");
+      within(
+        advisory.container.querySelector(
+          '[data-scorer-id="judge:goalCompletion"]',
+        ) as HTMLElement,
+      ).getByText("Advisory"),
+    ).toBeTruthy();
     advisory.unmount();
 
     const gating = renderSection({
       judgeConfig: { goalCompletion: { role: "gating" } },
     });
-    const card = gating.container.querySelector(
-      '[data-testid="stage-chain-card-userValue"]',
-    );
-    expect(card?.textContent).toContain("Gated");
     const group = gating.container.querySelector(
       '[data-stage-group="userValue"]',
     ) as HTMLElement;
+    // The row's control reads Required; it sits on the row itself.
     const judgeRole = group.querySelector('[aria-label="Judge role"]');
     expect(
-      within(judgeRole as HTMLElement).getByRole("button", { name: "Gate" }),
+      within(judgeRole as HTMLElement).getByRole("button", {
+        name: "Required",
+      }),
     ).toHaveAttribute("aria-pressed", "true");
   });
 
@@ -239,7 +253,7 @@ describe("VerdictPolicyUpgradeButton", () => {
         onUpgrade={onUpgrade}
       />,
     );
-    expect(screen.getByText(/3 repetitions, 80% threshold/)).toBeTruthy();
+    expect(screen.getByText(/3 iterations, 80% threshold/)).toBeTruthy();
     await user.click(
       screen.getByRole("button", { name: /switch to verdict policy v2/i }),
     );

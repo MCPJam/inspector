@@ -111,17 +111,22 @@ interface UseAutoConnectProjectServersResult {
 
 /**
  * Mount once per surface (Servers tab, host page, Playground) with the
- * names of the active/previewed host's REQUIRED servers. On first mount
- * with `requiredServerNames` non-empty, fires `ensureServersReady` for
- * every name whose runtime status is not already
- * connected/connecting/oauth-flow. Dedupes across re-mounts and surfaces
- * via a module-level Set keyed by `(projectId, sortedServerNames)`.
+ * names of every server in the project catalog. On first mount with
+ * `serverNames` non-empty, fires `ensureServersReady` for every name whose
+ * runtime status is not already connected/connecting/oauth-flow. Dedupes
+ * across re-mounts and surfaces via a module-level Set keyed by
+ * `(projectId, hostScope, serverName)`.
  *
- * Disabled entirely when `autoConnectServersEnabled` is false in the
- * preferences store.
+ * Auto-connect is a PERSONAL, per-device preference: disabled entirely when
+ * `autoConnectServersEnabled` is false in the preferences store, which the
+ * Servers-tab header switch writes. It only touches this browser's runtime
+ * pool (Playground + debugger tabs); evals, swarms and user testing connect
+ * their own servers in the cloud from their own server groups.
  *
- * Server-set semantics: the caller passes the SAVED host's required set
- * (`HostConfig.serverIds` resolved to names). Required servers auto-connect.
+ * Server-set semantics: the caller passes the whole project catalog, not a
+ * per-client list — a client's stored `serverIds` is no longer what decides
+ * what connects here. A server added to the catalog therefore joins the
+ * candidate set on its own and connects without any toggle round-trip.
  *
  * Client-switch recycle: switching the active/lead client (a `hostScopeKey`
  * change) reconnects EVERY currently-connected server so each re-runs the MCP
@@ -138,7 +143,7 @@ interface UseAutoConnectProjectServersResult {
 export function useAutoConnectProjectServers({
   projectId,
   hostScopeKey,
-  requiredServerNames,
+  serverNames,
 }: {
   projectId: string | null;
   /**
@@ -149,7 +154,8 @@ export function useAutoConnectProjectServers({
    * that "no host" scope.
    */
   hostScopeKey: string | null;
-  requiredServerNames: ReadonlyArray<string>;
+  /** Every server in the project catalog, by runtime name. */
+  serverNames: ReadonlyArray<string>;
 }): UseAutoConnectProjectServersResult {
   const enabled = usePreferencesStore((s) => s.autoConnectServersEnabled);
   const sharedAppState = useSharedAppState();
@@ -158,31 +164,26 @@ export function useAutoConnectProjectServers({
   const lastResultRef = useRef<EnsureServersReadyResult | null>(null);
 
   const scopeKey = hostScopeKey ?? "-";
-  // Stable key for "what the active host wants selected". Drives the
-  // playground/chat multi-select sync below, independent of connect /
-  // disconnect dedupe.
-  const requiredNamesKey = useMemo(
-    () => requiredServerNames.slice().sort().join("\0"),
-    [requiredServerNames]
+  // Stable key for the catalog, so reordering never looks like a change.
+  const catalogNamesKey = useMemo(
+    () => serverNames.slice().sort().join("\0"),
+    [serverNames]
   );
-  const requiredNames = useMemo(
-    () => (requiredNamesKey ? requiredNamesKey.split("\0") : []),
-    [requiredNamesKey]
+  const catalogNames = useMemo(
+    () => (catalogNamesKey ? catalogNamesKey.split("\0") : []),
+    [catalogNamesKey]
   );
 
   // Build the candidate name list. Skip servers that are already connected,
   // currently connecting, or in an OAuth flow — connecting/oauth-flow would
-  // be interrupted; connected has nothing to do.
-  // The candidate pool is the host's required set UNION the servers the
-  // currently connecting, or in an OAuth flow — connecting/oauth-flow would
   // be interrupted; connected has nothing to do. This is the "connect the
-  // host's required servers" path; reconnecting the ALREADY-connected set on a
-  // client switch is handled separately below.
+  // catalog" path; reconnecting the ALREADY-connected set on a client switch
+  // is handled separately below.
   const candidateNamesKey = useMemo(() => {
-    if (!enabled || !projectId || requiredNames.length === 0) {
+    if (!enabled || !projectId || catalogNames.length === 0) {
       return null;
     }
-    const candidates = requiredNames.filter((name) => {
+    const candidates = catalogNames.filter((name) => {
       const status = sharedAppState.servers[name]?.connectionStatus;
       return (
         status !== "connected" &&
@@ -194,7 +195,7 @@ export function useAutoConnectProjectServers({
     // Stable key: sorted and joined with NUL so reordering doesn't trigger a
     // fresh batch.
     return candidates.sort().join("\0");
-  }, [enabled, projectId, requiredNames, sharedAppState.servers]);
+  }, [enabled, projectId, catalogNames, sharedAppState.servers]);
 
   // Detect a scope transition (user switched the active/lead client) and
   // clear the prior attempt log so revisiting a previously-tried host

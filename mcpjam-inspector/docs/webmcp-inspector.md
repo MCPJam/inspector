@@ -3,6 +3,12 @@
 A managed browser pointed at a page, so the WebMCP tools that page registers can
 be listed, invoked, watched across navigations, and handed to a model.
 
+This is WebMCP pointed OUTWARD, at somebody else's page. The other direction —
+the `ui_*` tools MCPJam itself publishes, so a browser agent can drive the
+inspector — is [`webmcp-native-tools.md`](./webmcp-native-tools.md). The two
+share a protocol and nothing else: page tools are third-party and never
+trusted to describe themselves, MCPJam's own are first-party and curated.
+
 Visibility follows `local-browser-enabled` in Node/Electron and
 `hosted-browser-enabled` in hosted deployments.
 
@@ -30,13 +36,13 @@ client/src/components/webmcp-inspector/   the /webmcp workspace
   ├ WebmcpInspectorTab.tsx                 three-panel workspace (Tools-shaped)
   ├ WebmcpToolsSidebar.tsx                 URL + tools list / invoke form
   ├ ActivityTimeline.tsx                   activity as a log rail
-  └ ElectronWebviewPane.tsx                the ONLY <webview> in the app
-client/src/stores/webmcp-inspector-store  session state, SSE stream
-client/src/lib/webmcp-inspector/          aliases, chat dispatch, export
+client/src/stores/webmcp-inspector-store  session state, SSE stream, frame channel
+client/src/lib/browser-pane/              the shared viewer: reader, channel, input
+client/src/lib/webmcp-inspector/          aliases, chat dispatch, export, frame socket
 shared/webmcp-inspector-protocol.ts       the wire contract
+shared/browserd-frame-stream.ts           the frame record format, every end
 server/routes/mcp/webmcp-inspector.ts     /api/mcp/webmcp/*
-server/services/webmcp-inspector/         providers, runtime, registry, hub
-src/main.ts                               the switch, webviewTag, the guest guard
+server/services/webmcp-inspector/         providers, runtime, registry, hub, frames
 ```
 
 The workspace shares `ThreePanelLayout` with Tools / Resources / Prompts / Tasks:
@@ -106,19 +112,28 @@ that carries tools and invocations:
 
 ```text
 Page.screencastFrame → ack FIRST → drop a byte-identical repeat → drop an oversized paint → 10fps throttle (~30fps during input, mandatory trailing frame)
-→ runtime publishFrame → hub's coalesced slot → binary WS (or SSE)
-→ Node-local WS: newest JPEG per animation frame → shared BrowserPaneSurface
+→ runtime publishFrame → the session's one-slot frame channel → binary WS
+→ createFrameWireReader: one decode in flight, newest pending, off the main thread
+→ frame channel → shared BrowserPaneSurface canvas
 ```
+
+THE SOCKET IS THE ONLY PATH. Frames used to ride the SSE event stream as well,
+with a `frames=off` switch for a client reading them off the socket instead, and
+a once-a-second screenshot poll under that. Both are gone: the client and server
+ship in one package, so the version skew they guarded against cannot happen, and
+the hosted deployment does not mount this route at all. What is left is one
+transport, one decoder, and one place a framing bug can live.
 
 Six properties hold this together, and each one is a bug if it is dropped:
 
 - **Ack before anything else.** Chromium sends the next frame only once the
   current one is acknowledged. Acking after consumption lets a slow consumer
   starve the stream into stillness.
-- **Frames never enter the replay ring.** They live in a single coalesced slot
-  beside the latest tool snapshot, so a page animating at 10fps cannot flush the
-  timeline the session exists to produce. A reconnecting client replays exactly
-  one frame: the current one.
+- **Frames are not events.** They have their own one-slot channel on the
+  runtime (`frame-channel.ts`), so a page animating at 10fps cannot flush the
+  timeline the session exists to produce — and no consumer of the event hub has
+  to filter pixels out. A socket that connects mid-session is handed exactly one
+  frame: the current one.
 - **The throttle's trailing frame is mandatory.** The last paint of a burst is
   the one that shows what the page ended up looking like; drop it and a settled
   page leaves the pane stale forever.
@@ -140,11 +155,16 @@ Six properties hold this together, and each one is a bug if it is dropped:
 ### Human interaction in the Node package
 
 The workspace subscribes only to session, tools, activity, and control state.
-Frame and screenshot subscriptions live inside the viewport, so streaming does
-not rerender the activity rail or tools panel. Node-local binary frames are
-coalesced before blob allocation and store publication. A socket write callback
-proves transport progress, not that a viewer rendered a frame; this client
-coalescing reduces presentation work without claiming to bound upstream buffers.
+Frames are not store state at all: they ride a narrow channel
+(`lib/browser-pane/frame-channel.ts`) that only the viewport subscribes to, so
+thirty frames a second cannot re-render the activity rail or the tools panel —
+and a panel added later cannot accidentally start doing so. The shared reader
+keeps one decode in flight and one newest pending record, so a burst converges
+on the current picture instead of queueing. A decode cannot be cancelled, so
+turning live view off calls the reader's `drop()`: the socket stays open for
+when it comes back on, and the picture still decoding is closed rather than
+published into a pane that has stopped watching. A socket write callback proves
+transport progress, not that a viewer rendered a frame.
 
 A local `frame-stream` socket advertises `{type:"capabilities",features:["input"]}`.
 The viewer can then send `{type:"input",seq,events}` and receives
@@ -183,9 +203,15 @@ bounds after an 80ms resize debounce. Explicit API callers can still request
 DPR up to 2. Native-window sessions retain their window geometry. Frame geometry
 comes from the JPEG itself; pointer coordinates use its device-to-CSS scale.
 
-The current inspection adapter still owns its socket and SSE/screenshot fallback
-lifecycle. Those adapters are not a second capture/input engine; their remaining
-lifecycle consolidation is tracked in [the unification plan](browser-viewer-unification-plan.md).
+Inspection and Playground now share the client frame path as well as the
+surface: the same `createFrameWireReader` decodes both, and the connection owns
+the bitmaps it hands out. The inspection adapter still owns its own socket
+lifecycle (open, retry, ping, latch); extracting that into a shared
+`useFrameStream` is tracked in [the unification plan](browser-viewer-unification-plan.md).
+
+When the socket's four attempts are spent, the pane says so — "Live view is
+unavailable for this session. Use Screenshot to see the page." — rather than
+quietly showing a picture that has stopped updating.
 
 Frames are TRANSIENT and deliberately distinct from the screenshots on
 invocation entries: those are persisted evidence at a 64 KiB budget, exported
