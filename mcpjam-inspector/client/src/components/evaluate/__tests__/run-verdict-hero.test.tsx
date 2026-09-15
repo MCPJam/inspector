@@ -95,15 +95,15 @@ describe("RunVerdictHero", () => {
     },
   );
 
-  it("labels each insight as AI generated, not the body or heading icon", () => {
+  it("keeps deterministic summaries free of AI attribution", () => {
     render(<RunVerdictHero view={view()} />);
 
     const sentence = screen.getByTestId("run-verdict-sentence");
     const remedy = screen.getByTestId("run-verdict-remedy");
     expect(within(sentence).queryByText("AI generated")).toBeNull();
     expect(within(remedy).queryByText("AI generated")).toBeNull();
-    expect(screen.getAllByText("AI generated")).toHaveLength(2);
-    expect(screen.getAllByTestId("run-verdict-ai-insight")).toHaveLength(2);
+    expect(screen.queryByText("AI generated")).toBeNull();
+    expect(screen.queryByTestId("run-verdict-ai-insight")).toBeNull();
 
     const whatBroke = screen.getByRole("heading", { name: "What broke" });
     const howToFix = screen.getByRole("heading", { name: "Next step" });
@@ -127,6 +127,20 @@ describe("RunVerdictHero", () => {
       "border-border",
     );
     expect(remedy.parentElement).not.toHaveClass("rounded-lg", "border-border");
+  });
+
+  it("keeps pairing measurements when findings replace the explanation", () => {
+    render(
+      <RunVerdictHero
+        view={view({ pairings: [pairing()] })}
+        explanation={null}
+      />,
+    );
+    expect(screen.getByTestId("run-verdict-pairing")).toHaveTextContent(
+      "Cursor",
+    );
+    expect(screen.queryByTestId("run-verdict-insights")).toBeNull();
+    expect(screen.queryByTestId("run-summary-loading")).toBeNull();
   });
 
   it("does not mark the loading skeletons as generated", () => {

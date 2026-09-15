@@ -27550,6 +27550,109 @@
               "$ref": "#/components/schemas/ActionableFinding"
             }
           },
+          "currentFindings": {
+            "type": "array",
+            "description": "Absent on a deployment that predates findings. The always-available observation view: findings assembled from deterministic evidence plus any identity-matching model enrichment, populated INDEPENDENTLY of `status`. Read `currentFindings ?? findings` — and treat an explicit `[]` as a real \"nothing here needs a change\" rather than falling back to the generated array.",
+            "items": {
+              "$ref": "#/components/schemas/ActionableFinding"
+            }
+          },
+          "observationState": {
+            "type": "string",
+            "description": "How much of the population `currentFindings` describes — distinct from `status`, which describes a model GENERATION. `unavailable` means nothing could be measured, which is NOT the same as an empty `currentFindings`.",
+            "enum": ["ready", "partial", "unavailable"]
+          },
+          "observationCoverage": {
+            "type": "object",
+            "required": ["unit", "analyzed", "total", "gradedCount", "exclusions"],
+            "description": "Coverage for `currentFindings`, describing ITS population. Deliberately separate from `coverage`, whose counters describe the generation's population.",
+            "properties": {
+              "unit": {
+                "type": "string",
+                "enum": ["iterations"]
+              },
+              "analyzed": {
+                "type": "integer"
+              },
+              "total": {
+                "type": "integer"
+              },
+              "gradedCount": {
+                "type": "integer"
+              },
+              "exclusions": {
+                "type": "object",
+                "description": "Counted reasons an iteration was left out, keyed by reason. An OPEN map: a new exclusion class must not require a consumer change to keep validating.",
+                "additionalProperties": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "unifiedFindings": {
+            "type": "object",
+            "required": [
+              "capability",
+              "snapshot",
+              "job",
+              "canBuild",
+              "canEnrich"
+            ],
+            "description": "Absent on a deployment that predates findings. Its PRESENCE says the deployment serves findings; `snapshot: null` says this run has none built yet — two different answers a caller must not conflate.",
+            "properties": {
+              "capability": {
+                "type": "string",
+                "enum": ["unified_findings_v1"]
+              },
+              "analysis": {
+                "type": "object",
+                "description": "The trace analysis pipeline's progress while one exists for the run. Absent when none has been requested.",
+                "required": ["phase", "progress", "models", "completeness"],
+                "properties": {
+                  "phase": {
+                    "type": "string",
+                    "enum": ["reading", "grouping", "checking", "done", "failed"]
+                  },
+                  "progress": {
+                    "type": "object",
+                    "required": ["done", "total", "unit"],
+                    "properties": {
+                      "done": { "type": "integer" },
+                      "total": { "type": "integer" },
+                      "unit": { "type": "string", "enum": ["iterations"] }
+                    }
+                  },
+                  "models": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  },
+                  "completeness": {
+                    "type": "object",
+                    "required": ["iterationReports", "total", "missingTraces"],
+                    "properties": {
+                      "iterationReports": { "type": "integer" },
+                      "total": { "type": "integer" },
+                      "missingTraces": { "type": "integer" }
+                    }
+                  }
+                }
+              },
+              "snapshot": {
+                "type": ["object", "null"],
+                "description": "The built findings snapshot: its deterministic findings, per-finding provenance, and any pipeline-verified mechanisms. `null` means none has been built for this run."
+              },
+              "job": {
+                "type": ["object", "null"],
+                "description": "The in-flight or last-failed operation, so a refusal never renders as a completed analysis."
+              },
+              "canBuild": {
+                "type": "boolean"
+              },
+              "canEnrich": {
+                "type": "boolean"
+              }
+            }
+          },
           "runHealth": {
             "type": "object",
             "required": ["targets"],

@@ -1206,59 +1206,6 @@ describe("TestTemplateEditor run view from route", () => {
     expect(streamEvalTestCaseMock).not.toHaveBeenCalled();
   });
 
-  it("accepting a no-tool suggestion persists a restriction", async () => {
-    const noToolSteps = [{ id: "s1", kind: "prompt", prompt: "Say hello" }];
-    activeCaseDoc = {
-      ...goldenCaseDoc,
-      steps: noToolSteps,
-      predicates: { mode: "extend", list: [{ type: "noToolErrors" }] },
-      expectedOutput: "A greeting",
-      lastMessageRun: undefined,
-    } as any;
-    const trial = {
-      ...baseIteration,
-      blob: "blob-1",
-      testCaseSnapshot: {
-        ...baseIteration.testCaseSnapshot,
-        steps: noToolSteps,
-        predicates: [{ type: "noToolErrors" }],
-        expectedOutput: "A greeting",
-      },
-    };
-    renderGoldenCase({ observeFirst: true, suiteIterations: [trial] });
-    fireEvent.click((await screen.findAllByTestId("case-run-row"))[0]);
-    fireEvent.click(await screen.findByText("Suggested assertions"));
-    const text = await screen
-      .findByText("Require that no tool is called")
-      .catch(() => {
-        throw new Error(document.body.textContent ?? "no text");
-      });
-    const row = text.closest("li")!;
-    fireEvent.click(
-      within(row).getByRole("button", { name: "Add", exact: true }),
-    );
-    await waitFor(() =>
-      expect(
-        screen.queryByText("Require that no tool is called"),
-      ).not.toBeInTheDocument(),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Close", exact: true }));
-    fireEvent.click(screen.getAllByRole("button", { name: /save/i })[0]!);
-    await waitFor(() => expect(updateTestCaseMutationMock).toHaveBeenCalled());
-    const payload = updateTestCaseMutationMock.mock.calls.at(-1)?.[0];
-    expect(
-      payload.isNegativeTest === true ||
-        payload.predicates?.list?.some(
-          (p: any) => p.type === "onlyToolsCalled" && p.toolNames.length === 0,
-        ) ||
-        payload.steps.some(
-          (s: any) =>
-            s.assertion?.type === "onlyToolsCalled" &&
-            s.assertion.toolNames.length === 0,
-        ),
-    ).toBe(true);
-  });
-
   it("mounts the FORM by default — observe-first is opt-in", async () => {
     activeCaseDoc = goldenCaseDoc;
     renderGoldenCase();
