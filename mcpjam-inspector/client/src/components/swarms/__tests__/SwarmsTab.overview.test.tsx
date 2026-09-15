@@ -1058,7 +1058,7 @@ describe("Overview — empty and loading states", () => {
 });
 
 describe("Swarm header chrome", () => {
-  const SUBTITLE =
+  const HEADLINE =
     "No recruiting, no scheduling, no setup. Agents find what breaks in every client.";
 
   it("keeps tabs inline and shows the headline on the empty state", async () => {
@@ -1071,14 +1071,14 @@ describe("Swarm header chrome", () => {
     expect(row?.contains(within(header).getByRole("button", { name: "Overview" }))).toBe(
       true,
     );
-    expect(screen.getByText(SUBTITLE)).toBeTruthy();
+    expect(screen.getByText(HEADLINE)).toBeTruthy();
   });
 
   it("keeps that chrome once the project has personas and runs", async () => {
     renderTab();
     await screen.findByTestId("swarm-overview-runs");
     expect(screen.queryByTestId("swarms-empty-hero")).toBeNull();
-    expect(screen.getByText(SUBTITLE)).toBeTruthy();
+    expect(screen.getByText(HEADLINE)).toBeTruthy();
     expect(
       screen.queryByText("The library of user personas you send into swarms."),
     ).toBeNull();
