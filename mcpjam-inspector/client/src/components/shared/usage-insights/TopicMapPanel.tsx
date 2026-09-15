@@ -1763,7 +1763,14 @@ export function TopicMapPanel({
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col">
-          <ScrollArea className="min-h-0 flex-1">
+          {/* Radix wraps the viewport's children in a `display: table` box,
+              which shrink-to-fits its content rather than taking the rail's
+              width. A cluster label is `truncate` — i.e. `nowrap` — so a long
+              one became that box's minimum width and pushed every card past
+              the 372px rail, where the viewport's `overflow-x: hidden` clipped
+              it with no scrollbar to reach the rest. Block layout takes the
+              rail's width, and the label truncates as it was meant to. */}
+          <ScrollArea className="min-h-0 flex-1 [&>[data-slot=scroll-area-viewport]>div]:block!">
             <div className="space-y-3 p-4">
               {communities.map((community) => {
                 const isActive = activeClusterIds.has(community.clusterId);
