@@ -320,6 +320,14 @@ function PersonaIterationsRow({
   disabled: boolean;
 }) {
   const id = useId();
+  // What the user is part-way through typing, before it is a count. Committing
+  // every keystroke through the clamp turned the "1" already in the field plus
+  // a typed "2" into 12, which landed straight on the maximum.
+  const [draft, setDraft] = useState<string | null>(null);
+  const commit = (value: number) => {
+    setDraft(null);
+    onChange(value);
+  };
   const conversations = goalCount * iterations;
   return (
     <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
@@ -334,7 +342,7 @@ function PersonaIterationsRow({
           className="size-7"
           aria-label={`Fewer iterations for ${personaName}`}
           disabled={disabled || iterations <= MIN_SWARM_ITERATIONS}
-          onClick={() => onChange(iterations - 1)}
+          onClick={() => commit(iterations - 1)}
         >
           <Minus className="size-3.5" />
         </Button>
@@ -344,10 +352,36 @@ function PersonaIterationsRow({
           min={MIN_SWARM_ITERATIONS}
           max={MAX_SWARM_ITERATIONS}
           step={1}
-          value={iterations}
+          value={draft ?? iterations}
           disabled={disabled}
           data-testid="new-swarm-persona-iterations"
-          onChange={(event) => onChange(Number(event.target.value))}
+          onFocus={(event) => event.target.select()}
+          onChange={(event) => {
+            const typed = event.target.value;
+            // A digit pressed next to the one already there reads as 12, not
+            // 2. The range ends below ten, so the digit just typed is the
+            // count the user meant and the one before it is the stale one.
+            const entered =
+              typed.length > 1 && Number(typed) > MAX_SWARM_ITERATIONS
+                ? typed.slice(-1)
+                : typed;
+            const count = Number(entered);
+            if (
+              entered !== "" &&
+              Number.isInteger(count) &&
+              count >= MIN_SWARM_ITERATIONS &&
+              count <= MAX_SWARM_ITERATIONS
+            ) {
+              commit(count);
+              return;
+            }
+            setDraft(entered);
+          }}
+          onBlur={() => {
+            if (draft === null) return;
+            // Number("") is 0, which the parent clamp lifts to the minimum.
+            commit(Number(draft));
+          }}
           className="h-7 w-14 text-center font-mono [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
         />
         <Button
@@ -357,7 +391,7 @@ function PersonaIterationsRow({
           className="size-7"
           aria-label={`More iterations for ${personaName}`}
           disabled={disabled || iterations >= MAX_SWARM_ITERATIONS}
-          onClick={() => onChange(iterations + 1)}
+          onClick={() => commit(iterations + 1)}
         >
           <Plus className="size-3.5" />
         </Button>
