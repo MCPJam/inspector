@@ -297,9 +297,14 @@ export function OverviewPanel({
     return list;
   }, [filteredSuites, suiteSearch, failuresOnly, activeBucket]);
 
+  // Tag choices must use the bucket before the selected tag narrows its suites.
+  const tagOptionBucket = useMemo(
+    () => buildRunTimeline(suites).find((bucket) => bucket.id === selectedBucketId) ?? null,
+    [suites, selectedBucketId],
+  );
   const availableTags = allTags.filter((tag) => tag === filterTag || suites.some((entry) =>
     entry.suite.tags?.includes(tag) &&
-    (!activeBucket || activeBucket.suiteIds.has(entry.suite._id)) &&
+    (!tagOptionBucket || tagOptionBucket.suiteIds.has(entry.suite._id)) &&
     (!suiteSearch || entry.suite.name.toLowerCase().includes(suiteSearch.toLowerCase())) &&
     (!failuresOnly || entry.latestRun?.result === "failed" || !entry.latestRun)));
 
