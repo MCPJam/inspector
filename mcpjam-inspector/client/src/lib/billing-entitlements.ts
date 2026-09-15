@@ -1,5 +1,5 @@
 import { ConvexError } from "convex/values";
-import { convexErrMessage } from "@/lib/convex-error";
+import { convexErrMessage, describeConvexFailure } from "@/lib/convex-error";
 import type {
   BillingFeatureName,
   BillingInterval,
@@ -530,11 +530,26 @@ export function getBillingErrorMessage(
   // A payload carrying only a message is not a billing rejection at all —
   // `extractBillingErrorPayload` wraps every thrown `Error` that way. Shape it
   // like any other Convex failure so the redacted "[Request ID: …] Server
-  // Error" prefix never reaches the toast. Shape the PARSED message rather than
-  // re-reading the error: for a JSON-encoded `Error.message`, `convexErrMessage`
-  // hands back the raw JSON blob instead of the sentence inside it.
+  // Error" prefix never reaches the toast.
   const parsed =
     typeof payload.message === "string" ? payload.message.trim() : "";
   if (!parsed) return convexErrMessage(error, fallback);
-  return parsed.replace(/^\[.*?\]\s*/, "").slice(0, 400) || fallback;
+  // Only a JSON-ENCODED message needs shaping here: `convexErrMessage` reads
+  // the error itself and would hand back the raw JSON blob instead of the
+  // sentence inside it. Every other payload IS the error's own text, so defer
+  // to the shared path — it is the one that knows about `ConvexError` payloads
+  // and about the support reference, neither of which this file should
+  // reimplement.
+  const raw = typeof error === "string" ? error : rawErrorMessage(error);
+  if (raw === null || raw.trim() === parsed) {
+    return convexErrMessage(error, fallback);
+  }
+  return describeConvexFailure(new Error(parsed), fallback).message;
+}
+
+/** The text a thrown `Error` carries, for telling a decoded payload from a raw one. */
+function rawErrorMessage(error: unknown): string | null {
+  return error instanceof Error && typeof error.message === "string"
+    ? error.message
+    : null;
 }

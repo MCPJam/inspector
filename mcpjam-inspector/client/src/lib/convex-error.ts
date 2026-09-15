@@ -1,26 +1,203 @@
 /**
- * Extract a user-facing message from a Convex mutation/query rejection.
+ * One shaping path for every Convex function rejection the UI shows.
  *
- * Convex `ConvexError` payloads land on `err.data` (a string, or a record
- * with `message`) — prefer that over `err.message`, which for an application
- * error is the redacted "Server Error"/Request-ID string. Extracted from
- * `SandboxImagesDrawer` so every Convex-backed management surface shares one
- * error-shaping path.
+ * Convex stamps `[Request ID: <16 hex>]` on EVERY function exception, in dev
+ * and in production. Production redacts everything after it to `Server Error`;
+ * a dev deployment appends `Uncaught <Name>: <message>` plus the server stack.
+ * That request id is searchable in the Convex dashboard's logs page and rides
+ * into Sentry as `request_id` on the Convex integration's events, so it is
+ * already a join key that reaches the real stack from a screenshot. We keep it
+ * and drop everything around it, rather than minting a second id of our own.
+ *
+ * So a failure toast reads as a sentence plus a reference line, never as a
+ * stack trace, and support can go screenshot -> Sentry -> Convex logs.
  */
-export function convexErrMessage(err: unknown, fallback: string): string {
-  if (err && typeof err === "object" && "data" in err) {
-    const data = (err as { data: unknown }).data;
-    if (typeof data === "string" && data.trim()) return data.slice(0, 400);
-    if (data && typeof data === "object" && "message" in data) {
-      const msg = (data as { message: unknown }).message;
-      if (typeof msg === "string" && msg.trim()) return msg.slice(0, 400);
+
+/** A support reference as it is spliced into a message: `(ref <id>)`. */
+const SUPPORT_REFERENCE = /\(ref ([0-9a-f]+)\)\s*$/;
+
+/**
+ * `[Request ID: …]`, optionally behind the browser client's own
+ * `[CONVEX M(<fn>)]` prefix. The remainder is whatever the deployment chose to
+ * disclose, which may be several lines of server stack.
+ */
+const CONVEX_REJECTION =
+  /^(?:\[CONVEX [A-Z]+\([^)]*\)\]\s*)?\[Request ID: ([0-9a-f]+)\]\s*([\s\S]*)$/;
+
+/** The request id alone, wherever it sits in a message. */
+const REQUEST_ID = /\[Request ID: ([0-9a-f]+)\]/;
+
+/** Any remaining `[CONVEX …]`-style prefix on a message that carries no id. */
+const LEADING_BRACKET_PREFIX = /^\[[^\]]*\]\s*/;
+
+/** What production substitutes for every plain throw. */
+const REDACTED_BODY = "Server Error";
+
+/** What the user reads when the deployment disclosed nothing at all. */
+const REDACTED_MESSAGE = "Something went wrong";
+
+/** Toasts are one or two lines; a message longer than this is a stack in disguise. */
+const MAX_MESSAGE_LENGTH = 400;
+
+export type ConvexFailure = {
+  /** A human sentence. Never a stack, never longer than 400 characters. */
+  message: string;
+  /** The Convex request id, when the rejection carried one. */
+  requestId: string | null;
+  /** True when production masked the real failure as `Server Error`. */
+  redacted: boolean;
+};
+
+/** The text a thrown value carries, if it carries any. */
+function messageOf(error: unknown): string | null {
+  if (typeof error === "string") return error;
+  // Every read below can run a getter on an object we did not construct, and
+  // this whole path exists to explain a failure that already happened.
+  try {
+    if (error instanceof Error) {
+      return typeof error.message === "string" ? error.message : null;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+/**
+ * The first line of `text`, with the server stack removed.
+ *
+ * Convex's dev disclosure is `<message>\n    at <frame>\n    at <frame>…`, and
+ * the browser client appends its own `Called by client` line. Neither is
+ * something a user can act on, and a toast that shows them reads as a crash.
+ */
+function firstMeaningfulLine(text: string): string {
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed === "") continue;
+    if (/^at\s/.test(trimmed)) break;
+    if (trimmed === "Called by client") break;
+    return trimmed;
+  }
+  return "";
+}
+
+/**
+ * The application payload a `ConvexError` carries, if there is one.
+ *
+ * Convex only delivers a message intact to a production browser when the
+ * backend threw a `ConvexError`; its payload lands on `data` (a string, or a
+ * record with `message`). Those are sentences a human wrote for this user, so
+ * they are shown unchanged.
+ */
+function applicationPayload(error: unknown): string | null {
+  if (!error || typeof error !== "object" || !("data" in error)) return null;
+  const data = (error as { data: unknown }).data;
+  if (typeof data === "string" && data.trim())
+    return data.slice(0, MAX_MESSAGE_LENGTH);
+  if (data && typeof data === "object" && "message" in data) {
+    const message = (data as { message: unknown }).message;
+    if (typeof message === "string" && message.trim()) {
+      return message.slice(0, MAX_MESSAGE_LENGTH);
     }
   }
-  if (err instanceof Error && err.message) {
-    // Fallback: strip the noisy server prefix from a plain thrown message.
-    return err.message.replace(/^\[.*?\]\s*/, "").slice(0, 400) || fallback;
+  return null;
+}
+
+/**
+ * The Convex request id on a rejection, for reporting.
+ *
+ * Present on a `ConvexError` too: the payload is what the user reads, but the
+ * id still identifies the invocation in the dashboard's logs.
+ */
+export function getConvexRequestId(error: unknown): string | null {
+  const message = messageOf(error);
+  if (!message) return null;
+  return REQUEST_ID.exec(message)?.[1] ?? null;
+}
+
+/** How a request id is spliced into a sentence the user can screenshot. */
+export function formatSupportReference(requestId: string): string {
+  return `(ref ${requestId})`;
+}
+
+/**
+ * Peel a `(ref …)` suffix back off a message.
+ *
+ * The toast layer renders the reference on its own line rather than trailing
+ * the sentence, so it has to undo the splice `convexErrMessage` made. Keeping
+ * both halves in one module is what stops the two spellings from drifting.
+ */
+export function splitSupportReference(text: string): {
+  text: string;
+  requestId: string | null;
+} {
+  const match = SUPPORT_REFERENCE.exec(text);
+  if (!match) return { text, requestId: null };
+  return { text: text.slice(0, match.index).trim(), requestId: match[1] };
+}
+
+/**
+ * Turn any Convex rejection into something a user can read and quote back.
+ *
+ * The three shapes that matter:
+ * - a `ConvexError` payload, shown unchanged (the backend worded it);
+ * - a production plain throw, which discloses nothing beyond the request id;
+ * - a dev plain throw, which discloses the real message AND the server stack.
+ */
+export function describeConvexFailure(
+  error: unknown,
+  fallback: string,
+): ConvexFailure {
+  const requestId = getConvexRequestId(error);
+
+  const payload = applicationPayload(error);
+  if (payload) return { message: payload, requestId, redacted: false };
+
+  const raw = messageOf(error);
+  if (!raw || !raw.trim()) {
+    return { message: fallback, requestId, redacted: false };
   }
-  return fallback;
+
+  const rejection = CONVEX_REJECTION.exec(raw);
+  if (rejection) {
+    const body = rejection[2];
+    const disclosed = firstMeaningfulLine(
+      // Production says only `Server Error`; a dev deployment says it too, on
+      // its own line, before the message that actually happened.
+      body.startsWith(REDACTED_BODY) ? body.slice(REDACTED_BODY.length) : body,
+    );
+    if (!disclosed) {
+      return { message: REDACTED_MESSAGE, requestId, redacted: true };
+    }
+    return {
+      message: disclosed.slice(0, MAX_MESSAGE_LENGTH),
+      requestId,
+      redacted: false,
+    };
+  }
+
+  // Not a Convex rejection, or one whose prefix we do not recognise: still
+  // drop any bracketed prefix and any stack, and show the first line.
+  const message = firstMeaningfulLine(
+    raw.replace(LEADING_BRACKET_PREFIX, ""),
+  ).slice(0, MAX_MESSAGE_LENGTH);
+  return { message: message || fallback, requestId, redacted: false };
+}
+
+/**
+ * Extract a user-facing message from a Convex mutation/query rejection.
+ *
+ * The shaped sentence, with `(ref <id>)` appended when the failure was an
+ * incident rather than a refusal. `toast.error` lifts that suffix onto its own
+ * `Reference <id>` line; a caller that renders the string inline (an inline
+ * form error, say) keeps it where it is. A `ConvexError` payload never gets
+ * one: it is an expected outcome the backend worded on purpose, and a
+ * reference on it reads as a crash.
+ */
+export function convexErrMessage(error: unknown, fallback: string): string {
+  const { message, requestId } = describeConvexFailure(error, fallback);
+  if (!requestId || applicationPayload(error)) return message;
+  return `${message} ${formatSupportReference(requestId)}`;
 }
 
 /**

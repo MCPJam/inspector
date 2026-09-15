@@ -5,6 +5,7 @@ import { copyToClipboard } from "@/lib/clipboard";
 import { track } from "@/lib/analytics";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
 import { isProtocolVersionPinFailure } from "@/lib/protocol-version-pin";
+import { splitSupportReference } from "@/lib/convex-error";
 
 /**
  * App-wide toast.
@@ -106,18 +107,52 @@ function protocolPinFallbackAction(
   };
 }
 
-const error: typeof sonnerToast.error = (message, data) =>
-  sonnerToast.error(
-    typeof message === "string" ? (
+/**
+ * Lift a `(ref …)` support reference out of the sentence and onto its own line.
+ *
+ * `convexErrMessage` splices the Convex request id into the message, because
+ * most callers hand that string straight to a toast and a second argument
+ * would be dropped on the way. Here — the one place every error toast passes
+ * through — it becomes a `Reference <id>` description instead: a line the user
+ * can screenshot, and one the existing hover copy button already picks up,
+ * since `copyText` joins title and description. No new UI, no per-call-site
+ * change, and no toast that reads as a stack trace.
+ *
+ * Like `protocolPinFallbackAction`, this never overrides what a caller passed:
+ * a supplied description keeps its place and the reference follows it.
+ */
+function withSupportReference(
+  message: string,
+  data: Parameters<typeof sonnerToast.error>[1],
+): { title: string; description: string | undefined } {
+  const { text, requestId } = splitSupportReference(message);
+  const callerDescription =
+    typeof data?.description === "string" && data.description.trim() !== ""
+      ? data.description
+      : undefined;
+  if (!requestId) return { title: message, description: callerDescription };
+  const reference = `Reference ${requestId}`;
+  return {
+    title: text || message,
+    description: callerDescription
+      ? `${callerDescription}\n${reference}`
+      : reference,
+  };
+}
+
+const error: typeof sonnerToast.error = (message, data) => {
+  const shaped =
+    typeof message === "string" ? withSupportReference(message, data) : null;
+  return sonnerToast.error(
+    shaped ? (
       <CopyableErrorMessage
-        text={message}
+        text={shaped.title}
         // A toast that splits its failure across title and description has to
         // copy both, or the button hands over a server name and nothing else.
         // Blank descriptions are skipped: the delimiter would be all it added.
         copyText={
-          typeof data?.description === "string" &&
-          data.description.trim() !== ""
-            ? `${message}: ${data.description}`
+          shaped.description
+            ? `${shaped.title}: ${shaped.description}`
             : undefined
         }
       />
@@ -127,9 +162,11 @@ const error: typeof sonnerToast.error = (message, data) =>
     {
       duration: ERROR_TOAST_DURATION_MS,
       ...data,
+      ...(shaped?.description ? { description: shaped.description } : {}),
       ...protocolPinFallbackAction(message, data),
     },
   );
+};
 
 export const toast: typeof sonnerToast = Object.assign(
   (...args: Parameters<typeof sonnerToast>) => sonnerToast(...args),

@@ -113,10 +113,12 @@ describe("getBillingErrorMessage", () => {
     );
   });
 
-  it("strips the request-id prefix off a plain Error", () => {
+  it("strips the request-id prefix off a plain Error, keeping the reference", () => {
+    // The prefix is noise; the id inside it is the one thing support can look
+    // the failure up by, so it comes back as a reference rather than a prefix.
     expect(
       getBillingErrorMessage(new Error("[Request ID: abc] boom"), "fallback"),
-    ).toBe("boom");
+    ).toBe("boom (ref abc)");
   });
 
   it("falls back when the error carries nothing readable", () => {

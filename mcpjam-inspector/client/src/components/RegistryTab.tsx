@@ -67,6 +67,8 @@ import {
 import { OrgRegistryRemoveDialog } from "./registry/OrgRegistryRemoveDialog";
 import { ErrorBoundary } from "./ui/error-boundary";
 import { toast } from "@/lib/toast";
+import { convexErrMessage } from "@/lib/convex-error";
+import { reportCaught } from "@/lib/error-reporting";
 import type { ServerFormData } from "@/shared/types.js";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import {
@@ -347,7 +349,17 @@ export function RegistryTab({
             break;
           default:
             setEndpointPrompt(null);
-            toast.error(error.message);
+            // `unknown` is the code for a throw nothing classified, so its
+            // message is the raw server string: in production the redacted
+            // "[Request ID: …] Server Error", in dev that plus a stack. Shape
+            // it into a sentence and a support reference, and report it — the
+            // other codes carry a sentence the backend wrote for this user.
+            if (error.code === "unknown") {
+              reportCaught(rawError, { source: "registry_directory_connect" });
+              toast.error(convexErrMessage(rawError, error.message));
+            } else {
+              toast.error(error.message);
+            }
             break;
         }
         return { ok: false as const, error };
