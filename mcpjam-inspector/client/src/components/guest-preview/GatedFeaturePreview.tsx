@@ -237,16 +237,38 @@ function SampleFlow({
 }: {
   sample: Extract<GatedFeatureSample, { kind: "flow" }>;
 }) {
+  // One hue per column, and they have to be TELLABLE APART or the gaps between
+  // them read as one block. Two attempts got this wrong on the way here, both
+  // worth recording because the failure is invisible in the source:
+  //
+  //  1. `chart-1` then `primary` — both salmon in the shipped theme, so
+  //     BEHAVIOR and OUTCOME merged into one pink field.
+  //  2. `chart-3`, picked from `design-system/src/index.css` where it is a
+  //     strong blue. The ACTIVE theme overrides it to `oklch(0.8816 0.0276
+  //     93.128)`, a near-white cream, and the column disappeared against the
+  //     card.
+  //
+  // So: `chart-N` is a per-theme palette slot and says nothing about the hue
+  // you will get. The semantic tokens do — `success`, `info` and `warning` are
+  // green, blue and amber in every preset because that is what they mean.
+  // Nothing here is claiming a column is a success or a warning; they are the
+  // tokens with a guaranteed hue, which is the property this needs.
   const COLUMN_TONES = [
     "fill-success/60",
     "fill-chart-1/60",
-    "fill-primary/60",
+    "fill-info/60",
     "fill-warning/60",
   ];
+  // Geometry tuned against the rendered card, not in the abstract. The SVG is
+  // stretched to the card's width (`preserveAspectRatio="none"`), so a viewBox
+  // unit is about 5x wider than it is tall: at the first draft's 100x56 in an
+  // `h-20` box the bezier S-curves flattened into straight bars and only the
+  // first gap read as a split. Taller box, taller viewBox relative to width,
+  // and a narrower bar so the ribbons get the space instead.
   const width = 100;
-  const height = 56;
-  const barW = 4;
-  const nodeGap = 3;
+  const height = 74;
+  const barW = 2.5;
+  const nodeGap = 3.5;
   const colGap = (width - barW) / (sample.stages.length - 1);
 
   // Each column is stacked independently: its gaps come out of the height
@@ -311,18 +333,38 @@ function SampleFlow({
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex justify-between text-[8px] uppercase tracking-wide text-muted-foreground">
-        {sample.stages.map((stage) => (
-          <span key={stage.label}>{stage.label}</span>
+      {/* Each label sits over its own bar. `justify-between` put BEHAVIOR and
+          OUTCOME at even thirds while their bars are at 34% and 66%, which
+          reads as a misalignment rather than as a label row. */}
+      <div className="relative h-3 text-[8px] uppercase tracking-wide text-muted-foreground">
+        {sample.stages.map((stage, i) => (
+          <span
+            key={stage.label}
+            className={cn(
+              "absolute top-0 whitespace-nowrap",
+              i === 0 && "left-0",
+              i === sample.stages.length - 1 && "right-0",
+            )}
+            style={
+              i === 0 || i === sample.stages.length - 1
+                ? undefined
+                : {
+                    left: `${i * ((100 - barW) / (sample.stages.length - 1))}%`,
+                    transform: "translateX(-50%)",
+                  }
+            }
+          >
+            {stage.label}
+          </span>
         ))}
       </div>
       <svg
         viewBox={`0 0 ${width} ${height}`}
-        className="h-20 w-full"
+        className="h-32 w-full"
         preserveAspectRatio="none"
       >
         {ribbons.map((r) => (
-          <path key={r.key} d={r.d} className={cn(r.tone, "opacity-30")} />
+          <path key={r.key} d={r.d} className={cn(r.tone, "opacity-45")} />
         ))}
         {columns.map((col, i) =>
           col.map((seg, j) => (
