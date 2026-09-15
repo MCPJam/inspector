@@ -656,10 +656,23 @@ export function ShareUsageThreadDetail({
       return (
         <div className="flex h-full flex-col">
           <SwarmJudgeSection threadId={threadId} goalScore={thread.goalScore} />
-          <div className="flex flex-1 items-center justify-center">
+          <div className="flex flex-1 flex-col items-center justify-center gap-1.5 px-6 text-center">
             <p className="text-sm text-muted-foreground">
               No messages in this session
             </p>
+            {/* This branch has no header, so the disabled promote button and
+                its hover reason never render here — and an empty transcript is
+                USUALLY a run that died before it said anything, which is the
+                question the reader has. Say it in the empty state instead of
+                leaving them to guess (BB-247, CodeRabbit on PR 5127). */}
+            {promoteBlockedReason ? (
+              <p
+                className="max-w-sm text-xs text-muted-foreground"
+                data-testid="share-usage-empty-promote-blocked"
+              >
+                {promoteBlockedReason}
+              </p>
+            ) : null}
           </div>
         </div>
       );

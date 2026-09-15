@@ -560,6 +560,25 @@ describe("ShareUsageThreadDetail — promote affordance", () => {
       );
     });
 
+    /**
+     * A failed attempt often persists no transcript at all, and that shell
+     * renders before the header — so neither the disabled button nor its
+     * hover reason is reachable there. The reason has to appear in the empty
+     * state itself or the reader is left guessing.
+     */
+    it("explains the blocked state when there is no transcript either", async () => {
+      mockThreadState.runAttemptStatus = "failed";
+      mockAdaptTraceToUiMessages.mockReturnValue({
+        messages: [],
+        toolRenderOverrides: {},
+      });
+      render(<ShareUsageThreadDetail threadId="thread-1" promote={PROMOTE} />);
+
+      expect(
+        await screen.findByTestId("share-usage-empty-promote-blocked"),
+      ).toHaveTextContent(/did not finish/i);
+    });
+
     it("blocks when the backend reports no status at all", async () => {
       // Older backend, or an attempt row that claims no session. Absence is
       // not permission.
