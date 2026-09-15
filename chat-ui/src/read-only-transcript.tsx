@@ -43,6 +43,11 @@ export interface TranscriptProps {
   reasoningDisplayMode?: ReasoningDisplayMode;
   widgetPolicy?: WidgetPolicy;
   className?: string;
+  /**
+   * See `MessageViewProps.showAssistantAvatar`. Defaults to whether
+   * `renderAvatar` was supplied; deliberately NOT defaulted here, so the
+   * resolution lives in one place.
+   */
   showAssistantAvatar?: boolean;
   renderAvatar?: (model: ChatUiModel | undefined) => ReactNode;
   /** Host override for the tool block (inspector interactive `ToolPart`). */
@@ -86,7 +91,7 @@ export function Transcript({
   reasoningDisplayMode = "inline",
   widgetPolicy = "placeholder",
   className,
-  showAssistantAvatar = true,
+  showAssistantAvatar,
   renderAvatar,
   renderTool,
   renderWidget,
@@ -145,7 +150,7 @@ export type ReadOnlyTranscriptProps = Omit<
  * a second copy of a component that already exists one layer up.
  *
  * It is NOT inert. Parts own local disclosure state — reasoning collapses
- * (`ReasoningPart`) and a large tool payload folds (`FoldedBlock`) — so the
+ * (`ReasoningPart`) and the tool card collapses (`ToolCallPart`) — so the
  * subtree contains focusable controls whose only effect is on what this
  * component shows. A transcript that inlined every hundred-line payload was
  * the "bunch of JSON" BB-198 was filed about.

@@ -32,7 +32,14 @@ export interface MessageViewProps {
   /** Host override for displaying a tool's JSON payloads. */
   renderJson?: JsonRenderer;
   renderWidget?: (input: WidgetRenderInput) => ReactNode;
-  /** Show a generic assistant avatar to the left of assistant messages. */
+  /**
+   * Show an avatar to the left of assistant messages. Defaults to whether
+   * `renderAvatar` was supplied — so a host that passes one gets it, and a
+   * host that passes neither gets no gutter (BB-239: the generic
+   * `MessageCircle` this used to default to identified nothing, and the
+   * Playground renderer has never drawn one). Pass `true` without
+   * `renderAvatar` for the built-in placeholder.
+   */
   showAssistantAvatar?: boolean;
   /** Host override for the assistant avatar (e.g. provider logos). */
   renderAvatar?: (model: ChatUiModel | undefined) => ReactNode;
@@ -81,7 +88,7 @@ function MessageViewImpl({
   renderTool,
   renderWidget,
   renderJson,
-  showAssistantAvatar = true,
+  showAssistantAvatar,
   renderAvatar,
   renderTurnFooter,
   turnIndex = 0,
@@ -134,6 +141,11 @@ function MessageViewImpl({
 
   const steps = groupAssistantPartsIntoSteps(message.parts ?? []);
 
+  // A host that supplies `renderAvatar` and nothing else means to show it.
+  // Requiring both props would make that a silent no-op; an explicit `false`
+  // still wins, so a host can pass a renderer and suppress it per surface.
+  const withAvatar = showAssistantAvatar ?? Boolean(renderAvatar);
+
   const avatar = renderAvatar ? (
     renderAvatar(model)
   ) : (
@@ -148,12 +160,12 @@ function MessageViewImpl({
   return (
     <article
       className={
-        showAssistantAvatar
+        withAvatar
           ? "mcpjam-chat-message mcpjam-chat-message-assistant group/assistant-message flex w-full min-w-0 gap-4"
           : "mcpjam-chat-message mcpjam-chat-message-assistant group/assistant-message w-full min-w-0"
       }
     >
-      {showAssistantAvatar ? avatar : null}
+      {withAvatar ? avatar : null}
       <div className="min-w-0 flex-1">
         <div className="space-y-6 text-sm leading-6">
           {steps.map((stepParts, sIdx) => (
