@@ -171,6 +171,7 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   // noise problem this field exists to remove. Callers that know the failure
   // happened on an internal boundary escalate it themselves.
   "internal/unknown": "ambiguous",
+  "provider/empty_response": "ambiguous",
 };
 
 function entry(
@@ -838,6 +839,15 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     ],
     "server-rate-limited",
     "warning",
+  ),
+
+  "provider/empty_response": entry(
+    "provider/empty_response",
+    "Model returned no response",
+    "The model returned no response, so the turn could not complete.",
+    ["The model request ended without usable content."],
+    ["Rerun the affected cases. If this recurs, report it with the run details."],
+    "model-empty-response",
   ),
 
   // --- Internal / unknown ---

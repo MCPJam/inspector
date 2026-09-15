@@ -45,7 +45,7 @@ import {
   type RunResultsMatrixData,
 } from "./run-results-matrix-model";
 import { IterationDetails } from "../evals/iteration-details";
-import { TrialScorecard } from "./case-scorecard/trial-scorecard";
+import { IterationReportScorecard } from "./case-scorecard/iteration-report-subscriber";
 import { authoredForTrial } from "./case-scorecard/trial-authored";
 
 type StatusFilter = "failed" | "passed" | "pending" | "cancelled";
@@ -927,7 +927,7 @@ function IterationDrawer({
           scorecard={{
             render: (context) => (
               <>
-                <TrialScorecard
+                <IterationReportScorecard
                   authored={authored}
                   iteration={iteration}
                   steps={authored.steps}

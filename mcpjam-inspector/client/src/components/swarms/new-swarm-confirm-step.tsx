@@ -296,6 +296,19 @@ function CompactPersonaCard({
 }
 
 /**
+ * The character just typed, found by comparing the field against what it
+ * showed. `selectionStart` would say it directly, but reading it on a number
+ * input throws, so the caret is inferred from where the two texts diverge.
+ * Null when the text did not grow by exactly one character.
+ */
+function insertedCharacter(shown: string, typed: string): string | null {
+  if (typed.length !== shown.length + 1) return null;
+  let index = 0;
+  while (index < shown.length && shown[index] === typed[index]) index++;
+  return typed[index];
+}
+
+/**
  * Iterations for one persona, and what they cost.
  *
  * Sits on the collapsed card next to the persona it sizes, the way Remove
@@ -320,6 +333,14 @@ function PersonaIterationsRow({
   disabled: boolean;
 }) {
   const id = useId();
+  // What the user is part-way through typing, before it is a count. Committing
+  // every keystroke through the clamp turned the "1" already in the field plus
+  // a typed "2" into 12, which landed straight on the maximum.
+  const [draft, setDraft] = useState<string | null>(null);
+  const commit = (value: number) => {
+    setDraft(null);
+    onChange(value);
+  };
   const conversations = goalCount * iterations;
   return (
     <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
@@ -334,7 +355,7 @@ function PersonaIterationsRow({
           className="size-7"
           aria-label={`Fewer iterations for ${personaName}`}
           disabled={disabled || iterations <= MIN_SWARM_ITERATIONS}
-          onClick={() => onChange(iterations - 1)}
+          onClick={() => commit(iterations - 1)}
         >
           <Minus className="size-3.5" />
         </Button>
@@ -344,10 +365,39 @@ function PersonaIterationsRow({
           min={MIN_SWARM_ITERATIONS}
           max={MAX_SWARM_ITERATIONS}
           step={1}
-          value={iterations}
+          value={draft ?? iterations}
           disabled={disabled}
           data-testid="new-swarm-persona-iterations"
-          onChange={(event) => onChange(Number(event.target.value))}
+          onFocus={(event) => event.target.select()}
+          onChange={(event) => {
+            const typed = event.target.value;
+            const shown = String(draft ?? iterations);
+            const grew = typed.length > shown.length;
+            // A digit pressed beside the one already there reads as 12, not 2.
+            // The range ends below ten, so a digit added to a field that
+            // already holds one is the count meant and the rest is stale.
+            const entered = grew ? insertedCharacter(shown, typed) : typed;
+            const count = entered === null ? Number.NaN : Number(entered);
+            if (
+              entered !== null &&
+              entered !== "" &&
+              Number.isInteger(count) &&
+              count >= MIN_SWARM_ITERATIONS &&
+              count <= MAX_SWARM_ITERATIONS
+            ) {
+              commit(count);
+              return;
+            }
+            // Only a shrinking field holds text that is not a count: an empty
+            // box on the way to one. Anything else is a keystroke the control
+            // cannot take, and showing it would display a forbidden value.
+            setDraft(typed.length < shown.length ? typed : shown);
+          }}
+          onBlur={() => {
+            if (draft === null) return;
+            // Number("") is 0, which the parent clamp lifts to the minimum.
+            commit(Number(draft));
+          }}
           className="h-7 w-14 text-center font-mono [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
         />
         <Button
@@ -357,7 +407,7 @@ function PersonaIterationsRow({
           className="size-7"
           aria-label={`More iterations for ${personaName}`}
           disabled={disabled || iterations >= MAX_SWARM_ITERATIONS}
-          onClick={() => onChange(iterations + 1)}
+          onClick={() => commit(iterations + 1)}
         >
           <Plus className="size-3.5" />
         </Button>
