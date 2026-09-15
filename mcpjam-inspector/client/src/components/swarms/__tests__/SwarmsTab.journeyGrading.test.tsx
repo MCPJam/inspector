@@ -34,6 +34,7 @@ const persona = {
   notes: "",
 };
 
+let viewerId = "creator";
 let journeyRubric: Array<{ id: string; predicate: Predicate }> | null = [
   { id: "crit-existing", predicate: EXISTING },
 ];
@@ -46,12 +47,19 @@ vi.mock("convex/react", () => ({
   useQuery: (name: string, args: unknown) => {
     if (args === "skip") return undefined;
     switch (name) {
+      case "users:getCurrentUser":
+        return { _id: viewerId };
+      case "projects:getMyProjects":
+        return [{ _id: "proj-1", organizationId: "org-1" }];
+      case "billing:getOrganizationBillingStatus":
+        return { effectivePlan: "free" };
       case "personas:listPersonas":
         return [persona];
       case "journeys:listJourneysByPersona":
         return [
           {
             _id: "journey-1",
+            createdByUserId: "creator",
             personaRefId: "persona-1",
             goal: "Do the thing",
             hostIds: ["host-1"],
@@ -128,6 +136,7 @@ import { openPersonasTab } from "./swarms-tab-test-helpers";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  viewerId = "creator";
   journeyRubric = [{ id: "crit-existing", predicate: EXISTING }];
   updateJourneyMutation.mockResolvedValue(undefined);
 });
@@ -140,13 +149,24 @@ function openGradingEditor() {
 }
 
 describe("SwarmsTab — journey grading editor", () => {
+  it("offers Team instead of editing another creator's settings on Free", () => {
+    viewerId = "collaborator";
+    openGradingEditor();
+    expect(screen.getByRole("alert")).toHaveTextContent("requires Basic RBAC");
+    expect(
+      screen.getByRole("link", { name: "View Team plans" }),
+    ).toHaveAttribute("href", "/organizations/org-1/plans");
+    expect(screen.queryByTestId("seeded-criteria")).not.toBeInTheDocument();
+    expect(updateJourneyMutation).not.toHaveBeenCalled();
+  });
+
   it("labels the trigger with the journey's current check count", () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
     openPersonasTab();
     fireEvent.click(screen.getAllByText("Persona One")[0]);
 
     expect(screen.getByTestId("journey-grading-trigger")).toHaveTextContent(
-      "1 check"
+      "1 check",
     );
   });
 
@@ -154,7 +174,7 @@ describe("SwarmsTab — journey grading editor", () => {
     openGradingEditor();
 
     expect(await screen.findByTestId("seeded-criteria")).toHaveTextContent(
-      "crit-existing"
+      "crit-existing",
     );
   });
 
@@ -180,7 +200,7 @@ describe("SwarmsTab — journey grading editor", () => {
     fireEvent.click(screen.getAllByText("Persona One")[0]);
 
     expect(screen.getByTestId("journey-grading-trigger")).toHaveTextContent(
-      "Grading"
+      "Grading",
     );
   });
 });

@@ -50,6 +50,7 @@ export interface ScenarioServerSettings {
 }
 
 export interface ScenarioSettings {
+  owner?: { userId: string; name: string; imageUrl: string };
   scenarioId: string;
   projectId: string;
   name: string;

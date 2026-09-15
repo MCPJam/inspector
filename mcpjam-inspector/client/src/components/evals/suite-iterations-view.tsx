@@ -1,3 +1,4 @@
+import { SharedSettingsGate } from "@/components/billing/SharedSettingsGate";
 import { AssertionBacktestPanel } from "./assertion-backtest-panel";
 import { JudgeBacktestPanel } from "./judge-backtest-panel";
 import { ImportDatasetDialog } from "../evaluate/import-dataset-dialog";
@@ -1717,7 +1718,7 @@ export function SuiteIterationsView({
         !selectedCompareBaseRunId &&
         !selectedRunTestCaseId));
 
-  return (
+  const content = (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       {projectId && !editingDisabled && (
         <ImportDatasetDialog
@@ -2826,5 +2827,16 @@ export function SuiteIterationsView({
         </ShareDialog>
       ) : null}
     </div>
+  );
+  return isEditMode ? (
+    <SharedSettingsGate
+      projectId={projectId}
+      creatorId={suite.createdBy}
+      resource="eval suite"
+    >
+      {content}
+    </SharedSettingsGate>
+  ) : (
+    content
   );
 }
