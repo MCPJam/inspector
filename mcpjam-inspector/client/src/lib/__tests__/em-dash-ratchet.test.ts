@@ -116,12 +116,13 @@ const LEGACY_EM_DASH_COPY = new Map<string, number>([
   ["components/evals/sdk-eval-quickstart.tsx", 7],
   ["components/evals/suite-automation-row.tsx", 1],
   ["components/evals/suite-environment-composer-bar.tsx", 2],
-  ["components/evals/suite-grading-model.ts", 6],
+  ["components/evals/suite-grading-model.ts", 2],
   ["components/evals/suite-group-compare.tsx", 1],
   ["components/evals/suite-header.tsx", 1],
   ["components/evals/suite-hero-stats.tsx", 1],
   ["components/evals/suite-iterations-view.tsx", 3],
   ["components/evals/suite-runs-chart-grid.tsx", 1],
+  ["components/evals/suite-scorer-table.tsx", 1],
   ["components/evals/suite-stage-facts-panel.tsx", 1],
   ["components/evals/suite-stage-facts.ts", 7],
   ["components/evals/test-cases-overview.tsx", 1],
@@ -358,8 +359,10 @@ function isEmptyValuePlaceholder(node: ts.Node, text: string): boolean {
   if (text.trim() !== EM_DASH) return false;
   if (node.kind === ts.SyntaxKind.JsxText) {
     const siblings = (node.parent as ts.JsxElement | ts.JsxFragment).children;
+    // A JSX comment parses as an expression with nothing in it, and interpolates
+    // no value, so it leaves a lone dash a placeholder.
     return !siblings.some(
-      (child) => child.kind === ts.SyntaxKind.JsxExpression,
+      (child) => ts.isJsxExpression(child) && child.expression !== undefined,
     );
   }
   // A template chunk always sits next to an interpolation.
