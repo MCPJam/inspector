@@ -25,7 +25,6 @@
  */
 
 import { useMemo, useState } from "react";
-import { ChevronRight } from "lucide-react";
 import { type UserValueStage } from "@mcpjam/sdk/contract";
 import type { Predicate } from "@mcpjam/sdk/predicates";
 import type { EvalMatchOptions } from "@/shared/eval-matching";
@@ -178,7 +177,7 @@ export function SuiteScorerTable({
       capabilities?.judge,
     ],
   );
-  const [expanded, setExpanded] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [matchEditorOpen, setMatchEditorOpen] = useState(false);
   const checkPolicy = capabilities?.scorers?.checkPolicy === true;
   const authorableKinds = authorablePredicateKinds(
@@ -220,7 +219,7 @@ export function SuiteScorerTable({
     } else {
       scope.onDraftChange(removeCaseRule(scope.draft, rule.index));
     }
-    setExpanded(null);
+    setExpanded(new Set());
   };
   const addPredicate = (predicate: Predicate) => {
     if (scope.kind === "suite") {
@@ -315,7 +314,7 @@ export function SuiteScorerTable({
     }
   };
 
-  // The section title, hint, and stage questions are suite settings
+  // The section title and hint are suite settings
   // furniture. A case page has its own title and reads as a plain
   // checklist: stage name on the left, boxes on the right.
   const suiteChrome = scope.kind === "suite";
@@ -328,7 +327,7 @@ export function SuiteScorerTable({
             <div className="space-y-1">
               <div className="flex items-center gap-1.5">
                 <h3 className="text-lg font-semibold tracking-tight text-foreground">
-                  Test Suite Evaluators
+                  Checks by stage
                 </h3>
                 <GlobalGatesSectionInfoHint />
               </div>
@@ -359,7 +358,7 @@ export function SuiteScorerTable({
         <div>
           <div className="grid grid-cols-1 gap-x-6 border-b border-border pb-2 text-sm text-muted-foreground sm:grid-cols-[minmax(10rem,1fr)_2fr]">
             <span>Stage of user value chain</span>
-            <span className="hidden sm:block">Assertions</span>
+            <span className="hidden sm:block">What we check</span>
           </div>
           {table.groups.map((group) => (
             <section
@@ -369,11 +368,6 @@ export function SuiteScorerTable({
             >
               <div>
                 <h4 className="font-medium">{group.label}</h4>
-                {suiteChrome ? (
-                  <p className="mt-0.5 text-xs text-muted-foreground">
-                    {group.question}
-                  </p>
-                ) : null}
               </div>
               <div className="min-w-0 space-y-3">
                 {group.rows.length === 0 ? (
@@ -402,11 +396,14 @@ export function SuiteScorerTable({
                         checkPolicy={checkPolicy}
                         judgeDisabledReason={judgeDisabledReason}
                         judgeConfig={judgeConfig}
-                        expanded={expanded === row.id}
+                        expanded={expanded.has(row.id)}
                         onToggleExpand={() =>
-                          setExpanded((current) =>
-                            current === row.id ? null : row.id,
-                          )
+                          setExpanded((current) => {
+                            const next = new Set(current);
+                            if (next.has(row.id)) next.delete(row.id);
+                            else next.add(row.id);
+                            return next;
+                          })
                         }
                         editable={
                           row.predicateIndex !== undefined &&
@@ -473,15 +470,15 @@ export function SuiteScorerTable({
                 {scope.kind === "suite" &&
                 onJudgeConfigChange &&
                 group.stage === "userValue" ? (
-                  <div
+                  <details
                     className="space-y-5 pt-2"
                     data-setting-key="judge"
                     data-subsection-id="judge"
                   >
+                    <summary className="cursor-pointer text-xs font-medium">
+                      Judge — model, criteria and gate
+                    </summary>
                     <div>
-                      <h4 className="text-sm font-semibold text-foreground">
-                        Judge
-                      </h4>
                       <p className="mt-1 text-sm text-muted-foreground">
                         {judgeHint}
                       </p>
@@ -503,7 +500,7 @@ export function SuiteScorerTable({
                       judgesCapabilities={capabilities?.judges}
                       groundednessEvidence={groundednessEvidence}
                     />
-                  </div>
+                  </details>
                 ) : null}
               </div>
             </section>
@@ -557,10 +554,10 @@ function ScorerRow({
   facts?: React.ReactNode;
 }) {
   const predicate = rule?.predicate;
-  // The family label names what the box switches; a rule outside any family
+  // The family name names what the box switches; a rule outside any family
   // is named by its criterion, the only name it has.
-  const onLabel = row.family?.label ?? row.name;
-  const title = row.family ? row.family.label : row.name;
+  const onLabel = row.family?.name ?? row.name;
+  const title = onLabel;
   const inherited = scope === "case" && rule?.source === "suite";
   // A row that is off says only its name. Everything else — the number it
   // turns on, its role, its editor — appears once the box is ticked.
@@ -570,24 +567,14 @@ function ScorerRow({
     row.kind === "judge" &&
     row.judgeSlot === "goalCompletion" &&
     scope === "suite";
-  // The title discloses an editor only when there is something in it: the
-  // judge's threshold, or an assertion's own fields. One that is nothing but
-  // its kind ("No tool returns an error") has its role inline and its
-  // removal on the box, so it opens nothing.
-  const opensEditor =
-    on &&
-    (judgeEditable ||
-      (row.kind === "predicate" &&
-        editable &&
-        predicate !== undefined &&
-        predicateHasFields(predicate)));
+  const opensEditor = on && row.kind !== "observed";
   const sourceLine =
     scope === "case" && row.kind === "predicate"
       ? row.suppressed
         ? "From suite · off for this case"
         : inherited
-          ? "From suite"
-          : "This case"
+        ? "From suite"
+        : "This case"
       : null;
   const familyLine =
     inherited && row.family && row.family.suiteRules > 1
@@ -598,18 +585,18 @@ function ScorerRow({
   // say: the number an assertion turns on. Match and judge titles name their
   // own kind; a family title names its assertion, so its criterion is repeated
   // only when it carries a threshold ("under 5,000 ms"). A bare assertion's title is
-  // its criterion, so its kind is the one thing left to add.
+  // its criterion, so no extra detail is needed.
   let detail: string | null = null;
   if (row.kind === "observed") {
-    detail = "Measured by the runner · always on";
+    detail = "Measured by the runner";
   } else if (row.kind === "judge") {
     if (row.thresholdKind === "judge") {
-      detail = `Threshold ${judgeConfig?.goalCompletion?.threshold ?? DEFAULT_JUDGE_THRESHOLD}`;
+      detail = `Threshold ${
+        judgeConfig?.goalCompletion?.threshold ?? DEFAULT_JUDGE_THRESHOLD
+      }`;
     }
   } else if (row.kind === "predicate") {
-    if (!row.family) {
-      detail = row.kindLabel;
-    } else if (row.thresholdKind === "budget" && row.name !== title) {
+    if (row.thresholdKind === "budget" && row.name !== title) {
       detail = row.name;
     }
   }
@@ -648,13 +635,6 @@ function ScorerRow({
                   aria-expanded={expanded}
                 >
                   {title}
-                  <ChevronRight
-                    aria-hidden
-                    className={cn(
-                      "size-3.5 shrink-0 text-muted-foreground transition-transform",
-                      expanded && "rotate-90",
-                    )}
-                  />
                 </button>
               ) : (
                 <span>{title}</span>
@@ -665,18 +645,6 @@ function ScorerRow({
                 </span>
               ) : null}
             </div>
-            {on && row.kind !== "observed" ? (
-              <RoleCell
-                row={row}
-                predicate={predicate}
-                checkPolicy={checkPolicy}
-                judgeDisabledReason={judgeDisabledReason}
-                judgeEditable={judgeEditable}
-                editable={editable}
-                onPredicateChange={onPredicateChange}
-                onJudgeRoleChange={onJudgeRoleChange}
-              />
-            ) : null}
           </div>
           {sourceLine ? (
             <span className="block text-xs text-muted-foreground">
@@ -711,7 +679,20 @@ function ScorerRow({
           className="ml-6 mt-2 space-y-3 rounded-md border border-border/50 bg-muted/10 p-3"
           data-scorer-editor={row.id}
         >
-          {row.thresholdKind === "judge" ? (
+          {row.family ? (
+            <p className="text-xs text-muted-foreground">{row.family.label}</p>
+          ) : null}
+          <RoleCell
+            row={row}
+            predicate={predicate}
+            checkPolicy={checkPolicy}
+            judgeDisabledReason={judgeDisabledReason}
+            judgeEditable={judgeEditable}
+            editable={editable}
+            onPredicateChange={onPredicateChange}
+            onJudgeRoleChange={onJudgeRoleChange}
+          />
+          {judgeEditable && row.thresholdKind === "judge" ? (
             <label className="flex items-center gap-2 text-xs text-muted-foreground">
               Threshold
               <JudgeThresholdInput
@@ -721,7 +702,9 @@ function ScorerRow({
             </label>
           ) : null}
           {row.kind === "predicate" &&
+          editable &&
           predicate &&
+          predicateHasFields(predicate) &&
           row.predicateIndex !== undefined ? (
             <CheckRow
               noun="assertion"

@@ -113,6 +113,11 @@ describe("SuitePassOrFailSection", () => {
 
   it("marks the judge advisory by default and required when the role says so", () => {
     const advisory = renderSection();
+    fireEvent.click(
+      within(advisory.container).getByRole("button", {
+        name: "Goal completion judge",
+      }),
+    );
     expect(
       within(
         advisory.container.querySelector(
@@ -129,6 +134,9 @@ describe("SuitePassOrFailSection", () => {
       '[data-stage-group="userValue"]',
     ) as HTMLElement;
     // The row's control reads Required; it sits on the row itself.
+    fireEvent.click(
+      within(group).getByRole("button", { name: "Goal completion judge" }),
+    );
     const judgeRole = group.querySelector('[aria-label="Judge role"]');
     expect(
       within(judgeRole as HTMLElement).getByRole("button", {

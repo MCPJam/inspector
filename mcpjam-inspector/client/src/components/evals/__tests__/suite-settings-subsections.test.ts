@@ -18,7 +18,7 @@ describe("getSubsectionsForGroup", () => {
     const subs = getSubsectionsForGroup("grading", base);
     expect(subs.map((sub) => sub.label)).toEqual([
       "Quality gate",
-      "Assertions",
+      "Checks by stage",
     ]);
     expect(subs.some((sub) => sub.target.type === "stage")).toBe(false);
   });
@@ -30,7 +30,7 @@ describe("getSubsectionsForGroup", () => {
     });
     expect(subs.map((sub) => sub.label)).toEqual([
       "Quality gate",
-      "Assertions",
+      "Checks by stage",
     ]);
   });
 
@@ -93,15 +93,15 @@ describe("getSubsectionsForGroup", () => {
         x: 0,
         y: 0,
         toJSON: () => ({}),
-      }) as DOMRect;
+      } as DOMRect);
 
     const policy = document.createElement("div");
     policy.setAttribute("data-subsection-id", "policy");
-    policy.getBoundingClientRect = () => ({ top: -80, height: 40 }) as DOMRect;
+    policy.getBoundingClientRect = () => ({ top: -80, height: 40 } as DOMRect);
 
     const checks = document.createElement("div");
     checks.setAttribute("data-setting-key", "checks");
-    checks.getBoundingClientRect = () => ({ top: 40, height: 80 }) as DOMRect;
+    checks.getBoundingClientRect = () => ({ top: 40, height: 80 } as DOMRect);
 
     root.append(policy, checks);
 

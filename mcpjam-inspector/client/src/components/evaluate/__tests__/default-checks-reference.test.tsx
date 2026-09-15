@@ -81,9 +81,9 @@ describe("Default checks navigation and page", () => {
       (c) => c.id === "response.performance",
     )!;
     expect(
-      screen.getByRole("checkbox", { name: latency.label }),
+      screen.getByRole("checkbox", { name: latency.name }),
     ).not.toBeChecked();
-    await user.click(screen.getByRole("checkbox", { name: latency.label }));
+    await user.click(screen.getByRole("checkbox", { name: latency.name }));
     expect(onChecksChange).toHaveBeenCalledWith({
       predicates: { mode: "extend", list: [latency.preset] },
       suppressedSuiteStandardCheckIds: [],

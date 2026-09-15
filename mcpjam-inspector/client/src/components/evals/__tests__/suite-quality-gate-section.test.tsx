@@ -294,3 +294,18 @@ describe("SuiteQualityGateSection", () => {
     expect(screen.getByText("No run selected")).toBeTruthy();
   });
 });
+
+it("only shows baseline details and allowed drop after choosing a baseline", () => {
+  const { container } = renderGate({ simplified: true });
+  const baseline = container.querySelector(
+    '[data-setting-key="qualityGateBaseline"]',
+  )!;
+  expect(baseline.querySelector("p.break-all")).toBeNull();
+  expect(screen.queryByText("Allowed drop")).toBeNull();
+  fireEvent.change(
+    screen.getByRole("combobox", { name: "Quality gate baseline" }),
+    { target: { value: "run" } },
+  );
+  expect(screen.getByText("No run selected")).toBeInTheDocument();
+  expect(screen.getByText("Allowed drop")).toBeInTheDocument();
+});
