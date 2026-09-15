@@ -401,6 +401,26 @@ describe("OrganizationsTab billing", () => {
     });
   });
 
+  it.each(["plans", "billing"] as const)(
+    "does not promote local installation on %s in hosted mode",
+    (section) => {
+      mockUseOrganizationBilling.mockReturnValue(
+        createBillingHookState({
+          billingStatus: billingStatusFixture({ plan: "free" }),
+        }),
+      );
+      vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+      try {
+        render(<OrganizationsTab organizationId="org-1" section={section} />);
+        expect(
+          screen.queryByRole("region", { name: "Use Inspector locally" }),
+        ).not.toBeInTheDocument();
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    },
+  );
+
   it("renders Pro only from a v2 catalog and checks out the selected annual plan", async () => {
     const legacy = createPlanCatalog();
     const pro = {
@@ -441,6 +461,34 @@ describe("OrganizationsTab billing", () => {
     const column = within(getPlanColumn("Pro"));
     expect(column.getByText("$24")).toBeInTheDocument();
     expect(column.queryByText("/seat/mo")).not.toBeInTheDocument();
+    expect(
+      column.queryByText(
+        "For individual developers deploying MCP servers in production.",
+      ),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("CI/CD Integration")).not.toBeInTheDocument();
+    const disclosure = screen.getByRole("button", { name: "SSO / SAML" });
+    expect(disclosure).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(disclosure);
+    expect(disclosure).toHaveAttribute("aria-expanded", "true");
+    expect(
+      screen.getByText("Single sign-on with SAML is available on Enterprise."),
+    ).toBeVisible();
+    fireEvent.click(disclosure);
+    expect(disclosure).toHaveAttribute("aria-expanded", "false");
+    expect(
+      screen.getByText("Single sign-on with SAML is available on Enterprise."),
+    ).not.toBeVisible();
+    const ssoRow = screen.getByRole("row", { name: /SSO \/ SAML/ });
+    expect(within(ssoRow).getAllByRole("cell")[3]).toHaveTextContent(
+      "Not included",
+    );
+    expect(
+      within(getPlanColumn("Team")).queryByText("Legacy"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Auth forensics, SIEM reports"),
+    ).toBeInTheDocument();
     expect(screen.getByText("3,000").closest("td")).toHaveTextContent(
       "3,000/ mo",
     );
@@ -480,7 +528,10 @@ describe("OrganizationsTab billing", () => {
   it("shows the current plan summary in the billing view", () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
-        billingStatus: billingStatusFixture({ plan: "free" }),
+        billingStatus: billingStatusFixture({
+          plan: "free",
+          stripeCurrentPeriodEnd: 1792022400000,
+        }),
       }),
     );
 
@@ -498,10 +549,70 @@ describe("OrganizationsTab billing", () => {
     expect(panel.getByText("Current")).toBeInTheDocument();
     expect(panel.queryByText("Billing cycle")).not.toBeInTheDocument();
     expect(panel.queryByText("Subscription status")).not.toBeInTheDocument();
-    expect(screen.getByTestId("current-plan-renewal")).toHaveTextContent(
-      "No active subscription",
-    );
+    expect(panel.queryByTestId("current-plan-renewal")).not.toBeInTheDocument();
+    expect(
+      panel.queryByText("No credit card required"),
+    ).not.toBeInTheDocument();
   });
+
+  it.each(["v1", "v2"])(
+    "labels only legacy Team while V2 offers are enabled (subscription %s)",
+    (pricingVersion) => {
+      const legacy = createPlanCatalog();
+      const startPlanChange = vi.fn();
+      mockUseOrganizationBilling.mockReturnValue(
+        createBillingHookState({
+          billingStatus: billingStatusFixture({
+            plan: "team",
+            effectivePlan: "team",
+            source: "subscription",
+            pricingVersion,
+            catalogPlanId: `team_${pricingVersion}`,
+            billingInterval: "monthly",
+            hasCustomer: true,
+          }),
+          planCatalog: {
+            ...legacy,
+            plans: {
+              ...legacy.plans,
+              pro: {
+                ...legacy.plans.team,
+                plan: "pro",
+                displayName: "Pro",
+                billingModel: "flat",
+              },
+              team: {
+                ...legacy.plans.team,
+                catalogPlanId: "team_v2",
+                billingModel: "flat",
+                prices: { monthly: 24900, annual: 238800 },
+              },
+            },
+          },
+          startPlanChange,
+        }),
+      );
+      render(<OrganizationsTab organizationId="org-1" section="billing" />);
+      const panel = within(screen.getByTestId("current-plan-panel"));
+      if (pricingVersion === "v1") {
+        expect(
+          panel.getByTestId("current-plan-legacy-badge"),
+        ).toHaveTextContent("Legacy");
+        expect(
+          panel.getByText(
+            "Your existing subscription terms apply. View billing details for your price.",
+          ),
+        ).toBeInTheDocument();
+        expect(panel.queryByText(/\$249/)).not.toBeInTheDocument();
+      } else {
+        expect(
+          panel.queryByTestId("current-plan-legacy-badge"),
+        ).not.toBeInTheDocument();
+        expect(panel.getByText(/\$249 flat monthly rate/)).toBeInTheDocument();
+      }
+      expect(startPlanChange).not.toHaveBeenCalled();
+    },
+  );
 
   it("shows pending seat payment notice in the billing view", async () => {
     const finishSeatPayment = vi

@@ -10,6 +10,17 @@ export const PLAN_ORDER: OrganizationPlan[] = [
   "team",
   "enterprise",
 ];
+/** Pro is only present when the server offers the V2 catalog. */
+export function isV2PlanCatalog(catalog: PlanCatalog): boolean {
+  return catalog.plans.pro != null;
+}
+
+export function isLegacyTeamEntry(entry: PlanCatalogEntry): boolean {
+  return (
+    entry.plan === "team" &&
+    (entry.catalogPlanId === "team_v1" || entry.billingModel === "per_seat")
+  );
+}
 /** getPlanCatalog applies PRICING_V2_MODE and actor/org eligibility on the server. */
 export function offeredPlans(catalog: PlanCatalog): OrganizationPlan[] {
   return PLAN_ORDER.filter((plan) => catalog.plans[plan] != null);

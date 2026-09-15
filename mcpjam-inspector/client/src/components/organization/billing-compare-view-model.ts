@@ -1,4 +1,9 @@
-import { offeredPlans, formatIncludedCredits } from "@/lib/pricing-catalog";
+import {
+  offeredPlans,
+  formatIncludedCredits,
+  isV2PlanCatalog,
+} from "@/lib/pricing-catalog";
+import { buildV2ComparePlanSections } from "./compare-plan-v2";
 import type { ComparePlanRow, ComparePlanCell } from "./compare-plan-marketing";
 import {
   COMPARE_PLAN_MARKETING_SECTIONS,
@@ -33,6 +38,9 @@ function formatEvalLimit(
 export function buildComparePlanSectionsFromCatalog(
   planCatalog: PlanCatalog,
 ): ComparePlanSection[] {
+  if (isV2PlanCatalog(planCatalog)) {
+    return buildV2ComparePlanSections(planCatalog);
+  }
   if (planCatalog.plans.free.catalogPlanId) {
     const plans = offeredPlans(planCatalog);
     const row = (
@@ -42,7 +50,7 @@ export function buildComparePlanSectionsFromCatalog(
       ({
         label,
         ...Object.fromEntries(plans.map((plan) => [plan, value(plan)])),
-      } as ComparePlanRow);
+      }) as ComparePlanRow;
     const featureKeys = new Map<string, string>();
     for (const plan of plans)
       for (const feature of planCatalog.plans[plan]?.display?.features ?? [])

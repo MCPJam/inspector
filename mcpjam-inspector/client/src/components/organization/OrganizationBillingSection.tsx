@@ -1,13 +1,28 @@
-import { LocalInstallCallout } from "@/components/billing/LocalInstallCallout";
-import { PricingEstimator } from "@/components/billing/PricingEstimator";
 import {
+  isV2PlanCatalog,
+  isLegacyTeamEntry,
   PLAN_ORDER,
   offeredPlans,
   canCheckoutPlan,
   formatCatalogPrice,
 } from "@/lib/pricing-catalog";
-import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
-import { Check, CheckCircle2, CreditCard, Info, Loader2 } from "lucide-react";
+import {
+  Fragment,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import {
+  Check,
+  CheckCircle2,
+  ChevronDown,
+  CreditCard,
+  Info,
+  Loader2,
+  Minus,
+} from "lucide-react";
 import { toast } from "@/lib/toast";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
@@ -265,6 +280,16 @@ const COMPARE_PLAN_ROW_LABEL_TOOLTIPS: Record<
   string,
   { ariaLabel: string; content: string; contentClassName?: string }
 > = {
+  "V2 included credits": {
+    ariaLabel: "About included credits",
+    content:
+      "Credits cover usage across playground, chat, evals, swarms, and user testing. Free credits reset daily; Pro and Team include an organization-wide monthly allowance.",
+  },
+  "V2 SSO / SAML": {
+    ariaLabel: "About SSO",
+    content:
+      "Single sign-on with SAML for your organization is available on Enterprise.",
+  },
   "Included credits": {
     ariaLabel: "About included credits",
     content:
@@ -351,13 +376,105 @@ function ComparePlanRowLabel({
   );
 }
 
+const V2_ROW_EXPLANATIONS: Record<string, string> = {
+  "Included credits":
+    "Credits cover usage across your organization. Free credits reset daily; paid plan credits renew monthly.",
+  Seats: "The number of members who can collaborate in your organization.",
+  BYOK: "Bring your own API keys to use your preferred model providers.",
+  Playground:
+    "Connect to an MCP server and interact with its tools, resources, and prompts.",
+  "OAuth / XAA Debugger":
+    "Inspect authentication flows and troubleshoot server connections.",
+  "User Acceptance Testing":
+    "Test your server with realistic user interactions.",
+  Evaluations: "Run repeatable tests to evaluate your MCP server’s behavior.",
+  "Eval history": "How long past evaluation results remain available.",
+  "Triage Insights": "Review evaluation findings to investigate failures.",
+  "Traces history": "How long recorded traces remain available for inspection.",
+  "SSO / SAML": "Single sign-on with SAML is available on Enterprise.",
+  "Role-based access control":
+    "Control member permissions. Enterprise includes custom roles and SCIM provisioning.",
+  "Data processing agreement":
+    "Enterprise agreements cover how your organization’s data is processed.",
+  "Uptime SLA":
+    "Enterprise service agreements define availability commitments.",
+  "Audit log retention":
+    "Retain organization activity records under your Enterprise agreement.",
+  "Auth forensics, SIEM reports":
+    "Enterprise reporting supports authentication investigations and security monitoring.",
+  "Support tier":
+    "Choose the level of assistance your organization needs, from community to dedicated support.",
+};
+
+function V2ComparisonRow({
+  row,
+  plans,
+}: {
+  row: { label: string } & Partial<Record<OrganizationPlan, ComparePlanCell>>;
+  plans: OrganizationPlan[];
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const detailId = useId();
+  return (
+    <>
+      <TableRow className="border-b hover:bg-transparent">
+        <TableCell className="sticky left-0 z-10 bg-card p-0 text-base font-normal">
+          <button
+            type="button"
+            className="flex min-h-[62px] w-full items-center gap-3 rounded-sm px-3 py-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-expanded={expanded}
+            aria-controls={detailId}
+            onClick={() => setExpanded((value) => !value)}
+          >
+            <ChevronDown
+              aria-hidden
+              className={cn(
+                "size-4 shrink-0 transition-transform duration-200 motion-reduce:transition-none",
+                expanded && "rotate-180",
+              )}
+            />
+            {row.label}
+          </button>
+        </TableCell>
+        {plans.map((plan) => (
+          <TableCell key={plan} className="px-3 py-4 text-center align-middle">
+            <ComparePlanMatrixCell v2 cell={row[plan] ?? { kind: "x" }} />
+          </TableCell>
+        ))}
+      </TableRow>
+      <TableRow hidden={!expanded} className="border-b hover:bg-transparent">
+        <TableCell colSpan={plans.length + 1} className="px-10 py-4">
+          <p
+            id={detailId}
+            className="max-w-2xl text-sm leading-relaxed text-muted-foreground"
+          >
+            {V2_ROW_EXPLANATIONS[row.label]}
+          </p>
+        </TableCell>
+      </TableRow>
+    </>
+  );
+}
+
 const COMPARE_PLAN_PERIOD_SUFFIXES = ["/ seat / mo", "/ day", "/ mo"] as const;
 
-function ComparePlanMatrixCell({ cell }: { cell: ComparePlanCell }) {
+function ComparePlanMatrixCell({
+  cell,
+  v2 = false,
+}: {
+  cell: ComparePlanCell;
+  v2?: boolean;
+}) {
   if (cell.kind === "check") {
     return (
       <span className="flex w-full justify-center">
-        <Check className="size-4 shrink-0 text-emerald-600" aria-hidden />
+        <Check
+          className={cn(
+            "shrink-0",
+            v2 ? "size-5 text-primary" : "size-4 text-emerald-600",
+          )}
+          aria-hidden
+        />
         <span className="sr-only">Included</span>
       </span>
     );
@@ -365,7 +482,11 @@ function ComparePlanMatrixCell({ cell }: { cell: ComparePlanCell }) {
   if (cell.kind === "x") {
     return (
       <span className="flex w-full justify-center text-sm text-muted-foreground/80">
-        <span aria-hidden>-</span>
+        {v2 ? (
+          <Minus className="size-5" aria-hidden />
+        ) : (
+          <span aria-hidden>-</span>
+        )}
         <span className="sr-only">Not included</span>
       </span>
     );
@@ -845,15 +966,6 @@ export function OrganizationBillingSection({
 
   return (
     <div className="space-y-5">
-      <LocalInstallCallout />
-      {planCatalog?.plans[currentPlan]?.rateCard &&
-        billingStatus?.catalogPlanId ===
-          planCatalog.plans[currentPlan]?.catalogPlanId && (
-          <PricingEstimator
-            key={billingStatus?.catalogPlanId}
-            entry={planCatalog.plans[currentPlan]!}
-          />
-        )}
 
       <Dialog
         open={checkoutPlanNotice !== null}
@@ -1169,12 +1281,27 @@ export function OrganizationBillingSection({
                                     "border-x border-primary/35 bg-primary/[0.06]",
                                 )}
                               >
-                                <div className="mx-auto flex h-full min-h-[11rem] w-full max-w-[13rem] flex-col">
+                                <div
+                                  className={cn(
+                                    "mx-auto flex h-full min-h-[11rem] w-full max-w-[13rem] flex-col",
+                                    isV2PlanCatalog(planCatalog) &&
+                                      "h-[11rem] gap-3",
+                                  )}
+                                >
                                   <div className="flex min-h-0 flex-1 flex-col items-center gap-3">
-                                    <div className="flex flex-wrap items-center justify-center gap-2">
+                                    <div
+                                      className={cn(
+                                        "flex flex-wrap items-center justify-center gap-2",
+                                        isV2PlanCatalog(planCatalog) &&
+                                          "min-h-10",
+                                      )}
+                                    >
                                       <span className="text-base font-semibold">
                                         {entry.displayName}
                                       </span>
+                                      {isLegacyTeamEntry(entry) ? (
+                                        <Badge variant="outline">Legacy</Badge>
+                                      ) : null}
                                       {isPopular ? (
                                         <Badge className="rounded-md bg-primary px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary-foreground">
                                           Popular
@@ -1184,7 +1311,12 @@ export function OrganizationBillingSection({
                                     <div className="w-full space-y-1 text-center">
                                       <PlanPriceDisplay label={priceLabel} />
                                       <p className="text-xs leading-snug text-muted-foreground">
-                                        {priceSubtext}
+                                        {isV2PlanCatalog(planCatalog) &&
+                                        entry.billingModel === "flat"
+                                          ? billingInterval === "annual"
+                                            ? "Billed annually"
+                                            : "Billed monthly"
+                                          : priceSubtext}
                                       </p>
                                       {entry.seatMinimum ? (
                                         <p className="text-xs leading-snug text-muted-foreground">
@@ -1258,6 +1390,15 @@ export function OrganizationBillingSection({
                               </TableRow>
                             ) : null}
                             {section.rows.map((row, rowIndex) => {
+                              if (isV2PlanCatalog(planCatalog)) {
+                                return (
+                                  <V2ComparisonRow
+                                    key={row.label}
+                                    row={row}
+                                    plans={offeredPlans(planCatalog)}
+                                  />
+                                );
+                              }
                               return (
                                 <TableRow
                                   key={`${section.title}-${rowIndex}-${row.label}`}
