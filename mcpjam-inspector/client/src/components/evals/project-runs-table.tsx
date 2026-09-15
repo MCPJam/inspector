@@ -884,9 +884,15 @@ export function ProjectRunsTable({
                   <ChevronDown className="size-3" aria-hidden />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
+              <DropdownMenuContent align="start" side="bottom">
                 {platformFilters
-                  .filter((filter) => availablePlatforms.includes(filter.value))
+                  .filter((filter) =>
+                    (suiteFilter === ALL_SUITES &&
+                      clientFilter === ALL_EVAL_FILTER_VALUES &&
+                      serverFilter === ALL_EVAL_FILTER_VALUES &&
+                      !hasGitFilter) ||
+                    availablePlatforms.includes(filter.value),
+                  )
                   .map((filter) => (
                     <DropdownMenuCheckboxItem
                       key={filter.value}

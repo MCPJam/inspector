@@ -298,7 +298,7 @@ describe("ProjectRunsTable", () => {
     const chips = screen
       .getAllByRole("menuitemcheckbox")
       .map((chip) => chip.textContent);
-    expect(chips).toEqual(["SDK"]);
+    expect(chips).toEqual(["SDK", "UI", "API", "CLI"]);
   });
 
   it("drops a selected chip when platform-post-launch goes off mid-session", async () => {
@@ -367,7 +367,7 @@ describe("ProjectRunsTable", () => {
     setRows([makeRow({ source: "sdk" })]);
     const view = render(<ProjectRunsTable projectId="proj_1" onSelectRun={vi.fn()} />);
     await user.click(screen.getByRole("button", { name: "Filter by platform" }));
-    expect(screen.queryByRole("menuitemcheckbox", { name: "CLI" })).toBeNull();
+    expect(screen.getByRole("menuitemcheckbox", { name: "CLI" })).toBeVisible();
     await user.click(screen.getByRole("menuitemcheckbox", { name: "SDK" }));
     await user.keyboard("{Escape}");
     setRows([makeRow({ source: "ui" })]);
