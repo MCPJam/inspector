@@ -39,6 +39,7 @@ import {
 } from "./evaluate-run-diff-model";
 import { useEvalRunCompare } from "./use-eval-run-compare";
 import { FailureGroupsCard } from "./failure-groups-card";
+import { UnifiedFindingsSection } from "./unified-findings-section";
 import { RunResultsMatrix } from "./run-results-matrix";
 import { RunDescriptionExperimentCard } from "./run-description-experiment-card";
 import { useEvalDescriptionExperiment } from "./use-eval-description-experiment";
@@ -47,7 +48,7 @@ import {
   buildStageFixPrompt,
 } from "./stage-fix-prompt";
 import { remedyForDiagnostic } from "./stage-remedy";
-import { RunVerdictHero } from "./run-verdict-hero";
+import { HeroExplanation, RunVerdictHero } from "./run-verdict-hero";
 import { buildRunVerdictHero } from "./run-verdict-hero-model";
 import {
   buildHeroPairings,
@@ -215,6 +216,10 @@ export function SingleRunContent({
   // Advisory only, and read from the same place the existing triage card reads
   // it. `autoRequest` is deliberately off: a server-quality generation costs
   // money, and this page's primary action does not depend on it.
+  //
+  // ALSO the controller the unified-findings experiment borrows. One per run,
+  // deliberately: mounting a second would give the page two lifecycles for the
+  // same lease and let one click become two billable requests.
   const serverQuality = useServerQuality(run, { autoRequest: false });
 
   /**
@@ -299,6 +304,28 @@ export function SingleRunContent({
     onOpenIteration && focusTarget?.testCaseId,
   );
 
+  /**
+   * Open the iteration a finding's evidence names.
+   *
+   * The page's router wants `{ testCaseId, iterationId }`, so the case is
+   * looked up FROM THE ITERATION rather than borrowed from whatever the
+   * verdict hero happens to be focused on — those are different cases most of
+   * the time, and reusing the focus target would open the wrong one while
+   * looking like it worked. An iteration this page does not hold (a finding
+   * built from a run whose rows are paged out) opens nothing rather than
+   * opening something adjacent.
+   */
+  const openEvidenceIteration = useCallback(
+    (iterationId: string) => {
+      if (!onOpenIteration) return;
+      const iteration = iterations.find((row) => row._id === iterationId);
+      const testCaseId = iteration?.testCaseId;
+      if (!testCaseId) return;
+      onOpenIteration({ testCaseId: String(testCaseId), iterationId });
+    },
+    [onOpenIteration, iterations],
+  );
+
   const inRunPageHeader = useEvaluateRunPageHeaderActions(
     canOpenFailingTrace || improvePrompt
       ? {
@@ -317,6 +344,25 @@ export function SingleRunContent({
     >
       <RunVerdictHero
         view={view}
+        explanation={
+          <UnifiedFindingsSection
+            suiteRunId={String(run._id)}
+            iterations={iterations}
+            clientLabel={view.pairings?.[0]?.client ?? null}
+            fallback={<HeroExplanation view={view} />}
+            generation={{
+              pending: serverQuality.pending,
+              failedGeneration: serverQuality.failedGeneration,
+              error: serverQuality.error,
+              unavailable: serverQuality.unavailable,
+              canRequest: serverQuality.canRequest,
+              requestInsight: serverQuality.requestServerQuality,
+            }}
+            {...(onOpenIteration
+              ? { onOpenIteration: openEvidenceIteration }
+              : {})}
+          />
+        }
         {...(!inRunPageHeader && canOpenFailingTrace
           ? { onOpenFailingTrace: openFailingTrace }
           : {})}
