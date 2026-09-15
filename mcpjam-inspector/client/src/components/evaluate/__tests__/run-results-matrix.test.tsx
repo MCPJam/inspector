@@ -607,3 +607,20 @@ describe("run results matrix", () => {
     },
   );
 });
+
+
+describe("SDK case navigation", () => {
+  it("opens a single SDK iteration directly from its title", async () => {
+    render(<RunResultsMatrix run={run("sdk", { source: "sdk" })} iterations={[iteration("only", "sdk")]} />);
+    await userEvent.click(screen.getByRole("button", { name: "Inspect test case: Refund order" }));
+    expect(screen.getByRole("dialog")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Back to test case iterations" })).toBeVisible();
+    expect(await screen.findByText("Tool details unavailable for this older run.")).toBeVisible();
+  });
+  it("opens the iteration list for repeated SDK cases", async () => {
+    render(<RunResultsMatrix run={run("sdk", { source: "sdk" })} iterations={[iteration("one", "sdk"), iteration("two", "sdk")]} />);
+    await userEvent.click(screen.getByRole("button", { name: "Inspect test case: Refund order" }));
+    expect(screen.getByText("Test case averages")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Back to test case iterations" })).toBeNull();
+  });
+});

@@ -1,3 +1,4 @@
+import { RecordedToolDetails } from "./recorded-tool-details";
 import { useAction, useQuery } from "convex/react";
 import { useActorCanQuery } from "@/hooks/use-actor-can-query";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -237,6 +238,7 @@ export function IterationDetails({
   layoutMode = "compact",
   caseInsightSlot,
   judgeCase = null,
+  isSdkRun = false,
   enableJudgeReview = false,
   trialChainSlot,
   scorecard,
@@ -249,6 +251,7 @@ export function IterationDetails({
   testCase: EvalCase | null;
   serverNames?: string[];
   layoutMode?: "compact" | "full";
+  isSdkRun?: boolean;
   /** Run-level case insight caption; shown under the trace toolbar or at top when no trace blob. */
   caseInsightSlot?: ReactNode;
   /** Advisory judge verdict for this case+run; surfaced on the Results tab. */
@@ -372,9 +375,10 @@ export function IterationDetails({
   const [toolCallsSectionOpen, setToolCallsSectionOpen] = useState(() =>
     layoutMode === "full" ? iteration.result !== "passed" : true,
   );
+  const showRecordedTools = isSdkRun || iteration.metadata?.sdkRecorderVersion === 1;
   type PreviewTraceMode = TraceViewMode | "browser" | "steps" | "scorecard";
   const [previewTraceMode, setPreviewTraceMode] = useState<PreviewTraceMode>(
-    scorecard ? "scorecard" : "chat",
+    showRecordedTools ? "tools" : scorecard ? "scorecard" : "chat",
   );
 
   // The authored steps this run executed (from its snapshot), so the replay can
@@ -452,7 +456,9 @@ export function IterationDetails({
     // the 1:1 mirror of the authored steps — matching the live preview default;
     // pure prompt+grade cases keep Chat.
     setPreviewTraceMode(
-      scorecard
+      showRecordedTools
+        ? "tools"
+        : scorecard
         ? "scorecard"
         : snapshotSteps.some((s) => s.kind === "interact" || s.kind === "assert")
         ? "steps"
@@ -708,7 +714,7 @@ export function IterationDetails({
   const traceTabsReady = hasTrace && !loading && !error;
   const previewTraceToolbar =
     layoutMode === "full" &&
-    (scorecard || (hasTrace && !loading && !error)) ? (
+    (showRecordedTools || scorecard || (hasTrace && !loading && !error)) ? (
       <PreviewHeaderSlot>
         <TraceViewModeTabs
           mode={
@@ -719,7 +725,7 @@ export function IterationDetails({
               : previewTraceMode
           }
           onModeChange={setPreviewTraceMode}
-          showToolsTab={Boolean(scorecard) || (hasEvalToolCalls && traceTabsReady)}
+          showToolsTab={showRecordedTools || Boolean(scorecard) || (hasEvalToolCalls && traceTabsReady)}
           showBrowserTab={hasBrowserArtifacts && traceTabsReady}
           browserActive={previewTraceMode === "browser"}
           onSelectBrowser={() => setPreviewTraceMode("browser")}
@@ -1241,7 +1247,14 @@ export function IterationDetails({
 
       {caseInsightFallback}
 
-      {isProbe && !scorecard ? (
+      {showRecordedTools && previewTraceMode === "tools" ? (
+        loading || error ? traceSection : (
+          <div className="space-y-4">
+            <RecordedToolDetails trace={blob} metadata={iteration.metadata} error={iteration.error} />
+            {expectedToolCalls.length > 0 && toolCallsGrids}
+          </div>
+        )
+      ) : isProbe && !scorecard ? (
         <>
           {predicatesSection}
           {scoresSection}
