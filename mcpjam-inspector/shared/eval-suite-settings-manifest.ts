@@ -188,10 +188,13 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   {
     key: "qualityGate",
     // The quality gate answers a DIFFERENT question from the pass criteria: not
-    // "did this run meet the bar" but "did it regress against a baseline run".
-    // It has its own conditions, its own baseline and its own audit
-    // requirement, and folding it under the criterion row is what made one
-    // heading mean both.
+    // "did this run meet the bar" but "should this run block a merge". It has
+    // its own conditions and its own audit requirement, and folding it under
+    // the criterion row is what made one heading mean both.
+    //
+    // Baseline comparison is no longer edited here, so the row holds only the
+    // condition that never needed a baseline. The comparison fields are still
+    // on the API — see `SETTINGS_PAGE_HIDDEN_KEYS`.
     label: "Quality gate",
     excluded:
       "A presentation grouping of the settings.qualityGate conditions, each of which is reachable on its own.",
