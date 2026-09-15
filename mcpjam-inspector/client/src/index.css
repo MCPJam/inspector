@@ -10,6 +10,11 @@
    read-only transcript relies on the inspector's existing global shadcn tokens
    for color values, so no package stylesheet import is needed here. */
 @source "../../../chat-ui/src/**/*.{ts,tsx}";
+/* @mcpjam/widget-react is aliased to source as well, and it owns the whole
+   MCP App surface. Without this the classes it alone uses are never emitted —
+   `z-40` on the fullscreen container is why a fullscreen App painted beneath
+   the sidebar and the transcript. */
+@source "../../../widget-react/src/**/*.tsx";
 
 @layer base {
   * {
