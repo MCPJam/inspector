@@ -4,8 +4,11 @@ import "../src/index.css";
 import { ScenarioSignInGate } from "../src/components/hosted/ScenarioSignInGate";
 import { ShareDialog } from "../src/components/sharing/ShareDialog";
 import { ShareSection } from "../src/components/sharing/ShareSection";
+import { buildScenarioLink } from "../src/lib/scenario-session";
 import { SCENARIO_ACCESS_OPTIONS } from "../src/lib/scenario-access-presets";
 import { Button } from "@mcpjam/design-system/button";
+
+const sampleShareUrl = buildScenarioLink("preview-example", "checkout-study");
 
 function Preview() {
   const [view, setView] = useState(
@@ -67,8 +70,8 @@ function Preview() {
             selfEmailLower="owner@example.com"
             members={[]}
             showMembers={false}
-            shareUrl="https://app.mcpjam.com/user-testing/checkout-study/preview-example"
-            displayLink="app.mcpjam.com/user-testing/checkout-study/preview-example"
+            shareUrl={sampleShareUrl}
+            displayLink={sampleShareUrl.replace(/^https?:\/\//, "")}
             currentPreset={preset}
             presets={SCENARIO_ACCESS_OPTIONS}
             onSetPreset={async (value) => {

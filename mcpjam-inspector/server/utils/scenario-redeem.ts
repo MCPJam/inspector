@@ -6,10 +6,9 @@
  * redeemed, the inspector forwards the `scenarioId` (NOT the token) on
  * every subsequent hot-path request.
  *
- * The bearer is required: WorkOS bearer for signed-in viewers, or a
- * guest JWT obtained via `/guest/session` for anonymous viewers in
- * `anyone_with_link` mode. Anonymous redemption is rejected by the
- * backend with 401.
+ * Successful redemption requires an account bearer, or a guest JWT when
+ * the scenario permits guests. A request without a bearer only resolves
+ * link policy: the backend returns 401 without configuration or grants.
  */
 
 import { logger } from "./logger.js";
