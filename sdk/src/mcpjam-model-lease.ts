@@ -102,11 +102,17 @@ function readEnvVar(name: string): string | undefined {
   return process.env[name];
 }
 
+function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === "/") end--;
+  return value.slice(0, end);
+}
+
 /** The MCPJam app origin to mint against. */
 export function resolveMcpjamBaseUrl(explicit?: string): string {
   const raw =
     explicit ?? readEnvVar("MCPJAM_BASE_URL") ?? "https://app.mcpjam.com";
-  return raw.replace(/\/+$/, "");
+  return trimTrailingSlashes(raw);
 }
 
 /**
@@ -171,7 +177,7 @@ function proxyUrlFor(proxyBaseUrl: string, pathname: string): string {
   // `…/model-proxy/openai/v1` — the difference is the vendor's own path shape,
   // not something a caller should have to know. Normalize both to a base
   // WITHOUT `/v1` and let the provider's path supply it.
-  const base = proxyBaseUrl.replace(/\/+$/, "").replace(/\/v1$/, "");
+  const base = trimTrailingSlashes(proxyBaseUrl).replace(/\/v1$/, "");
   return `${base}${pathname}`;
 }
 
@@ -212,7 +218,7 @@ export class McpjamLeaseClient {
   private minting: Promise<McpjamModelLease> | null = null;
 
   constructor(options: McpjamLeaseClientOptions) {
-    this.baseUrl = options.baseUrl.replace(/\/+$/, "");
+    this.baseUrl = trimTrailingSlashes(options.baseUrl);
     this.apiKey = options.apiKey;
     this.project = options.project;
     this.model = options.model;

@@ -506,6 +506,15 @@ describe("configuration", () => {
     );
   });
 
+  it("trims only trailing slashes, including long slash runs", () => {
+    const slashes = "/".repeat(100_000);
+    const base = `https://example.test/${slashes}path`;
+    expect(resolveMcpjamBaseUrl(`${base}${slashes}`)).toBe(base);
+    expect(resolveMcpjamBaseUrl(base)).toBe(base);
+    expect(resolveMcpjamBaseUrl(slashes)).toBe("");
+    expect(resolveMcpjamBaseUrl("")).toBe("");
+  });
+
   it("defaults the project to the `default` sentinel", () => {
     // Resolved server-side to the key org's Default project — the same
     // resolution eval reporting uses, so inference and results land together
