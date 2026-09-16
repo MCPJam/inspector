@@ -80,6 +80,26 @@ describe("describeConvexFailure", () => {
     ).toBe("You are not a member.");
   });
 
+  it("treats a `data` payload as a refusal however it was constructed", () => {
+    // Duck-typed on purpose, not gated on `instanceof ConvexError`. `data` is
+    // the only field that survives to a production browser, so a failed
+    // `instanceof` would cost the user the backend's own wording. The shape is
+    // also how several suites stand in for a refusal without constructing one
+    // — `SwarmsTab.overview` throws exactly this and asserts the bare sentence.
+    const lookalike = new Error("[Request ID: da0bbc6cf9261481] Server Error");
+    (lookalike as unknown as { data: { message: string } }).data = {
+      message: "Not a member of this project.",
+    };
+
+    const failure = describeConvexFailure(lookalike, "fallback");
+    expect(failure.message).toBe("Not a member of this project.");
+    expect(failure.refusal).toBe(true);
+    // No reference: a refusal is the product working, whatever threw it.
+    expect(convexErrMessage(lookalike, "fallback")).toBe(
+      "Not a member of this project.",
+    );
+  });
+
   it("de-prefixes a plain throw that carries no request id", () => {
     expect(
       describeConvexFailure(new Error("[CONVEX M(x)] Suite not found"), "f")

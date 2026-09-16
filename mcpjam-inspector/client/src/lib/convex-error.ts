@@ -185,8 +185,26 @@ export function describeConvexFailure(
   const requestId = getConvexRequestId(error);
 
   const payload = applicationPayload(error);
-  if (payload)
-    return { message: payload, requestId, redacted: false, refusal: true };
+  if (payload) {
+    return {
+      message: payload,
+      requestId,
+      redacted: false,
+      // A `data` payload IS the refusal signal here, deliberately duck-typed
+      // rather than gated on `instanceof ConvexError`.
+      //
+      // Two reasons. `data` is the only field that survives to a production
+      // browser, so if `instanceof` ever failed — a second copy of `convex` in
+      // the bundle, a realm boundary — the user would stop seeing the
+      // backend's own wording and get the generic sentence instead, which is
+      // the regression `github-checks-errors` carries a comment about. And the
+      // shape is already load-bearing in tests that stand in for a refusal
+      // without constructing one (`SwarmsTab.overview`, for instance, throws
+      // `Object.assign(new Error(…), { data: { code: "FORBIDDEN", … } })` and
+      // asserts the bare sentence reaches the toast).
+      refusal: true,
+    };
+  }
 
   const raw = messageOf(error);
   if (!raw || !raw.trim()) {
