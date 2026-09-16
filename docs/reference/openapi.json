@@ -23122,6 +23122,15 @@
         "description": "A client plus its resolved config (model, capabilities, host context, MCP profile) and the read-backs an editor needs.",
         "required": ["id", "name", "config", "ownerScope"],
         "properties": {
+          "versionId": {
+            "type": "string",
+            "description": "Saved client history entry read together with config. Absent on older clients or deployments."
+          },
+          "versionNumber": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Client configuration version, numbered from 1 in saved edit order."
+          },
           "id": {
             "type": "string"
           },

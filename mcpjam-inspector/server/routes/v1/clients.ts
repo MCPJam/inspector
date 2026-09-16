@@ -86,6 +86,8 @@ type HostImpact = {
 };
 
 type HostDetailRow = {
+  versionId?: string;
+  versionNumber?: number;
   hostId: string;
   name: string;
   config: Record<string, unknown>;
@@ -160,6 +162,9 @@ function toClientDetailDto(detail: HostDetailRow) {
       ? {}
       : { configId: detail.hostConfigId }),
     config: detail.config,
+    ...(detail.versionId
+      ? { versionId: detail.versionId, versionNumber: detail.versionNumber }
+      : {}),
     ownerScope: detail.ownerScope ?? null,
     ...(detail.hasComputer === undefined
       ? {}

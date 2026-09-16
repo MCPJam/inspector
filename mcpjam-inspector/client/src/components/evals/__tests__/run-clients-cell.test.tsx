@@ -32,7 +32,7 @@ describe("RunClientsCell", () => {
       />,
     );
     expect(
-      within(screen.getByTestId("expanded-run-models")).getByText("gpt-5"),
+      within(screen.getByTestId("expanded-run-models")).getByText("GPT-5"),
     ).toBeVisible();
     expect(screen.queryByText("a")).toBeNull();
   });
@@ -60,7 +60,7 @@ describe("RunClientsCell", () => {
     expect(
       within(screen.getByTestId("expanded-run-models")).getByText("haiku"),
     ).toBeVisible();
-    expect(screen.getByText("gpt-5")).toBeVisible();
+    expect(screen.getByText("GPT-5")).toBeVisible();
     expect(screen.queryByText("Claude")).toBeNull();
     expect(screen.queryByText("Cursor")).toBeNull();
   });
@@ -84,7 +84,7 @@ describe("RunClientsCell", () => {
     await user.hover(more);
     const tooltip = await screen.findByRole("tooltip");
     expect(tooltip).toHaveTextContent("sonnet");
-    expect(tooltip).toHaveTextContent("gpt-5");
+    expect(tooltip).toHaveTextContent("GPT-5");
   });
 
   it("lists pairings inline without an expand control", () => {
@@ -94,10 +94,10 @@ describe("RunClientsCell", () => {
       />,
     );
     expect(
-      screen.getByLabelText("Claude · gpt-5-nano, Cursor · haiku"),
+      screen.getByLabelText("Claude · GPT-5 Nano, Cursor · haiku"),
     ).toBeVisible();
     expect(screen.getByText(/Claude/)).toBeVisible();
-    expect(screen.getByText(/gpt-5-nano/)).toBeVisible();
+    expect(screen.getByText(/GPT-5 Nano/)).toBeVisible();
     expect(screen.getByText(/Cursor/)).toBeVisible();
     expect(screen.getByText(/haiku/)).toBeVisible();
     expect(screen.queryByRole("button")).toBeNull();
@@ -123,8 +123,8 @@ describe("RunClientsCell", () => {
     expect(more).toHaveTextContent("+1");
     await user.hover(more);
     const tooltip = await screen.findByRole("tooltip");
-    expect(tooltip).toHaveTextContent("ChatGPT · gpt-5.1");
-    expect(tooltip).toHaveTextContent("Claude · gpt-5-nano");
+    expect(tooltip).toHaveTextContent("ChatGPT · GPT-5.1");
+    expect(tooltip).toHaveTextContent("Claude · GPT-5 Nano");
     expect(tooltip).toHaveTextContent("Cursor · haiku");
   });
 });
@@ -144,4 +144,77 @@ it("counts unique clients rather than client-model pairs", () => {
   expect(screen.getAllByText("Claude")).toHaveLength(1);
   expect(screen.getByText("Cursor")).toBeVisible();
   expect(screen.getByLabelText("1 more clients")).toBeVisible();
+});
+
+it("shows client versions only on hover and keyboard focus, preserving distinct versions", async () => {
+  const user = userEvent.setup();
+  renderWithProviders(
+    <RunClientsCell
+      column="client"
+      rows={[
+        {
+          ...row("My client", []),
+          clientId: "client1",
+          clientVersionId: "v1",
+          clientVersionNumber: 1,
+        },
+        {
+          ...row("My client", []),
+          clientId: "client1",
+          clientVersionId: "v2",
+          clientVersionNumber: 2,
+        },
+      ]}
+    />,
+  );
+  expect(screen.getAllByText("My client")).toHaveLength(2);
+  expect(screen.queryByText(/v1/)).toBeNull();
+  await user.hover(screen.getAllByText("My client")[0]);
+  expect(await screen.findByRole("tooltip")).toHaveTextContent(
+    "My client · v1",
+  );
+  await user.unhover(screen.getAllByText("My client")[0]);
+  await user.tab();
+  await user.tab();
+  expect(await screen.findByRole("tooltip")).toHaveTextContent(
+    "My client · v2",
+  );
+});
+
+it("shows the friendly model name in both layouts", () => {
+  renderWithProviders(
+    <RunClientsCell
+      column="model"
+      rows={[row("My client", ["claude-haiku-4-5-20251001"])]}
+    />,
+  );
+  expect(
+    within(screen.getByTestId("expanded-run-models")).getByText(
+      "Claude Haiku 4.5",
+    ),
+  ).toBeVisible();
+  expect(
+    within(screen.getByTestId("compact-run-models")).getByText(
+      "Claude Haiku 4.5",
+    ),
+  ).toBeVisible();
+  expect(screen.queryByText("claude-haiku-4-5-20251001")).toBeNull();
+});
+
+it("includes versions in the combined pairing overflow tooltip", async () => {
+  const user = userEvent.setup();
+  renderWithProviders(
+    <RunClientsCell
+      rows={[1, 2, 3].map((version) => ({
+        ...row("My client", ["gpt-5"]),
+        clientId: "client1",
+        clientVersionId: `v${version}`,
+        clientVersionNumber: version,
+      }))}
+    />,
+  );
+  await user.hover(screen.getByLabelText("1 more client and model pairings"));
+  expect(await screen.findByRole("tooltip")).toHaveTextContent(
+    "My client · v3 · GPT-5",
+  );
 });

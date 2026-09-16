@@ -1,3 +1,8 @@
+import {
+  createSavedClientRunner,
+  type EvalSuiteClientOptions,
+} from "./saved-client-runner.js";
+export type { EvalSuiteClientOptions } from "./saved-client-runner.js";
 import { composeAbortSignals } from "./compose-abort-signals.js";
 import { formatRunSummaryTable } from "./eval-summary.js";
 import type { EvalSelectionManifest } from "./eval-selection.js";
@@ -265,10 +270,48 @@ export class EvalSuite {
   }
 
   /**
-   * Run all tests in the suite with the given executor and options.
+   * Resolve the latest saved client once, then run against its frozen settings.
    */
+  async runWithClient(
+    client: EvalSuiteClientOptions,
+    options: Omit<EvalTestRunOptions, "iterations"> & {
+      iterations?: number;
+    } = {}
+  ): Promise<EvalSuiteResult> {
+    const selection = { ...client };
+    return this.runPrepared(async (signal) => {
+      const resolved = await createSavedClientRunner(selection, signal);
+      return {
+        executor: resolved.executor,
+        reporting: {
+          ...(options.mcpjam ?? this.mcpjamConfig),
+          apiKey: selection.apiKey,
+          project: selection.projectId,
+          baseUrl: selection.baseUrl,
+          selectedClient: resolved.selectedClient,
+        },
+      };
+    }, options);
+  }
+
   async run(
     executor: HostExecutor,
+    options: Omit<EvalTestRunOptions, "iterations"> & {
+      iterations?: number;
+    } = {}
+  ): Promise<EvalSuiteResult> {
+    return this.runPrepared(executor, options);
+  }
+
+  private async runPrepared(
+    source:
+      | HostExecutor
+      | ((
+          signal: AbortSignal
+        ) => Promise<{
+          executor: HostExecutor;
+          reporting: MCPJamReportingConfig;
+        }>),
     options: Omit<EvalTestRunOptions, "iterations"> & {
       iterations?: number;
     } = {}
@@ -297,7 +340,7 @@ export class EvalSuite {
           () => controller.abort(new Error("Suite deadline exceeded")),
           options.runTimeoutMs
         );
-      const reporting = options.mcpjam ?? this.mcpjamConfig;
+      let reporting = options.mcpjam ?? this.mcpjamConfig;
       const composed = composeAbortSignals(
         [controller.signal, options.signal].filter(
           (signal): signal is AbortSignal => !!signal
@@ -305,6 +348,16 @@ export class EvalSuite {
       );
       dispose = composed.dispose;
       const signal = composed.signal;
+      let executor: HostExecutor;
+      if (typeof source === "function") {
+        signal.throwIfAborted();
+        const prepared = await source(signal);
+        reporting = prepared.reporting;
+        executor = prepared.executor;
+        signal.throwIfAborted();
+      } else {
+        executor = source;
+      }
       return await this.runInternal(
         executor.withOptions({ mcpjamLeaseScope: leaseScope }),
         {

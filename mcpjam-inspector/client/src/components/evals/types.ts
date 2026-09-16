@@ -189,6 +189,8 @@ export type ImportEligibility = {
 
 /** Mirrors backend convex/lib/runClientDescriptor.ts. */
 export type RunClientDescriptor = {
+  versionId?: string;
+  versionNumber?: number;
   namedHostId?: string;
   hostConfigId?: string;
   name: string;

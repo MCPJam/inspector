@@ -1,3 +1,5 @@
+import { createElement } from "react";
+import { ModelDisplayNamesContext } from "@/lib/model-display-name";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
@@ -533,7 +535,9 @@ export function CiEvalsTab({
       }),
   });
 
-  return (
+  return createElement(
+    ModelDisplayNamesContext.Provider,
+    { value: availableModels },
     <EvalTabGate
       variant="ci"
       isLoading={isLoading}
@@ -889,6 +893,6 @@ export function CiEvalsTab({
           </DialogContent>
         </Dialog>
       </>
-    </EvalTabGate>
+    </EvalTabGate>,
   );
 }
