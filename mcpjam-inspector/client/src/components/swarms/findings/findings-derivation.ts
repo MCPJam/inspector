@@ -159,6 +159,18 @@ export function runIsTerminal(run: SwarmOverviewRun): boolean {
   return !TERMINAL_EXCLUDED.has(run.status);
 }
 
+/**
+ * A settled run whose sessions all died before producing a transcript. Rubric
+ * verdicts, the judge rollup and detector candidates all describe sessions,
+ * so here they have nothing to describe — and a stage they light up
+ * reads as a finding about the server under test rather than the launch that
+ * never happened.
+ */
+function runExecutedNothing(run: SwarmOverviewRun): boolean {
+  const { total, succeeded } = run.summary;
+  return runIsTerminal(run) && total > 0 && succeeded === 0;
+}
+
 function plural(n: number, noun: string): string {
   return `${n} ${noun}${n === 1 ? "" : "s"}`;
 }
@@ -258,7 +270,12 @@ function goalSentiment(
   demoVariant = false,
   variantIndex = 0
 ): SentimentPillModel {
-  const states = JOURNEY_STAGES.map((s) => stages[s.id].state);
+  // Connection is excluded for the reason goalDiagnosis excludes it: launch
+  // outcomes are not a finding about the server (CONNECTION_CAVEAT), and a
+  // feeling word is a claim about the experience the server delivered.
+  const states = JOURNEY_STAGES.filter((s) => s.id !== "connection").map(
+    (s) => stages[s.id].state
+  );
   if (states.includes("fail")) {
     return demoVariant
       ? DEMO_SENTIMENTS[variantIndex % DEMO_SENTIMENTS.length]!
@@ -425,6 +442,9 @@ export function deriveSwarmFindingsModel(args: {
     const stages = forRun(run.runId);
     const connection = connectionEvidence(run);
     if (connection) stages.connection.push(connection);
+    // Launch outcomes are the only thing a run with no transcripts can speak
+    // to; connectionEvidence above carries them, captioned as such.
+    if (runExecutedNothing(run)) continue;
     stages.value.push(...rubricEvidence(run));
     const judge = judgeEvidence(run);
     if (judge) stages.value.push(judge);
@@ -441,6 +461,7 @@ export function deriveSwarmFindingsModel(args: {
       if (!attributed) continue;
       for (const run of runs) {
         if (run.journeyRefId !== candidate.subjectId) continue;
+        if (runExecutedNothing(run)) continue;
         forRun(run.runId)[attributed.stage].push(attributed.evidence);
       }
     } else if (candidate.subjectKind === "persona") {
@@ -452,6 +473,7 @@ export function deriveSwarmFindingsModel(args: {
       const personaName = doc?.name ?? candidate.subjectLabel;
       for (const run of runs) {
         if (run.personaName !== personaName) continue;
+        if (runExecutedNothing(run)) continue;
         forRun(run.runId)[attributed.stage].push(attributed.evidence);
       }
     }

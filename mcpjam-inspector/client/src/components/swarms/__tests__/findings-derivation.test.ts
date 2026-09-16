@@ -563,3 +563,99 @@ describe("persona rollup", () => {
     expect(derive({ signals: null }).sessionCount).toBe(4);
   });
 });
+
+describe("a run that executed nothing states that, and infers nothing", () => {
+  /**
+   * A run refused before any session executed — the provider rate-limited the
+   * key, the launch 400d, the target never connected — has no transcripts to
+   * reason about. Rubric verdicts, the judge rollup and detector candidates
+   * all describe sessions, so on such a run they describe nothing, and a stage
+   * they light up reads as a finding about the server under test. Only the
+   * connection row, which reports launch outcomes and says so, still applies.
+   */
+  const refused = (overrides: Partial<SwarmOverviewRun> = {}) =>
+    run({
+      summary: { total: 4, succeeded: 0, failed: 4, rateLimited: 0 },
+      ...overrides,
+    });
+
+  it("drops rubric verdicts graded against transcripts that were never written", () => {
+    const model = derive({
+      runs: [
+        refused({
+          findings: [
+            {
+              criterionId: "crit-empty",
+              label: "Final message non-empty",
+              failCount: 4,
+              pendingCount: 0,
+              failedGradingCount: 0,
+              sessionsGraded: 4,
+              runStreak: 1,
+            },
+          ],
+        }),
+      ],
+    });
+    expect(model.personas[0]!.goals[0]!.stages.value.evidence).toEqual([]);
+  });
+
+  it("drops the judge rollup", () => {
+    const model = derive({
+      runs: [refused({ goalScoreSummary: { gradedCount: 4, passedCount: 0 } })],
+    });
+    expect(model.personas[0]!.goals[0]!.stages.value.evidence).toEqual([]);
+  });
+
+  it("drops detector evidence, which is mined from sessions", () => {
+    const model = derive({
+      runs: [refused()],
+      signals: signals({ candidates: [candidate()] }),
+    });
+    const stage = DETECTOR_STAGE_MAP.tool_errors.stage;
+    expect(model.personas[0]!.goals[0]!.stages[stage].evidence).toEqual([]);
+  });
+
+  it("still reports the launch outcome, which is the honest one", () => {
+    const connection =
+      derive({ runs: [refused()] }).personas[0]!.goals[0]!.stages.connection;
+    expect(connection.state).toBe("warn");
+    expect(connection.evidence[0]!.meta).toBe(CONNECTION_CAVEAT);
+  });
+
+  it("diagnoses nothing graded, not friction with the server", () => {
+    const goal = derive({
+      runs: [
+        refused({
+          findings: [
+            {
+              criterionId: "crit-empty",
+              label: "Final message non-empty",
+              failCount: 4,
+              pendingCount: 0,
+              failedGradingCount: 0,
+              sessionsGraded: 4,
+              runStreak: 1,
+            },
+          ],
+        }),
+      ],
+    }).personas[0]!.goals[0]!;
+    expect(goal.diagnosis.title).toBe("Nothing graded yet");
+    expect(goal.sentiment.label).toBe("Unscored");
+  });
+
+  it("leaves a run that did execute untouched", () => {
+    const model = derive({
+      runs: [
+        run({
+          summary: { total: 4, succeeded: 1, failed: 3, rateLimited: 0 },
+          goalScoreSummary: { gradedCount: 1, passedCount: 0 },
+        }),
+      ],
+    });
+    expect(
+      model.personas[0]!.goals[0]!.stages.value.evidence.length
+    ).toBeGreaterThan(0);
+  });
+});
