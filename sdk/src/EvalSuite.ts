@@ -23,7 +23,7 @@ import {
   captureEvalReporting,
   notRequestedReceipt,
 } from "./eval-reporting-receipt.js";
-import { releaseMcpjamModelLeases } from "./mcpjam-model-lease.js";
+import { McpjamModelLeaseScope } from "./mcpjam-model-lease.js";
 import { suiteTestResultsToEvalResultInputs } from "./eval-result-mapping.js";
 import { aggregateEvaluationConfigHash } from "./contract/derive.js";
 import { resolveServerReplayConfigs } from "./server-replay-configs.js";
@@ -287,6 +287,7 @@ export class EvalSuite {
         "runTimeoutMs must be a positive timer-sized integer"
       );
     this.running = true;
+    const leaseScope = new McpjamModelLeaseScope();
     let timer: ReturnType<typeof setTimeout> | undefined;
     let dispose: (() => void) | undefined;
     try {
@@ -304,26 +305,21 @@ export class EvalSuite {
       );
       dispose = composed.dispose;
       const signal = composed.signal;
-      return await this.runInternal(executor, {
-        ...options,
-        signal,
-        // Execution cancellation must still allow its evidence to be persisted.
-        // Only an explicitly authored transport signal cancels reporting.
-        mcpjam: reporting,
-      });
+      return await this.runInternal(
+        executor.withOptions({ mcpjamLeaseScope: leaseScope }),
+        {
+          ...options,
+          signal,
+          // Execution cancellation must still allow its evidence to be persisted.
+          // Only an explicitly authored transport signal cancels reporting.
+          mcpjam: reporting,
+        }
+      );
     } finally {
       if (timer !== undefined) clearTimeout(timer);
       dispose?.();
       this.running = false;
-      // Hand back any MCPJam-hosted-inference lease this run minted. A no-op
-      // for every other provider, and best-effort by construction: leases
-      // expire on their own, so this only returns the slot to the org's
-      // active-lease budget now rather than in half an hour.
-      //
-      // At the SUITE level, not per test: a vitest file builds a runner per
-      // case, and revoking per case would re-mint for the next one — spending
-      // the API key's rate limit to give back something about to be reused.
-      await releaseMcpjamModelLeases();
+      await leaseScope.release();
     }
   }
 

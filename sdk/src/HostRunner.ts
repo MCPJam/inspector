@@ -2,6 +2,7 @@
  * HostRunner - Runs LLM prompts with tool calling for evals
  */
 
+import type { McpjamModelLeaseScope } from "./mcpjam-model-lease.js";
 import {
   generateText,
   hasToolCall,
@@ -84,6 +85,8 @@ import {
  * string (legacy path with no host-derived defaults).
  */
 interface HostRunnerBaseConfig {
+  /** @internal Lease ownership inherited by iteration clones. */
+  mcpjamLeaseScope?: McpjamModelLeaseScope;
   /** Tools to provide to the LLM (Tool[] from manager.getTools() or AiSdkTool from manager.getToolsForAiSdk()) */
   tools: Tool[] | AiSdkTool;
   /** API key for the LLM provider */
@@ -96,7 +99,8 @@ interface HostRunnerBaseConfig {
   maxSteps?: number;
   /** Custom providers registry for non-standard LLM providers */
   customProviders?:
-    Map<string, CustomProvider> | Record<string, CustomProvider>;
+    | Map<string, CustomProvider>
+    | Record<string, CustomProvider>;
   /** Optional MCP client manager for capturing MCP App replay snapshots */
   mcpClientManager?: MCPClientManager;
   /**
@@ -267,11 +271,13 @@ export class HostRunner implements HostExecutor {
   private readonly rawTools: Tool[] | AiSdkTool;
   private readonly model: string;
   private readonly apiKey: string;
+  private readonly mcpjamLeaseScope?: McpjamModelLeaseScope;
   private systemPrompt: string;
   private temperature: number | undefined;
   private readonly maxSteps: number;
   private readonly customProviders?:
-    Map<string, CustomProvider> | Record<string, CustomProvider>;
+    | Map<string, CustomProvider>
+    | Record<string, CustomProvider>;
   private readonly mcpClientManager?: MCPClientManager;
   private readonly injectOpenAiCompat: boolean;
   /**
@@ -282,7 +288,8 @@ export class HostRunner implements HostExecutor {
    * byte-identical to before this was wired up.
    */
   private readonly openAiCompatCapabilities:
-    Record<string, unknown> | undefined;
+    | Record<string, unknown>
+    | undefined;
 
   /**
    * Immutable host snapshot driving this runner, if constructed with a
@@ -303,7 +310,8 @@ export class HostRunner implements HostExecutor {
    * `withOptions` re-runs them against the raw `Tool[]` under a new host.
    */
   private readonly toolDescriptionOverrides:
-    Readonly<Record<string, string>> | undefined;
+    | Readonly<Record<string, string>>
+    | undefined;
 
   /** Normalized provider name parsed from the model string */
   private readonly _parsedProvider: string;
@@ -382,6 +390,7 @@ export class HostRunner implements HostExecutor {
       : config.tools;
     this.model = resolvedModel;
     this.apiKey = config.apiKey;
+    this.mcpjamLeaseScope = config.mcpjamLeaseScope;
     this.systemPrompt =
       config.systemPrompt ??
       (this.hostSnapshot?.systemPrompt && this.hostSnapshot.systemPrompt !== ""
@@ -776,6 +785,7 @@ export class HostRunner implements HostExecutor {
     try {
       const modelOptions: CreateModelOptions = {
         apiKey: this.apiKey,
+        mcpjamLeaseScope: this.mcpjamLeaseScope,
         customProviders: this.customProviders,
       };
       const model = createModelFromString(this.model, modelOptions);
@@ -1020,6 +1030,7 @@ export class HostRunner implements HostExecutor {
     const base = {
       tools: options.tools ?? this.rawTools,
       apiKey: options.apiKey ?? this.apiKey,
+      mcpjamLeaseScope: options.mcpjamLeaseScope ?? this.mcpjamLeaseScope,
       maxSteps: options.maxSteps ?? this.maxSteps,
       customProviders: options.customProviders ?? this.customProviders,
       mcpClientManager: options.mcpClientManager ?? this.mcpClientManager,

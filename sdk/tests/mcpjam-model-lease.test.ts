@@ -82,7 +82,7 @@ describe("minting", () => {
     const fetchImpl = vi.fn(
       async (url: RequestInfo | URL, init?: RequestInit) => {
         calls.push({ url: String(url), init: init ?? {} });
-        return String(url).includes("/model-leases")
+        return String(url).endsWith("/model-leases")
           ? json({ ok: true, ...leaseBody() })
           : json({ id: "msg_1" });
       }
@@ -117,7 +117,7 @@ describe("minting", () => {
     // on its first tick, each one counting against the org's active-lease cap.
     let mints = 0;
     const fetchImpl = vi.fn(async (url: RequestInfo | URL) => {
-      if (String(url).includes("/model-leases")) {
+      if (String(url).endsWith("/model-leases")) {
         mints += 1;
         await new Promise((r) => setTimeout(r, 5));
         return json({ ok: true, ...leaseBody() });
@@ -137,7 +137,7 @@ describe("minting", () => {
   it("reuses a live lease across sequential calls", async () => {
     let mints = 0;
     const fetchImpl = vi.fn(async (url: RequestInfo | URL) => {
-      if (String(url).includes("/model-leases")) {
+      if (String(url).endsWith("/model-leases")) {
         mints += 1;
         return json({ ok: true, ...leaseBody() });
       }
@@ -155,7 +155,7 @@ describe("minting", () => {
     // fail a call that was already paid for.
     let mints = 0;
     const fetchImpl = vi.fn(async (url: RequestInfo | URL) => {
-      if (String(url).includes("/model-leases")) {
+      if (String(url).endsWith("/model-leases")) {
         mints += 1;
         // Only 30s of life left — inside the renewal window.
         return json({
@@ -242,10 +242,11 @@ describe("spending a lease", () => {
     const generations: string[] = [];
     const fetchImpl = vi.fn(
       async (url: RequestInfo | URL, init?: RequestInit) => {
-        if (String(url).includes("/model-leases")) {
+        if (String(url).endsWith("/model-leases")) {
           mints += 1;
           return json({ ok: true, ...leaseBody({ lease: `lease_${mints}` }) });
         }
+        if (String(url).endsWith("/revoke")) return json({ ok: true });
         const presented = new Headers(init?.headers).get(
           "x-mcpjam-harness-lease"
         )!;
@@ -265,7 +266,7 @@ describe("spending a lease", () => {
   it("re-mints once when the lease was revoked", async () => {
     let mints = 0;
     const fetchImpl = vi.fn(async (url: RequestInfo | URL) => {
-      if (String(url).includes("/model-leases")) {
+      if (String(url).endsWith("/model-leases")) {
         mints += 1;
         return json({ ok: true, ...leaseBody({ lease: `lease_${mints}` }) });
       }
@@ -284,7 +285,7 @@ describe("spending a lease", () => {
     // API key's rate limit.
     let mints = 0;
     const fetchImpl = vi.fn(async (url: RequestInfo | URL) => {
-      if (String(url).includes("/model-leases")) {
+      if (String(url).endsWith("/model-leases")) {
         mints += 1;
         return json({ ok: true, ...leaseBody({ lease: `lease_${mints}` }) });
       }
@@ -302,7 +303,7 @@ describe("spending a lease", () => {
     let mints = 0;
     let attempts = 0;
     const fetchImpl = vi.fn(async (url: RequestInfo | URL) => {
-      if (String(url).includes("/model-leases")) {
+      if (String(url).endsWith("/model-leases")) {
         mints += 1;
         return json({ ok: true, ...leaseBody() });
       }
@@ -324,7 +325,7 @@ describe("spending a lease", () => {
     let mints = 0;
     let attempts = 0;
     const fetchImpl = vi.fn(async (url: RequestInfo | URL) => {
-      if (String(url).includes("/model-leases")) {
+      if (String(url).endsWith("/model-leases")) {
         mints += 1;
         return json({ ok: true, ...leaseBody() });
       }
@@ -347,7 +348,7 @@ describe("spending a lease", () => {
   it("passes an ordinary upstream error straight back", async () => {
     // A 400 from the model is the caller's problem, not the lease's.
     const fetchImpl = vi.fn(async (url: RequestInfo | URL) => {
-      if (String(url).includes("/model-leases")) {
+      if (String(url).endsWith("/model-leases")) {
         return json({ ok: true, ...leaseBody() });
       }
       return json({ error: { message: "max_tokens too large" } }, 400);
@@ -361,7 +362,7 @@ describe("spending a lease", () => {
     const urls: string[] = [];
     const fetchImpl = vi.fn(async (url: RequestInfo | URL) => {
       urls.push(String(url));
-      return String(url).includes("/model-leases")
+      return String(url).endsWith("/model-leases")
         ? json({ ok: true, ...leaseBody() })
         : json({ id: "msg_1" });
     }) as unknown as typeof fetch;
@@ -380,7 +381,7 @@ describe("spending a lease", () => {
     const urls: string[] = [];
     const fetchImpl = vi.fn(async (url: RequestInfo | URL) => {
       urls.push(String(url));
-      return String(url).includes("/model-leases")
+      return String(url).endsWith("/model-leases")
         ? json({
             ok: true,
             ...leaseBody({
@@ -513,5 +514,139 @@ describe("configuration", () => {
     vi.stubEnv("MCPJAM_PROJECT_ID", "jd7abc");
     expect(resolveMcpjamProject()).toBe("jd7abc");
     expect(resolveMcpjamProject("explicit")).toBe("explicit");
+  });
+});
+
+describe("lease lifecycle regressions", () => {
+  function transport() {
+    let count = 0;
+    const revoked: string[] = [];
+    const fetchImpl = vi.fn(
+      async (url: RequestInfo | URL, init?: RequestInit) => {
+        if (String(url).endsWith("/revoke")) {
+          revoked.push(JSON.parse(init!.body as string).runId);
+          return json({ ok: true });
+        }
+        if (String(url).endsWith("/model-leases")) {
+          count++;
+          return json(
+            leaseBody({ lease: `lease_${count}`, runId: `run_${count}` })
+          );
+        }
+        return json({ ok: true });
+      }
+    );
+    return { fetchImpl, revoked, count: () => count };
+  }
+
+  it("retires replacements and revokes every remaining lease at teardown", async () => {
+    const t = transport();
+    const client = makeClient(t.fetchImpl);
+    await client.getLease();
+    client.invalidate();
+    await client.proxyFetch(...providerRequest());
+    expect(t.revoked).toEqual(["run_1"]);
+    await client.revoke();
+    expect(t.revoked).toEqual(["run_1", "run_2"]);
+  });
+
+  it("does not let a delayed refusal invalidate the replacement", async () => {
+    const t = transport();
+    let release!: () => void;
+    const delayed = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let attempts = 0;
+    const client = makeClient(async (url, init) => {
+      if (
+        new Headers(init?.headers).get("x-mcpjam-harness-lease") === "lease_1"
+      ) {
+        if (++attempts === 2) await delayed;
+        return json({ error: "Lease budget_exhausted" }, 429);
+      }
+      return t.fetchImpl(url, init);
+    });
+    await client.getLease();
+    const first = client.proxyFetch(...providerRequest());
+    const second = client.proxyFetch(...providerRequest());
+    await first;
+    // The old request still uses the old lease.
+    expect(t.revoked).toEqual([]);
+    release();
+    await second;
+    expect(t.count()).toBe(2);
+    expect(t.revoked).toEqual(["run_1"]);
+    await client.revoke();
+  });
+
+  it("cancels one waiter without cancelling another waiter's shared mint", async () => {
+    const t = transport();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const client = makeClient(async (url, init) => {
+      await gate;
+      return t.fetchImpl(url, init);
+    });
+    const controller = new AbortController();
+    const [, init] = providerRequest();
+    const cancelled = client.proxyFetch(providerRequest()[0], {
+      ...init,
+      signal: controller.signal,
+    });
+    const other = client.getLease();
+    const rejection = expect(cancelled).rejects.toThrow("cancelled");
+    controller.abort(new Error("cancelled"));
+    await rejection;
+    release();
+    expect((await other).lease).toBe("lease_1");
+    expect(t.count()).toBe(1);
+    await client.revoke();
+  });
+
+  it("bounds a stalled mint, including a stalled response body", async () => {
+    vi.useFakeTimers();
+    let signal: AbortSignal | null | undefined;
+    const client = makeClient(async (_url, init) => {
+      signal = init?.signal;
+      return new Response(new ReadableStream({ start() {} }));
+    });
+    const pending = expect(client.getLease()).rejects.toThrow("timed out");
+    await vi.advanceTimersByTimeAsync(15_000);
+    await pending;
+    expect(signal?.aborted).toBe(true);
+  });
+
+  it("bounds teardown even when fetch never settles", async () => {
+    vi.useFakeTimers();
+    const t = transport();
+    const client = makeClient(async (url, init) =>
+      String(url).endsWith("/revoke")
+        ? new Promise<Response>(() => {})
+        : t.fetchImpl(url, init)
+    );
+    await client.getLease();
+    const pending = client.revoke();
+    await vi.advanceTimersByTimeAsync(5_000);
+    await expect(pending).resolves.toBeUndefined();
+  });
+
+  it("includes a pending mint in teardown", async () => {
+    const t = transport();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const client = makeClient(async (url, init) => {
+      await gate;
+      return t.fetchImpl(url, init);
+    });
+    const mint = client.getLease();
+    const cleanup = client.revoke();
+    release();
+    await mint;
+    await cleanup;
+    expect(t.revoked).toEqual(["run_1"]);
   });
 });

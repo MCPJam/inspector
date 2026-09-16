@@ -122,6 +122,49 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// A caller may stop waiting without cancelling the mint shared by other calls.
+function abortable<T>(
+  promise: Promise<T>,
+  signal?: AbortSignal | null
+): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise((resolve, reject) => {
+    const aborted = () => {
+      cleanup();
+      reject(signal.reason);
+    };
+    const cleanup = () => signal.removeEventListener("abort", aborted);
+    signal.addEventListener("abort", aborted, { once: true });
+    promise.then(
+      (value) => {
+        cleanup();
+        resolve(value);
+      },
+      (error) => {
+        cleanup();
+        reject(error);
+      }
+    );
+  });
+}
+
+async function withDeadline<T>(
+  operation: (signal: AbortSignal) => Promise<T>,
+  ms: number
+): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(new Error("MCPJam lease request timed out")),
+    ms
+  );
+  try {
+    return await abortable(operation(controller.signal), controller.signal);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Join the lease's proxy base with a vendor path, tolerating a `/v1` on either. */
 function proxyUrlFor(proxyBaseUrl: string, pathname: string): string {
   // Anthropic leases hand back `…/model-proxy/anthropic`, OpenAI leases
@@ -157,6 +200,9 @@ export class McpjamLeaseClient {
   private readonly fetchImpl: typeof fetch;
 
   private current: McpjamModelLease | null = null;
+  private readonly held = new Map<string, McpjamModelLease>();
+  private readonly inFlight = new Map<string, number>();
+  private readonly revoking = new Map<string, Promise<void>>();
   /**
    * The in-flight mint, so concurrent iterations share ONE call. Without it a
    * suite that runs 20 cases in parallel mints 20 leases on its first tick —
@@ -175,20 +221,27 @@ export class McpjamLeaseClient {
   }
 
   /** The live lease, minting or renewing if needed. */
-  async getLease(): Promise<McpjamModelLease> {
+  async getLease(signal?: AbortSignal | null): Promise<McpjamModelLease> {
+    signal?.throwIfAborted();
     const live = this.current;
     if (live && live.expiresAt - Date.now() > RENEW_BEFORE_MS) return live;
-    if (this.minting) return this.minting;
+    if (this.minting) return abortable(this.minting, signal);
 
-    this.minting = this.mint().finally(() => {
+    this.current = null;
+    this.minting = withDeadline(async (signal) => {
+      // Return unused slots before asking for another lease at the active cap.
+      await this.revokeUnused();
+      signal.throwIfAborted();
+      return this.mint(signal);
+    }, 15_000).finally(() => {
       this.minting = null;
     });
-    return this.minting;
+    return abortable(this.minting, signal);
   }
 
   /** Forget the cached lease, so the next call mints a fresh one. */
-  invalidate(): void {
-    this.current = null;
+  invalidate(expected = this.current): void {
+    if (this.current === expected) this.current = null;
   }
 
   /**
@@ -199,11 +252,19 @@ export class McpjamLeaseClient {
    * active-lease budget immediately rather than in half an hour.
    */
   async revoke(): Promise<void> {
-    const live = this.current;
+    // A mint already in progress may return after teardown begins.
+    await this.minting?.catch(() => {});
     this.current = null;
-    if (!live) return;
-    try {
-      await this.fetchImpl(
+    await Promise.all(
+      [...this.held.values()].map((lease) => this.revokeLease(lease))
+    );
+  }
+
+  private async revokeLease(lease: McpjamModelLease): Promise<void> {
+    const pending = this.revoking.get(lease.runId);
+    if (pending) return pending;
+    const revoke = withDeadline(async (signal) => {
+      const response = await this.fetchImpl(
         `${this.baseUrl}/api/v1/projects/${encodeURIComponent(this.project)}/model-leases/revoke`,
         {
           method: "POST",
@@ -211,15 +272,29 @@ export class McpjamLeaseClient {
             "content-type": "application/json",
             authorization: `Bearer ${this.apiKey}`,
           },
-          body: JSON.stringify({ runId: live.runId }),
+          body: JSON.stringify({ runId: lease.runId }),
+          signal,
         }
       );
-    } catch {
-      // Teardown must not fail a run that already produced its results.
-    }
+      if (response.ok) this.held.delete(lease.runId);
+    }, 5_000)
+      .catch(() => {})
+      .finally(() => this.revoking.delete(lease.runId));
+    this.revoking.set(lease.runId, revoke);
+    return revoke;
   }
 
-  private async mint(): Promise<McpjamModelLease> {
+  private async revokeUnused(): Promise<void> {
+    await Promise.all(
+      [...this.held.values()]
+        .filter(
+          (lease) => lease !== this.current && !this.inFlight.get(lease.runId)
+        )
+        .map((lease) => this.revokeLease(lease))
+    );
+  }
+
+  private async mint(signal: AbortSignal): Promise<McpjamModelLease> {
     const url = `${this.baseUrl}/api/v1/projects/${encodeURIComponent(this.project)}/model-leases`;
     const send = () =>
       this.fetchImpl(url, {
@@ -229,6 +304,7 @@ export class McpjamLeaseClient {
           authorization: `Bearer ${this.apiKey}`,
         },
         body: JSON.stringify({ model: this.model }),
+        signal,
       });
 
     let response = await send();
@@ -237,7 +313,7 @@ export class McpjamLeaseClient {
     // first tick; anything past one retry is a real refusal to surface.
     if (response.status === 429) {
       const wait = await readRetryAfterSeconds(response);
-      await sleep(Math.min((wait ?? 1) * 1000, 5_000));
+      await abortable(sleep(Math.min((wait ?? 1) * 1000, 5_000)), signal);
       response = await send();
     }
 
@@ -280,6 +356,8 @@ export class McpjamLeaseClient {
       expiresAt: body.expiresAt,
       runId: body.runId,
     };
+    signal.throwIfAborted();
+    this.held.set(lease.runId, lease);
     this.current = lease;
     return lease;
   }
@@ -311,43 +389,59 @@ export class McpjamLeaseClient {
       headers.delete("authorization");
       headers.delete("x-api-key");
       headers.set("x-mcpjam-harness-lease", lease.lease);
-      return this.fetchImpl(
-        proxyUrlFor(lease.proxyBaseUrl, requested.pathname) + requested.search,
-        { ...init, headers }
-      );
+      init?.signal?.throwIfAborted();
+      this.inFlight.set(lease.runId, (this.inFlight.get(lease.runId) ?? 0) + 1);
+      try {
+        return await this.fetchImpl(
+          proxyUrlFor(lease.proxyBaseUrl, requested.pathname) +
+            requested.search,
+          { ...init, headers }
+        );
+      } finally {
+        const remaining = (this.inFlight.get(lease.runId) ?? 1) - 1;
+        if (remaining) this.inFlight.set(lease.runId, remaining);
+        else this.inFlight.delete(lease.runId);
+      }
     };
 
-    let lease = await this.getLease();
-    let response = await attempt(lease);
+    try {
+      let lease = await this.getLease(init?.signal);
+      let response = await attempt(lease);
 
-    // A retry has to re-send the body, so it is only safe when the body is a
-    // string — which is what the AI SDK sends. A stream would already be
-    // consumed, so leave those refusals to the caller.
-    const replayable = typeof init?.body === "string" || init?.body == null;
-    if (!replayable || response.ok) return response;
+      // A retry has to re-send the body, so it is only safe when the body is a
+      // string — which is what the AI SDK sends. A stream would already be
+      // consumed, so leave those refusals to the caller.
+      const replayable = typeof init?.body === "string" || init?.body == null;
+      if (!replayable || response.ok) return response;
 
-    const reason = await peekLeaseRefusal(response);
-    if (reason === "stale") {
-      // Revoked, expired, or spent — a fresh lease is a fresh envelope. The
-      // org's own spend cap still binds on every generation, so this cannot
-      // turn a spending refusal into unlimited spending.
-      this.invalidate();
-      lease = await this.getLease();
-      return attempt(lease);
-    }
-    if (reason === "in_flight") {
-      // This lease's parallel-generation ceiling, not a spending problem —
-      // re-minting would burn a lease slot for something that clears on its
-      // own in milliseconds.
-      for (const delay of IN_FLIGHT_RETRY_DELAYS_MS) {
-        await sleep(delay);
-        response = await attempt(lease);
-        if (response.ok || (await peekLeaseRefusal(response)) !== "in_flight") {
-          return response;
+      const reason = await peekLeaseRefusal(response);
+      if (reason === "stale") {
+        // Revoked, expired, or spent — a fresh lease is a fresh envelope. The
+        // org's own spend cap still binds on every generation, so this cannot
+        // turn a spending refusal into unlimited spending.
+        this.invalidate(lease);
+        lease = await this.getLease(init?.signal);
+        return await attempt(lease);
+      }
+      if (reason === "in_flight") {
+        // This lease's parallel-generation ceiling, not a spending problem —
+        // re-minting would burn a lease slot for something that clears on its
+        // own in milliseconds.
+        for (const delay of IN_FLIGHT_RETRY_DELAYS_MS) {
+          await abortable(sleep(delay), init?.signal);
+          response = await attempt(lease);
+          if (
+            response.ok ||
+            (await peekLeaseRefusal(response)) !== "in_flight"
+          ) {
+            return response;
+          }
         }
       }
+      return response;
+    } finally {
+      await this.revokeUnused();
     }
-    return response;
   }
 }
 
@@ -386,39 +480,44 @@ async function peekLeaseRefusal(
  * One client per (deployment, project, model, key), so every iteration of a run
  * shares a lease.
  *
- * Module-level rather than per-`HostRunner`: a vitest file constructs a runner
- * per case, and a lease per case would multiply both the mint traffic and the
- * active-lease count by the size of the suite.
+ * A suite shares this scope across its iteration clones and releases only
+ * these clients at teardown. Standalone runners share the default scope.
  */
-const clients = new Map<string, McpjamLeaseClient>();
+export class McpjamModelLeaseScope {
+  private readonly clients = new Map<string, McpjamLeaseClient>();
 
-export function getMcpjamLeaseClient(
-  options: McpjamLeaseClientOptions
-): McpjamLeaseClient {
-  // The key ends with a SUFFIX of the API key, never the key: enough to keep
-  // two credentials' clients apart, not enough to leak one into a heap dump or
-  // an error message.
-  const cacheKey = [
-    options.baseUrl,
-    options.project,
-    options.model,
-    options.apiKey.slice(-6),
-  ].join("|");
-  const existing = clients.get(cacheKey);
-  if (existing) return existing;
-  const created = new McpjamLeaseClient(options);
-  clients.set(cacheKey, created);
-  return created;
+  getClient(options: McpjamLeaseClientOptions): McpjamLeaseClient {
+    const key = JSON.stringify([
+      options.baseUrl,
+      options.project,
+      options.model,
+      options.apiKey,
+    ]);
+    let client = this.clients.get(key);
+    if (!client) {
+      client = new McpjamLeaseClient(options);
+      this.clients.set(key, client);
+    }
+    return client;
+  }
+
+  async release(): Promise<void> {
+    const held = [...this.clients.values()];
+    this.clients.clear();
+    await Promise.all(held.map((client) => client.revoke()));
+  }
 }
 
-/**
- * Revoke every lease this process holds, and forget them.
- *
- * `EvalSuite.run` calls this at teardown. Safe to call directly — from a
- * vitest `afterAll`, say — and safe to call when there is nothing to revoke.
- */
+const defaultScope = new McpjamModelLeaseScope();
+
+export function getMcpjamLeaseClient(
+  options: McpjamLeaseClientOptions,
+  scope = defaultScope
+): McpjamLeaseClient {
+  return scope.getClient(options);
+}
+
+/** Release leases made outside an EvalSuite; suites own independent scopes. */
 export async function releaseMcpjamModelLeases(): Promise<void> {
-  const held = [...clients.values()];
-  clients.clear();
-  await Promise.all(held.map((client) => client.revoke()));
+  await defaultScope.release();
 }

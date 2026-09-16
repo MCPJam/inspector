@@ -20,6 +20,7 @@ import type { LanguageModel } from "ai";
 import type { LLMProvider, CustomProvider } from "./types.js";
 import {
   getMcpjamLeaseClient,
+  type McpjamModelLeaseScope,
   resolveMcpjamBaseUrl,
   resolveMcpjamProject,
   MCPJAM_PLACEHOLDER_API_KEY,
@@ -52,11 +53,14 @@ export interface BaseUrls {
  * Options for creating a model.
  */
 export interface CreateModelOptions {
+  /** @internal Lease ownership for a suite run. */
+  mcpjamLeaseScope?: McpjamModelLeaseScope;
   apiKey: string;
   baseUrls?: BaseUrls;
   /** Custom providers registry (name -> config) */
   customProviders?:
-    Map<string, CustomProvider> | Record<string, CustomProvider>;
+    | Map<string, CustomProvider>
+    | Record<string, CustomProvider>;
   /**
    * Which project pays for `mcpjam/…` models. Falls back to
    * `MCPJAM_PROJECT_ID` and then the `default` sentinel, which resolves
@@ -418,12 +422,15 @@ export function createModelFromString(
             "Set MCPJAM_API_KEY, or pass it as the runner's apiKey."
         );
       }
-      const client = getMcpjamLeaseClient({
-        baseUrl: resolveMcpjamBaseUrl(baseUrls?.mcpjam),
-        apiKey: mcpjamApiKey,
-        project: resolveMcpjamProject(mcpjamProject),
-        model,
-      });
+      const client = getMcpjamLeaseClient(
+        {
+          baseUrl: resolveMcpjamBaseUrl(baseUrls?.mcpjam),
+          apiKey: mcpjamApiKey,
+          project: resolveMcpjamProject(mcpjamProject),
+          model,
+        },
+        options.mcpjamLeaseScope
+      );
 
       // The FULL vendor id is what reaches the wire, so the proxy's model
       // allowlist matches the lease exactly rather than through its
