@@ -40,7 +40,12 @@ export type LLMProvider =
   | "ollama"
   | "mistral"
   | "openrouter"
-  | "xai";
+  | "xai"
+  // Not a vendor: MCPJam-hosted inference, billed to your organization's
+  // credits. `mcpjam/anthropic/claude-sonnet-4.5` names the vendor model
+  // AFTER the prefix, and the only credential it needs is `MCPJAM_API_KEY`.
+  // See `mcpjam-model-lease.ts`.
+  | "mcpjam";
 
 /**
  * Compatible API protocols for custom providers
