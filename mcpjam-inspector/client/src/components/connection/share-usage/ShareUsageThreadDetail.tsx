@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { AlertTriangle, Loader2, Share2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
@@ -317,6 +324,21 @@ interface ShareUsageThreadDetailProps {
  */
 const PROMOTABLE_SOURCE_TYPES = new Set(["swarm", "scenario"]);
 
+/**
+ * One line per page load, not one per session: the skew is a property of the
+ * deployment, so a warning per rendered session would bury it in its own noise.
+ */
+let warnedMissingRunAttemptStatus = false;
+function warnMissingRunAttemptStatusOnce(): void {
+  if (warnedMissingRunAttemptStatus) return;
+  warnedMissingRunAttemptStatus = true;
+  console.warn(
+    "[share-usage] Swarm sessions carry no runAttemptStatus. The backend " +
+      "predates the promote gate, so every swarm session will report an " +
+      "unknown run outcome and promotion is off until it is deployed."
+  );
+}
+
 export function ShareUsageThreadDetail({
   threadId,
   sessionLink,
@@ -554,6 +576,50 @@ export function ShareUsageThreadDetail({
     PROMOTABLE_SOURCE_TYPES.has(thread.sourceType),
   );
 
+  /**
+   * Why the backend would refuse this promote, when we can know it up front.
+   * `null` means "nothing we can see stops it" — never "it will succeed",
+   * since the server re-checks everything (BB-247).
+   *
+   * Only swarm sessions have a run to have finished. Promotion requires their
+   * attempt to have reached 'succeeded', and a failed, rate-limited or
+   * still-running attempt leaves a transcript that reads exactly like a
+   * complete one — so without this the button looked live and the dialog
+   * answered with a server error. A missing status (older backend, or an
+   * attempt row that claims no session) blocks too: we cannot vouch for it,
+   * and offering the action is what produced the bad error in the first place.
+   */
+  // Ties the button to its explanation for assistive tech; see the render.
+  const promoteBlockedReasonId = useId();
+
+  const promoteBlockedReason = useMemo((): string | null => {
+    if (!canPromoteThread || thread?.sourceType !== "swarm") return null;
+    switch (thread.runAttemptStatus) {
+      case "succeeded":
+        return null;
+      case "pending":
+      case "running":
+        return "This session is still running. It can be promoted once the run finishes.";
+      case "rate_limited":
+        return "This session's run stopped on a rate limit, so the conversation is incomplete. Only sessions from runs that finished can become test cases.";
+      case "failed":
+        return "This session's run did not finish, so the conversation is incomplete. Only sessions from runs that finished can become test cases.";
+      case undefined:
+        // The BACKEND is older than this client: a deploy that predates the
+        // field sends no property at all. Blocking is still right, but this is
+        // a deployment problem, not a damaged session, and it hits EVERY swarm
+        // session at once. Without this line the only symptom is a trickle of
+        // one-off "unknown outcome" tickets that each look like bad data.
+        warnMissingRunAttemptStatusOnce();
+        return "This session's run outcome is unknown, so it cannot be promoted to a test case.";
+      default:
+        // `null` (an attempt the backend could not identify) and any status
+        // this client has not learned yet. A property of the session, so no
+        // warning.
+        return "This session's run outcome is unknown, so it cannot be promoted to a test case.";
+    }
+  }, [canPromoteThread, thread?.sourceType, thread?.runAttemptStatus]);
+
   // Reset when the viewer switches sessions, so a dialog opened on one thread
   // never lands on the next one — and when the capability goes away, since a
   // parent can withdraw it while this component stays mounted on the same
@@ -626,10 +692,23 @@ export function ShareUsageThreadDetail({
       return (
         <div className="flex h-full flex-col">
           <SwarmJudgeSection threadId={threadId} goalScore={thread.goalScore} />
-          <div className="flex flex-1 items-center justify-center">
+          <div className="flex flex-1 flex-col items-center justify-center gap-1.5 px-6 text-center">
             <p className="text-sm text-muted-foreground">
               No messages in this session
             </p>
+            {/* This branch has no header, so the disabled promote button and
+                its hover reason never render here — and an empty transcript is
+                USUALLY a run that died before it said anything, which is the
+                question the reader has. Say it in the empty state instead of
+                leaving them to guess (BB-247, CodeRabbit on PR 5127). */}
+            {promoteBlockedReason ? (
+              <p
+                className="max-w-sm text-xs text-muted-foreground"
+                data-testid="share-usage-empty-promote-blocked"
+              >
+                {promoteBlockedReason}
+              </p>
+            ) : null}
           </div>
         </div>
       );
@@ -676,16 +755,55 @@ export function ShareUsageThreadDetail({
             </Button>
           )}
           {canPromoteThread ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-8 rounded-lg px-2.5 text-xs"
-              data-testid="share-usage-promote-to-test-case"
-              onClick={() => setPromoteOpen(true)}
-            >
-              Promote to test case
-            </Button>
+            promoteBlockedReason ? (
+              /* Shown inert rather than hidden: a missing button reads as a
+                 surface that lost a feature, while one that says why answers
+                 the question the reader actually has.
+
+                 `aria-disabled` rather than `disabled`, so the control stays
+                 in the tab order and its reason is reachable without a mouse.
+                 A truly disabled button takes no focus and fires no pointer
+                 events, which leaves keyboard and touch users with no path to
+                 an explanation that only exists in a hover hint. The reason is
+                 therefore carried three ways: `title` for the mouse, an
+                 `aria-describedby` target for assistive tech, and the visible
+                 empty-state copy further up for a session with no transcript.
+                 Inertness comes from never wiring `setPromoteOpen`, not from
+                 any handler. The design system hangs its disabled styling off
+                 the `disabled:` variant, which by definition never matches
+                 here, so the muted look and the dead cursor are spelled out. */
+              <span
+                className="inline-flex"
+                data-testid="share-usage-promote-blocked"
+              >
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 cursor-not-allowed rounded-lg px-2.5 text-xs opacity-50 hover:bg-transparent hover:text-current"
+                  data-testid="share-usage-promote-to-test-case"
+                  title={promoteBlockedReason}
+                  aria-disabled
+                  aria-describedby={promoteBlockedReasonId}
+                >
+                  Promote to test case
+                </Button>
+                <span id={promoteBlockedReasonId} className="sr-only">
+                  {promoteBlockedReason}
+                </span>
+              </span>
+            ) : (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 rounded-lg px-2.5 text-xs"
+                data-testid="share-usage-promote-to-test-case"
+                onClick={() => setPromoteOpen(true)}
+              >
+                Promote to test case
+              </Button>
+            )
           ) : null}
           {/* Labeled, never icon-only: readers who wanted to send a session to
               a teammate did not recognize the copy icon as the way to do it.

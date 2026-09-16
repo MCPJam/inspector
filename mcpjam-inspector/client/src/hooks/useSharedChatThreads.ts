@@ -172,6 +172,25 @@ export interface SharedChatThread {
     error?: string;
   };
   /**
+   * How the swarm run that produced this session ENDED, from the backend's
+   * `journeyRunAttempts` row (detail query only — `getSession`).
+   *
+   * Only a 'succeeded' attempt may be promoted to a test case, and the
+   * transcript persists whatever the outcome, so this is the ONLY thing that
+   * distinguishes a session the promote gate will accept from one it always
+   * refuses. Read `undefined` (older backend) and `null` (non-swarm source, or
+   * a swarm row no attempt claimed) as "cannot vouch for this" rather than as
+   * permission — the backend refuses either way, this field only decides
+   * whether the UI offers the action.
+   */
+  runAttemptStatus?:
+    | "pending"
+    | "running"
+    | "succeeded"
+    | "failed"
+    | "rate_limited"
+    | null;
+  /**
    * The session's derived user-value chain (`chatSessions.stageDerivation`).
    *
    * Absent on every session written before D8 and on any the analyzer has not
