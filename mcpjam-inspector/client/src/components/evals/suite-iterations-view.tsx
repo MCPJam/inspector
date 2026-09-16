@@ -665,7 +665,7 @@ export function SuiteIterationsView({
       ? "run-detail"
       : route.type === "test-detail"
         ? "test-detail"
-        : route.type === "test-edit" && !editingDisabled
+        : route.type === "test-edit" && (!editingDisabled || evaluateCaseEditor)
           ? "test-edit"
           : route.type === "test-edit"
             ? "test-detail"
@@ -1851,6 +1851,7 @@ export function SuiteIterationsView({
                 <TestTemplateEditor
                   suiteId={suite._id}
                   selectedTestCaseId={selectedTestId}
+                  readOnly={editingDisabled}
                   onDeleteCase={
                     onDeleteTestCasesBatch
                       ? async (testCaseId) => {
@@ -1898,7 +1899,7 @@ export function SuiteIterationsView({
                     })
                   }
                   checksPage={
-                    route.type === "test-edit" && Boolean(route.checks)
+                    !editingDisabled && route.type === "test-edit" && Boolean(route.checks)
                   }
                   onOpenCaseChecks={() =>
                     navigation.toTestEdit(suite._id, selectedTestId, {

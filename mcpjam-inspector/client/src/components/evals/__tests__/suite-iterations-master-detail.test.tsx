@@ -27,6 +27,10 @@ vi.mock("@/hooks/useProjectEnvironments", () => ({
   useProjectEnvironments: () => cloudState.environments,
 }));
 
+vi.mock("../test-template-editor", () => ({
+  TestTemplateEditor: ({ readOnly }: {readOnly?: boolean}) => <div data-testid="case-workspace" data-readonly={String(readOnly)} />,
+}));
+
 vi.mock("convex/react", () => ({
   useMutation: (name: any) => (mocks.useMutation as any)(name),
   useQuery: (name: any, args: any) => (mocks.useQuery as any)(name, args),
@@ -921,6 +925,17 @@ describe("SuiteIterationsView suiteDetailOverview", () => {
     createdAt: 1,
     completedAt: 2,
   };
+
+  it("opens locked SDK test routes in the new read-only workspace", () => {
+    renderOverview({
+      suite: { ...baseSuite, source: "sdk" },
+      suiteDetailOverview: true,
+      evaluateCaseEditor: true,
+      route: { type: "test-edit", suiteId: "suite-1", testId: "case-1" },
+    });
+    expect(screen.getByTestId("case-workspace")).toHaveAttribute("data-readonly", "true");
+    expect(screen.queryByTestId("evaluate-run-page")).toBeNull();
+  });
 
   it("lets locked SDK run titles open their definition without enabling evaluator edits", () => {
     const navigation = { ...noopNav, toTestEdit: vi.fn() };
