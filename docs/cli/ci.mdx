@@ -699,7 +699,3 @@ steps:
 `command` replaces `project` and `suite`: the action runs your tests, then reports the runs they uploaded. It finds each run through a receipt the SDK writes, so `@mcpjam/sdk` must be **8.8.0 or newer** — an older SDK uploads normally but writes no receipt, and the step reports that it found no run.
 
 The comment carries the client/model table, the failed cases, and links into MCPJam. The checks summary carries the full report. Without `pull-requests: write` the action warns and leaves the eval verdict alone.
-
-<Note>
-Reaching a MCPJam that sits behind Cloudflare Access — a staging or self-hosted deployment — also needs a service token. Set `CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET` in the same `env:` block; the action sends them with its MCPJam reads and with nothing else.
-</Note>
