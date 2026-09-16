@@ -23,6 +23,7 @@ import {
   captureEvalReporting,
   notRequestedReceipt,
 } from "./eval-reporting-receipt.js";
+import { releaseMcpjamModelLeases } from "./mcpjam-model-lease.js";
 import { suiteTestResultsToEvalResultInputs } from "./eval-result-mapping.js";
 import { aggregateEvaluationConfigHash } from "./contract/derive.js";
 import { resolveServerReplayConfigs } from "./server-replay-configs.js";
@@ -314,6 +315,15 @@ export class EvalSuite {
       if (timer !== undefined) clearTimeout(timer);
       dispose?.();
       this.running = false;
+      // Hand back any MCPJam-hosted-inference lease this run minted. A no-op
+      // for every other provider, and best-effort by construction: leases
+      // expire on their own, so this only returns the slot to the org's
+      // active-lease budget now rather than in half an hour.
+      //
+      // At the SUITE level, not per test: a vitest file builds a runner per
+      // case, and revoking per case would re-mint for the next one — spending
+      // the API key's rate limit to give back something about to be reused.
+      await releaseMcpjamModelLeases();
     }
   }
 
