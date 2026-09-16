@@ -126,17 +126,23 @@ function withSupportReference(
   data: Parameters<typeof sonnerToast.error>[1],
 ): { title: string; description: string | undefined } {
   const { text, requestId } = splitSupportReference(message);
-  const callerDescription =
-    typeof data?.description === "string" && data.description.trim() !== ""
-      ? data.description
+  const description = data?.description;
+  const callerText =
+    typeof description === "string" && description.trim() !== ""
+      ? description
       : undefined;
-  if (!requestId) return { title: message, description: callerDescription };
+  if (!requestId) return { title: message, description: callerText };
+  // Sonner also accepts a `ReactNode` or a render function here, and neither
+  // can be concatenated with a line of text. Overwriting one would drop
+  // whatever the caller chose to render, so the reference stays inline in the
+  // sentence instead: less tidy, and nothing is lost either way.
+  if (description != null && typeof description !== "string") {
+    return { title: message, description: undefined };
+  }
   const reference = `Reference ${requestId}`;
   return {
     title: text || message,
-    description: callerDescription
-      ? `${callerDescription}\n${reference}`
-      : reference,
+    description: callerText ? `${callerText}\n${reference}` : reference,
   };
 }
 

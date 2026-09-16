@@ -1,5 +1,10 @@
 import { ConvexError } from "convex/values";
-import { convexErrMessage, describeConvexFailure } from "@/lib/convex-error";
+import {
+  convexErrMessage,
+  describeConvexFailure,
+  formatSupportReference,
+  getConvexRequestId,
+} from "@/lib/convex-error";
 import type {
   BillingFeatureName,
   BillingInterval,
@@ -544,7 +549,16 @@ export function getBillingErrorMessage(
   if (raw === null || raw.trim() === parsed) {
     return convexErrMessage(error, fallback);
   }
-  return describeConvexFailure(new Error(parsed), fallback).message;
+  const shaped = describeConvexFailure(new Error(parsed), fallback).message;
+  // Decoding threw away the `[Request ID: …]` prefix along with the blob that
+  // was wrapped in it — `tryParseJsonPayload` lifts a TRAILING JSON object out
+  // of a prefixed message, so the id and the payload arrive together. Put the
+  // reference back, or a JSON-encoded failure is the one kind nobody can quote
+  // to support. A `ConvexError` still gets none: its payload is a refusal the
+  // backend worded, not an incident.
+  const requestId =
+    error instanceof ConvexError ? null : getConvexRequestId(error);
+  return requestId ? `${shaped} ${formatSupportReference(requestId)}` : shaped;
 }
 
 /** The text a thrown `Error` carries, for telling a decoded payload from a raw one. */

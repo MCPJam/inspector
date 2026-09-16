@@ -128,6 +128,24 @@ describe("support references on error toasts", () => {
     expect(screen.getByText(/Reference da0bbc6cf9261481/)).toBeInTheDocument();
   });
 
+  it("keeps a rendered description rather than replacing it with the reference", async () => {
+    // Sonner also takes a `ReactNode` here, which cannot be concatenated with
+    // a line of text. Overwriting it would drop whatever the caller rendered,
+    // so the reference stays inline in the sentence instead.
+    render(<Toaster />);
+
+    appToast.error("Something went wrong (ref da0bbc6cf9261481)", {
+      description: <strong>Check the server logs</strong>,
+    });
+
+    expect(
+      await screen.findByText("Check the server logs"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Something went wrong (ref da0bbc6cf9261481)"),
+    ).toBeInTheDocument();
+  });
+
   it("leaves a message that carries no reference exactly as it was", async () => {
     render(<Toaster />);
 

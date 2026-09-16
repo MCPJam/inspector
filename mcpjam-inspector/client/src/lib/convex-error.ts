@@ -90,15 +90,27 @@ function firstMeaningfulLine(text: string): string {
  * they are shown unchanged.
  */
 function applicationPayload(error: unknown): string | null {
-  if (!error || typeof error !== "object" || !("data" in error)) return null;
-  const data = (error as { data: unknown }).data;
-  if (typeof data === "string" && data.trim())
-    return data.slice(0, MAX_MESSAGE_LENGTH);
-  if (data && typeof data === "object" && "message" in data) {
-    const message = (data as { message: unknown }).message;
-    if (typeof message === "string" && message.trim()) {
-      return message.slice(0, MAX_MESSAGE_LENGTH);
+  // Guarded, not trusted, like `attachedNormalized` in `error-reporting`: the
+  // thrown value is whatever a rejected promise carried, so `data` (or the
+  // `in` check, on a Proxy) can run code that throws. This function is on the
+  // path that EXPLAINS a failure, and every caller passes its result straight
+  // to a toast or into error state, so a throw here would swallow the message
+  // the user was owed and re-throw inside a `catch` that was already handling
+  // something.
+  try {
+    if (!error || typeof error !== "object" || !("data" in error)) return null;
+    const data = (error as { data: unknown }).data;
+    if (typeof data === "string" && data.trim())
+      return data.slice(0, MAX_MESSAGE_LENGTH);
+    if (data && typeof data === "object" && "message" in data) {
+      const message = (data as { message: unknown }).message;
+      if (typeof message === "string" && message.trim()) {
+        return message.slice(0, MAX_MESSAGE_LENGTH);
+      }
     }
+  } catch {
+    // Unreadable payload: fall through to the message, then the fallback.
+    return null;
   }
   return null;
 }

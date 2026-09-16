@@ -67,7 +67,10 @@ describe("describeConvexFailure", () => {
   it("reads a structured ConvexError payload's message field", () => {
     expect(
       describeConvexFailure(
-        new ConvexError({ kind: "forbidden", message: "You are not a member." }),
+        new ConvexError({
+          kind: "forbidden",
+          message: "You are not a member.",
+        }),
         "fallback",
       ).message,
     ).toBe("You are not a member.");
@@ -95,6 +98,28 @@ describe("describeConvexFailure", () => {
         "fallback",
       );
     }
+  });
+
+  it("survives a payload that throws when it is read", () => {
+    // The thrown value is whatever a rejected promise carried. This function
+    // explains a failure that already happened, so a throwing getter must
+    // degrade to the fallback rather than replace the user's message with a
+    // second exception raised inside the `catch` that was handling the first.
+    const hostile = new Error("[Request ID: abc] Server Error");
+    Object.defineProperty(hostile, "data", {
+      get() {
+        throw new Error("nope");
+      },
+    });
+
+    expect(describeConvexFailure(hostile, "fallback")).toEqual({
+      message: "Something went wrong",
+      requestId: "abc",
+      redacted: true,
+    });
+    expect(convexErrMessage(hostile, "fallback")).toBe(
+      "Something went wrong (ref abc)",
+    );
   });
 
   it("never hands a toast more than 400 characters", () => {
@@ -159,9 +184,9 @@ describe("convexErrMessage", () => {
   });
 
   it("leaves a message with no request id alone", () => {
-    expect(convexErrMessage(new Error("[CONVEX M(x)] Suite not found"), "f")).toBe(
-      "Suite not found",
-    );
+    expect(
+      convexErrMessage(new Error("[CONVEX M(x)] Suite not found"), "f"),
+    ).toBe("Suite not found");
     expect(convexErrMessage(null, "fallback")).toBe("fallback");
   });
 });
