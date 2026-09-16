@@ -42,6 +42,7 @@ import { runHistoryFilterClass } from "../evals/run-history-table";
 import {
   buildRunResultsMatrix,
   resultCounts,
+  cellResult,
   type RunResultsMatrixData,
 } from "./run-results-matrix-model";
 import { IterationDetails } from "../evals/iteration-details";
@@ -85,20 +86,16 @@ type MatrixView = "results" | "metrics";
 
 function CellResults({ items }: { items: EvalIteration[] }) {
   const counts = resultCounts(items);
-  const status = counts.pending
-    ? "Running"
-    : counts.failed
-      ? "Fail"
-      : counts.cancelled
-        ? "Cancelled"
-        : "Pass";
-  const statusTone = counts.pending
-    ? "text-pending"
-    : counts.failed
-      ? "text-destructive"
-      : counts.cancelled
-        ? "text-muted-foreground"
-        : "text-success";
+  const result = cellResult(items);
+  const status =
+    result === "pending"
+      ? "Running"
+      : result === "failed"
+        ? "Fail"
+        : result === "cancelled"
+          ? "Cancelled"
+          : "Pass";
+  const statusTone = outcomeTextTone(result ?? "passed");
   const breakdown = `${counts.passed} passed, ${counts.failed} failed, ${counts.pending} in progress, ${counts.cancelled} cancelled`;
   return (
     <span className="w-full space-y-2">
@@ -295,8 +292,7 @@ export function RunResultsMatrix({
           (row) =>
             row.title.toLowerCase().includes(query) &&
             data.targets.some(
-              (target) =>
-                resultCounts(target.cells.get(row.key) ?? [])[value] > 0,
+              (target) => cellResult(target.cells.get(row.key) ?? []) === value,
             ),
         ),
     );
@@ -327,9 +323,7 @@ export function RunResultsMatrix({
       (activeStatus === ALL_EVAL_FILTER_VALUES ||
         data.targets.some(
           (target) =>
-            resultCounts(target.cells.get(row.key) ?? [])[
-              activeStatus as StatusFilter
-            ] > 0,
+            cellResult(target.cells.get(row.key) ?? []) === activeStatus,
         )),
   );
   const hasActiveFilters =
