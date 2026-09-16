@@ -16,16 +16,27 @@ export type UpdateStatus =
 // quietly running in the background" deserve different patience. Both are
 // exposed as `let` so tests can shorten them.
 //
-// INSTALL: the user clicked and is waiting. Five minutes covers a 100MB+
-// macOS update on a sluggish link; longer than that is a stall, not slow
-// network.
-export const DEFAULT_STALLED_INSTALL_TIMEOUT_MS = 5 * 60_000;
+// INSTALL: the user clicked and is watching a spinner. Thirty seconds, not
+// minutes — anything a person waits through with no progress and no answer
+// IS the reported bug, whatever the clock says. It costs a slow download
+// nothing to be retired here: `update-downloaded` always wins, so a build
+// that lands late still flips the pill back to a working Restart.
+export const DEFAULT_STALLED_INSTALL_TIMEOUT_MS = 30_000;
 // DOWNLOAD: nobody clicked, so we can wait longer — but not forever. Before
 // this existed a download that started and never landed left the Update
 // button on screen for the life of the process with nothing behind it.
 export const DEFAULT_STALLED_DOWNLOAD_TIMEOUT_MS = 20 * 60_000;
+// QUIT: the staged build is real and `quitAndInstall()` returned without
+// throwing, so the app should be on its way out. If this timer ever fires the
+// process is still alive, which means Squirrel took the install and did
+// nothing with it — silently, since a throw or an `error` event would have
+// been handled elsewhere. The renderer is sitting on "Updating…" with no
+// status left to clear it, so this is the ONLY thing standing between that
+// user and a spinner that runs for the life of the process.
+export const DEFAULT_STALLED_QUIT_TIMEOUT_MS = 30_000;
 let stalledInstallTimeoutMs = DEFAULT_STALLED_INSTALL_TIMEOUT_MS;
 let stalledDownloadTimeoutMs = DEFAULT_STALLED_DOWNLOAD_TIMEOUT_MS;
+let stalledQuitTimeoutMs = DEFAULT_STALLED_QUIT_TIMEOUT_MS;
 
 // How many collapsed downloads it takes before we stop offering the in-app
 // install at all. One collapse can be a dropped connection; the next poll
@@ -75,6 +86,8 @@ let stalledInstallTimer: ReturnType<typeof setTimeout> | null = null;
 // download: a click may bring it forward, never push it out.
 let stalledDownloadDeadline: number | null = null;
 let collapsedDownloads = 0;
+// Armed only after a `quitAndInstall()` that returned without throwing.
+let stalledQuitTimer: ReturnType<typeof setTimeout> | null = null;
 
 function clearStalledInstallWatchdog(): void {
   if (stalledInstallTimer !== null) {
@@ -82,6 +95,52 @@ function clearStalledInstallWatchdog(): void {
     stalledInstallTimer = null;
   }
   stalledDownloadDeadline = null;
+}
+
+function clearStalledQuitWatchdog(): void {
+  if (stalledQuitTimer !== null) {
+    clearTimeout(stalledQuitTimer);
+    stalledQuitTimer = null;
+  }
+}
+
+/**
+ * The last thing between the user and a spinner that never stops.
+ *
+ * `quitAndInstall()` is fire-and-forget: it hands the staged build to Squirrel
+ * and, on success, the app is gone before this timer can fire. The failure
+ * mode it covers is the silent one — Squirrel accepts the install, the process
+ * keeps running, and NOTHING comes back. No throw (the call sites already
+ * catch those), no `error` event, no status change. `isQuittingForUpdate`
+ * stays true so every later click is ignored as "install already underway",
+ * and the renderer keeps `restartRequested` because only `update-error`,
+ * `idle` or `manual` clear it. That is the reported bug in its purest form:
+ * "Updating…", forever, on a build that really was downloaded.
+ *
+ * So: unstick the flag and hand over the releases page, which is the one path
+ * left that we know works.
+ */
+function startStalledQuitWatchdog(): void {
+  clearStalledQuitWatchdog();
+  const timeoutMs = stalledQuitTimeoutMs;
+  stalledQuitTimer = setTimeout(() => {
+    stalledQuitTimer = null;
+    // Re-check at fire time: a real quit never gets here, and an `error` that
+    // arrived first has already cleared the flag and answered the user.
+    if (!isQuittingForUpdate) {
+      return;
+    }
+    log.error(
+      `Install never quit the app (no response for ${timeoutMs}ms); offering manual download`,
+    );
+    isQuittingForUpdate = false;
+    // Deliberately not `escalateToManualDownload()` — that one refuses to
+    // touch a `downloaded` status, which is exactly the status we are in.
+    const version =
+      currentStatus.kind === "downloaded" ? currentStatus.version : undefined;
+    setStatus({ kind: "manual", version });
+    broadcastUpdateError();
+  }, timeoutMs);
 }
 
 function startStalledInstallWatchdog(timeoutMs: number): void {
@@ -331,6 +390,9 @@ export function setupAutoUpdaterEvents(): void {
     log.error("Auto-updater error:", error);
     const wasQuittingForUpdate = isQuittingForUpdate;
     isQuittingForUpdate = false;
+    // A real error is an answer, and it reaches the user through the path
+    // below — so the silent-quit watchdog has nothing left to catch.
+    clearStalledQuitWatchdog();
 
     // Always notify users in packaged builds — Bug 2: previously we only
     // broadcast when the user had clicked, so download failures before any
@@ -358,6 +420,8 @@ export function setupAutoUpdaterEvents(): void {
       isQuittingForUpdate = true;
       try {
         autoUpdater.quitAndInstall();
+        // Returning is not succeeding — see startStalledQuitWatchdog.
+        startStalledQuitWatchdog();
       } catch (error) {
         // quitAndInstall can throw on macOS when the staged build is
         // mis-signed or Squirrel's staging dir is corrupted. Don't leave the
@@ -416,6 +480,9 @@ export function registerUpdateListeners(mainWindow: BrowserWindow): void {
       isQuittingForUpdate = true;
       try {
         autoUpdater.quitAndInstall();
+        // The click path the bug report came through: if this install goes
+        // nowhere, nothing else will ever clear the spinner.
+        startStalledQuitWatchdog();
       } catch (error) {
         log.error("quitAndInstall threw:", error);
         isQuittingForUpdate = false;
@@ -517,6 +584,7 @@ export function installUpdateOnQuit(): boolean {
 // Test-only reset
 export function __resetUpdateStateForTests(): void {
   clearStalledInstallWatchdog();
+  clearStalledQuitWatchdog();
   currentStatus = { kind: "idle" };
   isQuittingForUpdate = false;
   trustedWindow = null;
@@ -524,6 +592,7 @@ export function __resetUpdateStateForTests(): void {
   collapsedDownloads = 0;
   stalledInstallTimeoutMs = DEFAULT_STALLED_INSTALL_TIMEOUT_MS;
   stalledDownloadTimeoutMs = DEFAULT_STALLED_DOWNLOAD_TIMEOUT_MS;
+  stalledQuitTimeoutMs = DEFAULT_STALLED_QUIT_TIMEOUT_MS;
 }
 
 // Test-only timeout override so the watchdog test doesn't have to advance
@@ -534,4 +603,8 @@ export function __setStalledInstallTimeoutForTests(ms: number): void {
 
 export function __setStalledDownloadTimeoutForTests(ms: number): void {
   stalledDownloadTimeoutMs = ms;
+}
+
+export function __setStalledQuitTimeoutForTests(ms: number): void {
+  stalledQuitTimeoutMs = ms;
 }

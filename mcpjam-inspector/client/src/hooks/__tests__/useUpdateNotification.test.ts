@@ -331,6 +331,29 @@ describe("useUpdateNotification", () => {
       expect(result.current.restartRequested).toBe(false);
     });
 
+    it("re-arms when the install itself hangs and the main process gives up", () => {
+      // The silent-quit watchdog: the build was downloaded, the click reached
+      // Squirrel, and nothing came back. The main process retires the install
+      // to `manual`, and that has to unstick the spinner here — otherwise the
+      // pill reads "Updating…" for the life of the process.
+      const { mockOnUpdateStatus } = setupElectronMock();
+
+      const { result } = renderHook(() => useUpdateNotification());
+      const onStatus = mockOnUpdateStatus.mock.calls[0][0];
+
+      act(() => {
+        onStatus({ kind: "downloaded", version: "3.6.0" });
+        result.current.restartAndInstall();
+      });
+      expect(result.current.restartRequested).toBe(true);
+
+      act(() => {
+        onStatus({ kind: "manual", version: "3.6.0" });
+      });
+
+      expect(result.current.restartRequested).toBe(false);
+    });
+
     it("stays armed through a downloaded install so a second click cannot land", () => {
       const { mockOnUpdateStatus } = setupElectronMock();
 

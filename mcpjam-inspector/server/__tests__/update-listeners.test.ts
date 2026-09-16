@@ -833,6 +833,102 @@ describe("update-listeners", () => {
     expect(quitAndInstallMock).toHaveBeenCalledTimes(1);
   });
 
+  it("hands over the manual download when quitAndInstall never quits the app", async () => {
+    // The reported bug at its purest: the build really was downloaded, the
+    // click really reached Squirrel, and then nothing came back. No throw, no
+    // `error` event, no quit — so `isQuittingForUpdate` stayed true, every
+    // later click was swallowed as "already underway", and the renderer sat
+    // on "Updating…" for the life of the process.
+    vi.useFakeTimers();
+    try {
+      const window = createWindow();
+      windows.push(window);
+      const mod = await loadUpdateListeners();
+      mod.__setStalledQuitTimeoutForTests(1_000);
+
+      mod.registerUpdateListeners(window as any);
+      emitAutoUpdaterEvent("update-available");
+      emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "2.5.0");
+      ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+
+      expect(quitAndInstallMock).toHaveBeenCalledTimes(1);
+      // Still inside the window: we assume the app is on its way out.
+      expect(window.webContents.send).not.toHaveBeenCalledWith("update-error");
+
+      vi.advanceTimersByTime(1_000);
+
+      expect(window.webContents.send).toHaveBeenCalledWith("update-status", {
+        kind: "manual",
+        version: "2.5.0",
+      });
+      expect(window.webContents.send).toHaveBeenCalledWith("update-error");
+
+      // And the pill now opens the releases page instead of re-entering the
+      // install that just proved it goes nowhere.
+      ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+      expect(quitAndInstallMock).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("hands over the manual download when a queued install never quits the app", async () => {
+    // Same silent hang, reached the other way: the user clicked while the
+    // download was still running, so `update-downloaded` fired the install.
+    vi.useFakeTimers();
+    try {
+      const window = createWindow();
+      windows.push(window);
+      const mod = await loadUpdateListeners();
+      mod.__setStalledQuitTimeoutForTests(1_000);
+
+      mod.registerUpdateListeners(window as any);
+      emitAutoUpdaterEvent("update-available");
+      ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+      emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "2.5.0");
+
+      expect(quitAndInstallMock).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(1_000);
+
+      expect(window.webContents.send).toHaveBeenCalledWith("update-status", {
+        kind: "manual",
+        version: "2.5.0",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stays quiet when an updater error already answered the user", async () => {
+    // A real `error` is an answer: it clears the quitting flag and toasts on
+    // its own. The watchdog must not fire behind it and broadcast a second
+    // time.
+    vi.useFakeTimers();
+    try {
+      const window = createWindow();
+      windows.push(window);
+      const mod = await loadUpdateListeners();
+      mod.__setStalledQuitTimeoutForTests(1_000);
+
+      mod.registerUpdateListeners(window as any);
+      emitAutoUpdaterEvent("update-available");
+      emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "2.5.0");
+      ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+      // Squirrel answers with a real error instead of quitting.
+      emitAutoUpdaterEvent("error", new Error("squirrel: install failed"));
+      (window.webContents.send as any).mockClear();
+
+      vi.advanceTimersByTime(1_000);
+
+      // The error already answered the user; the watchdog must stay quiet
+      // rather than broadcasting a second time.
+      expect(window.webContents.send).not.toHaveBeenCalledWith("update-error");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("catches quitAndInstall throws and surfaces an error broadcast", async () => {
     const window = createWindow();
     windows.push(window);
