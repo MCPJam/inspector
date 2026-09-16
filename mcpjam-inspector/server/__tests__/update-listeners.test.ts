@@ -221,6 +221,35 @@ describe("update-listeners", () => {
     expect(quitAndInstallMock).not.toHaveBeenCalled();
   });
 
+  it("keeps a staged build when a later poll re-announces the update", async () => {
+    // update-electron-app never stops polling after a download lands, so a
+    // `downloaded` status has to survive a fresh `update-available`. Without
+    // the guard the poll walked it back to `pending`, and the poll's own
+    // `update-not-available` then collapsed it — "Restart to update"
+    // vanishing for a build sitting on disk that installs on next launch.
+    const window = createWindow();
+    windows.push(window);
+    const { registerUpdateListeners } = await loadUpdateListeners();
+
+    registerUpdateListeners(window as any);
+    emitAutoUpdaterEvent("update-available");
+    emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "2.5.0");
+    (window.webContents.send as any).mockClear();
+
+    emitAutoUpdaterEvent("update-available");
+    emitAutoUpdaterEvent("update-not-available");
+
+    expect(window.webContents.send).not.toHaveBeenCalledWith(
+      "update-status",
+      expect.objectContaining({ kind: "pending" }),
+    );
+    expect(
+      ipcHandlers.get("app:get-update-status")?.({ sender: { id: 1 } }),
+    ).toEqual(
+      expect.objectContaining({ kind: "downloaded", version: "2.5.0" }),
+    );
+  });
+
   it("queues install when the user clicks Update while the download is still pending", async () => {
     const window = createWindow();
     windows.push(window);
@@ -351,6 +380,59 @@ describe("update-listeners", () => {
 
     expect(installUpdateOnQuit()).toBe(false);
     expect(quitAndInstallMock).not.toHaveBeenCalled();
+  });
+
+  it("resets the collapse history after a simulated download lands", async () => {
+    // The simulated success has to do the real handler's cleanup, or a QA run
+    // of failure → success → failure jumps straight to the manual fallback on
+    // a collapse count the successful download should have cleared.
+    appState.isPackaged = false;
+    const window = createWindow();
+    windows.push(window);
+    const { registerUpdateListeners } = await loadUpdateListeners();
+
+    registerUpdateListeners(window as any);
+    ipcListeners.get("app:simulate-update")?.({ sender: { id: 1 } });
+    ipcListeners.get("app:simulate-update-error")?.({ sender: { id: 1 } });
+    ipcListeners.get("app:simulate-update")?.({ sender: { id: 1 } });
+    ipcListeners.get("app:simulate-update-downloaded")?.({ sender: { id: 1 } });
+
+    ipcListeners.get("app:simulate-update")?.({ sender: { id: 1 } });
+    ipcListeners.get("app:simulate-update-error")?.({ sender: { id: 1 } });
+
+    expect(
+      ipcHandlers.get("app:get-update-status")?.({ sender: { id: 1 } }),
+    ).toEqual({ kind: "idle" });
+  });
+
+  it("gives the next simulated download a full deadline after one lands", async () => {
+    // The simulated success must clear the watchdog too. A leftover deadline
+    // is spent time: the next simulated download inherits what is left of it
+    // and can collapse almost immediately.
+    vi.useFakeTimers();
+    try {
+      appState.isPackaged = false;
+      const window = createWindow();
+      windows.push(window);
+      const mod = await loadUpdateListeners();
+      mod.__setStalledDownloadTimeoutForTests(1_000);
+
+      mod.registerUpdateListeners(window as any);
+      ipcListeners.get("app:simulate-update")?.({ sender: { id: 1 } });
+      vi.advanceTimersByTime(600);
+      ipcListeners.get("app:simulate-update-downloaded")?.({
+        sender: { id: 1 },
+      });
+
+      ipcListeners.get("app:simulate-update")?.({ sender: { id: 1 } });
+      vi.advanceTimersByTime(500);
+
+      expect(
+        ipcHandlers.get("app:get-update-status")?.({ sender: { id: 1 } }),
+      ).toEqual({ kind: "pending", installRequested: false });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("retires a download that never reports anything, even with no click", async () => {

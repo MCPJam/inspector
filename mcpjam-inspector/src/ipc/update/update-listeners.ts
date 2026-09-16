@@ -272,6 +272,16 @@ export function setupAutoUpdaterEvents(): void {
       log.info("Update available, download already in progress");
       return;
     }
+    if (currentStatus.kind === "downloaded") {
+      // A staged build outranks a fresh announcement. update-electron-app
+      // never stops polling after a download, so without this a poll would
+      // walk `downloaded` back to `pending` — and now that `pending` is no
+      // longer sticky, the poll's own `update-not-available` would then
+      // collapse it. The user would watch "Restart to update" disappear for
+      // a build that is on disk and installs on next launch.
+      log.info("Update available, but a build is already staged — keeping it");
+      return;
+    }
     log.info("Update available, downloading...");
     setStatus({ kind: "pending", installRequested: false });
     // Armed on ENTERING pending, not only when the user clicks: a download
@@ -446,6 +456,11 @@ export function registerUpdateListeners(mainWindow: BrowserWindow): void {
         );
         return;
       }
+      // Same success cleanup the real `update-downloaded` handler does, so a
+      // simulated success does not leave the previous download's deadline or
+      // collapse count behind for the next simulated run.
+      clearStalledInstallWatchdog();
+      collapsedDownloads = 0;
       log.info("Simulating update downloaded (dev mode)");
       const installRequested =
         currentStatus.kind === "pending" && currentStatus.installRequested;
