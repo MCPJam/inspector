@@ -310,3 +310,45 @@ describe("which sessions a selected stage narrows to", () => {
     expect(screen.getByTestId("findings-stage-discovery")).toBeInTheDocument();
   });
 });
+
+describe("reaching sessions from a stage with several findings", () => {
+  /**
+   * The expand rule was written for the footer — one session is a link, not
+   * something to expand — and reused for the evidence rows, where it means
+   * only row 0 renders the list. A stage that failed two rubric checks over
+   * the same session then shows the second one as text with nothing to click,
+   * which is what "none of the sessions link to anything" looked like.
+   */
+  function goalWithRows(rows: number, sessions: number): GoalFindingsModel {
+    const model = goal({ value: "fail" });
+    return {
+      ...model,
+      sessions,
+      stages: {
+        ...model.stages,
+        value: {
+          state: "fail",
+          evidence: Array.from({ length: rows }, (_, i) => ({
+            tone: "fail" as const,
+            observation: `Rubric check "check-${i}" failed`,
+            meta: `1 of ${sessions} session`,
+          })),
+        },
+      },
+    };
+  }
+
+  it("gives every finding a way in when one session backs several of them", () => {
+    renderInspect(goalWithRows(2, 1), "value");
+    expect(
+      screen.getAllByTestId("findings-evidence-sessions-toggle"),
+    ).toHaveLength(2);
+  });
+
+  it("still shows a lone finding's session without a toggle", () => {
+    renderInspect(goalWithRows(1, 1), "value");
+    expect(
+      screen.queryByTestId("findings-evidence-sessions-toggle"),
+    ).toBeNull();
+  });
+});
