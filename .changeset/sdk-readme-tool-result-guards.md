@@ -1,5 +1,5 @@
 ---
-"@mcpjam/sdk": patch
+"@mcpjam/sdk": minor
 ---
 
 Export `assertCallToolResult` and `isCallToolResult` so a TypeScript caller can
