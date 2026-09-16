@@ -17,10 +17,26 @@ export const INTEGRATIONS_TAB_FEATURE_FLAG = "integrations-tab";
  * feature's authority. Hiding the container is a presentation decision, so it
  * is decided in one place, on the client.
  *
- * `useFeatureFlagEnabled` returns `undefined` while flags load, treated as OFF
- * like every sibling flag hook — a tab that flickers in and then out is worse
- * than one that arrives a moment late.
+ * ── Why there are two hooks ─────────────────────────────────────────────────
+ *
+ * `useFeatureFlagEnabled` returns `undefined` while flags load, and the two
+ * callers owe that window opposite answers:
+ *
+ *   - LISTING the tab is reversible, so `undefined` reads as OFF. An entry
+ *     that appears and then vanishes is worse than one that arrives late.
+ *   - REDIRECTING is not reversible. Treating `undefined` as OFF there throws
+ *     a flagged-IN reader off their own page before the flag has spoken —
+ *     every direct hit on `/settings/integrations` lands mid-load, so that is
+ *     the ordinary path, not an edge case.
  */
 export function useIntegrationsTabEnabled(): boolean {
-  return useFeatureFlagEnabled(INTEGRATIONS_TAB_FEATURE_FLAG) === true;
+  return useIntegrationsTabFlag() === true;
+}
+
+/**
+ * The same flag, with its LOADING state intact: `undefined` until PostHog has
+ * answered. For callers that must wait rather than guess — see above.
+ */
+export function useIntegrationsTabFlag(): boolean | undefined {
+  return useFeatureFlagEnabled(INTEGRATIONS_TAB_FEATURE_FLAG);
 }

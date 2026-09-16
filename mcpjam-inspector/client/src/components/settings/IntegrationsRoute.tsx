@@ -15,7 +15,7 @@ import { useOrganizationQueries } from "@/hooks/useOrganizations";
 import { useOrgSlackSettings } from "@/hooks/useOrgSlackSettings";
 import { SettingsPageShell } from "./SettingsPageShell";
 import { useGithubChecksSettings } from "@/hooks/useGithubChecksSettings";
-import { useIntegrationsTabEnabled } from "@/hooks/useIntegrationsTabEnabled";
+import { useIntegrationsTabFlag } from "@/hooks/useIntegrationsTabEnabled";
 import { useDiscordAgentEnabled } from "@/hooks/useDiscordAgentEnabled";
 import { useTraceDestinationsEnabled } from "@/hooks/useTraceDestinationsEnabled";
 import {
@@ -347,11 +347,17 @@ export function IntegrationsRoute({
   });
   // The tab is a beta gate over the whole page, not a card. The rail already
   // hides the entry; this is the same decision applied to the URL, so a link
-  // kept from a flagged-in session lands on Settings rather than on a page
+  // kept from a flagged-out session lands on Settings rather than on a page
   // that is supposed to be dark.
-  const integrationsTabEnabled = useIntegrationsTabEnabled();
+  //
+  // The FLAG'S OWN loading state, not the rail's `=== true` reading of it. A
+  // redirect cannot be taken back, and every direct hit on this URL arrives
+  // before PostHog has answered — so `undefined` waits here, exactly like the
+  // auth and organization reads below, and only an answered `false` navigates.
+  const integrationsTabFlag = useIntegrationsTabFlag();
 
-  if (!integrationsTabEnabled) return <Navigate to="/settings" replace />;
+  if (integrationsTabFlag === undefined) return null;
+  if (!integrationsTabFlag) return <Navigate to="/settings" replace />;
 
   if (!activeOrganizationId) {
     if (authLoading || organizationsLoading) return null;

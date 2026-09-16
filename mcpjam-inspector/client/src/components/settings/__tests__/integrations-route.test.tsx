@@ -49,9 +49,11 @@ const {
     destinations: undefined as
       Array<{ enabled: boolean; paused: unknown }> | undefined,
   },
-  // The tab's own beta gate. Default ON so every existing assertion still
-  // describes the page a flagged-in reader sees; the off case is its own test.
-  mockIntegrationsTab: { enabled: true },
+  // The tab's own beta gate, TRI-STATE like the hook: `undefined` is "PostHog
+  // has not answered yet". Default ON so every existing assertion still
+  // describes the page a flagged-in reader sees; off and loading are each
+  // their own test.
+  mockIntegrationsTab: { enabled: true as boolean | undefined },
   mockDiscord: {
     enabled: false,
     /** null models VITE_MCPJAM_DISCORD_CLIENT_ID being unset. */
@@ -121,7 +123,7 @@ vi.mock("@/lib/config", () => ({
 }));
 
 vi.mock("@/hooks/useIntegrationsTabEnabled", () => ({
-  useIntegrationsTabEnabled: () => mockIntegrationsTab.enabled,
+  useIntegrationsTabFlag: () => mockIntegrationsTab.enabled,
 }));
 
 vi.mock("@/hooks/useTraceDestinationsEnabled", () => ({
@@ -156,7 +158,9 @@ function renderRoute({
   error = null,
   activeOrganizationId = "org-1" as string | null,
   slackConnections,
-  integrationsTabEnabled = true,
+  // A WORD, not `boolean | undefined`: passing `undefined` explicitly would
+  // hit the default and silently test the flagged-in case instead.
+  integrationsTab = "on" as "on" | "off" | "loading",
 }: {
   availability?: { state: "enabled" | "disabled" };
   repos?: unknown[];
@@ -165,9 +169,10 @@ function renderRoute({
   slackConnections?: { workspaces: Array<{ installed: boolean }> };
   discordEnabled?: boolean;
   discordInstallUrl?: string | null;
-  integrationsTabEnabled?: boolean;
+  integrationsTab?: "on" | "off" | "loading";
 }) {
-  mockIntegrationsTab.enabled = integrationsTabEnabled;
+  mockIntegrationsTab.enabled =
+    integrationsTab === "loading" ? undefined : integrationsTab === "on";
   mockAvailability.value = availability;
   mockAvailability.error = error;
   mockRepos.value = repos;
@@ -196,11 +201,24 @@ describe("IntegrationsRoute", () => {
     // The rail hides the entry; this is the same decision applied to the URL,
     // so a link kept from a flagged-in session lands somewhere real.
     renderRoute({
-      integrationsTabEnabled: false,
+      integrationsTab: "off",
       availability: { state: "enabled" },
       repos: [],
     });
     expect(screen.getByText("Settings Screen")).toBeInTheDocument();
+    expect(screen.queryByText("Slack")).not.toBeInTheDocument();
+  });
+
+  it("waits, rather than redirecting, while the flag is still loading", () => {
+    // A redirect cannot be taken back, and a direct hit on this URL ordinarily
+    // arrives before PostHog answers — so a flagged-IN reader must not be
+    // thrown off their own page by the loading window.
+    renderRoute({
+      integrationsTab: "loading",
+      availability: { state: "enabled" },
+      repos: [],
+    });
+    expect(screen.queryByText("Settings Screen")).not.toBeInTheDocument();
     expect(screen.queryByText("Slack")).not.toBeInTheDocument();
   });
 
