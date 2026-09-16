@@ -1,0 +1,57 @@
+---
+title: "Coming from MCP Inspector?"
+description: "Map your MCP Inspector workflow to MCPJam Inspector in minutes. Feature-by-feature equivalents, connection steps for your existing server config, and when to keep using MCP Inspector."
+icon: "arrow-right-left"
+---
+
+MCPJam Inspector covers the same protocol validation workflow as MCP Inspector and then extends into behavior debugging with a model in the loop. The overlap ends after you've verified that your server speaks MCP correctly. From there, MCPJam focuses on understanding how AI clients and models actually use your server. This page maps the MCP Inspector workflow to the MCPJam surface you reach for next.
+
+<video
+  controls
+  preload="metadata"
+  style={{ width: "100%", borderRadius: "12px" }}
+>
+  <source
+    src="https://res.cloudinary.com/drogwgi6f/video/upload/v1783977396/walkthrough2_sltggs.mp4"
+    type="video/mp4"
+  />
+  Your browser does not support the video tag.
+</video>
+
+## Feature mapping
+
+| Capability | In MCP Inspector | In MCPJam Inspector |
+|---|---|---|
+| Quick protocol validation | Initialize the server, list tools, and manually execute a tool to verify the protocol path works. | The same protocol validation is available here too. This is the only overlap between the two tools. |
+| Manual tool execution | Select a tool, fill in the arguments manually, run it directly, and inspect the structured response returned by the server. | Use [**Tools, Prompts, and Resources**](/inspector/tools-prompts-resources) for the same direct protocol-level check, or continue into [**Playground**](/inspector/playground) when you want to see how a real model chooses and uses those tools. |
+| Protocol message view | Inspect the raw protocol messages exchanged during connection and tool calls. | [**Tracing & debugging**](/inspector/debugging) captures MCP protocol messages, while [**Trace**](/inspector/debugging) extends that into the complete agent execution once a model is involved. |
+| Auth configuration | Configure Bearer headers or OAuth fields before connecting, then retry until the request succeeds. | Configure auth when adding the server in [**Connecting Servers**](/inspector/connecting-servers). MCPJam supports Bearer Token, OAuth, and Cross-App Access authentication. |
+| OAuth debugging | Not available. | [**OAuth Debugger**](/inspector/guided-oauth) runs the OAuth exchange step by step — metadata discovery, client registration, auth code, and access token — so you can see which step fails. |
+| Real model using the server | No equivalent. MCP Inspector validates the tool itself, not how an AI model would actually use it. | [**Playground**](/inspector/playground): a real agent runs your server, just like in production. |
+| Agent / tool-call debugging | No equivalent. There is no agent execution timeline to inspect. | [**Trace**](/inspector/debugging): every step from the prompt to the response, visible and timed. |
+| Testing across clients and models | No equivalent. | [**Clients**](/inspector/clients): reproduce major AI clients, including their supported models, host capabilities, prompts, and client-specific behavior, so you can test the same server under production-like client environments. |
+| Automated eval suites | No equivalent in the UI. CLI mode can script individual tool calls with pass/fail exit codes for protocol-level CI checks. | [**Evals**](/inspector/evals): generate tests, run them with a real model, and diagnose the failures. |
+
+## Connect your existing server
+
+Most servers already configured in MCP Inspector can connect to MCPJam without modification. The main exception is deployment mode: the hosted web app requires remote HTTPS servers, while local STDIO servers use the desktop or terminal client.
+
+**HTTP servers**
+
+1. Click "Add server" in the MCP Servers tab.
+2. Select the `Streamable HTTP` transport and paste the same URL (for example `https://your-server.example.com/mcp`, or `http://localhost:3000/mcp` if you're on the desktop client).
+3. If the server uses a Bearer token, choose `Bearer Token` under authentication and add the same token.
+
+The hosted web app accepts HTTPS URLs only. Localhost and STDIO servers require the desktop or terminal client.
+
+**Stdio servers**
+
+1. Click "Add server" and select the STDIO transport.
+2. Use the same command and args from your MCP Inspector config file's `mcpServers` entry.
+3. Add any environment variables with "Add Variable" in the Environment Variables section.
+
+See [Multi-server connections](/inspector/connecting-servers) for details on each transport and authentication option.
+
+## When to keep using MCP Inspector
+
+MCP Inspector remains a good fit as a lightweight protocol and deterministic response checker. If all you need is verifying that a server initializes and its tools respond according to the spec, it does the job.
