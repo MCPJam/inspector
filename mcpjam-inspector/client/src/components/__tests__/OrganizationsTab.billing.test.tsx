@@ -685,6 +685,36 @@ describe("OrganizationsTab billing", () => {
     });
   });
 
+  it("reports one plan-comparison impression from the Plans route", async () => {
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "free",
+          effectivePlan: "free",
+        }),
+      }),
+    );
+
+    const view = render(
+      <OrganizationsTab organizationId="org-1" section="plans" />,
+    );
+    view.rerender(<OrganizationsTab organizationId="org-1" section="plans" />);
+
+    await waitFor(() => {
+      const impressions = trackMock.mock.calls.filter(
+        ([event]) => event === "billing_plans_viewed",
+      );
+      expect(impressions).toHaveLength(1);
+      expect(impressions[0]?.[1]).toEqual(
+        expect.objectContaining({
+          location: "organization_billing",
+          source: "plans_page",
+          current_plan: "free",
+        }),
+      );
+    });
+  });
+
   it.each(["v1", "v2"])(
     "labels only legacy Team while V2 offers are enabled (subscription %s)",
     (pricingVersion) => {
@@ -850,6 +880,17 @@ describe("OrganizationsTab billing", () => {
       ),
     );
     expect(toast.success).not.toHaveBeenCalled();
+    expect(trackMock).toHaveBeenCalledWith(
+      "billing_flow_failed",
+      expect.objectContaining({
+        flow: "seat_payment_cancel",
+        failure_kind: "deferred",
+      }),
+    );
+    expect(trackMock).not.toHaveBeenCalledWith(
+      "billing_flow_succeeded",
+      expect.objectContaining({ flow: "seat_payment_cancel" }),
+    );
   });
 
   // A charge raised automatically when an invitee signs up fails with nobody
@@ -968,6 +1009,55 @@ describe("OrganizationsTab billing", () => {
     );
     expect(toast.success).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["plans", "plans_page", "organization_billing"],
+    ["members", "members_page", "organization_members"],
+  ] as const)(
+    "attributes seat-payment retries from the %s surface",
+    async (section, source, location) => {
+      const retrySeatPayment = vi
+        .fn()
+        .mockResolvedValue({ status: "paid", seatQuantity: 4 });
+      mockUseOrganizationBilling.mockReturnValue(
+        createBillingHookState({
+          billingStatus: billingStatusFixture({
+            plan: "team",
+            effectivePlan: "team",
+            source: "subscription",
+            billingInterval: "monthly",
+            subscriptionStatus: "active",
+            hasCustomer: true,
+            stripePriceId: "price_team_monthly",
+          }),
+          activeSeatPaymentIntent: failedSeatPaymentIntentFixture(),
+          retrySeatPayment,
+        }),
+      );
+
+      render(<OrganizationsTab organizationId="org-1" section={section} />);
+      fireEvent.click(screen.getByRole("button", { name: "Retry payment" }));
+
+      await waitFor(() => expect(retrySeatPayment).toHaveBeenCalled());
+      expect(trackMock).toHaveBeenCalledWith(
+        "billing_flow_started",
+        expect.objectContaining({
+          flow: "seat_payment_retry",
+          source,
+          location,
+        }),
+      );
+      expect(trackMock).toHaveBeenCalledWith(
+        "billing_flow_succeeded",
+        expect.objectContaining({
+          flow: "seat_payment_retry",
+          source,
+          location,
+          outcome: "paid",
+        }),
+      );
+    },
+  );
 
   it("shows an error when the charge can no longer be retried", async () => {
     // retrySeatPayment resolves undefined when the cancel-version guard trips

@@ -598,6 +598,14 @@ interface CheckoutNavigationOptions {
   source?: "billing_page" | "pricing_deep_link";
 }
 
+type SeatPaymentSurface = "billing_page" | "plans_page" | "members_page";
+
+function seatPaymentLocation(surface: SeatPaymentSurface) {
+  return surface === "members_page"
+    ? "organization_members"
+    : "organization_billing";
+}
+
 function OrganizationPage({
   organization,
   section,
@@ -720,24 +728,28 @@ function OrganizationPage({
   const slackTab: SlackSettingsTabId = resolveSlackSettingsTab(rawSurfaceTab);
   const discordTab: DiscordSettingsTabId =
     resolveDiscordSettingsTab(rawSurfaceTab);
-  const billingViewTrackedRef = useRef(false);
+  const billingViewTrackedSectionRef = useRef<"billing" | "plans" | null>(null);
   useEffect(() => {
-    if (activeSection !== "billing") {
-      billingViewTrackedRef.current = false;
+    if (activeSection !== "billing" && activeSection !== "plans") {
+      billingViewTrackedSectionRef.current = null;
       return;
     }
     if (
-      billingViewTrackedRef.current ||
+      billingViewTrackedSectionRef.current === activeSection ||
       isLoadingBilling ||
       isLoadingPlanCatalog ||
       !billingStatus
     ) {
       return;
     }
-    billingViewTrackedRef.current = true;
+    billingViewTrackedSectionRef.current = activeSection;
     track("billing_plans_viewed", {
       location: "organization_billing",
-      source: checkoutIntent ? "pricing_deep_link" : "billing_page",
+      source: checkoutIntent
+        ? "pricing_deep_link"
+        : activeSection === "plans"
+        ? "plans_page"
+        : "billing_page",
       current_plan: billingStatus.plan,
       effective_plan: billingStatus.effectivePlan ?? billingStatus.plan,
       can_manage_billing: billingStatus.canManageBilling,
@@ -904,7 +916,11 @@ function OrganizationPage({
       });
       if (result.needsSeatPayment) {
         setInviteEmail("");
-        await handleFinishSeatPayment(result.seatPaymentIntentId, email);
+        await handleFinishSeatPayment(
+          result.seatPaymentIntentId,
+          email,
+          "members_page",
+        );
         return;
       }
       if (result.isPending) {
@@ -931,19 +947,20 @@ function OrganizationPage({
   const handleFinishSeatPayment = async (
     seatPaymentIntentId?: string,
     email?: string,
+    surface: SeatPaymentSurface = "billing_page",
   ) => {
     track("billing_flow_started", {
-      location: "organization_billing",
+      location: seatPaymentLocation(surface),
       flow: "seat_payment",
-      source: "billing_page",
+      source: surface,
       current_plan: billingStatus?.plan ?? "unknown",
     });
     try {
       const result = await finishSeatPayment(seatPaymentIntentId);
       track("billing_flow_succeeded", {
-        location: "organization_billing",
+        location: seatPaymentLocation(surface),
         flow: "seat_payment",
-        source: "billing_page",
+        source: surface,
         outcome: result.status,
         current_plan: billingStatus?.plan ?? "unknown",
       });
@@ -956,9 +973,9 @@ function OrganizationPage({
       }
     } catch (error) {
       track("billing_flow_failed", {
-        location: "organization_billing",
+        location: seatPaymentLocation(surface),
         flow: "seat_payment",
-        source: "billing_page",
+        source: surface,
         failure_kind: "request_failed",
         current_plan: billingStatus?.plan ?? "unknown",
       });
@@ -973,20 +990,22 @@ function OrganizationPage({
   const seatInviteRemovalInFlightRef = useRef(false);
   const [isRemovingSeatInvite, setIsRemovingSeatInvite] = useState(false);
 
-  const handleRetrySeatPayment = async () => {
+  const handleRetrySeatPayment = async (
+    surface: SeatPaymentSurface = "billing_page",
+  ) => {
     if (activeSeatPaymentIntent?.status === "cleanup_pending") return;
     track("billing_flow_started", {
-      location: "organization_billing",
+      location: seatPaymentLocation(surface),
       flow: "seat_payment_retry",
-      source: "billing_page",
+      source: surface,
       current_plan: billingStatus?.plan ?? "unknown",
     });
     try {
       const result = await retrySeatPayment();
       track("billing_flow_succeeded", {
-        location: "organization_billing",
+        location: seatPaymentLocation(surface),
         flow: "seat_payment_retry",
-        source: "billing_page",
+        source: surface,
         outcome: result?.status ?? "no_op",
         current_plan: billingStatus?.plan ?? "unknown",
       });
@@ -999,9 +1018,9 @@ function OrganizationPage({
       }
     } catch (error) {
       track("billing_flow_failed", {
-        location: "organization_billing",
+        location: seatPaymentLocation(surface),
         flow: "seat_payment_retry",
-        source: "billing_page",
+        source: surface,
         failure_kind: "request_failed",
         current_plan: billingStatus?.plan ?? "unknown",
       });
@@ -1013,7 +1032,9 @@ function OrganizationPage({
     }
   };
 
-  const handleCancelSeatPayment = async () => {
+  const handleCancelSeatPayment = async (
+    surface: SeatPaymentSurface = "billing_page",
+  ) => {
     // For a terminal charge the button says "Remove invite", and that is what
     // it has to do: cancelSeatPayment returns immediately for anything not
     // still active, so calling it here left the invite and the notice exactly
@@ -1031,9 +1052,9 @@ function OrganizationPage({
       setIsRemovingSeatInvite(true);
     }
     track("billing_flow_started", {
-      location: "organization_billing",
+      location: seatPaymentLocation(surface),
       flow: isInviteRemoval ? "seat_invite_remove" : "seat_payment_cancel",
-      source: "billing_page",
+      source: surface,
       current_plan: billingStatus?.plan ?? "unknown",
     });
     try {
@@ -1043,9 +1064,9 @@ function OrganizationPage({
           email: activeSeatPaymentIntent.email,
         });
         track("billing_flow_succeeded", {
-          location: "organization_billing",
+          location: seatPaymentLocation(surface),
           flow: "seat_invite_remove",
-          source: "billing_page",
+          source: surface,
           outcome: "removed",
           current_plan: billingStatus?.plan ?? "unknown",
         });
@@ -1053,31 +1074,52 @@ function OrganizationPage({
         return;
       }
       const result = await cancelSeatPayment();
-      track("billing_flow_succeeded", {
-        location: "organization_billing",
-        flow: "seat_payment_cancel",
-        source: "billing_page",
-        outcome: result.outcome,
-        current_plan: billingStatus?.plan ?? "unknown",
-      });
       if (result.outcome === "canceled") {
+        track("billing_flow_succeeded", {
+          location: seatPaymentLocation(surface),
+          flow: "seat_payment_cancel",
+          source: surface,
+          outcome: result.outcome,
+          current_plan: billingStatus?.plan ?? "unknown",
+        });
         toast.success("Pending seat payment canceled.");
       } else if (result.outcome === "deferred") {
+        track("billing_flow_failed", {
+          location: seatPaymentLocation(surface),
+          flow: "seat_payment_cancel",
+          source: surface,
+          failure_kind: "deferred",
+          current_plan: billingStatus?.plan ?? "unknown",
+        });
         toast.error(
           "Stripe could not confirm cancellation yet. The payment is still pending; try again.",
         );
       } else if (result.outcome === "paid") {
+        track("billing_flow_succeeded", {
+          location: seatPaymentLocation(surface),
+          flow: "seat_payment_cancel",
+          source: surface,
+          outcome: result.outcome,
+          current_plan: billingStatus?.plan ?? "unknown",
+        });
         toast.success(
           "Payment completed before cancellation; the member was added.",
         );
       } else {
+        track("billing_flow_failed", {
+          location: seatPaymentLocation(surface),
+          flow: "seat_payment_cancel",
+          source: surface,
+          failure_kind: "not_active",
+          current_plan: billingStatus?.plan ?? "unknown",
+        });
         toast.error("This seat payment is no longer active.");
       }
     } catch (error) {
       track("billing_flow_failed", {
-        location: "organization_billing",
+        location: seatPaymentLocation(surface),
         flow: isInviteRemoval ? "seat_invite_remove" : "seat_payment_cancel",
-        source: "billing_page",
+        source: surface,
         failure_kind: "request_failed",
         current_plan: billingStatus?.plan ?? "unknown",
       });
@@ -1651,7 +1693,7 @@ function OrganizationPage({
     ],
   );
 
-  const pendingSeatPaymentNotice =
+  const renderPendingSeatPaymentNotice = (surface: SeatPaymentSurface) =>
     activeSeatPaymentIntent && billingStatus?.canManageBilling ? (
       <PendingSeatPaymentNotice
         intent={activeSeatPaymentIntent}
@@ -1660,10 +1702,10 @@ function OrganizationPage({
         isCancelingSeatPayment={isCancelingSeatPayment || isRemovingSeatInvite}
         onFinish={() =>
           void (activeSeatPaymentIntent.needsRetry
-            ? handleRetrySeatPayment()
-            : handleFinishSeatPayment())
+            ? handleRetrySeatPayment(surface)
+            : handleFinishSeatPayment(undefined, undefined, surface))
         }
-        onCancel={() => void handleCancelSeatPayment()}
+        onCancel={() => void handleCancelSeatPayment(surface)}
       />
     ) : null;
 
@@ -1744,7 +1786,9 @@ function OrganizationPage({
           </ErrorBoundary>
         ) : activeSection === "billing" || activeSection === "plans" ? (
           <>
-            {pendingSeatPaymentNotice}
+            {renderPendingSeatPaymentNotice(
+              activeSection === "plans" ? "plans_page" : "billing_page",
+            )}
             <OrganizationBillingSection
               organizationId={organization._id}
               showPlanBilling={billingUiEnabled}
@@ -1844,7 +1888,7 @@ function OrganizationPage({
                 <CardContent className="space-y-6 p-0">
                   {canInvite ? (
                     <div className="space-y-3">
-                      {pendingSeatPaymentNotice}
+                      {renderPendingSeatPaymentNotice("members_page")}
                       <div className="space-y-2">
                         <label
                           htmlFor="organization-invite-email"
