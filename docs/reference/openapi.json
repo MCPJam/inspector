@@ -6646,6 +6646,152 @@
         }
       }
     },
+    "/projects/{projectId}/model-leases": {
+      "post": {
+        "operationId": "createModelLease",
+        "tags": [
+          "Eval runs"
+        ],
+        "summary": "Mint a model lease for MCPJam-hosted inference",
+        "description": "How an SDK eval running OUTSIDE the platform (local dev, CI) uses MCPJam-hosted inference on the organization's credits, with no provider key of its own. Authenticate like any other `/api/v1` route (typically an `sk_` key).\n\nThe lease is strictly narrower than the key used to get it: one organization, one project, one model, one proxy host, about 30 minutes, a per-lease spend and call cap, and revocable by `runId`.\n\nThe `{projectId}` segment declares which project's organization pays, and always wins over any `projectId` in the body. The literal `default` resolves to the key org's Default project — the zero-config CI case, and the same resolution the eval-ingest routes use, so a lease and the results it produces land in the same project.",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Project id, or the literal `default` for the key org's Default project."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelLeaseRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A short-lived lease and the proxy to present it to.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelLease"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/model-leases/revoke": {
+      "post": {
+        "operationId": "revokeModelLease",
+        "tags": [
+          "Eval runs"
+        ],
+        "summary": "Revoke a model lease",
+        "description": "Kills this caller's SDK model leases under `runId` in the addressed project, immediately — the proxy fails a revoked lease closed from that moment. Leases also expire on their own, so this is for ending a run early (an SDK suite calls it at teardown) rather than something a caller must do.",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Project id, or the literal `default` for the key org's Default project."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelLeaseRevokeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "How many leases were revoked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "revoked"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "revoked": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
+    },
     "/projects/{projectId}/eval-ingest/runs/finalize": {
       "post": {
         "operationId": "finalizeEvalIngestRun",
@@ -16608,6 +16754,82 @@
         "description": "Forwarded VERBATIM to the backend's eval-ingestion surface, which owns the schema. The `projectId` path segment always wins: it overwrites any `projectId` in the body, and the literal `default` omits it so the key's org Default project is used. Bodies are capped at ~6 MiB here and 5 MiB by the backend.",
         "additionalProperties": true
       },
+    "ModelLeaseRequest": {
+      "type": "object",
+      "required": [
+        "model"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "model": {
+          "type": "string",
+          "description": "Canonical model id. Only `anthropic/claude-*` and `openai/gpt-5*` are served, and only if the model has a gateway pricing row.",
+          "example": "anthropic/claude-sonnet-4.5"
+        },
+        "runId": {
+          "type": "string",
+          "description": "Caller-chosen id to revoke by. Generated if omitted."
+        },
+        "maxOutputTokens": {
+          "type": "integer",
+          "description": "Per-call output ceiling, clamped to the server maximum."
+        }
+      }
+    },
+    "ModelLease": {
+      "type": "object",
+      "required": [
+        "lease",
+        "protocol",
+        "proxyBaseUrl",
+        "expiresAt",
+        "runId",
+        "model"
+      ],
+      "properties": {
+        "lease": {
+          "type": "string",
+          "description": "Present it as the `x-mcpjam-harness-lease` header on requests to `proxyBaseUrl`. Never as a bearer token, and never sent to any other host."
+        },
+        "protocol": {
+          "type": "string",
+          "enum": [
+            "anthropic",
+            "openai"
+          ],
+          "description": "Which vendor wire format `proxyBaseUrl` speaks, derived from the model's vendor prefix."
+        },
+        "proxyBaseUrl": {
+          "type": "string",
+          "format": "uri",
+          "description": "Base URL for the metered model proxy. Anthropic leases accept `POST /v1/messages`; OpenAI leases accept `POST /v1/responses`."
+        },
+        "expiresAt": {
+          "type": "integer",
+          "description": "Epoch milliseconds. Mint a new lease before this; the proxy fails an expired one closed."
+        },
+        "runId": {
+          "type": "string",
+          "description": "Pass to the revoke operation to kill this lease early."
+        },
+        "model": {
+          "type": "string"
+        }
+      }
+    },
+    "ModelLeaseRevokeRequest": {
+      "type": "object",
+      "required": [
+        "runId"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "runId": {
+          "type": "string",
+          "description": "The `runId` returned when the lease was minted."
+        }
+      }
+    },
       "EvalIngestResponse": {
         "type": "object",
         "description": "The backend's response, passed through verbatim along with its status code. Success shapes are the legacy `{ ok: true, ... }` envelopes the SDK reporter parses — deliberately NOT the v1 resource envelope. Errors are canonical v1 `{ code, message }`.",

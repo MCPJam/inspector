@@ -464,6 +464,21 @@ const r5 = await runner.run("Search tasks", {
 r5.getToolArguments("search_tasks"); // captured even if the prompt stops early
 ```
 
+No provider key? Prefix the model with `mcpjam/` and MCPJam runs it on your
+organization's credits, with an MCPJam API key as the only secret:
+
+```ts
+const runner = new HostRunner({
+  tools: await manager.getToolsForAiSdk(),
+  model: "mcpjam/anthropic/claude-sonnet-4.5",
+  apiKey: process.env.MCPJAM_API_KEY!, // or omit it and set MCPJAM_API_KEY
+});
+```
+
+Hosted models are `mcpjam/anthropic/claude-*` and `mcpjam/openai/gpt-5*`. An
+`EvalSuite` releases its leases when it finishes; if you build runs by hand,
+call `releaseMcpjamModelLeases()` when you are done.
+
 `stopWhen` does not skip tool execution. It controls whether the prompt loop continues after the current step completes, and `HostRunner` also applies `stepCountIs(maxSteps)` as a safety guard.
 
 `timeout` bounds prompt runtime. `number` and `totalMs` cap the full prompt, `stepMs` caps each step, and `chunkMs` is accepted for parity but mainly matters in streaming flows. The runtime creates an internal abort signal, so tools can stop early if their implementation respects the provided `abortSignal`.
