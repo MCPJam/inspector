@@ -199,6 +199,21 @@ describe("guest-session-source", () => {
     expect(result.status).toBe(404);
   });
 
+  it("carries the upstream Retry-After on a 429 refusal", async () => {
+    vi.mocked(global.fetch).mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: "capped" }), {
+        status: 429,
+        headers: { "Content-Type": "application/json", "retry-after": "120" },
+      }),
+    );
+    const { fetchRemoteGuestSession } =
+      await import("../guest-session-source.js");
+    const result = await fetchRemoteGuestSession(undefined);
+    expect(result.kind).toBe("error");
+    expect(result.kind === "error" ? result.status : 0).toBe(429);
+    expect(result.kind === "error" ? result.retryAfterSeconds : 0).toBe(120);
+  });
+
   it("captures upstream Set-Cookie headers and forwards them in the result", async () => {
     vi.mocked(global.fetch).mockResolvedValue(
       new Response(
