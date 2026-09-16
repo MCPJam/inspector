@@ -296,4 +296,34 @@ describe("Markdown case import", () => {
         .markdownImport?.source,
     ).toEqual(source);
   });
+
+  it("replaces the raw limit refusal with the plain sentence", async () => {
+    vi.mocked(extractMarkdownCases).mockRejectedValueOnce(
+      new Error(
+        "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
+      ),
+    );
+    renderWithProviders(<ImportDatasetDialog {...props} />);
+    upload();
+    fireEvent.click(screen.getByRole("button", { name: "Extract cases" }));
+
+    const alert = await screen.findByRole("alert");
+    // Loose on the wording: the sentence is owned by the SDK error catalog,
+    // and the point of the test is that the backend's own phrasing is gone.
+    expect(alert).toHaveTextContent(/MCPJam (model )?limit reached\./);
+    expect(alert).not.toHaveTextContent("Use BYOK");
+  });
+
+  it("keeps non-limit errors verbatim", async () => {
+    vi.mocked(extractMarkdownCases).mockRejectedValueOnce(
+      new Error("You cannot import cases into this suite."),
+    );
+    renderWithProviders(<ImportDatasetDialog {...props} />);
+    upload();
+    fireEvent.click(screen.getByRole("button", { name: "Extract cases" }));
+
+    await expect(screen.findByRole("alert")).resolves.toHaveTextContent(
+      "You cannot import cases into this suite.",
+    );
+  });
 });

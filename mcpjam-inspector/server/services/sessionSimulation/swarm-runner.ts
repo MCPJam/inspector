@@ -1251,6 +1251,22 @@ async function runJourneyFanOut(
           // run-stop (`sessionSignal.aborted`).
           const abortedBySpendCap =
             spendCapTripped && outcome === "failed" && sessionSignal.aborted;
+          // The run clock is the same kind of abort artifact as the spend cap,
+          // and needs the same reclassification here rather than only at the
+          // run-level finalize.
+          //
+          // `runDeadline` aborts `sessionSignal`, the in-flight session unwinds
+          // and returns `outcome: "failed"`, and `terminalForOutcome` maps that
+          // to a generic `session_failed` BEFORE `reportAttempt` writes it. The
+          // finalizer added alongside this can only reach attempts that are
+          // still `pending` or `running` — it cannot rewrite one that already
+          // reached a terminal. So without this arm, the very sessions the run
+          // budget stopped are the ones recorded as ordinary failures, and a
+          // run that ran out of clock looks like a run whose sessions broke.
+          const abortedByRunDeadline =
+            outcome === "failed" &&
+            sessionSignal.aborted &&
+            runDeadline.firedClock() === "run";
           const terminal = abortedBySpendCap
             ? {
                 status: "rate_limited" as SwarmAttemptStatus,
@@ -1264,7 +1280,17 @@ async function runJourneyFanOut(
                     }
                   : {}),
               }
-            : terminalForOutcome(outcome, errorMessage, errorReason);
+            : abortedByRunDeadline
+              ? {
+                  status: "failed" as SwarmAttemptStatus,
+                  errorCode: "run_timeout",
+                  errorMessage:
+                    `Run exceeded its ${budgets.runTimeoutMs}ms budget`.slice(
+                      0,
+                      MAX_ATTEMPT_ERROR_CHARS,
+                    ),
+                }
+              : terminalForOutcome(outcome, errorMessage, errorReason);
           emit({
             type: "attempt_status",
             status: terminal.status,
@@ -1590,7 +1616,18 @@ async function runJourneyFanOut(
         }
       : abortSignal?.aborted
         ? { errorCode: "runner_shutdown" }
-        : undefined;
+        : // The run's own clock is a run TERMINAL, exactly like the other two.
+          // Without this arm a deadline-only stop finalizes nothing: every
+          // attempt that never started stays `pending` until the backend's
+          // stale-run cron, and the ones the deadline aborted are recorded as
+          // ordinary session failures — a run that ran out of budget looking
+          // like a run whose sessions went wrong.
+          runDeadline.firedClock() === "run"
+          ? {
+              errorCode: "run_timeout",
+              errorMessage: `Run exceeded its ${budgets.runTimeoutMs}ms budget`,
+            }
+          : undefined;
     if (finalizeTerminal) {
       const finalizeBearer = await getBearer().catch((error: unknown) => {
         logger.error(
@@ -1620,6 +1657,11 @@ async function runJourneyFanOut(
   } finally {
     clearInterval(heartbeat);
     sessionSignals.dispose();
+    // `sessionSignals.dispose()` releases the COMPOSITION; the deadline owns
+    // its own timer and its own listener on the caller's signal, and those
+    // stay armed until the (possibly two-hour) budget expires unless it is
+    // disposed too.
+    runDeadline.dispose();
     logEvent("run.finish", {
       runId,
       targetCount: hosts.length,

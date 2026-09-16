@@ -1,3 +1,5 @@
+import { ConvexError } from "convex/values";
+import { toast } from "@/lib/toast";
 /**
  * Post-create grading edits on a journey card.
  *
@@ -152,12 +154,29 @@ describe("SwarmsTab — journey grading editor", () => {
   it("offers Team instead of editing another creator's settings on Free", () => {
     viewerId = "collaborator";
     openGradingEditor();
-    expect(screen.getByRole("alert")).toHaveTextContent("requires Basic RBAC");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "requires Team or Enterprise",
+    );
     expect(
       screen.getByRole("link", { name: "View Team plans" }),
     ).toHaveAttribute("href", "/organizations/org-1/plans");
-    expect(screen.queryByTestId("seeded-criteria")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^save$/i })).toBeDisabled();
     expect(updateJourneyMutation).not.toHaveBeenCalled();
+  });
+
+  it("toasts a collaborative editing denial from a journey save", async () => {
+    updateJourneyMutation.mockRejectedValueOnce(
+      new ConvexError({ code: "COLLABORATIVE_EDITING_REQUIRED" }),
+    );
+    openGradingEditor();
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        "Editing another member's work requires Team or Enterprise.",
+      ),
+    );
+    expect(screen.getByRole("button", { name: /^save$/i })).toBeInTheDocument();
+    expect(toast.success).not.toHaveBeenCalled();
   });
 
   it("labels the trigger with the journey's current check count", () => {

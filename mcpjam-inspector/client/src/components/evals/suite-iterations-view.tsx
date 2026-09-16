@@ -1,3 +1,4 @@
+import { JudgeInstructionsEditor } from "./judge-instructions-editor";
 import { SharedSettingsGate } from "@/components/billing/SharedSettingsGate";
 import { AssertionBacktestPanel } from "./assertion-backtest-panel";
 import { JudgeBacktestPanel } from "./judge-backtest-panel";
@@ -67,7 +68,7 @@ import { TestTemplateEditor } from "./test-template-editor";
 import { useEvalRunIterationChains } from "@/hooks/use-eval-run-iteration-chains";
 import { PassCriteriaSelector } from "./pass-criteria-selector";
 import { SuitePassOrFailSection } from "./suite-pass-or-fail-section";
-import { JudgeRubricEditor, isRubricValid } from "./judge-rubric-editor";
+import { isRubricValid } from "./judge-rubric-editor";
 import { JudgeGatePanel } from "./judge-gate-panel";
 import { useGroundedness } from "./use-groundedness";
 import {
@@ -351,6 +352,7 @@ export function SuiteIterationsView({
   evaluateDecisionSummary = false,
   evaluateCaseEditor = false,
   evaluateObserveFirst = false,
+  onGeneratingChange,
   alwaysShowEditIterationRows = false,
   onEditTestCase,
   onDeleteTestCasesBatch: onDeleteTestCasesBatchProp,
@@ -498,6 +500,8 @@ export function SuiteIterationsView({
   evaluateCaseEditor?: boolean;
   /** Observe-first authoring: the spine, Run test, and run-derived checks. */
   evaluateObserveFirst?: boolean;
+  /** Passed through to {@link SuiteDetailOverview}; see its prop doc. */
+  onGeneratingChange?: (state: { exit: () => void } | null) => void;
   /** Playground run detail: show edit affordance on every row that has a test case id. */
   alwaysShowEditIterationRows?: boolean;
   /** Override default test edit navigation (e.g. playground hash navigation). */
@@ -1847,6 +1851,14 @@ export function SuiteIterationsView({
                 <TestTemplateEditor
                   suiteId={suite._id}
                   selectedTestCaseId={selectedTestId}
+                  onDeleteCase={
+                    onDeleteTestCasesBatch
+                      ? async (testCaseId) => {
+                          await onDeleteTestCasesBatch([testCaseId]);
+                          navigation.toSuiteOverview(suite._id);
+                        }
+                      : undefined
+                  }
                   connectedServerNames={connectedServerNames}
                   projectId={projectId}
                   availableModels={availableModels}
@@ -2101,6 +2113,7 @@ export function SuiteIterationsView({
                       ? () => setImportOpen(true)
                       : undefined
                   }
+                  onDeleteTestCasesBatch={onDeleteTestCasesBatch}
                   onGenerateTestCases={onGenerateTestCases}
                   canGenerateTestCases={canGenerateTestCases}
                   generateTestCasesDisabledReason={
@@ -2120,6 +2133,7 @@ export function SuiteIterationsView({
                   onDuplicateSuite={onDuplicateSuite}
                   projectId={projectId}
                   decisionSummaryEnabled={evaluateDecisionSummary}
+                  onGeneratingChange={onGeneratingChange}
                 />
               </motion.div>
             ) : showFoldedUnifiedDashboard ? (
@@ -2726,7 +2740,7 @@ export function SuiteIterationsView({
                     />
                   }
                   rubricEditor={
-                    <JudgeRubricEditor
+                    <JudgeInstructionsEditor
                       value={draft.current.judgeRubric}
                       onChange={(next) =>
                         dispatchDraft({

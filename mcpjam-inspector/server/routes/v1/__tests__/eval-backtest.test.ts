@@ -94,3 +94,39 @@ it("maps typed assertion cooldown separately from judge previews", async () => {
   );
   expect((await post()).status).toBe(429);
 });
+
+it("forwards a judge rubric and continuation without dropping instructions", async () => {
+  const continuation = {
+    cursor: 1,
+    sourceHash: "a".repeat(64),
+    reservationId: "reservation",
+  };
+  const rubric = { instructions: "Check every tool result" };
+  const response = await app.request(
+    url.replace("/backtest", "/judge/backtest"),
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ rubric, continuation }),
+    },
+  );
+  expect(response.status).toBe(200);
+  expect(mocks.action).toHaveBeenCalledWith(
+    "goalCompletionAction:requestJudgeBacktest",
+    {
+      suiteId: "suite",
+      runId: "run",
+      judgeRubricDraft: rubric,
+      ...continuation,
+    },
+  );
+});
+it("refuses a judge preview for another project before spending", async () => {
+  mocks.query.mockResolvedValue({ projectId: "other", suiteId: "suite" });
+  const response = await app.request(
+    url.replace("/backtest", "/judge/backtest"),
+    { method: "POST", body: JSON.stringify({ rubric: null }) },
+  );
+  expect(response.status).toBe(404);
+  expect(mocks.action).not.toHaveBeenCalled();
+});

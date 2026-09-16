@@ -483,6 +483,9 @@ export function iterationTraceFromPrompts(
   traceMessages: Array<{ role: string; content: unknown }>,
   promptSummaries?: PromptTraceSummaryLike[]
 ): EvalResultInput["trace"] | undefined {
+  const recordedContext = prompts.flatMap((prompt) =>
+    prompt.recordedContext ? [prompt.recordedContext] : []
+  );
   const mergedSpans = mergePromptSpansForIteration(prompts);
   if (
     traceMessages.length === 0 &&
@@ -492,6 +495,7 @@ export function iterationTraceFromPrompts(
     return undefined;
   }
   return {
+    ...(recordedContext.length ? { recordedContext } : {}),
     messages: traceMessages,
     ...(mergedSpans.length > 0 ? { spans: mergedSpans } : {}),
     ...(promptSummaries && promptSummaries.length > 0

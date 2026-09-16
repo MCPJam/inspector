@@ -264,7 +264,7 @@ describe("stageConfigStates", () => {
     return states.find((row) => row.stage === stage);
   }
 
-  it("reads the default suite as runner / gated / gap / judge on request", () => {
+  it("shows unavailable grading state until the backend resolves inheritance", () => {
     const states = statesFor({ predicates: [] });
     expect(stateOf(states, "connection")).toMatchObject({
       state: "runner",
@@ -292,10 +292,10 @@ describe("stageConfigStates", () => {
       advisory: 0,
     });
     expect(stateOf(states, "userValue")).toMatchObject({
-      state: "judgeOnRequest",
+      state: "judgeUnknown",
       required: 0,
       advisory: 0,
-      judge: "manual",
+      judge: "unknown",
     });
   });
 
@@ -366,6 +366,7 @@ describe("stageConfigStates", () => {
 
   it("a userValue predicate beside a manual judge is gated with judge: manual", () => {
     const states = statesFor({
+      judgeConfig: { goalCompletion: { autoRun: false } },
       predicates: [samplePredicate("responseContains")],
     });
     expect(stateOf(states, "userValue")).toMatchObject({

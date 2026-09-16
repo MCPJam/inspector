@@ -325,6 +325,7 @@ vi.mock("../lib/guest-session", () => ({
   }),
   getGuestBearerToken: mockGetGuestBearerToken,
   getCachedGuestSession: vi.fn(() => null),
+  getGuestSessionRefusal: vi.fn(() => null),
   getOrCreateGuestSession: vi.fn(async () => null),
   subscribeGuestSessionChanges: vi.fn(() => () => {}),
 }));

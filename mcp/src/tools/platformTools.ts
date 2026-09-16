@@ -37,6 +37,7 @@ import {
   generateEvalCasesOperation,
   cancelEvalRunOperation,
   backtestEvalRunOperation,
+  backtestEvalRunJudgeOperation,
   requestEvalRunJudgeOperation,
   proposeEvalDescriptionRewriteOperation,
   startEvalDescriptionExperimentOperation,
@@ -293,6 +294,7 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   getEvalRunStepsOperation,
   cancelEvalRunOperation,
   backtestEvalRunOperation,
+  backtestEvalRunJudgeOperation,
   requestEvalRunJudgeOperation,
   // The description-rewrite experiment, beside the judge request it most
   // resembles: propose and start are spends with a stated cap, so they carry

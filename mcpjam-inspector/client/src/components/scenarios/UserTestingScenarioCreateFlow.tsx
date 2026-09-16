@@ -47,6 +47,7 @@ import type {
   ScenarioPerTurnFeedbackStyle,
   ScenarioTaskItem,
 } from "@/types/chatUi";
+import { useGuestSharingSignUp } from "@/hooks/useGuestSharingSignUp";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 
@@ -530,6 +531,8 @@ export function UserTestingScenarioCreateFlow({
     onCreateEnvironment();
   };
 
+  const { handleGuestSharingError, guestSharingPrompt } = useGuestSharingSignUp();
+
   const handleSave = async () => {
     if (!hasTarget || savingRef.current) return;
     // Never an empty name in the database: the field is allowed to be empty,
@@ -601,6 +604,11 @@ export function UserTestingScenarioCreateFlow({
         toast.success("Study created");
       }
     } catch (err) {
+      if (handleGuestSharingError(err)) {
+        savingRef.current = false;
+        setIsSaving(false);
+        return;
+      }
       // A taken name is not a failure to report and walk away from — it is one
       // input to change. The message goes ON the field, the draft stays whole,
       // and the step with the field is the one we land on: refusing from step 2
@@ -641,6 +649,7 @@ export function UserTestingScenarioCreateFlow({
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto">
+      {guestSharingPrompt}
       <div className="mx-auto w-full max-w-2xl px-6 py-6 sm:px-8">
         <button
           type="button"

@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import {
   EvaluateHistoryHeader,
   EvaluateHistoryRow,
+  EvaluateHistoryRowSkeleton,
   historyResult,
 } from "../evaluate-history-row";
 import type { ProjectRunRow } from "../../evals/project-runs-table";
@@ -171,5 +172,27 @@ describe("Evaluate history rows", () => {
     expect(cells[4]).toHaveTextContent("—");
     expect(cells[9]).toHaveTextContent("—");
     expect(cells[10]).toHaveTextContent("—");
+  });
+
+  it("draws an all-skeleton row, since an unread launch is not yet a row", () => {
+    render(
+      <table>
+        <tbody>
+          <EvaluateHistoryRowSkeleton showSuite />
+        </tbody>
+      </table>,
+    );
+    // aria-hidden, so the row is absent from the a11y tree by design: the
+    // table's footer already announces that the history is loading.
+    expect(screen.queryByRole("row")).toBeNull();
+    const cells = screen
+      .getByTestId("run-history-row-skeleton")
+      .querySelectorAll("td");
+    // One per header column, so the columns do not jump when the row lands.
+    expect(cells).toHaveLength(12);
+    for (const cell of cells) {
+      expect(cell.querySelector('[data-slot="skeleton"]')).not.toBeNull();
+      expect(cell).not.toHaveTextContent("—");
+    }
   });
 });

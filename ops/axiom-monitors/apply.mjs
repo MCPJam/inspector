@@ -45,7 +45,29 @@ const MONITOR_FIELDS = [
   "alertOnNoData",
   "resolvable",
   "notifyEveryRun",
+  // Debounce: fire only after N positive results out of the last M runs.
+  // Omitting these silently creates the monitor with the default (1 of 1),
+  // which is how guest-mints-hourly first shipped without its 2-of-2 debounce.
+  "triggerAfterNPositiveResults",
+  "triggerFromNRuns",
 ];
+
+/**
+ * Ceiling on the text Axiom posts to Slack.
+ *
+ * Axiom's payload is: monitor name, the WHOLE description, the managed marker,
+ * and only THEN the line that carries the actual number ("Current value of
+ * 150.97 is above the threshold value of 150"). So every character of prose
+ * here pushes the one fact the reader needs further down, into Slack's
+ * "Show more" fold, in a channel that also carries Sentry and PostHog noise.
+ * The 2026-09-15 spend monitors shipped at ~2,200 characters each, repeating
+ * an identical 1,100-character incident retrospective nine times, and were
+ * skipped.
+ *
+ * Reasoning belongs in `rationale` — a repo-only field, code-reviewed and
+ * diffable like the rest of the definition, which is never sent to Axiom.
+ */
+const MAX_DESCRIPTION_CHARS = 900;
 
 const REQUIRED_MONITOR_FIELDS = [
   "type",
@@ -152,11 +174,23 @@ function loadDefinitions() {
         fail(`${file} monitor block is missing "${field}"`);
       }
     }
+    const description = asText(raw.description);
+    if (
+      description.length > MAX_DESCRIPTION_CHARS &&
+      raw.descriptionLengthExempt !== true
+    ) {
+      fail(
+        `${file} description is ${description.length} chars (max ${MAX_DESCRIPTION_CHARS}). ` +
+          `Slack puts the alert's VALUE below this text, so long descriptions bury it. ` +
+          `Move the WHY / CONTEXT / THRESHOLD prose into the "rationale" field — it stays ` +
+          `in the repo and is never sent to Axiom.`,
+      );
+    }
     const apl = asText(raw.aplQuery);
     if (!apl.includes(`['${raw.dataset}']`)) {
       fail(`${file} query does not read its declared dataset ['${raw.dataset}']`);
     }
-    return { ...raw, aplQuery: apl, description: asText(raw.description), file };
+    return { ...raw, aplQuery: apl, description, file };
   });
   const seen = new Set();
   for (const d of defs) {

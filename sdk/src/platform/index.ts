@@ -258,6 +258,12 @@ export type {
   PlatformInsightAttribution,
   PlatformInsightScope,
   PlatformInsightsEnvelope,
+  PlatformInsightsObservationCoverage,
+  PlatformInsightsObservationState,
+  PlatformInsightsFindingProvenance,
+  PlatformEvalIterationReport,
+  PlatformEvalFindingsAnalysis,
+  PlatformUnifiedFindings,
   PlatformInsightsStatus,
   PlatformWaveInsights,
   PlatformWaveInsightsCanceled,
@@ -359,6 +365,7 @@ export {
   createTunnelOperation,
   cancelEvalRunOperation,
   backtestEvalRunOperation,
+  backtestEvalRunJudgeOperation,
   requestEvalRunJudgeOperation,
   listEvalGithubReposOperation,
   connectEvalGithubRepoOperation,
@@ -869,3 +876,8 @@ export type {
   EvalBacktestReport,
   EvalBacktestDifference,
 } from "../contract/eval-backtest.js";
+
+export type {
+  JudgeBacktestRequest,
+  JudgeBacktestReport,
+} from "../contract/judge-backtest.js";

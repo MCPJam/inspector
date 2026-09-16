@@ -208,7 +208,6 @@ const LEGACY_EM_DASH_COPY = new Map<string, number>([
   ["components/ResourcesTab.tsx", 4],
   ["components/scenarios/findings/scenario-findings-derivation.ts", 2],
   ["components/scenarios/findings/scenario-findings-tab.tsx", 1],
-  ["components/scenarios/ScenarioGradingSection.tsx", 1],
   ["components/scenarios/ScenarioOutcomeCalibration.tsx", 2],
   ["components/scenarios/ScenarioPreviewPane.tsx", 2],
   ["components/scenarios/ScenarioShareEmptyPanel.tsx", 3],
