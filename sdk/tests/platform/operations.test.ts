@@ -31,8 +31,6 @@ import {
   listProjectPluginsOperation,
   listProjectServersOperation,
   listProjectsOperation,
-  listServerPromptsOperation,
-  listServerResourcesOperation,
   listServerToolsOperation,
   PlatformApiClient,
   PlatformApiError,
@@ -40,7 +38,6 @@ import {
   publishScenarioOperation,
   readServerResourceOperation,
   runEvalSuiteOperation,
-  setEvalSuiteEnvironmentsOperation,
   showServersOperation,
 } from "../../src/platform/index.js";
 

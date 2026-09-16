@@ -14950,6 +14950,16 @@
         "required": ["id", "title", "steps", "legacyIterations", "isNegative", "models"],
         "description": "`EvalCase` as projected under `x-mcpjam-eval-vocabulary: 2`: the legacy floor is `legacyIterations`, the exact policy-2 count is `iterations`, the rule override is `assertions`. Every other field is as in `EvalCase`, in the same position.",
         "properties": {
+          "judge": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              }
+            },
+            "description": "Per-case judge override. enabled: false skips goal-completion grading for this case."
+          },
           "id": {
             "type": "string"
           },
@@ -15068,6 +15078,17 @@
         "required": ["title", "steps"],
         "description": "Create one case. `title` and a non-empty `steps` array are both required — a case persisted without executable steps could never run. Vocabulary 2 (`x-mcpjam-eval-vocabulary: 2`): `legacyIterations`/`runs` is the floor, `iterations`/`repetitions` the exact count, `assertions`/`checks`/`predicates` the rules; two spellings of one field is a `400`. A canonical client projects a GET into this body rather than echoing both spellings back.",
         "properties": {
+          "judge": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              }
+            },
+            "nullable": true,
+            "description": "Per-case judge override. enabled: false skips goal-completion grading for this case; null clears the override and restores the suite setting."
+          },
           "declaredSuiteId": {
             "type": "string",
             "maxLength": 128,
@@ -15260,6 +15281,17 @@
         "type": "object",
         "description": "Partial update. Every field is optional; omitted fields are left as they are. `steps` REPLACES the definition rather than merging into it. Vocabulary 2 (`x-mcpjam-eval-vocabulary: 2`): same spellings as `EvalCaseCreateRequestV2`; two spellings of one field is a `400`. A PATCH that names neither spelling of the floor leaves the stored floor exactly as it was.",
         "properties": {
+          "judge": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              }
+            },
+            "nullable": true,
+            "description": "Per-case judge override. enabled: false skips goal-completion grading for this case; null clears the override and restores the suite setting."
+          },
           "declaredSuiteId": {
             "type": "string",
             "maxLength": 128,
@@ -15902,6 +15934,16 @@
         ],
         "description": "A persisted eval case, in the public steps-first shape. Note this is NOT `EvalTestCase`, which is the INLINE authoring shape accepted by suite creation.",
         "properties": {
+          "judge": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              }
+            },
+            "description": "Per-case judge override. enabled: false skips goal-completion grading for this case."
+          },
           "id": {
             "type": "string"
           },
@@ -16200,6 +16242,17 @@
         ],
         "description": "Create one case. `title` and a non-empty `steps` array are both required — a case persisted without executable steps could never run.",
         "properties": {
+          "judge": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              }
+            },
+            "nullable": true,
+            "description": "Per-case judge override. enabled: false skips goal-completion grading for this case; null clears the override and restores the suite setting."
+          },
           "declaredSuiteId": {
             "type": "string",
             "maxLength": 128,
@@ -16604,6 +16657,17 @@
         "type": "object",
         "description": "Partial update. Every field is optional; omitted fields are left as they are. `steps` REPLACES the definition rather than merging into it.",
         "properties": {
+          "judge": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              }
+            },
+            "nullable": true,
+            "description": "Per-case judge override. enabled: false skips goal-completion grading for this case; null clears the override and restores the suite setting."
+          },
           "declaredSuiteId": {
             "type": "string",
             "maxLength": 128,
@@ -19458,6 +19522,35 @@
           "cases"
         ],
         "properties": {
+          "progress": {
+            "type": "object",
+            "required": [
+              "total",
+              "completed",
+              "errors",
+              "skipped"
+            ],
+            "properties": {
+              "total": {
+                "type": "number"
+              },
+              "completed": {
+                "type": "number"
+              },
+              "errors": {
+                "type": "number"
+              },
+              "skipped": {
+                "type": "number"
+              }
+            }
+          },
+          "judgeTemplateVersion": {
+            "type": "number"
+          },
+          "judgeTemplateHash": {
+            "type": "string"
+          },
           "status": {
             "type": ["string", "null"],
             "enum": ["pending", "completed", "failed", null],
@@ -19486,7 +19579,7 @@
             "items": {
               "$ref": "#/components/schemas/EvalRunGoalCompletionCase"
             },
-            "description": "Per-case grades. EMPTY unless `status` is `completed` — a pending or failed judge carries no cases, and `status` is what says which."
+            "description": "Per-iteration measurements and unscored error or skipped rows on terminal jobs. Failed jobs retain completed measurements. Pending jobs expose progress and an empty cases array."
           }
         }
       },
@@ -19563,6 +19656,106 @@
         "type": "object",
         "required": ["caseKey", "score", "passed", "reason", "rubricHits"],
         "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "scored",
+              "error",
+              "skipped"
+            ],
+            "description": "Measurement state. Interpret score and passed only for scored rows. Legacy scored rows are projected as scored."
+          },
+          "gradingKey": {
+            "type": "string"
+          },
+          "errorCode": {
+            "type": "string"
+          },
+          "judgeTemplateVersion": {
+            "type": "number"
+          },
+          "judgeTemplateHash": {
+            "type": "string"
+          },
+          "evidenceHash": {
+            "type": "string"
+          },
+          "evidenceManifest": {
+            "type": "object",
+            "required": [
+              "version",
+              "traceComplete",
+              "traceFields",
+              "messageCount",
+              "spanCount",
+              "artifactSources",
+              "uncaptured",
+              "inputBytes"
+            ],
+            "properties": {
+              "version": {
+                "type": "number",
+                "enum": [
+                  1
+                ]
+              },
+              "traceComplete": {
+                "type": "boolean",
+                "enum": [
+                  true
+                ]
+              },
+              "traceFields": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "messageCount": {
+                "type": "number"
+              },
+              "spanCount": {
+                "type": "number"
+              },
+              "artifactSources": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "sourceId",
+                    "mediaType",
+                    "modality"
+                  ],
+                  "properties": {
+                    "sourceId": {
+                      "type": "string"
+                    },
+                    "mediaType": {
+                      "type": "string"
+                    },
+                    "modality": {
+                      "type": "string",
+                      "enum": [
+                        "image",
+                        "audio",
+                        "video",
+                        "file"
+                      ]
+                    }
+                  }
+                }
+              },
+              "uncaptured": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "inputBytes": {
+                "type": "number"
+              }
+            }
+          },
           "caseKey": {
             "type": "string",
             "description": "The stable AUTHORED-case identity, as persisted. NOT a case row id — do not join it against the ids the per-case routes take."

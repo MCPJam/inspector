@@ -44,3 +44,10 @@ export const GOAL_COMPLETION_DEFAULTS: ResolvedGoalCompletionConfig = {
   autoRun: false,
   role: "advisory",
 };
+
+export type GoalJudgePolicy = {
+  contractVersion: 4;
+  effective: ResolvedGoalCompletionConfig;
+  executionPaused: boolean;
+  automatic: boolean;
+};

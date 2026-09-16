@@ -18,6 +18,7 @@ vi.mock("ai", () => ({
     type: "dynamic",
   })),
   jsonSchema: vi.fn((schema: any) => schema),
+  asSchema: vi.fn((schema: any) => ({ jsonSchema: schema })),
 }));
 
 // Mock the model factory
@@ -283,6 +284,17 @@ describe("HostRunner", () => {
 
       expect(result).toBeInstanceOf(PromptResult);
       expect(result.text).toBe("The result is 5");
+      expect(result.recordedContext?.toolDefinitions).toEqual(
+        Object.entries(mockToolSet).map(([name, tool]) => ({
+          name,
+          description: tool.description,
+          inputSchema: tool.inputSchema,
+        }))
+      );
+      expect(result.recordedContext?.systemPrompt).toBe(
+        "You are a helpful assistant."
+      );
+      expect(result.recordedContext?.unavailable).toBeUndefined();
       expect(result.toolsCalled()).toEqual(["add"]);
       expect(result.hasError()).toBe(false);
       expect(result.inputTokens()).toBe(10);

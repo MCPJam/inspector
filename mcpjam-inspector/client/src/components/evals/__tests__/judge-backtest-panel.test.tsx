@@ -52,7 +52,9 @@ describe("JudgeBacktestPanel", () => {
     expect(mocks.action).toHaveBeenLastCalledWith({
       suiteId: "suite-1",
       runId: "run-1",
-      judgeRubricDraft: [{ id: "cites", label: "Cites a source" }],
+      judgeRubricDraft: {
+        criteria: [{ id: "cites", label: "Cites a source" }],
+      },
     });
 
     rerender(

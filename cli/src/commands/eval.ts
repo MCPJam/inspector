@@ -4721,6 +4721,7 @@ export function registerEvalCommands(program: Command): void {
       )
       .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
   )
+    .option("--scope <all|failed>", "Regrade all or retry only failed grading")
     .option("--force", "Re-grade a run that already has a judge result")
     .option(
       "--enable",
@@ -4734,6 +4735,7 @@ export function registerEvalCommands(program: Command): void {
           project?: string;
           run: string;
           force?: boolean;
+          scope?: string;
           enable?: boolean;
           judgeModel?: string;
           judgeThreshold?: string;
@@ -4748,6 +4750,10 @@ export function registerEvalCommands(program: Command): void {
           requestEvalRunJudgeOperation,
           {
             runId: options.run,
+            // Preserved when explicitly supplied, even empty: dropping an
+            // empty value would silently grade everything when the person
+            // asked for something and mistyped it.
+            ...(options.scope !== undefined ? { scope: options.scope } : {}),
             ...(options.project === undefined
               ? {}
               : { project: options.project }),

@@ -144,12 +144,18 @@ export function fileCaseToCreateBody(
   vocabulary: EvalVocabulary = 1
 ): Record<string, unknown> {
   return {
+    ...(testCase.judge === undefined ? {} : { judge: testCase.judge }),
     id: testCase.id,
     title: testCase.title,
     ...(testCase.intent !== undefined ? { intent: testCase.intent } : {}),
     ...(testCase.kind !== undefined ? { kind: testCase.kind } : {}),
     steps: testCase.steps,
-    ...(testCase.suppressedSuiteStandardCheckIds !== undefined ? { suppressedSuiteStandardCheckIds: testCase.suppressedSuiteStandardCheckIds } : {}),
+    ...(testCase.suppressedSuiteStandardCheckIds !== undefined
+      ? {
+          suppressedSuiteStandardCheckIds:
+            testCase.suppressedSuiteStandardCheckIds,
+        }
+      : {}),
     ...caseCountAndRules(vocabulary, testCase, "create"),
     passThreshold: testCase.passThreshold,
     ...(testCase.expectedOutput !== undefined
@@ -177,13 +183,20 @@ export function fileCaseToUpdateBody(
   vocabulary: EvalVocabulary = 1
 ): Record<string, unknown> {
   return {
+    judge: testCase.judge ?? null,
     title: testCase.title,
     // A file re-sync is authoritative: unlike an ordinary PATCH, a missing
     // label must clear the old one rather than preserve stale attribution.
     intent: testCase.intent ?? null,
     kind: testCase.kind ?? null,
     steps: testCase.steps,
-    ...(testCase.suppressedSuiteStandardCheckIds !== undefined || previousSuppression?.length ? { suppressedSuiteStandardCheckIds: testCase.suppressedSuiteStandardCheckIds ?? [] } : {}),
+    ...(testCase.suppressedSuiteStandardCheckIds !== undefined ||
+    previousSuppression?.length
+      ? {
+          suppressedSuiteStandardCheckIds:
+            testCase.suppressedSuiteStandardCheckIds ?? [],
+        }
+      : {}),
     ...caseCountAndRules(vocabulary, testCase, "update"),
     passThreshold: testCase.passThreshold,
     expectedOutput: testCase.expectedOutput ?? "",
@@ -1097,6 +1110,7 @@ export async function executeEvalRunFromFile(
     {
       projectId: project.id,
       body: {
+        judge: authored.defaults.judge ?? null,
         declaredSuiteId: authored.suite.id,
         name: authored.suite.name,
         ...(authored.suite.description !== undefined

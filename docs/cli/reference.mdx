@@ -1530,6 +1530,17 @@ per-case grades. `status: null` means that judge was never requested for the
 run — different from a judge that ran and graded nothing. In `--format human`,
 each judge that actually graded gets a one-line summary.
 
+Goal completion reports per-iteration `status`: `scored`, `error`, or `skipped`.
+Legacy scored rows are returned as `scored`. A failed job retains completed
+measurements alongside any unscored error or skipped rows; job failure does not
+mean every trial failed its goal. Use each row's `status` before interpreting
+`score` and `passed`, and join rows to trials using `iterationId`.
+Pending jobs return an empty `cases` array and may expose `progress`
+(`total`, `completed`, `errors`, `skipped`). Terminal jobs may include template
+version/hash; case rows may also include `gradingKey`, `errorCode`,
+`evidenceHash`, and `evidenceManifest` for provenance. Older results can omit
+these fields. Groundedness retains its existing per-case grade shape.
+
 The failure diagnostics inside `decisionSummary` are **paginated**, and a page
 that is not the whole set says so: `diagnostics.complete` is `false` and
 `diagnostics.nextCursor` carries the next page. Without `--diagnostics-cursor`

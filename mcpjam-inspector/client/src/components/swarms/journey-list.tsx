@@ -1,3 +1,4 @@
+import type { GoalJudgePolicy } from "@/shared/judge-defaults";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { SharedSettingsGate } from "@/components/billing/SharedSettingsGate";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -76,6 +77,7 @@ export type JourneyListJourney = {
    * declared here because `autoRun` decides whether the pre-run credit estimate
    * carries a judge line at all. */
   judgeConfig?: GoalJudgeConfig;
+  judgePolicy?: GoalJudgePolicy;
   /** Deterministic criteria. `null` from the wire when the journey has none. */
   rubric?: JourneyCriterion[] | null;
 };
@@ -720,6 +722,7 @@ function JourneyGradingEditor({
           resource="swarm settings"
         >
           <JudgesSection
+            policy={journey.judgePolicy}
             chrome="bare"
             value={judgeConfig}
             onChange={setJudgeConfig}

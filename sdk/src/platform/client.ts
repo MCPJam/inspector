@@ -628,8 +628,8 @@ export class PlatformApiClient {
     this.userAgent = isBrowserPage()
       ? options.userAgent
       : options.userAgent
-      ? `${options.userAgent} ${DEFAULT_PLATFORM_USER_AGENT}`
-      : DEFAULT_PLATFORM_USER_AGENT;
+        ? `${options.userAgent} ${DEFAULT_PLATFORM_USER_AGENT}`
+        : DEFAULT_PLATFORM_USER_AGENT;
     this.launchHeaders = buildLaunchHeaders(options);
     // Lower-cased at construction so `request` cannot end up with two spellings
     // of one header — HTTP names are case-insensitive, but a plain object's
@@ -769,8 +769,8 @@ export class PlatformApiClient {
             params.connectableOnly === undefined
               ? undefined
               : params.connectableOnly
-              ? "true"
-              : "false",
+                ? "true"
+                : "false",
           ...pageQuery({ cursor: params.cursor, limit: params.limit }),
         },
       },
@@ -2634,11 +2634,6 @@ export class PlatformApiClient {
     );
   }
 
-  /**
-   * Preview deterministic evaluators using stored evidence, without model calls
-   * or verdict writes. Resume a bounded result with its continuation and the
-   * unchanged draft. Starting a new preview has a separate one-minute cooldown.
-   */
   backtestEvalRun(
     params: {
       projectId: string;
@@ -2678,6 +2673,7 @@ export class PlatformApiClient {
       projectId: string;
       runId: string;
       force?: boolean;
+      scope?: "all" | "failed";
       enable?: boolean;
       model?: string;
       threshold?: number;
@@ -2691,6 +2687,7 @@ export class PlatformApiClient {
       )}/eval-runs/${encodeURIComponent(params.runId)}/judge`,
       {
         body: {
+          ...(params.scope ? { scope: params.scope } : {}),
           ...(params.force === true ? { force: true } : {}),
           ...(params.enable !== undefined ? { enable: params.enable } : {}),
           ...(params.model !== undefined ? { model: params.model } : {}),
