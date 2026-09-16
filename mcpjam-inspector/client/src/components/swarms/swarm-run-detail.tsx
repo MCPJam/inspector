@@ -78,16 +78,10 @@ import {
 import { SwarmFindingsTab } from "@/components/swarms/findings/swarm-findings-tab";
 import { NewSwarmRunningStep } from "@/components/swarms/new-swarm-running-step";
 import {
+  DETAIL_TAB_OPTIONS,
   launchedRunsFromWave,
   resolveSwarmRunDetailTab,
 } from "@/components/swarms/swarm-run-detail-model";
-
-const DETAIL_TAB_OPTIONS = [
-  { value: "run" as const, label: "Run" },
-  { value: "findings" as const, label: "Findings" },
-  { value: "insights" as const, label: "Insights" },
-  { value: "sessions" as const, label: "Sessions" },
-] as const;
 
 export interface SwarmRunDetailProps {
   swarmId: string;
