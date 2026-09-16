@@ -492,6 +492,68 @@ describe("v1 eval-edit routes", () => {
     }
   });
 
+  it("GET projects executionBudgets, and null when nothing is authored", async () => {
+    // The READ half of the pair. PATCH forwarding is covered above, but a
+    // caller that can write a budget and never read it back cannot tell a
+    // stored value from a dropped one — and a DTO that silently omitted the
+    // field would pass every assertion in this file without this test. That
+    // is not hypothetical: this exact surface shipped once with the schema
+    // accepting a path the handler and the DTO both ignored.
+    const unset = await request(
+      "GET",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+    );
+    const unsetBody = (await unset.json()) as any;
+    // `null`, not absent: the key has to be PRESENT and empty, so a reader can
+    // distinguish "inherits the platform defaults" from "this build of the API
+    // does not know about budgets".
+    expect(unsetBody.settings).toHaveProperty("executionBudgets");
+    expect(unsetBody.settings.executionBudgets).toBeNull();
+
+    const stored = {
+      turnTimeoutMs: 300_000,
+      toolCallTimeoutMs: 60_000,
+      iterationTimeoutMs: 900_000,
+      runTimeoutMs: 3_600_000,
+      turnRetries: 0,
+    };
+    convexQueryMock.mockImplementation((name: string) =>
+      name === "testSuites:getTestSuite"
+        ? Promise.resolve({ ...SUITE_DOC, executionBudgets: stored })
+        : defaultQueryImpl(name),
+    );
+    const set = await request(
+      "GET",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+    );
+    // Every clock, by value. A partial projection is the same failure as no
+    // projection for whichever field it drops, so this asserts the whole
+    // object rather than spot-checking one key.
+    expect(((await set.json()) as any).settings.executionBudgets).toEqual(
+      stored,
+    );
+  });
+
+  it("GET reports an authored zero, which is not the same as unauthored", async () => {
+    // `turnRetries: 0` is a real choice — never retry — and the one value a
+    // `??`-style projection is most likely to collapse into the empty case.
+    convexQueryMock.mockImplementation((name: string) =>
+      name === "testSuites:getTestSuite"
+        ? Promise.resolve({
+            ...SUITE_DOC,
+            executionBudgets: { turnRetries: 0 },
+          })
+        : defaultQueryImpl(name),
+    );
+    const res = await request(
+      "GET",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+    );
+    expect(((await res.json()) as any).settings.executionBudgets).toEqual({
+      turnRetries: 0,
+    });
+  });
+
   it("GET reports minimumIterations, null when the suite has no floor", async () => {
     const unset = await request(
       "GET",
