@@ -128,17 +128,6 @@ function PairingStat({
   );
 }
 
-function AiGeneratedLabel() {
-  return (
-    <span
-      className="shrink-0 text-[10.5px] font-medium text-muted-foreground"
-      data-testid="run-verdict-ai-insight"
-    >
-      AI generated
-    </span>
-  );
-}
-
 function PairingPassList({
   pairings,
   showDeltas,
@@ -248,28 +237,132 @@ function PairingPassList({
   );
 }
 
-export function RunVerdictHero({
-  view,
-  headerVerdict = view.verdict,
-  onOpenFailingTrace,
-  actions,
-}: {
-  view: RunVerdictHeroView;
-  headerVerdict?: RunVerdictHeroView["verdict"];
-  onOpenFailingTrace?: () => void;
-  /** The primary action slot, so the copy-prompt button can land here later. */
-  actions?: React.ReactNode;
-}) {
-  const inHeader = useRunHeaderVerdict(headerVerdict);
-  const showVerdict = !inHeader && view.verdict.word !== "Running";
-  const pairings = view.pairings ?? [];
-  const hasPairings = pairings.length > 0;
+/**
+ * The hero's own contract-derived explanation.
+ *
+ * Exported because the run page now hands the findings block into the
+ * explanation slot and needs THIS as the fallback: a run with no findings
+ * built must still say what broke, in the words prod already ships.
+ */
+export function HeroExplanation({ view }: { view: RunVerdictHeroView }) {
   const remedy = view.focus ? remedyForDiagnostic(view.focus.diagnostic) : null;
   const hasSentence = view.sentence.text.trim().length > 0;
   const summaryLoading =
     view.pending ||
     (!hasSentence &&
       ["Running", "Pending", "Queued"].includes(view.verdict.word));
+  return summaryLoading ? (
+    <div
+      className="grid divide-y divide-border/40 border-t border-border/60 pt-3 lg:grid-cols-2 lg:divide-x lg:divide-y-0"
+      role="status"
+      aria-label="Loading run summary"
+      data-testid="run-summary-loading"
+    >
+      {[0, 1].map((column) => (
+        <div
+          key={column}
+          className="min-w-0 space-y-3 py-3 lg:px-4 lg:py-2 lg:first:pl-0"
+          aria-hidden="true"
+        >
+          <Skeleton className="h-3 w-24" />
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-4 w-4/5" />
+        </div>
+      ))}
+    </div>
+  ) : hasSentence ? (
+    <div
+      className="grid divide-y divide-border/40 border-t border-border/60 pt-3 lg:grid-cols-2 lg:divide-x lg:divide-y-0"
+      data-testid="run-verdict-insights"
+    >
+      <div className="min-w-0 py-3 lg:px-4 lg:py-2 lg:first:pl-0">
+        <div className="flex items-baseline justify-between gap-3">
+          <h4 className="flex min-w-0 items-center gap-2 text-sm font-semibold">
+            {view.sentence.kind === "noFailure" ? (
+              <CircleCheck
+                className="size-4 text-muted-foreground"
+                aria-hidden
+              />
+            ) : view.sentence.kind === "brokeAt" ? (
+              <TriangleAlert
+                className="size-4 text-muted-foreground"
+                aria-hidden
+              />
+            ) : (
+              <CircleAlert
+                className="size-4 text-muted-foreground"
+                aria-hidden
+              />
+            )}
+            {view.sentence.kind === "noFailure"
+              ? "What passed"
+              : view.sentence.kind === "brokeAt"
+                ? "What broke"
+                : "What happened"}
+          </h4>
+        </div>
+        {hasSentence ? (
+          <p
+            className="mt-2 max-w-[72ch] text-sm leading-relaxed text-foreground"
+            data-testid="run-verdict-sentence"
+          >
+            {view.sentence.text}
+          </p>
+        ) : null}
+      </div>
+      <div className="min-w-0 py-3 lg:px-4 lg:py-2">
+        <div className="flex items-baseline justify-between gap-3">
+          <h4 className="flex min-w-0 items-center gap-2 text-sm font-semibold">
+            {remedy ? (
+              <Wrench className="size-4 text-muted-foreground" aria-hidden />
+            ) : (
+              <Lightbulb className="size-4 text-muted-foreground" aria-hidden />
+            )}
+            {remedy ? "How to fix" : "Next step"}
+          </h4>
+        </div>
+        <p
+          className="mt-2 text-sm leading-relaxed text-foreground"
+          data-testid="run-verdict-remedy"
+        >
+          {remedy?.text ??
+            (view.pending
+              ? "Results are still arriving. Inspect the live case matrix below as iterations complete."
+              : view.sentence.kind === "noFailure"
+                ? "Compare with a previous run to check for regressions, or export this report to share the evidence."
+                : "Open the case evidence to inspect the recorded result. No specific remediation has been established for this run.")}
+        </p>
+      </div>
+    </div>
+  ) : null;
+}
+
+export function RunVerdictHero({
+  view,
+  headerVerdict = view.verdict,
+  onOpenFailingTrace,
+  actions,
+  explanation,
+}: {
+  view: RunVerdictHeroView;
+  headerVerdict?: RunVerdictHeroView["verdict"];
+  onOpenFailingTrace?: () => void;
+  /** The primary action slot, so the copy-prompt button can land here later. */
+  actions?: React.ReactNode;
+  /**
+   * What sits under the pairing rows.
+   *
+   * `undefined` keeps the hero's own two columns — the shape prod ships, and
+   * what a surface with no findings block still gets. A node REPLACES them, so
+   * the run page renders exactly one explanation instead of the hero's and the
+   * findings block's side by side. `null` renders neither.
+   */
+  explanation?: React.ReactNode | null;
+}) {
+  const inHeader = useRunHeaderVerdict(headerVerdict);
+  const showVerdict = !inHeader && view.verdict.word !== "Running";
+  const pairings = view.pairings ?? [];
+  const hasPairings = pairings.length > 0;
   const canOpenTrace = Boolean(onOpenFailingTrace && view.focus);
 
   return (
@@ -310,98 +403,13 @@ export function RunVerdictHero({
           </div>
         ) : null}
 
-        {summaryLoading ? (
-          <div
-            className="grid divide-y divide-border/40 border-t border-border/60 pt-3 lg:grid-cols-2 lg:divide-x lg:divide-y-0"
-            role="status"
-            aria-label="Loading run summary"
-            data-testid="run-summary-loading"
-          >
-            {[0, 1].map((column) => (
-              <div
-                key={column}
-                className="min-w-0 space-y-3 py-3 lg:px-4 lg:py-2 lg:first:pl-0"
-                aria-hidden="true"
-              >
-                <Skeleton className="h-3 w-24" />
-                <Skeleton className="h-4 w-full" />
-                <Skeleton className="h-4 w-4/5" />
-              </div>
-            ))}
-          </div>
-        ) : hasSentence ? (
-          <div
-            className="grid divide-y divide-border/40 border-t border-border/60 pt-3 lg:grid-cols-2 lg:divide-x lg:divide-y-0"
-            data-testid="run-verdict-insights"
-          >
-            <div className="min-w-0 py-3 lg:px-4 lg:py-2 lg:first:pl-0">
-              <div className="flex items-baseline justify-between gap-3">
-                <h4 className="flex min-w-0 items-center gap-2 text-sm font-semibold">
-                  {view.sentence.kind === "noFailure" ? (
-                    <CircleCheck
-                      className="size-4 text-muted-foreground"
-                      aria-hidden
-                    />
-                  ) : view.sentence.kind === "brokeAt" ? (
-                    <TriangleAlert
-                      className="size-4 text-muted-foreground"
-                      aria-hidden
-                    />
-                  ) : (
-                    <CircleAlert
-                      className="size-4 text-muted-foreground"
-                      aria-hidden
-                    />
-                  )}
-                  {view.sentence.kind === "noFailure"
-                    ? "What passed"
-                    : view.sentence.kind === "brokeAt"
-                      ? "What broke"
-                      : "What happened"}
-                </h4>
-                <AiGeneratedLabel />
-              </div>
-              {hasSentence ? (
-                <p
-                  className="mt-2 max-w-[72ch] text-sm leading-relaxed text-foreground"
-                  data-testid="run-verdict-sentence"
-                >
-                  {view.sentence.text}
-                </p>
-              ) : null}
-            </div>
-            <div className="min-w-0 py-3 lg:px-4 lg:py-2">
-              <div className="flex items-baseline justify-between gap-3">
-                <h4 className="flex min-w-0 items-center gap-2 text-sm font-semibold">
-                  {remedy ? (
-                    <Wrench
-                      className="size-4 text-muted-foreground"
-                      aria-hidden
-                    />
-                  ) : (
-                    <Lightbulb
-                      className="size-4 text-muted-foreground"
-                      aria-hidden
-                    />
-                  )}
-                  {remedy ? "How to fix" : "Next step"}
-                </h4>
-                <AiGeneratedLabel />
-              </div>
-              <p
-                className="mt-2 text-sm leading-relaxed text-foreground"
-                data-testid="run-verdict-remedy"
-              >
-                {remedy?.text ??
-                  (view.pending
-                    ? "Results are still arriving. Inspect the live case matrix below as iterations complete."
-                    : view.sentence.kind === "noFailure"
-                      ? "Compare with a previous run to check for regressions, or export this report to share the evidence."
-                      : "Open the case evidence to inspect the recorded result. No specific remediation has been established for this run.")}
-              </p>
-            </div>
-          </div>
-        ) : null}
+        {explanation !== undefined ? (
+          explanation === null ? null : (
+            <div className="border-t border-border/60 pt-3">{explanation}</div>
+          )
+        ) : (
+          <HeroExplanation view={view} />
+        )}
 
         {actions || canOpenTrace ? (
           <div className="mt-4 flex flex-wrap items-center gap-2">

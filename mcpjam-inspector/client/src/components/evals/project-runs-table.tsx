@@ -4,6 +4,7 @@ import { SuiteHealth } from "../evaluate/suite-health";
 import {
   EvaluateHistoryHeader,
   EvaluateHistoryRow,
+  EvaluateHistoryRowSkeleton,
 } from "../evaluate/evaluate-history-row";
 import { Input } from "@mcpjam/design-system/input";
 import {
@@ -886,12 +887,13 @@ export function ProjectRunsTable({
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" side="bottom">
                 {platformFilters
-                  .filter((filter) =>
-                    (suiteFilter === ALL_SUITES &&
-                      clientFilter === ALL_EVAL_FILTER_VALUES &&
-                      serverFilter === ALL_EVAL_FILTER_VALUES &&
-                      !hasGitFilter) ||
-                    availablePlatforms.includes(filter.value),
+                  .filter(
+                    (filter) =>
+                      (suiteFilter === ALL_SUITES &&
+                        clientFilter === ALL_EVAL_FILTER_VALUES &&
+                        serverFilter === ALL_EVAL_FILTER_VALUES &&
+                        !hasGitFilter) ||
+                      availablePlatforms.includes(filter.value),
                   )
                   .map((filter) => (
                     <DropdownMenuCheckboxItem
@@ -1190,6 +1192,16 @@ export function ProjectRunsTable({
                     (a, b) =>
                       a.runNumber - b.runNumber || a._id.localeCompare(b._id),
                   )[0];
+                  // Unread runs make the whole row provisional, not just its
+                  // metrics: the launch this row stands for is still forming.
+                  if (
+                    (history.loading || isLoadingFirstPage) &&
+                    launch.runs.some((row) => !history.details.has(row._id))
+                  ) {
+                    return (
+                      <EvaluateHistoryRowSkeleton key={launch.key} showSuite />
+                    );
+                  }
                   return (
                     <EvaluateHistoryRow
                       key={launch.key}

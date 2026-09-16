@@ -850,7 +850,9 @@ export function ServerPicker({
             selection?.kind === "server" ? selection.serverId : null
           }
           selectedGroupId={
-            selection?.kind === "group" ? selection.groupId : null
+            selection && selection.kind !== "dangling"
+              ? selection.groupId
+              : null
           }
           onSelectServer={(serverId) => void handleSelectServer(serverId)}
           onSelectGroup={(groupId) => void handleSelectGroup(groupId)}

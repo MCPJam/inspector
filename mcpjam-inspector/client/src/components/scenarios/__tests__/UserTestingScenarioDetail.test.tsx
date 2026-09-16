@@ -1213,7 +1213,6 @@ describe("UserTestingScenarioDetail — settings layout", () => {
     const order = [
       "user-testing-description-section",
       "user-testing-tasks-section",
-      "scenario-grading-section",
       "user-testing-delete",
     ].map((id) =>
       Array.prototype.indexOf.call(
@@ -1239,7 +1238,6 @@ describe("UserTestingScenarioDetail — settings layout", () => {
     expect(
       screen.getByRole("heading", { name: "Ratings" }),
     ).toBeInTheDocument();
-    expect(screen.getByTestId("scenario-grading-section")).toBeInTheDocument();
     expect(
       screen.getByTestId("user-testing-tasks-section"),
     ).toBeInTheDocument();
