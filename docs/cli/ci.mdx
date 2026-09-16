@@ -407,6 +407,24 @@ jobs:
 Create the `MCPJAM_API_KEY` repository secret under GitHub **Settings → Secrets and
 variables → Actions**. The YAML contains only a reference to it, never the key.
 
+**MCPJam behind Cloudflare Access:** if your MCPJam deployment is fronted by
+Cloudflare Access, the action needs a service token to reach the API. Add
+`CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET` to the step's `env:`:
+
+```yaml
+      - uses: MCPJam/inspector/actions/evals@evals-v1
+        with:
+          api-key: ${{ secrets.MCPJAM_API_KEY }}
+          project: 'My project'
+          suite: 'My eval suite'
+        env:
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+```
+
+Both variables must be set — one alone is ignored. The action sends them only
+with its MCPJam requests; GitHub API calls are unaffected.
+
 Without `gate: true`, the run itself must pass. With gates enabled, each gate
 must pass or be waived; a lower threshold or existing waiver can clear an eval
 failure. Failed launches, incomplete runs, missing reports, and upload failures
