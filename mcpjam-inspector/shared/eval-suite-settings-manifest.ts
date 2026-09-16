@@ -114,7 +114,7 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   },
   {
     key: "checks",
-    label: "Checks by stage",
+    label: "Evaluators",
     api: "settings.checks",
   },
   {

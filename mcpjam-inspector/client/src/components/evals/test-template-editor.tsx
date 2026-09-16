@@ -3954,11 +3954,6 @@ export function TestTemplateEditor({
                 Undo
               </Button>
             )}
-            {draftKind === "describe" && (
-              <Button size="sm" variant="outline" onClick={evalAgent.open}>
-                Ask MCPJam
-              </Button>
-            )}
           </div>
         </div>
       )}
