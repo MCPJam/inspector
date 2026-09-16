@@ -558,6 +558,17 @@ function resolveSlug(error: unknown): {
   if (/refresh\s+token/i.test(message) && /(failed|invalid|expired|revoked)/i.test(message)) {
     return { slug: "auth/oauth_refresh_failed" };
   }
+
+  // MCPJam's own consent-prompt wording. The orchestrator now attaches a
+  // normalized block directly, so a live consent state never reaches here —
+  // this catches the strings already persisted in client state from earlier
+  // sessions, and any future caller that still hands over bare prose.
+  if (
+    /consent\s+is\s+required/i.test(message) ||
+    /^\s*reauthenticate\b[\s\S]*\bto\s+continue\b/i.test(message)
+  ) {
+    return { slug: "auth/consent_required" };
+  }
   // Note: "missing bearer" wording is checked earlier (step d.5) so it
   // wins over the generic HTTP status check; no duplicate here.
 

@@ -351,6 +351,18 @@ An expired OAuth access token could not be refreshed.
 **Next steps**
 - Click **Reconnect** on the server card to run a fresh OAuth flow.
 
+### Consent required
+
+`auth/consent_required`
+
+This server needs your permission before it can connect.
+
+**Likely causes**
+- Reconnect ran without opening the sign-in prompt, so no OAuth token exists for this server yet.
+
+**Next steps**
+- Click **Reconnect** and approve the request in the window that opens.
+
 ### Missing bearer
 
 `auth/missing_bearer`
