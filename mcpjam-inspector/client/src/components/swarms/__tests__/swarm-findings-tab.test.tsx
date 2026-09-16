@@ -19,8 +19,8 @@ import { SwarmRunDetail } from "../swarm-run-detail";
  *     goals collapsed (expanding one lands on its diagnosis stage), the
  *     empty-stage copy refuses to read as a pass, sentiment is a pill only.
  *     Session click-through is opt-in (`projectId`); these tests omit it.
- *  2. `SwarmRunDetail` wiring — Findings sits beside Insights | Sessions and
- *     a `?tab=findings` deep link renders it.
+ *  2. `SwarmRunDetail` wiring — Findings sits beside Insights | Sessions (and
+ *     Run, while the wave is live) and a `?tab=findings` deep link renders it.
  */
 
 // ── Convex plumbing (SwarmRunDetail layer) ──────────────────────────────────
@@ -534,20 +534,39 @@ describe("SwarmFindingsTab", () => {
     expect(summary.children).toHaveLength(1);
     expect(summary.textContent).not.toContain("No findings yet");
     expect(screen.getByText(/Choose a persona/i)).toBeInTheDocument();
+    // Same SectionLabel face as Finding summary / Goals they tried — not
+    // body-ink 11px, which read as a different font from the muted kickers.
+    for (const label of [
+      screen.getByText(/Choose a persona/i),
+      screen.getByText(/Finding summary/i),
+      screen.getByText(/Goals they tried/i),
+    ]) {
+      expect(label.className.split(/\s+/)).toEqual(
+        expect.arrayContaining([
+          "text-xs",
+          "font-semibold",
+          "uppercase",
+          "tracking-widest",
+          "text-muted-foreground",
+        ]),
+      );
+    }
   });
 });
 
 // ── SwarmRunDetail wiring ───────────────────────────────────────────────────
 
 describe("SwarmRunDetail findings wiring", () => {
-  it("offers the Findings tab beside Insights | Sessions and renders it on ?tab=findings", () => {
+  it("offers the Findings tab beside Run | Insights | Sessions and renders it on ?tab=findings", () => {
     window.history.replaceState({}, "", "/swarms/wave-1?tab=findings");
     renderDetail();
     const nav = screen.getByRole("navigation", { name: "Swarm run view" });
+    expect(within(nav).getByRole("button", { name: "Run" })).toBeInTheDocument();
     expect(
       within(nav).getByRole("button", { name: "Findings" })
     ).toBeInTheDocument();
     expect(screen.getByTestId("swarm-findings-tab")).toBeInTheDocument();
+    expect(screen.getByTestId("swarm-run-detail-state")).toBeInTheDocument();
     expect(
       screen.queryByTestId("stub-insights-workbench")
     ).not.toBeInTheDocument();
@@ -556,6 +575,7 @@ describe("SwarmRunDetail findings wiring", () => {
   it("still lands on Findings by default", () => {
     renderDetail();
     expect(screen.getByTestId("swarm-findings-tab")).toBeInTheDocument();
+    expect(screen.getByTestId("swarm-run-detail-state")).toBeInTheDocument();
     expect(screen.queryByTestId("stub-insights-workbench")).not.toBeInTheDocument();
   });
 });

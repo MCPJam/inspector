@@ -30,6 +30,7 @@ import {
 } from "@/hooks/useUsageInsights";
 import { useEnsureFirstAnalysis } from "@/hooks/useInsightsFlowController";
 import { withHideSynthetic } from "@/components/scenarios/user-testing-traffic";
+import { SectionLabel } from "@/components/shared/section-label";
 import { FindingsSummaryCard } from "@/components/swarms/findings/findings-summary-card";
 import { FindingsPersonaTabs } from "@/components/swarms/findings/findings-persona-tabs";
 import { FindingsPersonaCard } from "@/components/swarms/findings/findings-persona-card";
@@ -295,9 +296,7 @@ export function ScenarioFindingsTab({
         summary={summary}
         footnotes={cardFootnotes}
       />
-      <p className="mb-2.5 mt-7 text-[11px] font-semibold uppercase tracking-[0.14em] text-foreground">
-        Choose a persona
-      </p>
+      <SectionLabel className="mb-2.5 mt-7">Choose a persona</SectionLabel>
       <div className="mb-3">
         <FindingsPersonaTabs
           personas={model.personas}

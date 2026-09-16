@@ -1,13 +1,11 @@
 /**
  * Dedicated Swarm Run (wave) detail at `/swarms/:swarmId`.
  *
- * Chrome: identity row (back · title · actions) above Findings |
- * Insights | Sessions. Findings is the default landing tab.
- *
- * This page is also where a live run lives once the create wizard is left: the
- * wizard's Running step has no URL, so a finding followed out of it lands here,
- * and the live strip below the header is what says the run is still going —
- * plus, when a session is focused, the one control back to the whole run.
+ * Chrome: identity row (back · title · settled outcome · tabs · actions).
+ * A still-running wave with no `?tab=` opens Run — the same matrix +
+ * stream as the create wizard. Findings is the default once the wave has
+ * settled. The live strip under the header is only for work in flight
+ * (progress + Stop).
  */
 import { useCallback, useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
@@ -78,8 +76,14 @@ import {
   waveSessionTotals,
 } from "@/components/swarms/swarm-overview-panel";
 import { SwarmFindingsTab } from "@/components/swarms/findings/swarm-findings-tab";
+import { NewSwarmRunningStep } from "@/components/swarms/new-swarm-running-step";
+import {
+  launchedRunsFromWave,
+  resolveSwarmRunDetailTab,
+} from "@/components/swarms/swarm-run-detail-model";
 
 const DETAIL_TAB_OPTIONS = [
+  { value: "run" as const, label: "Run" },
   { value: "findings" as const, label: "Findings" },
   { value: "insights" as const, label: "Insights" },
   { value: "sessions" as const, label: "Sessions" },
@@ -126,7 +130,7 @@ export function SwarmRunDetail({
   const findingParam = useCurrentSearchParam("finding");
   // Pass both tab and session: a `?session=` deep-link without `tab` must open
   // Sessions. Building `?tab=` alone used to strip session and land on Insights.
-  const tab: SwarmDetailTab = parseSwarmDetailTab(
+  const parsedTab: SwarmDetailTab = parseSwarmDetailTab(
     (() => {
       const search = new URLSearchParams();
       if (tabParam) search.set("tab", tabParam);
@@ -169,6 +173,20 @@ export function SwarmRunDetail({
     () => (overview === undefined ? null : resolveSwarmWave(waves, swarmId)),
     [overview, waves, swarmId]
   );
+  const launchedRuns = useMemo(
+    () => (wave ? launchedRunsFromWave(wave.runs, personas) : []),
+    [personas, wave],
+  );
+  const liveProgress = useMemo(
+    () => (wave ? waveLiveProgress(wave.runs) : null),
+    [wave],
+  );
+  const tab = resolveSwarmRunDetailTab({
+    parsed: parsedTab,
+    tabParam,
+    sessionParam,
+    live: liveProgress !== null,
+  });
 
   // The Findings tab consumes this alongside the wave data. Keep the
   // subscription at the detail-page level so switching tabs does not discard
@@ -222,6 +240,16 @@ export function SwarmRunDetail({
     [navigate, selParam, swarmId]
   );
 
+  const handleOpenFindings = useCallback(() => {
+    navigate(
+      buildSwarmPath(swarmId, {
+        tab: "findings",
+        sel: selParam ?? undefined,
+      }),
+      { replace: true },
+    );
+  }, [navigate, selParam, swarmId]);
+
   /**
    * Drop the focused session and show the run itself. Deliberately NOT
    * `replace`: arriving here from a finding pushed an entry, so a viewer who
@@ -232,11 +260,11 @@ export function SwarmRunDetail({
   const handleBackToRun = useCallback(() => {
     navigate(
       buildSwarmPath(swarmId, {
-        tab,
+        tab: liveProgress ? "run" : parsedTab === "run" ? "findings" : parsedTab,
         sel: selParam ?? undefined,
       })
     );
-  }, [navigate, selParam, swarmId, tab]);
+  }, [liveProgress, navigate, parsedTab, selParam, swarmId]);
 
   const handleSelectionChange = useCallback(
     (
@@ -406,7 +434,7 @@ export function SwarmRunDetail({
   }
 
   const title = swarmWaveTitle(wave);
-  const live = waveLiveProgress(wave.runs);
+  const live = liveProgress;
   const dataRunState = waveRunState(wave.runs);
   // `stoppedHere` only overrides a TERMINAL read: between the cancel resolving
   // and the wave query catching up, the runs still say `running`, and claiming
@@ -459,8 +487,47 @@ export function SwarmRunDetail({
             {title}
           </h1>
         }
+        meta={
+          live ? undefined : (
+            <div
+              className="flex items-center gap-2"
+              data-testid="swarm-run-detail-state"
+              data-run-state={showStopped ? "stopped" : dataRunState}
+              role="status"
+            >
+              <span
+                className={
+                  "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide " +
+                  (showStopped
+                    ? "bg-muted text-muted-foreground"
+                    : swarmWaveRunStateChipClass(dataRunState))
+                }
+                data-testid="swarm-run-detail-state-label"
+              >
+                {showStopped ? "Stopped" : swarmWaveRunStateLabel(dataRunState)}
+              </span>
+              <span className="truncate text-sm text-muted-foreground">
+                {sessionTotals.total > 0
+                  ? `${sessionTotals.succeeded} of ${sessionTotals.total}`
+                  : "None ran"}
+              </span>
+            </div>
+          )
+        }
         actions={
           <>
+            {!live && sessionParam ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="shrink-0 rounded-lg"
+                onClick={() => handleBackToRun()}
+                data-testid="swarm-run-detail-back-to-run"
+              >
+                Back to the run
+              </Button>
+            ) : null}
             <Button
               type="button"
               size="sm"
@@ -495,11 +562,8 @@ export function SwarmRunDetail({
         }}
       />
 
-      {/* Rendered OUTSIDE the tab switch, so a session opened from a finding
-          still has the run's state on screen above it — and ALWAYS rendered,
-          terminal included: a viewer returning to this page had no way to tell
-          an active run from a finished one, and the way back out of a focused
-          session existed only while the run happened to still be going. */}
+      {/* Live only. Settled outcome lives in the header so a finished wave
+          does not spend a second row repeating Complete + the session tally. */}
       {live ? (
         <div
           className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border/40 bg-primary/[0.04] px-8 py-2"
@@ -588,44 +652,7 @@ export function SwarmRunDetail({
             </Button>
           ) : null}
         </div>
-      ) : (
-        <div
-          className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border/40 px-8 py-2"
-          data-testid="swarm-run-detail-state"
-          data-run-state={showStopped ? "stopped" : dataRunState}
-          role="status"
-        >
-          <span
-            className={
-              "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide " +
-              (showStopped
-                ? "bg-muted text-muted-foreground"
-                : swarmWaveRunStateChipClass(dataRunState))
-            }
-            data-testid="swarm-run-detail-state-label"
-          >
-            {showStopped ? "Stopped" : swarmWaveRunStateLabel(dataRunState)}
-          </span>
-          <span className="text-sm text-muted-foreground">
-            {sessionTotals.total > 0
-              ? `${sessionTotals.succeeded} of ${sessionTotals.total} sessions succeeded`
-              : "No sessions ran"}
-          </span>
-          <span className="flex-1" />
-          {sessionParam ? (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="shrink-0 rounded-lg"
-              onClick={() => handleBackToRun()}
-              data-testid="swarm-run-detail-back-to-run"
-            >
-              Back to the run
-            </Button>
-          ) : null}
-        </div>
-      )}
+      ) : null}
 
       {/* What the viewer followed in on. Without this, clicking a finding
           handed over a transcript with the claim removed — the evidence, minus
@@ -651,6 +678,22 @@ export function SwarmRunDetail({
       ) : null}
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        {tab === "run" && projectId ? (
+          <NewSwarmRunningStep
+            projectId={projectId}
+            runs={launchedRuns}
+            fallbackColumns={[]}
+            hosts={hosts}
+            chrome="page"
+            onLeave={handleOpenFindings}
+            onOpenSession={handleOpenSession}
+          />
+        ) : null}
+        {tab === "run" && !projectId ? (
+          <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
+            Sign in to watch this run.
+          </div>
+        ) : null}
         {tab === "findings" ? (
           <div className="min-h-0 flex-1 overflow-y-auto px-8 py-6">
             <SwarmFindingsTab

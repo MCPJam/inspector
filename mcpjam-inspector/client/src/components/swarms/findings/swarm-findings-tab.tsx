@@ -23,6 +23,7 @@ import {
   deriveHonestyFootnotes,
 } from "./findings-headline";
 import type { JourneyStageId } from "./journey-stages";
+import { SectionLabel } from "@/components/shared/section-label";
 import { FindingsSummaryCard } from "./findings-summary-card";
 import { FindingsPersonaTabs } from "./findings-persona-tabs";
 import { FindingsPersonaCard } from "./findings-persona-card";
@@ -129,9 +130,7 @@ export function SwarmFindingsTab({
         summary={summary}
         footnotes={footnotes}
       />
-      <p className="mb-2.5 mt-7 text-[11px] font-semibold uppercase tracking-[0.14em] text-foreground">
-        Choose a persona
-      </p>
+      <SectionLabel className="mb-2.5 mt-7">Choose a persona</SectionLabel>
       <div className="mb-3">
         <FindingsPersonaTabs
           personas={model.personas}
