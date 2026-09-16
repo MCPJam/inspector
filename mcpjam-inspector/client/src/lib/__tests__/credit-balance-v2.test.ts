@@ -15,3 +15,32 @@ it("recognizes flat monthly credits and does not declare a funded Pro wallet emp
     "daily",
   );
 });
+
+it("preserves debt and carried credits without treating missing values as balances", () => {
+  expect(
+    normalizeBalance({
+      outstandingDeficitCredits: 125,
+      rolloverCreditsRemaining: 700,
+    }),
+  ).toMatchObject({
+    outstandingDeficitCredits: 125,
+    rolloverCreditsRemaining: 700,
+  });
+  for (const value of [undefined, null, "15", NaN, Infinity]) {
+    const balance = normalizeBalance({
+      outstandingDeficitCredits: value,
+      rolloverCreditsRemaining: value,
+    });
+    expect(balance?.outstandingDeficitCredits).toBeUndefined();
+    expect(balance?.rolloverCreditsRemaining).toBeUndefined();
+  }
+  expect(
+    normalizeBalance({
+      outstandingDeficitCredits: 0,
+      rolloverCreditsRemaining: 0,
+    }),
+  ).toMatchObject({
+    outstandingDeficitCredits: 0,
+    rolloverCreditsRemaining: 0,
+  });
+});

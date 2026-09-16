@@ -1,3 +1,4 @@
+import { ConvexError } from "convex/values";
 /**
  * Scenario detail. Two behaviours are load-bearing beyond layout:
  *
@@ -691,6 +692,22 @@ describe("UserTestingScenarioDetail", () => {
       // name here, because the mocked scenario never updates. The new name
       // arriving is the reactive envelope's job, not EditableTitle's.
       await screen.findByText("Payments beta");
+    });
+
+    it("toasts the collaborative editing denial when saving a description", async () => {
+      updateScenarioMock.mockRejectedValueOnce(
+        new ConvexError({ code: "COLLABORATIVE_EDITING_REQUIRED" }),
+      );
+      renderEdit({ description: "Old copy" });
+      fireEvent.change(screen.getByTestId("user-testing-description"), {
+        target: { value: "New copy" },
+      });
+      fireEvent.blur(screen.getByTestId("user-testing-description"));
+      await waitFor(() =>
+        expect(toast.error).toHaveBeenCalledWith(
+          "Editing another member's work requires Team or Enterprise.",
+        ),
+      );
     });
 
     it("persists the description on blur, only when it changed", () => {
