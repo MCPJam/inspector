@@ -971,6 +971,14 @@ export {
   traceIndicatesToolExecutionFailure,
   traceMessagePartIndicatesToolFailure,
 } from "./eval-tool-execution.js";
+
+// `executeTool` returns `CallToolResult | Record<string, unknown>`, so reading
+// `.content` off it does not type-check. These are the narrowings the manager
+// itself uses; a caller in TypeScript needs one of them to get past the union.
+export {
+  assertCallToolResult,
+  isCallToolResult,
+} from "./mcp-client-manager/result-guards.js";
 export type { FinalizeEvalPassedParams } from "./eval-tool-execution.js";
 
 // Eval result mapping utilities
