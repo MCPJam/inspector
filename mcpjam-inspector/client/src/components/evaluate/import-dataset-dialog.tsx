@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { describeMCPJamLimitMessage } from "@/lib/mcpjam-limit";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Dialog,
@@ -28,6 +29,11 @@ export function ImportDatasetDialog({
   const [warnings, setWarnings] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [phase, setPhase] = useState<"idle" | "extracting">("idle");
+  // The limit dialog already opened on the refusal; the inline line only has
+  // to say why the import stopped. The wire sentence ("… Use BYOK or try
+  // again tomorrow.") is authored by a Convex backend outside this repo, so
+  // matching the other two case-creation surfaces has to happen here.
+  const errorText = error ? (describeMCPJamLimitMessage(error) ?? error) : null;
   const controller = useRef<AbortController | null>(null);
   const generation = useRef(0);
   const busy = useRef(false);
@@ -209,12 +215,12 @@ export function ImportDatasetDialog({
             ))}
           </ul>
         )}
-        {error && (
+        {errorText && (
           <p
             role="alert"
             className="rounded bg-destructive/10 p-3 text-sm text-destructive"
           >
-            {error}
+            {errorText}
           </p>
         )}
         {phase === "extracting" && <p role="status">Extracting cases…</p>}
