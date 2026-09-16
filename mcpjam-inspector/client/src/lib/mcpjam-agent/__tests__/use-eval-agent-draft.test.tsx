@@ -1,3 +1,4 @@
+import { useEvalAgentScopes } from "../eval-scope";
 import { useAgentPanelStore } from "@/stores/agent-panel/agent-panel-store";
 import { getOrCreateAgentChat } from "../agent-chat-instances";
 import { useState } from "react";
@@ -76,6 +77,42 @@ describe("eval draft edits", () => {
     expect(useDescribeFlow.getState().sessions[freshSession]).toBeUndefined();
     act(() => result.current.agent.open());
     expect(useAgentPanelStore.getState().activeSessionId).toBe(freshSession);
+    unmount();
+  });
+  it("uses the latest suite name when undo opens a replacement chat", () => {
+    const { result, rerender, unmount } = renderHook(
+      ({ suiteName }) => {
+        const [draft, setDraft] = useState<EvalDraft | null>({
+          title: "Initial",
+          steps: [],
+        });
+        return useEvalAgentDraft({
+          projectId: "rename-project",
+          suiteId: "s",
+          suiteName,
+          caseId: "draft:describe",
+          draft,
+          setDraft,
+          tools: [],
+          autoOpen: true,
+        });
+      },
+      { initialProps: { suiteName: "Original suite" } },
+    );
+    const oldSession = useAgentPanelStore.getState().activeSessionId;
+    rerender({ suiteName: "Renamed suite" });
+    const bridge = getEvalDraft(result.current.scope);
+    act(() => {
+      bridge.edit(bridge.read().revision, { title: "Updated" });
+    });
+    act(() => {
+      bridge.undo(bridge.read().revision);
+    });
+    const session = useAgentPanelStore.getState().activeSessionId!;
+    expect(session).not.toBe(oldSession);
+    expect(useEvalAgentScopes.getState().scopes[session].suiteName).toBe(
+      "Renamed suite",
+    );
     unmount();
   });
   it("applies structured edits and rejects stale writes and undo after manual edits", () => {

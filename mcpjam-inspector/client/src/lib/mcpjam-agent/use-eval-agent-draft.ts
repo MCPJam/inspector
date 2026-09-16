@@ -43,6 +43,7 @@ export function useEvalAgentDraft<T extends EvalDraft>({
   autoOpen: boolean;
 }) {
   const current = useRef({
+    suiteName,
     draft,
     tools,
     metadata,
@@ -57,12 +58,13 @@ export function useEvalAgentDraft<T extends EvalDraft>({
   useLayoutEffect(() => {
     if (current.current.draft !== draft)
       current.current.revision = generateId();
+    current.current.suiteName = suiteName;
     current.current.draft = draft;
     current.current.tools = tools;
     current.current.metadata = metadata;
     current.current.retryTools = retryTools;
     notifyEvalContextChanged();
-  }, [draft, tools, metadata, retryTools]);
+  }, [draft, tools, metadata, retryTools, suiteName]);
   const hasCaseContent = Boolean(
     draft?.steps.some((step) => step.kind !== "prompt" || step.prompt.trim()),
   );
@@ -176,6 +178,7 @@ export function useEvalAgentDraft<T extends EvalDraft>({
       if (!patch) {
         newEvalChat({
           ...scope,
+          suiteName: state.suiteName,
           caseTitle: next.title,
           hasCaseContent: next.steps.some(
             (step) => step.kind !== "prompt" || Boolean(step.prompt.trim()),
