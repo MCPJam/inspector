@@ -422,7 +422,11 @@ describe("launchJourneyRun — MCPJam limit", () => {
 
     let err: unknown;
     try {
-      await launchJourneyRun({ projectId: "proj-1", journeyId: "goal-1" });
+      await launchJourneyRun({
+        projectId: "proj-1",
+        journeyId: "goal-1",
+        launchKey: "lk",
+      });
     } catch (e) {
       err = e;
     }
@@ -445,7 +449,11 @@ describe("launchJourneyRun — MCPJam limit", () => {
     );
 
     await expect(
-      launchJourneyRun({ projectId: "proj-1", journeyId: "goal-1" })
+      launchJourneyRun({
+        projectId: "proj-1",
+        journeyId: "goal-1",
+        launchKey: "lk",
+      })
     ).rejects.toBeInstanceOf(LaunchJourneyRunError);
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
   });
@@ -457,7 +465,11 @@ describe("launchJourneyRun — MCPJam limit", () => {
 
     let err: unknown;
     try {
-      await launchJourneyRun({ projectId: "proj-1", journeyId: "goal-1" });
+      await launchJourneyRun({
+        projectId: "proj-1",
+        journeyId: "goal-1",
+        launchKey: "lk",
+      });
     } catch (e) {
       err = e;
     }
