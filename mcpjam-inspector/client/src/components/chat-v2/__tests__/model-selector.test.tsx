@@ -210,8 +210,36 @@ function ProviderIntentControlledModelSelector({
 
 describe("ModelSelector", () => {
   beforeEach(() => {
-    useModelPickerIntentStore.setState({ openProvidersTabNonce: 0 });
+    useModelPickerIntentStore.setState({
+      openProvidersTabNonce: 0,
+      providersTabResponderCount: 0,
+    });
     localStorage.clear();
+  });
+
+  it("registers as a providers-tab responder only while opted in", () => {
+    // The out-of-credits dialog reads this count to decide between opening
+    // the picker in place and navigating to the org's AI providers page, so
+    // dropping the prop must show up here rather than as a silent no-op.
+    const opted = render(<ProviderIntentControlledModelSelector />);
+    expect(
+      useModelPickerIntentStore.getState().providersTabResponderCount
+    ).toBe(1);
+    opted.unmount();
+    expect(
+      useModelPickerIntentStore.getState().providersTabResponderCount
+    ).toBe(0);
+
+    render(
+      <ModelSelector
+        currentModel={models[0]!}
+        availableModels={models}
+        onModelChange={vi.fn()}
+      />
+    );
+    expect(
+      useModelPickerIntentStore.getState().providersTabResponderCount
+    ).toBe(0);
   });
 
   it("keeps the popover open when multiple models are enabled", async () => {

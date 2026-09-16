@@ -171,7 +171,7 @@ export function swarmWaveRunStateChipClass(state: SwarmWaveRunState): string {
   }
 }
 
-/** Short label for a wave state — list row pill and run-page strip. */
+/** Short label for a wave state — list row pill and run-page header. */
 export function swarmWaveRunStateLabel(state: SwarmWaveRunState): string {
   switch (state) {
     case "running":

@@ -9,6 +9,16 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-09-16
+
+#### Changed
+
+- **Swarm run detail now has a Run tab with the live persona × client matrix** — opening a swarm run at `/swarms/:id` while a wave is in progress lands on a new **Run** tab that shows the same persona × client matrix and session stream previously only visible in the create wizard. The tab stays reachable via `?tab=run` after the wave settles, so you can always return to the matrix. A still-running wave with no explicit `?tab=` opens Run automatically; a finished wave still defaults to Findings.
+
+- **Settled outcome moved to the header; the separate Complete strip is gone** — once a wave finishes, the outcome chip (Complete / Stopped / Failed) and the session tally (`N of N`) appear in the header row before the Share button instead of on a second status bar below the tabs. The tab strip is no longer obscured by the strip on narrow viewports.
+
+- **`?tab=` is always present in the URL** — navigating to any tab, including Findings, now writes `?tab=findings` (or `?tab=run`, `?tab=insights`, `?tab=sessions`) to the URL. Share links copied from the run detail page include the active tab.
+
 ### 2026-09-15
 
 #### Changed
