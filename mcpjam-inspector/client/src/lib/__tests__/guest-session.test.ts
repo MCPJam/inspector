@@ -160,6 +160,32 @@ describe("guest-session module", () => {
       expect(global.fetch).toHaveBeenCalledTimes(1);
     });
 
+    it("clears the refusal and notifies subscribers when retry-after elapses", async () => {
+      vi.useFakeTimers();
+      try {
+        const listener = vi.fn();
+        guestSession.subscribeGuestSessionChanges(listener);
+        vi.mocked(global.fetch).mockResolvedValue({
+          ok: false,
+          status: 429,
+          statusText: "Too Many Requests",
+          headers: {
+            get: (name: string) => (name === "retry-after" ? "5" : null),
+          },
+        } as unknown as Response);
+        await guestSession.getOrCreateGuestSession();
+        expect(guestSession.getGuestSessionRefusal()).not.toBeNull();
+        const callsAfterRefusal = listener.mock.calls.length;
+
+        vi.advanceTimersByTime(5_000);
+
+        expect(guestSession.getGuestSessionRefusal()).toBeNull();
+        expect(listener.mock.calls.length).toBeGreaterThan(callsAfterRefusal);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it("notifies subscribers when a refusal is recorded", async () => {
       const listener = vi.fn();
       guestSession.subscribeGuestSessionChanges(listener);

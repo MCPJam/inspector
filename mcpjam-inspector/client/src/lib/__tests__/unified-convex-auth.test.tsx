@@ -13,6 +13,7 @@ const mockState = vi.hoisted(() => ({
   getOrCreateGuestSession: vi.fn(),
   forceRefreshGuestSession: vi.fn(),
   markGuestActivated: vi.fn(),
+  getGuestSessionRefusal: vi.fn(() => null as { until: number } | null),
   reportCaught: vi.fn(),
 }));
 
@@ -29,6 +30,7 @@ vi.mock("@/lib/guest-session", () => ({
   getOrCreateGuestSession: mockState.getOrCreateGuestSession,
   forceRefreshGuestSession: mockState.forceRefreshGuestSession,
   markGuestActivated: mockState.markGuestActivated,
+  getGuestSessionRefusal: mockState.getGuestSessionRefusal,
 }));
 
 describe("useUnifiedConvexAuth", () => {
@@ -38,6 +40,7 @@ describe("useUnifiedConvexAuth", () => {
     mockState.workos.isLoading = false;
     mockState.workos.user = null;
     mockState.getCachedGuestSession.mockReturnValue(null);
+    mockState.getGuestSessionRefusal.mockReturnValue(null);
     useSessionRefreshStore.setState({
       status: "idle",
       kind: null,
@@ -80,6 +83,24 @@ describe("useUnifiedConvexAuth", () => {
       id: "__guest__",
     });
     expect(mockState.reportCaught).not.toHaveBeenCalled();
+  });
+
+  it("stops after one attempt and does not report when the server refused to create a guest", async () => {
+    mockState.getOrCreateGuestSession.mockResolvedValue(null);
+    mockState.getGuestSessionRefusal.mockReturnValue({
+      until: Date.now() + 600_000,
+    });
+
+    const { result } = renderHook(() => useUnifiedConvexAuth());
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500 + 1500 + 3000);
+    });
+
+    expect(mockState.getOrCreateGuestSession).toHaveBeenCalledTimes(1);
+    expect(mockState.reportCaught).not.toHaveBeenCalled();
+    expect(result.current.isLoading).toBe(false);
+    expect(result.current.user).toBeNull();
   });
 
   it("reports once after guest session bootstrap exhausts every attempt", async () => {

@@ -63,6 +63,7 @@ export interface GuestSessionRefusal {
   readonly until: number;
 }
 let refusal: GuestSessionRefusal | null = null;
+let refusalExpiryTimer: ReturnType<typeof setTimeout> | null = null;
 
 function notifySessionListeners(): void {
   for (const listener of sessionListeners) {
@@ -71,7 +72,23 @@ function notifySessionListeners(): void {
 }
 
 function setRefusal(next: GuestSessionRefusal | null): void {
+  if (refusalExpiryTimer !== null) {
+    clearTimeout(refusalExpiryTimer);
+    refusalExpiryTimer = null;
+  }
   refusal = next;
+  if (next) {
+    // Subscribers (the banner) only learn about a change through a
+    // notification, so the expiry must announce itself: on an idle page the
+    // lazy check in getGuestSessionRefusal() never runs.
+    refusalExpiryTimer = setTimeout(
+      () => {
+        refusalExpiryTimer = null;
+        if (refusal === next) setRefusal(null);
+      },
+      Math.max(0, next.until - Date.now()),
+    );
+  }
   notifySessionListeners();
 }
 
