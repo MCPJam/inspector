@@ -322,11 +322,7 @@ export function PlanLimitDialogPreview() {
           onBuyCredits={() =>
             setLastAction("would open the buy-credits dialog")
           }
-          onUseOwnKey={() => {
-            window.location.assign(
-              "/organizations/m972p9fe96d6wqvtrdb3psfg2x8eckkg/billing/byok",
-            );
-          }}
+          onUseOwnKey={() => setLastAction("BYOK and credits")}
           onExplorePlans={() => setLastAction("Plans settings")}
           onDismiss={() => setLastAction("dismissed")}
         />

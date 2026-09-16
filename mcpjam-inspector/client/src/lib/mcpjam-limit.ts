@@ -340,10 +340,26 @@ export function isMCPJamModelLimitError(args: MCPJamLimitErrorInput): boolean {
   return false;
 }
 
+const hasFrontierSignInCode = (
+  value: unknown,
+  seen = new WeakSet<object>(),
+): boolean => {
+  if (typeof value === "string") {
+    return collectJsonCandidates(value).some((parsed) =>
+      hasFrontierSignInCode(parsed, seen),
+    );
+  }
+  if (!value || typeof value !== "object" || seen.has(value)) return false;
+  seen.add(value);
+
+  if (getStringProperty(value, "code") === "guest_model_not_allowed") return true;
+  return Object.values(value).some((item) => hasFrontierSignInCode(item, seen));
+};
+
 export function notifyMCPJamLimitError(args: MCPJamLimitErrorInput): boolean {
   // Authentication gating is not credit exhaustion: do not mark the wallet empty.
   if (
-    args.code === "guest_model_not_allowed" ||
+    hasFrontierSignInCode(args) ||
     [args.message, ...collectStringValues(args.details)].some(
       (value) =>
         typeof value === "string" &&

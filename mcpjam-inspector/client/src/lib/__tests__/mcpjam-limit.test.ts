@@ -391,6 +391,28 @@ describe("describeMCPJamLimitMessage", () => {
 });
 
 describe("frontier sign-in wall", () => {
+  it.each([
+    { details: { error: { code: "guest_model_not_allowed" } } },
+    { message: '{"code":"guest_model_not_allowed","message":"Login required"}' },
+    { message: 'Agent failed: {"error":{"code":"guest_model_not_allowed"}}' },
+    { details: { errors: ['Request failed: {"code":"guest_model_not_allowed"}'] } },
+  ])("recognizes wrapped frontier codes: %j", (args) => {
+    expect(notifyMCPJamLimitError(args)).toBe(true);
+    expect(useFrontierSignInDialogStore.getState().isOpen).toBe(true);
+    expect(useMCPJamLimitDialogStore.getState().outOfCreditsHit).toBe(false);
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
+  });
+
+  it("ignores unrelated codes and cyclic details", () => {
+    const details: Record<string, unknown> = {
+      code: "guest_model_not_allowed_other",
+      message: "Sign in to continue.",
+    };
+    details.cause = details;
+    expect(notifyMCPJamLimitError({ details })).toBe(false);
+    expect(useFrontierSignInDialogStore.getState().isOpen).toBe(false);
+  });
+
   it("recognizes the backend code even if the copy changes", () => {
     expect(notifyMCPJamLimitError({ code: "guest_model_not_allowed" })).toBe(true);
     expect(useFrontierSignInDialogStore.getState().isOpen).toBe(true);
