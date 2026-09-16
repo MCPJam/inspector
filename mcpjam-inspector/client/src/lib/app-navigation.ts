@@ -352,8 +352,9 @@ export function parseUserTestingDetailTab(
 /** The Swarms create route. Static, so it outranks `:swarmId`. */
 export const swarmsCreatePath = `${routePaths.swarms}/new`;
 
-/** Detail tabs on `/swarms/:swarmId`. Findings is the default landing tab. */
-export type SwarmDetailTab = "findings" | "insights" | "sessions";
+/** Detail tabs on `/swarms/:swarmId`. Findings is the default landing tab
+ * for a finished wave; a still-running wave with no `?tab=` opens `run`. */
+export type SwarmDetailTab = "run" | "findings" | "insights" | "sessions";
 
 /**
  * Build a path to one Swarm Run (wave) detail. `swarmId` is the durable
@@ -377,7 +378,7 @@ export function buildSwarmPath(
 ): string {
   const base = `${routePaths.swarms}/${encodeURIComponent(swarmId)}`;
   const search = new URLSearchParams();
-  if (opts.tab && opts.tab !== "findings") search.set("tab", opts.tab);
+  if (opts.tab) search.set("tab", opts.tab);
   if (opts.session) search.set("session", opts.session);
   if (opts.sel) search.set("sel", opts.sel);
   if (opts.finding) search.set("finding", opts.finding);
@@ -393,6 +394,7 @@ export function buildSwarmPath(
 export function parseSwarmDetailTab(search: string): SwarmDetailTab {
   const params = new URLSearchParams(search);
   const value = params.get("tab");
+  if (value === "run") return "run";
   if (value === "sessions") return "sessions";
   if (value === "insights" || value === "personas" || value === "overview") {
     return "insights";
