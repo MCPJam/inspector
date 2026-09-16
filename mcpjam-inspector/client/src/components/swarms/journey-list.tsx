@@ -1,3 +1,4 @@
+import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { SharedSettingsGate } from "@/components/billing/SharedSettingsGate";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, usePaginatedQuery } from "convex/react";
@@ -679,7 +680,7 @@ function JourneyGradingEditor({
       toast.success("Grading updated — applies to future runs");
       setOpen(false);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to update grading");
+      toast.error(getBillingErrorMessage(e, "Failed to update grading"));
     } finally {
       setSaving(false);
     }
@@ -827,9 +828,7 @@ function JourneyEnvironmentsEditor({
       toast.success("Goal environments updated");
       setOpen(false);
     } catch (e) {
-      toast.error(
-        e instanceof Error ? e.message : "Failed to update environments",
-      );
+      toast.error(getBillingErrorMessage(e, "Failed to update environments"));
     } finally {
       setSaving(false);
     }
@@ -863,9 +862,7 @@ function JourneyEnvironmentsEditor({
       toast.success("Goal switched back to clients");
       setOpen(false);
     } catch (e) {
-      toast.error(
-        e instanceof Error ? e.message : "Failed to update environments",
-      );
+      toast.error(getBillingErrorMessage(e, "Failed to update environments"));
     } finally {
       setSaving(false);
     }

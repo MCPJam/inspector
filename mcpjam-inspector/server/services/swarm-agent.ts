@@ -437,6 +437,7 @@ export async function createJourneyRun(
     projectId: string;
     journeyRefId: string;
     launchKey: string;
+    kind?: "swarm" | "user_testing";
     maxHosts?: number;
     /**
      * Opaque id shared by every run of one co-launched swarm wave. Omitted by
@@ -466,6 +467,7 @@ export async function createJourneyRun(
       projectId: args.projectId,
       journeyRefId: args.journeyRefId,
       launchKey: args.launchKey,
+      kind: args.kind ?? "swarm",
       ...(args.maxHosts !== undefined ? { maxHosts: args.maxHosts } : {}),
       ...(args.swarmRunGroupId
         ? { swarmRunGroupId: args.swarmRunGroupId }
