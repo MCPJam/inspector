@@ -1,3 +1,8 @@
+import {
+  createSavedClientRunner,
+  type EvalSuiteClientOptions,
+} from "./saved-client-runner.js";
+export type { EvalSuiteClientOptions } from "./saved-client-runner.js";
 import { composeAbortSignals } from "./compose-abort-signals.js";
 import { formatRunSummaryTable } from "./eval-summary.js";
 import type { EvalSelectionManifest } from "./eval-selection.js";
@@ -23,6 +28,7 @@ import {
   captureEvalReporting,
   notRequestedReceipt,
 } from "./eval-reporting-receipt.js";
+import { McpjamModelLeaseScope } from "./mcpjam-model-lease.js";
 import { suiteTestResultsToEvalResultInputs } from "./eval-result-mapping.js";
 import { aggregateEvaluationConfigHash } from "./contract/derive.js";
 import { resolveServerReplayConfigs } from "./server-replay-configs.js";
@@ -264,10 +270,50 @@ export class EvalSuite {
   }
 
   /**
-   * Run all tests in the suite with the given executor and options.
+   * Resolve the latest saved client once, then run against its frozen settings.
    */
+  async runWithClient(
+    client: EvalSuiteClientOptions,
+    options: Omit<EvalTestRunOptions, "iterations"> & {
+      iterations?: number;
+    } = {}
+  ): Promise<EvalSuiteResult> {
+    const selection = {
+      ...client,
+      baseUrl:
+        client.baseUrl ?? options.mcpjam?.baseUrl ?? this.mcpjamConfig?.baseUrl,
+    };
+    return this.runPrepared(async (signal) => {
+      const resolved = await createSavedClientRunner(selection, signal);
+      return {
+        executor: resolved.executor,
+        reporting: {
+          ...(options.mcpjam ?? this.mcpjamConfig),
+          apiKey: selection.apiKey,
+          project: selection.projectId,
+          baseUrl: selection.baseUrl,
+          selectedClient: resolved.selectedClient,
+        },
+      };
+    }, options);
+  }
+
   async run(
     executor: HostExecutor,
+    options: Omit<EvalTestRunOptions, "iterations"> & {
+      iterations?: number;
+    } = {}
+  ): Promise<EvalSuiteResult> {
+    return this.runPrepared(executor, options);
+  }
+
+  private async runPrepared(
+    source:
+      | HostExecutor
+      | ((signal: AbortSignal) => Promise<{
+          executor: HostExecutor;
+          reporting: MCPJamReportingConfig;
+        }>),
     options: Omit<EvalTestRunOptions, "iterations"> & {
       iterations?: number;
     } = {}
@@ -285,7 +331,9 @@ export class EvalSuite {
       throw new TypeError(
         "runTimeoutMs must be a positive timer-sized integer"
       );
+    this.validateRunOptions(options);
     this.running = true;
+    const leaseScope = new McpjamModelLeaseScope();
     let timer: ReturnType<typeof setTimeout> | undefined;
     let dispose: (() => void) | undefined;
     try {
@@ -295,7 +343,7 @@ export class EvalSuite {
           () => controller.abort(new Error("Suite deadline exceeded")),
           options.runTimeoutMs
         );
-      const reporting = options.mcpjam ?? this.mcpjamConfig;
+      let reporting = options.mcpjam ?? this.mcpjamConfig;
       const composed = composeAbortSignals(
         [controller.signal, options.signal].filter(
           (signal): signal is AbortSignal => !!signal
@@ -303,27 +351,37 @@ export class EvalSuite {
       );
       dispose = composed.dispose;
       const signal = composed.signal;
-      return await this.runInternal(executor, {
-        ...options,
-        signal,
-        // Execution cancellation must still allow its evidence to be persisted.
-        // Only an explicitly authored transport signal cancels reporting.
-        mcpjam: reporting,
-      });
+      let executor: HostExecutor;
+      if (typeof source === "function") {
+        signal.throwIfAborted();
+        const prepared = await source(signal);
+        reporting = prepared.reporting;
+        executor = prepared.executor;
+        signal.throwIfAborted();
+      } else {
+        executor = source;
+      }
+      return await this.runInternal(
+        executor.withOptions({ mcpjamLeaseScope: leaseScope }),
+        {
+          ...options,
+          signal,
+          // Execution cancellation must still allow its evidence to be persisted.
+          // Only an explicitly authored transport signal cancels reporting.
+          mcpjam: reporting,
+        }
+      );
     } finally {
       if (timer !== undefined) clearTimeout(timer);
       dispose?.();
       this.running = false;
+      await leaseScope.release();
     }
   }
 
-  private async runInternal(
-    executor: HostExecutor,
-    options: Omit<EvalTestRunOptions, "iterations"> & {
-      iterations?: number;
-    } = {}
-  ): Promise<EvalSuiteResult> {
-    this.lastReportingReceipt = notRequestedReceipt("disabled");
+  private validateRunOptions(
+    options: Omit<EvalTestRunOptions, "iterations"> & { iterations?: number }
+  ): void {
     const iterations = options.iterations ?? this.defaults.iterations;
     if (!Number.isSafeInteger(iterations) || iterations! < 1)
       throw new TypeError(
@@ -360,6 +418,16 @@ export class EvalSuite {
       throw new TypeError(
         "Choose evaluatorTimeoutMs or scorerTimeoutMs, not both"
       );
+  }
+
+  private async runInternal(
+    executor: HostExecutor,
+    options: Omit<EvalTestRunOptions, "iterations"> & {
+      iterations?: number;
+    } = {}
+  ): Promise<EvalSuiteResult> {
+    this.lastReportingReceipt = notRequestedReceipt("disabled");
+    const iterations = options.iterations ?? this.defaults.iterations;
     this.lastSelection = this.freezeSelection(iterations!);
     const plannedIterations = this.tests.size * iterations!;
     const suiteReportingConfig = await prepareReportingConfig(

@@ -590,7 +590,9 @@ async function runJourneyFanOut(
       // refetch the live host config — everything comes from the immutable
       // snapshot. A model-less / unresolvable pinned spec throws HERE, before any
       // attempt is claimed — the catch finalizes this target's pending attempts.
-      const modelDefinition = buildSyntheticModelDefinition(modelId);
+      const modelDefinition = buildSyntheticModelDefinition(modelId, {
+        hosted: target.hosted,
+      });
 
       // B-isolation F4/phase 6 — a harness target runs on ITS OWN disposable box
       // or it does not run at all.
@@ -691,6 +693,7 @@ async function runJourneyFanOut(
                 model: {
                   id: String(modelDefinition.id),
                   provider: modelDefinition.provider,
+                  hosted: modelDefinition.hosted,
                 },
                 // The same pinned id under the name the external-account rule
                 // reads. Identical to `model.id` here — a swarm target has no
@@ -788,6 +791,11 @@ async function runJourneyFanOut(
         // callback fired later in the session uses the token this session began
         // with — which is the intended semantics, not an accident.
         const sessionBearer = bearer;
+        // Same reason, for the loop counter: `sessionIdx` is hoisted to the
+        // worker scope so the catch can finalize the attempts this target left
+        // behind, so a closure reads wherever the loop has since advanced to —
+        // not the session it was created for.
+        const attemptSessionIdx = sessionIdx;
 
         // Deterministic claim key — the immutable chatSessionId the attempt is
         // claimed with and every persist + terminal reuse (shared mint, D1: env
@@ -1186,6 +1194,8 @@ async function runJourneyFanOut(
                 projectId,
                 runId,
                 hostId,
+                ...(targetId ? { targetId } : {}),
+                sessionIdx: attemptSessionIdx,
                 transcriptSoFar,
                 // Forward the run-level stop (composed shutdown/cancel + spend-cap
                 // runStop) so a short-circuit aborts a parked persona fetch

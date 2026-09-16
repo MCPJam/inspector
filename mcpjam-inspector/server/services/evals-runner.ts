@@ -111,7 +111,7 @@ import {
   type ModelDefinition,
   type ModelProvider,
 } from "@/shared/types";
-import { isHostedCatalogModel } from "./hosted-model-catalog.js";
+import { isHostedModelDefinition } from "./hosted-model-catalog.js";
 import {
   hasSkillTools,
   mergeToolCallsByPromptIndex,
@@ -2810,10 +2810,11 @@ const executeTestCase = async (params: {
     String(modelDefinition.id),
     modelDefinition.provider,
   );
-  const isJamModel = isHostedCatalogModel(
-    resolvedModelId,
-    modelDefinition.provider,
-  );
+  const isJamModel = isHostedModelDefinition({
+    id: resolvedModelId,
+    provider: modelDefinition.provider,
+    hosted: modelDefinition.hosted,
+  });
   const orgByokRuntime = isJamModel
     ? undefined
     : await resolveOrgByokEvalRuntime({

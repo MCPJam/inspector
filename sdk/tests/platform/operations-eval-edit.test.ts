@@ -691,6 +691,31 @@ describe("declaredSuiteId reaches the wire", () => {
   });
 });
 
+describe("judge rubric parity", () => {
+  it("accepts instructions with the same shape exposed through MCP", () => {
+    const result = updateEvalSuiteOperation.inputSchema.safeParse({
+      suite: "s1",
+      settings: { judge: { rubric: { instructions: "Check evidence" } } },
+    });
+    expect(result.success).toBe(true);
+  });
+  it("rejects an invalid instruction even beside valid criteria", () => {
+    expect(
+      updateEvalSuiteOperation.inputSchema.safeParse({
+        suite: "s1",
+        settings: {
+          judge: {
+            rubric: {
+              instructions: "x".repeat(2001),
+              criteria: [{ id: "a", label: "A" }],
+            },
+          },
+        },
+      }).success
+    ).toBe(false);
+  });
+});
+
 describe("update_eval_suite grading scope", () => {
   it.each([
     {

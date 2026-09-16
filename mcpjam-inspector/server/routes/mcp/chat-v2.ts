@@ -41,7 +41,7 @@ import type { RuntimeStandaloneSkill } from "../../services/environments/effecti
 import type { SkillsFetchFailure } from "../../utils/computers/cloud-skill-tools.js";
 import { getCanonicalModelId } from "@/shared/types";
 import type { ModelProvider } from "@/shared/types";
-import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
+import { isHostedModelDefinition } from "../../services/hosted-model-catalog.js";
 import { getSpendClientIp } from "../../utils/client-ip.js";
 import { toolCallCancellationFromMcpProfile } from "../../utils/effective-auth.js";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
@@ -1099,13 +1099,12 @@ chatV2.post("/", async (c) => {
     }
 
     const requestAuthHeader = c.req.header("authorization");
-    // Provider-aware, matching streamWebChatTurn's dispatch: bare hosted ids
-    // (`gpt-5-nano` + `openai`) only canonicalize to their prefixed MCPJam form
-    // with the provider — a provider-blind check here routes them into
-    // org/BYOK below even after they passed the harness preflight.
+    // Matches streamWebChatTurn's dispatch: the whole definition, so a bare
+    // hosted id (`gpt-5-nano` + `openai`) still canonicalizes to its prefixed
+    // MCPJam form, and the picker's explicit `hosted: false` on a "Your
+    // providers" row with the same bare id still routes to the org's key.
     const isMcpJamProvidedModel = Boolean(
-      modelDefinition.id &&
-        isHostedCatalogModel(modelDefinition.id, modelDefinition.provider),
+      modelDefinition.id && isHostedModelDefinition(modelDefinition),
     );
     // …OR an EXTERNAL-ACCOUNT harness, whose host carries a sentinel model
     // (`cursor/auto`) that is deliberately not MCPJam-hosted. Same exemption
@@ -1284,6 +1283,7 @@ chatV2.post("/", async (c) => {
         model: {
           id: String(modelDefinition.id),
           provider: modelDefinition.provider,
+          hosted: modelDefinition.hosted,
         },
         // The HOST's own configured id, kept separate from the resolved model
         // above. Only the external-account rule reads it, and only that rule

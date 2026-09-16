@@ -186,6 +186,20 @@ const groupHasMatch = (group: ModelGroup, search: string): boolean =>
     (model) => modelFilter(modelSearchValue(model, group.title), search) > 0,
   );
 
+// The credential source is part of a selection: equal IDs can belong to
+// different providers, and an omitted routing flag has legacy server semantics.
+function sameModelSelection(
+  left: ModelDefinition,
+  right: ModelDefinition,
+): boolean {
+  return (
+    String(left.id) === String(right.id) &&
+    left.provider === right.provider &&
+    left.customProviderName === right.customProviderName &&
+    left.hosted === right.hosted
+  );
+}
+
 function sameModelOrder(
   left: ModelDefinition[],
   right: ModelDefinition[],
@@ -195,7 +209,7 @@ function sameModelOrder(
   }
 
   return left.every(
-    (model, index) => String(model.id) === String(right[index]?.id),
+    (model, index) => sameModelSelection(model, right[index]!),
   );
 }
 
@@ -497,7 +511,7 @@ export function ModelSelector({
   const requestSelectionChange = (nextChange: PendingSelectionChange) => {
     const isSingleNoOp =
       nextChange.type === "single" &&
-      String(nextChange.nextModel.id) === String(currentModel.id);
+      sameModelSelection(nextChange.nextModel, currentModel);
     const isMultiNoOp =
       nextChange.type === "multi" &&
       nextChange.enabled === multiModelEnabled &&
@@ -648,7 +662,7 @@ export function ModelSelector({
                 />
               ) : null}
             </div>
-          ) : String(model.id) === String(currentModel.id) ? (
+          ) : sameModelSelection(model, currentModel) ? (
             <div className="ml-auto size-1.5 shrink-0 rounded-full bg-primary" />
           ) : null}
         </CommandItem>

@@ -224,7 +224,7 @@ describe("suite settings ledger", () => {
     // page again rather than asserted absent.
     const { container } = renderSettingsSheet({ suite: v2Suite });
     expect(
-      screen.getByRole("heading", { name: "Checks by stage" }),
+      screen.getByRole("heading", { name: "Evaluators" }),
     ).toBeTruthy();
     expect(container.querySelectorAll("[data-stage-group]")).toHaveLength(6);
     expect(

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import {
+  accessHeadersFromEnv,
   fetchRunBundle,
   publishPullRequestComment,
   readActionReceipts,
@@ -48,6 +49,48 @@ test("fetches every iteration page for the exact receipt run", async () => {
   assert.deepEqual(bundle.iterations.map((row) => row.id), ["i1", "i2"]);
   assert.ok(urls.every((url) => url.includes("/projects/project1/eval-runs/run1")));
   assert.ok(requests.every((init) => init.signal instanceof AbortSignal));
+});
+
+test("sends the identity-proxy service token with every MCPJam read", async () => {
+  const seen = [];
+  const fetchImpl = async (url, init) => {
+    seen.push(init.headers);
+    return String(url).includes("/iterations")
+      ? response({ items: [] })
+      : response({ id: "run1", status: "completed", result: "passed" });
+  };
+  await fetchRunBundle(
+    receipt,
+    "sk-test",
+    fetchImpl,
+    accessHeadersFromEnv({
+      CF_ACCESS_CLIENT_ID: " id ",
+      CF_ACCESS_CLIENT_SECRET: "secret",
+    }),
+  );
+  assert.equal(seen.length, 2);
+  for (const headers of seen) {
+    assert.equal(headers["cf-access-client-id"], "id");
+    assert.equal(headers["cf-access-client-secret"], "secret");
+    assert.equal(headers.authorization, "Bearer sk-test");
+  }
+});
+
+test("withholds a partial or newline-bearing service token", () => {
+  assert.deepEqual(accessHeadersFromEnv({}), {});
+  assert.deepEqual(
+    accessHeadersFromEnv({ CF_ACCESS_CLIENT_ID: "id" }),
+    {},
+    "an id with no secret is not a usable token",
+  );
+  assert.deepEqual(
+    accessHeadersFromEnv({
+      CF_ACCESS_CLIENT_ID: "id",
+      CF_ACCESS_CLIENT_SECRET: "secret\r\nx-injected: 1",
+    }),
+    {},
+    "a value that could split into another header is dropped",
+  );
 });
 
 test("renders the client summary and failed-case tables from stored results", () => {
