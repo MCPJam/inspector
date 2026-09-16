@@ -15,7 +15,7 @@ import { BROWSER_BUILT_IN_TOOL_ID } from "@/shared/client-fulfilled-tools";
 import { Hono } from "hono";
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { getCanonicalModelId } from "@/shared/types";
-import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
+import { isHostedModelDefinition } from "../../services/hosted-model-catalog.js";
 import {
   listCloudRuntimeSkills,
   shouldEnableCloudSkillTools,
@@ -940,6 +940,11 @@ chatV2.post("/", async (c) => {
         model: {
           id: String(modelDefinition.id),
           provider: modelDefinition.provider,
+          // The picker's own-provider stamp. Without it the gate reads a
+          // "Your providers" row whose bare id has a hosted twin as hosted,
+          // admits the harness, and the dispatch (which does honour the
+          // stamp) then runs the turn on the org's key — emulated, silently.
+          hosted: modelDefinition.hosted,
         },
         // The HOST's own configured id, kept separate from the resolved model
         // above. Only the external-account rule reads it, and only that rule
@@ -1072,10 +1077,7 @@ chatV2.post("/", async (c) => {
     // because the SAME manager (same advertised/gated tool set) drives it.
     const isEmulatedMcpjam =
       Boolean(modelDefinition.id) &&
-      isHostedCatalogModel(
-        String(modelDefinition.id),
-        modelDefinition.provider,
-      ) &&
+      isHostedModelDefinition(modelDefinition) &&
       !resolvedExecution.harness;
     const rawMrtrVersion = (rawBody as Record<string, unknown>)
       .hostedMrtrVersion;

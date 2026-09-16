@@ -26,7 +26,11 @@
  * behavior.
  */
 
-import { getCanonicalModelId, MCPJAM_PROVIDED_MODEL_IDS } from "@/shared/types";
+import {
+  getCanonicalModelId,
+  MCPJAM_PROVIDED_MODEL_IDS,
+  type Model,
+} from "@/shared/types";
 import { logger } from "../utils/logger.js";
 
 const REFRESH_INTERVAL_MS = 60 * 60 * 1000; // hourly, matches the backend cron
@@ -188,6 +192,34 @@ export function isHostedCatalogModel(
   const canonical = getCanonicalModelId(modelId, provider);
   if (SEED_IDS.has(canonical)) return true;
   return catalogIds?.has(canonical) ?? false;
+}
+
+/**
+ * Billing classification for a RESOLVED model definition: `isHostedCatalogModel`
+ * plus the one fact the id and provider cannot carry — an explicit
+ * `hosted: false` from the picker.
+ *
+ * 25 of the bare BYOK ids in `SUPPORTED_MODELS` (`claude-fable-5`, `gpt-5-nano`,
+ * `gemini-2.5-pro`, …) canonicalize, with their provider, to a hosted twin
+ * (`anthropic/claude-fable-5`, `openai/gpt-5-nano`, …). That canonicalization
+ * is deliberate — legacy host pins store bare hosted ids and must keep billing
+ * to MCPJam — so `(id, provider)` alone cannot say whether the user picked the
+ * free row or the row under "Your providers". Only the picker knows, and it
+ * stamps its own-provider rows `hosted: false` (see `ModelDefinition.hosted`).
+ *
+ * Honouring that flag from a request body is safe: `false` only ever moves a
+ * turn OFF MCPJam credits and onto the org's own configured key, which the
+ * org-BYOK path then verifies exists. A client cannot opt INTO MCPJam billing
+ * this way — `true` and absent both fall through to the id-based check, so
+ * nothing a body says can promote a non-hosted id.
+ */
+export function isHostedModelDefinition(model: {
+  id: string | Model;
+  provider?: string;
+  hosted?: boolean;
+}): boolean {
+  if (model.hosted === false) return false;
+  return isHostedCatalogModel(String(model.id), model.provider);
 }
 
 // ── Test hooks ────────────────────────────────────────────────────────────

@@ -926,6 +926,7 @@ export type {
 // EvalSuite - Groups multiple EvalTests
 export { EvalSuite } from "./EvalSuite.js";
 export type {
+  EvalSuiteClientOptions,
   EvalSuiteConfig,
   EvalSuiteResult,
   TestResult,
@@ -960,6 +961,7 @@ export type {
   EvalWidgetSnapshotInput,
   EvalResultInput,
   MCPServerReplayConfig,
+  SelectedEvalClient,
   MCPJamReportingConfig,
   ReportEvalResultsInput,
   ReportEvalResultsOutput,

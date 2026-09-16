@@ -183,7 +183,7 @@ function serverOverridesToPublic(
  * `serverIds`, `schemaVersion`, …) onto the public `HostJson` (clean MCP
  * vocabulary). No implementation names cross this boundary.
  */
-function canonicalToPublic(c: CanonicalHostConfigV2): HostJson {
+export function canonicalToPublic(c: CanonicalHostConfigV2): HostJson {
   const out: HostJson = {
     style: c.hostStyle,
     model: c.modelId,

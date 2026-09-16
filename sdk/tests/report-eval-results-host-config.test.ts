@@ -37,6 +37,14 @@ import { Host } from "../src/host-config/index";
 import type { HostJson } from "../src/host-config/index";
 import type { EvalResultInput } from "../src/eval-reporting-types";
 
+const selectedClient = {
+  id: "client1",
+  name: "My client",
+  configId: "config1",
+  versionId: "version1",
+  versionNumber: 1,
+};
+
 const successSummary = {
   total: 1,
   passed: 1,
@@ -128,6 +136,7 @@ describe("reportEvalResults — Stage 5 Step 3 wire host-config", () => {
       baseUrl: "https://example.com",
       suiteName: "S",
       host,
+      selectedClient,
       results: smallResults(),
     });
 
@@ -137,6 +146,7 @@ describe("reportEvalResults — Stage 5 Step 3 wire host-config", () => {
     );
     expect(report).toBeDefined();
     expect(report!.body.hostConfig).toBeDefined();
+    expect(report!.body.selectedClient).toEqual(selectedClient);
     expect(typeof report!.body.hostConfigHash).toBe("string");
     expect(report!.body.hostConfigHash.length).toBeGreaterThan(0);
 
@@ -180,6 +190,7 @@ describe("reportEvalResults — Stage 5 Step 3 wire host-config", () => {
       baseUrl: "https://example.com",
       suiteName: "S",
       host,
+      selectedClient,
       results: smallResults(),
       ...chunkedConfigOverrides(),
     });
@@ -190,6 +201,7 @@ describe("reportEvalResults — Stage 5 Step 3 wire host-config", () => {
     );
     expect(start).toBeDefined();
     expect(start!.body.hostConfig).toBeDefined();
+    expect(start!.body.selectedClient).toEqual(selectedClient);
     expect(typeof start!.body.hostConfigHash).toBe("string");
 
     // Critically: iterations + finalize MUST NOT carry the wire pair.

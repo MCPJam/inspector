@@ -27,7 +27,7 @@ import {
 } from "../evals/eval-list-filter";
 import { useProjectRunHistory } from "../evals/use-project-run-history";
 import type { EvalSuiteRun, EvalIteration } from "../evals/types";
-import { buildRunResultsMatrix, resultCounts } from "./run-results-matrix-model";
+import { buildRunResultsMatrix, cellResult } from "./run-results-matrix-model";
 import { RunResultsMatrix } from "./run-results-matrix";
 import {
   buildRunVerdictHero,
@@ -179,10 +179,8 @@ export function CombinedRunContent({
           (target.cells.get(row.key)?.length ?? 0) > 0 &&
           row.title.toLowerCase().includes(matrixFilters.search) &&
           (matrixFilters.status === ALL_EVAL_FILTER_VALUES ||
-            resultCounts(target.cells.get(row.key) ?? [])[
-              matrixFilters.status as
-                "passed" | "failed" | "pending" | "cancelled"
-            ] > 0),
+            cellResult(target.cells.get(row.key) ?? []) ===
+              matrixFilters.status),
       ),
   );
   const options = dependentFilterOptions(optionTargets, {
