@@ -359,7 +359,6 @@ export function MCPJamLimitDialog() {
     track("plan_limit_dialog_shown", {
       location: "plan_limit_dialog",
       wall_kind: "organization_credits",
-      organization_id: billingOrgId,
       organization_resolved: Boolean(billingOrgId),
       limit_kind: "credits",
       origin: "credits",

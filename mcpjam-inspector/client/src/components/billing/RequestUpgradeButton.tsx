@@ -154,7 +154,6 @@ export function RequestUpgradeButton({
               location: "plan_limit_dialog",
               limit_kind: limitKind,
               origin,
-              organization_id: organizationId,
               recipient_count: recipients.length,
               has_named_recipient: recipients.some((recipient) =>
                 Boolean(recipient.name?.trim()),

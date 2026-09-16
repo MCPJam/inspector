@@ -124,6 +124,13 @@ export const ANALYTICS_EVENTS = {
 
   // --- Billing / revenue funnel (migrated) ---
   billing_upsell_gate_viewed: { source: "client" },
+  // Organization billing funnel. Properties are deliberately categorical:
+  // flow/source/plan/interval/outcome/failure_kind only. Never attach prices,
+  // Stripe ids, organization ids, invoice ids, or raw error strings.
+  billing_plans_viewed: { source: "client" },
+  billing_flow_started: { source: "client" },
+  billing_flow_succeeded: { source: "client" },
+  billing_flow_failed: { source: "client" },
   credit_topup_checkout_started: { source: "client" },
   credit_topup_checkout_failed: { source: "client" },
   credit_topup_return_cancelled: { source: "client" },

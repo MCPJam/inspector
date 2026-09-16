@@ -20,6 +20,7 @@ const mockUseOrganizationQueries = vi.fn();
 const mockUseOrganizationMembers = vi.fn();
 const mockUseFeatureFlagEnabled = vi.fn();
 const mockUseOrganizationBilling = vi.mocked(useOrganizationBilling);
+const trackMock = vi.hoisted(() => vi.fn());
 const {
   addMemberMock,
   removeMemberMock,
@@ -306,6 +307,8 @@ vi.mock("sonner", () => ({
     warning: vi.fn(),
   },
 }));
+
+vi.mock("@/lib/analytics", () => ({ track: trackMock }));
 
 vi.mock("@/hooks/useOrganizations", () => ({
   useOrganizationQueries: (...args: unknown[]) =>
@@ -645,6 +648,41 @@ describe("OrganizationsTab billing", () => {
     expect(
       panel.queryByText("No credit card required"),
     ).not.toBeInTheDocument();
+  });
+
+  it("reports one privacy-safe billing view impression", async () => {
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "free",
+          effectivePlan: "free",
+        }),
+      }),
+    );
+
+    const view = render(
+      <OrganizationsTab organizationId="org-1" section="billing" />,
+    );
+    view.rerender(
+      <OrganizationsTab organizationId="org-1" section="billing" />,
+    );
+
+    await waitFor(() => {
+      const impressions = trackMock.mock.calls.filter(
+        ([event]) => event === "billing_plans_viewed",
+      );
+      expect(impressions).toHaveLength(1);
+      expect(impressions[0]?.[1]).toEqual(
+        expect.objectContaining({
+          location: "organization_billing",
+          source: "billing_page",
+          current_plan: "free",
+          can_manage_billing: true,
+        }),
+      );
+      expect(impressions[0]?.[1]).not.toHaveProperty("organization_id");
+      expect(impressions[0]?.[1]).not.toHaveProperty("price_cents");
+    });
   });
 
   it.each(["v1", "v2"])(

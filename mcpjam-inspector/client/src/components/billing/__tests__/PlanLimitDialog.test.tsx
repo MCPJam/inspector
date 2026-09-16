@@ -139,7 +139,7 @@ function arriveFromCheckout(
   url: string,
   organizationId = "org-1",
   origin: "evals" | "credits" = "evals",
-  userId = "user-1"
+  userId = "user-1",
 ) {
   stashUpgradeReturnToken(organizationId, origin, userId);
   window.history.replaceState(null, "", url);
@@ -178,7 +178,7 @@ describe("PlanLimitDialog", () => {
     render(<PlanLimitDialog />);
 
     expect(
-      screen.getByRole("heading", { name: /out of eval iterations today/i })
+      screen.getByRole("heading", { name: /out of eval iterations today/i }),
     ).toBeInTheDocument();
     const description = screen.getByTestId("plan-limit-dialog-description");
     expect(description).toHaveTextContent(/Free includes 75 a day/);
@@ -186,7 +186,7 @@ describe("PlanLimitDialog", () => {
     // The Team figure comes from the plan catalog, so it tracks what billing
     // enforces rather than a hardcoded marketing string.
     expect(description).toHaveTextContent(
-      /The Team plan includes 5,000 per seat each month/
+      /The Team plan includes 5,000 per seat each month/,
     );
   });
 
@@ -207,19 +207,19 @@ describe("PlanLimitDialog", () => {
     view.rerender(<PlanLimitDialog />);
 
     const impressions = trackMock.mock.calls.filter(
-      ([event]) => event === "plan_limit_dialog_shown"
+      ([event]) => event === "plan_limit_dialog_shown",
     );
     expect(impressions).toHaveLength(1);
     expect(impressions[0]?.[1]).toEqual(
       expect.objectContaining({
         wall_kind: "eval_iterations",
-        organization_id: "org-1",
         current_plan: "free",
         effective_plan: "free",
         can_manage_billing: true,
         primary_action: "upgrade",
-      })
+      }),
     );
+    expect(impressions[0]?.[1]).not.toHaveProperty("organization_id");
   });
 
   it("waits for owner recipients before reporting a request impression", () => {
@@ -230,7 +230,7 @@ describe("PlanLimitDialog", () => {
 
     expect(trackMock).not.toHaveBeenCalledWith(
       "plan_limit_dialog_shown",
-      expect.anything()
+      expect.anything(),
     );
 
     recipientsState.current = {
@@ -244,7 +244,7 @@ describe("PlanLimitDialog", () => {
       expect.objectContaining({
         primary_action: "request_owner",
         request_recipient_count: 1,
-      })
+      }),
     );
   });
 
@@ -257,10 +257,10 @@ describe("PlanLimitDialog", () => {
     expect(annual).toHaveTextContent("per seat/month");
     expect(annual).toHaveTextContent("Save 21%");
     expect(screen.getByTestId("upgrade-interval-monthly")).toHaveTextContent(
-      "$38"
+      "$38",
     );
     expect(screen.getByTestId("upgrade-plan-cta")).toHaveTextContent(
-      /Upgrade to Team/
+      /Upgrade to Team/,
     );
   });
 
@@ -285,7 +285,7 @@ describe("PlanLimitDialog", () => {
     // must not start checkout on its own.
     expect(screen.getByTestId("upgrade-interval-annual")).toHaveAttribute(
       "aria-checked",
-      "true"
+      "true",
     );
     await user.click(screen.getByTestId("upgrade-interval-monthly"));
     expect(startMock).not.toHaveBeenCalled();
@@ -310,7 +310,7 @@ describe("PlanLimitDialog", () => {
     render(<PlanLimitDialog />);
 
     expect(
-      screen.queryByRole("button", { name: /wait for reset/i })
+      screen.queryByRole("button", { name: /wait for reset/i }),
     ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /close/i })).toBeInTheDocument();
   });
@@ -325,7 +325,7 @@ describe("PlanLimitDialog", () => {
     render(<PlanLimitDialog />);
 
     expect(
-      screen.getByTestId("plan-limit-dialog-description")
+      screen.getByTestId("plan-limit-dialog-description"),
     ).toHaveTextContent(/Only an owner can upgrade this organization/);
     expect(screen.queryByTestId("upgrade-plan-cta")).not.toBeInTheDocument();
 
@@ -346,7 +346,7 @@ describe("PlanLimitDialog", () => {
     render(<PlanLimitDialog />);
 
     expect(
-      screen.queryByTestId("request-upgrade-mail")
+      screen.queryByTestId("request-upgrade-mail"),
     ).not.toBeInTheDocument();
   });
 
@@ -362,7 +362,7 @@ describe("PlanLimitDialog", () => {
     expect(description).not.toHaveTextContent(/The Team plan/);
     expect(screen.queryByTestId("upgrade-plan-cta")).not.toBeInTheDocument();
     expect(screen.getByTestId("plan-limit-enterprise-cta")).toHaveTextContent(
-      /Request upgrade/
+      /Request upgrade/,
     );
   });
 
@@ -376,7 +376,7 @@ describe("PlanLimitDialog", () => {
     await user.click(screen.getByTestId("plan-limit-enterprise-cta"));
     expect(trackMock).toHaveBeenCalledWith(
       "plan_limit_enterprise_cta_clicked",
-      expect.objectContaining({ plan: "team" })
+      expect.objectContaining({ plan: "team" }),
     );
     expect(usePlanLimitDialogStore.getState().isOpen).toBe(false);
   });
@@ -391,7 +391,7 @@ describe("PlanLimitDialog", () => {
     expect(description).toHaveTextContent(/Your plan includes 50,000 a month/);
     expect(description).not.toHaveTextContent(/Enterprise adds/);
     expect(
-      screen.queryByTestId("plan-limit-enterprise-cta")
+      screen.queryByTestId("plan-limit-enterprise-cta"),
     ).not.toBeInTheDocument();
   });
 
@@ -418,7 +418,7 @@ describe("PlanLimitDialog", () => {
     expect(usePlanLimitDialogStore.getState().isOpen).toBe(false);
     expect(trackMock).toHaveBeenCalledWith(
       "plan_limit_dialog_dismissed",
-      expect.objectContaining({ limit_kind: "evalIterations" })
+      expect.objectContaining({ limit_kind: "evalIterations" }),
     );
   });
 
@@ -426,13 +426,13 @@ describe("PlanLimitDialog", () => {
     it("confirms in place and strips the return params once the plan is paid", async () => {
       billingState.plan = "team";
       arriveFromCheckout(
-        "/evals?suite=abc&upgrade=return&upgrade_org=org-1&upgrade_from=evals"
+        "/evals?suite=abc&upgrade=return&upgrade_org=org-1&upgrade_from=evals",
       );
       render(<PlanLimitDialog />);
 
       await waitFor(() => {
         expect(toastSuccess).toHaveBeenCalledWith(
-          expect.stringMatching(/You're on the Team plan/)
+          expect.stringMatching(/You're on the Team plan/),
         );
       });
       // The surface the user was blocked on is preserved; only the upgrade
@@ -440,14 +440,14 @@ describe("PlanLimitDialog", () => {
       expect(window.location.search).toBe("?suite=abc");
       expect(trackMock).toHaveBeenCalledWith(
         "plan_limit_upgrade_returned",
-        expect.objectContaining({ upgraded: true, plan: "team" })
+        expect.objectContaining({ upgraded: true, plan: "team" }),
       );
     });
 
     it("waits for delayed billing state before confirming checkout", async () => {
       billingState.plan = "free";
       arriveFromCheckout(
-        "/evals?upgrade=return&upgrade_org=org-1&upgrade_from=evals"
+        "/evals?upgrade=return&upgrade_org=org-1&upgrade_from=evals",
       );
       const view = render(<PlanLimitDialog />);
 
@@ -457,14 +457,14 @@ describe("PlanLimitDialog", () => {
       expect(toastSuccess).not.toHaveBeenCalled();
       expect(trackMock).not.toHaveBeenCalledWith(
         "plan_limit_upgrade_returned",
-        expect.anything()
+        expect.anything(),
       );
 
       billingState.plan = "team";
       view.rerender(<PlanLimitDialog />);
       await waitFor(() => {
         expect(toastSuccess).toHaveBeenCalledWith(
-          expect.stringMatching(/You're on the Team plan/)
+          expect.stringMatching(/You're on the Team plan/),
         );
       });
       expect(window.location.search).toBe("");
@@ -475,7 +475,7 @@ describe("PlanLimitDialog", () => {
       try {
         billingState.plan = "free";
         arriveFromCheckout(
-          "/evals?upgrade=return&upgrade_org=org-1&upgrade_from=evals"
+          "/evals?upgrade=return&upgrade_org=org-1&upgrade_from=evals",
         );
         render(<PlanLimitDialog />);
 
@@ -485,7 +485,7 @@ describe("PlanLimitDialog", () => {
 
         expect(trackMock).toHaveBeenCalledWith(
           "plan_limit_upgrade_returned",
-          expect.objectContaining({ upgraded: false, settlement: "pending" })
+          expect.objectContaining({ upgraded: false, settlement: "pending" }),
         );
         expect(toastSuccess).not.toHaveBeenCalled();
         expect(window.location.search).toBe("");
@@ -499,7 +499,7 @@ describe("PlanLimitDialog", () => {
       try {
         billingState.plan = "free";
         arriveFromCheckout(
-          "/evals?upgrade=return&upgrade_org=org-1&upgrade_from=evals"
+          "/evals?upgrade=return&upgrade_org=org-1&upgrade_from=evals",
         );
         const view = render(<PlanLimitDialog />);
 
@@ -508,7 +508,7 @@ describe("PlanLimitDialog", () => {
         });
         expect(trackMock).toHaveBeenCalledWith(
           "plan_limit_upgrade_returned",
-          expect.objectContaining({ upgraded: false, settlement: "pending" })
+          expect.objectContaining({ upgraded: false, settlement: "pending" }),
         );
 
         // A slow webhook is still a real purchase: the user gets the
@@ -520,11 +520,11 @@ describe("PlanLimitDialog", () => {
         });
 
         expect(toastSuccess).toHaveBeenCalledWith(
-          expect.stringMatching(/You're on the Team plan/)
+          expect.stringMatching(/You're on the Team plan/),
         );
         expect(trackMock).toHaveBeenCalledWith(
           "plan_limit_upgrade_returned",
-          expect.objectContaining({ upgraded: true, settlement: "late" })
+          expect.objectContaining({ upgraded: true, settlement: "late" }),
         );
       } finally {
         vi.useRealTimers();
@@ -537,17 +537,17 @@ describe("PlanLimitDialog", () => {
       // would burn the one-shot token and swallow the confirmation.
       billingState.plan = "team";
       arriveFromCheckout(
-        "/evals?upgrade=return&upgrade_org=org-1&upgrade_from=evals"
+        "/evals?upgrade=return&upgrade_org=org-1&upgrade_from=evals",
       );
       render(
         <StrictMode>
           <PlanLimitDialog />
-        </StrictMode>
+        </StrictMode>,
       );
 
       await waitFor(() => {
         expect(toastSuccess).toHaveBeenCalledWith(
-          expect.stringMatching(/You're on the Team plan/)
+          expect.stringMatching(/You're on the Team plan/),
         );
       });
     });
@@ -557,7 +557,7 @@ describe("PlanLimitDialog", () => {
       try {
         billingState.plan = "free";
         arriveFromCheckout(
-          "/evals?upgrade=return&upgrade_org=org-1&upgrade_from=evals"
+          "/evals?upgrade=return&upgrade_org=org-1&upgrade_from=evals",
         );
         const first = render(<PlanLimitDialog />);
 
@@ -579,16 +579,16 @@ describe("PlanLimitDialog", () => {
         });
 
         expect(toastSuccess).toHaveBeenCalledWith(
-          expect.stringMatching(/You're on the Team plan/)
+          expect.stringMatching(/You're on the Team plan/),
         );
         // Reported as late, not immediate: the wait survived the reload.
         expect(trackMock).toHaveBeenCalledWith(
           "plan_limit_upgrade_returned",
-          expect.objectContaining({ upgraded: true, settlement: "late" })
+          expect.objectContaining({ upgraded: true, settlement: "late" }),
         );
         // Retired, so a third load says nothing.
         expect(
-          window.sessionStorage.getItem("mcpjam.upgradeReturnToken:user-1")
+          window.sessionStorage.getItem("mcpjam.upgradeReturnToken:user-1"),
         ).toBe(null);
       } finally {
         vi.useRealTimers();
@@ -604,7 +604,7 @@ describe("PlanLimitDialog", () => {
         "/evals?upgrade=return&upgrade_org=org-1&upgrade_from=evals",
         "org-1",
         "evals",
-        "user-1"
+        "user-1",
       );
 
       authState.userId = "user-2";
@@ -617,12 +617,12 @@ describe("PlanLimitDialog", () => {
       expect(toastSuccess).not.toHaveBeenCalled();
       expect(trackMock).not.toHaveBeenCalledWith(
         "plan_limit_upgrade_returned",
-        expect.anything()
+        expect.anything(),
       );
       // user-2 has no ticket of their own, and user-1's is namespaced out of
       // reach rather than something user-2's session has to notice and clean.
       expect(
-        window.sessionStorage.getItem("mcpjam.upgradeReturnToken:user-2")
+        window.sessionStorage.getItem("mcpjam.upgradeReturnToken:user-2"),
       ).toBe(null);
     });
 
@@ -632,7 +632,7 @@ describe("PlanLimitDialog", () => {
       // signs in next.
       billingState.plan = "free";
       arriveFromCheckout(
-        "/evals?upgrade=return&upgrade_org=org-1&upgrade_from=evals"
+        "/evals?upgrade=return&upgrade_org=org-1&upgrade_from=evals",
       );
       const view = render(<PlanLimitDialog />);
       await act(async () => {
@@ -656,12 +656,12 @@ describe("PlanLimitDialog", () => {
       expect(toastSuccess).not.toHaveBeenCalled();
       expect(trackMock).not.toHaveBeenCalledWith(
         "plan_limit_upgrade_returned",
-        expect.anything()
+        expect.anything(),
       );
       // user-1's ticket outlives the sign-out untouched — it is namespaced, so
       // user-2's session can neither read nor redeem it — and dies with the tab.
       expect(
-        window.sessionStorage.getItem("mcpjam.upgradeReturnToken:user-2")
+        window.sessionStorage.getItem("mcpjam.upgradeReturnToken:user-2"),
       ).toBe(null);
     });
 
@@ -671,7 +671,7 @@ describe("PlanLimitDialog", () => {
       // parent ones — so the gate has to be synchronous.
       billingState.plan = "free";
       arriveFromCheckout(
-        "/evals?upgrade=return&upgrade_org=org-1&upgrade_from=evals"
+        "/evals?upgrade=return&upgrade_org=org-1&upgrade_from=evals",
       );
       const view = render(<PlanLimitDialog />);
       await act(async () => {
@@ -689,7 +689,7 @@ describe("PlanLimitDialog", () => {
       expect(toastSuccess).not.toHaveBeenCalled();
       expect(trackMock).not.toHaveBeenCalledWith(
         "plan_limit_upgrade_returned",
-        expect.anything()
+        expect.anything(),
       );
     });
 
@@ -698,7 +698,7 @@ describe("PlanLimitDialog", () => {
       // the pending confirmation must survive it.
       billingState.plan = "team";
       arriveFromCheckout(
-        "/evals?upgrade=return&upgrade_org=org-1&upgrade_from=evals"
+        "/evals?upgrade=return&upgrade_org=org-1&upgrade_from=evals",
       );
 
       authState.userId = null;
@@ -708,7 +708,7 @@ describe("PlanLimitDialog", () => {
       });
       expect(toastSuccess).not.toHaveBeenCalled();
       expect(
-        window.sessionStorage.getItem("mcpjam.upgradeReturnToken:user-1")
+        window.sessionStorage.getItem("mcpjam.upgradeReturnToken:user-1"),
       ).not.toBe(null);
 
       authState.userId = "user-1";
@@ -718,7 +718,7 @@ describe("PlanLimitDialog", () => {
       });
 
       expect(toastSuccess).toHaveBeenCalledWith(
-        expect.stringMatching(/You're on the Team plan/)
+        expect.stringMatching(/You're on the Team plan/),
       );
     });
 
@@ -729,7 +729,7 @@ describe("PlanLimitDialog", () => {
       window.history.replaceState(
         null,
         "",
-        "/evals?upgrade=return&upgrade_org=org-1&upgrade_from=evals"
+        "/evals?upgrade=return&upgrade_org=org-1&upgrade_from=evals",
       );
       render(<PlanLimitDialog />);
 
@@ -740,19 +740,19 @@ describe("PlanLimitDialog", () => {
       expect(toastSuccess).not.toHaveBeenCalled();
       expect(trackMock).not.toHaveBeenCalledWith(
         "plan_limit_upgrade_returned",
-        expect.anything()
+        expect.anything(),
       );
       expect(window.location.search).toBe("");
     });
 
-    it("resolves the org from the ticket, never from the URL", async () => {
+    it("does not leak the ticket or URL organization into analytics", async () => {
       // A tampered or stale `upgrade_org` must not redirect the confirmation:
       // the ticket records the org THIS tab actually started checkout for, and
       // that is the only one we report on.
       billingState.plan = "team";
       arriveFromCheckout(
         "/evals?upgrade=return&upgrade_org=org-2&upgrade_from=evals",
-        "org-1"
+        "org-1",
       );
       render(<PlanLimitDialog />);
 
@@ -762,8 +762,12 @@ describe("PlanLimitDialog", () => {
 
       expect(trackMock).toHaveBeenCalledWith(
         "plan_limit_upgrade_returned",
-        expect.objectContaining({ organization_id: "org-1" })
+        expect.objectContaining({ upgraded: true, plan: "team" }),
       );
+      const returned = trackMock.mock.calls.find(
+        ([event]) => event === "plan_limit_upgrade_returned",
+      );
+      expect(returned?.[1]).not.toHaveProperty("organization_id");
     });
 
     it("uses credit wording when the user came from the credits wall", async () => {
@@ -771,13 +775,13 @@ describe("PlanLimitDialog", () => {
       arriveFromCheckout(
         "/chat?upgrade=return&upgrade_org=org-1&upgrade_from=credits",
         "org-1",
-        "credits"
+        "credits",
       );
       render(<PlanLimitDialog />);
 
       await waitFor(() => {
         expect(toastSuccess).toHaveBeenCalledWith(
-          expect.stringMatching(/Your credits are available now/)
+          expect.stringMatching(/Your credits are available now/),
         );
       });
     });
@@ -790,7 +794,7 @@ describe("PlanLimitDialog", () => {
       expect(toastSuccess).not.toHaveBeenCalled();
       expect(trackMock).not.toHaveBeenCalledWith(
         "plan_limit_upgrade_returned",
-        expect.anything()
+        expect.anything(),
       );
     });
   });

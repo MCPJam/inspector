@@ -13,7 +13,13 @@ import {
   matchesMember,
 } from "./settings/MemberSearch";
 import { OrganizationGeneralDetails } from "./organization/OrganizationGeneralDetails";
-import { useCallback, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import { useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
@@ -104,6 +110,7 @@ import {
   buildOrganizationPath,
 } from "@/lib/app-navigation";
 import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
+import { track } from "@/lib/analytics";
 
 interface OrganizationsTabProps {
   organizationId?: string;
@@ -588,6 +595,7 @@ interface OrganizationPageProps {
 interface CheckoutNavigationOptions {
   navigation?: "new-tab" | "same-tab";
   onBeforeNavigate?: () => void;
+  source?: "billing_page" | "pricing_deep_link";
 }
 
 function OrganizationPage({
@@ -712,6 +720,38 @@ function OrganizationPage({
   const slackTab: SlackSettingsTabId = resolveSlackSettingsTab(rawSurfaceTab);
   const discordTab: DiscordSettingsTabId =
     resolveDiscordSettingsTab(rawSurfaceTab);
+  const billingViewTrackedRef = useRef(false);
+  useEffect(() => {
+    if (activeSection !== "billing") {
+      billingViewTrackedRef.current = false;
+      return;
+    }
+    if (
+      billingViewTrackedRef.current ||
+      isLoadingBilling ||
+      isLoadingPlanCatalog ||
+      !billingStatus
+    ) {
+      return;
+    }
+    billingViewTrackedRef.current = true;
+    track("billing_plans_viewed", {
+      location: "organization_billing",
+      source: checkoutIntent ? "pricing_deep_link" : "billing_page",
+      current_plan: billingStatus.plan,
+      effective_plan: billingStatus.effectivePlan ?? billingStatus.plan,
+      can_manage_billing: billingStatus.canManageBilling,
+      has_checkout_intent: checkoutIntent !== null,
+      requested_plan: checkoutIntent?.plan ?? null,
+      requested_interval: checkoutIntent?.interval ?? null,
+    });
+  }, [
+    activeSection,
+    billingStatus,
+    checkoutIntent,
+    isLoadingBilling,
+    isLoadingPlanCatalog,
+  ]);
   const memberInviteGate = resolveBillingGateState({
     billingUiEnabled,
     organizationId: organization._id,
@@ -892,8 +932,21 @@ function OrganizationPage({
     seatPaymentIntentId?: string,
     email?: string,
   ) => {
+    track("billing_flow_started", {
+      location: "organization_billing",
+      flow: "seat_payment",
+      source: "billing_page",
+      current_plan: billingStatus?.plan ?? "unknown",
+    });
     try {
       const result = await finishSeatPayment(seatPaymentIntentId);
+      track("billing_flow_succeeded", {
+        location: "organization_billing",
+        flow: "seat_payment",
+        source: "billing_page",
+        outcome: result.status,
+        current_plan: billingStatus?.plan ?? "unknown",
+      });
       if (result.status === "paid") {
         toast.success(
           `${
@@ -902,6 +955,13 @@ function OrganizationPage({
         );
       }
     } catch (error) {
+      track("billing_flow_failed", {
+        location: "organization_billing",
+        flow: "seat_payment",
+        source: "billing_page",
+        failure_kind: "request_failed",
+        current_plan: billingStatus?.plan ?? "unknown",
+      });
       toast.error(
         error instanceof Error
           ? error.message
@@ -915,8 +975,21 @@ function OrganizationPage({
 
   const handleRetrySeatPayment = async () => {
     if (activeSeatPaymentIntent?.status === "cleanup_pending") return;
+    track("billing_flow_started", {
+      location: "organization_billing",
+      flow: "seat_payment_retry",
+      source: "billing_page",
+      current_plan: billingStatus?.plan ?? "unknown",
+    });
     try {
       const result = await retrySeatPayment();
+      track("billing_flow_succeeded", {
+        location: "organization_billing",
+        flow: "seat_payment_retry",
+        source: "billing_page",
+        outcome: result?.status ?? "no_op",
+        current_plan: billingStatus?.plan ?? "unknown",
+      });
       if (result?.status === "paid") {
         toast.success(
           `${
@@ -925,6 +998,13 @@ function OrganizationPage({
         );
       }
     } catch (error) {
+      track("billing_flow_failed", {
+        location: "organization_billing",
+        flow: "seat_payment_retry",
+        source: "billing_page",
+        failure_kind: "request_failed",
+        current_plan: billingStatus?.plan ?? "unknown",
+      });
       toast.error(
         error instanceof Error
           ? error.message
@@ -950,16 +1030,36 @@ function OrganizationPage({
       seatInviteRemovalInFlightRef.current = true;
       setIsRemovingSeatInvite(true);
     }
+    track("billing_flow_started", {
+      location: "organization_billing",
+      flow: isInviteRemoval ? "seat_invite_remove" : "seat_payment_cancel",
+      source: "billing_page",
+      current_plan: billingStatus?.plan ?? "unknown",
+    });
     try {
       if (isInviteRemoval && activeSeatPaymentIntent) {
         await removeMember({
           organizationId: organization._id,
           email: activeSeatPaymentIntent.email,
         });
+        track("billing_flow_succeeded", {
+          location: "organization_billing",
+          flow: "seat_invite_remove",
+          source: "billing_page",
+          outcome: "removed",
+          current_plan: billingStatus?.plan ?? "unknown",
+        });
         toast.success(`Invite for ${activeSeatPaymentIntent.email} removed.`);
         return;
       }
       const result = await cancelSeatPayment();
+      track("billing_flow_succeeded", {
+        location: "organization_billing",
+        flow: "seat_payment_cancel",
+        source: "billing_page",
+        outcome: result.outcome,
+        current_plan: billingStatus?.plan ?? "unknown",
+      });
       if (result.outcome === "canceled") {
         toast.success("Pending seat payment canceled.");
       } else if (result.outcome === "deferred") {
@@ -974,6 +1074,13 @@ function OrganizationPage({
         toast.error("This seat payment is no longer active.");
       }
     } catch (error) {
+      track("billing_flow_failed", {
+        location: "organization_billing",
+        flow: isInviteRemoval ? "seat_invite_remove" : "seat_payment_cancel",
+        source: "billing_page",
+        failure_kind: "request_failed",
+        current_plan: billingStatus?.plan ?? "unknown",
+      });
       toast.error(
         error instanceof Error
           ? error.message
@@ -1138,10 +1245,30 @@ function OrganizationPage({
   );
 
   const handleManageBilling = async () => {
+    track("billing_flow_started", {
+      location: "organization_billing",
+      flow: "manage_billing",
+      source: "billing_page",
+      current_plan: billingStatus?.plan ?? "unknown",
+    });
     try {
       const billingUrl = await openPortal(getBillingReturnUrl());
+      track("billing_flow_succeeded", {
+        location: "organization_billing",
+        flow: "manage_billing",
+        source: "billing_page",
+        outcome: "portal_handoff",
+        current_plan: billingStatus?.plan ?? "unknown",
+      });
       openBillingUrl(billingUrl);
     } catch (error) {
+      track("billing_flow_failed", {
+        location: "organization_billing",
+        flow: "manage_billing",
+        source: "billing_page",
+        failure_kind: "request_failed",
+        current_plan: billingStatus?.plan ?? "unknown",
+      });
       toast.error(
         error instanceof Error
           ? error.message
@@ -1153,13 +1280,36 @@ function OrganizationPage({
   const handleChangeBillingInterval = async (
     targetBillingInterval: BillingInterval,
   ) => {
+    track("billing_flow_started", {
+      location: "organization_billing",
+      flow: "change_interval",
+      source: "billing_page",
+      current_plan: billingStatus?.plan ?? "unknown",
+      target_interval: targetBillingInterval,
+    });
     try {
       const billingUrl = await openIntervalChangePortal(
         getBillingReturnUrl(),
         targetBillingInterval,
       );
+      track("billing_flow_succeeded", {
+        location: "organization_billing",
+        flow: "change_interval",
+        source: "billing_page",
+        outcome: "portal_handoff",
+        current_plan: billingStatus?.plan ?? "unknown",
+        target_interval: targetBillingInterval,
+      });
       openBillingUrl(billingUrl);
     } catch (error) {
+      track("billing_flow_failed", {
+        location: "organization_billing",
+        flow: "change_interval",
+        source: "billing_page",
+        failure_kind: "request_failed",
+        current_plan: billingStatus?.plan ?? "unknown",
+        target_interval: targetBillingInterval,
+      });
       toast.error(
         error instanceof Error
           ? error.message
@@ -1214,11 +1364,31 @@ function OrganizationPage({
   const handleConfirmScheduledBillingChangeCancellation = async () => {
     if (!scheduledBillingChangeCancellation) return;
 
+    track("billing_flow_started", {
+      location: "organization_billing",
+      flow: "cancel_scheduled_change",
+      source: "billing_page",
+      current_plan: billingStatus?.plan ?? "unknown",
+    });
     try {
       await cancelScheduledBillingChange();
+      track("billing_flow_succeeded", {
+        location: "organization_billing",
+        flow: "cancel_scheduled_change",
+        source: "billing_page",
+        outcome: "cancelled",
+        current_plan: billingStatus?.plan ?? "unknown",
+      });
       setScheduledBillingChangeConfirmOpen(false);
       toast.success(scheduledBillingChangeCancellation.successMessage);
     } catch (error) {
+      track("billing_flow_failed", {
+        location: "organization_billing",
+        flow: "cancel_scheduled_change",
+        source: "billing_page",
+        failure_kind: "request_failed",
+        current_plan: billingStatus?.plan ?? "unknown",
+      });
       toast.error(
         error instanceof Error
           ? error.message
@@ -1232,16 +1402,41 @@ function OrganizationPage({
 
     const { targetPlan, targetBillingInterval } = pendingDowngradeConfirmation;
 
+    if (targetPlan !== "free") {
+      await handlePlanChange(targetPlan, targetBillingInterval);
+      setPendingDowngradeConfirmation(null);
+      return;
+    }
+
+    track("billing_flow_started", {
+      location: "organization_billing",
+      flow: "cancel_subscription",
+      source: "billing_page",
+      current_plan: billingStatus?.plan ?? "unknown",
+      target_plan: "free",
+    });
     try {
-      if (targetPlan === "free") {
-        // Leaving paid entirely is a Stripe cancellation, not a plan change.
-        const billingUrl = await openCancellationPortal(getBillingReturnUrl());
-        openBillingUrl(billingUrl);
-      } else {
-        await handlePlanChange(targetPlan, targetBillingInterval);
-      }
+      // Leaving paid entirely is a Stripe cancellation, not a plan change.
+      const billingUrl = await openCancellationPortal(getBillingReturnUrl());
+      track("billing_flow_succeeded", {
+        location: "organization_billing",
+        flow: "cancel_subscription",
+        source: "billing_page",
+        outcome: "portal_handoff",
+        current_plan: billingStatus?.plan ?? "unknown",
+        target_plan: "free",
+      });
+      openBillingUrl(billingUrl);
       setPendingDowngradeConfirmation(null);
     } catch (error) {
+      track("billing_flow_failed", {
+        location: "organization_billing",
+        flow: "cancel_subscription",
+        source: "billing_page",
+        failure_kind: "request_failed",
+        current_plan: billingStatus?.plan ?? "unknown",
+        target_plan: "free",
+      });
       toast.error(
         error instanceof Error ? error.message : "Failed to change plan",
       );
@@ -1253,6 +1448,15 @@ function OrganizationPage({
     billingInterval: "monthly" | "annual",
     options: CheckoutNavigationOptions = {},
   ) => {
+    const source = options.source ?? "billing_page";
+    track("billing_flow_started", {
+      location: "organization_billing",
+      flow: "plan_change",
+      source,
+      current_plan: billingStatus?.plan ?? "unknown",
+      target_plan: tier,
+      target_interval: billingInterval,
+    });
     try {
       const result = await startPlanChange(
         getBillingReturnUrl(),
@@ -1262,6 +1466,15 @@ function OrganizationPage({
       );
 
       if (result.kind === "updated") {
+        track("billing_flow_succeeded", {
+          location: "organization_billing",
+          flow: "plan_change",
+          source,
+          outcome: "updated",
+          current_plan: billingStatus?.plan ?? "unknown",
+          target_plan: tier,
+          target_interval: billingInterval,
+        });
         toast.success(
           `Plan updated to ${formatPlanName(
             result.subscription.plan ?? tier,
@@ -1271,15 +1484,43 @@ function OrganizationPage({
       }
 
       if (result.kind === "scheduled") {
+        track("billing_flow_succeeded", {
+          location: "organization_billing",
+          flow: "plan_change",
+          source,
+          outcome: "scheduled",
+          current_plan: billingStatus?.plan ?? "unknown",
+          target_plan: tier,
+          target_interval: billingInterval,
+        });
         toast.success("Plan change scheduled for renewal.");
         return;
       }
 
       const billingUrl =
         result.kind === "checkout" ? result.checkoutUrl : result.portalUrl;
+      track("billing_flow_succeeded", {
+        location: "organization_billing",
+        flow: "plan_change",
+        source,
+        outcome:
+          result.kind === "checkout" ? "checkout_handoff" : "portal_handoff",
+        current_plan: billingStatus?.plan ?? "unknown",
+        target_plan: tier,
+        target_interval: billingInterval,
+      });
       options.onBeforeNavigate?.();
       openBillingUrl(billingUrl, options.navigation);
     } catch (error) {
+      track("billing_flow_failed", {
+        location: "organization_billing",
+        flow: "plan_change",
+        source,
+        failure_kind: "request_failed",
+        current_plan: billingStatus?.plan ?? "unknown",
+        target_plan: tier,
+        target_interval: billingInterval,
+      });
       toast.error(
         error instanceof Error ? error.message : "Failed to change plan",
       );
@@ -1312,6 +1553,14 @@ function OrganizationPage({
 
   const handleAutoPlanChange = useCallback(
     async (tier: "pro" | "team", billingInterval: "monthly" | "annual") => {
+      track("billing_flow_started", {
+        location: "organization_billing",
+        flow: "plan_change",
+        source: "pricing_deep_link",
+        current_plan: billingStatus?.plan ?? "unknown",
+        target_plan: tier,
+        target_interval: billingInterval,
+      });
       try {
         const result = await startPlanChange(
           getBillingReturnUrl(),
@@ -1321,6 +1570,15 @@ function OrganizationPage({
         );
 
         if (result.kind === "updated") {
+          track("billing_flow_succeeded", {
+            location: "organization_billing",
+            flow: "plan_change",
+            source: "pricing_deep_link",
+            outcome: "updated",
+            current_plan: billingStatus?.plan ?? "unknown",
+            target_plan: tier,
+            target_interval: billingInterval,
+          });
           toast.success(
             `Plan updated to ${formatPlanName(
               result.subscription.plan ?? tier,
@@ -1330,15 +1588,47 @@ function OrganizationPage({
         }
 
         if (result.kind === "scheduled") {
+          track("billing_flow_succeeded", {
+            location: "organization_billing",
+            flow: "plan_change",
+            source: "pricing_deep_link",
+            outcome: "scheduled",
+            current_plan: billingStatus?.plan ?? "unknown",
+            target_plan: tier,
+            target_interval: billingInterval,
+          });
           toast.success("Plan change scheduled for renewal.");
           return;
         }
 
         const billingUrl =
           result.kind === "checkout" ? result.checkoutUrl : result.portalUrl;
+        track("billing_flow_succeeded", {
+          location: "organization_billing",
+          flow: "plan_change",
+          source: "pricing_deep_link",
+          outcome:
+            result.kind === "checkout" ? "checkout_handoff" : "portal_handoff",
+          current_plan: billingStatus?.plan ?? "unknown",
+          target_plan: tier,
+          target_interval: billingInterval,
+        });
         onCheckoutIntentNavigationStarted?.();
         openBillingUrl(billingUrl, "same-tab");
       } catch (error) {
+        track("billing_flow_failed", {
+          location: "organization_billing",
+          flow: "plan_change",
+          source: "pricing_deep_link",
+          failure_kind:
+            error instanceof Error &&
+            error.message === PAID_PLAN_CHANGE_CONFIRMATION_REQUIRED_MESSAGE
+              ? "confirmation_required"
+              : "request_failed",
+          current_plan: billingStatus?.plan ?? "unknown",
+          target_plan: tier,
+          target_interval: billingInterval,
+        });
         if (
           !(
             error instanceof Error &&
@@ -1354,6 +1644,7 @@ function OrganizationPage({
     },
     [
       getBillingReturnUrl,
+      billingStatus?.plan,
       onCheckoutIntentNavigationStarted,
       openBillingUrl,
       startPlanChange,

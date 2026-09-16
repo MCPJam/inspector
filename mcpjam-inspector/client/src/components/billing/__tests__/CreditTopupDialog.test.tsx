@@ -162,13 +162,15 @@ describe("CreditTopupDialog", () => {
       expect(impressions).toHaveLength(1);
       expect(impressions[0]?.[1]).toEqual(
         expect.objectContaining({
-          organization_id: "org-1",
           source: "chat_banner",
           package_count: 3,
-          default_package_id: "credits_500",
+          organization_resolved: true,
+          packages_available: true,
           has_resume_context: true,
         }),
       );
+      expect(impressions[0]?.[1]).not.toHaveProperty("organization_id");
+      expect(impressions[0]?.[1]).not.toHaveProperty("default_package_id");
     });
   });
 
@@ -192,18 +194,21 @@ describe("CreditTopupDialog", () => {
     expect(trackMock).toHaveBeenCalledWith(
       "credit_topup_package_selected",
       expect.objectContaining({
-        package_id: "credits_1000",
-        price_cents: 1000,
         package_index: 1,
+        package_count: 3,
       }),
     );
     expect(trackMock).toHaveBeenCalledWith(
       "credit_topup_dialog_dismissed",
       expect.objectContaining({
         dismissal_method: "cancel",
-        selected_package_id: "credits_1000",
+        had_selection: true,
       }),
     );
+    for (const [, properties] of trackMock.mock.calls) {
+      expect(properties).not.toHaveProperty("package_id");
+      expect(properties).not.toHaveProperty("price_cents");
+    }
     expect(
       trackMock.mock.calls.filter(
         ([event]) => event === "credit_topup_dialog_dismissed",
@@ -266,11 +271,13 @@ describe("CreditTopupDialog", () => {
       expect.objectContaining({
         organizationId: "org-1",
         packageId: "credits_1000",
-        priceCents: 1000,
         chatSessionId: "chat-1",
         lastUserMessage: "please continue",
         source: "chat_banner",
       }),
+    );
+    expect(startCheckoutMock.mock.calls[0]?.[0]).not.toHaveProperty(
+      "priceCents",
     );
   });
 
