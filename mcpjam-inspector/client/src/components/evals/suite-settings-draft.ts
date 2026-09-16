@@ -31,7 +31,7 @@ import {
   describeEvalPassCriterion,
   normalizeSuiteGatePolicy,
   type SuiteGatePolicyV1,
-  EXECUTION_BUDGET_CEILINGS,
+  evalExecutionBudgetsSchema,
 } from "@mcpjam/sdk/contract";
 import { ORDER_OPTIONS, ARGS_OPTIONS } from "./validators-section";
 import type { EvalJudgeConfig, EvalJudgeRubric } from "./types";
@@ -413,23 +413,6 @@ export function canCommit(
   return areChecksValid(draft.current.defaultPredicates);
 }
 
-/**
- * The PLATFORM bound for each authored clock, keyed by draft key.
- *
- * `unitTimeoutMs` is the resolved spelling of the iteration clock, which is
- * why the lookup is explicit rather than a lift of the ceilings object: the
- * authored vocabulary and the resolved one differ by exactly this name, and a
- * silent `undefined` here would disable the check for the one clock most
- * likely to be set too high.
- */
-const BUDGET_CEILING_MS: Record<ExecutionBudgetDraftKey, number> = {
-  turnTimeoutMs: EXECUTION_BUDGET_CEILINGS.evals.turnTimeoutMs,
-  toolCallTimeoutMs: EXECUTION_BUDGET_CEILINGS.evals.toolCallTimeoutMs,
-  iterationTimeoutMs: EXECUTION_BUDGET_CEILINGS.evals.unitTimeoutMs,
-  runTimeoutMs: EXECUTION_BUDGET_CEILINGS.evals.runTimeoutMs,
-  turnRetries: EXECUTION_BUDGET_CEILINGS.evals.turnRetries,
-};
-
 export type ExecutionBudgetDraftKey =
   | "turnTimeoutMs"
   | "toolCallTimeoutMs"
@@ -438,10 +421,54 @@ export type ExecutionBudgetDraftKey =
   | "turnRetries";
 
 /**
+ * Every clock the authored schema carries, taken from the schema rather than
+ * listed again beside it.
+ *
+ * The union above is the spelling the rest of the module reads, but this list
+ * is what the validation actually walks, so a sixth clock added to the
+ * contract is bounded from the moment it exists. If it were ever a field with
+ * no numeric bounds to read, it lands in the table below without them and
+ * fails the test that walks it — which is the loud half of the same property.
+ */
+const EXECUTION_BUDGET_DRAFT_KEYS = Object.keys(
+  evalExecutionBudgetsSchema.shape,
+) as ExecutionBudgetDraftKey[];
+
+/** Both platform bounds for one authored clock, in its stored unit. */
+export type ExecutionBudgetBounds = { min: number; max: number };
+
+/**
+ * The PLATFORM bounds for each authored clock, read off the very schema the
+ * route parses with.
+ *
+ * Both halves come from one place deliberately. Every clock here has a real
+ * floor as well as a ceiling — a tool call may not be given under a second,
+ * an iteration under thirty — and a table that carried only the ceiling let
+ * the form offer a `0` the server was always going to refuse. A derived `max`
+ * sitting beside a hand-written floor reads as single-sourced at a glance
+ * while only half of it is.
+ *
+ * Taking the authored schema rather than lifting the ceilings table also
+ * retires a name hazard: the iteration clock is `unitTimeoutMs` once resolved
+ * but `iterationTimeoutMs` as authored, so a lift needed one hand-written
+ * rename whose only symptom, if wrong, would be a check that silently passed.
+ */
+export const EXECUTION_BUDGET_DRAFT_BOUNDS: Readonly<
+  Record<ExecutionBudgetDraftKey, ExecutionBudgetBounds>
+> = Object.freeze(
+  Object.fromEntries(
+    EXECUTION_BUDGET_DRAFT_KEYS.map((key) => {
+      const field = evalExecutionBudgetsSchema.shape[key].unwrap();
+      return [key, { min: field.minValue, max: field.maxValue }];
+    }),
+  ) as Record<ExecutionBudgetDraftKey, ExecutionBudgetBounds>,
+);
+
+/**
  * Authored clocks the PLATFORM would refuse, so the save button can refuse
  * them first.
  *
- * Only the platform bound, deliberately. An organization that lowered its own
+ * Only the platform bounds, deliberately. An organization that lowered its own
  * ceiling is still enforced by the server, which names the field and the
  * bound; the client does not know that number and guessing it would either
  * block a legal value or promise one the server rejects.
@@ -449,14 +476,14 @@ export type ExecutionBudgetDraftKey =
 export function outOfRangeBudgetKeys(
   values: SuiteSettingsValues,
 ): ExecutionBudgetDraftKey[] {
-  const keys = Object.keys(BUDGET_CEILING_MS) as ExecutionBudgetDraftKey[];
-  return keys.filter((key) => {
+  return EXECUTION_BUDGET_DRAFT_KEYS.filter((key) => {
     const value = values[key];
     if (value === undefined) return false;
     // Not a number at all is out of range too: a control that parsed junk into
     // NaN must not reach a save that would send it.
     if (!Number.isFinite(value)) return true;
-    return value < 0 || value > BUDGET_CEILING_MS[key];
+    const bounds = EXECUTION_BUDGET_DRAFT_BOUNDS[key];
+    return value < bounds.min || value > bounds.max;
   });
 }
 

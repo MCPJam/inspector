@@ -21,7 +21,6 @@ import {
   EVAL_ITERATION_RULE_LABELS,
   EVAL_PASS_CRITERION_SCOPE_HINTS,
   EVAL_PASS_CRITERION_SCOPE_LABELS,
-  EXECUTION_BUDGET_CEILINGS,
   EXECUTION_BUDGET_DEFAULTS,
 } from "@mcpjam/sdk/contract";
 import { useFeatureFlagEnabled } from "posthog-js/react";
@@ -129,6 +128,8 @@ import {
   initSuiteSettingsDraft,
   readSuiteSettingsValues,
   suiteSettingsReducer,
+  EXECUTION_BUDGET_DRAFT_BOUNDS,
+  type ExecutionBudgetBounds,
   type SuiteSettingsKey,
 } from "./suite-settings-draft";
 import { SuiteSettingsRow } from "./suite-settings-row";
@@ -242,7 +243,7 @@ function BudgetSettingRow({
   hint,
   unit,
   unitMs,
-  ceilingMs,
+  bounds,
   defaultMs,
   value,
   onChange,
@@ -254,7 +255,8 @@ function BudgetSettingRow({
   unit: string;
   /** Milliseconds in one unit; 1 for a plain count like retries. */
   unitMs: number;
-  ceilingMs: number;
+  /** Both platform bounds, so the control cannot offer what the save refuses. */
+  bounds: ExecutionBudgetBounds;
   defaultMs: number;
   value: number | undefined;
   onChange: (next: number | undefined) => void;
@@ -274,8 +276,13 @@ function BudgetSettingRow({
           type="number"
           className="w-28"
           aria-label={label}
-          min={0}
-          max={toUnit(ceilingMs)}
+          min={toUnit(bounds.min)}
+          max={toUnit(bounds.max)}
+          // The stored unit is milliseconds; minutes and seconds are only how
+          // the number is shown. Without this the browser steps by 1 FROM the
+          // floor, so a 10s floor on a minutes field makes every whole minute
+          // a step mismatch — and a legal 45s could never be typed anyway.
+          step="any"
           placeholder={`${toUnit(defaultMs)}`}
           value={value === undefined ? "" : String(toUnit(value))}
           onChange={(event: React.ChangeEvent<HTMLInputElement>) => {
@@ -2751,7 +2758,7 @@ export function SuiteIterationsView({
                 hint="How long one assistant turn may take, including the tool steps it drives."
                 unit="minutes"
                 unitMs={60_000}
-                ceilingMs={EXECUTION_BUDGET_CEILINGS.evals.turnTimeoutMs}
+                bounds={EXECUTION_BUDGET_DRAFT_BOUNDS.turnTimeoutMs}
                 defaultMs={EXECUTION_BUDGET_DEFAULTS.evals.turnTimeoutMs}
                 value={draft.current.turnTimeoutMs}
                 onChange={(next) =>
@@ -2774,7 +2781,7 @@ export function SuiteIterationsView({
                 hint="How long one MCP request may take. A host-pinned per-server override still wins over this."
                 unit="seconds"
                 unitMs={1_000}
-                ceilingMs={EXECUTION_BUDGET_CEILINGS.evals.toolCallTimeoutMs}
+                bounds={EXECUTION_BUDGET_DRAFT_BOUNDS.toolCallTimeoutMs}
                 defaultMs={EXECUTION_BUDGET_DEFAULTS.evals.toolCallTimeoutMs}
                 value={draft.current.toolCallTimeoutMs}
                 onChange={(next) =>
@@ -2797,7 +2804,7 @@ export function SuiteIterationsView({
                 hint="How long one trial may take. A trial that runs out of clock fails alone; its siblings keep going."
                 unit="minutes"
                 unitMs={60_000}
-                ceilingMs={EXECUTION_BUDGET_CEILINGS.evals.unitTimeoutMs}
+                bounds={EXECUTION_BUDGET_DRAFT_BOUNDS.iterationTimeoutMs}
                 defaultMs={EXECUTION_BUDGET_DEFAULTS.evals.unitTimeoutMs}
                 value={draft.current.iterationTimeoutMs}
                 onChange={(next) =>
@@ -2820,7 +2827,7 @@ export function SuiteIterationsView({
                 hint="A backstop for the whole run, not the working bound: the per-iteration clock is what usually fires."
                 unit="minutes"
                 unitMs={60_000}
-                ceilingMs={EXECUTION_BUDGET_CEILINGS.evals.runTimeoutMs}
+                bounds={EXECUTION_BUDGET_DRAFT_BOUNDS.runTimeoutMs}
                 defaultMs={EXECUTION_BUDGET_DEFAULTS.evals.runTimeoutMs}
                 value={draft.current.runTimeoutMs}
                 onChange={(next) =>
@@ -2843,7 +2850,7 @@ export function SuiteIterationsView({
                 hint="How many times one model call is retried. Never applied to a live stream."
                 unit="retries"
                 unitMs={1}
-                ceilingMs={EXECUTION_BUDGET_CEILINGS.evals.turnRetries}
+                bounds={EXECUTION_BUDGET_DRAFT_BOUNDS.turnRetries}
                 defaultMs={EXECUTION_BUDGET_DEFAULTS.evals.turnRetries}
                 value={draft.current.turnRetries}
                 onChange={(next) =>

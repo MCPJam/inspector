@@ -1,6 +1,8 @@
 import { describe, expect, test } from "vitest";
+import { evalExecutionBudgetsSchema } from "@mcpjam/sdk/contract";
 import {
   canCommit,
+  EXECUTION_BUDGET_DRAFT_BOUNDS,
   committedSuiteSettingsValues,
   describeChange,
   describeDraft,
@@ -723,5 +725,57 @@ describe("execution budgets save as one object", () => {
     expect(
       describeChange("turnRetries", BASE, { ...BASE, turnRetries: 1 }).after,
     ).toBe("1 retry");
+  });
+
+  // Each clock has a FLOOR as well as a ceiling, and the floor is the half
+  // that is easy to lose: a table carrying only the ceiling still looks
+  // single-sourced, and `value < 0` still looks like a bounds check. It is
+  // not one. A tool call may not be given under a second, an iteration under
+  // thirty, a run under a minute — and every one of those is reachable by
+  // typing, precisely because an authored `0` is a real value on this surface
+  // rather than a way of spelling "unset".
+  test.each([
+    ["toolCallTimeoutMs" as const, 0],
+    ["runTimeoutMs" as const, 30_000],
+    ["iterationTimeoutMs" as const, 12_000],
+    ["turnTimeoutMs" as const, 5_000],
+  ])("a clock under its platform floor cannot be saved: %s", (key, value) => {
+    expect(canCommit(edit(draftOf(), key, value), alwaysValid)).toBe(false);
+  });
+
+  test("the floor itself saves, and zero retries is not a floor breach", () => {
+    // The boundary is inclusive on both sides, and `turnRetries` genuinely
+    // floors at 0 — refusing it would make "never retry" unsayable.
+    expect(
+      canCommit(edit(draftOf(), "toolCallTimeoutMs", 1_000), alwaysValid),
+    ).toBe(true);
+    expect(canCommit(edit(draftOf(), "turnRetries", 0), alwaysValid)).toBe(
+      true,
+    );
+  });
+
+  test("the bounds the form offers are the bounds the route parses", () => {
+    // The point of reading bounds off `evalExecutionBudgetsSchema` is that
+    // there is nothing to keep in step. This proves it rather than trusting
+    // it: for every clock, one step below the floor and one above the ceiling
+    // must be refused by the schema, and both bounds accepted by it. A table
+    // that drifted from the schema fails here before a person can be offered
+    // a number the server was always going to reject.
+    for (const [key, bounds] of Object.entries(EXECUTION_BUDGET_DRAFT_BOUNDS)) {
+      expect(Number.isFinite(bounds.min)).toBe(true);
+      expect(Number.isFinite(bounds.max)).toBe(true);
+      expect(
+        evalExecutionBudgetsSchema.safeParse({ [key]: bounds.min }).success,
+      ).toBe(true);
+      expect(
+        evalExecutionBudgetsSchema.safeParse({ [key]: bounds.max }).success,
+      ).toBe(true);
+      expect(
+        evalExecutionBudgetsSchema.safeParse({ [key]: bounds.min - 1 }).success,
+      ).toBe(false);
+      expect(
+        evalExecutionBudgetsSchema.safeParse({ [key]: bounds.max + 1 }).success,
+      ).toBe(false);
+    }
   });
 });
