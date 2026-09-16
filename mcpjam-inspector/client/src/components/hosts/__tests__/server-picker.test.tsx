@@ -254,7 +254,7 @@ describe("ServerPicker — picking a bare server", () => {
 });
 
 describe("ServerPicker — the Groups tab", () => {
-  it("hides the rows that stand in for a single server", async () => {
+  it("lists a one-server group named after its server", async () => {
     mockState.attachments = [
       {
         _id: "att_solo",
@@ -275,9 +275,38 @@ describe("ServerPicker — the Groups tab", () => {
     );
 
     expect(await screen.findByText("alpha + 1")).toBeInTheDocument();
-    // `alpha` is reachable on the Servers tab; listing it here too would
-    // offer the same choice twice under two names.
-    expect(screen.queryByRole("button", { name: /^alpha$/ })).toBeNull();
+    // Named after its only server — the shape a stand-in also has. Hiding
+    // that shape made a group the user created disappear from this tab.
+    expect(
+      screen.getByRole("button", { name: "Delete alpha" }),
+    ).toBeInTheDocument();
+  });
+
+  it("marks the stand-in on the Groups tab when it is the selection", async () => {
+    mockState.attachments = [
+      {
+        _id: "att_solo",
+        name: "alpha",
+        serverIds: ["srv_1"],
+        resolvedServerNames: ["alpha"],
+      },
+    ];
+    render(
+      <ServerPicker
+        projectId="p_1"
+        value="att_solo"
+        onChange={vi.fn()}
+        onClearSelection={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("server-picker-trigger"));
+    await userEvent.click(
+      await screen.findByRole("tab", { name: "Server Groups" }),
+    );
+
+    expect(
+      screen.getByRole("button", { name: /alpha/i, current: true }),
+    ).toBeInTheDocument();
   });
 
   it("emits a group id straight through, with no write", async () => {
@@ -1628,11 +1657,10 @@ describe("ServerPicker — clearing a selection the list no longer holds", () =>
 });
 
 describe("ServerPicker — a group of exactly one server", () => {
-  it("does not suggest a name that would hide the group being made", async () => {
-    // The form pre-fills the name, and for one pick the shared deriver returns
-    // the server's own name — which is precisely the shape `isServerStandIn`
-    // reads as "not a group", so the row would be filtered off the Groups tab
-    // the moment it was created.
+  it("does not suggest a name that collides with a bare-server stand-in", async () => {
+    // The form pre-fills the name, and for one pick the shared deriver
+    // would return the server's own name — already reserved if that
+    // server was ever picked on the Servers tab.
     open();
     await userEvent.click(
       await screen.findByRole("tab", { name: "Server Groups" }),
@@ -1651,6 +1679,36 @@ describe("ServerPicker — a group of exactly one server", () => {
     expect(
       isServerStandIn({ ...written, resolvedServerNames: ["alpha"] }),
     ).toBe(false);
+  });
+
+  it("keeps a group named after its only server on the Groups tab", async () => {
+    open();
+    await userEvent.click(
+      await screen.findByRole("tab", { name: "Server Groups" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: /new group/i }),
+    );
+    await userEvent.click(
+      await screen.findByRole("checkbox", { name: "alpha" }),
+    );
+    const nameField = screen.getByLabelText("Group name") as HTMLInputElement;
+    await userEvent.clear(nameField);
+    await userEvent.type(nameField, "alpha");
+    fireEvent.click(await screen.findByRole("button", { name: /^Create$/ }));
+
+    await waitFor(() => expect(mockState.createSpy).toHaveBeenCalled());
+    expect(mockState.createSpy.mock.calls[0][0]).toMatchObject({
+      name: "alpha",
+      serverIds: ["srv_1"],
+    });
+    fireEvent.click(screen.getByTestId("server-picker-trigger"));
+    await userEvent.click(
+      await screen.findByRole("tab", { name: "Server Groups" }),
+    );
+    expect(
+      await screen.findByRole("button", { name: "Delete alpha" }),
+    ).toBeInTheDocument();
   });
 });
 

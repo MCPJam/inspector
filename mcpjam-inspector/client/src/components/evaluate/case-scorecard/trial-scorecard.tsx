@@ -1,3 +1,4 @@
+import type { PlatformEvalIterationReport } from "@mcpjam/sdk/platform";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
 /**
  * The trial, as the same scorers the left pane authored.
@@ -85,6 +86,7 @@ export function summaryLine(
 }
 
 export function TrialScorecard({
+  report,
   authored,
   iteration,
   steps,
@@ -100,6 +102,7 @@ export function TrialScorecard({
   syncedStepId,
   onSyncStep,
 }: {
+  report?: PlatformEvalIterationReport | null;
   authored: CaseScorecardInput;
   iteration: EvalIteration | null;
   /** The steps the trial ran, which are not always the ones on screen. */
@@ -124,6 +127,7 @@ export function TrialScorecard({
   const groups = useMemo(() => {
     const card = buildCaseScorecard(authored);
     return joinTrialResults(card.groups, {
+      report,
       iteration,
       steps,
       chain,
@@ -136,6 +140,7 @@ export function TrialScorecard({
     // id — on each keystroke in the prompt box.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
+    report,
     authored.steps,
     authored.numbering,
     authored.toolsChoice,
@@ -221,7 +226,7 @@ export function TrialScorecard({
     ...new Set(
       [
         ...(userValueStage?.state === "passed"
-          ? (userValueStage.evidence?.predicateReasons ?? [])
+          ? userValueStage.evidence?.predicateReasons ?? []
           : []),
         ...userValuePassRows.flatMap((row) => [
           ...("reason" in row.result && row.result.reason
@@ -346,9 +351,25 @@ export function TrialScorecard({
             const selected = defaultGroups.find(
               (group) => group.stage === stage,
             );
-            return selected ? (
+            const note =
+              !judgeHidden && report?.status === "ready"
+                ? report.stageNotes?.find((note) => note.stage === stage)
+                : undefined;
+            return selected || note ? (
               <ul className="mt-4" aria-label="Recorded assertions">
-                {selected.rows.map((row) => (
+                {note && (
+                  <li
+                    className="border-b border-border/60 py-4 text-sm leading-relaxed"
+                    data-narrative-source="ai"
+                  >
+                    <p>{note.actual}</p>
+                    <details className="mt-2 text-xs text-muted-foreground">
+                      <summary>AI explanation · cited trace evidence</summary>
+                      <p>{note.citations.join(" · ")}</p>
+                    </details>
+                  </li>
+                )}
+                {(selected?.rows ?? []).map((row) => (
                   <TrialScorecardRow
                     key={row.key}
                     layout="report"

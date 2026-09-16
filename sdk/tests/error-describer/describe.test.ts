@@ -803,3 +803,19 @@ describe("a 429 is attributed to the boundary it crossed", () => {
     expect(d.slug).toBe("auth/http_401");
   });
 });
+
+it.each(["content", "messages"])(
+  "describes an empty hosted model response (%s) without blaming the server",
+  (noun) => {
+    expect(
+      describeError(
+        `Backend step returned no ${noun} (stream error or empty response)`
+      )
+    ).toMatchObject({
+      slug: "provider/empty_response",
+      origin: "ambiguous",
+      oneLine:
+        "The model returned no response, so the turn could not complete.",
+    });
+  }
+);

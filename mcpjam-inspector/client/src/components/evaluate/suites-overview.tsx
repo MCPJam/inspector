@@ -248,7 +248,7 @@ function OverviewBody({
             <EvalListFilter
               label="Client"
               variant="header"
-              className="min-h-8 w-full justify-start px-1"
+              className="-ml-1 min-h-8 w-full justify-start px-1"
               value={clientFilter}
               options={clientOptions}
               onChange={setClientFilter}
@@ -258,7 +258,7 @@ function OverviewBody({
             <EvalListFilter
               label="Model"
               variant="header"
-              className="min-h-8 w-full justify-start px-1"
+              className="-ml-1 min-h-8 w-full justify-start px-1"
               value={modelFilter}
               options={modelOptions}
               formatOption={compactModelIdTail}
@@ -268,7 +268,7 @@ function OverviewBody({
           <div role="columnheader" aria-label="Server" className="min-w-0">
             <EvalListFilter
               label="Server"
-              className="min-h-8 w-full justify-start px-1"
+              className="-ml-1 min-h-8 w-full justify-start px-1"
               variant="header"
               value={serverFilter}
               options={serverOptions}
