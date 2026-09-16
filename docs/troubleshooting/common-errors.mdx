@@ -207,6 +207,15 @@ Get-Process -Id (Get-NetTCPConnection -LocalPort 6274).OwningProcess | Stop-Proc
 
 The desktop app automatically clears stale GPU and HTTP caches (`Cache`, `Code Cache`, `GPUCache`) the first time it launches after a version change. This handles most renderer or GPU process crashes caused by cached data from a previous build. If the app still fails to start after an update, use the **Reset app data and quit** option in the recovery dialog.
 
+### "Update" button does nothing or shows "Download update"
+
+If the update pill in the sidebar shows **Update** but clicking it has no visible effect, or if it changes to **Download update**, the desktop app's auto-updater was unable to download or apply the new version on this install.
+
+- **"Download update"** — the app detected a newer version but could not install it automatically. Click the button to open the [releases page](https://github.com/MCPJam/inspector/releases) in your browser and download the installer manually.
+- **"Update" with no effect** — this was a bug fixed in desktop 2.46.0. After updating, the pill either completes the install or falls back to "Download update" as described above.
+
+The app continues to check for updates in the background. If a later check succeeds, the pill returns to the normal **Update** → **Restart to update** flow automatically.
+
 ## Getting Help
 
 If you're still experiencing issues:
