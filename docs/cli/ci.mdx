@@ -367,9 +367,16 @@ uploads reports to GitHub. It sets up Node automatically. It tests the suite's
 saved server; it does not build or deploy your PR's source code.
 
 <Note>
-The action's `evals-v1` tag must be published after its live smoke test passes
-before the example below can be used. The direct CLI integration in the next
-section remains available independently.
+The `evals-v1` tag is published automatically by the MCPJam Release workflow
+whenever `actions/evals` changes. To check whether it has been published yet:
+
+```sh
+git ls-remote --tags https://github.com/MCPJam/inspector 'evals-v*'
+```
+
+If that command prints nothing, the action has not been released and the example
+above cannot resolve. The direct CLI integration in the next section remains
+available independently.
 </Note>
 
 Save this as `.github/workflows/mcpjam.yml`, then replace the project and suite:
