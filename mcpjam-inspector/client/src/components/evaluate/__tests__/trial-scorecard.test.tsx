@@ -342,7 +342,7 @@ describe("TrialScorecard", () => {
     renderCard({
       judgeSlot: <div data-testid="judge-panel">Judge score hidden</div>,
     });
-    const judge = rowFor("Judge · Goal completion");
+    const judge = rowFor("Outcome achieved");
     expect(within(judge).getByTestId("judge-panel")).toBeInTheDocument();
   });
 
