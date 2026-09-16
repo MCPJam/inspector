@@ -1,6 +1,6 @@
-/** Product findings view: one analysis action, a lead problem/fix, and evidence drawers. */
+/** Product findings view: a lead problem/fix, and evidence drawers. */
 import { useMemo, useRef, useState } from "react";
-import { Loader2, Sparkles } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   sortFindingsForDisplay,
@@ -166,31 +166,21 @@ export function UnifiedFindingsPanel({
             onSeeAll={() => setAllOpen(true)}
             seeAllRef={seeAllTrigger}
           />
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-9"
-            disabled={!analyze.available || analyze.pending}
-            onClick={analyze.onRun}
-            data-testid="unified-findings-analyze"
-          >
-            {analyze.pending ? (
+          {analyze.pending ? (
+            <span
+              className="flex items-center gap-2 text-sm text-muted-foreground"
+              role="status"
+            >
               <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
-            ) : (
-              <Sparkles className="size-3.5" aria-hidden="true" />
-            )}
-            {analyze.pending
-              ? analysis?.phase === "reading"
+              {analysis?.phase === "reading"
                 ? `Reading iterations ${analysis.progress.done}/${analysis.progress.total}`
                 : analysis?.phase === "grouping"
                 ? "Grouping problems…"
                 : analysis?.phase === "checking"
                 ? "Checking evidence…"
-                : "Analyzing…"
-              : enrichment?.status === "ready"
-              ? "Analyze again"
-              : "Analyze findings"}
-          </Button>
+                : "Analyzing…"}
+            </span>
+          ) : null}
           {current ? (
             <CopyFindingPrompt
               key={current.id}
@@ -302,7 +292,7 @@ export function UnifiedFindingsPanel({
             ? "No supported finding yet. Evidence is incomplete; this does not mean the run passed."
             : mode === "ai"
             ? "Analysis found no supported issue to report. This does not change the run’s results."
-            : "No issue found in the recorded checks. Analyze findings to look for patterns and suggested fixes."}
+            : "No issue found in the recorded checks."}
         </StateNote>
       )}
       {observationCoverage &&

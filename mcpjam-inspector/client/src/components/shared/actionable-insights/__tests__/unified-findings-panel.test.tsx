@@ -138,8 +138,7 @@ describe("walkthrough findings layout", () => {
     ).toBeNull();
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(analyze.onRun).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Analyze findings" }));
-    expect(analyze.onRun).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: /Analyze/ })).toBeNull();
   });
 
   it("opens the details sheet without recorded evidence or a successful comparison", () => {
@@ -490,7 +489,7 @@ describe("analysis states and provenance", () => {
         "data-analysis-phase",
         phase,
       );
-      expect(screen.getByRole("button", { name: label })).toBeDisabled();
+      expect(screen.getByText(label)).toBeVisible();
       expect(screen.getByTestId("unified-finding-observed")).toBeVisible();
     },
   );
@@ -511,11 +510,11 @@ describe("analysis states and provenance", () => {
       finding().observed,
     );
   });
-  it("uses a single pending action and retains the current finding", () => {
+  it("shows pending status and retains the current finding", () => {
     renderPanel({
       analyze: { available: true, pending: true, error: null, onRun: vi.fn() },
     });
-    expect(screen.getByRole("button", { name: "Analyzing…" })).toBeDisabled();
+    expect(screen.getByRole("status")).toHaveTextContent("Analyzing…");
     expect(screen.getByTestId("unified-finding-observed")).toBeVisible();
   });
   it("distinguishes not analyzed, incomplete, and known-empty results", () => {
