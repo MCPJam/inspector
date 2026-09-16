@@ -567,6 +567,34 @@ describe("CreditBalanceCard", () => {
       expect(screen.queryByTestId("usage-daily")).not.toBeInTheDocument();
     });
 
+    it("keeps V1 Team monthly eval iterations alongside the draining shared credit pool", () => {
+      evalQuotaState = {
+        used: 125,
+        allowed: 500,
+        resetsAt: Date.now() + 86400000,
+        windowKind: "month",
+      };
+      const { rerender } = render(<CreditBalanceCard pricingVersion="v1" />);
+      expect(screen.queryByText("Free daily credits")).not.toBeInTheDocument();
+      expect(screen.getByTestId("usage-eval-iterations")).toHaveTextContent(
+        "Monthly eval iterations",
+      );
+      expect(screen.getByTestId("usage-eval-iterations")).toHaveTextContent(
+        "375 / 500",
+      );
+      expect(
+        screen.getByLabelText("Monthly credits remaining"),
+      ).toHaveAttribute("aria-valuenow", "77.5");
+      balanceState = { ...balanceState!, monthlyAllowanceRemaining: 9000 };
+      rerender(<CreditBalanceCard pricingVersion="v1" />);
+      expect(
+        screen.getByLabelText("Monthly credits remaining"),
+      ).toHaveAttribute("aria-valuenow", "50");
+      expect(screen.getByTestId("usage-paid")).toHaveTextContent(
+        "1,500 credits",
+      );
+    });
+
     it("shows paid top-ups separately from the allowance", () => {
       render(<CreditBalanceCard />);
       const paid = screen.getByTestId("usage-paid");
