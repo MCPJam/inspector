@@ -324,7 +324,7 @@ import {
   buildResolvedModelRequestPayload,
   normalizeSystemPromptForProvider,
 } from "./model-request-payload";
-import { hashGuestSpendIp } from "./guest-spend-ip.js";
+import { guestIpForwardHeaders, hashGuestSpendIp } from "./guest-spend-ip.js";
 import { isAbortError } from "@/shared/abort-errors";
 
 const DEFAULT_MAX_STEPS = 30;
@@ -698,15 +698,13 @@ function applyToolRefresh(
   }
 
   const retiredSet = new Set(retired);
-  const kept = io
-    .currentToolDefs()
-    .filter(
-      (def) =>
-        !retiredSet.has(def.name) &&
-        // `hasOwn`, not `in`: a page tool called `constructor` or `toString`
-        // must not be mistaken for one the refresh re-added.
-        !Object.hasOwn(refresh.add ?? {}, def.name),
-    );
+  const kept = io.currentToolDefs().filter(
+    (def) =>
+      !retiredSet.has(def.name) &&
+      // `hasOwn`, not `in`: a page tool called `constructor` or `toString`
+      // must not be mistaken for one the refresh re-added.
+      !Object.hasOwn(refresh.add ?? {}, def.name),
+  );
   const addedDefs = serializeToolsForConvex(
     Object.fromEntries(added) as ToolSet,
   );
@@ -1589,7 +1587,7 @@ function createClientFinishChunk(
     !Array.isArray(metadata) &&
     usage
       ? { ...metadata, ...usage }
-      : metadata ?? usage;
+      : (metadata ?? usage);
 
   return buildFinishChunk({
     finishReason: source?.finishReason ?? fallbackReason,
@@ -2038,9 +2036,9 @@ async function processStream(
           ? parseErr
           : new Error(
               typeof parseErr === "object" &&
-              parseErr !== null &&
-              "message" in parseErr &&
-              typeof (parseErr as { message?: unknown }).message === "string"
+                parseErr !== null &&
+                "message" in parseErr &&
+                typeof (parseErr as { message?: unknown }).message === "string"
                 ? (parseErr as { message: string }).message
                 : "stream parse failed",
             );
@@ -2365,7 +2363,7 @@ async function emitToolResults(
             ("structuredContent" in rawResult ||
               isModelVisibleImageOutput(part.output))
               ? rawResult
-              : part.output ?? rawResult;
+              : (part.output ?? rawResult);
 
           let outputForUi: unknown = rawOutput;
           if (rawOutput && typeof rawOutput === "object") {
@@ -2378,7 +2376,8 @@ async function emitToolResults(
                 : {};
             const toolMeta =
               serverId && toolName
-                ? mcpClientManager.getAllToolsMetadata(serverId)[toolName] ?? {}
+                ? (mcpClientManager.getAllToolsMetadata(serverId)[toolName] ??
+                  {})
                 : {};
 
             // Include descriptor metadata in streamed output so shared/minimal chat
@@ -2974,9 +2973,7 @@ async function processOneStep(
       delete convexHeaders[header];
     }
   }
-  if (ipHash) {
-    convexHeaders[GUEST_IP_HASH_HEADER] = ipHash;
-  }
+  Object.assign(convexHeaders, guestIpForwardHeaders(ipHash));
   let res: Response;
   // Everything above this line is ours; everything at or below it is the
   // model's turn. Marked HERE, at the handover, not once a response comes
@@ -4059,25 +4056,28 @@ export async function runChatEngineLoop(
     // surface as user-visible failures.
     const startHeartbeat = () => {
       if (resolvedHeartbeatMs <= 0) return;
-      heartbeatTimer = setInterval(() => {
-        if (streamClosed || aborted) return;
-        const sinceLastWrite = Date.now() - lastWriteAt;
-        if (sinceLastWrite < resolvedHeartbeatMs) return;
-        try {
-          writeTraceEvent(safeWriter, {
-            type: "heartbeat",
-            turnId: traceTurn.turnId,
-            promptIndex: traceTurn.promptIndex,
-          });
-        } catch (error) {
-          // Should not happen — safeWriter swallows write errors —
-          // but a final guard here keeps a misbehaving writeTraceEvent
-          // from killing the loop.
-          logger.warn("[mcpjam-stream-handler] heartbeat emit failed", {
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-      }, Math.max(250, Math.floor(resolvedHeartbeatMs / 2)));
+      heartbeatTimer = setInterval(
+        () => {
+          if (streamClosed || aborted) return;
+          const sinceLastWrite = Date.now() - lastWriteAt;
+          if (sinceLastWrite < resolvedHeartbeatMs) return;
+          try {
+            writeTraceEvent(safeWriter, {
+              type: "heartbeat",
+              turnId: traceTurn.turnId,
+              promptIndex: traceTurn.promptIndex,
+            });
+          } catch (error) {
+            // Should not happen — safeWriter swallows write errors —
+            // but a final guard here keeps a misbehaving writeTraceEvent
+            // from killing the loop.
+            logger.warn("[mcpjam-stream-handler] heartbeat emit failed", {
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        },
+        Math.max(250, Math.floor(resolvedHeartbeatMs / 2)),
+      );
     };
 
     // External abort listener: marks `aborted` so downstream catch
@@ -4323,9 +4323,12 @@ export async function runChatEngineLoop(
             // SWALLOWED. This is a tool-list read; a browser that would not
             // answer it is not a reason to end somebody's conversation, and
             // the step that follows simply advertises what it already had.
-            logger.warn("[chat] mid-turn tool refresh failed; keeping the current set", {
-              error: error instanceof Error ? error.message : String(error),
-            });
+            logger.warn(
+              "[chat] mid-turn tool refresh failed; keeping the current set",
+              {
+                error: error instanceof Error ? error.message : String(error),
+              },
+            );
           }
         }
       }
