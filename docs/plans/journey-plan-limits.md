@@ -37,3 +37,9 @@ The backend error code was verified against current backend main's `convex/lib/c
 - `git diff --check`: passed.
 
 Tests use mocked backend responses; authenticated end-to-end billing and deployed fee enforcement were not exercised.
+
+## CI follow-up
+
+The first full CI run exposed two outdated test contracts outside the initial focused set: the route snapshot assertion omitted the newly required `kind`, and the hosted OAuth suite's guest-session mock omitted `getGuestSessionRefusal`, which the banner added on main now reads. The hosted OAuth failure reproduced locally (62 failing tests); the route payload mismatch was confirmed in the CI log. Updated the exact route payload assertion and supplied the mock's no-refusal state; no production behavior changed.
+
+Validation after the fix: hosted OAuth 78/78, swarm route 9/9, launch service 40/40, and swarm-agent contract 6/6 passed (133 tests total). Generated local runtime bundles with `npm run bundle:all` to run the route suite; no generated tracked files changed.
