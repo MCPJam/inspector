@@ -300,7 +300,25 @@ describe("v1 model leases", () => {
       "https://convex-http.example.com/web/harness/model-broker/revoke",
     );
     expect(JSON.parse((init as { body: string }).body)).toEqual({
+      delivery: "sdk-direct",
       runId: "run_lease_1",
+    });
+  });
+
+  it("scopes revocation to the path project and SDK delivery", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(backendResponse(200, { ok: true, revoked: 1 }));
+    global.fetch = fetchMock as never;
+    await request(makeApp(), "/api/v1/projects/project_a/model-leases/revoke", {
+      runId: "shared_run",
+      projectId: "project_b",
+      delivery: "e2b-network-transform",
+    });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+      runId: "shared_run",
+      projectId: "project_a",
+      delivery: "sdk-direct",
     });
   });
 

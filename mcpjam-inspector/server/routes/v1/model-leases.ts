@@ -206,10 +206,12 @@ modelLeases.post("/projects/:projectId/model-leases/revoke", async (c) => {
   if (typeof runId !== "string" || !runId.trim()) {
     return v1Error(c, "VALIDATION_ERROR", "runId is required");
   }
-  // No projectId: the backend revokes by (runId, caller), so the path segment
-  // is decoration here. Kept in the path anyway so both operations live under
-  // the project a caller already addresses.
-  const result = await callBroker(c, "revoke", { runId: runId.trim() });
+  const projectId = c.req.param("projectId");
+  const result = await callBroker(c, "revoke", {
+    runId: runId.trim(),
+    delivery: "sdk-direct",
+    ...(projectId && projectId !== "default" ? { projectId } : {}),
+  });
   if (result instanceof Response) return result;
 
   return c.json({ ok: true, revoked: result.body.revoked ?? 0 });
