@@ -55,6 +55,8 @@ vi.mock("@/lib/app-navigation", () => ({
   navigateApp: (...args: unknown[]) => mockNavigateApp(...args),
   buildEvalsPath: (route: Record<string, unknown>) =>
     `/evals/${route.suiteId}/${route.testId}`,
+  buildEvaluatePath: (route: Record<string, unknown>) =>
+    `/evaluate/${route.suiteId}/${route.testId}`,
 }));
 
 // Radix Select needs a pointer dance jsdom can't do faithfully; the items
@@ -142,7 +144,7 @@ describe("SaveAsTestCaseAction", () => {
       ),
     );
     await waitFor(() =>
-      expect(mockNavigateApp).toHaveBeenCalledWith("/evals/suite-1/case-1"),
+      expect(mockNavigateApp).toHaveBeenCalledWith("/evaluate/suite-1/case-1"),
     );
     // The toast was the old dead end; navigation replaces it.
     expect(mockToast.success).not.toHaveBeenCalled();
@@ -174,6 +176,6 @@ describe("SaveAsTestCaseAction", () => {
         "Saved as test case. Added Excalidraw to the suite.",
       ),
     );
-    expect(mockNavigateApp).toHaveBeenCalledWith("/evals/suite-1/case-1");
+    expect(mockNavigateApp).toHaveBeenCalledWith("/evaluate/suite-1/case-1");
   });
 });

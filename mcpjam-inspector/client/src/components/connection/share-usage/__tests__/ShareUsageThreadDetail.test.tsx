@@ -207,6 +207,8 @@ vi.mock("@/lib/app-navigation", () => ({
   navigateApp: (...args: unknown[]) => mockNavigateApp(...args),
   buildEvalsPath: (route: Record<string, unknown>) =>
     `/evals/${route.suiteId}/${route.testId}`,
+  buildEvaluatePath: (route: Record<string, unknown>) =>
+    `/evaluate/${route.suiteId}/${route.testId}`,
 }));
 
 describe("ShareUsageThreadDetail", () => {
@@ -622,7 +624,7 @@ describe("ShareUsageThreadDetail — promote affordance", () => {
     // Default behavior lands the user on the artifact they just created.
     await user.click(screen.getByText("simulate import"));
     await waitFor(() =>
-      expect(mockNavigateApp).toHaveBeenCalledWith("/evals/suite-1/case-1"),
+      expect(mockNavigateApp).toHaveBeenCalledWith("/evaluate/suite-1/case-1"),
     );
   });
 
