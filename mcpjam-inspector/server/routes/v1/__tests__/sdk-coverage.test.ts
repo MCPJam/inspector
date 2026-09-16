@@ -439,6 +439,10 @@ const EXCLUDED_FROM_SDK: Readonly<Record<string, string>> = {
     "Deprecated alias of `POST /clients/{client}/duplicate`; see `GET /projects/{projectId}/hosts`.",
   "post /projects/{projectId}/agent":
     "The headless agent turn. Reachable only with a chat-surface service credential (Slack/Discord), and it spends hosted-model credits per call — an SDK method would advertise a capability an sk_ key does not have.",
+  "post /projects/{projectId}/model-leases":
+    "Transport plumbing for the SDK's `mcpjam/*` model provider, which mints, renews and revokes leases inside its own `fetch`. The SDK DOES call this route — but a lease is only usable by something that then speaks the vendor wire protocol to `proxyBaseUrl`, tracks `expiresAt`, and re-mints on a budget denial, which is exactly what the provider exists to do. A client method would hand a caller a raw credential and no way to spend it.",
+  "post /projects/{projectId}/model-leases/revoke":
+    "The teardown half of the above; `releaseMcpjamModelLeases()` calls it. See `POST /projects/{projectId}/model-leases`.",
   "get /agent-ops":
     "The agent's own operation registry, serialized for the org-settings Capabilities page. It describes the tools THIS build offers its agent — an implementation detail whose shape changes with every tool added, not a contract to program against.",
   "get /harness/{harnessId}/builtin-tools":
