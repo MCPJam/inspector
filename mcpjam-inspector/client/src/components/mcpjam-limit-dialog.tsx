@@ -410,7 +410,6 @@ export function MCPJamLimitDialog() {
     track("plan_limit_dialog_shown", {
       location: "plan_limit_dialog",
       wall_kind: "organization_credits",
-      organization_id: billingOrgId,
       organization_resolved: Boolean(billingOrgId),
       limit_kind: "credits",
       origin: "credits",
@@ -468,7 +467,7 @@ export function MCPJamLimitDialog() {
       track("plan_limit_buy_credits_clicked", {
         location: "plan_limit_dialog",
         wall_kind: "organization_credits",
-        organization_id: null,
+        organization_resolved: false,
         origin: "credits",
         outcome: "blocked_missing_organization",
         current_plan: creditsUpgrade.currentPlan,
@@ -484,7 +483,7 @@ export function MCPJamLimitDialog() {
     track("plan_limit_buy_credits_clicked", {
       location: "plan_limit_dialog",
       wall_kind: "organization_credits",
-      organization_id: orgId,
+      organization_resolved: true,
       origin: "credits",
       outcome: "billing_opened",
       current_plan: creditsUpgrade.currentPlan,
@@ -511,7 +510,7 @@ export function MCPJamLimitDialog() {
       track("plan_limit_byok_clicked", {
         location: "plan_limit_dialog",
         wall_kind: "organization_credits",
-        organization_id: billingOrgId,
+        organization_resolved: Boolean(billingOrgId),
         origin: "credits",
         outcome: "model_picker_opened",
         current_plan: creditsUpgrade.currentPlan,
@@ -526,7 +525,7 @@ export function MCPJamLimitDialog() {
       track("plan_limit_byok_clicked", {
         location: "plan_limit_dialog",
         wall_kind: "organization_credits",
-        organization_id: null,
+        organization_resolved: false,
         origin: "credits",
         outcome: "blocked_missing_organization",
         current_plan: creditsUpgrade.currentPlan,
@@ -540,7 +539,7 @@ export function MCPJamLimitDialog() {
     track("plan_limit_byok_clicked", {
       location: "plan_limit_dialog",
       wall_kind: "organization_credits",
-      organization_id: orgId,
+      organization_resolved: true,
       origin: "credits",
       outcome: "providers_settings_opened",
       current_plan: creditsUpgrade.currentPlan,
@@ -556,7 +555,7 @@ export function MCPJamLimitDialog() {
       track("plan_limit_explore_plans_clicked", {
         location: "plan_limit_dialog",
         wall_kind: "organization_credits",
-        organization_id: null,
+        organization_resolved: false,
         origin: "credits",
         outcome: "blocked_missing_organization",
       });
@@ -569,7 +568,7 @@ export function MCPJamLimitDialog() {
     track("plan_limit_explore_plans_clicked", {
       location: "plan_limit_dialog",
       wall_kind: "organization_credits",
-      organization_id: orgId,
+      organization_resolved: true,
       origin: "credits",
       outcome: "billing_opened",
     });
@@ -580,7 +579,7 @@ export function MCPJamLimitDialog() {
     track("plan_limit_dialog_dismissed", {
       location: "plan_limit_dialog",
       wall_kind: "organization_credits",
-      organization_id: billingOrgId,
+      organization_resolved: Boolean(billingOrgId),
       limit_kind: "credits",
       origin: "credits",
       current_plan: creditsUpgrade.currentPlan,
@@ -611,7 +610,6 @@ export function MCPJamLimitDialog() {
           }
           isKnownNonManager={isKnownNonManager}
           requestRecipients={isBillingReady ? requestRecipients : []}
-          organizationId={billingOrgId}
           organizationName={creditsUpgrade.organizationName}
           teamName={creditsUpgrade.teamName}
           onBuyCredits={handleTopUp}
@@ -640,7 +638,6 @@ export function MCPJamLimitDialog() {
           // recipient.
           requestRecipients={isBillingReady ? requestRecipients : []}
           requestAction={creditsRequestAction}
-          organizationId={billingOrgId}
           organizationName={creditsUpgrade.organizationName}
           interval={creditsUpgrade.interval}
           onIntervalChange={creditsUpgrade.setInterval}

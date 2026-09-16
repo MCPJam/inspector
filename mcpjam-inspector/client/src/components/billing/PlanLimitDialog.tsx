@@ -171,7 +171,6 @@ function UpgradeReturnFlow({
 
     track("plan_limit_upgrade_returned", {
       location: "plan_limit_dialog",
-      organization_id: upgradeReturn.organizationId,
       origin: upgradeReturn.origin,
       upgraded,
       // "pending" is a checkout we couldn't see settle in time, not a bail.
@@ -334,7 +333,6 @@ function PlanLimitWall() {
     track("plan_limit_dialog_shown", {
       location: "plan_limit_dialog",
       wall_kind: "eval_iterations",
-      organization_id: organizationId,
       limit_kind: limit.kind,
       origin: limit.origin,
       used: limit.used,
@@ -382,7 +380,6 @@ function PlanLimitWall() {
     close();
     track("plan_limit_enterprise_cta_clicked", {
       location: "plan_limit_dialog",
-      organization_id: organizationId,
       limit_kind: limit?.kind ?? "evalIterations",
       origin: limit?.origin,
       plan: upgrade.effectivePlan,
@@ -405,7 +402,6 @@ function PlanLimitWall() {
       track("plan_limit_dialog_dismissed", {
         location: "plan_limit_dialog",
         wall_kind: "eval_iterations",
-        organization_id: organizationId,
         limit_kind: limit.kind,
         origin: limit.origin,
         current_plan: upgrade.currentPlan,
@@ -489,7 +485,6 @@ function PlanLimitWall() {
       showEnterprise={showEnterprise}
       showRequest={showRequest}
       requestRecipients={requestRecipients}
-      organizationId={organizationId}
       organizationName={upgrade.organizationName}
       origin="evals"
       limitKind={limit.kind}

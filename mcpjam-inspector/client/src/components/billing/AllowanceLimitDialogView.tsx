@@ -19,7 +19,6 @@ export interface AllowanceLimitDialogViewProps {
   /** Can't buy credits or upgrade. Gets the owner-request path instead. */
   isKnownNonManager: boolean;
   requestRecipients: UpgradeRequestRecipient[];
-  organizationId?: string | null;
   organizationName: string;
   teamName: string;
   onBuyCredits: () => void;
@@ -44,7 +43,6 @@ export function AllowanceLimitDialogView({
   description,
   isKnownNonManager,
   requestRecipients,
-  organizationId,
   organizationName,
   teamName,
   onBuyCredits,
@@ -78,7 +76,6 @@ export function AllowanceLimitDialogView({
             origin="credits"
             limitKind="credits"
             requestAction="buyCredits"
-            organizationId={organizationId}
           />
         ) : (
           <>

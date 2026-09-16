@@ -26,7 +26,6 @@ export interface CreditsLimitDialogViewProps {
   showRequestUpgrade?: boolean;
   requestRecipients: UpgradeRequestRecipient[];
   requestAction?: UpgradeRequestAction;
-  organizationId?: string | null;
   organizationName: string;
   interval: BillingInterval;
   onIntervalChange: (interval: BillingInterval) => void;
@@ -63,7 +62,6 @@ export function CreditsLimitDialogView({
   showRequestUpgrade = false,
   requestRecipients,
   requestAction = "upgrade",
-  organizationId,
   organizationName,
   interval,
   onIntervalChange,
@@ -108,7 +106,6 @@ export function CreditsLimitDialogView({
             origin="credits"
             limitKind="credits"
             requestAction={requestAction}
-            organizationId={organizationId}
           />
         ) : (
           <>
@@ -136,7 +133,6 @@ export function CreditsLimitDialogView({
                 origin="credits"
                 limitKind="credits"
                 requestAction="upgrade"
-                organizationId={organizationId}
               />
             ) : null}
             <DialogFooter className="sm:justify-between">

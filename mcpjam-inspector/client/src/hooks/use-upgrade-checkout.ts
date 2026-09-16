@@ -302,11 +302,9 @@ export function useUpgradeCheckout({
       setInterval(nextInterval);
       track("plan_limit_interval_selected", {
         location: "plan_limit_dialog",
-        organization_id: organizationId,
         limit_kind: limitKind,
         origin,
         billing_interval: nextInterval,
-        price_cents: teamEntry?.prices[nextInterval] ?? null,
         current_plan: currentPlan,
         effective_plan: effectivePlan,
         can_manage_billing: canManageBilling,
@@ -344,7 +342,6 @@ export function useUpgradeCheckout({
       toast.error("Checkout is not available for this plan right now.");
       track("plan_limit_upgrade_failed", {
         location: "plan_limit_dialog",
-        organization_id: organizationId,
         limit_kind: limitKind,
         origin,
         error_kind: "no_supported_interval",
@@ -375,11 +372,9 @@ export function useUpgradeCheckout({
       );
       track("plan_limit_upgrade_clicked", {
         location: "plan_limit_dialog",
-        organization_id: organizationId,
         limit_kind: limitKind,
         origin,
         billing_interval: checkoutInterval,
-        price_cents: teamEntry?.prices[checkoutInterval] ?? null,
         current_plan: currentPlan,
         effective_plan: effectivePlan,
         can_manage_billing: canManageBilling,
@@ -419,7 +414,6 @@ export function useUpgradeCheckout({
       }
       track("plan_limit_upgrade_resolved", {
         location: "plan_limit_dialog",
-        organization_id: organizationId,
         limit_kind: limitKind,
         origin,
         result_kind: result.kind,
@@ -437,11 +431,9 @@ export function useUpgradeCheckout({
       );
       track("plan_limit_upgrade_failed", {
         location: "plan_limit_dialog",
-        organization_id: organizationId,
         limit_kind: limitKind,
         origin,
         error_kind: "start_plan_change_failed",
-        error_name: error instanceof Error ? error.name : "unknown",
         billing_interval: checkoutInterval,
         current_plan: currentPlan,
         effective_plan: effectivePlan,
