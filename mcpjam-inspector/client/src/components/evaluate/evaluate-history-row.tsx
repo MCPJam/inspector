@@ -200,6 +200,9 @@ export function EvaluateHistoryRow({
           hostNamesById,
         ).name,
         hostStyle: row.client?.hostStyle,
+        clientId: row.client?.namedHostId,
+        clientVersionId: row.client?.versionId,
+        clientVersionNumber: row.client?.versionNumber,
         models: row.client?.modelId ? [row.client.modelId] : [],
       },
   );

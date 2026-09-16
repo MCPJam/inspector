@@ -1003,9 +1003,9 @@ describe("project run history metrics", () => {
     ).toBeNull();
     expect(screen.getByText("1 of 1 loaded runs")).toBeVisible();
     expect(within(run).getByText(/Cursor/)).toBeVisible();
-    expect(within(run).getByText(/claude-fable-5/)).toBeVisible();
+    expect(within(run).getByText(/Claude Fable 5/)).toBeVisible();
     expect(within(run).getByText(/ChatGPT/)).toBeVisible();
-    expect(within(run).getByText(/gpt-5.1/)).toBeVisible();
+    expect(within(run).getByText(/GPT-5.1/)).toBeVisible();
     expect(
       within(run).queryByRole("button", { name: /Client model mapping/ }),
     ).toBeNull();

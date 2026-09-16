@@ -2588,6 +2588,9 @@ export interface PlatformClient {
 
 /** Full client detail, including the resolved config DTO and its read-backs. */
 export interface PlatformClientDetail {
+  /** Saved configuration revision, read atomically with config. */
+  versionId?: string;
+  versionNumber?: number;
   id: string;
   name: string;
   /** The concurrency token — see {@link PlatformClient.configId}. */

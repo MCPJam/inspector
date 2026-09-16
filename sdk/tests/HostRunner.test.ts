@@ -1976,6 +1976,8 @@ it("carries suite lease ownership through iteration clones into the model", asyn
   const runner = new HostRunner({
     tools: {},
     apiKey: "sk_test",
+    mcpjamProject: "selected-project",
+    baseUrls: { mcpjam: "https://custom.test" },
     model: "mcpjam/anthropic/claude-haiku-4.5",
   });
   const iteration = runner
@@ -1984,6 +1986,10 @@ it("carries suite lease ownership through iteration clones into the model", asyn
   await iteration.run("hello");
   expect(createModelFromString).toHaveBeenLastCalledWith(
     "mcpjam/anthropic/claude-haiku-4.5",
-    expect.objectContaining({ mcpjamLeaseScope: scope })
+    expect.objectContaining({
+      mcpjamLeaseScope: scope,
+      mcpjamProject: "selected-project",
+      baseUrls: { mcpjam: "https://custom.test" },
+    })
   );
 });

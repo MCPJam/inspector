@@ -87,6 +87,8 @@ import {
 interface HostRunnerBaseConfig {
   /** @internal Lease ownership inherited by iteration clones. */
   mcpjamLeaseScope?: McpjamModelLeaseScope;
+  mcpjamProject?: string;
+  baseUrls?: CreateModelOptions["baseUrls"];
   /** Tools to provide to the LLM (Tool[] from manager.getTools() or AiSdkTool from manager.getToolsForAiSdk()) */
   tools: Tool[] | AiSdkTool;
   /** API key for the LLM provider */
@@ -272,6 +274,8 @@ export class HostRunner implements HostExecutor {
   private readonly model: string;
   private readonly apiKey: string;
   private readonly mcpjamLeaseScope?: McpjamModelLeaseScope;
+  private readonly mcpjamProject?: string;
+  private readonly baseUrls?: CreateModelOptions["baseUrls"];
   private systemPrompt: string;
   private temperature: number | undefined;
   private readonly maxSteps: number;
@@ -391,6 +395,8 @@ export class HostRunner implements HostExecutor {
     this.model = resolvedModel;
     this.apiKey = config.apiKey;
     this.mcpjamLeaseScope = config.mcpjamLeaseScope;
+    this.mcpjamProject = config.mcpjamProject;
+    this.baseUrls = config.baseUrls;
     this.systemPrompt =
       config.systemPrompt ??
       (this.hostSnapshot?.systemPrompt && this.hostSnapshot.systemPrompt !== ""
@@ -786,6 +792,8 @@ export class HostRunner implements HostExecutor {
       const modelOptions: CreateModelOptions = {
         apiKey: this.apiKey,
         mcpjamLeaseScope: this.mcpjamLeaseScope,
+        mcpjamProject: this.mcpjamProject,
+        baseUrls: this.baseUrls,
         customProviders: this.customProviders,
       };
       const model = createModelFromString(this.model, modelOptions);
@@ -1031,6 +1039,8 @@ export class HostRunner implements HostExecutor {
       tools: options.tools ?? this.rawTools,
       apiKey: options.apiKey ?? this.apiKey,
       mcpjamLeaseScope: options.mcpjamLeaseScope ?? this.mcpjamLeaseScope,
+      mcpjamProject: options.mcpjamProject ?? this.mcpjamProject,
+      baseUrls: options.baseUrls ?? this.baseUrls,
       maxSteps: options.maxSteps ?? this.maxSteps,
       customProviders: options.customProviders ?? this.customProviders,
       mcpClientManager: options.mcpClientManager ?? this.mcpClientManager,

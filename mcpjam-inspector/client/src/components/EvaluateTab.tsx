@@ -1,3 +1,5 @@
+import { createElement } from "react";
+import { ModelDisplayNamesContext } from "@/lib/model-display-name";
 import { normalizeGeneratedDraft } from "@/lib/evals/normalize-generated-draft";
 import { evalChatSuiteContext } from "@/lib/mcpjam-agent/eval-chat-context";
 import { syncEvalChatContext } from "@/lib/mcpjam-agent/eval-scope";
@@ -1559,7 +1561,9 @@ function EvaluateTabContent({
 
   const renderPlaygroundBody = () => renderSuitesBrowsePanel();
 
-  return (
+  return createElement(
+    ModelDisplayNamesContext.Provider,
+    { value: availableModels },
     <EvalTabGate
       variant="playground"
       isLoading={isLoading}
@@ -1765,6 +1769,6 @@ function EvaluateTabContent({
           onConfirmDeleteTestCase={handlers.confirmDeleteTestCase}
         />
       </EvalAgentWorkspace>
-    </EvalTabGate>
+    </EvalTabGate>,
   );
 }
