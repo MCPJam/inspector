@@ -122,6 +122,31 @@ describe("buildSentryConfig", () => {
     expect(convexPattern.test("https://u:p@x.convex.cloud/")).toBe(false);
   });
 
+  it("propagates traces to the first-party Convex custom domains, exactly", () => {
+    // Production is served on rt.mcpjam.com (Convex API) and
+    // rt-http.mcpjam.com (HTTP actions) through our own Cloudflare zone. The
+    // host must match exactly — no suffix look-alikes, subdomains or userinfo.
+    const patterns = buildSentryConfig({
+      dsn: "dsn",
+      environment: "prod",
+      deployment: "hosted",
+    }).tracePropagationTargets.filter((t): t is RegExp => t instanceof RegExp);
+
+    const customPattern = patterns.find((p) => p.source.includes("mcpjam"))!;
+    expect(customPattern.test("https://rt.mcpjam.com/api/1.29.0/sync")).toBe(
+      true,
+    );
+    expect(customPattern.test("https://rt-http.mcpjam.com/stream")).toBe(true);
+    expect(customPattern.test("https://rt.mcpjam.com:443/x")).toBe(true);
+    expect(customPattern.test("https://rt.mcpjam.com")).toBe(true);
+    expect(customPattern.test("https://rt.mcpjam.com.evil/api")).toBe(false);
+    expect(customPattern.test("https://x.rt.mcpjam.com/")).toBe(false);
+    expect(customPattern.test("https://rt-https.mcpjam.com/")).toBe(false);
+    expect(customPattern.test("https://app.mcpjam.com/")).toBe(false);
+    expect(customPattern.test("https://rt.mcpjam.com@evil.test/")).toBe(false);
+    expect(customPattern.test("https://u:p@rt.mcpjam.com/")).toBe(false);
+  });
+
   it("defaults tracesSampleRate to 0.1 and honors an override", () => {
     const base = { dsn: "dsn", environment: "prod", deployment: "hosted" as const };
     expect(buildSentryConfig(base).tracesSampleRate).toBe(0.1);
