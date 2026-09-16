@@ -2429,20 +2429,18 @@ describe("ServerPicker — a surface that refuses an empty field", () => {
   });
 });
 
-describe("ServerPicker — what the popover warns about", () => {
-  it("carries BB-234's warning where the choice is actually made", async () => {
-    // The copy lives here rather than in the panel, so this is the assertion
-    // that proves it reaches a real popover — the panel only owes the slot.
+describe("ServerPicker — what the popover does NOT warn about", () => {
+  it("no longer carries BB-234's warning, which moved to swarm setup", async () => {
+    // BB-234 round two: the copy was scoped to Swarms and lifted onto the
+    // page, so this shared popover — which also serves evals, the environment
+    // editor and two chat authoring flows — must not reproduce it. Asserted
+    // on the popover it used to appear in, not merely on the module, so a
+    // reintroduction through the panel's `notice` slot fails here too.
     open();
 
-    const warning = await screen.findByTestId(
-      "server-picker-production-warning",
-    );
-    // "writing AND deleting" as one phrase: matching only the delete half
-    // would let the write claim be dropped, and writing is the half that
-    // surprises people about a run that looks read-only.
-    expect(warning).toHaveTextContent(/real actions/i);
-    expect(warning).toHaveTextContent(/writing and\s+deleting data/i);
-    expect(warning).toHaveTextContent(/not production/i);
+    // Prove the popover actually rendered before asserting an absence.
+    await serverRow("srv_1");
+    expect(screen.queryByTestId("server-picker-production-warning")).toBeNull();
+    expect(screen.queryByText(/real actions/i)).toBeNull();
   });
 });

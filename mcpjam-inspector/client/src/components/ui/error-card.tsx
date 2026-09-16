@@ -82,7 +82,18 @@ function resolveNormalized(input: unknown): NormalizedError {
   return describeError(input);
 }
 
-function severityStyles(severity: NormalizedError["severity"]) {
+/**
+ * The app's severity palette, and the thing the design system's ErrorCard
+ * node documents by name (Figma `Design System — MCPJam App`, node 119-2).
+ *
+ * Exported because that node is what product points at when it asks for "the
+ * blue informational treatment" — `SwarmProductionNotice` reads `info` from
+ * here rather than restating the class strings, so the palette has one home
+ * and a change to it cannot leave a sibling surface behind. Consumers outside
+ * this card want the STYLES only; the card's own error-reporting affordances
+ * (details, copy, docs, `role="alert"`) are not part of the contract.
+ */
+export function severityStyles(severity: NormalizedError["severity"]) {
   switch (severity) {
     case "info":
       return {
