@@ -646,9 +646,13 @@ describe("ServerConnectionCard", () => {
 
     it("renders long error messages via the ErrorCard", () => {
       // The ErrorCard owns details disclosure; we just confirm the rich
-      // surface shows up (title + Learn more link) rather than the old
-      // ad-hoc truncation. The full message lives in the collapsed
-      // details panel.
+      // surface shows up (the docs link) rather than the old ad-hoc
+      // truncation.
+      //
+      // This message is unclassified and short enough that the describer
+      // shows it in full, so there is no further evidence to disclose and no
+      // "Show details" toggle. The card puts "Learn more" on the action row
+      // instead of offering a disclosure that opens onto nothing.
       const longError = "A".repeat(150);
       const server = createServer({
         connectionStatus: "failed",
@@ -657,17 +661,32 @@ describe("ServerConnectionCard", () => {
       render(<ServerConnectionCard server={server} {...defaultProps} />);
 
       expect(screen.getByText("Learn more")).toBeInTheDocument();
+      expect(screen.queryByText("Show details")).not.toBeInTheDocument();
     });
 
-    it("shows troubleshooting link when connection failed", () => {
+    it("shows troubleshooting link when a failure carries no error card", () => {
+      // The generic troubleshooting index is the fallback for a failed server
+      // with nothing to describe. When there IS an error card it carries its
+      // own "Learn more" aimed at that specific error, and offering both put
+      // two docs links under one failure with the weaker one lower down.
       const server = createServer({
         connectionStatus: "failed",
-        lastError: "Error",
+        lastError: undefined,
       });
       render(<ServerConnectionCard server={server} {...defaultProps} />);
 
       expect(screen.getByText("Having trouble?")).toBeInTheDocument();
       expect(screen.getByText("Check troubleshooting")).toBeInTheDocument();
+    });
+
+    it("drops the generic troubleshooting link when an error card is shown", () => {
+      const server = createServer({
+        connectionStatus: "failed",
+        lastError: "Connection refused",
+      });
+      render(<ServerConnectionCard server={server} {...defaultProps} />);
+
+      expect(screen.queryByText("Having trouble?")).not.toBeInTheDocument();
     });
   });
 
