@@ -76,6 +76,7 @@ describe("swarm-agent createJourneyRun — request-body contract", () => {
       journeyRefId: "journey-1",
       launchKey: "lk-1",
       maxHosts: 1,
+      kind: "swarm",
       // ASSERTED BY THIS PROCESS, never taken from the caller's args above: we
       // are the runner, so we are the only honest source for what we can
       // execute. The backend reads it to decide whether an environment's
@@ -88,6 +89,20 @@ describe("swarm-agent createJourneyRun — request-body contract", () => {
     // And the bearer is forwarded as a JWT for the JWT-only Convex HTTP action.
     const headers = (init as RequestInit).headers as Record<string, string>;
     expect(headers.Authorization).toBe("Bearer bearer-token");
+  });
+  it("serializes an explicit standalone run kind", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify(okCreateResponse())),
+    );
+    await createJourneyRun(CONVEX_HTTP_URL, "token", {
+      projectId: "proj-1",
+      journeyRefId: "journey-1",
+      launchKey: "lk-2",
+      kind: "user_testing",
+    });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).kind).toBe(
+      "user_testing",
+    );
   });
 });
 

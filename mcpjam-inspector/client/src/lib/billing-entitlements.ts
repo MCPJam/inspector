@@ -461,7 +461,9 @@ export function getEvalIterationLimitFromError(
     windowKind:
       payload.windowKind === "month" || payload.windowKind === "day"
         ? payload.windowKind
-        : payload.plan === "pro" || payload.plan === "team" || payload.plan === "enterprise"
+        : payload.plan === "pro" ||
+          payload.plan === "team" ||
+          payload.plan === "enterprise"
         ? "month"
         : "day",
   };
@@ -478,6 +480,10 @@ export function getBillingErrorMessage(
     // lives on `err.data`; `err.message` is the redacted "Server Error"/Request
     // ID string, which reads as a crash rather than "fix this field".
     return convexErrMessage(error, fallback);
+  }
+
+  if (payload.code === "COLLABORATIVE_EDITING_REQUIRED") {
+    return "Editing another member's work requires Team or Enterprise.";
   }
 
   if (payload.code === "billing_feature_not_included") {

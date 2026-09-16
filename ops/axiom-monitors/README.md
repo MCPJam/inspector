@@ -20,6 +20,34 @@ Plan mode runs every query read-only against the real API and asserts it
 produces the declared `columnName`. A monitor whose APL does not compile, or
 whose query cannot produce the column the threshold reads, is never written.
 
+## What the alert actually says
+
+Axiom's Slack payload is, in order: the monitor **name**, the **whole
+description**, the managed marker, and *then* the line carrying the number
+(`Current value of 150.97 is above the threshold value of 150`). The number is
+last. Every extra paragraph of description pushes it further into Slack's
+"Show more" fold, in a channel that also carries Sentry and PostHog alerts.
+
+So a description is not documentation — it is the pager text. Write it as:
+
+1. One line a woken engineer can act on: tier, what crossed, and what normal
+   looks like for comparison.
+2. The triage step, as something to paste or click. `View Query` is already in
+   the message, so "open View Query and replace the last line with …" beats
+   restating the whole APL.
+3. Two or three readings of the result: this shape means X, that shape means Y.
+4. One pointer to the runbook.
+
+Everything else — why the monitor exists, how the threshold was measured, the
+incident it came from — goes in **`rationale`**, a repo-only field that
+`apply.mjs` never sends to Axiom. It is still code-reviewed and still diffable;
+it just does not wake anyone up. `apply.mjs` hard-fails a description over 900
+characters and tells you to move the prose.
+
+The seven `inspector-*` definitions predate this rule and carry
+`"descriptionLengthExempt": true`. That flag is visible debt, not an
+endorsement: delete it when the description is rewritten.
+
 ## Replay before changing thresholds
 
 ```bash
@@ -50,7 +78,14 @@ data, treat it as expired rather than as a passing SILENT.
 
 Notifier IDs are org-specific, so definitions reference a **logical key**
 (`mcpjam-alerts-page`) and the script resolves it from
-`AXIOM_NOTIFIER_MCPJAM_ALERTS_PAGE` at apply time. An unresolved notifier is a
+`AXIOM_NOTIFIER_MCPJAM_ALERTS_PAGE` at apply time.
+
+Logical keys in use: `mcpjam-alerts-page` (`jnWZGoVFRcvyTdUjBe`),
+`mcpjam-alerts-warn` (`Q3BO52GfVxE82N9tWH`), and `llm-safety`
+(`ox9MvFUsrwZtx9HfxM`, the existing "MCPJam LLM Safety Slack" notifier that
+every LLM-spend monitor routes through — set `AXIOM_NOTIFIER_LLM_SAFETY`). All
+three post to `#mcpjam-alerts` today; `llm-safety` exists as its own object so
+spend pages can be moved to a quieter channel with an env-var change. An unresolved notifier is a
 hard failure, never a default — a monitor wired to nothing looks healthy
 forever, which is the exact failure this work exists to fix.
 

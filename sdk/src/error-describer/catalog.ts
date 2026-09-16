@@ -105,6 +105,9 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   // Default only. A refresh failure on a credential MCPJam itself holds is
   // ours — callers pass `credentialOwner: "mcpjam"` to say so.
   "auth/oauth_refresh_failed": "user_config",
+  // Nothing has failed on the wire: the user simply has not granted consent
+  // yet. Config-side because only the user can complete it.
+  "auth/consent_required": "user_config",
   "oauth/invalid_client": "user_config",
   "oauth/invalid_grant": "user_config",
   "oauth/redirect_mismatch": "user_config",
@@ -525,6 +528,26 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     ],
     "oauth-refresh-failed",
   ),
+  /**
+   * Not a failure. The server is reachable and nothing was rejected — the
+   * user has simply not authorized MCPJam yet, or a reconnect ran on a path
+   * that deliberately refuses to open the consent window unprompted.
+   *
+   * `warning`, not `error`: rendering an expected, one-click state in the
+   * same red as a dead transport is what made this surface read as broken.
+   */
+  "auth/consent_required": entry(
+    "auth/consent_required",
+    "Sign-in required",
+    "This server needs your permission before it can connect.",
+    [
+      "Reconnect ran without opening the sign-in prompt, so no OAuth token exists for this server yet.",
+    ],
+    ["Click Reconnect and approve the request in the window that opens."],
+    "consent-required",
+    "warning",
+  ),
+
   "auth/missing_bearer": entry(
     "auth/missing_bearer",
     "Missing bearer token",

@@ -34,6 +34,8 @@ export interface CreditBalanceState {
    */
   billingModel: "daily" | "monthly_per_seat" | "monthly_flat";
   topUpEligible?: boolean;
+  outstandingDeficitCredits?: number;
+  rolloverCreditsRemaining?: number;
   rolloverCapCredits?: number | null;
   /** Team monthly allowance granted this period. Only set when monthly. */
   monthlyAllowanceTotal?: number;
@@ -75,6 +77,12 @@ export const normalizeBalance = (
   const r = raw as Record<string, unknown>;
   return {
     paidCreditsRemaining: optionalNumber(r.paidCreditsRemaining),
+    outstandingDeficitCredits: optionalNumberOrUndefined(
+      r.outstandingDeficitCredits,
+    ),
+    rolloverCreditsRemaining: optionalNumberOrUndefined(
+      r.rolloverCreditsRemaining,
+    ),
     hasPurchaseHistory: r.hasPurchaseHistory === true,
     freeDailyPercentUsed: clampPercent(r.freeDailyPercentUsed),
     freeDailyResetAt: optionalNumber(r.freeDailyResetAt),
