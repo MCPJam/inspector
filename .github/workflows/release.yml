@@ -446,6 +446,16 @@ jobs:
         env:
           VERSION_TAG: ${{ steps.tag.outputs.version_tag }}
         run: |
+          # Never move `evals-v1` backwards. The concurrency group stops two
+          # publishers running at once, but not two releases FINISHING out of
+          # order: one dispatched at an older commit could otherwise overwrite
+          # a newer release and hand every pinned user code that was already
+          # superseded.
+          if git rev-parse -q --verify 'refs/tags/evals-v1^{commit}' >/dev/null &&
+             ! git merge-base --is-ancestor evals-v1 "$GITHUB_SHA"; then
+            echo "::error::evals-v1 points at $(git rev-parse evals-v1), which is not an ancestor of $GITHUB_SHA. A newer release already published; re-run this one from the current main."
+            exit 1
+          fi
           # Immutable tag first. A second run racing this one fails here, on a
           # tag that already exists, before it can move the floating tag.
           if git rev-parse -q --verify "refs/tags/$VERSION_TAG" >/dev/null; then
