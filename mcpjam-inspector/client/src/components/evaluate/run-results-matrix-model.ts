@@ -1,6 +1,8 @@
 import { compactModelIdTail } from "@/lib/environment-label";
 import { computeIterationResult } from "../evals/pass-criteria";
-import { iterationLatencyP95, sumIterationCost,
+import {
+  iterationLatencyP95,
+  sumIterationCost,
   runClientIdentity,
   snapshotTestModels,
 } from "../evals/helpers";
@@ -34,6 +36,16 @@ export function resultCounts(iterations: readonly EvalIteration[]) {
     else counts.pending++;
   }
   return counts;
+}
+
+/** Match the overall result displayed for a case/client/model cell. */
+export function cellResult(iterations: readonly EvalIteration[]) {
+  if (!iterations.length) return null;
+  const counts = resultCounts(iterations);
+  if (counts.pending) return "pending";
+  if (counts.failed) return "failed";
+  if (counts.cancelled) return "cancelled";
+  return "passed";
 }
 
 export function matrixCaseKey(iteration: EvalIteration): string {
