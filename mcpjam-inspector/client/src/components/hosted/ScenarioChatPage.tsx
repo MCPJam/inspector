@@ -1,3 +1,4 @@
+import { ScenarioSignInGate } from "./ScenarioSignInGate";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
@@ -79,6 +80,7 @@ interface ScenarioRouteError {
 }
 
 type ScenarioErrorKind =
+  | "sign_in_required"
   | "access_denied"
   | "guest_blocked"
   | "invalid_link"
@@ -114,7 +116,10 @@ const UNEXPECTED_SCENARIO_ERROR_MESSAGE =
 
 type ScenarioBootstrapAuthMode = "workos" | "guest";
 type ScenarioLandingState =
-  "resolvingAuth" | "bootstrapping" | "ready" | "denied";
+  | "resolvingAuth"
+  | "bootstrapping"
+  | "ready"
+  | "denied";
 
 function sanitizeScenarioRouteErrorMessage(message: string): string {
   const normalized = message.replace(/\s+/g, " ").trim();
@@ -168,8 +173,8 @@ async function readRouteError(response: Response): Promise<ScenarioRouteError> {
       typeof domainCode === "string" && domainCode
         ? domainCode
         : typeof body?.code === "string"
-          ? body.code
-          : undefined;
+        ? body.code
+        : undefined;
     message =
       body?.message ||
       body?.error ||
@@ -206,6 +211,14 @@ function getScenarioDisplayError(
     };
   }
 
+  if (error.code === "SCENARIO_SIGN_IN_REQUIRED" || error.status === 401) {
+    return {
+      kind: "sign_in_required",
+      title: "Sign in to preview this scenario",
+      message:
+        "Sign in or create an account to preview and test this scenario.",
+    };
+  }
   const normalizedMessage = error.message.toLowerCase();
   const requiresSignIn = normalizedMessage.includes(
     "sign in to access this scenario",
@@ -214,6 +227,8 @@ function getScenarioDisplayError(
   // stay as the deploy-skew fallback for servers that predate the code.
   const isAccessDenied =
     error.code === "SCENARIO_ACCESS_DENIED" ||
+    error.code === "SCENARIO_INVITE_ONLY" ||
+    error.code === "SCENARIO_MEMBERS_ONLY" ||
     normalizedMessage.includes("don't have access");
   const isGuestBlocked =
     normalizedMessage.includes("guests cannot access") ||
@@ -297,13 +312,49 @@ async function redeemScenarioToken(
      * `share_link` on the request wire.
      */
     surface?: ScenarioSession["surface"];
+    authenticatedUserId?: string;
+    resolvePolicy?: boolean;
+    getAccountToken?: () => Promise<string | undefined>;
   },
 ): Promise<ScenarioSession> {
-  const redeemResponse = await authFetch("/api/web/scenarios/redeem", {
+  const init: RequestInit = {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ scenarioToken: token }),
-  });
+  };
+  // Before guest materialization, ask the backend using only the link. A
+  // restricted scenario responds with no configuration and no grant writes.
+  if (options?.resolvePolicy) {
+    const policyResponse = await fetch("/api/web/scenarios/redeem", init);
+    if (!policyResponse.ok) {
+      const error = await readRouteError(policyResponse);
+      if (error.code !== "SCENARIO_UNAUTHENTICATED") throw error;
+    } else {
+      throw createScenarioRouteError(
+        502,
+        "Unexpected unauthenticated redemption",
+      );
+    }
+  }
+  if (options?.getAccountToken) {
+    let bearer: string | undefined;
+    try {
+      bearer = await options.getAccountToken();
+    } catch {
+      /* expired account */
+    }
+    if (!bearer)
+      throw createScenarioRouteError(
+        401,
+        "Sign in to preview this scenario",
+        "SCENARIO_SIGN_IN_REQUIRED",
+      );
+    init.headers = {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${bearer}`,
+    };
+  }
+  const redeemResponse = await authFetch("/api/web/scenarios/redeem", init);
 
   if (!redeemResponse.ok) {
     throw await readRouteError(redeemResponse);
@@ -328,6 +379,7 @@ async function redeemScenarioToken(
     // Stamped so recovery has a way back to a grant after the post-redeem
     // strip removes the token from the URL.
     shareToken: token,
+    authenticatedUserId: options?.authenticatedUserId,
   });
 
   if (!nextSession) {
@@ -357,6 +409,8 @@ export function ScenarioChatPage({
   const {
     getAccessToken,
     signIn,
+    signUp,
+    signOut,
     user: workOsUser,
     isLoading: isWorkOsLoading,
   } = useAuth();
@@ -409,8 +463,23 @@ export function ScenarioChatPage({
     clearScenarioSession();
   }, []);
 
-  const [session, setSession] = useState<ScenarioSession | null>(() =>
+  const [cachedSession, setSession] = useState<ScenarioSession | null>(() =>
     readCurrentSession(),
+  );
+  const validatedIdentityRef = useRef<string | null>(null);
+  const currentIdentityRef = useRef(workOsUser?.id);
+  currentIdentityRef.current = workOsUser?.id;
+  const session =
+    cachedSession?.payload.requiresSignIn &&
+    (!workOsUser ||
+      validatedIdentityRef.current !== workOsUser.id ||
+      cachedSession.authenticatedUserId !== workOsUser.id)
+      ? null
+      : cachedSession;
+  const retainedTokenRef = useRef(cachedSession?.shareToken ?? null);
+  if (pathToken) retainedTokenRef.current = pathToken;
+  const accountRequiredRef = useRef(
+    cachedSession?.payload.requiresSignIn === true,
   );
   const [isBootstrapping, setIsBootstrapping] = useState(Boolean(pathToken));
   const [routeError, setRouteError] = useState<ScenarioRouteError | null>(null);
@@ -446,11 +515,13 @@ export function ScenarioChatPage({
   // precisely what keeps the staleness guards below from discarding every
   // refresh forever; navigating to a DIFFERENT scenario still trips them.
   const resolveShareToken = useCallback(
-    () => tokenFromPathRef.current ?? sessionRef.current?.shareToken ?? null,
+    () =>
+      tokenFromPathRef.current ??
+      sessionRef.current?.shareToken ??
+      retainedTokenRef.current,
     [],
   );
-  const isAuthSettling =
-    Boolean(tokenFromPath) && (isWorkOsLoading || isAuthLoading);
+  const isAuthSettling = isWorkOsLoading || isAuthLoading;
 
   const sessionServersRequired = useMemo(
     () => session?.payload.servers.filter((s) => !s.optional) ?? [],
@@ -635,7 +706,26 @@ export function ScenarioChatPage({
     let cancelled = false;
 
     const resolve = async () => {
-      if (tokenFromPath) {
+      const tokenToRedeem = tokenFromPath ?? retainedTokenRef.current;
+      if (tokenToRedeem) {
+        if (
+          cachedSession?.payload.requiresSignIn &&
+          cachedSession.authenticatedUserId !== workOsUser?.id
+        ) {
+          clearCurrentSession(cachedSession.scenarioId);
+        }
+        setSession(null);
+        if (accountRequiredRef.current && !workOsUser) {
+          setRouteError(
+            createScenarioRouteError(
+              401,
+              "Sign in to preview this scenario",
+              "SCENARIO_SIGN_IN_REQUIRED",
+            ),
+          );
+          setIsBootstrapping(false);
+          return;
+        }
         const authMode = getScenarioBootstrapAuthMode(isAuthenticated);
         setIsBootstrapping(true);
         setRouteError(null);
@@ -646,9 +736,16 @@ export function ScenarioChatPage({
           status: "started",
         });
         try {
-          const nextSession = await redeemScenarioToken(tokenFromPath);
+          const nextSession = await redeemScenarioToken(tokenToRedeem, {
+            authenticatedUserId: workOsUser?.id,
+            getAccountToken: workOsUser ? getAccessToken : undefined,
+            resolvePolicy: !workOsUser,
+          });
           if (cancelled) return;
 
+          accountRequiredRef.current =
+            nextSession.payload.requiresSignIn === true;
+          validatedIdentityRef.current = workOsUser?.id ?? null;
           writeCurrentSession(nextSession);
           setSession(nextSession);
           setRouteError(null);
@@ -663,7 +760,9 @@ export function ScenarioChatPage({
         } catch (error) {
           if (cancelled) return;
           setSession(null);
-          clearCurrentSession(sessionRef.current?.scenarioId ?? null);
+          clearCurrentSession(
+            cachedSession?.scenarioId ?? sessionRef.current?.scenarioId ?? null,
+          );
 
           const nextError = isScenarioRouteError(error)
             ? error
@@ -673,6 +772,8 @@ export function ScenarioChatPage({
                   ? error.message
                   : "Unable to open this scenario.",
               );
+          if (nextError.code === "SCENARIO_SIGN_IN_REQUIRED")
+            accountRequiredRef.current = true;
           const displayError = getScenarioDisplayError(nextError);
 
           if (displayError.kind === "unexpected") {
@@ -680,7 +781,6 @@ export function ScenarioChatPage({
               status: nextError.status,
               code: nextError.code,
               message: nextError.message,
-              rawMessage: nextError.rawMessage,
             });
           }
 
@@ -723,6 +823,7 @@ export function ScenarioChatPage({
   }, [
     clearCurrentSession,
     isAuthenticated,
+    workOsUser?.id,
     isAuthSettling,
     readCurrentSession,
     tokenFromPath,
@@ -750,6 +851,7 @@ export function ScenarioChatPage({
   // in flight would strand the capture hook's queued stale snapshot.
   const refreshInFlightRef = useRef<{
     token: string;
+    identity?: string;
     promise: Promise<HostedAccessRecoveryResult>;
   } | null>(null);
   const refreshAccessSession =
@@ -759,13 +861,20 @@ export function ScenarioChatPage({
         return { ok: false, reason: "no_token" };
       }
       const inFlight = refreshInFlightRef.current;
-      if (inFlight && inFlight.token === token) {
+      if (
+        inFlight &&
+        inFlight.token === token &&
+        inFlight.identity === workOsUser?.id
+      ) {
         return inFlight.promise;
       }
 
       const promise = (async (): Promise<HostedAccessRecoveryResult> => {
         try {
           const nextSession = await redeemScenarioToken(token, {
+            authenticatedUserId: workOsUser?.id,
+            getAccountToken: workOsUser ? getAccessToken : undefined,
+            resolvePolicy: !workOsUser,
             surface: sessionRef.current?.surface,
           });
           // Guards before mutating shared session state: a navigation to a
@@ -774,7 +883,11 @@ export function ScenarioChatPage({
           // (the visitor left the page, or the exit path just CLEARED the
           // stored session) must not resurrect a session the page no longer
           // owns — sessionStorage outlives this component.
-          if (!isMountedRef.current || resolveShareToken() !== token) {
+          if (
+            !isMountedRef.current ||
+            resolveShareToken() !== token ||
+            currentIdentityRef.current !== workOsUser?.id
+          ) {
             return { ok: false, reason: "transient" };
           }
           writeCurrentSession(nextSession);
@@ -822,15 +935,32 @@ export function ScenarioChatPage({
         }
       })();
 
-      refreshInFlightRef.current = { token, promise };
+      refreshInFlightRef.current = { token, identity: workOsUser?.id, promise };
       return promise;
-    }, [resolveShareToken, writeCurrentSession]);
+    }, [
+      resolveShareToken,
+      writeCurrentSession,
+      workOsUser?.id,
+      getAccessToken,
+    ]);
 
   // Fire-and-forget wrapper kept for `useSharedChatWidgetCapture`, whose
   // contract is a void call it never awaits.
   const requestRefreshAccessVersion = useCallback(() => {
-    void refreshAccessSession();
-  }, [refreshAccessSession]);
+    void refreshAccessSession().then((result) => {
+      if (!result.ok && result.reason === "denied" && result.error) {
+        clearCurrentSession(sessionRef.current?.scenarioId);
+        setSession(null);
+        setRouteError(
+          createScenarioRouteError(
+            result.error.status,
+            result.error.message,
+            result.error.code,
+          ),
+        );
+      }
+    });
+  }, [refreshAccessSession, clearCurrentSession]);
 
   // Terminal access loss: recovery ran and this visitor still cannot reach
   // the scenario. Drop the session so `landingState` computes "denied" and
@@ -854,10 +984,10 @@ export function ScenarioChatPage({
   const landingState: ScenarioLandingState = isAuthSettling
     ? "resolvingAuth"
     : isBootstrapping
-      ? "bootstrapping"
-      : session
-        ? "ready"
-        : "denied";
+    ? "bootstrapping"
+    : session
+    ? "ready"
+    : "denied";
 
   useEffect(() => {
     if (
@@ -955,10 +1085,40 @@ export function ScenarioChatPage({
     );
   }, [leaveScenario, previewScenarioId]);
 
+  const rememberReturnPath = useCallback(() => {
+    const token = resolveShareToken();
+    if (!token) return;
+    // A generic slug avoids retaining scenario details at the sign-in gate.
+    const target = new URL(
+      buildScenarioLink(token, "scenario"),
+      window.location.origin,
+    );
+    const surface =
+      sessionRef.current?.surface ??
+      readScenarioSurfaceFromUrl(window.location.search);
+    writeScenarioSignInReturnPath(
+      target.pathname + (surface === "preview" ? "?surface=preview" : ""),
+    );
+  }, [resolveShareToken]);
   const handleSignIn = useCallback(() => {
-    writeScenarioSignInReturnPath(window.location.pathname);
-    signIn();
-  }, [signIn]);
+    rememberReturnPath();
+    void signIn();
+  }, [signIn, rememberReturnPath]);
+  const handleSignUp = useCallback(() => {
+    rememberReturnPath();
+    void signUp();
+  }, [signUp, rememberReturnPath]);
+  const handleSwitchAccount = useCallback(() => {
+    rememberReturnPath();
+    const token = resolveShareToken();
+    clearCurrentSession(sessionRef.current?.scenarioId);
+    setSession(null);
+    void signOut({
+      returnTo: token
+        ? buildScenarioLink(token, "scenario")
+        : window.location.origin,
+    });
+  }, [rememberReturnPath, resolveShareToken, clearCurrentSession, signOut]);
 
   const handleOAuthRequired = useCallback(
     (details?: HostedOAuthRequiredDetails) => {
@@ -1040,6 +1200,12 @@ export function ScenarioChatPage({
       );
     }
 
+    if (landingState === "denied" && displayError.kind === "sign_in_required") {
+      return (
+        <ScenarioSignInGate onSignIn={handleSignIn} onSignUp={handleSignUp} />
+      );
+    }
+
     if (landingState === "denied") {
       const isAccessDenied = displayError.kind === "access_denied";
       const guestBlocked = displayError.kind === "guest_blocked";
@@ -1071,6 +1237,11 @@ export function ScenarioChatPage({
               (isAccessDenied || guestBlocked) &&
               !isEmbeddedPreview() ? (
                 <Button onClick={handleSignIn}>Sign in</Button>
+              ) : null}
+              {workOsUser &&
+              (isAccessDenied || guestBlocked) &&
+              !isEmbeddedPreview() ? (
+                <Button onClick={handleSwitchAccount}>Switch accounts</Button>
               ) : null}
               <Button variant="outline" onClick={handleOpenMcpJam}>
                 Open in App

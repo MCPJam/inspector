@@ -1,4 +1,10 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ScenarioChatPage } from "../ScenarioChatPage";
@@ -23,6 +29,8 @@ const {
   mockWorkOsAuthState,
   mockGetAccessToken,
   mockSignIn,
+  mockSignUp,
+  mockSignOut,
   mockGetStoredTokens,
   mockInitiateOAuth,
   mockValidateHostedServer,
@@ -43,6 +51,8 @@ const {
   },
   mockGetAccessToken: vi.fn(),
   mockSignIn: vi.fn(),
+  mockSignUp: vi.fn(),
+  mockSignOut: vi.fn(),
   mockGetStoredTokens: vi.fn(),
   mockInitiateOAuth: vi.fn(async () => ({ success: false })),
   mockValidateHostedServer: vi.fn(),
@@ -69,6 +79,8 @@ vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({
     getAccessToken: mockGetAccessToken,
     signIn: mockSignIn,
+    signUp: mockSignUp,
+    signOut: mockSignOut,
     user: mockWorkOsAuthState.user,
     isLoading: mockWorkOsAuthState.isLoading,
   }),
@@ -150,8 +162,9 @@ vi.mock("@/lib/oauth/mcp-oauth", () => ({
 // jsdom can't put the page inside a real same-origin iframe, so stub the
 // embed detector; the hash-sync helpers keep their real implementations.
 vi.mock("@/lib/embedded-preview", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("@/lib/embedded-preview")>();
+  const actual = await importOriginal<
+    typeof import("@/lib/embedded-preview")
+  >();
   return {
     ...actual,
     isEmbeddedPreview: () => mockIsEmbeddedPreview(),
@@ -211,6 +224,8 @@ describe("ScenarioChatPage", () => {
     mockWorkOsAuthState.isLoading = false;
     mockGetAccessToken.mockReset();
     mockSignIn.mockReset();
+    mockSignUp.mockReset();
+    mockSignOut.mockReset();
     mockGetStoredTokens.mockReset();
     mockInitiateOAuth.mockReset();
     mockValidateHostedServer.mockReset();
@@ -218,6 +233,16 @@ describe("ScenarioChatPage", () => {
     mockChatTabV2.mockReset();
     mockUseApiContext.mockReset();
     mockAuthFetch.mockReset();
+    vi.mocked(global.fetch).mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            code: "SCENARIO_UNAUTHENTICATED",
+            error: "Missing or invalid bearer token",
+          }),
+          { status: 401 },
+        ),
+    );
     mockPosthogCapture.mockReset();
     mockIsEmbeddedPreview.mockReset();
     mockIsEmbeddedPreview.mockReturnValue(false);
@@ -266,6 +291,92 @@ describe("ScenarioChatPage", () => {
     vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it("gates account-required links without minting a guest or loading a preview", async () => {
+    mockConvexAuthState.isAuthenticated = false;
+    mockWorkOsAuthState.user = null as any;
+    vi.mocked(global.fetch).mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          code: "SCENARIO_SIGN_IN_REQUIRED",
+          error: "Sign in to preview this scenario.",
+        }),
+        { status: 401 },
+      ),
+    );
+    window.history.replaceState(
+      {},
+      "",
+      "/user-testing/study/private-token?surface=preview",
+    );
+    render(<ScenarioChatPage pathToken="private-token" />);
+    expect(
+      await screen.findByRole("heading", {
+        name: "Sign in to preview this scenario",
+      }),
+    ).toBeInTheDocument();
+    expect(mockAuthFetch).not.toHaveBeenCalled();
+    expect(mockChatTabV2).not.toHaveBeenCalled();
+    expect(mockValidateHostedServer).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Create an account" }));
+    expect(mockSignUp).toHaveBeenCalledOnce();
+    expect(localStorage.getItem(SCENARIO_SIGN_IN_RETURN_PATH_STORAGE_KEY)).toBe(
+      "/user-testing/scenario/private-token?surface=preview",
+    );
+    expect(
+      mockPosthogCapture.mock.calls.flat().map(String).join(" "),
+    ).not.toContain("private-token");
+  });
+
+  it("clears protected preview data on logout and re-redeems after account changes", async () => {
+    const base = await mockAuthFetch();
+    const body = await base.json();
+    const response = () =>
+      createFetchResponse({
+        ...body,
+        bootstrap: {
+          ...body.bootstrap,
+          requiresSignIn: true,
+          allowGuestAccess: false,
+        },
+      });
+    mockAuthFetch.mockClear();
+    mockAuthFetch.mockImplementation(async () => response());
+    const view = render(<ScenarioChatPage pathToken="account-token" />);
+    await waitFor(() =>
+      expect(readScenarioSession()?.authenticatedUserId).toBe("user_123"),
+    );
+    mockWorkOsAuthState.user = null as any;
+    mockConvexAuthState.isAuthenticated = false;
+    view.rerender(<ScenarioChatPage pathToken="account-token" />);
+    expect(
+      await screen.findByRole("heading", {
+        name: "Sign in to preview this scenario",
+      }),
+    ).toBeInTheDocument();
+    expect(readScenarioSession()).toBeNull();
+    const callsAtLogout = mockAuthFetch.mock.calls.length;
+    mockWorkOsAuthState.user = { id: "different-account" };
+    mockConvexAuthState.isAuthenticated = true;
+    view.rerender(<ScenarioChatPage pathToken="account-token" />);
+    await waitFor(() =>
+      expect(readScenarioSession()?.authenticatedUserId).toBe(
+        "different-account",
+      ),
+    );
+    expect(mockAuthFetch.mock.calls.length).toBeGreaterThan(callsAtLogout);
+  });
+
+  it("never falls back to guests when the account token expires", async () => {
+    mockGetAccessToken.mockRejectedValue(new Error("Login required"));
+    render(<ScenarioChatPage pathToken="expired-account" />);
+    expect(
+      await screen.findByRole("heading", {
+        name: "Sign in to preview this scenario",
+      }),
+    ).toBeInTheDocument();
+    expect(mockAuthFetch).not.toHaveBeenCalled();
   });
 
   it("applies scenario host style data attributes while keeping MCPJam branding", async () => {
@@ -770,7 +881,7 @@ describe("ScenarioChatPage", () => {
 
     expect(mockSignIn).toHaveBeenCalledTimes(1);
     expect(localStorage.getItem(SCENARIO_SIGN_IN_RETURN_PATH_STORAGE_KEY)).toBe(
-      "/user-testing/test/token-denied",
+      "/user-testing/scenario/token-denied",
     );
   });
 
@@ -917,8 +1028,6 @@ describe("ScenarioChatPage", () => {
         status: 500,
         code: "INTERNAL_ERROR",
         message: "Internal database exploded",
-        rawMessage:
-          "Uncaught Error: Internal database exploded at handler (../../convex/scenarios.ts:1088:6)",
       }),
     );
   });
@@ -1605,7 +1714,8 @@ describe("ScenarioChatPage", () => {
     function latestHostedContext() {
       const calls = mockChatTabV2.mock.calls;
       const last = calls[calls.length - 1]?.[0] as
-        { hostedContext?: Record<string, unknown> } | undefined;
+        | { hostedContext?: Record<string, unknown> }
+        | undefined;
       return last?.hostedContext;
     }
 

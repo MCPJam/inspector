@@ -3,7 +3,6 @@ import { z } from "zod";
 import {
   ErrorCode,
   WebRouteError,
-  assertBearerToken,
   handleRoute,
   parseWithSchema,
   readJsonBody,
@@ -57,7 +56,7 @@ scenarios.post("/redeem", async (c) =>
       );
     }
 
-    const bearerToken = assertBearerToken(c);
+    const bearerToken = c.req.header("authorization") ?? "";
     const body = parseWithSchema(
       scenarioRedeemSchema,
       await readJsonBody<unknown>(c),

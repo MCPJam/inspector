@@ -42,6 +42,7 @@ export type ScenarioRedeemBootstrap = {
   hostStyle: "claude" | "chatgpt" | string;
   mode: "project_members" | "invited_only" | "anyone_with_link";
   allowGuestAccess: boolean;
+  requiresSignIn?: boolean;
   viewerIsProjectMember: boolean;
   systemPrompt: string;
   modelId: string;
@@ -79,7 +80,9 @@ export type ScenarioRedeemFailure = {
   code?: string;
 };
 
-export type ScenarioRedeemResult = ScenarioRedeemSuccess | ScenarioRedeemFailure;
+export type ScenarioRedeemResult =
+  | ScenarioRedeemSuccess
+  | ScenarioRedeemFailure;
 
 function getConvexHttpUrl(): string {
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
@@ -112,7 +115,7 @@ export async function redeemScenarioToken(args: {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        authorization,
+        ...(args.bearer ? { authorization } : {}),
       },
       body: JSON.stringify({ scenarioToken: args.scenarioToken }),
       signal: args.signal,

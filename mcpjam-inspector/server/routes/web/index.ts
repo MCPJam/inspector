@@ -55,7 +55,21 @@ web.use("/tools/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/resources/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/tasks/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/prompts/*", bearerAuthMiddleware, guestRateLimitMiddleware);
-web.use("/scenarios/*", bearerAuthMiddleware, guestRateLimitMiddleware);
+web.use(
+  "/scenarios/*",
+  async (c, next) => {
+    // The no-bearer redeem is a policy probe only. Convex returns a denial,
+    // never configuration or a grant; all other scenario operations need auth.
+    if (
+      c.req.method === "POST" &&
+      c.req.path === "/api/web/scenarios/redeem" &&
+      !c.req.header("authorization")
+    )
+      return next();
+    return bearerAuthMiddleware(c, next);
+  },
+  guestRateLimitMiddleware,
+);
 // Swarm (journey-execution) launch route — member-gated. The runner-control
 // API it fronts is LAUNCHER-gated + project-member-gated server-side.
 web.use("/swarm/*", bearerAuthMiddleware, guestRateLimitMiddleware);

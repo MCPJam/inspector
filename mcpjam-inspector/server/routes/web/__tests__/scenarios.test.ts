@@ -20,6 +20,33 @@ describe("web routes — scenarios redeem", () => {
     }
   });
 
+  it("forwards an unauthenticated policy probe and preserves the sign-in code", async () => {
+    const upstream = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            ok: false,
+            code: "SCENARIO_SIGN_IN_REQUIRED",
+            error: "Sign in to preview this scenario.",
+          }),
+          { status: 401 },
+        ),
+      );
+    vi.stubGlobal("fetch", upstream);
+    const response = await postJson(app, "/api/web/scenarios/redeem", {
+      scenarioToken: "private-token",
+    });
+    expect(response.status).toBe(401);
+    expect(await response.json()).toMatchObject({
+      code: "UNAUTHORIZED",
+      details: { code: "SCENARIO_SIGN_IN_REQUIRED" },
+    });
+    expect(
+      new Headers(upstream.mock.calls[0][1].headers).has("authorization"),
+    ).toBe(false);
+  });
+
   it("surfaces a deployment mismatch when the upstream scenario route is missing", async () => {
     vi.stubGlobal(
       "fetch",
