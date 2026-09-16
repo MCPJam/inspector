@@ -247,6 +247,7 @@ export async function launchJourneyRun(
       projectId: input.projectId,
       journeyRefId: input.journeyRefId,
       launchKey: input.launchKey,
+      kind: input.waveId ? "swarm" : "user_testing",
       ...(input.waveId ? { swarmRunGroupId: input.waveId } : {}),
       ...(input.environmentIds?.length
         ? { environmentIds: input.environmentIds }

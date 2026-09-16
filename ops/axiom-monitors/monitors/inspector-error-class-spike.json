@@ -59,5 +59,6 @@
     "COST: measured ~500ms elapsed, 39 blocks, 1.48M rows scanned per evaluation. Cheap at a 15-minute interval; re-measure if the dataset grows materially.",
     "",
     "ROLLBACK: revert the definition file, then run `node ops/axiom-monitors/apply.mjs --apply --only inspector-error-class-spike`. The --apply flag is required: the script defaults to read-only plan mode, so omitting it reports the change and leaves the live monitor untouched. If it is noisy, tighten the org/baseline terms rather than raising `recent` — raising the floor is how you go blind to the next 08-06."
-  ]
+  ],
+  "descriptionLengthExempt": true
 }
