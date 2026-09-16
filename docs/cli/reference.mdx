@@ -1570,6 +1570,7 @@ budget.** Returns a pending receipt; read the grades from `eval status`.
 |------|----------|-------------|
 | `--run <id>` | Yes | Eval run ID (from `eval run`) |
 | `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--scope <all\|failed>` | No | Regrade all iterations (`all`) or retry only failed or ungraded ones (`failed`) |
 | `--force` | No | Re-grade a run that already has a judge result |
 | `--enable` | No | Grade this run even though the judge was off when it ran |
 | `--judge-model <id>` | No | Judge model for this run only |
@@ -1580,6 +1581,8 @@ for the suite does not reach a run that was already recorded — `--enable` is
 what grades it, and it changes nothing beyond that run. Passing neither
 `--judge-model` nor `--judge-threshold` grades with the suite's own config,
 clearing any override a previous request left on the run.
+
+`--scope failed` retries only iterations that previously errored or were skipped, without regrading ones that already have a scored result. `--scope all` regrading every iteration. Omitting `--scope` uses the suite's default behavior. An empty string is rejected.
 
 ### `cloud eval stage-analytics`
 
