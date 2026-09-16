@@ -245,6 +245,14 @@ test("a browser agent discovers MCPJam's tools, navigates, and reads the screen 
     data: { activeTab: "oauth-flow" },
   });
   await page.waitForURL("**/oauth-flow", { timeout: 15_000 });
+  // A fresh profile opens setup automatically. Dismiss the modal before
+  // querying the sidebar, which is hidden from accessibility while it is open.
+  const setupDialog = page.getByRole("dialog", {
+    name: "Configure Server to Test",
+  });
+  await expect(setupDialog).toBeVisible();
+  await setupDialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(setupDialog).toBeHidden();
   // The sidebar marks the screen the user is looking at. This is the "the
   // user sees the page change" half of every navigation tool's description.
   await expect(
