@@ -31,6 +31,30 @@ describe("isMCPJamModelLimitError", () => {
     expect(isMCPJamModelLimitError({ code: "user_rate_limit" })).toBe(true);
   });
 
+  /**
+   * The refusals the generation routes now forward verbatim instead of
+   * flattening into a 500. Neither is the customer's wallet: `platform_capacity`
+   * is MCPJam's own daily budget for the feature and `generation_rate_limited`
+   * is a request-COUNT cap, so both lift on their own and neither has anything
+   * to buy. Opening the top-up dialog for them would sell credits that cannot
+   * clear the refusal.
+   */
+  it.each(["platform_capacity", "generation_rate_limited"])(
+    "does not open the top-up dialog for the platform refusal %s",
+    (code) => {
+      expect(isMCPJamModelLimitError({ code })).toBe(false);
+      // …nor when the same code arrives nested in the route envelope's
+      // `details`, which is where the deep scan looks.
+      expect(
+        isMCPJamModelLimitError({
+          code: "RATE_LIMITED",
+          message: "MCPJam's daily generation budget is used up.",
+          details: { code, canTopUp: false, isRetryable: true },
+        })
+      ).toBe(false);
+    }
+  );
+
   it("does not match the org spend-budget refusal", () => {
     // Buying credits does not raise an admin-set cap, so this code must
     // never reach the top-up modal that this predicate gates.
