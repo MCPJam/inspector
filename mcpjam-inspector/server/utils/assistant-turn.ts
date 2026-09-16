@@ -26,7 +26,7 @@ import type {
 import type { MCPClientManager, Harness } from "@mcpjam/sdk";
 import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config/internal";
 import type { ModelDefinition } from "@/shared/types";
-import { isHostedCatalogModel } from "../services/hosted-model-catalog.js";
+import { isHostedModelDefinition } from "../services/hosted-model-catalog.js";
 import type { LiveChatTraceUsage } from "@/shared/live-chat-trace";
 import type {
   ProgressiveToolPlan,
@@ -670,8 +670,13 @@ export async function runAssistantTurn(
         adapter: harnessAdapter,
         modelId: harnessModelId,
         provider: opts.modelDefinition.provider,
+        hosted: opts.modelDefinition.hosted,
       })
-    : isHostedCatalogModel(harnessModelId, opts.modelDefinition.provider);
+    : isHostedModelDefinition({
+        id: harnessModelId,
+        provider: opts.modelDefinition.provider,
+        hosted: opts.modelDefinition.hosted,
+      });
   const useHarness = harnessRequested && modelEligible;
   if (harnessRequested && !modelEligible) {
     // AN EXTERNAL-ACCOUNT HARNESS HAS NO FALLBACK, so ineligibility here is a

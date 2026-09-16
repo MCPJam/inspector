@@ -299,7 +299,9 @@ export function runClientIdentity(
     // Use the persisted style, not the inspector's default: the backend's
     // historical fallback is Claude while the inspector defaults to MCPJam.
     const name =
-      (namedHostId && hostNamesById?.get(namedHostId)?.trim()) ||
+      (client.versionId
+        ? client.name.trim()
+        : namedHostId && hostNamesById?.get(namedHostId)?.trim()) ||
       (client.source === "suite_default" && findHostStyle(hostStyle)
         ? getScenarioHostLabel(hostStyle!)
         : client.name.trim()) ||
@@ -349,9 +351,7 @@ export function snapshotTestModels(
 /** Context groups retain environment identity, never its mutable revision. */
 export function runContextKey(run: RunContextSource): string {
   const ref = runEnvironmentRef(run);
-  return ref
-    ? `environment:${ref.environmentId}`
-    : runClientIdentity(run).key;
+  return ref ? `environment:${ref.environmentId}` : runClientIdentity(run).key;
 }
 
 /**
@@ -421,9 +421,11 @@ export function runRevisionLabel(run: RunContextSource): string | null {
  */
 export function buildHostNamesById(
   attachments:
-    Array<{ namedHostId: string; hostName: string | null }> | undefined,
+    | Array<{ namedHostId: string; hostName: string | null }>
+    | undefined,
   projectHosts:
-    Array<{ hostId: string; name: string; displayName?: string }> | undefined,
+    | Array<{ hostId: string; name: string; displayName?: string }>
+    | undefined,
 ): Map<string, string | null> {
   const map = new Map<string, string | null>();
   const projectHostById = new Map(

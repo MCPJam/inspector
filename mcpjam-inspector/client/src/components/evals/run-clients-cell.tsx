@@ -6,7 +6,11 @@ import {
 import { resolveHostLogoByName } from "@/lib/host-logo";
 import { findHostStyle } from "@/lib/client-styles";
 import { getScenarioHostLogo } from "@/lib/scenario-client-style";
-import { compactModelIdTail } from "@/lib/environment-label";
+import {
+  modelDisplayName,
+  ModelDisplayNamesContext,
+} from "@/lib/model-display-name";
+import { useContext } from "react";
 import { usePreferencesStoreWithDefaults } from "@/stores/preferences/preferences-provider";
 import type { SuiteRunHistoryRow } from "../evaluate/suite-detail-model";
 
@@ -14,13 +18,22 @@ export const VISIBLE_RUN_CLIENT_PAIRINGS = 2;
 
 type ClientModelPairing = {
   client: string;
+  clientId?: string;
+  clientVersionId?: string;
+  clientVersionNumber?: number;
   hostStyle?: string;
   models: string[];
 };
 
-function pairingLabel(mapping: ClientModelPairing): string {
-  const models = mapping.models.map(compactModelIdTail).join(", ") || "-";
-  return `${mapping.client} · ${models}`;
+function pairingLabel(
+  mapping: ClientModelPairing,
+  modelName: (id: string) => string,
+): string {
+  const models = mapping.models.map(modelName).join(", ") || "-";
+  const version = mapping.clientVersionNumber
+    ? ` · v${mapping.clientVersionNumber}`
+    : "";
+  return `${mapping.client}${version} · ${models}`;
 }
 
 /** Recorded client/model pairs, never a cross product of two independent lists. */
@@ -28,20 +41,46 @@ export function RunClientsCell({
   rows,
   column,
 }: {
-  rows: Pick<SuiteRunHistoryRow, "client" | "models" | "hostStyle">[];
+  rows: Pick<
+    SuiteRunHistoryRow,
+    | "client"
+    | "models"
+    | "hostStyle"
+    | "clientId"
+    | "clientVersionId"
+    | "clientVersionNumber"
+  >[];
   column?: "client" | "model";
 }) {
+  const availableModels = useContext(ModelDisplayNamesContext);
+  const modelName = (id: string) => modelDisplayName(id, availableModels);
+  const clientLabel = (mapping: ClientModelPairing) =>
+    mapping.clientVersionNumber
+      ? `${mapping.client} · v${mapping.clientVersionNumber}`
+      : mapping.client;
   const theme = usePreferencesStoreWithDefaults((state) => state.themeMode);
   const mappings = [
     ...new Map(
       rows.map((row) => [
-        JSON.stringify([row.client, row.models]),
+        JSON.stringify([
+          row.clientId,
+          row.client,
+          row.clientVersionId,
+          row.clientVersionNumber,
+          row.models,
+        ]),
         {
-          client: row.client === "SDK harness" ? "-" : (row.client ?? "-"),
+          client:
+            row.client === "SDK harness" && !row.clientId
+              ? "-"
+              : (row.client ?? "-"),
           models: row.models.filter(
             (model) => model.trim() && model.trim().toLowerCase() !== "n/a",
           ),
           hostStyle: row.hostStyle,
+          clientId: row.clientId,
+          clientVersionId: row.clientVersionId,
+          clientVersionNumber: row.clientVersionNumber,
         },
       ]),
     ).values(),
@@ -52,14 +91,24 @@ export function RunClientsCell({
     column === "client"
       ? [
           ...new Map(
-            mappings.map((mapping) => [mapping.client, mapping]),
+            mappings.map((mapping) => [
+              JSON.stringify([
+                mapping.clientId,
+                mapping.client,
+                mapping.clientVersionId,
+                mapping.clientVersionNumber,
+              ]),
+              mapping,
+            ]),
           ).values(),
         ]
       : mappings;
   const visible = entries.slice(0, VISIBLE_RUN_CLIENT_PAIRINGS);
   const hidden = entries.slice(VISIBLE_RUN_CLIENT_PAIRINGS);
   const allLabels = entries.map((mapping) =>
-    column === "client" ? mapping.client : pairingLabel(mapping),
+    column === "client"
+      ? clientLabel(mapping)
+      : pairingLabel(mapping, modelName),
   );
   const models = [...new Set(mappings.flatMap((mapping) => mapping.models))];
   // Each column announces ITS OWN values. One shared pairing list made the
@@ -68,7 +117,7 @@ export function RunClientsCell({
     column === "client"
       ? entries.map((mapping) => mapping.client).join(", ")
       : column === "model"
-        ? models.map(compactModelIdTail).join(", ") || "-"
+        ? models.map(modelName).join(", ") || "-"
         : allLabels.join(", ");
   // The expanded model column lists models, so its overflow counts models —
   // the pairing count belongs to the columns that show pairings.
@@ -105,9 +154,9 @@ export function RunClientsCell({
         >
           <span
             className="min-w-0 truncate text-xs text-muted-foreground"
-            title={models[0]}
+            title={models[0] ? modelName(models[0]) : undefined}
           >
-            {models[0] ? compactModelIdTail(models[0]) : "-"}
+            {models[0] ? modelName(models[0]) : "-"}
           </span>
           {models.length > 1 && (
             <Tooltip>
@@ -125,7 +174,7 @@ export function RunClientsCell({
               <TooltipContent>
                 <ul>
                   {models.slice(1).map((model) => (
-                    <li key={model}>{model}</li>
+                    <li key={model}>{modelName(model)}</li>
                   ))}
                 </ul>
               </TooltipContent>
@@ -149,38 +198,42 @@ export function RunClientsCell({
           ? visibleModels.map((model) => (
               <span
                 key={model}
-                title={model}
+                title={modelName(model)}
                 className="min-w-0 shrink truncate text-xs text-muted-foreground"
               >
-                {compactModelIdTail(model)}
+                {modelName(model)}
               </span>
             ))
           : visible.map((mapping, index) => (
-              <span
-                key={`${mapping.client}-${mapping.models.join(",")}-${index}`}
-                // A title, not a tab stop: the span has no role and nothing to
-                // activate, and the row already has its own focusable control.
-                title={column === "client" ? mapping.client : undefined}
-                className="inline-flex min-w-0 items-center gap-1.5"
+              <Tooltip
+                key={`${mapping.client}-${mapping.clientVersionId}-${index}`}
               >
-                {mapping.client !== "-" &&
-                  logo(mapping.client, mapping.hostStyle)}
-                <span
-                  className={
-                    column === "client" && mapping.client !== "-"
-                      ? "hidden truncate text-xs @min-[1100px]/run-history:inline"
-                      : "truncate text-xs"
-                  }
-                >
-                  {mapping.client}
-                  {!column && (
-                    <span className="text-muted-foreground">
-                      {" · "}
-                      {mapping.models.map(compactModelIdTail).join(", ") || "-"}
+                <TooltipTrigger asChild>
+                  <span
+                    tabIndex={mapping.clientVersionNumber ? 0 : undefined}
+                    className="inline-flex min-w-0 items-center gap-1.5"
+                  >
+                    {mapping.client !== "-" &&
+                      logo(mapping.client, mapping.hostStyle)}
+                    <span
+                      className={
+                        column === "client" && mapping.client !== "-"
+                          ? "hidden truncate text-xs @min-[1100px]/run-history:inline"
+                          : "truncate text-xs"
+                      }
+                    >
+                      {mapping.client}
+                      {!column && (
+                        <span className="text-muted-foreground">
+                          {" · "}
+                          {mapping.models.map(modelName).join(", ") || "-"}
+                        </span>
+                      )}
                     </span>
-                  )}
-                </span>
-              </span>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>{clientLabel(mapping)}</TooltipContent>
+              </Tooltip>
             ))}
         {(column === "model" ? hiddenModels : hidden).length > 0 ? (
           <Tooltip>
@@ -209,11 +262,11 @@ export function RunClientsCell({
               className="max-w-xs text-left"
             >
               <ul className="space-y-1">
-                {(column === "model" ? hiddenModels : allLabels).map(
-                  (label) => (
-                    <li key={label}>{label}</li>
-                  ),
-                )}
+                {column === "model"
+                  ? hiddenModels.map((id) => <li key={id}>{modelName(id)}</li>)
+                  : allLabels.map((label, index) => (
+                      <li key={index}>{label}</li>
+                    ))}
               </ul>
             </TooltipContent>
           </Tooltip>

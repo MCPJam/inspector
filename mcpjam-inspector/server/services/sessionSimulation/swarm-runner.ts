@@ -590,7 +590,9 @@ async function runJourneyFanOut(
       // refetch the live host config — everything comes from the immutable
       // snapshot. A model-less / unresolvable pinned spec throws HERE, before any
       // attempt is claimed — the catch finalizes this target's pending attempts.
-      const modelDefinition = buildSyntheticModelDefinition(modelId);
+      const modelDefinition = buildSyntheticModelDefinition(modelId, {
+        hosted: target.hosted,
+      });
 
       // B-isolation F4/phase 6 — a harness target runs on ITS OWN disposable box
       // or it does not run at all.
@@ -691,6 +693,7 @@ async function runJourneyFanOut(
                 model: {
                   id: String(modelDefinition.id),
                   provider: modelDefinition.provider,
+                  hosted: modelDefinition.hosted,
                 },
                 // The same pinned id under the name the external-account rule
                 // reads. Identical to `model.id` here — a swarm target has no
