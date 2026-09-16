@@ -259,6 +259,24 @@ For cases where "did the right tools fire" isn't enough — anything graded on t
 
 Open a completed run and find the **LLM as Judge** panel (labelled **Goal judge** when shown inside the suite results split). Pick a judge model (default: `openai/gpt-5.4-mini`) and a threshold (default 0.7), then click **Run judge**. Each case gets a score, an advisory verdict, a one-line reason, and rubric hits. The judge never runs automatically unless you enable **Auto-run** in suite settings.
 
+The judge grades recorded traces — the full conversation, tool definitions, runtime context, and any captured media — not just the final answer text.
+
+### Grading instructions
+
+In suite settings, the **Grading instructions** field lets you add free-text guidance the judge applies to every case alongside each case's own task and expected outcome. Use it to express requirements that are hard to capture as structured criteria — for example, "only count success when a tool result confirms it; saying 'done' is not enough."
+
+Structured rubric criteria (authored through the API) remain supported and appear read-only in the suite settings panel. Instructions and criteria can be used together.
+
+### Per-iteration grading status
+
+Each graded row carries a `status`: `scored` (a verdict was produced), `error` (the judge could not grade this iteration), or `skipped` (grading was disabled for this case). Interpret `score` and `passed` only for `scored` rows.
+
+A failed grading job retains the measurements it completed — job failure does not mean every iteration failed. The **Retry grading** button appears when any iterations errored, and retries only those rows without regrading ones that already have a scored result. Use `mcpjam cloud eval judge --run <id> --scope failed` for the same operation from the CLI.
+
+### Per-case judge override
+
+Set `enabled: false` on an individual case (via the API or a suite file) to skip goal-completion grading for that case. The suite setting applies to all other cases. Set `judge: null` to clear a per-case override and restore the suite default.
+
 Judge results are also accessible outside the app. `mcpjam cloud eval status` returns a `judges` block in its JSON output with each grader's status, summary, model used, threshold, and per-case grades. To request grading from the CLI, use `mcpjam cloud eval judge --run <id> --project <name>`. See the [`cloud eval judge` reference](/cli/reference#cloud-eval-judge) for the full flag list, including `--force` to re-grade and `--enable` to grade a run recorded before the judge was turned on.
 
 The same judge config and defaults are shared with **Swarm journeys**. When creating a new journey, expand **Advanced → Judge** to set the judge model and enable auto-grade for that journey. Session score badges (showing the verdict and score) appear in the Sessions list and run matrix cells whenever a session has been graded. Sessions with no transcript still expose the on-demand judge entry point so failed or empty sessions can be graded against the journey goal.
