@@ -17,6 +17,7 @@ import {
   type CreditTopupSource,
 } from "@/hooks/useCreditTopup";
 import { track } from "@/lib/analytics";
+import { buildOrganizationPath, useAppNavigate } from "@/lib/app-navigation";
 
 interface CreditTopupDialogProps {
   open: boolean;
@@ -36,6 +37,7 @@ export function CreditTopupDialog({
   organizationId,
   source,
 }: CreditTopupDialogProps) {
+  const navigate = useAppNavigate();
   const { presets, presetsLoading, startCheckout, isStartingCheckout } =
     useCreditTopup();
   const quotePreset = useCreditTopupPricing(organizationId, open);
@@ -160,7 +162,20 @@ export function CreditTopupDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-4">
-          {presetsLoading ? (
+          {quotePreset.error ? (
+            <div role="alert" className="text-sm text-muted-foreground">
+              Credit pricing is unavailable right now. Close this dialog and try
+              again later.
+            </div>
+          ) : quotePreset.isLoading ? (
+            <div role="status" className="text-sm text-muted-foreground">
+              Loading credit options…
+            </div>
+          ) : quotePreset.requiresUpgrade ? (
+            <div role="status" className="text-sm text-muted-foreground">
+              Upgrade to Pro or Team to buy credits.
+            </div>
+          ) : presetsLoading ? (
             <div className="text-sm text-muted-foreground">
               Loading amounts…
             </div>
@@ -202,22 +217,34 @@ export function CreditTopupDialog({
           >
             Cancel
           </Button>
-          <Button
-            type="button"
-            onClick={handleConfirm}
-            disabled={
-              !selectedPreset ||
-              !organizationId ||
-              !quotePreset.canPurchase ||
-              isStartingCheckout
-            }
-          >
-            {isStartingCheckout
-              ? "Redirecting…"
-              : selectedQuote
-              ? `Continue with ${selectedQuote.displayPrice}`
-              : "Continue"}
-          </Button>
+          {quotePreset.requiresUpgrade && organizationId ? (
+            <Button
+              type="button"
+              onClick={() => {
+                onOpenChange(false);
+                navigate(buildOrganizationPath(organizationId, "plans"));
+              }}
+            >
+              Explore plan
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              onClick={handleConfirm}
+              disabled={
+                !selectedPreset ||
+                !organizationId ||
+                !quotePreset.canPurchase ||
+                isStartingCheckout
+              }
+            >
+              {isStartingCheckout
+                ? "Redirecting…"
+                : selectedQuote
+                ? `Continue with ${selectedQuote.displayPrice}`
+                : "Continue"}
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
