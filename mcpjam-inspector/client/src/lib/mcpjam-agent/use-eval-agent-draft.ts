@@ -16,7 +16,7 @@ import {
   registerEvalDraft,
   type EvalDraft,
 } from "./eval-workspace";
-import { openEvalChat, useEvalAgentScopes } from "./eval-scope";
+import { newEvalChat, openEvalChat, useEvalAgentScopes } from "./eval-scope";
 import { useAgentPanelStore } from "@/stores/agent-panel/agent-panel-store";
 
 export function useEvalAgentDraft<T extends EvalDraft>({
@@ -173,6 +173,15 @@ export function useEvalAgentDraft<T extends EvalDraft>({
           patch ? { fields: Object.keys(patch), revision: nextRevision } : null,
         );
       });
+      if (!patch) {
+        newEvalChat({
+          ...scope,
+          caseTitle: next.title,
+          hasCaseContent: next.steps.some(
+            (step) => step.kind !== "prompt" || Boolean(step.prompt.trim()),
+          ),
+        });
+      }
       return {
         status: patch ? "updated" : "undone",
         caseId,

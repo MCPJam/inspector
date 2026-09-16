@@ -39,7 +39,6 @@ import type { SuiteCapabilities } from "@/hooks/use-suite-capabilities";
 import { DEFAULT_JUDGE_THRESHOLD } from "@/components/shared/session-quality/judge-config";
 import { ValidatorsSection } from "./validators-section";
 import { CheckRow, blankPredicate } from "./checks-section";
-import { GlobalGatesSectionInfoHint } from "./global-gates-info";
 import { gateSwitchDisabledReason } from "./judge-gate-panel";
 import { SuiteScorerLibraryMenu } from "./suite-scorer-library-menu";
 import {
@@ -340,9 +339,8 @@ export function SuiteScorerTable({
               <div className="space-y-1">
                 <div className="flex items-center gap-1.5">
                   <h3 className="text-lg font-semibold tracking-tight text-foreground">
-                    Checks by stage
+                    Evaluators
                   </h3>
-                  <GlobalGatesSectionInfoHint />
                 </div>
                 <p className="text-sm text-muted-foreground">
                   {passOrFailHint}
@@ -639,7 +637,7 @@ function ScorerRow({
             disabled={onDisabledReason !== undefined}
             onCheckedChange={(next) => onEnabledChange(next === true)}
           />
-        ) : row.kind === "observed" ? (
+        ) : row.kind === "observed" || row.kind === "match" ? (
           <Checkbox className="mt-0.5" aria-label={title} checked disabled />
         ) : (
           <span aria-hidden className="mt-0.5 inline-block size-4 shrink-0" />
