@@ -39,6 +39,7 @@ import { consumeUrlFlag } from "@/lib/url-flag";
 interface CreditBalanceCardProps {
   organizationId?: string | null;
   canManageCredits?: boolean;
+  pricingVersion?: "v1" | "v2";
   /** Optional override for the chat session id used by the top-up flow. */
   chatSessionId?: string;
 }
@@ -47,14 +48,18 @@ export function CreditBalanceCard({
   organizationId,
   canManageCredits = false,
   chatSessionId,
+  pricingVersion,
 }: CreditBalanceCardProps = {}) {
   const navigate = useAppNavigate();
   const { balance, isLoading } = useCreditBalance({
     organizationId,
   });
+  const isV2 =
+    pricingVersion === "v2" || balance?.billingModel === "monthly_flat";
   const { quota: evalIterationQuota, isLoading: isEvalIterationQuotaLoading } =
     useEvalIterationQuota({
       organizationId,
+      enabled: !isV2,
     });
   const topUpEligible = balance?.topUpEligible !== false;
   const [isTopupOpen, setIsTopupOpen] = useState(false);
@@ -104,16 +109,24 @@ export function CreditBalanceCard({
   // daily free bucket. Paid top-ups are shown separately and spent only after
   // the allowance runs out.
   const showMonthly =
+    isV2 ||
     balance?.billingModel === "monthly_per_seat" ||
     balance?.billingModel === "monthly_flat";
   const monthlyTotal = balance?.monthlyAllowanceTotal ?? 0;
   const monthlyRemaining = balance?.monthlyAllowanceRemaining ?? 0;
   const paidRemaining = balance?.paidCreditsRemaining ?? 0;
   const monthlyExhausted =
-    showMonthly && monthlyRemaining <= 0 && paidRemaining <= 0;
+    !isLoading &&
+    !!balance &&
+    showMonthly &&
+    monthlyRemaining <= 0 &&
+    paidRemaining <= 0;
   const showEvalIterationUsage =
-    isEvalIterationQuotaLoading ||
-    (evalIterationQuota !== undefined && evalIterationQuota.allowed !== null);
+    !isLoading &&
+    !isV2 &&
+    (isEvalIterationQuotaLoading ||
+      (evalIterationQuota !== undefined &&
+        evalIterationQuota.allowed !== null));
   const evalIterationLabel = getEvalIterationQuotaLabel(
     evalIterationQuota?.windowKind,
   );
@@ -130,8 +143,9 @@ export function CreditBalanceCard({
               Organization usage
             </p>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              Model credits and eval iterations are shared across this
-              organization.
+              {isV2 || isLoading
+                ? "Credits are shared across this organization."
+                : "Model credits and eval iterations are shared across this organization."}
             </p>
           </div>
           {organizationId && canManageCredits ? (
@@ -175,14 +189,17 @@ export function CreditBalanceCard({
             rightText={
               isLoading || !balance
                 ? null
-                : `${monthlyRemaining.toLocaleString()} / ${monthlyTotal.toLocaleString()} · ${formatMonthlyResetText(
+                : `${monthlyRemaining.toLocaleString()} / ${monthlyTotal.toLocaleString()} remaining · ${formatMonthlyResetText(
                     balance.monthlyResetAt,
                   )}`
             }
             fillPercent={
               isLoading || monthlyTotal <= 0
                 ? 0
-                : (monthlyRemaining / monthlyTotal) * 100
+                : Math.min(
+                    100,
+                    Math.max(0, (monthlyRemaining / monthlyTotal) * 100),
+                  )
             }
             ariaLabel="Monthly credits remaining"
             ariaValueText={`${monthlyRemaining.toLocaleString()} of ${monthlyTotal.toLocaleString()} monthly credits remaining`}
@@ -192,7 +209,7 @@ export function CreditBalanceCard({
           />
         ) : (
           <UsageRow
-            label="Free daily credits"
+            label={isLoading ? "Credits" : "Free daily credits"}
             rightText={
               isLoading || !balance
                 ? null
@@ -213,7 +230,7 @@ export function CreditBalanceCard({
           />
         )}
 
-        {evalIterationQuota?.starterRemaining != null && (
+        {!isV2 && evalIterationQuota?.starterRemaining != null && (
           <p className="text-sm">
             Starter eval iterations:{" "}
             {evalIterationQuota.starterRemaining.toLocaleString()} remaining ·
@@ -282,12 +299,19 @@ export function CreditBalanceCard({
           />
         ) : null}
 
-        {!isLoading && hasPaidHistory && balance && (
+        {!isLoading && (isV2 || hasPaidHistory) && balance && (
           <div
             className="flex items-center justify-between gap-2"
             data-testid="usage-paid"
           >
-            <span className="text-xs font-medium">Shared paid credits</span>
+            <div>
+              <span className="text-xs font-medium">
+                {isV2 ? "Top-up credits" : "Shared paid credits"}
+              </span>
+              {isV2 && (
+                <p className="text-xs text-muted-foreground">Never expire</p>
+              )}
+            </div>
             <span className="flex items-center gap-1 text-xs font-medium">
               <CoinStackIcon aria-hidden="true" className="size-3" />
               {paidRemaining.toLocaleString()} credits
@@ -504,6 +528,7 @@ function UsageRow({
       ) : (
         <Progress
           value={fillPercent}
+          aria-valuenow={fillPercent}
           aria-label={ariaLabel ?? `${label} remaining`}
           className={
             fillPercent <= 10

@@ -60,8 +60,11 @@ export function SidebarCredits({
   const billingStatus = useOrganizationBillingStatus(organizationId, {
     enabled: billingUiEnabled,
   });
+  const isV2 =
+    billingStatus?.pricingVersion === "v2" ||
+    balance?.billingModel === "monthly_flat";
   const { quota: evalIterationQuota, isLoading: isEvalIterationQuotaLoading } =
-    useEvalIterationQuota({ organizationId });
+    useEvalIterationQuota({ organizationId, enabled: !isV2 });
 
   // Settled with nothing to show. Rendering the row anyway leaves a permanent
   // "See credits" whose card is a blank number over an empty bar, which reads
@@ -72,6 +75,7 @@ export function SidebarCredits({
   }
 
   const showMonthly =
+    isV2 ||
     balance?.billingModel === "monthly_per_seat" ||
     balance?.billingModel === "monthly_flat";
   const monthlyTotal = balance?.monthlyAllowanceTotal ?? 0;
@@ -90,8 +94,10 @@ export function SidebarCredits({
   // billing card uses, so the two surfaces never disagree about whether a
   // limit exists.
   const showEvalIterationUsage =
-    isEvalIterationQuotaLoading ||
-    (evalIterationQuota !== undefined && evalIterationQuota.allowed !== null);
+    !isV2 &&
+    (isEvalIterationQuotaLoading ||
+      (evalIterationQuota !== undefined &&
+        evalIterationQuota.allowed !== null));
 
   const plan = billingStatus?.effectivePlan;
   const planLabel = plan ? `${formatPlanName(plan)} plan` : null;
@@ -149,7 +155,7 @@ export function SidebarCredits({
                 </div>
               ) : null}
 
-              {evalIterationQuota?.starterRemaining != null && (
+              {!isV2 && evalIterationQuota?.starterRemaining != null && (
                 <p className="text-xs">
                   Starter eval iterations:{" "}
                   {evalIterationQuota.starterRemaining.toLocaleString()}{" "}

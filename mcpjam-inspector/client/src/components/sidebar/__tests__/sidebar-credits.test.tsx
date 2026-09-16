@@ -12,7 +12,7 @@ let balanceState:
       freeDailyCreditsRemaining: number;
       freeDailyCreditsTotal: number;
       walletLocked: boolean;
-      billingModel?: "daily" | "monthly_per_seat";
+      billingModel?: "daily" | "monthly_per_seat" | "monthly_flat";
       monthlyAllowanceTotal?: number;
       monthlyAllowanceRemaining?: number;
       monthlyResetAt?: number | null;
@@ -28,7 +28,10 @@ let evalQuotaState:
     }
   | undefined;
 let billingStatusState:
-  | { effectivePlan: "free" | "team" | "enterprise" }
+  | {
+      effectivePlan: "free" | "team" | "enterprise";
+      pricingVersion?: "v1" | "v2";
+    }
   | undefined;
 
 vi.mock("@/hooks/useCreditBalance", () => ({
@@ -235,6 +238,30 @@ describe("SidebarCredits", () => {
     const evalRow = screen.getByTestId("sidebar-usage-eval-iterations");
     expect(evalRow).toHaveTextContent("Daily eval iterations");
     expect(evalRow).toHaveTextContent("38 / 50 remaining");
+  });
+
+  it("hides legacy eval allowances for V2 in the sidebar too", () => {
+    billingStatusState = { effectivePlan: "team", pricingVersion: "v2" };
+    balanceState = {
+      ...balanceState!,
+      billingModel: "monthly_flat",
+      monthlyAllowanceTotal: 50000,
+      monthlyAllowanceRemaining: 30000,
+    };
+    evalQuotaState = {
+      used: 12,
+      allowed: 500,
+      resetsAt: 0,
+      windowKind: "month",
+    };
+    renderCredits();
+    expect(
+      screen.queryByTestId("sidebar-usage-eval-iterations"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Free daily credits")).not.toBeInTheDocument();
+    expect(screen.getByTestId("sidebar-usage-monthly")).toHaveTextContent(
+      "30,000 / 50,000",
+    );
   });
 
   it("offers Explore plans on the free plan", () => {
