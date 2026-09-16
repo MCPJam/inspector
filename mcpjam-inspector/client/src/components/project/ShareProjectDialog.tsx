@@ -67,9 +67,8 @@ import { serializeServersForSharing } from "@/lib/project-serialization";
 import { useOrganizationBilling } from "@/hooks/useOrganizationBilling";
 import { BILLING_GATES, resolveBillingGateState } from "@/lib/billing-gates";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
-import { convexErrMessage } from "@/lib/convex-error";
+import { convexErrMessage, describeConvexFailure } from "@/lib/convex-error";
 import { reportCaught } from "@/lib/error-reporting";
-import { ConvexError } from "convex/values";
 import {
   getBillingUpsellCtaLabel,
   getBillingUpsellTeaser,
@@ -422,12 +421,16 @@ export function ShareProjectDialog({
         project_visibility: currentVisibility,
       });
     } catch (error) {
-      // A billing refusal is the product working as designed, and it arrives
-      // as a `ConvexError` the backend worded for this user. Only a masked
-      // throw is an incident, and only that one is worth a Sentry issue —
-      // where the Convex request id now rides along as a tag, so the reference
-      // the toast shows resolves to the real stack.
-      if (!(error instanceof ConvexError)) {
+      // A billing cap or a permission refusal is the product working as
+      // designed, so only a masked throw is worth a Sentry issue — and there
+      // the Convex request id rides along as a tag, so the reference the toast
+      // shows resolves to the real stack.
+      //
+      // Asking the shared parser rather than `instanceof ConvexError`: it is
+      // the one place that decides what counts as a refusal, and a second rule
+      // here would disagree with the toast about the very same error.
+      const { refusal } = describeConvexFailure(error, "");
+      if (!refusal) {
         reportCaught(error, { source: "share_project_dialog_invite" });
       }
       toast.error(getBillingErrorMessage(error, "Failed to invite member"));

@@ -875,6 +875,31 @@ describe("ShareProjectDialog failures", () => {
     });
   });
 
+  it("does not report a refusal that arrived without a ConvexError wrapper", async () => {
+    // The toast and the reporter must agree about the same error. Deciding
+    // this on `instanceof ConvexError` while the shared parser decides it on
+    // the `data` payload meant a refusal could read as a refusal and page as
+    // an incident at the same time. Both now ask the parser.
+    mockInviteProjectMember.mockRejectedValueOnce(
+      Object.assign(new Error("[Request ID: da0bbc6cf9261481] Server Error"), {
+        data: { code: "FORBIDDEN", message: "Not a member of this project." },
+      }),
+    );
+
+    renderDialog();
+    fireEvent.change(screen.getByPlaceholderText("Add people, emails..."), {
+      target: { value: "invitee@example.com" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Invite" }));
+
+    await waitFor(() => expect(mockToastError).toHaveBeenCalled());
+    expect(lastToast()).toEqual({
+      title: "Not a member of this project.",
+      description: undefined,
+    });
+    expect(mockReportCaught).not.toHaveBeenCalled();
+  });
+
   it("does not report a refusal the backend worded for this user", async () => {
     // A billing cap or a permission refusal is the product working as designed.
     // It reads as its own sentence, with no reference and no Sentry issue.
