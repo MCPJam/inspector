@@ -57,7 +57,6 @@ import {
 } from "@/lib/swarm-api";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import { cn } from "@/lib/utils";
-import type { HostListItem } from "@/hooks/useClients";
 import { clientDisplayName } from "@/lib/client-display-name";
 
 export type SwarmLaunchedRun = {
@@ -618,6 +617,7 @@ export function NewSwarmRunningStep({
   fallbackColumns,
   environments = [],
   hosts = [],
+  chrome = "wizard",
   onLeave,
   onOpenSession,
   onRunsComplete,
@@ -628,7 +628,17 @@ export function NewSwarmRunningStep({
   fallbackColumns: SwarmRunningColumn[];
   /** Used to label columns by client (host) instead of env nickname. */
   environments?: ProjectEnvironmentView[];
-  hosts?: HostListItem[];
+  hosts?: ReadonlyArray<{
+    hostId: string;
+    name: string;
+    displayName?: string;
+  }>;
+  /**
+   * `wizard` is the create-flow Running step (title, Open findings, hero,
+   * progress). `page` is the same matrix + stream on `/swarms/:id`, where
+   * the detail header and live strip already own that chrome.
+   */
+  chrome?: "wizard" | "page";
   /**
    * Leave the watch surface for the swarm's Findings page. Does not cancel
    * the run — "Stop" used to imply that and was a lie.
@@ -817,6 +827,10 @@ export function NewSwarmRunningStep({
   const completionAnnouncedRef = useRef(false);
   useEffect(() => {
     if (!allTerminal) return;
+    // The run-detail page owns this surface as a real tab. Auto-leaving
+    // would bounce a finished wave off `?tab=run` the moment the snapshots
+    // land.
+    if (chrome === "page") return;
     if (!completionAnnouncedRef.current) {
       completionAnnouncedRef.current = true;
       callbacksRef.current.onRunsComplete?.();
@@ -826,7 +840,7 @@ export function NewSwarmRunningStep({
       callbacksRef.current.onLeave();
     }, COMPLETION_TOAST_DWELL_MS);
     return () => window.clearTimeout(timer);
-  }, [allTerminal]);
+  }, [allTerminal, chrome]);
 
   /**
    * The first non-success terminal, humanized — what the run banner explains.
@@ -941,6 +955,12 @@ export function NewSwarmRunningStep({
     [mergedStream.sessions, selection]
   );
 
+  const showIntro =
+    chrome === "wizard" ||
+    missingPlannedClients.length > 0 ||
+    providerRateLimit !== null ||
+    runFailure !== null;
+
   return (
     <div
       className="flex h-full min-h-0 w-full"
@@ -955,39 +975,42 @@ export function NewSwarmRunningStep({
         />
       ))}
 
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-5 overflow-y-auto px-6 py-6 sm:px-8">
+      <div
+        className={
+          chrome === "page"
+            ? "flex min-h-0 min-w-0 flex-1 flex-col gap-5 overflow-y-auto px-6 py-4 sm:px-8"
+            : "flex min-h-0 min-w-0 flex-1 flex-col gap-5 overflow-y-auto px-6 py-6 sm:px-8"
+        }
+      >
+        {showIntro ? (
         <div className="flex flex-wrap items-start gap-3">
           <div className="min-w-0 flex-1 space-y-2">
-            <div className="flex items-start gap-2">
-              <h2
-                className="mb-0 min-w-0 flex-1 text-xl font-semibold tracking-[-0.02em] text-muted-foreground"
-                data-testid="new-swarm-running-title"
-              >
-                {swarmRunningTitle({
-                  allTerminal,
-                  succeeded,
-                  rateLimited,
-                  done,
-                  total,
-                })}
-              </h2>
-              <div className="flex shrink-0 items-center gap-2">
-                <Button
-                  type="button"
-                  size="sm"
-                  className="shrink-0"
-                  data-testid="new-swarm-running-open-findings"
-                  onClick={onLeave}
+            {chrome === "wizard" ? (
+              <div className="flex items-start gap-2">
+                <h2
+                  className="mb-0 min-w-0 flex-1 text-xl font-semibold tracking-[-0.02em] text-muted-foreground"
+                  data-testid="new-swarm-running-title"
                 >
-                  Open findings
-                </Button>
+                  {swarmRunningTitle({
+                    allTerminal,
+                    succeeded,
+                    rateLimited,
+                    done,
+                    total,
+                  })}
+                </h2>
+                <div className="flex shrink-0 items-center gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="shrink-0"
+                    data-testid="new-swarm-running-open-findings"
+                    onClick={onLeave}
+                  >
+                    Open findings
+                  </Button>
+                </div>
               </div>
-            </div>
-            {columns.length > 0 ? (
-              <p className="text-sm text-foreground">
-                Clients:{" "}
-                {columns.map((column) => column.label).join(" · ")}
-              </p>
             ) : null}
             {missingPlannedClients.length > 0 ? (
               <p
@@ -1056,29 +1079,34 @@ export function NewSwarmRunningStep({
                 ) : null}
               </div>
             ) : null}
-            <SwarmRunningHero
-              className={allTerminal ? "justify-end" : "justify-start"}
-            />
-            <div className="flex items-center gap-3">
-              <div
-                className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-muted"
-                role="progressbar"
-                aria-valuenow={Math.round(progress * 100)}
-                aria-valuemin={0}
-                aria-valuemax={100}
-                data-testid="new-swarm-running-progress"
-              >
-                <div
-                  className="h-full rounded-full bg-primary transition-[width] duration-500"
-                  style={{ width: `${Math.round(progress * 100)}%` }}
+            {chrome === "wizard" ? (
+              <>
+                <SwarmRunningHero
+                  className={allTerminal ? "justify-end" : "justify-start"}
                 />
-              </div>
-              <span className="shrink-0 text-xs text-foreground">
-                {`${Math.round(progress * 100)}%`}
-              </span>
-            </div>
+                <div className="flex items-center gap-3">
+                  <div
+                    className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-muted"
+                    role="progressbar"
+                    aria-valuenow={Math.round(progress * 100)}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    data-testid="new-swarm-running-progress"
+                  >
+                    <div
+                      className="h-full rounded-full bg-primary transition-[width] duration-500"
+                      style={{ width: `${Math.round(progress * 100)}%` }}
+                    />
+                  </div>
+                  <span className="shrink-0 text-xs text-foreground">
+                    {`${Math.round(progress * 100)}%`}
+                  </span>
+                </div>
+              </>
+            ) : null}
           </div>
         </div>
+        ) : null}
 
         {columns.length === 0 ? (
           <p className="text-sm text-muted-foreground">

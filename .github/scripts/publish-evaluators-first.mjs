@@ -5,18 +5,22 @@ import { pathToFileURL } from "node:url";
 /** Changesets publishes concurrently; publish the new dependency before its SDK consumers. */
 export function publishEvaluatorsFirst(
   version,
-  run = (args) => spawnSync("npm", args, { encoding: "utf8" })
+  run = (args) => spawnSync("npm", args, { encoding: "utf8" }),
+  sleep = (ms) =>
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms),
+  { attempts = 20, intervalMs = 3000 } = {}
 ) {
   const name = "@mcpjam/evaluators";
-  const lookup = run(["view", `${name}@${version}`, "version", "--json"]);
-  if (lookup.status === 0) {
-    if (JSON.parse(lookup.stdout) !== version)
+  const lookup = () => run(["view", `${name}@${version}`, "version", "--json"]);
+  const first = lookup();
+  if (first.status === 0) {
+    if (JSON.parse(first.stdout) !== version)
       throw new Error("Unexpected evaluator registry version");
     return "already-published";
   }
   let code;
   try {
-    code = JSON.parse(lookup.stdout).error?.code;
+    code = JSON.parse(first.stdout).error?.code;
   } catch {
     /* Fail closed below. */
   }
@@ -29,7 +33,20 @@ export function publishEvaluatorsFirst(
     throw new Error(
       "Evaluator publication failed; dependent publication must stop"
     );
-  return "published";
+  // A brand-new package name is not readable the instant `npm publish`
+  // returns. `changeset publish` runs its own `npm info` next, and a 404 there
+  // makes it publish this same version again — which npm rejects (E403) and
+  // fails the release after every other package has already shipped. Return
+  // only once the registry serves the version we just wrote.
+  for (let i = 0; i < attempts; i++) {
+    const check = lookup();
+    if (check.status === 0 && JSON.parse(check.stdout) === version)
+      return "published";
+    sleep(intervalMs);
+  }
+  throw new Error(
+    `Published ${name}@${version} but the registry does not serve it yet; dependent publication must stop`
+  );
 }
 if (
   process.argv[1] &&

@@ -1,3 +1,4 @@
+import { SharedSettingsGate } from "@/components/billing/SharedSettingsGate";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router";
 import {
@@ -48,8 +49,7 @@ import {
 } from "@/hooks/useProjectEnvironments";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { isAdhocEnvironment } from "@/lib/environment-label";
-import { convexErrMessage } from "@/lib/convex-error";
-import { ScenarioGradingSection } from "./ScenarioGradingSection";
+import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import {
   buildUserTestingScenarioEditPath,
   buildUserTestingScenarioPath,
@@ -70,8 +70,8 @@ import { toast } from "@/lib/toast";
  *
  * Detail (`/user-testing/:id`): Insights | Sessions under one header carrying
  * Edit / Open preview / Share. Edit (`/user-testing/:id/edit`) wears the same
- * action row and holds Settings — environment, sharing permissions, ratings,
- * grading — beside a docked live Preview. Only the back link differs: Edit is
+ * action row and holds Settings — environment, sharing permissions, ratings —
+ * beside a docked live Preview. Only the back link differs: Edit is
  * a sub-route, so it returns to the scenario rather than out to the list.
  *
  * Preview embeds the share link, so opening Edit starts a REAL guest session —
@@ -112,7 +112,7 @@ const TAB_OPTIONS: ReadonlyArray<{
 /**
  * One settings card. Stacked in a single column, the edge is what keeps a run
  * of sections from reading as one undifferentiated form — it is the only thing
- * saying where "Ratings" stops and "Grading" starts.
+ * saying where "Sharing permissions" stops and "Ratings" starts.
  */
 const SETTINGS_CARD =
   "space-y-4 rounded-xl border border-border bg-card p-5 shadow-sm";
@@ -310,7 +310,10 @@ export function UserTestingScenarioDetail({
         toast.error(
           isAdhocUnavailable(err)
             ? "This workspace's backend doesn't support editing a scenario's setup yet."
-            : convexErrMessage(err, "Could not update this scenario's setup"),
+            : getBillingErrorMessage(
+                err,
+                "Could not update this scenario's setup",
+              ),
         );
       } finally {
         committingRef.current = false;
@@ -374,7 +377,7 @@ export function UserTestingScenarioDetail({
     try {
       await updateScenario({ scenarioId: scenario.scenarioId, name } as any);
     } catch (err) {
-      toast.error(convexErrMessage(err, "Failed to rename the scenario"));
+      toast.error(getBillingErrorMessage(err, "Failed to rename the scenario"));
       // Rethrow so EditableTitle reverts to the persisted name.
       throw err;
     }
@@ -412,7 +415,9 @@ export function UserTestingScenarioDetail({
       // A newer save has taken over: its value is the one to keep, and
       // resyncing from here would drop it.
       if (generation !== descriptionSaveRef.current) return;
-      toast.error(convexErrMessage(err, "Failed to save the description"));
+      toast.error(
+        getBillingErrorMessage(err, "Failed to save the description"),
+      );
       // Also rolls the marked seed back to what is actually stored.
       adoptRemoteDescription();
     }
@@ -616,23 +621,28 @@ export function UserTestingScenarioDetail({
 
   if (editMode) {
     return (
-      <div className="flex h-full min-h-0 flex-col overflow-hidden">
-        {/* Back goes to the scenario, not the list: Edit is a sub-route, and
+      <SharedSettingsGate
+        projectId={scenario.projectId}
+        creatorId={scenario.owner?.userId}
+        resource="user-testing study"
+      >
+        <div className="flex h-full min-h-0 flex-col overflow-hidden">
+          {/* Back goes to the scenario, not the list: Edit is a sub-route, and
             its own Edit button is inert here, so the list would strand it. */}
-        <DetailPageHeader
-          backLabel={scenario.name || "Scenario"}
-          onBack={() =>
-            navigate(buildUserTestingScenarioPath(scenario.scenarioId))
-          }
-          backTestId="user-testing-detail-back"
-          title={headerTitle}
-          actions={headerActions}
-        />
-        <div
-          className="relative min-h-0 flex-1 overflow-hidden"
-          data-testid="user-testing-edit-tab"
-        >
-          {/* ONE COLUMN of wide cards, centred.
+          <DetailPageHeader
+            backLabel={scenario.name || "Scenario"}
+            onBack={() =>
+              navigate(buildUserTestingScenarioPath(scenario.scenarioId))
+            }
+            backTestId="user-testing-detail-back"
+            title={headerTitle}
+            actions={headerActions}
+          />
+          <div
+            className="relative min-h-0 flex-1 overflow-hidden"
+            data-testid="user-testing-edit-tab"
+          >
+            {/* ONE COLUMN of wide cards, centred.
 
               This was two columns from `xl`, which answered an older report
               ("too much white space") by filling the pane. Settings reads top
@@ -654,193 +664,189 @@ export function UserTestingScenarioDetail({
 
               Cards, not bare headings: a run of sections with no boundary
               reads as one long form that happens to have gaps. */}
-          <div className="h-full overflow-y-auto px-6 py-6 sm:px-8">
-            <div className="mx-auto w-full max-w-[960px] space-y-6">
-              <h1 className="text-xl font-semibold tracking-tight text-foreground">
-                Settings
-              </h1>
-              <div className="space-y-6">
-                <div className="min-w-0 space-y-6">
-                  {/* Off the header row as of BB-202: a field that grows next to
+            <div className="h-full overflow-y-auto px-6 py-6 sm:px-8">
+              <div className="mx-auto w-full max-w-[960px] space-y-6">
+                <h1 className="text-xl font-semibold tracking-tight text-foreground">
+                  Settings
+                </h1>
+                <div className="space-y-6">
+                  <div className="min-w-0 space-y-6">
+                    {/* Off the header row as of BB-202: a field that grows next to
                   the title crowds the tabs. Still the only editor for it. */}
-                  <section
-                    className={SETTINGS_CARD}
-                    data-testid="user-testing-description-section"
-                  >
-                    <h2 className={SETTINGS_CARD_TITLE}>Description</h2>
-                    <TextareaAutosize
-                      aria-label="Scenario description"
-                      data-testid="user-testing-description"
-                      value={descriptionDraft}
-                      onChange={(e) => setDescriptionDraft(e.target.value)}
-                      onFocus={() => {
-                        descriptionFocusedRef.current = true;
-                      }}
-                      onBlur={() => void persistDescription()}
-                      minRows={2}
-                      maxRows={8}
-                      maxLength={2000}
-                      placeholder="Add a description…"
-                      className="resize-none text-sm"
-                    />
-                  </section>
-
-                  {environmentError ? (
-                    <div
-                      data-testid="user-testing-detail-environment-error"
-                      className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3"
-                    >
-                      <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-500" />
-                      <div className="min-w-0 text-sm">
-                        <p className="font-medium text-foreground">
-                          {environmentError.code === "ENV_ARCHIVED"
-                            ? "This scenario's environment is archived — the share link no longer opens."
-                            : "This scenario's environment can't be loaded right now — the share link won't open."}
-                        </p>
-                        <p className="mt-0.5 text-xs text-muted-foreground">
-                          {environmentError.message} Its sessions are
-                          unaffected.
-                        </p>
-                      </div>
-                    </div>
-                  ) : null}
-
-                  {/* Where this scenario runs, edited in place. It used to hide
-                    behind a footer "Edit setup" dialog; the setup IS the
-                    setting, so it reads as one here. */}
-                  {composerActive ? (
                     <section
                       className={SETTINGS_CARD}
-                      data-testid="user-testing-environment-section"
+                      data-testid="user-testing-description-section"
                     >
-                      <h2 className={SETTINGS_CARD_TITLE}>Environment</h2>
-                      <div className="min-w-0">
-                        <EnvironmentComposer
-                          projectId={scenario.projectId}
-                          environments={liveNamedEnvironments}
-                          value={composer}
-                          onChange={handleComposerChange}
-                          maxTargets={1}
-                          disabled={isRebinding || !composerReady}
-                          lockedSlots={setupLockedReason}
-                          testIdPrefix="user-testing-detail"
-                          environmentPickerFooter={
-                            canPromoteEnvironment ? (
-                              // The row behind this setup is ad-hoc:
-                              // content-addressed, immutable, labeled by its
-                              // client rather than a name. Saving it (in place,
-                              // same id) turns it into a curated environment
-                              // other surfaces can pick.
-                              <button
-                                type="button"
-                                onClick={() => setNameEnvironmentOpen(true)}
-                                data-testid="user-testing-save-as-environment"
-                                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                              >
-                                <PenLine className="size-3.5 shrink-0" />
-                                Save as environment
-                              </button>
-                            ) : null
-                          }
-                        />
-                      </div>
+                      <h2 className={SETTINGS_CARD_TITLE}>Description</h2>
+                      <TextareaAutosize
+                        aria-label="Scenario description"
+                        data-testid="user-testing-description"
+                        value={descriptionDraft}
+                        onChange={(e) => setDescriptionDraft(e.target.value)}
+                        onFocus={() => {
+                          descriptionFocusedRef.current = true;
+                        }}
+                        onBlur={() => void persistDescription()}
+                        minRows={2}
+                        maxRows={8}
+                        maxLength={2000}
+                        placeholder="Add a description…"
+                        className="resize-none text-sm"
+                      />
                     </section>
-                  ) : null}
 
-                  {/* The same "what to try" list create step 2 authors, keyed
+                    {environmentError ? (
+                      <div
+                        data-testid="user-testing-detail-environment-error"
+                        className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3"
+                      >
+                        <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-500" />
+                        <div className="min-w-0 text-sm">
+                          <p className="font-medium text-foreground">
+                            {environmentError.code === "ENV_ARCHIVED"
+                              ? "This scenario's environment is archived — the share link no longer opens."
+                              : "This scenario's environment can't be loaded right now — the share link won't open."}
+                          </p>
+                          <p className="mt-0.5 text-xs text-muted-foreground">
+                            {environmentError.message} Its sessions are
+                            unaffected.
+                          </p>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {/* Where this scenario runs, edited in place. It used to hide
+                    behind a footer "Edit setup" dialog; the setup IS the
+                    setting, so it reads as one here. */}
+                    {composerActive ? (
+                      <section
+                        className={SETTINGS_CARD}
+                        data-testid="user-testing-environment-section"
+                      >
+                        <h2 className={SETTINGS_CARD_TITLE}>Environment</h2>
+                        <div className="min-w-0">
+                          <EnvironmentComposer
+                            projectId={scenario.projectId}
+                            environments={liveNamedEnvironments}
+                            value={composer}
+                            onChange={handleComposerChange}
+                            maxTargets={1}
+                            disabled={isRebinding || !composerReady}
+                            lockedSlots={setupLockedReason}
+                            testIdPrefix="user-testing-detail"
+                            environmentPickerFooter={
+                              canPromoteEnvironment ? (
+                                // The row behind this setup is ad-hoc:
+                                // content-addressed, immutable, labeled by its
+                                // client rather than a name. Saving it (in place,
+                                // same id) turns it into a curated environment
+                                // other surfaces can pick.
+                                <button
+                                  type="button"
+                                  onClick={() => setNameEnvironmentOpen(true)}
+                                  data-testid="user-testing-save-as-environment"
+                                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                                >
+                                  <PenLine className="size-3.5 shrink-0" />
+                                  Save as environment
+                                </button>
+                              ) : null
+                            }
+                          />
+                        </div>
+                      </section>
+                    ) : null}
+
+                    {/* The same "what to try" list create step 2 authors, keyed
                     per scenario for the reason the ratings toggle is: this
                     section holds an unsaved draft, and reusing one instance
                     across scenarios would carry one study's rows into
                     another's editor. */}
-                  <div className={SETTINGS_CARD}>
-                    <ScenarioTasksSection
-                      key={scenario.scenarioId}
-                      scenario={scenario}
-                    />
+                    <div className={SETTINGS_CARD}>
+                      <ScenarioTasksSection
+                        key={scenario.scenarioId}
+                        scenario={scenario}
+                      />
+                    </div>
                   </div>
-                </div>
 
-                {/* The rules it runs under. Its own wrapper, not merged into
+                  {/* The rules it runs under. Its own wrapper, not merged into
                     the one above: the grouping is still real, it is just read
                     in sequence now rather than side by side. */}
-                <div className="min-w-0 space-y-6">
-                  <section className={SETTINGS_CARD}>
-                    <h2 className={SETTINGS_CARD_TITLE}>Sharing permissions</h2>
-                    <ScenarioShareSection scenario={scenario} />
-                  </section>
+                  <div className="min-w-0 space-y-6">
+                    <section className={SETTINGS_CARD}>
+                      <h2 className={SETTINGS_CARD_TITLE}>
+                        Sharing permissions
+                      </h2>
+                      <ScenarioShareSection scenario={scenario} />
+                    </section>
 
-                  <section className={SETTINGS_CARD}>
-                    <h2 className={SETTINGS_CARD_TITLE}>Ratings</h2>
-                    {/* Keyed per scenario: the toggle holds optimistic state
+                    <section className={SETTINGS_CARD}>
+                      <h2 className={SETTINGS_CARD_TITLE}>Ratings</h2>
+                      {/* Keyed per scenario: the toggle holds optimistic state
                         across an await, and reusing one instance would let a
                         write started on one scenario resolve into another's. */}
-                    <ScenarioPerTurnFeedbackToggle
-                      key={scenario.scenarioId}
-                      scenario={scenario}
-                    />
-                  </section>
-
-                  {/* Production scoring: grade sampled real sessions against
-                      deterministic checks. Its own card — grading config is a
-                      peer of sharing, not part of it. */}
-                  <div className={SETTINGS_CARD}>
-                    <ScenarioGradingSection scenario={scenario} />
+                      <ScenarioPerTurnFeedbackToggle
+                        key={scenario.scenarioId}
+                        scenario={scenario}
+                      />
+                    </section>
                   </div>
                 </div>
-              </div>
 
-              {/* Last, and visibly apart from the cards above it: the one
+                {/* Last, and visibly apart from the cards above it: the one
                   control here that cannot be undone should not sit in a run of
                   sections where a mis-aimed click lives next to a switch. */}
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/25 bg-destructive/5 px-5 py-4">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-foreground">
-                    Delete this study
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    Removes the study, its share link and its sessions. This
-                    cannot be undone.
-                  </p>
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/25 bg-destructive/5 px-5 py-4">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-foreground">
+                      Delete this study
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Removes the study, its share link and its sessions. This
+                      cannot be undone.
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="rounded-lg text-destructive hover:bg-destructive/10 hover:text-destructive"
+                    onClick={() => setDeleteOpen(true)}
+                    data-testid="user-testing-delete"
+                  >
+                    <Trash2 className="mr-1.5 size-4" />
+                    Delete scenario
+                  </Button>
                 </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="rounded-lg text-destructive hover:bg-destructive/10 hover:text-destructive"
-                  onClick={() => setDeleteOpen(true)}
-                  data-testid="user-testing-delete"
-                >
-                  <Trash2 className="mr-1.5 size-4" />
-                  Delete scenario
-                </Button>
               </div>
             </div>
           </div>
-        </div>
 
-        <ScenarioShareDialog
-          scenario={scenario}
-          open={shareOpen}
-          onOpenChange={setShareOpen}
-        />
-
-        <ScenarioDeleteConfirmDialog
-          entityLabel="scenario"
-          open={deleteOpen}
-          onOpenChange={setDeleteOpen}
-          scenarioName={scenario.name}
-          isDeleting={isDeleting}
-          onConfirm={handleDelete}
-        />
-
-        {environment ? (
-          <NameEnvironmentDialog
-            open={nameEnvironmentOpen}
-            onOpenChange={setNameEnvironmentOpen}
-            projectId={scenario.projectId}
-            environment={environment}
+          <ScenarioShareDialog
+            scenario={scenario}
+            open={shareOpen}
+            onOpenChange={setShareOpen}
           />
-        ) : null}
-      </div>
+
+          <ScenarioDeleteConfirmDialog
+            entityLabel="scenario"
+            open={deleteOpen}
+            onOpenChange={setDeleteOpen}
+            scenarioName={scenario.name}
+            isDeleting={isDeleting}
+            onConfirm={handleDelete}
+          />
+
+          {environment ? (
+            <NameEnvironmentDialog
+              open={nameEnvironmentOpen}
+              onOpenChange={setNameEnvironmentOpen}
+              projectId={scenario.projectId}
+              environment={environment}
+            />
+          ) : null}
+        </div>
+      </SharedSettingsGate>
     );
   }
 

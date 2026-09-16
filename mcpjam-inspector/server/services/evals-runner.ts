@@ -1,3 +1,5 @@
+import { EVAL_SANDBOX_CAPACITY_POLICY } from "../utils/run-supervisor/capacity-retry.js";
+import type { TimeoutMetadata } from "../utils/run-supervisor/deadline.js";
 import { isCredentialFreeGithubExecution } from "./github-checks/credential-policy.js";
 import {
   peekPageToolsForChatTurn,
@@ -84,6 +86,16 @@ import {
 } from "./browserd/hosted-recording.js";
 import { seedEvalCaseAttachments } from "../utils/computers/eval-attachments-seed.js";
 import { logger } from "../utils/logger";
+import {
+  platformExecutionBudgetCeilings,
+  platformExecutionBudgetDefaults,
+  resolveExecutionBudgets,
+  type ResolvedExecutionBudgets,
+} from "@mcpjam/sdk";
+import {
+  deadlineClockOf,
+  withDeadline,
+} from "../utils/run-supervisor/deadline.js";
 import { captureMcpAppWidgetSnapshots } from "../utils/mcp-app-widget-capture";
 import {
   buildLlmRuntimeConfigFromOrgConfig,
@@ -558,6 +570,18 @@ export type RunEvalSuiteOptions = {
    * lets a run reach `enforce` at all.
    */
   gradingMode?: GradingEngineMode;
+  /**
+   * The run's FROZEN execution budgets, read from
+   * `configSnapshot.executionBudgets` in the `startTestSuiteRun` RESPONSE —
+   * the same seam `gradingMode` above arrives on, and for the same reason: the
+   * runner reads the launch response, not the row.
+   *
+   * ABSENT ⇒ resolved locally as `{ authored: undefined }`, which yields the
+   * platform defaults byte-for-byte. That is every run launched before the
+   * backend writes budgets, so there is no legacy branch below — just a
+   * resolution that happens to take the default rung on every field.
+   */
+  executionBudgets?: ResolvedExecutionBudgets;
   config: {
     tests: EvalTestCase[];
     environment: {
@@ -761,8 +785,6 @@ const MAX_STEPS = 20;
 // These bound it — a 20-min whole-run cap, a 10-min per-iteration cap, periodic
 // liveness heartbeats, and a cancellation poll — all surfacing through one
 // `EvalRunStoppedError` that aborts in-flight work and finalizes the run.
-const EVAL_RUN_TIMEOUT_MS = 20 * 60 * 1000;
-export const EVAL_ITERATION_TIMEOUT_MS = 10 * 60 * 1000;
 const EVAL_CANCEL_POLL_MS = 10 * 1000;
 const EVAL_ABORT_GRACE_MS = 30 * 1000;
 const EVAL_HEARTBEAT_MS = 15 * 1000;
@@ -787,23 +809,112 @@ class EvalRunStoppedError extends Error {
   }
 }
 
+/**
+ * Did the iteration's OWN clock fire, as opposed to someone cancelling the run?
+ *
+ * Both arrive as an `AbortError` on the same signal — `runSingleIteration`
+ * hands each iteration a signal composed from the run's — so the abort alone
+ * says nothing about which bound tripped. `deadlineClockOf` is the
+ * discriminator: it reads the clock the deadline stamped on its abort reason,
+ * and returns `undefined` for an abort that carries none (a user cancel, a
+ * torn-down socket).
+ *
+ * Checked on BOTH the thrown error and the signal's reason because only one of
+ * them reliably carries the stamp: the deadline aborts the signal with its own
+ * error, but a provider SDK that notices the abort usually raises a fresh,
+ * unstamped `AbortError` of its own.
+ *
+ * Getting this wrong is not a cosmetic mislabel. The iteration runners return
+ * a benign "cancelled" result on abort, and if a budget abort takes that path
+ * the supervisor sees a normal return inside its grace window and files the
+ * timed-out iteration as a completed one — the timeout disappears from the run
+ * entirely.
+ */
+function isIterationBudgetAbort(
+  error: unknown,
+  signal: AbortSignal | undefined,
+): boolean {
+  return (
+    deadlineClockOf(error) === "iteration" ||
+    deadlineClockOf(signal?.reason) === "iteration"
+  );
+}
+
 const RUN_CANCELLED_ERROR = new EvalRunStoppedError({
   stopReason: "user_cancelled",
   terminalStatus: "cancelled",
   notes: "Run cancelled by user",
 });
 
-const RUN_TIMEOUT_ERROR = new EvalRunStoppedError({
-  stopReason: "run_timeout",
-  terminalStatus: "timed_out",
-  notes: "Run timed out after 20 minutes",
-});
+/**
+ * Both messages are DERIVED from the resolved budget rather than hardcoded.
+ * The old strings said "20 minutes" and "10 minutes" literally, which stopped
+ * being true the moment either number became tunable — and a timeout notice
+ * that names the wrong number is worse than one that names none.
+ */
+function runTimeoutError(runTimeoutMs: number): EvalRunStoppedError {
+  return new EvalRunStoppedError({
+    stopReason: "run_timeout",
+    terminalStatus: "timed_out",
+    notes: `Run timed out after ${formatBudget(runTimeoutMs)}`,
+  });
+}
 
-const ITERATION_TIMEOUT_ERROR = new EvalRunStoppedError({
-  stopReason: "iteration_timeout",
-  terminalStatus: "timed_out",
-  notes: "Run timed out because an iteration exceeded 10 minutes",
-});
+function iterationTimeoutError(unitTimeoutMs: number): EvalRunStoppedError {
+  return new EvalRunStoppedError({
+    stopReason: "iteration_timeout",
+    terminalStatus: "timed_out",
+    notes: `Run timed out because an iteration exceeded ${formatBudget(
+      unitTimeoutMs,
+    )}`,
+  });
+}
+
+/** Minutes where they divide cleanly, else seconds. Rendering only. */
+function formatBudget(ms: number): string {
+  if (ms % 60_000 === 0) {
+    const minutes = ms / 60_000;
+    return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+  }
+  const seconds = Math.round(ms / 1000);
+  return `${seconds} second${seconds === 1 ? "" : "s"}`;
+}
+
+/**
+ * Kill switch for iteration ISOLATION only (§5).
+ *
+ * `0` restores the old behaviour — an iteration timeout aborts the whole run —
+ * for one release, so a customer surprised by runs that now finish with a
+ * verdict instead of exiting 5 has a way back. Naming follows
+ * `MCPJAM_GRADING_ENGINE_MODE`.
+ */
+/**
+ * The platform defaults, resolved through the real resolver.
+ *
+ * Not a hand-written object: going through `resolveExecutionBudgets` with
+ * nothing authored is what guarantees this is byte-identical to what a launch
+ * would have frozen, `sources` included. Used for quick runs (which have no
+ * launch response at all) and for runs launched before the backend wrote
+ * budgets — same path, no legacy branch.
+ */
+export function defaultEvalExecutionBudgets(): ResolvedExecutionBudgets {
+  const resolution = resolveExecutionBudgets({
+    defaults: platformExecutionBudgetDefaults("evals"),
+    ceilings: platformExecutionBudgetCeilings("evals"),
+  });
+  if (!resolution.ok) {
+    // Unreachable: nothing is authored, so nothing can exceed a ceiling. A
+    // throw here would mean the platform table contradicts itself.
+    throw new Error(
+      "execution budget defaults exceed their own ceilings — the platform table is inconsistent",
+    );
+  }
+  return resolution.resolved;
+}
+
+function isolatedIterationTimeoutEnabled(): boolean {
+  return process.env.MCPJAM_EVAL_ISOLATED_ITERATION_TIMEOUT !== "0";
+}
 
 function isEvalRunStoppedError(error: unknown): error is EvalRunStoppedError {
   return error instanceof EvalRunStoppedError;
@@ -841,7 +952,11 @@ type DescriptionExperimentIterationStamp = {
  * value would fail that check.
  */
 type IterationMetadataValue =
-  string | number | boolean | DescriptionExperimentIterationStamp;
+  | string
+  | number
+  | boolean
+  | DescriptionExperimentIterationStamp
+  | TimeoutMetadata;
 
 type IterationMetadataBase = Record<string, IterationMetadataValue>;
 
@@ -1869,6 +1984,13 @@ type RunIterationBaseParams = {
   test: EvalTestCase;
   runIndex: number;
   /**
+   * The run's FROZEN execution budgets. Resolved once at launch and carried
+   * down unchanged — the iteration runners slice `turnTimeoutMs` and
+   * `turnRetries` out of it rather than re-deriving anything.
+   */
+  budgets: ResolvedExecutionBudgets;
+  iterationDeadlineAt?: number;
+  /**
    * Suite-level raw tool set, kept for `toolSignals` telemetry only.
    * Iteration runners route the actual tool prep through `prepareChatV2`
    * (per PR 1 of the engine consolidation) so eval gets skill tools,
@@ -2255,13 +2377,17 @@ async function markIterationTimedOut(args: {
   precreatedIterationId?: string;
   test: EvalTestCase;
   runIndex: number;
+  /** The budget that expired, so the message names the real number. */
+  budgetMs: number;
+  /** How long it actually took. Absent under the kill switch. */
+  elapsedMs?: number;
 }): Promise<void> {
   const iterationId = await findIterationIdForTimeout(args);
   if (!iterationId) {
     return;
   }
 
-  const message = "Iteration timed out after 10 minutes";
+  const message = `Iteration timed out after ${formatBudget(args.budgetMs)}`;
   try {
     await args.convexClient.action("testSuites:updateTestIteration" as any, {
       iterationId,
@@ -2273,7 +2399,19 @@ async function markIterationTimedOut(args: {
       messages: [{ role: "assistant", content: message }],
       error: message,
       resultSource: "derived",
-      metadata: { stopReason: "iteration_timeout" },
+      metadata: {
+        stopReason: "iteration_timeout",
+        // WHICH clock fired. `stopReason` alone cannot say: a trial stopped by
+        // its iteration cap and one stopped by a hung single turn are the same
+        // word, and they are different bugs.
+        timeout: {
+          clock: "iteration",
+          budgetMs: args.budgetMs,
+          ...(args.elapsedMs !== undefined
+            ? { elapsedMs: args.elapsedMs }
+            : {}),
+        },
+      },
     });
   } catch (error) {
     logger.warn("[evals] Failed to mark timed-out iteration", {
@@ -2283,37 +2421,108 @@ async function markIterationTimedOut(args: {
   }
 }
 
-// Race a single iteration against the 10-minute per-iteration cap. On timeout
-// the loser (`onTimeout`) aborts the run and marks the row; a finished or
-// already-aborted iteration skips the timeout cleanly.
-export async function runIterationWithTimeout<T>(args: {
-  run: () => Promise<T>;
-  onTimeout: () => Promise<void>;
-  shouldSkipTimeout: () => boolean;
+/**
+ * Run ONE iteration under its own clock.
+ *
+ * This replaces a `Promise.race` against a bare timer, and the difference is
+ * the whole point of the change. A race declares a winner and walks away: the
+ * losing iteration keeps running, keeps its model stream open, keeps its
+ * sandbox — the timeout bounded the WAIT, not the WORK. Here the budget aborts
+ * the iteration's own child signal, so the work actually stops.
+ *
+ * On expiry this RESOLVES with a timed-out outcome; it must never reject. Its
+ * caller is a sequential `for (runIndex…)` loop with no try/catch, so a
+ * rejection would skip iterations `runIndex+1..N` of that case entirely. Those
+ * rows are pre-created, so they would sit `pending` forever and
+ * `completeTestSuiteRun` would refuse the terminal transition until the stale
+ * reaper eventually noticed — one slow trial silently costing the rest of its
+ * case AND the run's ability to finish.
+ *
+ * Sequencing on expiry matters and is deliberate: abort, then AWAIT the
+ * runner's settle under a grace window, and only then write `timed_out`. The
+ * old `onTimeout` was fire-and-forget, which races the runner's own failure
+ * write — and `internalUpdateTestIteration` lets `timed_out` overwrite
+ * `failed` but never the reverse, so losing that race silently downgrades the
+ * row to a product failure.
+ */
+export async function runIterationUnderBudget<T>(args: {
+  run: (iterationSignal: AbortSignal, deadlineAt: number) => Promise<T>;
+  /** Parent: the run signal (cancel poller ∧ run deadline ∧ shutdown). */
+  runSignal: AbortSignal | undefined;
+  unitTimeoutMs: number;
+  graceMs: number;
+  /** Write the terminal row. Awaited BEFORE this resolves. */
+  onTimeout: (elapsedMs: number) => Promise<void>;
+  /** The value to resolve with when this iteration ran out of clock. */
+  timedOutOutcome: () => T;
 }): Promise<T> {
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const handle = withDeadline(args.runSignal, args.unitTimeoutMs, "iteration");
+  // Started ONCE and held. Racing `args.run(...)` again would launch a second
+  // iteration of the same trial — a second model call, a second sandbox, a
+  // second set of rows — which is the opposite of what a timeout is for.
+  const running = args.run(handle.signal, Date.now() + args.unitTimeoutMs).then(
+    (value) => ({ kind: "settled" as const, value }),
+    (error) => ({ kind: "threw" as const, error }),
+  );
   try {
-    return await Promise.race([
-      args.run(),
-      new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(() => {
-          if (args.shouldSkipTimeout()) {
-            return;
-          }
-          reject(ITERATION_TIMEOUT_ERROR);
-          void args.onTimeout().catch((error) => {
-            logger.warn("[evals] Iteration timeout cleanup failed", {
-              error: error instanceof Error ? error.message : String(error),
-            });
-          });
-        }, EVAL_ITERATION_TIMEOUT_MS);
-      }),
+    const settled = await Promise.race([
+      running,
+      whenAborted(handle.signal).then(() => ({ kind: "aborted" as const })),
     ]);
-  } finally {
-    if (timeoutId) {
-      clearTimeout(timeoutId);
+
+    // The CLOCK is read before the race's winner is honoured, and that
+    // ordering is the whole enforcement.
+    //
+    // It is tempting to take a settled value first — it looks like a trial
+    // that beat the buzzer. It usually is not. A runner that handles its own
+    // abort resolves in the SAME tick the signal fires, and because its
+    // listener was registered before ours (`args.run` is called first), its
+    // promise wins this race. So the value arriving here is typically the
+    // runner's cancellation stub, produced after the budget expired.
+    //
+    // The runners now THROW on a budget abort rather than returning that stub,
+    // which fixed half the problem and created the other half: a throw takes
+    // the `settled.kind === "threw"` arm below and propagates OUT of this
+    // helper. `runSingleIteration` must RESOLVE a timed-out outcome, never
+    // reject — a rejection means iterations `runIndex+1..N` of that case never
+    // start, land `pending`, and block the run's terminal transition until the
+    // stale reaper takes the whole run.
+    //
+    // Reading the clock first covers both shapes at once. There is no way to
+    // tell a cancellation stub from a genuine last-moment result, so the
+    // conservative reading wins: the clock expired, the iteration timed out.
+    // The grace window below is for UNWINDING — letting partial writes land —
+    // not for deciding a verdict.
+    if (handle.firedClock() === "iteration") {
+      await Promise.race([
+        running,
+        delay(args.graceMs).then(() => ({ kind: "grace" as const })),
+      ]);
+      await args.onTimeout(handle.elapsedMs());
+      return args.timedOutOutcome();
     }
+
+    if (settled.kind === "settled") return settled.value;
+    if (settled.kind === "threw") throw settled.error;
+
+    // Aborted on someone else's clock. The run being cancelled is not this
+    // iteration's problem to report.
+    const reason = args.runSignal?.reason;
+    throw reason instanceof Error ? reason : RUN_CANCELLED_ERROR;
+  } finally {
+    handle.dispose();
+    // The held promise may still reject after we stopped waiting on it;
+    // without this the process sees an unhandled rejection.
+    void running.catch(() => undefined);
   }
+}
+
+/** Resolves when `signal` aborts; never rejects. */
+function whenAborted(signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.resolve();
+  return new Promise((resolve) => {
+    signal.addEventListener("abort", () => resolve(), { once: true });
+  });
 }
 
 const executeTestCase = async (params: {
@@ -2346,6 +2555,8 @@ const executeTestCase = async (params: {
   hostPolicy?: HostExecutionPolicy;
   /** The run's frozen grading-engine position (see RunEvalSuiteOptions). */
   gradingMode?: GradingEngineMode;
+  /** The run's frozen execution budgets (see RunEvalSuiteOptions). */
+  budgets: ResolvedExecutionBudgets;
   /** Pre-computed tool exposure signals for metadata stamping. */
   toolSignals?: ToolExposureSignals;
   setupSignals?: StageSetupSignals;
@@ -2403,6 +2614,7 @@ const executeTestCase = async (params: {
     injectOpenAiCompat,
     hostPolicy,
     gradingMode,
+    budgets,
     toolSignals,
     setupSignals,
     setupSpans,
@@ -2432,7 +2644,7 @@ const executeTestCase = async (params: {
   // Bails immediately if the run was already stopped; on timeout it aborts the
   // whole run (via `abortRun`) and marks the row `timed_out`.
   const runSingleIteration = async <T extends EvalIterationOutcome>(
-    runner: () => Promise<T>,
+    runner: (iterationSignal: AbortSignal, deadlineAt: number) => Promise<T>,
     precreatedIterationId: string | undefined,
     runIndex: number,
     timeoutTest: EvalTestCase = normalizedTest,
@@ -2441,19 +2653,63 @@ const executeTestCase = async (params: {
       const reason = abortSignal.reason;
       throw reason instanceof Error ? reason : RUN_CANCELLED_ERROR;
     }
-    return await runIterationWithTimeout({
+
+    if (!isolatedIterationTimeoutEnabled()) {
+      // Kill-switch path: the pre-isolation behaviour, kept verbatim for one
+      // release. An iteration timeout aborts the WHOLE run and rejects, which
+      // is the contract `evals-runner.test.ts` pinned before this change.
+      return await runIterationUnderBudget({
+        run: runner,
+        runSignal: abortSignal,
+        unitTimeoutMs: budgets.unitTimeoutMs,
+        graceMs: EVAL_ABORT_GRACE_MS,
+        onTimeout: async () => {
+          abortRun?.(iterationTimeoutError(budgets.unitTimeoutMs));
+          await markIterationTimedOut({
+            convexClient,
+            runId,
+            precreatedIterationId,
+            test: timeoutTest,
+            runIndex,
+            budgetMs: budgets.unitTimeoutMs,
+          });
+        },
+        timedOutOutcome: () => {
+          throw iterationTimeoutError(budgets.unitTimeoutMs);
+        },
+      });
+    }
+
+    return await runIterationUnderBudget({
       run: runner,
-      shouldSkipTimeout: () => abortSignal?.aborted === true,
-      onTimeout: async () => {
-        abortRun?.(ITERATION_TIMEOUT_ERROR);
+      runSignal: abortSignal,
+      unitTimeoutMs: budgets.unitTimeoutMs,
+      graceMs: EVAL_ABORT_GRACE_MS,
+      onTimeout: async (elapsedMs) => {
+        // NOTE: no `abortRun`. That is the change — one slow trial used to
+        // kill every sibling trial in the run, discarding evidence that had
+        // already been produced and turning an infrastructure event into a
+        // run-level verdict of `timed_out`.
         await markIterationTimedOut({
           convexClient,
           runId,
           precreatedIterationId,
           test: timeoutTest,
           runIndex,
+          budgetMs: budgets.unitTimeoutMs,
+          elapsedMs,
         });
       },
+      // Resolve, never reject: the caller's `for (runIndex…)` loop has no
+      // try/catch, so rejecting here strands this case's remaining iterations
+      // as `pending` and blocks the run's terminal transition.
+      timedOutOutcome: () =>
+        ({
+          evaluation: { passed: false },
+          ...(precreatedIterationId
+            ? { iterationId: precreatedIterationId }
+            : {}),
+        }) as unknown as T,
     });
   };
 
@@ -2475,6 +2731,7 @@ const executeTestCase = async (params: {
       const modelFreeParams = {
         test: normalizedTest,
         runIndex,
+        budgets,
         tools,
         selectedServers,
         mcpClientManager,
@@ -2514,9 +2771,14 @@ const executeTestCase = async (params: {
       };
       outcomes.push(
         await runSingleIteration(
-          () =>
+          (iterationSignal, iterationDeadlineAt) =>
             runLocalIteration({
               ...modelFreeParams,
+              // The ITERATION's signal, not the run's: this is what makes the
+              // budget abort this trial's own work instead of merely ending
+              // the wait for it.
+              abortSignal: iterationSignal,
+              iterationDeadlineAt,
               ...(streaming ? { emit: emit! } : {}),
             }),
           undefined,
@@ -2625,6 +2887,7 @@ const executeTestCase = async (params: {
       const backendParams = {
         test,
         runIndex,
+        budgets,
         tools,
         selectedServers,
         mcpClientManager,
@@ -2673,9 +2936,11 @@ const executeTestCase = async (params: {
         ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
       };
       const iterationOutcome = await runSingleIteration(
-        () =>
+        (iterationSignal, iterationDeadlineAt) =>
           runHostedIteration({
             ...backendParams,
+            abortSignal: iterationSignal,
+            iterationDeadlineAt,
             ...(streaming ? { emit: emit! } : {}),
           }),
         precreatedIterationId,
@@ -2690,6 +2955,7 @@ const executeTestCase = async (params: {
       const backendParams = {
         test,
         runIndex,
+        budgets,
         tools,
         selectedServers,
         mcpClientManager,
@@ -2742,9 +3008,11 @@ const executeTestCase = async (params: {
         ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
       };
       const iterationOutcome = await runSingleIteration(
-        () =>
+        (iterationSignal, iterationDeadlineAt) =>
           runHostedIteration({
             ...backendParams,
+            abortSignal: iterationSignal,
+            iterationDeadlineAt,
             ...(streaming ? { emit: emit! } : {}),
           }),
         precreatedIterationId,
@@ -2758,6 +3026,7 @@ const executeTestCase = async (params: {
     const localParams = {
       test,
       runIndex,
+      budgets,
       tools,
       selectedServers,
       mcpClientManager,
@@ -2797,9 +3066,11 @@ const executeTestCase = async (params: {
       ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
     };
     const iterationOutcome = await runSingleIteration(
-      () =>
+      (iterationSignal, iterationDeadlineAt) =>
         runLocalIteration({
           ...localParams,
+          abortSignal: iterationSignal,
+          iterationDeadlineAt,
           ...(streaming ? { emit: emit! } : {}),
         }),
       precreatedIterationId,
@@ -2820,6 +3091,7 @@ const runTestCase = (
 
 export const runEvalSuiteWithAiSdk = async ({
   gradingMode,
+  executionBudgets,
   suiteId,
   runId,
   config,
@@ -2845,6 +3117,15 @@ export const runEvalSuiteWithAiSdk = async ({
   benchmarkWriteGuard,
   extraHeaders,
 }: RunEvalSuiteOptions): Promise<RunEvalSuiteWithAiSdkResult | undefined> => {
+  // One resolution for the whole run. When the launch response carried frozen
+  // budgets we consume them verbatim — they are the decision, already made,
+  // against the platform ceilings; org ceilings apply once the backend
+  // freezes them. Without a frozen snapshot, resolve `{ authored: undefined }`,
+  // which yields
+  // the platform defaults byte-for-byte. Same code path either way; the only
+  // difference is which rung each field came from.
+  const budgets: ResolvedExecutionBudgets =
+    executionBudgets ?? defaultEvalExecutionBudgets();
   // Resolved inside the setup `try` below: a refused or unreadable override
   // is a run-setup failure, and the catch there is what marks the precreated
   // iteration rows failed. Thrown out here, the run would go `failed` while
@@ -3115,6 +3396,7 @@ export const runEvalSuiteWithAiSdk = async ({
     const runOne = (test: (typeof tests)[number]) =>
       runTestCase({
         test,
+        budgets,
         tools,
         selectedServers: serverIds,
         mcpClientManager,
@@ -3200,8 +3482,9 @@ export const runEvalSuiteWithAiSdk = async ({
             throw RUN_CANCELLED_ERROR;
           }
           if (currentRun?.status === "timed_out") {
-            abortRun(RUN_TIMEOUT_ERROR);
-            throw RUN_TIMEOUT_ERROR;
+            const stop = runTimeoutError(budgets.runTimeoutMs);
+            abortRun(stop);
+            throw stop;
           }
         } catch (error) {
           if (isEvalRunStoppedError(error)) {
@@ -3246,9 +3529,10 @@ export const runEvalSuiteWithAiSdk = async ({
     const createRunTimeout = (): Promise<never> =>
       new Promise<never>((_, reject) => {
         runTimeoutId = setTimeout(() => {
-          abortRun(RUN_TIMEOUT_ERROR);
-          reject(RUN_TIMEOUT_ERROR);
-        }, EVAL_RUN_TIMEOUT_MS);
+          const stop = runTimeoutError(budgets.runTimeoutMs);
+          abortRun(stop);
+          reject(stop);
+        }, budgets.runTimeoutMs);
       });
 
     // Surface an `EvalRunStoppedError` thrown by ANY iteration immediately
@@ -3286,6 +3570,14 @@ export const runEvalSuiteWithAiSdk = async ({
         }),
         createRunTimeout(),
       ]);
+      // allSettled and the lifecycle rejection can resolve in the same turn.
+      // A stop already recorded on the run signal wins either race ordering.
+      if (
+        abortController.signal.aborted &&
+        isEvalRunStoppedError(abortController.signal.reason)
+      ) {
+        throw abortController.signal.reason;
+      }
     } catch (error) {
       if (isEvalRunStoppedError(error)) {
         logger.debug("[evals] Run stopped by lifecycle guard", {
@@ -3492,6 +3784,8 @@ export function annotateStepsWithAttachments(
 const runLocalIteration = async ({
   test,
   runIndex,
+  budgets,
+  iterationDeadlineAt = Date.now() + budgets.unitTimeoutMs,
   // Suite-level raw set retained for `toolSignals`; per-iteration tool prep
   // is delegated to prepareChatV2 below.
   tools: _suiteTools,
@@ -3930,16 +4224,35 @@ const runLocalIteration = async ({
             "This eval pins a reproducible computer environment, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it.",
           );
         }
+        const capacityBudgetMs = Math.min(
+          EVAL_SANDBOX_CAPACITY_POLICY.totalBudgetMs,
+          Math.max(0, iterationDeadlineAt - Date.now()),
+        );
+        const capacityStartedAt = Date.now();
         evalSandbox = await provisionEvalSandbox({
+          timeoutMs: capacityBudgetMs,
           bearer: convexAuthToken,
           runId: String(runId),
           ...(iterationId ? { iterationId: String(iterationId) } : {}),
           ...(abortSignal ? { signal: abortSignal } : {}),
         });
         if (!evalSandbox.ok) {
-          throw new Error(
-            `Could not provision the eval's reproducible sandbox: ${evalSandbox.error}`,
-          );
+          const error = new Error(describeEvalSandboxRefusal(evalSandbox));
+          if (
+            evalSandbox.status === 503 &&
+            evalSandbox.code === "at_capacity"
+          ) {
+            iterationMetadataBase.timeout = {
+              clock: "sandboxCapacity",
+              budgetMs: capacityBudgetMs,
+              elapsedMs: Date.now() - capacityStartedAt,
+            };
+            Object.assign(error, {
+              clock: "sandboxCapacity",
+              timeout: iterationMetadataBase.timeout,
+            });
+          }
+          throw error;
         }
         // COMP-17: seed the case's pinned attachments into the fresh box before
         // it's exposed as `bash`. Runs BEFORE buildEvalBashTool so the model's
@@ -4120,6 +4433,11 @@ const runLocalIteration = async ({
     );
     const stepHandlers = buildLocalStepHandlers({
       acc,
+      // One turn's slice of the run's frozen budget. Nested under the
+      // iteration clock the runner already armed, so a wedged provider call
+      // costs one turn rather than the iteration's whole allowance.
+      turnTimeoutMs: budgets.turnTimeoutMs,
+      turnRetries: budgets.turnRetries,
       browser,
       mcpClientManager,
       selectedServers,
@@ -4151,7 +4469,7 @@ const runLocalIteration = async ({
       buildSinks: makeSinks,
     });
     const stepState = createStepExecutionState();
-    await executeSteps({
+    const stepOutcome = await executeSteps({
       steps,
       state: stepState,
       browser,
@@ -4177,7 +4495,17 @@ const runLocalIteration = async ({
     stepResults = buildStepResultRecords(stepState, steps);
     // §2: interact / widget-assert failures → the scripted-check gate below.
     stepScriptedFailures = buildStepScriptedCheckFailures(stepState);
-    if (localIsAborted()) return returnLocalCancelled();
+    // The executor's own report comes first. A turn the engine saw cancelled
+    // is cancelled whether or not the run's signal happens to read that way
+    // from here — re-reading the signal is a second source of truth for a fact
+    // the outcome already carries.
+    if (isIterationBudgetAbort(undefined, abortSignal)) {
+      throw abortSignal?.reason;
+    }
+    if (acc.timeout) iterationMetadataBase.timeout = acc.timeout;
+    if (stepOutcome.cancelled || localIsAborted()) {
+      return returnLocalCancelled();
+    }
 
     // Widget→host tool calls (a tool a widget invoked, e.g. from an authored
     // click) live outside the model transcript. Fold them into each turn's
@@ -4457,6 +4785,10 @@ const runLocalIteration = async ({
         : {}),
     };
   } catch (error) {
+    // Rethrown, not swallowed: this iteration ran out of its own budget, and
+    // `runIterationUnderBudget` is what records that. See
+    // `isIterationBudgetAbort`.
+    if (isIterationBudgetAbort(error, abortSignal)) throw error;
     if (error instanceof Error && error.name === "AbortError") {
       logger.debug("[evals] streaming iteration aborted due to cancellation");
       // Force passed:false (see the non-stream runner) so an all-pinned case
@@ -4619,7 +4951,13 @@ const runLocalIteration = async ({
       // PR 9: browser artifacts collected before the failure still persist.
       widgetRenderObservations: browser.widgetRenderObservations,
       browserInteractionSteps: browser.browserInteractionSteps,
-      status: "failed",
+      status:
+        iterationMetadataBase.timeout &&
+        typeof iterationMetadataBase.timeout === "object" &&
+        "clock" in iterationMetadataBase.timeout &&
+        iterationMetadataBase.timeout.clock === "sandboxCapacity"
+          ? "setup_failed"
+          : "failed",
       startedAt: runStartedAt,
       ...(toolPolicyGate?.blocks.length
         ? { policyBlocks: toolPolicyGate.blocks }
@@ -4714,6 +5052,8 @@ const runHostedIterationWithBrowser = async (
   {
     test,
     runIndex,
+    budgets,
+    iterationDeadlineAt = Date.now() + budgets.unitTimeoutMs,
     // Suite-level raw set retained for `toolSignals`; per-iteration tool prep
     // is delegated to prepareChatV2 below.
     tools: _suiteTools,
@@ -5193,7 +5533,13 @@ const runHostedIterationWithBrowser = async (
               : "This eval runs on a harness, which boots a disposable computer per iteration, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it.",
         );
       }
+      const capacityBudgetMs = Math.min(
+        EVAL_SANDBOX_CAPACITY_POLICY.totalBudgetMs,
+        Math.max(0, iterationDeadlineAt - Date.now()),
+      );
+      const capacityStartedAt = Date.now();
       evalSandbox = await provisionEvalSandbox({
+        timeoutMs: capacityBudgetMs,
         bearer: convexAuthToken,
         runId: String(runId),
         ...(iterationId ? { iterationId: String(iterationId) } : {}),
@@ -5205,7 +5551,19 @@ const runHostedIterationWithBrowser = async (
         ...(abortSignal ? { signal: abortSignal } : {}),
       });
       if (!evalSandbox.ok) {
-        throw new Error(describeEvalSandboxRefusal(evalSandbox));
+        const error = new Error(describeEvalSandboxRefusal(evalSandbox));
+        if (evalSandbox.status === 503 && evalSandbox.code === "at_capacity") {
+          iterationMetadataBase.timeout = {
+            clock: "sandboxCapacity",
+            budgetMs: capacityBudgetMs,
+            elapsedMs: Date.now() - capacityStartedAt,
+          };
+          Object.assign(error, {
+            clock: "sandboxCapacity",
+            timeout: iterationMetadataBase.timeout,
+          });
+        }
+        throw error;
       }
     }
     const sandboxBinding =
@@ -5333,6 +5691,9 @@ const runHostedIterationWithBrowser = async (
   } catch (error) {
     // Release any sandbox provisioned before a later line in the try threw.
     await releaseEvalSandboxIfAny();
+    if (isIterationBudgetAbort(error, abortSignal)) {
+      throw abortSignal?.reason ?? error;
+    }
     const errorMessage = error instanceof Error ? error.message : String(error);
     logger.error("[evals] iteration setup failed (prepareChatV2)", error);
     if (toolDescriptionOverride) {
@@ -5502,6 +5863,8 @@ const runHostedIterationWithBrowser = async (
       }
     | undefined;
   const hostedHandlers = buildHostedStepHandlers({
+    // See the local path: one turn's slice of the run's frozen budget.
+    turnTimeoutMs: budgets.turnTimeoutMs,
     browser,
     prepared,
     modelDefinition,
@@ -5694,7 +6057,16 @@ const runHostedIterationWithBrowser = async (
     // backend GC reaps anything this misses.
     await releaseEvalSandboxIfAny();
   }
-  if (isAborted()) return returnCancelled();
+  // Same discrimination as the local runner's catch: the engine swallows
+  // AbortError and returns normally, so a blown ITERATION budget reaches here
+  // looking exactly like a cancel. Throwing hands it back to
+  // `runIterationUnderBudget`, which marks the iteration timed out.
+  if (isIterationBudgetAbort(undefined, abortSignal)) {
+    throw abortSignal?.reason;
+  }
+  // The executor's own report first — see the local runner for why.
+  if (result.cancelled || isAborted()) return returnCancelled();
+  if (result.timeout) iterationMetadataBase.timeout = result.timeout;
   if (result.iterationError) {
     iterationError = result.iterationError;
     iterationErrorDetails = result.iterationErrorDetails;

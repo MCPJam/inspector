@@ -6807,6 +6807,152 @@
         }
       }
     },
+    "/projects/{projectId}/model-leases": {
+      "post": {
+        "operationId": "createModelLease",
+        "tags": [
+          "Eval runs"
+        ],
+        "summary": "Mint a model lease for MCPJam-hosted inference",
+        "description": "How an SDK eval running OUTSIDE the platform (local dev, CI) uses MCPJam-hosted inference on the organization's credits, with no provider key of its own. Authenticate like any other `/api/v1` route (typically an `sk_` key).\n\nThe lease is strictly narrower than the key used to get it: one organization, one project, one model, one proxy host, about 30 minutes, a per-lease spend and call cap, and revocable by `runId`.\n\nThe `{projectId}` segment declares which project's organization pays, and always wins over any `projectId` in the body. The literal `default` resolves to the key org's Default project — the zero-config CI case, and the same resolution the eval-ingest routes use, so a lease and the results it produces land in the same project.",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Project id, or the literal `default` for the key org's Default project."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelLeaseRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A short-lived lease and the proxy to present it to.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelLease"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/model-leases/revoke": {
+      "post": {
+        "operationId": "revokeModelLease",
+        "tags": [
+          "Eval runs"
+        ],
+        "summary": "Revoke a model lease",
+        "description": "Kills this caller's SDK model leases under `runId` in the addressed project, immediately — the proxy fails a revoked lease closed from that moment. Leases also expire on their own, so this is for ending a run early (an SDK suite calls it at teardown) rather than something a caller must do.",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Project id, or the literal `default` for the key org's Default project."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelLeaseRevokeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "How many leases were revoked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "revoked"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "revoked": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
+    },
     "/projects/{projectId}/eval-ingest/runs/finalize": {
       "post": {
         "operationId": "finalizeEvalIngestRun",
@@ -15005,7 +15151,7 @@
           "iterations": {
             "type": "integer",
             "minimum": 1,
-            "description": "The exact per-case count under verdict policy 2, when the case overrides the suite default. Absent means the case inherits it. Vocabulary 1 spells this field `repetitions`."
+            "description": "The exact per-case count under per-case grading, when the case overrides the suite default. Absent means the case inherits it. Vocabulary 1 spells this field `repetitions`."
           },
           "passThreshold": {
             "type": "number",
@@ -15093,6 +15239,17 @@
         "required": ["title", "steps"],
         "description": "Create one case. `title` and a non-empty `steps` array are both required — a case persisted without executable steps could never run. Vocabulary 2 (`x-mcpjam-eval-vocabulary: 2`): `legacyIterations`/`runs` is the floor, `iterations`/`repetitions` the exact count, `assertions`/`checks`/`predicates` the rules; two spellings of one field is a `400`. A canonical client projects a GET into this body rather than echoing both spellings back.",
         "properties": {
+          "judge": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              }
+            },
+            "nullable": true,
+            "description": "Per-case judge override. enabled: false skips goal-completion grading for this case; null clears the override and restores the suite setting."
+          },
           "declaredSuiteId": {
             "type": "string",
             "maxLength": 128,
@@ -15135,7 +15292,7 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 10,
-            "description": "The exact number of iterations this case runs under verdict policy 2, overriding the suite default (legacy spelling `repetitions`). VERDICT POLICY 2 ONLY — on a legacy suite this is a VALIDATION_ERROR naming the upgrade. A CREATE that names this but no `legacyIterations` stores the floor at the same value; a CREATE that names neither stores a floor of 1. Capped at 10."
+            "description": "The exact number of iterations this case runs under per-case grading, overriding the suite default (vocabulary 1 spells it `repetitions`). PER-CASE GRADING ONLY — on a suite decided by the suite-wide accuracy threshold this is a VALIDATION_ERROR naming the criterion change that would make it readable, because that criterion takes the count from the case's own `legacyIterations` raised to the suite's `minimumIterations` and would never read this. A CREATE that names this but no `legacyIterations` stores the floor at the same value; a CREATE that names neither stores a floor of 1. Capped at 10."
           },
           "repetitions": {
             "type": "integer",
@@ -15148,7 +15305,7 @@
             "type": "number",
             "minimum": 0,
             "maximum": 1,
-            "description": "Per-case pass threshold fraction. VERDICT POLICY 2 ONLY — on a legacy suite this is a VALIDATION_ERROR naming the upgrade, for the same reason as `repetitions`."
+            "description": "Per-case pass threshold FRACTION: the share of this case's own iterations that must pass. PER-CASE GRADING ONLY — on a suite decided by the suite-wide accuracy threshold this is a VALIDATION_ERROR, for the same reason as the count: that criterion has one percentage over the whole run and no per-case threshold to override."
           },
           "isNegative": {
             "type": "boolean"
@@ -15285,6 +15442,17 @@
         "type": "object",
         "description": "Partial update. Every field is optional; omitted fields are left as they are. `steps` REPLACES the definition rather than merging into it. Vocabulary 2 (`x-mcpjam-eval-vocabulary: 2`): same spellings as `EvalCaseCreateRequestV2`; two spellings of one field is a `400`. A PATCH that names neither spelling of the floor leaves the stored floor exactly as it was.",
         "properties": {
+          "judge": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              }
+            },
+            "nullable": true,
+            "description": "Per-case judge override. enabled: false skips goal-completion grading for this case; null clears the override and restores the suite setting."
+          },
           "declaredSuiteId": {
             "type": "string",
             "maxLength": 128,
@@ -15322,7 +15490,7 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 10,
-            "description": "The exact number of iterations this case runs under verdict policy 2, overriding the suite default (legacy spelling `repetitions`). VERDICT POLICY 2 ONLY — on a legacy suite this is a VALIDATION_ERROR naming the upgrade. A CREATE that names this but no `legacyIterations` stores the floor at the same value; a CREATE that names neither stores a floor of 1. Capped at 10."
+            "description": "The exact number of iterations this case runs under per-case grading, overriding the suite default (vocabulary 1 spells it `repetitions`). PER-CASE GRADING ONLY — on a suite decided by the suite-wide accuracy threshold this is a VALIDATION_ERROR naming the criterion change that would make it readable, because that criterion takes the count from the case's own `legacyIterations` raised to the suite's `minimumIterations` and would never read this. A CREATE that names this but no `legacyIterations` stores the floor at the same value; a CREATE that names neither stores a floor of 1. Capped at 10."
           },
           "repetitions": {
             "type": "integer",
@@ -15335,7 +15503,7 @@
             "type": "number",
             "minimum": 0,
             "maximum": 1,
-            "description": "Per-case pass threshold fraction. VERDICT POLICY 2 ONLY — on a legacy suite this is a VALIDATION_ERROR naming the upgrade, for the same reason as `repetitions`."
+            "description": "Per-case pass threshold FRACTION: the share of this case's own iterations that must pass. PER-CASE GRADING ONLY — on a suite decided by the suite-wide accuracy threshold this is a VALIDATION_ERROR, for the same reason as the count: that criterion has one percentage over the whole run and no per-case threshold to override."
           },
           "isNegative": {
             "type": "boolean"
@@ -15644,152 +15812,7 @@
               "type": "string"
             }
           },
-          "settings": {
-            "type": "object",
-            "properties": {
-              "minimumAccuracy": {
-                "type": ["number", "null"],
-                "description": "The legacy suite-wide floor, as a PERCENT in [0, 100]. ALWAYS `null` when `policy` is `v2`, whatever the suite's storage still holds: a v2 suite is decided by `verdictPolicyDefaults.passThreshold` (a fraction), and the legacy column an upgrade left behind is read by nothing. Reporting the two side by side would leave a reader to guess which one decides."
-              },
-              "minimumIterations": {
-                "type": ["number", "null"],
-                "description": "Suite-level floor on per-case iterations, 1–10: every case runs at least this many times (`max(case.iterations, minimumIterations)`). `null` means no floor — the suite's real state, not a stand-in for 1. PATCH `null` to remove it."
-              },
-              "matchOptions": {
-                "type": ["object", "null"]
-              },
-              "defaultAssertions": {
-                "type": "array",
-                "items": {
-                  "type": "object"
-                },
-                "description": "The suite's default rules, which every case inherits unless it overrides them. Vocabulary 1 spells this field `checks`."
-              },
-              "judge": {
-                "type": "object",
-                "description": "Goal-completion judge (LLM as Judge), FULLY RESOLVED: every field is the platform default where the suite set none, so this is what a run on this suite would actually grade with.",
-                "properties": {
-                  "enabled": {
-                    "type": "boolean",
-                    "description": "Judge is available on the suite. On its own this grades nothing."
-                  },
-                  "model": {
-                    "type": ["string", "null"],
-                    "description": "Resolved judge model. `null` only from deployments that predate resolution."
-                  },
-                  "autoRun": {
-                    "type": "boolean",
-                    "description": "The flag that makes grading HAPPEN: grade every run as it completes. Spends per run."
-                  },
-                  "threshold": {
-                    "type": "number",
-                    "description": "Advisory pass threshold, 0–1 (`passed = score >= threshold`)."
-                  },
-                  "severity": {
-                    "type": "string",
-                    "enum": ["warn"],
-                    "description": "Presentation severity on the goal-completion slot. Legal only with an advisory role."
-                  },
-                  "groundedness": {
-                    "type": "object",
-                    "description": "Stored groundedness slot, when present. Read-only while execution is unwired; PATCH refuses this key.",
-                    "properties": {
-                      "role": {
-                        "type": "string",
-                        "enum": ["advisory"]
-                      },
-                      "model": {
-                        "type": ["string", "null"]
-                      },
-                      "threshold": {
-                        "type": ["number", "null"]
-                      },
-                      "severity": {
-                        "type": "string",
-                        "enum": ["warn"]
-                      }
-                    }
-                  },
-                  "rubric": {
-                    "type": ["object", "null"],
-                    "description": "The suite's own grading criteria, handed to the judge alongside each case's expected output. `null` when the suite has none. The judge cites `id` in its reasons, so ids are load-bearing; editing them retires the suite's judge calibration.",
-                    "required": ["criteria"],
-                    "properties": {
-                      "criteria": {
-                        "type": "array",
-                        "items": {
-                          "type": "object",
-                          "required": ["id", "label"],
-                          "properties": {
-                            "id": {
-                              "type": "string"
-                            },
-                            "label": {
-                              "type": "string"
-                            },
-                            "description": {
-                              "type": "string"
-                            },
-                            "required": {
-                              "type": "boolean"
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              },
-              "verdictPolicyVersion": {
-                "type": "integer",
-                "enum": [2],
-                "description": "The verdict policy this suite's runs are decided under. `2` grades each case against a `passThreshold` FRACTION over its own `repetitions` and decides validity first (an unmeasurable run is `inconclusive`, not failed). ABSENT means legacy: `minimumAccuracy` (a PERCENT) over `max(case.iterations, minimumIterations)`. The two are not convertible, which is why absence is reported rather than defaulted."
-              },
-              "verdictPolicyDefaults": {
-                "type": "object",
-                "description": "Suite defaults a case inherits under policy 2. Present only with `verdictPolicyVersion: 2`, and only as a whole — `repetitions` without `passThreshold` cannot answer what a case is graded against.",
-                "required": ["iterations", "passThreshold"],
-                "properties": {
-                  "iterations": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "description": "Iterations per case unless the case overrides `iterations`. Vocabulary 1 spells this field `repetitions`."
-                  },
-                  "passThreshold": {
-                    "type": "number",
-                    "minimum": 0,
-                    "maximum": 1,
-                    "description": "Fraction of a case's trials that must pass. Never a percent."
-                  },
-                  "validity": {
-                    "type": "object",
-                    "description": "When a run counts as measured well enough to decide. DECLARED, not resolved: an omitted field is not \"no minimum\" but the contract default — `minCompletionRate` 0.8, `maxEvaluatorErrorRate` 0.1, and an omitted `minEligibleTrials` requiring every configured trial attempted plus at least one gradeable trial. The policy a run was actually decided under is on the run's `verdictSummary.validity`.",
-                    "properties": {
-                      "minEligibleTrials": {
-                        "type": "integer",
-                        "minimum": 1
-                      },
-                      "minCompletionRate": {
-                        "type": "number",
-                        "minimum": 0,
-                        "maximum": 1
-                      },
-                      "maxEvaluatorErrorRate": {
-                        "type": "number",
-                        "minimum": 0,
-                        "maximum": 1
-                      }
-                    }
-                  }
-                }
-              },
-              "policy": {
-                "type": "string",
-                "enum": ["legacy", "v2"],
-                "description": "Which policy decides this suite's runs, said in one word. `legacy` grades by `minimumAccuracy` (a percent) over `max(case.iterations, minimumIterations)`; `v2` grades each case by `passThreshold` (a fraction) over its own `repetitions` and decides validity first. It is also what says which threshold a PATCH may send — the two are refused together."
-              }
-            }
-          },
+          "settings": { "$ref": "#/components/schemas/EvalSuiteSettingsV2" },
           "schedule": {
             "$ref": "#/components/schemas/EvalSuiteSchedule"
           },
@@ -15993,7 +16016,7 @@
                 "type": "integer",
                 "minimum": 1,
                 "maximum": 100,
-                "description": "Verdict policy v2 only: iterations per case unless the case overrides it (legacy spelling `repetitions`). On a legacy suite, sending this together with `passThreshold` UPGRADES the suite to policy v2; neither alone is accepted there."
+                "description": "PER-CASE GRADING only: the DEFAULT iterations per case, which a case's own count REPLACES (vocabulary 1 spells it `repetitions`; unlike `minimumIterations`, a floor that raises it). On a suite decided by the suite-wide accuracy threshold, sending this together with `passThreshold` CHANGES which criterion decides the suite; neither alone is accepted there, because neither half answers what a case is graded against."
               },
               "repetitions": {
                 "type": "integer",
@@ -16006,12 +16029,12 @@
                 "type": "number",
                 "minimum": 0,
                 "maximum": 1,
-                "description": "Verdict policy v2 only: FRACTION of a case's trials that must pass, 0-1 (0.8 is eighty percent). The v2 replacement for `minimumAccuracy`, which is a percent; sending both is refused."
+                "description": "PER-CASE GRADING only: the FRACTION of a case's own trials that must pass, 0-1 (0.8 is eighty percent). A DIFFERENT criterion from `minimumAccuracy`, not a unit conversion of it — that one is a single percentage over the whole run — so sending both is refused rather than reconciled."
               },
               "validity": {
                 "type": "object",
                 "additionalProperties": false,
-                "description": "Verdict policy v2 only: when a run's measurement is trustworthy enough to decide. Omitted members keep the contract defaults (`minCompletionRate` 0.8, `maxEvaluatorErrorRate` 0.1); supplied members merge over the suite's stored validity rather than replacing it.",
+                "description": "PER-CASE GRADING only: when a run's measurement is trustworthy enough to decide, so a run that measured too little is `inconclusive` rather than passed or failed. A suite decided by the suite-wide accuracy threshold has no validity phase at all and accepts nothing here. Omitted members keep the contract defaults (`minCompletionRate` 0.8, `maxEvaluatorErrorRate` 0.1, and an omitted `minEligibleTrials` requiring every configured trial attempted plus at least one gradeable — the STRICTER rule, not no minimum); supplied members merge over the suite's stored validity rather than replacing it.",
                 "properties": {
                   "minEligibleTrials": {
                     "type": "integer",
@@ -16111,7 +16134,7 @@
           "repetitions": {
             "type": "integer",
             "minimum": 1,
-            "description": "Trials this case runs under verdict policy 2, overriding the suite default. Absent means the case inherits it. NOT a second spelling of `iterations`: that one is the legacy count, which the legacy resolver reads as a FLOOR (`max(iterations, suite.minimumIterations)`) and which a policy-2 case still reports for compatibility. This one is exact."
+            "description": "Trials this case runs under per-case grading, overriding the suite default. Absent means the case inherits it. NOT a second spelling of `iterations`: that one is read as a FLOOR (`max(iterations, suite.minimumIterations)`) by a suite decided on suite-wide accuracy, and a per-case-graded case still reports it for compatibility. This one REPLACES the count rather than raising it — a case at 7 runs 7 times under a floor of 3 and 3 times under a default of 3."
           },
           "passThreshold": {
             "type": "number",
@@ -16380,6 +16403,17 @@
         ],
         "description": "Create one case. `title` and a non-empty `steps` array are both required — a case persisted without executable steps could never run.",
         "properties": {
+          "judge": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              }
+            },
+            "nullable": true,
+            "description": "Per-case judge override. enabled: false skips goal-completion grading for this case; null clears the override and restores the suite setting."
+          },
           "declaredSuiteId": {
             "type": "string",
             "maxLength": 128,
@@ -16414,13 +16448,13 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 10,
-            "description": "Per-case repetitions; omitted cases inherit the suite default. VERDICT POLICY 2 ONLY — on a legacy suite this is a VALIDATION_ERROR naming the upgrade, because the legacy resolver takes the trial count from `iterations` and the suite's `minimumIterations` and would never read this. Capped at 10, the same hosted ceiling as `iterations`; the suite-file contract's larger `MAX_REPETITIONS` is what a file may DECLARE, not what a hosted run accepts."
+            "description": "Per-case repetitions; omitted cases inherit the suite default. PER-CASE GRADING ONLY — on a suite decided by the suite-wide accuracy threshold this is a VALIDATION_ERROR naming the criterion change that would make it readable, because that criterion takes the trial count from `iterations` raised to the suite's `minimumIterations` and would never read this. Capped at 10, the same hosted ceiling as `iterations`; the suite-file contract's larger `MAX_REPETITIONS` is what a file may DECLARE, not what a hosted run accepts."
           },
           "passThreshold": {
             "type": "number",
             "minimum": 0,
             "maximum": 1,
-            "description": "Per-case pass threshold fraction. VERDICT POLICY 2 ONLY — on a legacy suite this is a VALIDATION_ERROR naming the upgrade, for the same reason as `repetitions`."
+            "description": "Per-case pass threshold FRACTION: the share of this case's own iterations that must pass. PER-CASE GRADING ONLY — on a suite decided by the suite-wide accuracy threshold this is a VALIDATION_ERROR, for the same reason as the count: that criterion has one percentage over the whole run and no per-case threshold to override."
           },
           "isNegative": {
             "type": "boolean"
@@ -16784,6 +16818,17 @@
         "type": "object",
         "description": "Partial update. Every field is optional; omitted fields are left as they are. `steps` REPLACES the definition rather than merging into it.",
         "properties": {
+          "judge": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              }
+            },
+            "nullable": true,
+            "description": "Per-case judge override. enabled: false skips goal-completion grading for this case; null clears the override and restores the suite setting."
+          },
           "declaredSuiteId": {
             "type": "string",
             "maxLength": 128,
@@ -16813,13 +16858,13 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 10,
-            "description": "Per-case repetitions; omitted cases inherit the suite default. VERDICT POLICY 2 ONLY — on a legacy suite this is a VALIDATION_ERROR naming the upgrade, because the legacy resolver takes the trial count from `iterations` and the suite's `minimumIterations` and would never read this. Capped at 10, the same hosted ceiling as `iterations`; the suite-file contract's larger `MAX_REPETITIONS` is what a file may DECLARE, not what a hosted run accepts."
+            "description": "Per-case repetitions; omitted cases inherit the suite default. PER-CASE GRADING ONLY — on a suite decided by the suite-wide accuracy threshold this is a VALIDATION_ERROR naming the criterion change that would make it readable, because that criterion takes the trial count from `iterations` raised to the suite's `minimumIterations` and would never read this. Capped at 10, the same hosted ceiling as `iterations`; the suite-file contract's larger `MAX_REPETITIONS` is what a file may DECLARE, not what a hosted run accepts."
           },
           "passThreshold": {
             "type": "number",
             "minimum": 0,
             "maximum": 1,
-            "description": "Per-case pass threshold fraction. VERDICT POLICY 2 ONLY — on a legacy suite this is a VALIDATION_ERROR naming the upgrade, for the same reason as `repetitions`."
+            "description": "Per-case pass threshold FRACTION: the share of this case's own iterations that must pass. PER-CASE GRADING ONLY — on a suite decided by the suite-wide accuracy threshold this is a VALIDATION_ERROR, for the same reason as the count: that criterion has one percentage over the whole run and no per-case threshold to override."
           },
           "isNegative": {
             "type": "boolean"
@@ -16934,6 +16979,82 @@
         "description": "Forwarded VERBATIM to the backend's eval-ingestion surface, which owns the schema. The `projectId` path segment always wins: it overwrites any `projectId` in the body, and the literal `default` omits it so the key's org Default project is used. Bodies are capped at ~6 MiB here and 5 MiB by the backend.",
         "additionalProperties": true
       },
+    "ModelLeaseRequest": {
+      "type": "object",
+      "required": [
+        "model"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "model": {
+          "type": "string",
+          "description": "Canonical model id. Only `anthropic/claude-*` and `openai/gpt-5*` are served, and only if the model has a gateway pricing row.",
+          "example": "anthropic/claude-sonnet-4.5"
+        },
+        "runId": {
+          "type": "string",
+          "description": "Caller-chosen id to revoke by. Generated if omitted."
+        },
+        "maxOutputTokens": {
+          "type": "integer",
+          "description": "Per-call output ceiling, clamped to the server maximum."
+        }
+      }
+    },
+    "ModelLease": {
+      "type": "object",
+      "required": [
+        "lease",
+        "protocol",
+        "proxyBaseUrl",
+        "expiresAt",
+        "runId",
+        "model"
+      ],
+      "properties": {
+        "lease": {
+          "type": "string",
+          "description": "Present it as the `x-mcpjam-harness-lease` header on requests to `proxyBaseUrl`. Never as a bearer token, and never sent to any other host."
+        },
+        "protocol": {
+          "type": "string",
+          "enum": [
+            "anthropic",
+            "openai"
+          ],
+          "description": "Which vendor wire format `proxyBaseUrl` speaks, derived from the model's vendor prefix."
+        },
+        "proxyBaseUrl": {
+          "type": "string",
+          "format": "uri",
+          "description": "Base URL for the metered model proxy. Anthropic leases accept `POST /v1/messages`; OpenAI leases accept `POST /v1/responses`."
+        },
+        "expiresAt": {
+          "type": "integer",
+          "description": "Epoch milliseconds. Mint a new lease before this; the proxy fails an expired one closed."
+        },
+        "runId": {
+          "type": "string",
+          "description": "Pass to the revoke operation to kill this lease early."
+        },
+        "model": {
+          "type": "string"
+        }
+      }
+    },
+    "ModelLeaseRevokeRequest": {
+      "type": "object",
+      "required": [
+        "runId"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "runId": {
+          "type": "string",
+          "description": "The `runId` returned when the lease was minted."
+        }
+      }
+    },
       "EvalIngestResponse": {
         "type": "object",
         "description": "The backend's response, passed through verbatim along with its status code. Success shapes are the legacy `{ ok: true, ... }` envelopes the SDK reporter parses — deliberately NOT the v1 resource envelope. Errors are canonical v1 `{ code, message }`.",
@@ -18170,6 +18291,370 @@
           }
         }
       },
+      "EvalSuiteSettings": {
+        "type": "object",
+        "description": "A suite's grading configuration, as vocabulary 1 spells it. FOUR SEPARATE SETTINGS, and the first two are the ones most often confused: the PASS CRITERION (`minimumAccuracy`, one percentage over the whole run, OR `verdictPolicyDefaults.passThreshold`, a fraction each case must meet over its own iterations \u2014 `policy` says which decides this suite), the ITERATION RULE (`minimumIterations`, a floor that RAISES a case's own count, OR `verdictPolicyDefaults.repetitions`, a default that REPLACES it), the evaluators (`matchOptions`, `checks`, `judge`), and the QUALITY GATE, which asks whether a run regressed against a baseline rather than whether it met a bar. The four REQUIRED fields are the ones the DTO always emits: `minimumAccuracy` and `matchOptions` are nullable rather than absent \u2014 `null` is the suite's real state (no suite-wide threshold in effect, no match options set), not a stand-in for a default \u2014 and `judge` is fully resolved, so it is present even on a suite that configured nothing.",
+        "properties": {
+          "minimumAccuracy": {
+            "type": ["number", "null"],
+            "description": "The SUITE-WIDE accuracy threshold, as a PERCENT in [0, 100]: one rate across the whole run must reach it, and individual cases have no threshold of their own. It is NOT `verdictPolicyDefaults.passThreshold` in other units — ten cases, nine always passing and one always failing, passes a 90% suite-wide bar and fails a 0.9 per-case one, so dividing by 100 moves the bar for every suite with more than one case. ALWAYS `null` when `policy` is `v2`, whatever the suite's storage still holds: such a suite is decided per case, and the percent column left behind by a criterion change is read by nothing. Reporting the two side by side would leave a reader to guess which one decides."
+          },
+          "minimumIterations": {
+            "type": ["number", "null"],
+            "description": "Suite-level floor on per-case iterations, 1–10: every case runs at least this many times (`max(case.iterations, minimumIterations)`). `null` means no floor — the suite's real state, not a stand-in for 1. PATCH `null` to remove it."
+          },
+          "matchOptions": {
+            "type": ["object", "null"]
+          },
+          "checks": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "judge": {
+            "type": "object",
+            "description": "Goal-completion judge (LLM as Judge), FULLY RESOLVED: every field is the platform default where the suite set none, so this is what a run on this suite would actually grade with.",
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "description": "Judge is available on the suite. On its own this grades nothing."
+              },
+              "model": {
+                "type": ["string", "null"],
+                "description": "Resolved judge model. `null` only from deployments that predate resolution."
+              },
+              "autoRun": {
+                "type": "boolean",
+                "description": "The flag that makes grading HAPPEN: grade every run as it completes. Spends per run."
+              },
+              "threshold": {
+                "type": "number",
+                "description": "Advisory pass threshold, 0–1 (`passed = score >= threshold`)."
+              },
+              "severity": {
+                "type": "string",
+                "enum": ["warn"],
+                "description": "Presentation severity on the goal-completion slot. Legal only with an advisory role."
+              },
+              "groundedness": {
+                "type": "object",
+                "description": "Stored groundedness slot, when present. Read-only while execution is unwired; PATCH refuses this key.",
+                "properties": {
+                  "role": {
+                    "type": "string",
+                    "enum": ["advisory"]
+                  },
+                  "model": {
+                    "type": ["string", "null"]
+                  },
+                  "threshold": {
+                    "type": ["number", "null"]
+                  },
+                  "severity": {
+                    "type": "string",
+                    "enum": ["warn"]
+                  }
+                }
+              },
+              "rubric": {
+                "type": ["object", "null"],
+                "description": "The suite's own grading criteria, handed to the judge alongside each case's expected output. `null` when the suite has none. The judge cites `id` in its reasons, so ids are load-bearing; editing them retires the suite's judge calibration.",
+                "required": ["criteria"],
+                "properties": {
+                  "criteria": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": ["id", "label"],
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "label": {
+                          "type": "string"
+                        },
+                        "description": {
+                          "type": "string"
+                        },
+                        "required": {
+                          "type": "boolean"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "verdictPolicyVersion": {
+            "type": "integer",
+            "enum": [2],
+            "description": "The verdict policy this suite's runs are decided under. `2` grades each case against a `passThreshold` FRACTION over its own `repetitions` and decides validity first (an unmeasurable run is `inconclusive`, not failed). ABSENT means legacy: `minimumAccuracy` (a PERCENT) over `max(case.iterations, minimumIterations)`. The two are not convertible, which is why absence is reported rather than defaulted."
+          },
+          "verdictPolicyDefaults": {
+            "type": "object",
+            "description": "Suite defaults a case inherits under PER-CASE GRADING: the pass threshold, the iteration count, and the evidence requirements that let a run be withheld as `inconclusive`. Present only with `verdictPolicyVersion: 2`, and only as a whole — `repetitions` without `passThreshold` cannot answer what a case is graded against.",
+            "required": ["repetitions", "passThreshold"],
+            "properties": {
+              "repetitions": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Trials per case unless the case overrides `repetitions`."
+              },
+              "passThreshold": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "description": "Fraction of a case's trials that must pass. Never a percent."
+              },
+              "validity": {
+                "type": "object",
+                "description": "When a run counts as measured well enough to decide. DECLARED, not resolved: an omitted field is not \"no minimum\" but the contract default — `minCompletionRate` 0.8, `maxEvaluatorErrorRate` 0.1, and an omitted `minEligibleTrials` requiring every configured trial attempted plus at least one gradeable trial. The policy a run was actually decided under is on the run's `verdictSummary.validity`.",
+                "properties": {
+                  "minEligibleTrials": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "minCompletionRate": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "maxEvaluatorErrorRate": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                }
+              }
+            }
+          },
+          "policy": {
+            "type": "string",
+            "enum": ["legacy", "v2"],
+            "description": "Which policy decides this suite's runs, said in one word. `legacy` grades by `minimumAccuracy` (a percent) over `max(case.iterations, minimumIterations)`; `v2` grades each case by `passThreshold` (a fraction) over its own `repetitions` and decides validity first. It is also what says which threshold a PATCH may send — the two are refused together."
+          },
+        "qualityGate": {
+          "description": "Live quality-gate policy, or `null` when the suite has none. Absent on older API deployments. A DIFFERENT setting from the pass criteria above: this one compares a run against a baseline run, and a change to it requires an audited reason that appears in the suite's revision history.",
+          "oneOf": [
+            { "$ref": "#/components/schemas/SuiteGatePolicyV1" },
+            { "type": "null" }
+          ]
+        }
+        },
+        "required": ["minimumAccuracy", "matchOptions", "checks", "judge"]
+      },
+      "EvalSuiteSettingsV2": {
+        "type": "object",
+        "description": "As `EvalSuiteSettings`, spelled the way a client constructed with `evalVocabulary: 2` reads it: the suite-default rules are `defaultAssertions` and the per-case count is `verdictPolicyDefaults.iterations`. Same facts, canonical words. The four REQUIRED fields are the ones the DTO always emits: `minimumAccuracy` and `matchOptions` are nullable rather than absent \u2014 `null` is the suite's real state (no suite-wide threshold in effect, no match options set), not a stand-in for a default \u2014 and `judge` is fully resolved, so it is present even on a suite that configured nothing.",
+        "properties": {
+          "minimumAccuracy": {
+            "type": ["number", "null"],
+            "description": "The SUITE-WIDE accuracy threshold, as a PERCENT in [0, 100]: one rate across the whole run must reach it, and individual cases have no threshold of their own. It is NOT `verdictPolicyDefaults.passThreshold` in other units — ten cases, nine always passing and one always failing, passes a 90% suite-wide bar and fails a 0.9 per-case one, so dividing by 100 moves the bar for every suite with more than one case. ALWAYS `null` when `policy` is `v2`, whatever the suite's storage still holds: such a suite is decided per case, and the percent column left behind by a criterion change is read by nothing. Reporting the two side by side would leave a reader to guess which one decides."
+          },
+          "minimumIterations": {
+            "type": ["number", "null"],
+            "description": "Suite-level floor on per-case iterations, 1–10: every case runs at least this many times (`max(case.iterations, minimumIterations)`). `null` means no floor — the suite's real state, not a stand-in for 1. PATCH `null` to remove it."
+          },
+          "matchOptions": {
+            "type": ["object", "null"]
+          },
+          "defaultAssertions": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "description": "The suite's default rules, which every case inherits unless it overrides them. Vocabulary 1 spells this field `checks`."
+          },
+          "judge": {
+            "type": "object",
+            "description": "Goal-completion judge (LLM as Judge), FULLY RESOLVED: every field is the platform default where the suite set none, so this is what a run on this suite would actually grade with.",
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "description": "Judge is available on the suite. On its own this grades nothing."
+              },
+              "model": {
+                "type": ["string", "null"],
+                "description": "Resolved judge model. `null` only from deployments that predate resolution."
+              },
+              "autoRun": {
+                "type": "boolean",
+                "description": "The flag that makes grading HAPPEN: grade every run as it completes. Spends per run."
+              },
+              "threshold": {
+                "type": "number",
+                "description": "Advisory pass threshold, 0–1 (`passed = score >= threshold`)."
+              },
+              "severity": {
+                "type": "string",
+                "enum": ["warn"],
+                "description": "Presentation severity on the goal-completion slot. Legal only with an advisory role."
+              },
+              "groundedness": {
+                "type": "object",
+                "description": "Stored groundedness slot, when present. Read-only while execution is unwired; PATCH refuses this key.",
+                "properties": {
+                  "role": {
+                    "type": "string",
+                    "enum": ["advisory"]
+                  },
+                  "model": {
+                    "type": ["string", "null"]
+                  },
+                  "threshold": {
+                    "type": ["number", "null"]
+                  },
+                  "severity": {
+                    "type": "string",
+                    "enum": ["warn"]
+                  }
+                }
+              },
+              "rubric": {
+                "type": ["object", "null"],
+                "description": "The suite's own grading criteria, handed to the judge alongside each case's expected output. `null` when the suite has none. The judge cites `id` in its reasons, so ids are load-bearing; editing them retires the suite's judge calibration.",
+                "required": ["criteria"],
+                "properties": {
+                  "criteria": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": ["id", "label"],
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "label": {
+                          "type": "string"
+                        },
+                        "description": {
+                          "type": "string"
+                        },
+                        "required": {
+                          "type": "boolean"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "verdictPolicyVersion": {
+            "type": "integer",
+            "enum": [2],
+            "description": "The verdict policy this suite's runs are decided under. `2` grades each case against a `passThreshold` FRACTION over its own `repetitions` and decides validity first (an unmeasurable run is `inconclusive`, not failed). ABSENT means legacy: `minimumAccuracy` (a PERCENT) over `max(case.iterations, minimumIterations)`. The two are not convertible, which is why absence is reported rather than defaulted."
+          },
+          "verdictPolicyDefaults": {
+            "type": "object",
+            "description": "Suite defaults a case inherits under PER-CASE GRADING: the pass threshold, the iteration count, and the evidence requirements that let a run be withheld as `inconclusive`. Present only with `verdictPolicyVersion: 2`, and only as a whole — `repetitions` without `passThreshold` cannot answer what a case is graded against.",
+            "required": ["iterations", "passThreshold"],
+            "properties": {
+              "iterations": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Iterations per case unless the case overrides `iterations`. Vocabulary 1 spells this field `repetitions`."
+              },
+              "passThreshold": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "description": "Fraction of a case's trials that must pass. Never a percent."
+              },
+              "validity": {
+                "type": "object",
+                "description": "When a run counts as measured well enough to decide. DECLARED, not resolved: an omitted field is not \"no minimum\" but the contract default — `minCompletionRate` 0.8, `maxEvaluatorErrorRate` 0.1, and an omitted `minEligibleTrials` requiring every configured trial attempted plus at least one gradeable trial. The policy a run was actually decided under is on the run's `verdictSummary.validity`.",
+                "properties": {
+                  "minEligibleTrials": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "minCompletionRate": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "maxEvaluatorErrorRate": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                }
+              }
+            }
+          },
+          "policy": {
+            "type": "string",
+            "enum": ["legacy", "v2"],
+            "description": "Which policy decides this suite's runs, said in one word. `legacy` grades by `minimumAccuracy` (a percent) over `max(case.iterations, minimumIterations)`; `v2` grades each case by `passThreshold` (a fraction) over its own `repetitions` and decides validity first. It is also what says which threshold a PATCH may send — the two are refused together."
+          },
+        "qualityGate": {
+          "description": "Live quality-gate policy, or `null` when the suite has none. Absent on older API deployments. A DIFFERENT setting from the pass criteria above: this one compares a run against a baseline run, and a change to it requires an audited reason that appears in the suite's revision history.",
+          "oneOf": [
+            { "$ref": "#/components/schemas/SuiteGatePolicyV1" },
+            { "type": "null" }
+          ]
+        }
+        },
+        "required": ["minimumAccuracy", "matchOptions", "defaultAssertions", "judge"]
+      },
+      "SuiteGatePolicyV1": {
+        "type": "object",
+        "description": "Stored quality-gate policy: the conditions a run is failed on for REGRESSING against a baseline run, which is a different question from the pass criteria (`minimumAccuracy` or `verdictPolicyDefaults.passThreshold`). A run can meet its pass criterion and still fail the gate, and the reverse. Every field is optional and an omitted condition is not evaluated at all — it is not a condition set to zero. Numeric fields are FRACTIONS in [0,1] (`maximumPassRateDrop`) or nonnegative milliseconds (`maximumP95LatencyIncreaseMs`); a percent-shaped `3` meaning \"3%\" is a usage error, not three percentage points. A comparative condition with no resolvable baseline is `non_gateable` rather than passing.",
+        "properties": {
+          "baseline": {
+            "description": "Where the comparative conditions look for their baseline run. Omitted means there is none, which makes every comparative condition `non_gateable` rather than passing.",
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": { "type": "string", "enum": ["run"] },
+                  "runId": { "type": "string" }
+                },
+                "required": ["kind", "runId"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": { "type": "string", "enum": ["commit_sha"] },
+                  "commitSha": { "type": "string" }
+                },
+                "required": ["kind", "commitSha"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "RESERVED. The shape exists so a later capability can enable it without forking the schema; every public write refuses it today, and a historical row that already stores it evaluates as `non_gateable` rather than being silently ignored.",
+                "properties": {
+                  "kind": { "type": "string", "enum": ["previous_completed"] }
+                },
+                "required": ["kind"],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "maximumPassRateDrop": {
+            "type": "number",
+            "description": "How far the pass rate may fall below the baseline's, as a FRACTION in [0,1]. `0.05` is five percentage points, not five percent of the baseline."
+          },
+          "noDeterministicRegressions": {
+            "type": "boolean",
+            "description": "Fail the run when a scorer that passed deterministically on the baseline does not on this run."
+          },
+          "maximumP95LatencyIncreaseMs": {
+            "type": "number",
+            "description": "How far p95 latency may rise above the baseline's, in milliseconds."
+          },
+          "noGatingScoreErrors": {
+            "type": "boolean",
+            "description": "Fail the run when any required evaluator errored. An evaluator error is not a server defect — it means the run says nothing about the server — so this is a condition rather than a verdict."
+          }
+        },
+        "additionalProperties": false
+      },
       "EvalSuiteDetail": {
         "type": "object",
         "required": [
@@ -18267,151 +18752,7 @@
               "type": "string"
             }
           },
-          "settings": {
-            "type": "object",
-            "properties": {
-              "minimumAccuracy": {
-                "type": ["number", "null"],
-                "description": "The legacy suite-wide floor, as a PERCENT in [0, 100]. ALWAYS `null` when `policy` is `v2`, whatever the suite's storage still holds: a v2 suite is decided by `verdictPolicyDefaults.passThreshold` (a fraction), and the legacy column an upgrade left behind is read by nothing. Reporting the two side by side would leave a reader to guess which one decides."
-              },
-              "minimumIterations": {
-                "type": ["number", "null"],
-                "description": "Suite-level floor on per-case iterations, 1–10: every case runs at least this many times (`max(case.iterations, minimumIterations)`). `null` means no floor — the suite's real state, not a stand-in for 1. PATCH `null` to remove it."
-              },
-              "matchOptions": {
-                "type": ["object", "null"]
-              },
-              "checks": {
-                "type": "array",
-                "items": {
-                  "type": "object"
-                }
-              },
-              "judge": {
-                "type": "object",
-                "description": "Goal-completion judge (LLM as Judge), FULLY RESOLVED: every field is the platform default where the suite set none, so this is what a run on this suite would actually grade with.",
-                "properties": {
-                  "enabled": {
-                    "type": "boolean",
-                    "description": "Judge is available on the suite. On its own this grades nothing."
-                  },
-                  "model": {
-                    "type": ["string", "null"],
-                    "description": "Resolved judge model. `null` only from deployments that predate resolution."
-                  },
-                  "autoRun": {
-                    "type": "boolean",
-                    "description": "The flag that makes grading HAPPEN: grade every run as it completes. Spends per run."
-                  },
-                  "threshold": {
-                    "type": "number",
-                    "description": "Advisory pass threshold, 0–1 (`passed = score >= threshold`)."
-                  },
-                  "severity": {
-                    "type": "string",
-                    "enum": ["warn"],
-                    "description": "Presentation severity on the goal-completion slot. Legal only with an advisory role."
-                  },
-                  "groundedness": {
-                    "type": "object",
-                    "description": "Stored groundedness slot, when present. Read-only while execution is unwired; PATCH refuses this key.",
-                    "properties": {
-                      "role": {
-                        "type": "string",
-                        "enum": ["advisory"]
-                      },
-                      "model": {
-                        "type": ["string", "null"]
-                      },
-                      "threshold": {
-                        "type": ["number", "null"]
-                      },
-                      "severity": {
-                        "type": "string",
-                        "enum": ["warn"]
-                      }
-                    }
-                  },
-                  "rubric": {
-                    "type": ["object", "null"],
-                    "description": "The suite's own grading criteria, handed to the judge alongside each case's expected output. `null` when the suite has none. The judge cites `id` in its reasons, so ids are load-bearing; editing them retires the suite's judge calibration.",
-                    "required": ["criteria"],
-                    "properties": {
-                      "criteria": {
-                        "type": "array",
-                        "items": {
-                          "type": "object",
-                          "required": ["id", "label"],
-                          "properties": {
-                            "id": {
-                              "type": "string"
-                            },
-                            "label": {
-                              "type": "string"
-                            },
-                            "description": {
-                              "type": "string"
-                            },
-                            "required": {
-                              "type": "boolean"
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              },
-              "verdictPolicyVersion": {
-                "type": "integer",
-                "enum": [2],
-                "description": "The verdict policy this suite's runs are decided under. `2` grades each case against a `passThreshold` FRACTION over its own `repetitions` and decides validity first (an unmeasurable run is `inconclusive`, not failed). ABSENT means legacy: `minimumAccuracy` (a PERCENT) over `max(case.iterations, minimumIterations)`. The two are not convertible, which is why absence is reported rather than defaulted."
-              },
-              "verdictPolicyDefaults": {
-                "type": "object",
-                "description": "Suite defaults a case inherits under policy 2. Present only with `verdictPolicyVersion: 2`, and only as a whole — `repetitions` without `passThreshold` cannot answer what a case is graded against.",
-                "required": ["repetitions", "passThreshold"],
-                "properties": {
-                  "repetitions": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "description": "Trials per case unless the case overrides `repetitions`."
-                  },
-                  "passThreshold": {
-                    "type": "number",
-                    "minimum": 0,
-                    "maximum": 1,
-                    "description": "Fraction of a case's trials that must pass. Never a percent."
-                  },
-                  "validity": {
-                    "type": "object",
-                    "description": "When a run counts as measured well enough to decide. DECLARED, not resolved: an omitted field is not \"no minimum\" but the contract default — `minCompletionRate` 0.8, `maxEvaluatorErrorRate` 0.1, and an omitted `minEligibleTrials` requiring every configured trial attempted plus at least one gradeable trial. The policy a run was actually decided under is on the run's `verdictSummary.validity`.",
-                    "properties": {
-                      "minEligibleTrials": {
-                        "type": "integer",
-                        "minimum": 1
-                      },
-                      "minCompletionRate": {
-                        "type": "number",
-                        "minimum": 0,
-                        "maximum": 1
-                      },
-                      "maxEvaluatorErrorRate": {
-                        "type": "number",
-                        "minimum": 0,
-                        "maximum": 1
-                      }
-                    }
-                  }
-                }
-              },
-              "policy": {
-                "type": "string",
-                "enum": ["legacy", "v2"],
-                "description": "Which policy decides this suite's runs, said in one word. `legacy` grades by `minimumAccuracy` (a percent) over `max(case.iterations, minimumIterations)`; `v2` grades each case by `passThreshold` (a fraction) over its own `repetitions` and decides validity first. It is also what says which threshold a PATCH may send — the two are refused together."
-              }
-            }
-          },
+          "settings": { "$ref": "#/components/schemas/EvalSuiteSettings" },
           "schedule": {
             "$ref": "#/components/schemas/EvalSuiteSchedule"
           },
@@ -19183,7 +19524,7 @@
           "verdictPolicyVersion": {
             "type": "integer",
             "enum": [2],
-            "description": "The verdict policy this run was decided under, frozen at run start. ABSENT means legacy percent-threshold grading — `result` cannot then be `inconclusive` and there is no `verdictSummary`. A caller gating on fractions or on validity must read this FIRST rather than assume a missing summary means a clean run."
+            "description": "Which criterion decided this run, frozen at run start. `2` is PER-CASE GRADING; ABSENT means the SUITE-WIDE ACCURACY THRESHOLD — `result` cannot then be `inconclusive`, because that criterion has no validity phase, and there is no `verdictSummary`. The `2` is a wire spelling, not a version a caller upgrades to. A caller gating on fractions or on validity must read this FIRST rather than assume a missing summary means a clean run."
           },
           "verdictSummary": {
             "type": "object",
@@ -22434,18 +22775,18 @@
                 "type": "integer",
                 "minimum": 1,
                 "maximum": 100,
-                "description": "Verdict policy v2 only: trials per case unless the case overrides it. On a legacy suite, sending this together with `passThreshold` UPGRADES the suite to policy v2; neither alone is accepted there."
+                "description": "PER-CASE GRADING only: the DEFAULT trials per case, which a case's own count REPLACES (unlike `minimumIterations`, a floor that raises it). On a suite decided by the suite-wide accuracy threshold, sending this together with `passThreshold` CHANGES which criterion decides the suite; neither alone is accepted there, because neither half answers what a case is graded against. That change re-decides every case in the suite, which is why it takes both fields rather than happening as a side effect of one."
               },
               "passThreshold": {
                 "type": "number",
                 "minimum": 0,
                 "maximum": 1,
-                "description": "Verdict policy v2 only: FRACTION of a case's trials that must pass, 0-1 (0.8 is eighty percent). The v2 replacement for `minimumAccuracy`, which is a percent; sending both is refused."
+                "description": "PER-CASE GRADING only: the FRACTION of a case's own trials that must pass, 0-1 (0.8 is eighty percent). A DIFFERENT criterion from `minimumAccuracy`, not a unit conversion of it — that one is a single percentage over the whole run — so sending both is refused rather than reconciled."
               },
               "validity": {
                 "type": "object",
                 "additionalProperties": false,
-                "description": "Verdict policy v2 only: when a run's measurement is trustworthy enough to decide. Omitted members keep the contract defaults (`minCompletionRate` 0.8, `maxEvaluatorErrorRate` 0.1); supplied members merge over the suite's stored validity rather than replacing it.",
+                "description": "PER-CASE GRADING only: when a run's measurement is trustworthy enough to decide, so a run that measured too little is `inconclusive` rather than passed or failed. A suite decided by the suite-wide accuracy threshold has no validity phase at all and accepts nothing here. Omitted members keep the contract defaults (`minCompletionRate` 0.8, `maxEvaluatorErrorRate` 0.1, and an omitted `minEligibleTrials` requiring every configured trial attempted plus at least one gradeable — the STRICTER rule, not no minimum); supplied members merge over the suite's stored validity rather than replacing it.",
                 "properties": {
                   "minEligibleTrials": {
                     "type": "integer",
@@ -27785,6 +28126,109 @@
               "$ref": "#/components/schemas/ActionableFinding"
             }
           },
+          "currentFindings": {
+            "type": "array",
+            "description": "Absent on a deployment that predates findings. The always-available observation view: findings assembled from deterministic evidence plus any identity-matching model enrichment, populated INDEPENDENTLY of `status`. Read `currentFindings ?? findings` — and treat an explicit `[]` as a real \"nothing here needs a change\" rather than falling back to the generated array.",
+            "items": {
+              "$ref": "#/components/schemas/ActionableFinding"
+            }
+          },
+          "observationState": {
+            "type": "string",
+            "description": "How much of the population `currentFindings` describes — distinct from `status`, which describes a model GENERATION. `unavailable` means nothing could be measured, which is NOT the same as an empty `currentFindings`.",
+            "enum": ["ready", "partial", "unavailable"]
+          },
+          "observationCoverage": {
+            "type": "object",
+            "required": ["unit", "analyzed", "total", "gradedCount", "exclusions"],
+            "description": "Coverage for `currentFindings`, describing ITS population. Deliberately separate from `coverage`, whose counters describe the generation's population.",
+            "properties": {
+              "unit": {
+                "type": "string",
+                "enum": ["iterations"]
+              },
+              "analyzed": {
+                "type": "integer"
+              },
+              "total": {
+                "type": "integer"
+              },
+              "gradedCount": {
+                "type": "integer"
+              },
+              "exclusions": {
+                "type": "object",
+                "description": "Counted reasons an iteration was left out, keyed by reason. An OPEN map: a new exclusion class must not require a consumer change to keep validating.",
+                "additionalProperties": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "unifiedFindings": {
+            "type": "object",
+            "required": [
+              "capability",
+              "snapshot",
+              "job",
+              "canBuild",
+              "canEnrich"
+            ],
+            "description": "Absent on a deployment that predates findings. Its PRESENCE says the deployment serves findings; `snapshot: null` says this run has none built yet — two different answers a caller must not conflate.",
+            "properties": {
+              "capability": {
+                "type": "string",
+                "enum": ["unified_findings_v1"]
+              },
+              "analysis": {
+                "type": "object",
+                "description": "The trace analysis pipeline's progress while one exists for the run. Absent when none has been requested.",
+                "required": ["phase", "progress", "models", "completeness"],
+                "properties": {
+                  "phase": {
+                    "type": "string",
+                    "enum": ["reading", "grouping", "checking", "done", "failed"]
+                  },
+                  "progress": {
+                    "type": "object",
+                    "required": ["done", "total", "unit"],
+                    "properties": {
+                      "done": { "type": "integer" },
+                      "total": { "type": "integer" },
+                      "unit": { "type": "string", "enum": ["iterations"] }
+                    }
+                  },
+                  "models": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  },
+                  "completeness": {
+                    "type": "object",
+                    "required": ["iterationReports", "total", "missingTraces"],
+                    "properties": {
+                      "iterationReports": { "type": "integer" },
+                      "total": { "type": "integer" },
+                      "missingTraces": { "type": "integer" }
+                    }
+                  }
+                }
+              },
+              "snapshot": {
+                "type": ["object", "null"],
+                "description": "The built findings snapshot: its deterministic findings, per-finding provenance, and any pipeline-verified mechanisms. `null` means none has been built for this run."
+              },
+              "job": {
+                "type": ["object", "null"],
+                "description": "The in-flight or last-failed operation, so a refusal never renders as a completed analysis."
+              },
+              "canBuild": {
+                "type": "boolean"
+              },
+              "canEnrich": {
+                "type": "boolean"
+              }
+            }
+          },
           "runHealth": {
             "type": "object",
             "required": ["targets"],
@@ -29763,7 +30207,7 @@
         }
       },
       "EvalRunDecisionCounts": {
-        "description": "A tally WITH the population it counted. `measurementUnit` is never omitted and never inferred: under verdict policy v2 the counts are case-execution VARIANTS (repetitions are trials inside one, not members of it), and on a legacy run they are trials. A 3-case suite with 5 repetitions is legitimately 3 under one unit and 15 under the other, so a count reported without its unit is not a fact. On a `caseVariant` count every field is present and the three buckets sum to `total`; on a `trial` count each field is present only if the legacy run recorded it — absence stays absence rather than defaulting to zero.",
+        "description": "A tally WITH the population it counted. `measurementUnit` is never omitted and never inferred: under PER-CASE GRADING the counts are case-execution VARIANTS (iterations are trials inside one, not members of it), and under a SUITE-WIDE ACCURACY THRESHOLD they are trials. A 3-case suite with 5 iterations is legitimately 3 under one unit and 15 under the other, so a count reported without its unit is not a fact. On a `caseVariant` count every field is present and the three buckets sum to `total`; on a `trial` count each field is present only if the run recorded it — absence stays absence rather than defaulting to zero.",
         "oneOf": [
           {
             "type": "object",
@@ -29794,7 +30238,7 @@
               "inconclusive": {
                 "type": "integer",
                 "minimum": 0,
-                "description": "`caseVariant` only. A legacy run has no such bucket."
+                "description": "`caseVariant` only. A run decided by the suite-wide accuracy threshold has no such bucket, because that criterion has no validity phase to withhold a verdict."
               }
             },
             "additionalProperties": false
@@ -29837,7 +30281,7 @@
               "runResultNotAVerdict",
               "verdictSummaryUnavailable"
             ],
-            "description": "`runNotTerminal` — still pending, running, or held in `grading` for its gating judge; poll it. A held run's stored `verdictSummary` predates the judge's rows, so it is never read as that run's verdict. `runStatusNotAVerdict` — a LEGACY run that stopped at cancelled/timed_out/failed, so its stored counts describe the iterations it happened to record and gating on them is fail-open (a policy-v2 run is deliberately not resolved this way: its validity phase is where lifecycle enters the verdict). `runResultNotAVerdict` — completed with no recognizable result. `verdictSummaryUnavailable` — decided under policy v2 with no readable decision; there is no legacy fallback, because re-deciding a v2 run under percent-threshold semantics would answer a question nobody asked."
+            "description": "`runNotTerminal` — still pending, running, or held in `grading` for its gating judge; poll it. A held run's stored `verdictSummary` predates the judge's rows, so it is never read as that run's verdict. `runStatusNotAVerdict` — a run decided on SUITE-WIDE ACCURACY that stopped at cancelled/timed_out/failed, so its stored counts describe the iterations it happened to record and gating on them is fail-open (a per-case-graded run is deliberately not resolved this way: its validity phase is where lifecycle enters the verdict). `runResultNotAVerdict` — completed with no recognizable result. `verdictSummaryUnavailable` — decided by PER-CASE GRADING with no readable decision; there is no fallback to the suite-wide rate, because re-deciding such a run over a different population would answer a question nobody asked."
           },
           "detail": {
             "type": "string",
@@ -30004,7 +30448,7 @@
       },
       "EvalRunDecisionDiagnostic": {
         "type": "object",
-        "description": "One non-passing TRIAL, as evidence beneath the run's verdict. These are never counted as cases and never override the run's or a case's verdict: under policy v2 a case can pass with a failing trial in it, and a reader who tallies these rows instead of reading `decision.cases` has re-derived a different verdict from the same run.",
+        "description": "One non-passing TRIAL, as evidence beneath the run's verdict. These are never counted as cases and never override the run's or a case's verdict: under per-case grading a case can pass with a failing trial in it, and a reader who tallies these rows instead of reading `decision.cases` has re-derived a different verdict from the same run.",
         "required": [
           "iterationId",
           "iterationNumber",
@@ -30105,7 +30549,7 @@
       },
       "EvalRunDecisionSummary": {
         "type": "object",
-        "description": "The canonical run decision contract (schema version 1): what the run decided, in what unit it counted, and what evidence sits under the non-passing trials. START HERE when a run did not pass.\n\nIt EXPLAINS the verdict and never DECIDES it. Under verdict policy v2 the authority is the run's own decision — its verdict, rates, validity phase, reasons, per-case stability and mixed-verdict flags are copied after validation and never recomputed from the trials; `counts` is a tally of `decision.cases[].verdict` and nothing more.\n\n`verdict` has a fourth value the run verdict vocabulary does not: `notEstablished` means no verdict exists at all (the run is unfinished, stopped early, or its decision could not be read). It is not a failure and not `inconclusive` — `inconclusive` is a decision the validity phase reached, and this is the absence of any decision.",
+        "description": "The canonical run decision contract (schema version 1): what the run decided, in what unit it counted, and what evidence sits under the non-passing trials. START HERE when a run did not pass.\n\nIt EXPLAINS the verdict and never DECIDES it. Under per-case grading the authority is the run's own decision — its verdict, rates, validity phase, reasons, per-case stability and mixed-verdict flags are copied after validation and never recomputed from the trials; `counts` is a tally of `decision.cases[].verdict` and nothing more.\n\n`verdict` has a fourth value the run verdict vocabulary does not: `notEstablished` means no verdict exists at all (the run is unfinished, stopped early, or its decision could not be read). It is not a failure and not `inconclusive` — `inconclusive` is a decision the validity phase reached, and this is the absence of any decision.",
         "required": [
           "schemaVersion",
           "runId",
@@ -30133,7 +30577,7 @@
           "verdictSource": {
             "type": "string",
             "enum": ["policyV2", "legacy", "none"],
-            "description": "`policyV2` — the run's own decision, carried on `decision`; `verdict` is its verdict. `legacy` — a percent-threshold run predating policy v2; there is no decision object and any counts are trials. `none` — no verdict; `verdict` is `notEstablished` and `undecided` says why."
+            "description": "Which criterion decided the run, which is also what its counts are in. `policyV2` — PER-CASE GRADING: the run's own decision, carried on `decision`; `verdict` is its verdict and the counts are case-execution variants. `legacy` — the SUITE-WIDE ACCURACY THRESHOLD: one percentage over the whole run, so there is no decision object and any counts are trials. The two are not one criterion in two units, so never convert a rate across this line. `none` — no verdict; `verdict` is `notEstablished` and `undecided` says why."
           },
           "counts": {
             "$ref": "#/components/schemas/EvalRunDecisionCounts"

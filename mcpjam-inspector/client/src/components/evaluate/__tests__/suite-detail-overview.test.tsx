@@ -324,7 +324,7 @@ describe("SuiteDetailOverview", () => {
     expect(onTestCaseClick).toHaveBeenCalledWith("case-2");
 
     // "Edit" is the SUITE's (→ settings); the cases card says what it does.
-    await user.click(screen.getByRole("button", { name: "Edit" }));
+    await user.click(screen.getByRole("button", { name: "Configure suite evaluators" }));
     expect(onEditSuite).toHaveBeenCalledTimes(1);
     await user.click(screen.getByRole("button", { name: "Add case" }));
     await user.click(screen.getByRole("menuitem", { name: "Add manually" }));
@@ -718,7 +718,7 @@ describe("SuiteDetailOverview", () => {
     expect(screen.queryByText("No runs match these filters.")).toBeNull();
   });
 
-  it("names the active filter and releases a value that leaves the option set", async () => {
+  it("keeps a selected client clearable when its last run disappears", async () => {
     const user = userEvent.setup();
     const twoClientHosts = new Map<string, string | null>([
       ["host-1", "Claude"],
@@ -770,8 +770,12 @@ describe("SuiteDetailOverview", () => {
 
     expect(
       screen.getByRole("combobox", { name: "Filter by client" }),
-    ).toHaveTextContent("Client");
-    expect(screen.queryByText("No runs match these filters.")).toBeNull();
+    ).toHaveTextContent("Cursor");
+    await user.click(
+      screen.getByRole("combobox", { name: "Filter by client" }),
+    );
+    expect(screen.getByRole("option", { name: "Cursor" })).toBeVisible();
+    await user.click(screen.getByRole("option", { name: "All clients" }));
     expect(screen.getByTestId("suite-run-row-run-1")).toBeTruthy();
   });
 });
@@ -880,7 +884,7 @@ describe("SuiteDetailOverview — a CI-managed suite", () => {
   it("replaces Edit with the reason and a way forward", () => {
     renderLocked({ declaredSuiteId: "s_from_file" });
 
-    expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Configure suite evaluators" })).toBeNull();
     // The reason and the remedy TOGETHER. A disabled Edit with a tooltip would
     // make the way out discoverable only by hovering the thing that does not
     // work.
@@ -933,7 +937,7 @@ describe("SuiteDetailOverview — a CI-managed suite", () => {
         rerunningSuiteId={null}
       />,
     );
-    expect(screen.getByRole("button", { name: "Edit" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Configure suite evaluators" })).toBeTruthy();
     expect(screen.queryByTestId("suite-detail-ci-owned")).toBeNull();
     // …and the escape hatch is not offered where there is nothing to escape.
     expect(screen.queryByTestId("suite-detail-duplicate-to-edit")).toBeNull();
@@ -989,4 +993,65 @@ it("opens SDK setup from the suite header", async () => {
     .setup()
     .click(screen.getByRole("button", { name: "Setup SDK" }));
   expect(onSetupSdk).toHaveBeenCalledTimes(1);
+});
+
+it("deletes a test case from its row after confirming", async () => {
+  const onDeleteTestCasesBatch = vi.fn().mockResolvedValue(undefined);
+  const onTestCaseClick = vi.fn();
+  const user = userEvent.setup();
+
+  renderWithProviders(
+    <SuiteDetailOverview
+      suite={makeSuite()}
+      cases={[
+        makeCase({ _id: "case-1" }),
+        makeCase({ _id: "case-2", title: "Refund order" }),
+      ]}
+      runs={[]}
+      runsLoading={false}
+      allIterations={[]}
+      hostNamesById={new Map()}
+      onRerun={vi.fn()}
+      onEditSuite={vi.fn()}
+      onEditCases={vi.fn()}
+      onDeleteTestCasesBatch={onDeleteTestCasesBatch}
+      onRunClick={vi.fn()}
+      onTestCaseClick={onTestCaseClick}
+      rerunningSuiteId={null}
+    />,
+  );
+
+  await user.click(screen.getByTestId("suite-test-case-delete-case-2"));
+  // Opening the confirm is not opening the case.
+  expect(onTestCaseClick).not.toHaveBeenCalled();
+  expect(
+    within(screen.getByRole("dialog")).getByText(/Refund order/),
+  ).toBeTruthy();
+
+  await user.click(screen.getByTestId("suite-test-case-delete-confirm"));
+  expect(onDeleteTestCasesBatch).toHaveBeenCalledWith(["case-2"]);
+});
+
+it("hides the row delete button when the suite config is locked", () => {
+  renderWithProviders(
+    <SuiteDetailOverview
+      suite={makeSuite()}
+      cases={[makeCase({ _id: "case-1" })]}
+      runs={[]}
+      runsLoading={false}
+      allIterations={[]}
+      hostNamesById={new Map()}
+      onRerun={vi.fn()}
+      onEditSuite={vi.fn()}
+      onEditCases={vi.fn()}
+      onDeleteTestCasesBatch={vi.fn()}
+      onRunClick={vi.fn()}
+      onTestCaseClick={vi.fn()}
+      rerunningSuiteId={null}
+      configLocked
+    />,
+  );
+
+  expect(screen.getByTestId("suite-test-case-row-case-1")).toBeTruthy();
+  expect(screen.queryByTestId("suite-test-case-delete-case-1")).toBeNull();
 });

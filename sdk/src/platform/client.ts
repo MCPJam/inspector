@@ -2639,9 +2639,9 @@ export class PlatformApiClient {
   }
 
   /**
-   * Preview deterministic evaluators using stored evidence, without model calls
-   * or verdict writes. Resume a bounded result with its continuation and the
-   * unchanged draft. Starting a new preview has a separate one-minute cooldown.
+   * Preview a judge rubric using stored evidence. Spends model budget without
+   * changing saved verdicts. Resume a bounded result with its continuation
+   * and the unchanged draft.
    */
   backtestEvalRunJudge(
     params: JudgeBacktestRequest & { projectId: string; runId: string },

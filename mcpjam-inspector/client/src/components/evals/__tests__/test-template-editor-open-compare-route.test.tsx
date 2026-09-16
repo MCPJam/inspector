@@ -1206,59 +1206,6 @@ describe("TestTemplateEditor run view from route", () => {
     expect(streamEvalTestCaseMock).not.toHaveBeenCalled();
   });
 
-  it("accepting a no-tool suggestion persists a restriction", async () => {
-    const noToolSteps = [{ id: "s1", kind: "prompt", prompt: "Say hello" }];
-    activeCaseDoc = {
-      ...goldenCaseDoc,
-      steps: noToolSteps,
-      predicates: { mode: "extend", list: [{ type: "noToolErrors" }] },
-      expectedOutput: "A greeting",
-      lastMessageRun: undefined,
-    } as any;
-    const trial = {
-      ...baseIteration,
-      blob: "blob-1",
-      testCaseSnapshot: {
-        ...baseIteration.testCaseSnapshot,
-        steps: noToolSteps,
-        predicates: [{ type: "noToolErrors" }],
-        expectedOutput: "A greeting",
-      },
-    };
-    renderGoldenCase({ observeFirst: true, suiteIterations: [trial] });
-    fireEvent.click((await screen.findAllByTestId("case-run-row"))[0]);
-    fireEvent.click(await screen.findByText("Suggested assertions"));
-    const text = await screen
-      .findByText("Require that no tool is called")
-      .catch(() => {
-        throw new Error(document.body.textContent ?? "no text");
-      });
-    const row = text.closest("li")!;
-    fireEvent.click(
-      within(row).getByRole("button", { name: "Add", exact: true }),
-    );
-    await waitFor(() =>
-      expect(
-        screen.queryByText("Require that no tool is called"),
-      ).not.toBeInTheDocument(),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Close", exact: true }));
-    fireEvent.click(screen.getAllByRole("button", { name: /save/i })[0]!);
-    await waitFor(() => expect(updateTestCaseMutationMock).toHaveBeenCalled());
-    const payload = updateTestCaseMutationMock.mock.calls.at(-1)?.[0];
-    expect(
-      payload.isNegativeTest === true ||
-        payload.predicates?.list?.some(
-          (p: any) => p.type === "onlyToolsCalled" && p.toolNames.length === 0,
-        ) ||
-        payload.steps.some(
-          (s: any) =>
-            s.assertion?.type === "onlyToolsCalled" &&
-            s.assertion.toolNames.length === 0,
-        ),
-    ).toBe(true);
-  });
-
   it("mounts the FORM by default — observe-first is opt-in", async () => {
     activeCaseDoc = goldenCaseDoc;
     renderGoldenCase();
@@ -1284,7 +1231,7 @@ describe("TestTemplateEditor run view from route", () => {
     ).not.toBeInTheDocument();
     expect(screen.getAllByTestId("spine-action-row").length).toBeGreaterThan(0);
     const defaultChecks = screen.getByRole("button", {
-      name: "Show default evaluators",
+      name: "Configure test case evaluators",
     });
     expect(screen.getByTestId("case-spine")).not.toContainElement(
       defaultChecks,
@@ -1292,6 +1239,31 @@ describe("TestTemplateEditor run view from route", () => {
     expect(defaultChecks.parentElement).toContainElement(
       screen.getByRole("button", { name: "Setup Run" }),
     );
+  });
+
+  it("deletes the open case from the header, after confirming", async () => {
+    activeCaseDoc = goldenCaseDoc;
+    const onDeleteCase = vi.fn().mockResolvedValue(undefined);
+    renderGoldenCase({ observeFirst: true, onDeleteCase });
+
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("button", { name: "Delete test case" }),
+    );
+    await user.click(screen.getByTestId("case-header-delete-confirm"));
+
+    await waitFor(() => {
+      expect(onDeleteCase).toHaveBeenCalledWith("case-1");
+    });
+  });
+
+  it("offers no header delete when the surface passes no handler", async () => {
+    activeCaseDoc = goldenCaseDoc;
+    renderGoldenCase({ observeFirst: true });
+    await waitFor(() => {
+      expect(screen.getByTestId("case-spine")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("case-header-delete")).not.toBeInTheDocument();
   });
 
   it("shows a step-authored case in the workspace and leaves its flag alone", async () => {

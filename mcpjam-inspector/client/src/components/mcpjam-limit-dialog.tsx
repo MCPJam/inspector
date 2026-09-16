@@ -22,7 +22,7 @@ import {
 import { readStoredActiveOrganizationId } from "@/lib/active-organization-storage";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 import { useModelPickerIntentStore } from "@/stores/model-picker-intent-store";
-import { useAppNavigate } from "@/lib/app-navigation";
+import { buildOrganizationPath, useAppNavigate } from "@/lib/app-navigation";
 import { useUpgradeCheckout } from "@/hooks/use-upgrade-checkout";
 import { useUpgradeRequestRecipients } from "@/hooks/use-upgrade-request-recipients";
 import { CreditsLimitDialogView } from "@/components/billing/CreditsLimitDialogView";
@@ -79,7 +79,7 @@ const GUEST_WALL_ILLUSTRATION = "/guest-credit-wall.png";
 const GUEST_WALL_ILLUSTRATION_SIZE = 582;
 
 const normalizeGuestVariant = (
-  raw: string | boolean | undefined
+  raw: string | boolean | undefined,
 ): "control" | "treatment" => (raw === "treatment" ? "treatment" : "control");
 
 /**
@@ -285,7 +285,7 @@ export function MCPJamLimitDialog() {
   const isOpen = useMCPJamLimitDialogStore((s) => s.isOpen);
   const intent = useMCPJamLimitDialogStore((s) => s.intent);
   const limitOrganizationId = useMCPJamLimitDialogStore(
-    (s) => s.organizationId
+    (s) => s.organizationId,
   );
   const limitSurface = useMCPJamLimitDialogStore((s) => s.surface);
   const limitPeriod = useMCPJamLimitDialogStore((s) => s.period);
@@ -370,7 +370,9 @@ export function MCPJamLimitDialog() {
   // upgrade must not be pitched the upgrade with no way to act on it — they
   // get the buy-credits copy plus a way to ask an owner.
   const showCreditsUpgradeRequest =
-    !isKnownNonManager && isFreeEffectivePlan && !creditsUpgrade.canManageBilling;
+    !isKnownNonManager &&
+    isFreeEffectivePlan &&
+    !creditsUpgrade.canManageBilling;
   const creditsRequestAction =
     isKnownNonManager && !isFreeEffectivePlan ? "buyCredits" : "upgrade";
   // Names owners only, because the one action this wall offers is an email to
@@ -491,16 +493,56 @@ export function MCPJamLimitDialog() {
   };
 
   const handleBYOK = () => {
-    // Don't yank the user to the org settings page — just close the dialog
-    // and pop open the chat model picker on its "Your providers" tab so they
-    // can switch to an own-key model in place. The free models stay grayed.
+    // Two destinations, because this wall is no longer raised only from chat.
+    // Where a picker that honours the intent is on screen, keep the in-place
+    // behaviour: close the dialog and pop it open on "Your providers" so the
+    // user switches to an own-key model without leaving the page (the free
+    // models stay grayed). Everywhere else — the eval generation screen, the
+    // Ask MCPJam panel, the Markdown import dialog — nothing is listening,
+    // and firing the intent closed the dialog and did nothing at all. Those
+    // surfaces go to the org's AI providers page, where the keys live.
+    const { providersTabResponderCount, requestOpenProvidersTab } =
+      useModelPickerIntentStore.getState();
+    const orgId = resolveBillingOrgId();
+
+    if (providersTabResponderCount > 0) {
+      close();
+      requestOpenProvidersTab();
+      track("plan_limit_byok_clicked", {
+        location: "plan_limit_dialog",
+        wall_kind: "organization_credits",
+        organization_id: billingOrgId,
+        origin: "credits",
+        outcome: "model_picker_opened",
+        current_plan: creditsUpgrade.currentPlan,
+        effective_plan: creditsUpgrade.effectivePlan,
+      });
+      return;
+    }
+
+    // Same guard as `handleTopUp`: with no org resolved yet there is nowhere
+    // to route, so hold the dialog rather than dropping the user on nothing.
+    if (!orgId) {
+      track("plan_limit_byok_clicked", {
+        location: "plan_limit_dialog",
+        wall_kind: "organization_credits",
+        organization_id: null,
+        origin: "credits",
+        outcome: "blocked_missing_organization",
+        current_plan: creditsUpgrade.currentPlan,
+        effective_plan: creditsUpgrade.effectivePlan,
+      });
+      return;
+    }
+
     close();
-    useModelPickerIntentStore.getState().requestOpenProvidersTab();
+    appNavigate(buildOrganizationPath(orgId, "models"));
     track("plan_limit_byok_clicked", {
       location: "plan_limit_dialog",
       wall_kind: "organization_credits",
-      organization_id: billingOrgId,
+      organization_id: orgId,
       origin: "credits",
+      outcome: "providers_settings_opened",
       current_plan: creditsUpgrade.currentPlan,
       effective_plan: creditsUpgrade.effectivePlan,
     });
@@ -583,7 +625,11 @@ export function MCPJamLimitDialog() {
             isKnownNonManager
               ? memberDescription
               : showCreditsUpgrade
-              ? `Free credits reset daily. The ${creditsUpgrade.teamName} plan replaces the daily cap with a monthly allowance per seat, so usage isn't rationed day to day.`
+              ? `Free credits reset daily. The ${
+                  creditsUpgrade.teamName
+                } plan replaces the daily cap with a monthly allowance${
+                  creditsUpgrade.isFlatPlan ? "" : " per seat"
+                }, so usage isn't rationed day to day.`
               : "Buy credits to keep your team going, or use your own API key."
           }
           isKnownNonManager={isKnownNonManager}
@@ -603,6 +649,7 @@ export function MCPJamLimitDialog() {
           annualDiscountPct={creditsUpgrade.annualDiscountPct}
           annualSupported={creditsUpgrade.annualSupported}
           monthlySupported={creditsUpgrade.monthlySupported}
+          priceUnit={creditsUpgrade.priceUnit}
           teamName={creditsUpgrade.teamName}
           isStarting={creditsUpgrade.isStarting}
           isLoadingPrices={creditsUpgrade.isLoadingPrices}

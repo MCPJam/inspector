@@ -3,6 +3,12 @@ import {
   pageToolsSnapshotFrom,
 } from "../browserd/page-tools-peek.js";
 import { webmcpPageToolsMode } from "../../config.js";
+import {
+  deadlineClockOf,
+  withDeadline,
+  type DeadlineHandle,
+} from "../../utils/run-supervisor/deadline.js";
+import type { ResolvedExecutionBudgets } from "@mcpjam/sdk/contract";
 import { BROWSER_BUILT_IN_TOOL_ID } from "@/shared/client-fulfilled-tools";
 import {
   toMintedPageToolRecords,
@@ -182,7 +188,40 @@ const TERMINAL_ARTIFACT_FLUSH_TIMEOUT_MS = 30_000;
  * it just stops holding the caller. Rejections resolve to `fallback` too, so a
  * terminal path can't be broken by what it is only observing.
  */
-async function withDeadline<T>(
+/** Written for a human reading a failed session, not for a parser. */
+function formatBudgetMs(ms: number): string {
+  return ms % 60_000 === 0 ? `${ms / 60_000}m` : `${Math.round(ms / 1000)}s`;
+}
+
+function sessionTimeoutMessage(budgetMs: number, turn?: number): string {
+  const where = turn === undefined ? "" : ` (at turn ${turn + 1})`;
+  return `Session exceeded its ${formatBudgetMs(budgetMs)} budget${where}`;
+}
+
+function turnTimeoutMessage(budgetMs: number, turn?: number): string {
+  const where = turn === undefined ? "" : ` (turn ${turn + 1})`;
+  return `Turn exceeded its ${formatBudgetMs(budgetMs)} budget${where}`;
+}
+
+/**
+ * Rejects when `signal` aborts, and otherwise never settles.
+ *
+ * Its rejection carries the signal's REASON — the deadline's own stamped
+ * error when a clock fired — so the session's catch can tell a blown budget
+ * from a cancel rather than seeing a bare "aborted".
+ */
+function whenSessionAborted(signal: AbortSignal): Promise<never> {
+  return new Promise<never>((_resolve, reject) => {
+    const fail = () =>
+      reject(
+        signal.reason instanceof Error ? signal.reason : new Error("aborted"),
+      );
+    if (signal.aborted) fail();
+    else signal.addEventListener("abort", fail, { once: true });
+  });
+}
+
+async function settleWithin<T>(
   promise: Promise<T>,
   timeoutMs: number,
   fallback: T,
@@ -371,6 +410,13 @@ export interface SyntheticHostSessionAdapter {
   /** Deterministic chat session id — the claim key for swarm attempts. */
   chatSessionId: string;
   maxTurns: number;
+  /**
+   * The run's FROZEN execution budgets. A swarm session spends
+   * `unitTimeoutMs` on the whole conversation and `turnTimeoutMs` on each
+   * reply within it; `maxTurns` bounds the COUNT of turns, which is a
+   * different thing and never bounded their duration.
+   */
+  budgets: ResolvedExecutionBudgets;
   runtime: SyntheticHostRuntime;
   /**
    * Bearer used for the hosted drain + transcript persist. The persona driver
@@ -427,6 +473,7 @@ export async function runSyntheticHostSession(
     projectId,
     chatSessionId,
     maxTurns,
+    budgets,
     runtime,
     authHeader,
     managerFactory,
@@ -488,6 +535,22 @@ export async function runSyntheticHostSession(
   }
 
   const sessionStartedAt = Date.now();
+  // The session's clock, nested under whatever the caller passed (the run's
+  // stop signal, composed with cancel and the spend cap). `withDeadline`
+  // COMPOSES rather than replaces, so everything downstream still sees one
+  // signal and it fires on whichever bound trips first.
+  //
+  // Declared before the `try` because the `finally` disposes it, and because
+  // `sessionSignal` is what the turn loop reads instead of the raw
+  // `abortSignal` — reading the raw one would miss this session's own budget.
+  const sessionDeadline = withDeadline(
+    abortSignal,
+    budgets.unitTimeoutMs,
+    "session",
+  );
+  const sessionSignal = sessionDeadline.signal;
+  /** The turn currently in flight. Exactly one is armed at a time. */
+  let turnDeadline: DeadlineHandle | undefined;
   let manager: MCPClientManager | undefined;
   let dispose: (() => Promise<void>) | undefined;
   // Browser-rendered MCP App pipeline (same machinery as eval iterations):
@@ -594,7 +657,24 @@ export async function runSyntheticHostSession(
   let messageHistory: ModelMessage[] = [];
 
   try {
-    const built = await managerFactory();
+    // Raced against the session clock, because the factory takes no signal:
+    // it awaits plugin re-gating, a bearer mint and `createAuthorizedManager`,
+    // and none of them observes `sessionSignal`. Without the race a factory
+    // that hangs parks execution here forever — the deadline fires, aborts the
+    // signal, and nothing is left running to notice, so the session never
+    // reaches the terminal timeout path the clock exists to provide.
+    const built = await Promise.race([
+      // A factory that settles LATE still owns a live manager and a browser
+      // context. Nothing downstream will dispose it, because the session has
+      // already unwound — so the loser of the race tears down its own work.
+      managerFactory().then((value) => {
+        if (sessionSignal.aborted) {
+          void Promise.resolve(value.dispose()).catch(() => undefined);
+        }
+        return value;
+      }),
+      whenSessionAborted(sessionSignal),
+    ]);
     manager = built.manager;
     dispose = built.dispose;
     selectedServerIds = built.connectedServerIds;
@@ -924,14 +1004,32 @@ export async function runSyntheticHostSession(
     emit?.({ type: "session_start" });
 
     for (let turn = 0; turn < maxTurns; turn++) {
-      if (abortSignal?.aborted) {
+      if (sessionSignal.aborted) {
+        // The session's OWN clock, told apart from a cancel the same way the
+        // eval runner does it: `firedClock()` reports only this handle's bound.
+        const sessionTimedOut = sessionDeadline.firedClock() === "session";
+        const errorMessage = sessionTimedOut
+          ? sessionTimeoutMessage(budgets.unitTimeoutMs, turn)
+          : "aborted";
         emit?.({
           type: "session_complete",
           status: "failed",
-          errorMessage: "aborted",
+          errorMessage,
         });
-        return { outcome: "failed" };
+        return {
+          outcome: "failed",
+          errorMessage,
+          ...(sessionTimedOut ? { errorReason: "session_timeout" } : {}),
+        };
       }
+
+      // One clock per reply, nested under the session's. Disposed at the top
+      // of the next iteration and in this function's `finally`, so exactly one
+      // is ever armed. Without it a single wedged turn holds the session until
+      // the SESSION budget expires — the whole remaining conversation spent on
+      // a reply that was never coming.
+      turnDeadline?.dispose();
+      turnDeadline = withDeadline(sessionSignal, budgets.turnTimeoutMs, "turn");
 
       const next = await nextPersonaTurn(lastTranscript);
 
@@ -1099,13 +1197,33 @@ export async function runSyntheticHostSession(
         accessVersion,
         projectId,
         authHeader,
-        abortSignal,
+        abortSignal: turnDeadline.signal,
         // Threaded into the per-step /stream (or /stream/org) body and the
         // /stream/org/local-usage writeback so the backend BYOK and JAM-paid
         // writers can stamp the run id onto llmUsageRecord for per-run spend
         // attribution.
         ...(persist.journeyRunId ? { journeyRunId: persist.journeyRunId } : {}),
       });
+
+      if (turnDeadline.firedClock() === "turn") {
+        // Ends the SESSION, not just the turn — and that asymmetry with the
+        // eval runner is deliberate. Eval prompt turns are independently
+        // authored and independently graded, so the next one still means
+        // something. A swarm session is one conversation: turn N+1 is the
+        // persona reacting to turn N's reply, and there is no reply to react
+        // to. Carrying on would feed the persona a hole in the transcript.
+        const errorMessage = turnTimeoutMessage(budgets.turnTimeoutMs, turn);
+        emit?.({
+          type: "session_complete",
+          status: "failed",
+          errorMessage,
+        });
+        return {
+          outcome: "failed",
+          errorMessage,
+          errorReason: "turn_timeout",
+        };
+      }
 
       emit?.({ type: "turn_finish", turnIndex: turn });
       // Track the first turn's modelSource for the per-session persist
@@ -1260,6 +1378,27 @@ export async function runSyntheticHostSession(
     emit?.({ type: "session_complete", status: "succeeded" });
     return { outcome: "succeeded" };
   } catch (error) {
+    // A deadline abort reaches here as an `AbortError` whose message is the
+    // runtime's ("This operation was aborted"), which tells a reader nothing.
+    // `deadlineClockOf` recovers WHICH bound tripped and says so.
+    const firedClock = deadlineClockOf(error);
+    if (firedClock === "session" || firedClock === "turn") {
+      const errorMessage =
+        firedClock === "session"
+          ? sessionTimeoutMessage(budgets.unitTimeoutMs)
+          : turnTimeoutMessage(budgets.turnTimeoutMs);
+      emit?.({
+        type: "session_complete",
+        status: "failed",
+        errorMessage,
+      });
+      return {
+        outcome: "failed",
+        errorMessage,
+        errorReason:
+          firedClock === "session" ? "session_timeout" : "turn_timeout",
+      };
+    }
     const message = error instanceof Error ? error.message : String(error);
     // Single source of truth for the spend-cap / rate-limit fold — shared with
     // the per-runtime `classifyFailure` so the regex can't drift. Return the
@@ -1293,6 +1432,8 @@ export async function runSyntheticHostSession(
       ...(errorReason ? { errorReason } : {}),
     };
   } finally {
+    turnDeadline?.dispose();
+    sessionDeadline.dispose();
     // Tear down the browser harness (and its headless Chromium, if launched)
     // before the manager: the harness's widget bridge dispatches tools/call
     // through the manager, so it must die first.
@@ -1389,7 +1530,7 @@ export async function runSyntheticHostSession(
               // but a hung mutation would still hold a swarm worker slot while
               // contributing nothing. Whatever doesn't land stays unpersisted and
               // is reported by the `pending` warning below.
-              const result = await withDeadline(
+              const result = await settleWithin(
                 outbox.flush(),
                 TERMINAL_ARTIFACT_FLUSH_TIMEOUT_MS,
                 {

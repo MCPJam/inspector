@@ -1,3 +1,7 @@
+import {
+  dependentFilterOptions,
+  selectedFilter,
+} from "../evals/filter-options";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
   EvalRunDecisionDiagnostic,
@@ -11,12 +15,19 @@ import {
 } from "@/lib/evals/eval-decision-summary-store";
 import { Button } from "@mcpjam/design-system/button";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+} from "@mcpjam/design-system/select";
+import { useServerQuality } from "../evals/use-server-quality";
+import {
   EvalListFilter,
   ALL_EVAL_FILTER_VALUES,
 } from "../evals/eval-list-filter";
 import { useProjectRunHistory } from "../evals/use-project-run-history";
 import type { EvalSuiteRun, EvalIteration } from "../evals/types";
-import { buildRunResultsMatrix } from "./run-results-matrix-model";
+import { buildRunResultsMatrix, resultCounts } from "./run-results-matrix-model";
 import { RunResultsMatrix } from "./run-results-matrix";
 import {
   buildRunVerdictHero,
@@ -30,6 +41,7 @@ import {
   previousLaunchRuns,
 } from "./run-verdict-hero-deltas";
 import { RunVerdictHero } from "./run-verdict-hero";
+import { UnifiedFindingsSection } from "./unified-findings-section";
 import type { SingleRunContent } from "./evaluate-run-content";
 
 type MemberReport = {
@@ -38,8 +50,15 @@ type MemberReport = {
   chains: ReadonlyMap<string, EvalRunDecisionChain>;
 };
 
-/** One report, even when execution was distributed across several clients. */
+/**
+ * One report, even when execution was distributed across several clients.
+ *
+ * Findings remain scoped to one selected run. Switching the selector replaces
+ * the mounted controller and subscription; it never merges evidence populations
+ * or requests analysis for the other members of the combined report.
+ */
 export function CombinedRunContent({
+  run: routeRun,
   runs,
   projectId,
   suiteName,
@@ -50,7 +69,9 @@ export function CombinedRunContent({
   decisionSummaryEnabled,
   onEditCase,
   onEditEvaluator,
+  onOpenIteration,
 }: Parameters<typeof SingleRunContent>[0] & { runs: EvalSuiteRun[] }) {
+  const [findingsRunId, setFindingsRunId] = useState(routeRun._id);
   const history = useProjectRunHistory(
     projectId ?? "",
     runs,
@@ -58,6 +79,10 @@ export function CombinedRunContent({
   );
   const [client, setClient] = useState(ALL_EVAL_FILTER_VALUES);
   const [model, setModel] = useState(ALL_EVAL_FILTER_VALUES);
+  const [matrixFilters, setMatrixFilters] = useState({
+    search: "",
+    status: ALL_EVAL_FILTER_VALUES,
+  });
   const [reports, setReports] = useState<Map<string, MemberReport>>(new Map());
   const record = useCallback((id: string, report: MemberReport) => {
     setReports((previous) => new Map(previous).set(id, report));
@@ -83,6 +108,18 @@ export function CombinedRunContent({
   const selectedRuns = hydratedRuns.filter((run) =>
     selectedRunIds.has(run._id),
   );
+  const findingsRun =
+    selectedRuns.find((run) => run._id === findingsRunId) ??
+    selectedRuns.find((run) => run._id === routeRun._id) ??
+    selectedRuns[0];
+  // Use every target of this run for the label, even when the results table
+  // filters out a model: the snapshot still describes the whole selected run.
+  const findingRunLabel = (runId: string) => {
+    const members = matrix.targets.filter((target) => target.run._id === runId);
+    return `${members[0]?.client ?? "Client"} · ${members
+      .map((target) => target.model)
+      .join(", ")}`;
+  };
   const selectedIterations = targets.flatMap((target) => target.iterations);
   const selectedReports = selectedRuns.flatMap(
     (run) => reports.get(run._id) ?? [],
@@ -131,12 +168,38 @@ export function CombinedRunContent({
   const clearPairingFilters = () => {
     setClient(ALL_EVAL_FILTER_VALUES);
     setModel(ALL_EVAL_FILTER_VALUES);
+    setMatrixFilters({ search: "", status: ALL_EVAL_FILTER_VALUES });
   };
+  const optionTargets = matrix.targets.filter(
+    (target) =>
+      (!matrixFilters.search &&
+        matrixFilters.status === ALL_EVAL_FILTER_VALUES) ||
+      matrix.rows.some(
+        (row) =>
+          (target.cells.get(row.key)?.length ?? 0) > 0 &&
+          row.title.toLowerCase().includes(matrixFilters.search) &&
+          (matrixFilters.status === ALL_EVAL_FILTER_VALUES ||
+            resultCounts(target.cells.get(row.key) ?? [])[
+              matrixFilters.status as
+                "passed" | "failed" | "pending" | "cancelled"
+            ] > 0),
+      ),
+  );
+  const options = dependentFilterOptions(optionTargets, {
+    client: {
+      selected: selectedFilter(client),
+      values: (target) => [target.client],
+    },
+    model: {
+      selected: selectedFilter(model),
+      values: (target) => [target.modelId],
+    },
+  });
   const pairingFilterProps = {
     client,
     model,
-    clientOptions: [...new Set(matrix.targets.map((target) => target.client))],
-    modelOptions: [...new Set(matrix.targets.map((target) => target.modelId))],
+    clientOptions: options.client,
+    modelOptions: options.model,
     isFiltered,
     onClientChange: setClient,
     onModelChange: setModel,
@@ -183,7 +246,46 @@ export function CombinedRunContent({
         </div>
       ) : (
         <>
-          <RunVerdictHero view={view} headerVerdict={fullVerdict} />
+          <RunVerdictHero
+            view={view}
+            headerVerdict={fullVerdict}
+            explanation={null}
+          />
+          {findingsRun ? (
+            <div data-testid="combined-run-findings">
+              <SelectedRunFindings
+                scopeControl={
+                  <Select
+                    value={findingsRun._id}
+                    onValueChange={setFindingsRunId}
+                  >
+                    <SelectTrigger
+                      size="sm"
+                      aria-label="Findings for"
+                      className="w-auto max-w-full"
+                    >
+                      <span className="truncate">
+                        {findingRunLabel(findingsRun._id)}
+                      </span>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {selectedRuns.map((run) => (
+                        <SelectItem key={run._id} value={run._id}>
+                          {findingRunLabel(run._id)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                }
+                key={findingsRun._id}
+                run={findingsRun}
+                iterations={
+                  history.details.get(findingsRun._id)?.iterations ?? []
+                }
+                onOpenIteration={onOpenIteration}
+              />
+            </div>
+          ) : null}
           <div className="border-t border-border/40">
             <RunResultsMatrix
               onEditCase={onEditCase}
@@ -199,11 +301,50 @@ export function CombinedRunContent({
               toolbarExtra={<PairingFilters {...pairingFilterProps} />}
               extraFiltersActive={isFiltered}
               onClearExtraFilters={clearPairingFilters}
+              onFilterChange={setMatrixFilters}
             />
           </div>
         </>
       )}
     </div>
+  );
+}
+
+function SelectedRunFindings({
+  scopeControl,
+  run,
+  iterations,
+  onOpenIteration,
+}: {
+  scopeControl?: React.ReactNode;
+  run: EvalSuiteRun;
+  iterations: readonly EvalIteration[];
+  onOpenIteration: Parameters<typeof SingleRunContent>[0]["onOpenIteration"];
+}) {
+  const generation = useServerQuality(run, { autoRequest: false });
+  const openEvidence = (iterationId: string) => {
+    const iteration = iterations.find(
+      (row) => row._id === iterationId && row.suiteRunId === run._id,
+    );
+    if (iteration?.testCaseId) {
+      onOpenIteration?.({ testCaseId: iteration.testCaseId, iterationId });
+    }
+  };
+  return (
+    <UnifiedFindingsSection
+      scopeControl={scopeControl}
+      suiteRunId={run._id}
+      iterations={iterations}
+      generation={{
+        pending: generation.pending,
+        failedGeneration: generation.failedGeneration,
+        error: generation.error,
+        unavailable: generation.unavailable,
+        canRequest: generation.canRequest,
+        requestInsight: generation.requestServerQuality,
+      }}
+      {...(onOpenIteration ? { onOpenIteration: openEvidence } : {})}
+    />
   );
 }
 

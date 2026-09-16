@@ -92,6 +92,7 @@ so results respect the caller's project access.
 | `get_eval_run_steps` | Fetch one row per authored test step for an eval iteration, in order: each step's status (ok / fail / skipped / pending), the reason, and evidence (screenshot/video URLs, widget tool calls). | — |
 | `cancel_eval_run` | Cancel an in-flight eval run. | — |
 | `backtest_eval_run` | Preview draft assertions against stored evidence; reports missing capture and never changes saved results. | — |
+| `backtest_eval_run_judge` | Preview a draft judge rubric against recorded evidence. Spends model budget without changing saved verdicts; supports continuation. | — |
 | `request_eval_run_judge` | Run LLM-as-judge grading over a finished eval run: each case's final answer is scored against its expected output. SPENDS the organization's model budget; read the results from `get_eval_run`'s `judges.goalCompletion`. | — |
 | `propose_eval_description_rewrite` | Draft a rewritten description for one tool from a finished run's failed trials. SPENDS a small model budget; the developer applies the diff in their own server, MCPJam never edits it. | — |
 | `start_eval_description_experiment` | Replay the affected cases twice, original description versus the proposed rewrite, with the model, host and grader held still. SPENDS eval-iteration credits up to the stated cap; read the report from `get_eval_description_experiment`. | — |

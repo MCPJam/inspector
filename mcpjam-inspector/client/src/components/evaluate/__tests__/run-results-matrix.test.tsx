@@ -144,11 +144,11 @@ describe("run results matrix", () => {
         name: "Inspect Refund order on Claude · sonnet",
       }),
     );
-    expect(screen.queryByRole("button", { name: "Edit evaluators" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Configure test case evaluators" })).toBeNull();
     await user.click(
       screen.getByRole("button", { name: "Open iteration 1 details" }),
     );
-    await user.click(screen.getByRole("button", { name: "Edit evaluators" }));
+    await user.click(screen.getByRole("button", { name: "Configure test case evaluators" }));
     expect(onEditEvaluator).toHaveBeenCalledWith("refund");
     expect(screen.queryByRole("dialog")).toBeNull();
   });
@@ -590,7 +590,7 @@ describe("run results matrix", () => {
   });
 
   it.each(["pending", "running", "grading"] as const)(
-    "offers Pending while status is %s",
+    "hides Pending when no pending cases exist while status is %s",
     async (status) => {
       const user = userEvent.setup();
       render(
@@ -603,7 +603,7 @@ describe("run results matrix", () => {
       await user.click(
         screen.getByRole("combobox", { name: "Filter by status" }),
       );
-      expect(screen.getByRole("option", { name: "Pending" })).toBeVisible();
+      expect(screen.queryByRole("option", { name: "Pending" })).toBeNull();
     },
   );
 });

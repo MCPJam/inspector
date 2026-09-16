@@ -1,11 +1,13 @@
-import {
-  judgeBacktestRequestSchema,
-  type JudgeBacktestReport,
-} from "../contract/judge-backtest.js";
+import { gradingPolicyFromPlatformSuiteSettings } from "../eval-grading-policy.js";
+import { planEvalGradingPolicyEdit } from "../contract/grading-policy.js";
 import {
   caseJudgeSettingsSchema,
   judgeRubricSchema,
 } from "../contract/judge-settings.js";
+import {
+  judgeBacktestRequestSchema,
+  type JudgeBacktestReport,
+} from "../contract/judge-backtest.js";
 import {
   evalBacktestDraftSchema,
   evalBacktestContinuationSchema,
@@ -5752,7 +5754,7 @@ export const updateEvalSuiteOperation: PlatformOperation<
   name: "update_eval_suite",
   title: "Update MCPJam eval suite",
   description:
-    "Edit an eval suite's settings: name, description, environment servers, computer image, execution config (model/system prompt/temperature), hosts, minimum accuracy, minimum iterations, match options, checks, LLM-as-judge (enabled/model/autoRun/threshold — autoRun is what makes grading happen; enabled alone only makes the judge available), and the verdict policy v2 fields (repetitions/passThreshold/validity — fractions, and the v2 replacement for minimumAccuracy). Only the fields you pass change.",
+    "Edit an eval suite's settings: name, description, environment servers, computer image, execution config (model/system prompt/temperature), hosts, minimum accuracy, minimum iterations, match options, checks, LLM-as-judge (enabled/model/autoRun/threshold — autoRun is what makes grading happen; enabled alone only makes the judge available), and the per-case grading fields (repetitions/passThreshold/validity — FRACTIONS). minimumAccuracy is the suite-wide accuracy threshold, a PERCENT over the whole run; passThreshold is the per-case criterion, a fraction each case must meet over its own iterations. They are different criteria, not two units of one number — ten cases, nine always passing and one always failing, passes a 90% suite-wide bar and fails a 0.9 per-case one — so send whichever one the suite already uses (settings.policy on a read says which) and never convert between them. The operation reads the current criterion first and refuses repetitions (including the repetitions/passThreshold pair) on a suite-wide suite, and minimumIterations on a per-case suite. Changing criterion is API-only for now. Only the fields you pass change.",
   readOnly: false,
   permalink: derivePermalinks((result) => [
     { type: "eval_suite", id: result.id, ...projectIdOf(result) },
@@ -5782,6 +5784,31 @@ export const updateEvalSuiteOperation: PlatformOperation<
       input.project
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
+    const settings = input.settings;
+    if (
+      settings &&
+      ["passThreshold", "repetitions", "minimumIterations", "validity"].some(
+        (key) => settings[key as keyof typeof settings] !== undefined
+      )
+    ) {
+      const detail = await client.getEvalSuite(
+        { projectId: project.id, suiteId: suite.id },
+        { signal }
+      );
+      const read = gradingPolicyFromPlatformSuiteSettings(detail.settings);
+      if (!read.ok) throw operationInputError(read.message);
+      // Use the canonical refusals without translating the caller's wire fields.
+      // A lone passThreshold on a suite-wide suite is refused by the route.
+      const plan = planEvalGradingPolicyEdit(read.policy, {
+        ...(settings.repetitions !== undefined
+          ? { iterations: settings.repetitions }
+          : {}),
+        ...(settings.minimumIterations !== undefined
+          ? { minimumIterations: settings.minimumIterations }
+          : {}),
+      });
+      if (!plan.ok) throw operationInputError(plan.message);
+    }
     const body: Record<string, unknown> = {};
     for (const key of [
       "name",
@@ -6698,7 +6725,7 @@ export const getEvalRunOperation: PlatformOperation<
   name: "get_eval_run",
   title: "Get MCPJam eval run",
   description:
-    "Get the status, verdict, and — once the run is terminal — its `decisionSummary`: START THERE when a run did not pass. It carries the verdict and where it came from (`verdictSource`), the counts with the population they count (`measurementUnit`: caseVariant under verdict policy v2, trial on legacy runs — never assume one), the authoritative `decision` with the exact reasons a v2 run passed, failed, or was withheld as inconclusive, and per-trial `diagnostics` giving the user-value chain, the first failed stage, the failure category, the evidence for THAT stage, and one next action. `verdict: \"notEstablished\"` means no verdict exists (still running, stopped early, or undecidable) — it is not a failure. THE CHAIN, IN ORDER: connection → discovery → selection → call → response → userValue; a stage is only ever about the link it names, and the order is what makes `notReached` mean anything. Each diagnostic's `chain.status` is a THREE-WAY discriminant and only one of them carries rows: `verified` — the stored derivation validated, so `stages`, `firstFailedStage` and `failureCategory` are present and may be read; `unverified` — a derivation was stored and did not validate, so the rows and both claims derived from them are withheld deliberately (substituting your own reading of the trace for the withheld claim is the one thing this state exists to stop); `absent` — no derivation was ever stored, which is a DIFFERENT fact from one that was rejected. A row's `state` is one of five, and the three non-verdicts are three different facts that must never be collapsed: `passed` — measured, and it passed; `failed` — measured, and it failed; `notReached` — it never ran, because an earlier stage failed; `notMeasured` — this run captured nothing that could decide it; `notApplicable` — the stage does not apply to this case at all. Reporting a `notMeasured` or `notReached` stage as healthy is the misreading the five-state vocabulary exists to prevent. `firstFailedStage` IS A LOCATION, NOT A CAUSE: it names where the chain stopped, and the nearest thing to a cause is `reason` on that same stage's row. `failureCategory` is a coarse bucket, and it can be present with NO `firstFailedStage` at all — a setup abort and an evaluator error are real answers about a trial that never reached a stage. Neither the location nor the bucket on its own authorizes proposing a change to the server under test. The `user-value-chain-glossary` skill on this server defines every member of all six vocabularies — the stages, the five states, the twenty-nine stage reasons, the seven categories, the four verdicts and the analytics exclusion classes — along with the population rules that decide what a count means; fetch it rather than guessing a member's meaning from its spelling. Read authored step results (get_eval_run_steps) second and a full trace (get_eval_iteration_trace) last; you should not need to infer the chain from raw tool calls. Diagnostics are paginated: pass diagnosticsCursor to continue, and treat `diagnostics.complete: false` as a partial list, never as the full set of failures. The detail also carries an `insights` envelope with findings AGGREGATED across iterations (exemplar evidence attached); only a finding with actionTarget mcp_server AND actionability ready authorizes proposing a server change — other action targets name agent/test/environment work and must not be 'fixed' in server code.",
+    "Get the status, verdict, and — once the run is terminal — its `decisionSummary`: START THERE when a run did not pass. It carries the verdict and where it came from (`verdictSource`), the counts with the population they count (`measurementUnit`: caseVariant under per-case grading, trial under a suite-wide accuracy threshold — never assume one), the authoritative `decision` with the exact reasons a per-case-graded run passed, failed, or was withheld as inconclusive, and per-trial `diagnostics` giving the user-value chain, the first failed stage, the failure category, the evidence for THAT stage, and one next action. `verdict: \"notEstablished\"` means no verdict exists (still running, stopped early, or undecidable) — it is not a failure. THE CHAIN, IN ORDER: connection → discovery → selection → call → response → userValue; a stage is only ever about the link it names, and the order is what makes `notReached` mean anything. Each diagnostic's `chain.status` is a THREE-WAY discriminant and only one of them carries rows: `verified` — the stored derivation validated, so `stages`, `firstFailedStage` and `failureCategory` are present and may be read; `unverified` — a derivation was stored and did not validate, so the rows and both claims derived from them are withheld deliberately (substituting your own reading of the trace for the withheld claim is the one thing this state exists to stop); `absent` — no derivation was ever stored, which is a DIFFERENT fact from one that was rejected. A row's `state` is one of five, and the three non-verdicts are three different facts that must never be collapsed: `passed` — measured, and it passed; `failed` — measured, and it failed; `notReached` — it never ran, because an earlier stage failed; `notMeasured` — this run captured nothing that could decide it; `notApplicable` — the stage does not apply to this case at all. Reporting a `notMeasured` or `notReached` stage as healthy is the misreading the five-state vocabulary exists to prevent. `firstFailedStage` IS A LOCATION, NOT A CAUSE: it names where the chain stopped, and the nearest thing to a cause is `reason` on that same stage's row. `failureCategory` is a coarse bucket, and it can be present with NO `firstFailedStage` at all — a setup abort and an evaluator error are real answers about a trial that never reached a stage. Neither the location nor the bucket on its own authorizes proposing a change to the server under test. The `user-value-chain-glossary` skill on this server defines every member of all six vocabularies — the stages, the five states, the twenty-nine stage reasons, the seven categories, the four verdicts and the analytics exclusion classes — along with the population rules that decide what a count means; fetch it rather than guessing a member's meaning from its spelling. Read authored step results (get_eval_run_steps) second and a full trace (get_eval_iteration_trace) last; you should not need to infer the chain from raw tool calls. Diagnostics are paginated: pass diagnosticsCursor to continue, and treat `diagnostics.complete: false` as a partial list, never as the full set of failures. The detail also carries an `insights` envelope with findings AGGREGATED across iterations (exemplar evidence attached); only a finding with actionTarget mcp_server AND actionability ready authorizes proposing a server change — other action targets name agent/test/environment work and must not be 'fixed' in server code.",
   readOnly: true,
   permalink: derivePermalinks((result) => [
     evalRunRef(result.run.id, result.run.suiteId, result.project?.id),

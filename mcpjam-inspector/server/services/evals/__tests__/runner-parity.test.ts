@@ -122,7 +122,11 @@ vi.mock("../../../utils/chat-v2-orchestration", () => ({
   })),
 }));
 
-import { runEvalSuiteWithAiSdk, streamTestCase } from "../../evals-runner";
+import {
+  defaultEvalExecutionBudgets,
+  runEvalSuiteWithAiSdk,
+  streamTestCase,
+} from "../../evals-runner";
 import type { EvalStreamEvent } from "@/shared/eval-stream-events";
 
 // ── normalization: scrub wall-clock + volatile values so snapshots are stable ──
@@ -291,6 +295,7 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
     environment?: unknown;
   }) {
     return streamTestCase({
+      budgets: defaultEvalExecutionBudgets(),
       test: {
         title: "Case",
         query: "Hello",

@@ -1,102 +1,119 @@
 import { useCallback } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { useIsMemberActor } from "@/hooks/use-is-member-actor";
 import { useOrgScopedWrite } from "@/hooks/useOrgScopedWrite";
-import type { AutoTopupConfiguration } from "@/components/billing/AutoTopupSettings";
 
-/**
- * Convex function ids for auto-reload enrollment. The backend is not built
- * yet; these names are the contract it is expected to ship under. This app
- * has no generated Convex client, so nothing checks them at build time.
- *
- * Expected shapes:
- *   - GET  → `AutoTopupConfiguration | null` (null = not enrolled)
- *   - SET  → `{ organizationId, thresholdCredits, topupCredits,
- *              monthlySpendLimitCredits: number | null }`
- *   - CLEAR → `{ organizationId }`
- */
-export const AUTO_TOPUP_GET_FN = "billing/autoTopup:getOrganizationAutoTopup";
-export const AUTO_TOPUP_SET_FN = "billing/autoTopup:setOrganizationAutoTopup";
-export const AUTO_TOPUP_CLEAR_FN =
-  "billing/autoTopup:clearOrganizationAutoTopup";
-
-const finiteInt = (value: unknown): number | undefined =>
-  typeof value === "number" && Number.isSafeInteger(value) ? value : undefined;
-
-/**
- * `undefined` while loading; `null` when the org is confirmed not enrolled.
- * A malformed row reads as not enrolled rather than crashing the dialog.
- */
-export function normalizeAutoTopup(
-  raw: unknown,
-): AutoTopupConfiguration | null | undefined {
-  if (raw === undefined) return undefined;
-  if (raw === null || typeof raw !== "object") return null;
-  const r = raw as Record<string, unknown>;
-  const thresholdCredits = finiteInt(r.thresholdCredits);
-  const topupCredits = finiteInt(r.topupCredits);
-  if (thresholdCredits === undefined || topupCredits === undefined) return null;
-  return {
-    thresholdCredits,
-    topupCredits,
-    monthlySpendLimitCredits: finiteInt(r.monthlySpendLimitCredits) ?? null,
-  };
+export interface AutoTopupConfiguration {
+  thresholdCredits: number;
+  topupCredits: number;
+  monthlySpendLimitCents: number | null;
+}
+export interface AutoTopupView {
+  preferences:
+    | (AutoTopupConfiguration & { updatedByUserId: string; updatedAt: number })
+    | null;
+  revision: number;
+  consentVersion: "auto-topup-v1";
+  currency: "usd";
+  refillPriceCents: number | null;
+  eligible: boolean;
+  activationAllowed: boolean;
+  status:
+    | "not_configured"
+    | "not_active"
+    | "awaiting_card"
+    | "enrolled"
+    | "paused"
+    | "payment_pending"
+    | "needs_attention";
+  paymentIssue: string | null;
+  card: { brand: string; last4: string } | null;
+  monthlySpend: { month: string; chargedCents: number; reservedCents: number };
+}
+export interface AutoTopupSetup {
+  setupIntentId: string;
+  clientSecret: string;
 }
 
-/**
- * Auto-reload enrollment for one organization.
- *
- * **This hook can throw, and every call site MUST sit inside an
- * `ErrorBoundary`.** `useQuery` re-throws query errors during render, and the
- * ordinary case here is the backend function not being deployed yet: the two
- * repos release independently, and this one ships first.
- */
+/** Query errors must be contained by the billing dialog's ErrorBoundary. */
 export function useAutoTopup(organizationId: string | null | undefined) {
   const isMember = useIsMemberActor();
   const isUserReady = useDbUserReady();
   const canQuery = Boolean(isMember && isUserReady && organizationId);
-  // Resolved guest, not "still settling": see useIsMemberActor.
-  const actorIsGuest = isMember === false;
-
-  const raw = useQuery(
-    AUTO_TOPUP_GET_FN as any,
-    canQuery ? ({ organizationId } as any) : "skip",
-  ) as unknown;
-  const enrollment = normalizeAutoTopup(raw);
-
-  const setMutation = useMutation(AUTO_TOPUP_SET_FN as any);
-  const clearMutation = useMutation(AUTO_TOPUP_CLEAR_FN as any);
+  const view = useQuery(
+    "billing/autoTopupPreferences:get" as any,
+    canQuery ? { organizationId } : "skip",
+  ) as AutoTopupView | undefined;
+  const set = useMutation("billing/autoTopupPreferences:set" as any);
+  const clearPreferences = useMutation(
+    "billing/autoTopupPreferences:clear" as any,
+  );
+  const turnOff = useMutation("billing/autoTopupActivation:disable" as any);
+  const beginAction = useAction("billing/autoTopupActivationNode:begin" as any);
+  const finishAction = useAction(
+    "billing/autoTopupActivationNode:finish" as any,
+  );
   const { error, isSaving, run } = useOrgScopedWrite(organizationId ?? null);
-
+  const requireOrganization = () => {
+    if (!canQuery || !organizationId)
+      throw new Error("Sign in and select an organization first.");
+    return organizationId;
+  };
   const save = useCallback(
     async (configuration: AutoTopupConfiguration) => {
-      if (!organizationId) return;
-      await run(() =>
-        setMutation({
-          organizationId,
-          thresholdCredits: configuration.thresholdCredits,
-          topupCredits: configuration.topupCredits,
-          monthlySpendLimitCredits:
-            configuration.monthlySpendLimitCredits ?? null,
-        } as any),
-      );
+      if (!canQuery || !organizationId)
+        throw new Error("Select an organization first.");
+      await run(() => set({ organizationId, ...configuration }));
     },
-    [organizationId, run, setMutation],
+    [canQuery, organizationId, run, set],
   );
-
   const disable = useCallback(async () => {
-    if (!organizationId) return;
-    await run(() => clearMutation({ organizationId } as any));
-  }, [organizationId, run, clearMutation]);
-
+    if (!canQuery || !organizationId)
+      throw new Error("Select an organization first.");
+    await run(() => turnOff({ organizationId }));
+  }, [canQuery, organizationId, run, turnOff]);
+  const clear = useCallback(async () => {
+    if (!canQuery || !organizationId)
+      throw new Error("Select an organization first.");
+    await run(() => clearPreferences({ organizationId }));
+  }, [canQuery, organizationId, run, clearPreferences]);
+  const begin = async (): Promise<AutoTopupSetup> => {
+    const id = requireOrganization();
+    if (
+      !view?.activationAllowed ||
+      !view.eligible ||
+      !view.preferences ||
+      view.refillPriceCents == null
+    ) {
+      throw new Error(
+        "Automatic refills are unavailable. Save settings and review the current quote first.",
+      );
+    }
+    return await beginAction({
+      organizationId: id,
+      consent: true,
+      consentVersion: view.consentVersion,
+      expectedRevision: view.revision,
+      expectedPriceCents: view.refillPriceCents,
+    });
+  };
+  const finish = async (setupIntentId: string): Promise<void> => {
+    await finishAction({
+      organizationId: requireOrganization(),
+      setupIntentId,
+    });
+  };
   return {
-    enrollment,
-    isLoading: !actorIsGuest && enrollment === undefined,
-    querySkipped: actorIsGuest,
+    view,
+    isLoading: isMember !== false && view === undefined,
+    querySkipped: isMember === false,
     error,
     isSaving,
     save,
     disable,
+    clear,
+    begin,
+    finish,
   };
 }

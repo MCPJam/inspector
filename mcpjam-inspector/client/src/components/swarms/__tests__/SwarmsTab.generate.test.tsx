@@ -108,11 +108,18 @@ vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
 }));
 
 // The button is the handle the mid-flight test needs to retarget the dialog.
-vi.mock("@/components/hosts/ServerGroupPicker", () => ({
-  ServerGroupPicker: ({ onChange }: { onChange: (id: string) => void }) => (
+vi.mock("@/components/hosts/server-picker", () => ({
+  ServerPicker: ({
+    onChange,
+    triggerId,
+  }: {
+    onChange: (id: string) => void;
+    triggerId?: string;
+  }) => (
     <button
       type="button"
-      data-testid="generate-server-group-picker"
+      id={triggerId}
+      data-testid="generate-server-picker"
       onClick={() => onChange("att-other")}
     >
       server group
@@ -337,6 +344,24 @@ describe("SwarmsTab — generate persona", () => {
     expect(toastMock.success).not.toHaveBeenCalled();
   });
 
+  it("names the servers field, and says what the pick is for", () => {
+    // Without the association a screen reader announces the trigger's VALUE
+    // with no field name, while the caption sits right above it. And the line
+    // under the field is the only place left that says why the pick matters —
+    // it came off the old picker's tooltip, which went with the picker.
+    openGeneratePersona();
+
+    expect(screen.getByLabelText("Servers")).toBe(
+      screen.getByTestId("generate-server-picker"),
+    );
+    expect(
+      screen.getByText(/Generation reads the tools on these servers/),
+    ).toBeVisible();
+    expect(
+      screen.queryByText("Connect a client before generating."),
+    ).toBeNull();
+  });
+
   it("targets the environments selected at submit, not a mid-flight change", async () => {
     let releaseGenerate: (v: unknown) => void = () => {};
     generatePersonaMock.mockImplementation(
@@ -353,7 +378,7 @@ describe("SwarmsTab — generate persona", () => {
     });
 
     // Retarget the dialog while the generation request is still in flight.
-    fireEvent.click(screen.getByTestId("generate-server-group-picker"));
+    fireEvent.click(screen.getByTestId("generate-server-picker"));
 
     releaseGenerate({
       persona: { name: "P", role: "R" },
@@ -412,6 +437,34 @@ describe("SwarmsTab — generate persona", () => {
     expect(
       screen.getByRole("button", { name: /generate persona/i }),
     ).toBeInTheDocument();
+  });
+
+  /**
+   * The limit dialog already carries this sentence plus the actions that clear
+   * it. An inline card under the form would say the same thing twice with
+   * nothing to act on — so the dialog suppresses its own copy on the FLAG, not
+   * on the class (persona-cap failures share this catch and must keep showing).
+   */
+  it("leaves the message to the dialog when the limit wall was raised", async () => {
+    generatePersonaMock.mockRejectedValue(
+      new SwarmGenerateError(
+        429,
+        "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
+        true,
+      ),
+    );
+
+    openGeneratePersona();
+    fireEvent.click(screen.getByRole("button", { name: /generate persona/i }));
+
+    await waitFor(() => expect(generatePersonaMock).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /generate persona/i }),
+      ).toBeEnabled(),
+    );
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(createPersonaMutation).not.toHaveBeenCalled();
   });
 });
 

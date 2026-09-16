@@ -433,6 +433,16 @@ export function ModelSelector({
   const selectedLimitReached =
     multiModelEnabled && selectedModelsData.length >= maxSelectedModels;
 
+  // Counterpart of the nonce subscription below: tell the store a picker is
+  // on screen that will actually honour the intent. The out-of-credits
+  // dialog reads that count to decide between opening this picker in place
+  // and navigating to the org's AI providers page. Read off `getState()` so
+  // registering adds no subscription and no re-render.
+  useEffect(() => {
+    if (!respondToProviderTabIntent) return;
+    return useModelPickerIntentStore.getState().registerProvidersTabResponder();
+  }, [respondToProviderTabIntent]);
+
   // React to the global "open Your providers tab" intent (out-of-credits
   // BYOK). Only the opted-in instance subscribes to a live nonce; others read
   // a constant 0 so this never fires for them.

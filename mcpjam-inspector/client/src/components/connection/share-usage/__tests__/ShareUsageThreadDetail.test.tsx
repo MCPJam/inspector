@@ -1,7 +1,8 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ShareUsageThreadDetail } from "../ShareUsageThreadDetail";
+import { renderSessionJson } from "../session-json-view";
 
 const {
   mockMessageView,
@@ -29,6 +30,7 @@ const {
     synthetic: false as boolean,
     readiness: undefined as unknown,
     goalScore: undefined as unknown,
+    runAttemptStatus: undefined as unknown,
   },
   mockBrowserArtifactsState: {
     artifacts: undefined as unknown,
@@ -72,6 +74,7 @@ vi.mock("@/hooks/useSharedChatThreads", () => ({
       synthetic: mockThreadState.synthetic,
       readiness: mockThreadState.readiness,
       goalScore: mockThreadState.goalScore,
+      runAttemptStatus: mockThreadState.runAttemptStatus,
       messagesBlobUrl: "https://storage.example.com/thread.json",
       modelId: "openai/gpt-oss-120b",
       visitorDisplayName: "Marcelo Jimenez",
@@ -82,6 +85,13 @@ vi.mock("@/hooks/useSharedChatThreads", () => ({
   }),
   useSharedChatWidgetSnapshots: () => ({
     snapshots: [],
+  }),
+  // Absent from this factory the transcript subtree threw on every test in the
+  // file and rendered the ErrorBoundary fallback instead — green, but not
+  // exercising the tree it claims to. The assertions here sit outside that
+  // boundary, so nothing was wrong, just unwatched.
+  useSharedChatTurnScores: () => ({
+    scores: [],
   }),
   useSharedChatTurnTraces: () => ({
     traces: mockTurnTracesState.traces,
@@ -264,6 +274,50 @@ describe("ShareUsageThreadDetail", () => {
     });
   });
 
+  it("fades Raw's scroll edges from the same switch as Chat", async () => {
+    // Both panes of a session scroll, and the complaint that started this was
+    // about the edge, not about what was behind it — so one flag covers both
+    // rather than a caller having to remember two.
+    render(<ShareUsageThreadDetail threadId="thread-1" fadeScrollEdges />);
+
+    // `TraceViewer` only mounts off the Chat tab, so the assertion has to get
+    // there first — asserting on the landing tab would pass for the wrong
+    // reason (a spy that was never called cannot disagree).
+    fireEvent.click(await screen.findByRole("button", { name: "Raw" }));
+
+    await waitFor(() => {
+      expect(mockTraceViewer).toHaveBeenCalledWith(
+        expect.objectContaining({ rawFadeScrollEdges: true }),
+      );
+    });
+  });
+
+  it("leaves Raw alone on a surface that did not ask for the fade", async () => {
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Raw" }));
+
+    await waitFor(() => {
+      expect(mockTraceViewer).toHaveBeenCalledWith(
+        expect.objectContaining({ rawFadeScrollEdges: false }),
+      );
+    });
+  });
+
+  it("shows tool payloads in the Playground's JSON tree, not a <pre>", async () => {
+    // The wiring half of the change: the transcript has to be HANDED the
+    // renderer, or the package falls back to its own plain block and the
+    // Playground component is reused in name only. What that renderer draws is
+    // asserted in `session-json-view.test.tsx`.
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+
+    await waitFor(() => {
+      expect(mockReadOnlyTranscript).toHaveBeenCalledWith(
+        expect.objectContaining({ renderJson: renderSessionJson }),
+      );
+    });
+  });
+
   it("renders scenario threads with collapsible reasoning in chat mode", async () => {
     render(<ShareUsageThreadDetail threadId="thread-1" />);
 
@@ -400,6 +454,7 @@ describe("ShareUsageThreadDetail — promote affordance", () => {
     mockThreadState.synthetic = false;
     mockThreadState.readiness = undefined;
     mockThreadState.goalScore = undefined;
+    mockThreadState.runAttemptStatus = undefined;
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => [{ role: "assistant", content: [] }],
@@ -459,6 +514,94 @@ describe("ShareUsageThreadDetail — promote affordance", () => {
     expect(
       screen.queryByTestId("share-usage-promote-to-test-case"),
     ).not.toBeInTheDocument();
+  });
+
+  /**
+   * A swarm session is promotable only when its run attempt SUCCEEDED. The
+   * transcript renders the same either way, so before BB-247 the button was
+   * live on every row and a non-succeeded one answered with a raw Convex
+   * stack trace inside the dialog.
+   */
+  describe("swarm sessions whose run did not succeed", () => {
+    beforeEach(() => {
+      mockThreadState.sourceType = "swarm";
+    });
+
+    it("stays enabled when the attempt succeeded", async () => {
+      mockThreadState.runAttemptStatus = "succeeded";
+      render(<ShareUsageThreadDetail threadId="thread-1" promote={PROMOTE} />);
+
+      const button = await screen.findByTestId(
+        "share-usage-promote-to-test-case",
+      );
+      expect(button).toBeEnabled();
+      expect(button).not.toHaveAttribute("aria-disabled");
+      expect(
+        screen.queryByTestId("share-usage-promote-blocked"),
+      ).not.toBeInTheDocument();
+    });
+
+    it.each([
+      ["failed", /did not finish/i],
+      ["rate_limited", /rate limit/i],
+      ["running", /still running/i],
+      // What the backend actually sends for an attempt it could not identify
+      // (`chatSessions.ts` returns the literal `null`, never `undefined`), so
+      // this is the real unclaimed-session path rather than a synthetic one.
+      [null, /outcome is unknown/i],
+    ])("disables the button on a %s attempt", async (status, copy) => {
+      mockThreadState.runAttemptStatus = status;
+      const user = userEvent.setup();
+      render(<ShareUsageThreadDetail threadId="thread-1" promote={PROMOTE} />);
+
+      const button = await screen.findByTestId(
+        "share-usage-promote-to-test-case",
+      );
+      // `aria-disabled`, not `disabled`: the control keeps focus so keyboard
+      // and touch users can reach its explanation.
+      expect(button).toHaveAttribute("aria-disabled", "true");
+
+      // Inert all the same — opening the dialog is the path that rendered the
+      // server error.
+      await user.click(button);
+      expect(
+        screen.getByTestId("promote-dialog").getAttribute("data-open"),
+      ).toBe("false");
+
+      // The reason reaches a mouse (title) and assistive tech (description).
+      expect(button).toHaveAttribute("title", expect.stringMatching(copy));
+      expect(button).toHaveAccessibleDescription(copy);
+    });
+
+    /**
+     * A failed attempt often persists no transcript at all, and that shell
+     * renders before the header — so neither the disabled button nor its
+     * hover reason is reachable there. The reason has to appear in the empty
+     * state itself or the reader is left guessing.
+     */
+    it("explains the blocked state when there is no transcript either", async () => {
+      mockThreadState.runAttemptStatus = "failed";
+      mockAdaptTraceToUiMessages.mockReturnValue({
+        messages: [],
+        toolRenderOverrides: {},
+      });
+      render(<ShareUsageThreadDetail threadId="thread-1" promote={PROMOTE} />);
+
+      expect(
+        await screen.findByTestId("share-usage-empty-promote-blocked"),
+      ).toHaveTextContent(/did not finish/i);
+    });
+
+    it("blocks when the backend reports no status at all", async () => {
+      // Older backend, or an attempt row that claims no session. Absence is
+      // not permission.
+      mockThreadState.runAttemptStatus = undefined;
+      render(<ShareUsageThreadDetail threadId="thread-1" promote={PROMOTE} />);
+
+      expect(
+        await screen.findByTestId("share-usage-promote-to-test-case"),
+      ).toHaveAttribute("aria-disabled", "true");
+    });
   });
 
   it("opens the dialog on this thread and navigates to the created case", async () => {

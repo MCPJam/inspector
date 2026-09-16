@@ -8,7 +8,7 @@
  * renders it.
  */
 import { useMemo, useState } from "react";
-import { ArrowDown, ArrowLeft, ArrowUp, ChevronDown } from "lucide-react";
+import { ArrowLeft, ChevronDown } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Collapsible,
@@ -44,14 +44,14 @@ const RESULT_PILL: Record<
   RunCompareStatus,
   { label: string; className: string }
 > = {
-  passed: { label: "Passed", className: "bg-success/50 text-foreground" },
-  failed: { label: "Failed", className: "bg-destructive/50 text-foreground" },
+  passed: { label: "Passed", className: "bg-success/15 text-foreground" },
+  failed: { label: "Failed", className: "bg-destructive/10 text-destructive" },
   inconclusive: {
     label: "Inconclusive",
-    className: "bg-warning/50 text-foreground",
+    className: "bg-warning/15 text-foreground",
   },
-  timed_out: { label: "Timed out", className: "bg-warning/50 text-foreground" },
-  running: { label: "Running", className: "bg-warning/50 text-foreground" },
+  timed_out: { label: "Timed out", className: "bg-warning/15 text-foreground" },
+  running: { label: "Running", className: "bg-warning/15 text-foreground" },
   // Finished, but nothing judged it — a run older than the `result` field.
   // Neutral rather than dimmed: it ran, it just carries no verdict.
   completed: { label: "Completed", className: "bg-muted text-foreground" },
@@ -72,7 +72,7 @@ function RunResultPill({ status }: { status: RunCompareStatus }) {
   return (
     <span
       className={cn(
-        "inline-block rounded px-1.5 py-0.5 text-[10px] font-medium",
+        "inline-block whitespace-nowrap rounded px-1.5 py-1 text-[10px] font-semibold uppercase",
         pill.className,
       )}
     >
@@ -81,27 +81,26 @@ function RunResultPill({ status }: { status: RunCompareStatus }) {
   );
 }
 
-/** The arrow follows the number; the colour follows whether it helped. */
-function DeltaCell({ delta }: { delta: HeroStatDelta | null }) {
-  if (!delta) return <td className="px-3 py-2 text-muted-foreground">—</td>;
-  const Arrow =
-    delta.direction === "up"
-      ? ArrowUp
-      : delta.direction === "down"
-        ? ArrowDown
-        : null;
+/**
+ * The change sits BESIDE its number rather than in a column of its own.
+ *
+ * Four "Δ" headers said the same word four times and never which metric they
+ * belonged to, and the reader had to pair each one with the column to its
+ * left. The sign already carries the direction, so the arrow that preceded it
+ * was a third encoding of one fact — the colour says whether it helped.
+ */
+function Delta({ delta }: { delta: HeroStatDelta | null }) {
+  if (!delta) return null;
   return (
-    <td className="px-3 py-2" data-testid="run-compare-delta">
-      <span
-        className={cn(
-          "inline-flex items-center gap-0.5 text-[11px] font-medium tabular-nums",
-          DELTA_TONE_CLASS[delta.tone],
-        )}
-      >
-        {Arrow ? <Arrow className="size-3" aria-hidden /> : null}
-        {delta.label}
-      </span>
-    </td>
+    <span
+      data-testid="run-compare-delta"
+      className={cn(
+        "ml-2 text-[11px] font-medium tabular-nums",
+        DELTA_TONE_CLASS[delta.tone],
+      )}
+    >
+      {delta.label}
+    </span>
   );
 }
 
@@ -116,10 +115,11 @@ function MetricCell({
     <td className="whitespace-nowrap px-3 py-2 tabular-nums">
       {cell.value ?? "—"}
       {cell.value != null && detail ? (
-        <span className="block text-[11px] text-muted-foreground">
+        <span className="ml-1 text-[10px] text-muted-foreground">
           {detail}
         </span>
       ) : null}
+      <Delta delta={cell.delta} />
     </td>
   );
 }
@@ -134,50 +134,45 @@ function LaneRow({
   const git = readRunGitMetadata(row.run.ciMetadata ?? null);
   return (
     <tr
-      className={cn(
-        "border-b border-border/60",
-        row.isCurrentRun && "bg-muted/40",
-      )}
+      className="border-b border-border/60 transition-colors hover:bg-muted/50"
       {...(row.isCurrentRun ? { "aria-current": "true" as const } : {})}
     >
-      <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">
-        {new Date(row.createdAt).toLocaleString()}
-      </td>
       <td className="whitespace-nowrap px-3 py-2">
         <Button
           variant="link"
-          className="h-auto p-0 font-medium"
+          className="h-auto p-0 text-xs font-semibold text-foreground"
           onClick={() => onOpenRun(row.runId)}
         >
           {row.label}
         </Button>
-        {row.modelTail ? (
-          <span className="block text-[11px] text-muted-foreground">
-            {row.modelTail}
-          </span>
-        ) : null}
-      </td>
-      <td className="whitespace-nowrap px-3 py-2">
-        <RunPlatformBadge run={row.run} />
-        <RunCommitCell git={git} />
       </td>
       <td className="whitespace-nowrap px-3 py-2">
         <RunResultPill status={row.status} />
       </td>
       <MetricCell cell={row.pass} detail={row.passDetail} />
-      <DeltaCell delta={row.pass.delta} />
+      <td className="whitespace-nowrap px-3 py-2">
+        <div className="flex items-center gap-2">
+          <RunPlatformBadge run={row.run} neutral />
+          {git?.commitSha ? <RunCommitCell git={git} /> : null}
+        </div>
+      </td>
+      <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">
+        {new Date(row.createdAt).toLocaleString(undefined, {
+          month: "short",
+          day: "numeric",
+          hour: "numeric",
+          minute: "2-digit",
+        })}
+      </td>
       <MetricCell cell={row.p50} />
-      <DeltaCell delta={row.p50.delta} />
       <MetricCell cell={row.p95} />
-      <DeltaCell delta={row.p95.delta} />
       <MetricCell cell={row.tokens} />
-      <DeltaCell delta={row.tokens.delta} />
     </tr>
   );
 }
 
 const HEADER_CLASS =
-  "whitespace-nowrap border-b border-border px-3 py-2 text-left text-xs font-medium text-muted-foreground";
+  "whitespace-nowrap border-b border-border px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wide text-muted-foreground";
 
 function LaneSection({
   lane,
@@ -198,7 +193,7 @@ function LaneSection({
   return (
     <Collapsible open={open} onOpenChange={setOpen} asChild>
       <section className="group/lane overflow-hidden rounded-lg border border-border">
-        <div className="flex flex-wrap items-center justify-between gap-3 bg-muted/40 px-3 py-2">
+        <div className="flex flex-wrap items-center justify-between gap-3 bg-muted/50 px-3 py-2">
           <CollapsibleTrigger asChild>
             <Button
               variant="ghost"
@@ -213,6 +208,7 @@ function LaneSection({
                 run={lane.run}
                 hostNamesById={hostNamesById}
                 fallbackName="Suite default"
+                className="border-border bg-background shadow-none"
               />
             </Button>
           </CollapsibleTrigger>
@@ -223,31 +219,19 @@ function LaneSection({
         <CollapsibleContent>
           <div className="overflow-x-auto">
             <table
-              className="w-full border-collapse text-sm"
+              className="w-full border-collapse text-xs"
               aria-label={`Runs for ${lane.label}`}
             >
-              <thead>
+              <thead className="bg-muted/50">
                 <tr>
-                  <th className={HEADER_CLASS}>Date</th>
                   <th className={HEADER_CLASS}>Run</th>
-                  <th className={HEADER_CLASS}>Platform</th>
                   <th className={HEADER_CLASS}>Result</th>
                   <th className={HEADER_CLASS}>Pass</th>
-                  <th className={HEADER_CLASS} aria-label="Pass change">
-                    Δ
-                  </th>
+                  <th className={HEADER_CLASS}>Platform</th>
+                  <th className={HEADER_CLASS}>Date</th>
                   <th className={HEADER_CLASS}>P50</th>
-                  <th className={HEADER_CLASS} aria-label="P50 change">
-                    Δ
-                  </th>
                   <th className={HEADER_CLASS}>P95</th>
-                  <th className={HEADER_CLASS} aria-label="P95 change">
-                    Δ
-                  </th>
                   <th className={HEADER_CLASS}>Tokens</th>
-                  <th className={HEADER_CLASS} aria-label="Tokens change">
-                    Δ
-                  </th>
                 </tr>
               </thead>
               <tbody>

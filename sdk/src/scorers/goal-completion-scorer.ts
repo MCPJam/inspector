@@ -51,6 +51,51 @@ export type GoalCompletionScorerOptions = {
   ) => JudgeEvidence | Promise<JudgeEvidence>;
 };
 
+/**
+ * The evidence a runner supplies when the caller hands us no collector.
+ *
+ * Everything the scorer context holds, MINUS what the request already carries
+ * elsewhere. `trace` and `toolDefinitions` are top-level evidence fields, and
+ * the request serializes those alongside `context`, so copying the whole
+ * context in would send the transcript twice and every tool schema twice.
+ * That is not merely wasteful: the duplicate bytes count toward the request's
+ * own size bound, so a trace that fits can be refused as too large for the
+ * model — a judge declining to grade evidence it was perfectly able to read.
+ *
+ * Each recorded-context entry keeps its runtime facts (system prompt, model,
+ * temperature, what was uncaptured) and loses only its nested tool catalog,
+ * which the top-level field already carries.
+ */
+function defaultJudgeEvidence(context: ScorerContextV1): JudgeEvidence {
+  const {
+    trace: _trace,
+    toolDefinitions: _toolDefinitions,
+    recordedContext,
+    ...runtime
+  } = context as ScorerContextV1 & {
+    recordedContext?: unknown[];
+    toolDefinitions?: unknown;
+  };
+  const withoutCatalogs = recordedContext?.map((record) =>
+    record && typeof record === "object" && !Array.isArray(record)
+      ? (({ toolDefinitions: _dropped, ...rest }) => rest)(
+          record as Record<string, unknown>
+        )
+      : record
+  );
+  return {
+    version: 1 as const,
+    trace: context.trace,
+    context: {
+      ...runtime,
+      ...(withoutCatalogs ? { recordedContext: withoutCatalogs } : {}),
+    },
+    toolDefinitions: context.toolDefinitions,
+    unavailable: context.evidenceUnavailable,
+    uncaptured: context.toolDefinitions === undefined ? ["toolDefinitions"] : [],
+  };
+}
+
 /** Built-in v4 policy. Legacy custom judge prompts retain their existing implementation hash. */
 export function goalCompletionScorer(
   options: GoalCompletionScorerOptions
@@ -93,15 +138,7 @@ export function goalCompletionScorer(
     async score(context, signal) {
       const recorded: JudgeEvidence = options.evidence
         ? await options.evidence(context)
-        : {
-            version: 1 as const,
-            trace: context.trace,
-            context: { ...context },
-            toolDefinitions: context.toolDefinitions,
-            unavailable: context.evidenceUnavailable,
-            uncaptured:
-              context.toolDefinitions === undefined ? ["toolDefinitions"] : [],
-          };
+        : defaultJudgeEvidence(context);
       const evidence = {
         ...recorded,
         artifacts: [

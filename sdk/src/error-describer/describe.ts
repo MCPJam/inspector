@@ -160,6 +160,15 @@ function maybePromoteRawMessage(
   return { ...entry, oneLine: truncateOneLine(rawMessage) };
 }
 
+/**
+ * `describeEmptyStepFailure` (inspector engine) and the eval runner's fallback
+ * open every empty-model-step message with one of these, verbatim.
+ */
+const EMPTY_STEP_SENTINELS = [
+  "Backend step returned no content (stream error or empty response)",
+  "Backend step returned no messages (stream error or empty response)",
+] as const;
+
 function inspectorSentinelSlug(message: string): string | undefined {
   if (/NotYetSupportedInStateless/i.test(message)) {
     return "sdk/not_yet_supported_in_stateless";
@@ -446,6 +455,13 @@ function resolveSlug(error: unknown): {
 
   // (a) Inspector sentinel sniff first — these are SDK-thrown Errors whose
   // class identity is lost across realm boundaries; match on stable text.
+  // The empty-step sentinel is matched as a literal prefix: the engine and
+  // the eval runner both open with exactly this sentence and append detail.
+  if (
+    EMPTY_STEP_SENTINELS.some((sentinel) => message.startsWith(sentinel))
+  ) {
+    return { slug: "provider/empty_response" };
+  }
   const sentinel = inspectorSentinelSlug(message);
   if (sentinel) return { slug: sentinel };
 
@@ -541,6 +557,17 @@ function resolveSlug(error: unknown): {
   // Refresh-failed phrasing.
   if (/refresh\s+token/i.test(message) && /(failed|invalid|expired|revoked)/i.test(message)) {
     return { slug: "auth/oauth_refresh_failed" };
+  }
+
+  // MCPJam's own consent-prompt wording. The orchestrator now attaches a
+  // normalized block directly, so a live consent state never reaches here —
+  // this catches the strings already persisted in client state from earlier
+  // sessions, and any future caller that still hands over bare prose.
+  if (
+    /consent\s+is\s+required/i.test(message) ||
+    /^\s*reauthenticate\b[\s\S]*\bto\s+continue\b/i.test(message)
+  ) {
+    return { slug: "auth/consent_required" };
   }
   // Note: "missing bearer" wording is checked earlier (step d.5) so it
   // wins over the generic HTTP status check; no duplicate here.

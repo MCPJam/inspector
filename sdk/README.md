@@ -17,7 +17,7 @@ Compatible with your favorite testing framework like [Jest](https://jestjs.io/) 
 Test the individual parts, request response flow of your MCP server. MCP unit tests are deterministic.
 
 ```ts
-import { MCPClientManager } from "@mcpjam/sdk";
+import { MCPClientManager, assertCallToolResult } from "@mcpjam/sdk";
 
 describe("Everything MCP example", () => {
   let manager: MCPClientManager;
@@ -40,11 +40,14 @@ describe("Everything MCP example", () => {
   });
 
   test("get-sum tool returns correct result", async () => {
-    const result = await manager.executeTool("everything", "get-sum", {
-      a: 2,
-      b: 3,
-    });
-    expect(result.content[0].text).toBe("5");
+    // `executeTool` can also resolve to a task envelope, and a content block
+    // can be an image or a resource, so narrow both before reading the text.
+    const result = assertCallToolResult(
+      await manager.executeTool("everything", "get-sum", { a: 2, b: 3 }),
+    );
+    const [block] = result.content;
+    if (block.type !== "text") throw new Error("Expected a text block");
+    expect(block.text).toBe("The sum of 2 and 3 is 5.");
   });
 });
 ```
@@ -462,6 +465,21 @@ const r5 = await runner.run("Search tasks", {
 });
 r5.getToolArguments("search_tasks"); // captured even if the prompt stops early
 ```
+
+No provider key? Prefix the model with `mcpjam/` and MCPJam runs it on your
+organization's credits, with an MCPJam API key as the only secret:
+
+```ts
+const runner = new HostRunner({
+  tools: await manager.getToolsForAiSdk(),
+  model: "mcpjam/anthropic/claude-sonnet-4.5",
+  apiKey: process.env.MCPJAM_API_KEY!, // or omit it and set MCPJAM_API_KEY
+});
+```
+
+Hosted models are `mcpjam/anthropic/claude-*` and `mcpjam/openai/gpt-5*`. An
+`EvalSuite` releases its leases when it finishes; if you build runs by hand,
+call `releaseMcpjamModelLeases()` when you are done.
 
 `stopWhen` does not skip tool execution. It controls whether the prompt loop continues after the current step completes, and `HostRunner` also applies `stepCountIs(maxSteps)` as a safety guard.
 

@@ -22,4 +22,6 @@ vitest/dist/
 worktrees/
 wt-*/
 
+# Playwright MCP scratch output (screenshots, snapshots, console logs)
+.playwright-mcp/
 evaluators/dist/

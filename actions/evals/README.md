@@ -59,9 +59,16 @@ Failure reasons are copied from stored results in the full summary; the action
 does not infer them. A missing comment permission warns without changing the eval
 verdict.
 
-**Release status:** `evals-v1` becomes usable only after the release procedure
-below succeeds and the tag is published. Until then, test with a checkout and
-`uses: ./actions/evals`, as the live smoke workflow does.
+**Release status:** `evals-v1` is published by the `Release` workflow (see
+[Tests and release](#tests-and-release)). Check whether it exists yet:
+
+```sh
+git ls-remote --tags https://github.com/MCPJam/inspector 'evals-v*'
+```
+
+While that prints nothing the action has never been released, so the examples
+above cannot resolve. Test with a checkout and `uses: ./actions/evals`, as the
+live smoke workflow does.
 
 ## Optional gates
 
@@ -158,22 +165,43 @@ Run the tests without installing workspace dependencies:
 node --test actions/evals/*.test.mjs
 ```
 
-The `Evals action tests` workflow runs these checks on action changes. Before
-releasing, run `Evals action live smoke` manually against the candidate commit,
-supplying an existing project and suite and setting `MCPJAM_API_KEY` in the repo's
-Actions secrets. This spends eval credits. Test both gate settings before the
-first release. The smoke workflow verifies the pinned CLI is published, runs
-the helper tests, executes the local action, and uploads real reports.
+The `Evals action tests` workflow runs these checks on action changes.
 
-Publish only a commit with a successful live smoke run. The release guard checks
-the run's repository, workflow, event, conclusion and exact commit:
+### How the tags are published
+
+`Release` publishes the action. It compares this folder against whatever
+`evals-v1` points at, ignoring `README.md`, and when they differ it runs
+`Evals action live smoke` against the release commit. Only if that smoke passes
+does it create the next immutable `evals-v1.X.Y` and force-move `evals-v1` to
+the same commit. The smoke verifies the pinned CLI is published, runs the helper
+tests, executes the local action and uploads real reports — it spends eval
+credits, which is why a release that did not touch the folder skips both jobs.
+
+The action has no changeset of its own, so it rides along with the next package
+release that includes the change. Re-running a release after a successful one is
+a no-op: the folder now matches `evals-v1`.
+
+Set these once, in the repository's settings:
+
+| Kind | Name | Value |
+| --- | --- | --- |
+| Secret | `MCPJAM_API_KEY` | Key the smoke runs its evals with |
+| Variable | `EVALS_SMOKE_PROJECT` | An existing MCPJam project |
+| Variable | `EVALS_SMOKE_SUITE` | An existing hosted suite in it |
+
+`Evals action live smoke` can still be dispatched by hand — do that to exercise
+both `gate` settings before the first release.
+
+### Releasing out of band
+
+`check-release.mjs` guards a tag pushed by hand, and only recognises a manually
+dispatched smoke run:
 
 ```sh
 node actions/evals/check-release.mjs <successful-smoke-run-id> <full-commit-sha>
 ```
 
-After that check passes, maintainers can tag that exact commit `evals-v1.0.0`
-and create the moving `evals-v1` tag pointing at it. For later releases, repeat the
-smoke check for the new commit, create a new immutable version tag, then update
-`evals-v1`. These tags are separate from Inspector's application releases. Do not
-publish a tag or describe the action as released before the live check passes.
+It rejects a `Release` run, because there the smoke is a job of the release
+itself rather than its own run — a stronger guarantee than this after-the-fact
+check, since the tag cannot be pushed unless that job passed. These tags are
+separate from Inspector's application releases.

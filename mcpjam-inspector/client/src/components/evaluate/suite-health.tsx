@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
+import { Skeleton } from "@mcpjam/design-system/skeleton";
 import {
   Select,
   SelectContent,
@@ -49,9 +50,10 @@ export function buildSuiteHealth(
         {
           key: launch.key,
           runNumber: representative.runNumber,
-          target: representative.suiteName !== null
-            ? { suiteId: representative.suiteId, runId: representative._id }
-            : null,
+          target:
+            representative.suiteName !== null
+              ? { suiteId: representative.suiteId, runId: representative._id }
+              : null,
           date: Math.max(...members.map((row) => row.createdAt)),
           rate: (100 * stats.passed) / stats.total,
           threshold: run.passCriteria?.minimumPassRate ?? null,
@@ -193,18 +195,16 @@ export function SuiteHealth({
           </div>
         </div>
         {!complete ? (
-          <div className="py-8 text-sm text-muted-foreground" role="status">
-            {failed ? (
-              <>
-                Could not load run history.{" "}
-                <Button variant="outline" size="sm" onClick={onRetry}>
-                  Retry
-                </Button>
-              </>
-            ) : (
-              "Loading run history…"
-            )}
-          </div>
+          failed ? (
+            <div className="py-8 text-sm text-muted-foreground" role="status">
+              Could not load run history.{" "}
+              <Button variant="outline" size="sm" onClick={onRetry}>
+                Retry
+              </Button>
+            </div>
+          ) : (
+            <SuiteHealthSkeleton />
+          )
         ) : average == null ? (
           <p className="py-8 text-sm text-muted-foreground">
             No completed runs with recorded results for this client.
@@ -273,7 +273,9 @@ export function SuiteHealth({
                         onMouseLeave={() => onHoverRun?.(null)}
                         onFocus={() => onHoverRun?.(point.key)}
                         onBlur={() => onHoverRun?.(null)}
-                        onClick={() => point.target && onSelectRun?.(point.target)}
+                        onClick={() =>
+                          point.target && onSelectRun?.(point.target)
+                        }
                         aria-label={`Run #${point.runNumber}, ${dateLabel(point.date)}: ${Math.round(point.rate)}%`}
                         title={`Run #${point.runNumber} · ${dateLabel(point.date)} · ${Math.round(point.rate)}%`}
                         data-testid="suite-health-bar"
@@ -290,16 +292,16 @@ export function SuiteHealth({
                         aria-label={`Minimum accuracy: ${threshold}%`}
                         className="pointer-events-none absolute inset-x-0 border-t-2 border-dashed border-ring"
                         style={{ bottom: `${threshold}%` }}
-                      >
-                        <span className="absolute right-0 bottom-0 bg-background px-1 text-[11px] font-semibold text-ring">
-                          {threshold}%
-                        </span>
-                      </div>
+                      />
                     )}
                   </div>
                   <div className="mt-2 flex gap-1.5 text-[11px] text-muted-foreground">
                     {points.map((point) => (
-                      <span key={point.key} data-testid="suite-health-bar-date" className="min-w-2 flex-1 whitespace-nowrap text-center">
+                      <span
+                        key={point.key}
+                        data-testid="suite-health-bar-date"
+                        className="min-w-2 flex-1 whitespace-nowrap text-center"
+                      >
                         {dateLabel(point.date)}
                       </span>
                     ))}
@@ -316,5 +318,45 @@ export function SuiteHealth({
         )}
       </div>
     </section>
+  );
+}
+
+/**
+ * The loaded card's own shape, at its own height: the average, the axis, and
+ * three bars. A one-line "Loading…" collapsed the card to nothing and then
+ * shoved the whole page down when the runs arrived.
+ */
+function SuiteHealthSkeleton() {
+  return (
+    <div role="status" aria-label="Loading run history">
+      <div className="flex items-baseline gap-3">
+        <Skeleton className="h-[34px] w-[74px]" />
+        <Skeleton className="h-3 w-32" />
+      </div>
+      <div className="flex gap-2 pt-2">
+        <div className="relative mt-2 h-20 w-9 shrink-0 text-right text-[11px] text-muted-foreground">
+          <span className="absolute right-0 top-0 -translate-y-1/2">100%</span>
+          <span className="absolute bottom-0 right-0 translate-y-1/2">0%</span>
+        </div>
+        <div className="min-w-0 flex-1 pt-2">
+          <div className="flex h-20 items-end gap-1.5">
+            {[62, 84, 48].map((height) => (
+              <Skeleton
+                key={height}
+                className="min-w-2 flex-1 rounded-sm rounded-b-none"
+                style={{ height: `${height}%` }}
+              />
+            ))}
+          </div>
+          <div className="mt-2 flex gap-1.5">
+            {[0, 1, 2].map((index) => (
+              <div key={index} className="flex min-w-2 flex-1 justify-center">
+                <Skeleton className="h-3 w-10" />
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }

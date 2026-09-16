@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { screen } from "@testing-library/react";
 import { SettingsRow } from "@/components/setting/SettingsRow";
 import { render } from "@testing-library/react";
-import { QUALITY_GATE_THRESHOLD_HINT } from "../suite-policy-controls";
+import { PASS_THRESHOLD_HINT } from "../suite-policy-controls";
 import {
   openSettingsRow,
   renderSettingsSheet,
@@ -163,11 +163,40 @@ describe("suite settings ledger", () => {
     expect(container.textContent?.toLowerCase()).not.toContain("not measured");
   });
 
-  it("keeps v2 rows from claiming every case uses the default", () => {
+  it("keeps the per-case criterion row from claiming every case uses the default", () => {
     const { container } = renderSettingsSheet({ suite: v2Suite });
     const policy = container.querySelector('[data-setting-key="policy"]');
-    expect(policy?.textContent).toContain(QUALITY_GATE_THRESHOLD_HINT);
+    expect(policy?.textContent).toContain(PASS_THRESHOLD_HINT);
     expect(policy?.textContent?.toLowerCase()).not.toContain("every case uses");
+  });
+
+  it("splits the grading rows so each names one question", () => {
+    // One row titled "Quality gate" used to hold the criterion, the count and
+    // the gate. A reader looking for the threshold their runs are decided
+    // against had to open a heading about regressions to find it.
+    const { container } = renderSettingsSheet({ suite: v2Suite });
+    for (const [key, heading] of [
+      ["policy", "Pass criteria"],
+      ["iterations", "Iterations"],
+      ["qualityGate", "Quality gate"],
+    ] as const) {
+      const row = container.querySelector(`[data-setting-key="${key}"]`);
+      expect(row, key).toBeTruthy();
+      expect(row?.textContent, key).toContain(heading);
+    }
+  });
+
+  it("offers no scope switch beside the threshold", () => {
+    // The switch re-decides every multi-case suite: its own proposal divided
+    // the stored percent by 100, which moves the bar even though the number
+    // looks preserved. Changing it takes a hand-written PATCH rather than any
+    // affordance this app ships — and no copy on this page names a policy
+    // version.
+    const { container } = renderSettingsSheet({ suite: v2Suite });
+    const text = container.textContent?.toLowerCase() ?? "";
+    expect(text).not.toContain("verdict policy v2");
+    expect(text).not.toContain("switch to verdict policy");
+    expect(text).not.toContain("upgrade");
   });
 
   it("omits the immediate-save badge for environments", () => {
@@ -195,7 +224,7 @@ describe("suite settings ledger", () => {
     // page again rather than asserted absent.
     const { container } = renderSettingsSheet({ suite: v2Suite });
     expect(
-      screen.getByRole("heading", { name: "Checks by stage" }),
+      screen.getByRole("heading", { name: "Evaluators" }),
     ).toBeTruthy();
     expect(container.querySelectorAll("[data-stage-group]")).toHaveLength(6);
     expect(

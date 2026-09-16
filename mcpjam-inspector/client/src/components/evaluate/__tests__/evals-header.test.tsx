@@ -24,14 +24,16 @@ describe("EvalsHeader", () => {
     );
     await user.click(screen.getByRole("menuitem", { name: "Create suite" }));
     expect(create).toHaveBeenCalledOnce();
+    // A case belongs to a suite, and the runs list names none.
     await user.click(
       screen.getByRole("button", { name: "More evaluate actions" }),
     );
-    await user.click(screen.getByRole("menuitem", { name: "Add test case" }));
-    expect(add).toHaveBeenCalledOnce();
+    expect(
+      screen.queryByRole("menuitem", { name: "Add test case" }),
+    ).toBeNull();
   });
 
-  it("defaults to Create suite on Suites with secondary run and case actions", async () => {
+  it("defaults to Create suite on Suites, with the case action beside it", async () => {
     const user = userEvent.setup();
     const create = vi.fn(),
       setup = vi.fn(),
@@ -49,13 +51,11 @@ describe("EvalsHeader", () => {
     await user.click(
       screen.getByRole("button", { name: "More evaluate actions" }),
     );
-    await user.click(screen.getByRole("menuitem", { name: "Setup run" }));
-    expect(setup).toHaveBeenCalledOnce();
-    await user.click(
-      screen.getByRole("button", { name: "More evaluate actions" }),
-    );
+    // Setting up a run is the Runs landing's job, not a second offer here.
+    expect(screen.queryByRole("menuitem", { name: "Setup run" })).toBeNull();
     await user.click(screen.getByRole("menuitem", { name: "Add test case" }));
     expect(add).toHaveBeenCalledOnce();
+    expect(setup).not.toHaveBeenCalled();
   });
 
   it("links back to the case from the Test Case Evaluators breadcrumb", () => {

@@ -347,8 +347,12 @@ export function GoalCompletionCard({
           {inFlight ? (
             <div className="flex items-center gap-2 px-3 py-4 text-sm text-muted-foreground">
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              {/* "Processed", not "graded": the counter advances on an
+                  iteration the judge could not grade as well as one it did,
+                  and a number that claims more grading than happened is the
+                  kind of small lie that makes the rest of the card suspect. */}
               {run.goalCompletionProgress
-                ? `Graded ${run.goalCompletionProgress.completed} of ${run.goalCompletionProgress.total} iterations…`
+                ? `Processed ${run.goalCompletionProgress.completed} of ${run.goalCompletionProgress.total} iterations…`
                 : "Grading recorded traces…"}
             </div>
           ) : error ? (
