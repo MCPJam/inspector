@@ -3,7 +3,13 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { createMemoryRouter, RouterProvider } from "react-router";
 
-const { reportCaught } = vi.hoisted(() => ({ reportCaught: vi.fn() }));
+const { reportCaught, signInMock, track, captureAppSignInReturnPath } =
+  vi.hoisted(() => ({
+    reportCaught: vi.fn(),
+    signInMock: vi.fn(),
+    track: vi.fn(),
+    captureAppSignInReturnPath: vi.fn(),
+  }));
 // Only the reporting module is stubbed. `isAuthorizationRefusal` lives in its
 // own module and is left REAL on purpose: the whole point of BB-250 is that the
 // screen and the error sinks agree about what counts as a refusal, and a stub
@@ -11,6 +17,26 @@ const { reportCaught } = vi.hoisted(() => ({ reportCaught: vi.fn() }));
 vi.mock("@/lib/error-reporting", () => ({
   reportCaught,
   reportBoundaryError: vi.fn(),
+}));
+
+// Mutable so each test can pick the viewer: signed in, signed out, or still
+// resolving. Same shape as `login-initiation-route.test.tsx`.
+let authState: { user: unknown; isLoading: boolean } = {
+  user: { id: "user_1" },
+  isLoading: false,
+};
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({ ...authState, signIn: signInMock }),
+}));
+
+// Analytics goes through lib/analytics.ts#track (the ratchet forbids raw
+// posthog.capture in components); mock it to assert the surface tag.
+vi.mock("@/lib/analytics", () => ({ track }));
+vi.mock("@/lib/app-signin-return-path", () => ({
+  captureAppSignInReturnPath,
+}));
+vi.mock("@/lib/permalink-signin-return", () => ({
+  permalinkSignInOptions: () => ({ state: "permalink" }),
 }));
 
 import { ConvexError } from "convex/values";
@@ -53,6 +79,12 @@ describe("RouteErrorScreen", () => {
 
   beforeEach(() => {
     reportCaught.mockReset();
+    signInMock.mockReset();
+    track.mockReset();
+    captureAppSignInReturnPath.mockReset();
+    // Default viewer is SIGNED IN, so the existing membership-refusal tests
+    // keep describing the member case.
+    authState = { user: { id: "user_1" }, isLoading: false };
     consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
   });
 
@@ -132,6 +164,89 @@ describe("RouteErrorScreen", () => {
     it("does not report the refusal to the error sinks", async () => {
       renderRouteThrowing(membershipRefusal());
       await screen.findByTestId("route-access-denied-screen");
+
+      expect(reportCaught).not.toHaveBeenCalled();
+    });
+
+    it("offers sign-in, not an invite, to a SIGNED-OUT visitor", async () => {
+      // `requireUserActor` already raises `kind: 'forbidden'` for a guest on
+      // `main` today, so an unauthenticated visitor lands on this screen with
+      // or without the backend PR. Telling them to ask for an invite is wrong
+      // advice: they may already be a member and one sign-in away.
+      authState = { user: null, isLoading: false };
+      renderRouteThrowing(
+        new ConvexError({
+          kind: "forbidden",
+          message: "Authenticated user required",
+        }),
+      );
+
+      expect(
+        await screen.findByTestId("route-signin-required-screen"),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByTestId("route-access-denied-screen"),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByText(/ask them to invite you/i),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Sign in" }),
+      ).toBeInTheDocument();
+    });
+
+    it("routes a signed-out visitor through the normal return-path sign-in", async () => {
+      authState = { user: null, isLoading: false };
+      renderRouteThrowing(membershipRefusal());
+      await screen.findByTestId("route-signin-required-screen");
+
+      screen.getByRole("button", { name: "Sign in" }).click();
+
+      // The copy promises they come straight back here, so the return path has
+      // to be captured before the redirect — same wiring as the header control.
+      expect(captureAppSignInReturnPath).toHaveBeenCalled();
+      expect(signInMock).toHaveBeenCalledWith({ state: "permalink" });
+      expect(track).toHaveBeenCalledWith("login_button_clicked", {
+        location: "route_error_refusal",
+      });
+    });
+
+    it("says nothing about the resource to a signed-out visitor either", async () => {
+      // The split must not leak what the opaque membership copy protects.
+      authState = { user: null, isLoading: false };
+      renderRouteThrowing(membershipRefusal());
+      await screen.findByTestId("route-signin-required-screen");
+
+      expect(
+        screen.queryByText(/Not a member of this project/),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByText(/project/i)).not.toBeInTheDocument();
+    });
+
+    it("keeps the member copy while auth is still resolving", async () => {
+      // AuthKit reports no user mid-resolution. Showing a signed-in member a
+      // sign-in button is the worse of the two wrong answers, so `isLoading`
+      // counts as "not yet signed out".
+      authState = { user: null, isLoading: true };
+      renderRouteThrowing(membershipRefusal());
+
+      expect(
+        await screen.findByTestId("route-access-denied-screen"),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByTestId("route-signin-required-screen"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("does not report the guest refusal either", async () => {
+      authState = { user: null, isLoading: false };
+      renderRouteThrowing(
+        new ConvexError({
+          kind: "forbidden",
+          message: "Authenticated user required",
+        }),
+      );
+      await screen.findByTestId("route-signin-required-screen");
 
       expect(reportCaught).not.toHaveBeenCalled();
     });
