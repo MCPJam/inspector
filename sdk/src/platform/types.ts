@@ -1701,7 +1701,6 @@ export interface PlatformEvalSuiteSettingsBase {
    */
   judge: PlatformEvalSuiteGoalCompletionJudge & {
     contractVersion?: 4;
-    executionPaused?: boolean;
     automatic?: boolean;
     /**
      * Stored groundedness, when the suite has a reserved slot. Read-only
