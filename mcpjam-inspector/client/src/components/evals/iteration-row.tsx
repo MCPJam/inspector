@@ -111,9 +111,11 @@ export function CompactIterationRow({
           </span>
           <span className="text-xs text-muted-foreground min-w-[140px] max-w-[140px] truncate">
             {modelDisplayName(
-              iteration.testCaseSnapshot?.model ||
-                iterationTestCase?.models?.[0]?.model ||
-                "—",
+              iteration.testCaseSnapshot?.model
+                ? `${iteration.testCaseSnapshot.provider}/${iteration.testCaseSnapshot.model}`
+                : iterationTestCase?.models?.[0]?.model
+                  ? `${iterationTestCase.models[0].provider}/${iterationTestCase.models[0].model}`
+                  : "—",
               availableModels,
             )}
           </span>

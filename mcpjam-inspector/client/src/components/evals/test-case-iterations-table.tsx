@@ -210,7 +210,10 @@ export function TestCaseIterationsTable({
                     <div className="min-w-[120px] text-left truncate">
                       <span className="font-mono text-xs">
                         {snapshot
-                          ? modelDisplayName(snapshot.model, availableModels)
+                          ? modelDisplayName(
+                              `${snapshot.provider}/${snapshot.model}`,
+                              availableModels,
+                            )
                           : "—"}
                       </span>
                     </div>
