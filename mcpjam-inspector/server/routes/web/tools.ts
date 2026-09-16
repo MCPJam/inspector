@@ -1,3 +1,4 @@
+import { tokenizerClientIpHash } from "../../utils/tokenizer-service.js";
 import { Hono } from "hono";
 import { isMCPTasksWireError } from "@mcpjam/sdk";
 import { captureServerEvent } from "../../utils/analytics.js";
@@ -78,10 +79,14 @@ async function registerCreatedTaskInRegistry(
 }
 
 tools.post("/list", async (c) =>
-  withEphemeralConnection(c, toolsListSchema, (manager, body) =>
+  withEphemeralConnection(c, toolsListSchema, async (manager, body) =>
     // Hosted direct-ops read the server's live surface — never a cached
     // body — so raw/conformance evidence can't be masked by a stale serve.
-    listTools(manager, { ...body, cacheMode: "bypass" }),
+    listTools(
+      manager,
+      { ...body, cacheMode: "bypass" },
+      await tokenizerClientIpHash(c),
+    ),
   ),
 );
 

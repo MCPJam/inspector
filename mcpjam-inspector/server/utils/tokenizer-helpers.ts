@@ -1,4 +1,5 @@
 import { getModelById } from "../../shared/types";
+import { tokenizerServiceHeaders } from "./tokenizer-service.js";
 import { logger } from "./logger";
 
 /**
@@ -224,11 +225,16 @@ export function getTokenizerPeak(): {
 export async function countToolsTokens(
   tools: unknown[],
   modelId: string,
-  logPrefix = "[tools]"
+  logPrefix = "[tools]",
+  ipHash?: string | null,
 ): Promise<number> {
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
   const mappedModelId = mapModelIdToTokenizerBackend(modelId);
-  const useBackendTokenizer = mappedModelId !== null && !!convexHttpUrl;
+  const serviceHeaders = tokenizerServiceHeaders(ipHash);
+  const useBackendTokenizer =
+    mappedModelId !== null &&
+    !!convexHttpUrl &&
+    !!serviceHeaders["x-inspector-service-token"];
 
   // Hoisted so the catch can reuse it. Serializing `tools` a SECOND time on the
   // failure path doubled the cost of this function's most common outcome — the
@@ -255,7 +261,7 @@ export async function countToolsTokens(
 
       const response = await fetch(`${convexHttpUrl}/tokenizer/count`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...serviceHeaders },
         body: JSON.stringify({ text: toolsText, model: mappedModelId }),
       });
 
@@ -279,7 +285,7 @@ export async function countToolsTokens(
         `${logPrefix} Backend unreachable, falling back to estimate`,
         {
           cause: getFetchErrorCause(error),
-        }
+        },
       );
     } else {
       logger.warn(`${logPrefix} Error counting tokens`, {

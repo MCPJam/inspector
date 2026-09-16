@@ -122,7 +122,10 @@ interface FixedWindowMap {
   size: () => number;
 }
 
-function createFixedWindowMap(limit: number, windowMs: number): FixedWindowMap {
+export function createFixedWindowMap(
+  limit: number,
+  windowMs: number,
+): FixedWindowMap {
   const windows = new Map<string, Window>();
 
   setInterval(() => {
@@ -190,7 +193,7 @@ function tooMany(c: Context, retryAfterMs: number) {
     429,
     {
       "Retry-After": String(Math.max(1, Math.ceil(retryAfterMs / 1000))),
-    }
+    },
   );
 }
 
@@ -202,7 +205,7 @@ function tooMany(c: Context, retryAfterMs: number) {
  */
 export async function passthroughRateLimitMiddleware(
   c: Context,
-  next: Next
+  next: Next,
 ): Promise<Response | void> {
   if (!HOSTED_MODE) return next();
   if (c.get("authMethod") !== "unverified_passthrough") return next();

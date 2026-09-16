@@ -12,31 +12,31 @@ describe("mapModelIdToTokenizerBackend", () => {
   describe("Anthropic models", () => {
     it("maps claude-opus-4-1 correctly", () => {
       expect(mapModelIdToTokenizerBackend("claude-opus-4-1")).toBe(
-        "anthropic/claude-opus-4.1"
+        "anthropic/claude-opus-4.1",
       );
     });
 
     it("maps claude-sonnet-4-5 correctly", () => {
       expect(mapModelIdToTokenizerBackend("claude-sonnet-4-5")).toBe(
-        "anthropic/claude-sonnet-4.5"
+        "anthropic/claude-sonnet-4.5",
       );
     });
 
     it("maps claude-3-5-sonnet-latest correctly", () => {
       expect(mapModelIdToTokenizerBackend("claude-3-5-sonnet-latest")).toBe(
-        "anthropic/claude-3.5-sonnet"
+        "anthropic/claude-3.5-sonnet",
       );
     });
 
     it("maps prefixed anthropic models", () => {
       expect(
-        mapModelIdToTokenizerBackend("anthropic/claude-3-5-sonnet-latest")
+        mapModelIdToTokenizerBackend("anthropic/claude-3-5-sonnet-latest"),
       ).toBe("anthropic/claude-3.5-sonnet");
     });
 
     it("accepts the dotted hosted Haiku ID", () => {
       expect(mapModelIdToTokenizerBackend("anthropic/claude-haiku-4.5")).toBe(
-        "anthropic/claude-haiku-4.5"
+        "anthropic/claude-haiku-4.5",
       );
     });
   });
@@ -48,20 +48,20 @@ describe("mapModelIdToTokenizerBackend", () => {
 
     it("maps gpt-4o-mini correctly", () => {
       expect(mapModelIdToTokenizerBackend("gpt-4o-mini")).toBe(
-        "openai/gpt-4o-mini"
+        "openai/gpt-4o-mini",
       );
     });
 
     it("maps gpt-5 variants correctly", () => {
       expect(mapModelIdToTokenizerBackend("gpt-5")).toBe("openai/gpt-5");
       expect(mapModelIdToTokenizerBackend("gpt-5-mini")).toBe(
-        "openai/gpt-5-mini"
+        "openai/gpt-5-mini",
       );
     });
 
     it("maps canonical hosted OpenAI IDs", () => {
       expect(mapModelIdToTokenizerBackend("openai/gpt-5-mini")).toBe(
-        "openai/gpt-5-mini"
+        "openai/gpt-5-mini",
       );
     });
 
@@ -71,7 +71,7 @@ describe("mapModelIdToTokenizerBackend", () => {
         // The prefixed form resolves through the unprefixed lookup, so it
         // needs no entry of its own.
         expect(mapModelIdToTokenizerBackend(`openai/${id}`)).toBe(
-          "openai/gpt-5"
+          "openai/gpt-5",
         );
       }
     });
@@ -80,13 +80,13 @@ describe("mapModelIdToTokenizerBackend", () => {
   describe("DeepSeek models", () => {
     it("maps deepseek-chat correctly", () => {
       expect(mapModelIdToTokenizerBackend("deepseek-chat")).toBe(
-        "deepseek/deepseek-v3.1"
+        "deepseek/deepseek-v3.1",
       );
     });
 
     it("maps deepseek-reasoner correctly", () => {
       expect(mapModelIdToTokenizerBackend("deepseek-reasoner")).toBe(
-        "deepseek/deepseek-r1"
+        "deepseek/deepseek-r1",
       );
     });
   });
@@ -98,19 +98,19 @@ describe("mapModelIdToTokenizerBackend", () => {
 
     it("maps gemini-2.5-pro correctly", () => {
       expect(mapModelIdToTokenizerBackend("gemini-2.5-pro")).toBe(
-        "google/gemini-2.5-pro"
+        "google/gemini-2.5-pro",
       );
     });
 
     it("maps gemini-2.5-flash correctly", () => {
       expect(mapModelIdToTokenizerBackend("gemini-2.5-flash")).toBe(
-        "google/gemini-2.5-flash"
+        "google/gemini-2.5-flash",
       );
     });
 
     it("maps canonical hosted Gemini IDs", () => {
       expect(mapModelIdToTokenizerBackend("google/gemini-2.5-pro")).toBe(
-        "google/gemini-2.5-pro"
+        "google/gemini-2.5-pro",
       );
     });
   });
@@ -122,7 +122,7 @@ describe("mapModelIdToTokenizerBackend", () => {
 
     it("normalizes x-ai prefix to xai", () => {
       expect(mapModelIdToTokenizerBackend("x-ai/grok-4.1-fast")).toBe(
-        "xai/grok-4.1-fast"
+        "xai/grok-4.1-fast",
       );
     });
   });
@@ -130,13 +130,13 @@ describe("mapModelIdToTokenizerBackend", () => {
   describe("Mistral models", () => {
     it("maps mistral-large-latest correctly", () => {
       expect(mapModelIdToTokenizerBackend("mistral-large-latest")).toBe(
-        "mistral/mistral-large"
+        "mistral/mistral-large",
       );
     });
 
     it("maps codestral-latest correctly", () => {
       expect(mapModelIdToTokenizerBackend("codestral-latest")).toBe(
-        "mistral/codestral"
+        "mistral/codestral",
       );
     });
   });
@@ -242,9 +242,11 @@ describe("countToolsTokens fallback behavior", () => {
 
   beforeEach(() => {
     process.env.CONVEX_HTTP_URL = "http://nowhere.invalid";
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "test-secret");
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     global.fetch = originalFetch;
     if (originalUrl === undefined) {
       delete process.env.CONVEX_HTTP_URL;
@@ -307,7 +309,7 @@ describe("countToolsTokens fallback behavior", () => {
       },
     ];
     const expected = estimateTokensFromChars(
-      JSON.stringify([{ name: "search", description: "search the catalog" }])
+      JSON.stringify([{ name: "search", description: "search the catalog" }]),
     );
 
     const result = await countToolsTokens(tools, "claude-opus-4-1");
@@ -322,7 +324,7 @@ describe("countToolsTokens fallback behavior", () => {
   it("still calls the backend for a tools payload exactly at the size cap", async () => {
     const fetchSpy = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ ok: true, tokenCount: 7 })
+      json: async () => ({ ok: true, tokenCount: 7 }),
     });
     global.fetch = fetchSpy as unknown as typeof global.fetch;
 
@@ -351,5 +353,45 @@ describe("countToolsTokens fallback behavior", () => {
 
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(result).toBe(estimateTokensFromChars(JSON.stringify(tools)));
+  });
+});
+
+describe("countToolsTokens service authentication", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+  it("forwards server credentials and the caller's attested hash", async () => {
+    vi.stubEnv("CONVEX_HTTP_URL", "https://backend.invalid");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "server-secret");
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(Response.json({ ok: true, tokenCount: 7 }));
+    vi.stubGlobal("fetch", fetchMock);
+    expect(
+      await countToolsTokens(
+        [{ name: "echo" }],
+        "gpt-4o",
+        "[test]",
+        "attested-hash",
+      ),
+    ).toBe(7);
+    expect(fetchMock.mock.calls[0][1].headers).toMatchObject({
+      "x-inspector-service-token": "server-secret",
+      "x-mcpjam-guest-ip-hash": "attested-hash",
+    });
+  });
+  it("estimates locally without credentials", async () => {
+    vi.stubEnv("CONVEX_HTTP_URL", "https://backend.invalid");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(Response.json({ ok: true, tokenCount: 7 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const tools = [{ name: "echo" }];
+    expect(await countToolsTokens(tools, "gpt-4o")).toBe(
+      estimateTokensFromChars(JSON.stringify(tools)),
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

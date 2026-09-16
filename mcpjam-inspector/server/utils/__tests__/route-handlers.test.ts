@@ -34,12 +34,21 @@ describe("listTools (inspector enrichment)", () => {
       getAllToolsMetadata: vi.fn().mockReturnValue({ echo: { count: 1 } }),
     });
 
-    const result = await listTools(manager, {
-      serverId: "srv",
-      modelId: "claude-sonnet-4-5",
-    });
+    const result = await listTools(
+      manager,
+      {
+        serverId: "srv",
+        modelId: "claude-sonnet-4-5",
+      },
+      "attested-hash",
+    );
 
-    expect(countToolsTokens).toHaveBeenCalledWith(tools, "claude-sonnet-4-5");
+    expect(countToolsTokens).toHaveBeenCalledWith(
+      tools,
+      "claude-sonnet-4-5",
+      "[tools]",
+      "attested-hash",
+    );
     expect(result.tokenCount).toBe(150);
     expect(result.toolsMetadata).toEqual({ echo: { count: 1 } });
   });
@@ -70,7 +79,7 @@ describe("listTools (inspector enrichment)", () => {
     expect(countToolsTokens).not.toHaveBeenCalled();
     expect(result.tokenCount).toBeUndefined();
     expect(result.tokenCountError).toBe(
-      "Could not pre-calculate tool description tokens for this model."
+      "Could not pre-calculate tool description tokens for this model.",
     );
   });
 

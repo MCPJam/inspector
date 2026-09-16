@@ -1,3 +1,4 @@
+import { tokenizerClientIpHash } from "../../utils/tokenizer-service.js";
 import { Hono } from "hono";
 import type {
   ElicitRequest,
@@ -144,13 +145,18 @@ tools.post("/list", async (c) => {
       return c.json({ tools: [], toolsMetadata: {}, tokenCount: undefined });
     }
 
+    const tokenizerIpHash = await tokenizerClientIpHash(c);
     const { result, events } = await withCacheEventCapture(() =>
-      listToolsShared(c.mcpClientManager, {
-        serverId: normalizedServerId,
-        modelId,
-        cursor,
-        cacheMode: refresh === true ? "refresh" : undefined,
-      }),
+      listToolsShared(
+        c.mcpClientManager,
+        {
+          serverId: normalizedServerId,
+          modelId,
+          cursor,
+          cacheMode: refresh === true ? "refresh" : undefined,
+        },
+        tokenizerIpHash,
+      ),
     );
     const servedFromCache = toServedFromCache(events);
     return c.json({

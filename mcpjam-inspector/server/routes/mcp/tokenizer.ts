@@ -7,9 +7,34 @@ import {
   getFetchErrorCause,
 } from "../../utils/tokenizer-helpers";
 import { logger } from "../../utils/logger";
-import { reportRouteFailure, readRequestJson } from "../../utils/route-error-report.js";
+import {
+  reportRouteFailure,
+  readRequestJson,
+} from "../../utils/route-error-report.js";
+
+import { createFixedWindowMap } from "../../middleware/passthrough-rate-limit.js";
+import { getAttestedClientIp } from "../../utils/client-ip.js";
+import {
+  tokenizerClientIpHash,
+  tokenizerServiceHeaders,
+} from "../../utils/tokenizer-service.js";
 
 const tokenizer = new Hono();
+const ipWindows = createFixedWindowMap(30, 60_000);
+
+// Per-process spike brake. Convex enforces the shared-state compute budget.
+tokenizer.use("*", async (c, next) => {
+  const ip = getAttestedClientIp(c);
+  if (ip) {
+    const retryAfterMs = ipWindows.charge(ip);
+    if (retryAfterMs !== null) {
+      return c.json({ ok: false, error: "Too many requests" }, 429, {
+        "Retry-After": String(Math.max(1, Math.ceil(retryAfterMs / 1000))),
+      });
+    }
+  }
+  await next();
+});
 
 /**
  * Proxy endpoint to count tokens for MCP server tools
@@ -56,22 +81,19 @@ tokenizer.post("/count-tools", async (c) => {
     const mcpClientManager = c.mcpClientManager;
 
     const convexHttpUrl = process.env.CONVEX_HTTP_URL;
-    if (!convexHttpUrl) {
-      return c.json(
-        {
-          ok: false,
-          error: "Server missing CONVEX_HTTP_URL configuration",
-        },
-        500,
-      );
-    }
 
     // Get token counts for each server individually
     const tokenCounts: Record<string, number> = {};
 
     // Map model ID to backend-recognized format
     const mappedModelId = mapModelIdToTokenizerBackend(modelId);
-    const useBackendTokenizer = mappedModelId !== null;
+    const serviceHeaders = tokenizerServiceHeaders(
+      await tokenizerClientIpHash(c),
+    );
+    const useBackendTokenizer =
+      mappedModelId !== null &&
+      !!convexHttpUrl &&
+      !!serviceHeaders["x-inspector-service-token"];
 
     await Promise.all(
       selectedServers.map(async (serverId) => {
@@ -88,6 +110,7 @@ tokenizer.post("/count-tools", async (c) => {
               method: "POST",
               headers: {
                 "Content-Type": "application/json",
+                ...serviceHeaders,
               },
               body: JSON.stringify({
                 text: toolsText,
@@ -206,18 +229,15 @@ tokenizer.post("/count-text", async (c) => {
     }
 
     const convexHttpUrl = process.env.CONVEX_HTTP_URL;
-    if (!convexHttpUrl) {
-      return c.json(
-        {
-          ok: false,
-          error: "Server missing CONVEX_HTTP_URL configuration",
-        },
-        500,
-      );
-    }
 
     const mappedModelId = mapModelIdToTokenizerBackend(modelId);
-    const useBackendTokenizer = mappedModelId !== null;
+    const serviceHeaders = tokenizerServiceHeaders(
+      await tokenizerClientIpHash(c),
+    );
+    const useBackendTokenizer =
+      mappedModelId !== null &&
+      !!convexHttpUrl &&
+      !!serviceHeaders["x-inspector-service-token"];
 
     if (useBackendTokenizer && mappedModelId) {
       try {
@@ -226,6 +246,7 @@ tokenizer.post("/count-text", async (c) => {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
+            ...serviceHeaders,
           },
           body: JSON.stringify({
             text,

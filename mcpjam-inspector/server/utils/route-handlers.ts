@@ -43,6 +43,7 @@ export async function listTools(
     cursor?: string;
     cacheMode?: CacheMode;
   },
+  tokenizerIpHash?: string | null,
 ) {
   const result = await listToolsBase(manager, {
     serverId: params.serverId,
@@ -61,7 +62,12 @@ export async function listTools(
       : undefined;
   const tokenCount =
     params.modelId && !tokenCountError
-      ? await countToolsTokens(result.tools, params.modelId)
+      ? await countToolsTokens(
+          result.tools,
+          params.modelId,
+          "[tools]",
+          tokenizerIpHash,
+        )
       : undefined;
 
   return {
