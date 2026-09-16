@@ -1581,6 +1581,28 @@ what grades it, and it changes nothing beyond that run. Passing neither
 `--judge-model` nor `--judge-threshold` grades with the suite's own config,
 clearing any override a previous request left on the run.
 
+### `cloud eval judge-backtest`
+
+Preview a draft judge rubric against recorded evidence. **Spends your organization's model budget.** Leaves the run verdict unchanged. Supports paginated continuation for large runs.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--run <id>` | Yes | Terminal eval run ID (from `eval run`) |
+| `--json <request>` | Yes | JSON or `@file` with `rubric` and optional `continuation`. Set `rubric` to an object with `instructions` and/or `criteria`, or `null` for objective-only grading |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+The response includes a `cases` array with per-case draft scores, a `summary` with `graded`, `flips`, and `storedMissing` counts, and pagination fields (`cursor`, `sourceHash`, `reservationId`, `isDone`). When `isDone` is `false`, pass the returned `cursor`, `sourceHash`, and `reservationId` back in `continuation` with the unchanged rubric to grade the next page. Completed page retries return cached results.
+
+```bash
+# First page
+mcpjam cloud eval judge-backtest --run run_123 \
+  --json '{"rubric":{"instructions":"Check every tool result"}}'
+
+# Continue with the next page
+mcpjam cloud eval judge-backtest --run run_123 \
+  --json '{"rubric":{"instructions":"Check every tool result"},"continuation":{"cursor":1,"sourceHash":"<hash>","reservationId":"<id>"}}'
+```
+
 ### `cloud eval stage-analytics`
 
 Read the user-value chain funnel — how far value travelled through
