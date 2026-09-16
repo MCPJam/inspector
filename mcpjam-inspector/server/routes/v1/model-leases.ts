@@ -126,7 +126,7 @@ async function callBroker(
     const message =
       typeof body.error === "string" && body.error
         ? body.error
-        : "Could not mint a model lease";
+        : "Could not complete the model lease operation";
     // `retryAfter` is seconds, and the spec documents `Retry-After` on every
     // 429 — pass it through rather than promising a header we never send.
     const retryAfter =
@@ -136,7 +136,7 @@ async function callBroker(
     return v1Error(c, code, message, undefined, retryAfter);
   } catch (error) {
     if (isAbortError(error)) {
-      return v1Error(c, "TIMEOUT", "Minting a model lease timed out");
+      return v1Error(c, "TIMEOUT", "Model lease operation timed out");
     }
     throw error;
   } finally {
