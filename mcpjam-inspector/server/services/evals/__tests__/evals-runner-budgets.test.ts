@@ -341,11 +341,11 @@ describe("provisionEvalSandbox — capacity", () => {
       code: "at_capacity",
       resource: "desktops",
     });
-    // It really did try, and really did stop.
-    expect(requests).toBeGreaterThanOrEqual(1);
-    expect(requests).toBeLessThanOrEqual(
-      EVAL_SANDBOX_CAPACITY_POLICY.maxAttempts,
-    );
+    // It really did try, and really did stop — and with this budget the count
+    // is EXACT, not a range: one attempt fits, and the 7.5s floor on the wait
+    // that would precede a second one does not. A range here would pass just
+    // as happily if the budget stopped being enforced before the retry.
+    expect(requests).toBe(1);
   });
 });
 
