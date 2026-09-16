@@ -47,20 +47,25 @@ export function announcementFor(outcome, userId) {
     (outcome.resource && typeof outcome.resource.url === 'string' ? outcome.resource.url : null) ??
     outcome.runUrl ??
     null;
-  if (url) return `:white_check_mark: Approved by <@${userId}> — <${url}|follow it here>.`;
 
   switch (outcome.kind) {
     case 'cancel':
+      // KIND WINS over any resource URL. A cancel that also returns a resource
+      // should still say "Cancelled", not "Approved — follow it here".
       return `:white_check_mark: Cancelled by <@${userId}>.`;
     case 'generate':
+      if (url) return `:white_check_mark: Approved by <@${userId}> — <${url}|follow it here>.`;
       return `:white_check_mark: Approved by <@${userId}> — the cases are being generated.`;
     case 'schedule':
       // Nothing started. Saying "it's away" here would have the user watching
       // for a run that will not appear until the next interval.
+      if (url) return `:white_check_mark: Approved by <@${userId}> — <${url}|follow it here>.`;
       return `:white_check_mark: Approved by <@${userId}> — the schedule is updated.`;
     case 'external':
+      if (url) return `:white_check_mark: Approved by <@${userId}> — <${url}|follow it here>.`;
       return `:white_check_mark: Approved by <@${userId}> — the tool ran.`;
     case 'start':
+      if (url) return `:white_check_mark: Approved by <@${userId}> — <${url}|follow it here>.`;
       return `:white_check_mark: Approved by <@${userId}>, and it's away.`;
     default:
       break;
@@ -69,22 +74,29 @@ export function announcementFor(outcome, userId) {
   // A kind we do not recognise means a NEWER server, and the operation-name
   // table below is older than the kind vocabulary — consulting it would let a
   // brand-new action be announced as "it's away" on the strength of a name
-  // this build happens to recognise. Claim nothing instead.
+  // this build happens to recognise. Claim nothing instead, but use the URL
+  // if the server returned one.
   if (outcome.kind != null) {
+    if (url) return `:white_check_mark: Approved by <@${userId}> — <${url}|follow it here>.`;
     return `:white_check_mark: Approved by <@${userId}>.`;
   }
 
-  // No `kind` at all — an OLDER server. Fall back to the operation names this
-  // build knows, then to copy that claims nothing.
+  // No `kind` at all — an OLDER server. Check operation names first so a
+  // cancel_eval_run with a resource URL is announced as "Cancelled", not
+  // "Approved". Fall through to the URL fallback for other legacy operations
+  // that happen to return a resource link.
   if (outcome.operation === 'cancel_eval_run') {
     return `:white_check_mark: Cancelled by <@${userId}>.`;
   }
   if (outcome.operation === 'generate_eval_cases') {
+    if (url) return `:white_check_mark: Approved by <@${userId}> — <${url}|follow it here>.`;
     return `:white_check_mark: Approved by <@${userId}> — the cases are being generated.`;
   }
   if (outcome.operation === 'run_eval_suite' || outcome.operation === 'run_eval_case') {
+    if (url) return `:white_check_mark: Approved by <@${userId}> — <${url}|follow it here>.`;
     return `:white_check_mark: Approved by <@${userId}>, and it's away.`;
   }
+  if (url) return `:white_check_mark: Approved by <@${userId}> — <${url}|follow it here>.`;
   return `:white_check_mark: Approved by <@${userId}>.`;
 }
 
