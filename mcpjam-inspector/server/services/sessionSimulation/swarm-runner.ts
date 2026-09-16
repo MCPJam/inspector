@@ -691,6 +691,7 @@ async function runJourneyFanOut(
                 model: {
                   id: String(modelDefinition.id),
                   provider: modelDefinition.provider,
+                  hosted: modelDefinition.hosted,
                 },
                 // The same pinned id under the name the external-account rule
                 // reads. Identical to `model.id` here — a swarm target has no

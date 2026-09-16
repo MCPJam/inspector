@@ -733,7 +733,12 @@ export async function resolveSyntheticModelSource(args: {
   serverIds?: string[];
 }): Promise<SyntheticModelResolution> {
   const modelIdStr = String(args.modelDefinition.id);
-  if (isHostedCatalogModel(modelIdStr)) {
+  // Provider-blind on purpose (unchanged), but the picker's explicit
+  // `hosted: false` still wins — see `isHostedModelDefinition`.
+  if (
+    args.modelDefinition.hosted !== false &&
+    isHostedCatalogModel(modelIdStr)
+  ) {
     return { source: "mcpjam" };
   }
   // A runtime-chosen sentinel resolves NO org provider — see

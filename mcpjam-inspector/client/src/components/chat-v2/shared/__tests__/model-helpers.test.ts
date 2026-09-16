@@ -122,6 +122,61 @@ describe("org model helpers", () => {
     ).toBe(false);
   });
 
+  // Many bare BYOK ids (`claude-fable-5`, `gpt-5-nano`, …) canonicalize with
+  // their provider to a hosted twin, and the server reads that pair as hosted
+  // on purpose. The explicit `false` is the only way a request can say "this
+  // row is the user's own key" — so every SUPPORTED_MODELS-derived row must
+  // carry it.
+  it("stamps local BYOK rows from SUPPORTED_MODELS with hosted: false", () => {
+    const models = buildAvailableModels({
+      ...NO_KEYS,
+      hasToken: (provider) => provider === "anthropic",
+      hostedCatalog: [CATALOG_ONLY],
+    });
+    const own = models.filter((m) => m.provider === "anthropic");
+    expect(own.length).toBeGreaterThan(0);
+    expect(own.every((m) => m.hosted === false)).toBe(true);
+    expect(own.map((m) => String(m.id))).toContain("claude-fable-5");
+    // The hosted source is untouched.
+    expect(models).toContainEqual(CATALOG_ONLY);
+  });
+
+  it("stamps org-key rows from SUPPORTED_MODELS with hosted: false", () => {
+    const models = buildAvailableModelsFromOrgConfig(
+      {
+        providers: [{ providerKey: "anthropic", enabled: true, hasSecret: true }],
+      },
+      [CATALOG_ONLY]
+    );
+    const fable = models.find((m) => String(m.id) === "claude-fable-5");
+    expect(fable).toMatchObject({ provider: "anthropic", hosted: false });
+    expect(
+      models
+        .filter((m) => m.provider === "anthropic")
+        .every((m) => m.hosted === false)
+    ).toBe(true);
+  });
+
+  it("isMCPJamProvidedModelMenuItem treats an explicit hosted: false as own-provider", () => {
+    expect(
+      isMCPJamProvidedModelMenuItem({
+        id: "claude-fable-5",
+        name: "Claude Fable 5",
+        provider: "anthropic",
+        hosted: false,
+      })
+    ).toBe(false);
+    // The stamp wins even over a prefixed id the static check would call hosted.
+    expect(
+      isMCPJamProvidedModelMenuItem({
+        id: "anthropic/claude-fable-5",
+        name: "Claude Fable 5",
+        provider: "anthropic",
+        hosted: false,
+      })
+    ).toBe(false);
+  });
+
   it("buildAvailableModels uses the injected hosted catalog as the hosted source", () => {
     const models = buildAvailableModels({ ...NO_KEYS, hostedCatalog: [CATALOG_ONLY] });
     // The catalog-only model surfaces even though it's absent from SUPPORTED_MODELS.

@@ -70,10 +70,15 @@ export function buildAvailableModels(params: {
   const hosted = hostedCatalog ?? hostedModelDefinitionsFromSnapshot();
   // BYOK models the user has a key for — hosted ids handled by `hosted` above,
   // so exclude them here to avoid duplicates when a static model is both.
+  // `hosted: false` is stamped explicitly, not left absent: many of these
+  // bare ids (`claude-fable-5`, `gpt-5-nano`, …) canonicalize WITH their
+  // provider to a hosted twin, and the server reads that pair as hosted on
+  // purpose (legacy host pins are bare). The flag is the only way a request
+  // can say "this row is the user's own key". See `ModelDefinition.hosted`.
   const byok = SUPPORTED_MODELS.filter((m) => {
     if (isMCPJamProvidedModel(String(m.id))) return false;
     return providerHasKey[m.provider];
-  });
+  }).map((m) => ({ ...m, hosted: false }));
   const cloud = [...hosted, ...byok];
 
   const openRouterModels: ModelDefinition[] = providerHasKey.openrouter
@@ -159,10 +164,13 @@ export function buildAvailableModelsFromOrgConfig(
 
   // Hosted models plus the org-key-derived provider models (hosted ids excluded
   // from the latter so a static model that is both isn't duplicated).
+  // Explicit `hosted: false` for the same reason as the local BYOK rows in
+  // `buildAvailableModels`: the bare id + provider would otherwise be read as
+  // the hosted twin server-side and billed to MCPJam instead of the org's key.
   const orgKeyModels = SUPPORTED_MODELS.filter((m) => {
     if (isMCPJamProvidedModel(String(m.id))) return false;
     return availableProviderKeys.has(m.provider);
-  });
+  }).map((m) => ({ ...m, hosted: false }));
   const models: ModelDefinition[] = [...hosted, ...orgKeyModels];
 
   // OpenRouter: include selectedModels from org config
@@ -279,6 +287,11 @@ export function isMCPJamProvidedModelMenuItem(model: ModelMenuItem): boolean {
   // (not in the static list) still classifies as MCPJam-provided.
   if (model.hosted === true) {
     return true;
+  }
+  // An explicit `false` is the picker's own-provider stamp; it wins over the
+  // id-based back-compat check below for the same reason `true` does.
+  if (model.hosted === false) {
+    return false;
   }
   if (OWN_PROVIDER_SOURCES.has(model.provider)) {
     return false;

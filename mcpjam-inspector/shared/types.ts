@@ -323,7 +323,19 @@ export interface ModelDefinition {
   /**
    * True when the model comes from the MCPJam backend hosted catalog (billed to
    * MCPJam credits). Drives `isMCPJamProvidedModelMenuItem` and the free/paid
-   * locks. Absent on BYOK/org/custom models.
+   * locks.
+   *
+   * Explicitly FALSE on the picker's own-provider rows built from
+   * `SUPPORTED_MODELS` (`buildAvailableModels` / `buildAvailableModelsFromOrgConfig`).
+   * That is the one fact the server cannot recover from the id: 25 of those
+   * bare ids (`claude-fable-5`, `gpt-5-nano`, `gemini-2.5-pro`, …) canonicalize
+   * with their provider to a hosted twin, and the server deliberately reads a
+   * bare id + provider as hosted because legacy host pins are stored that way.
+   * So `(id, provider)` alone says "hosted" for a row the user picked under
+   * "Your providers" — `isHostedModelDefinition` (server) honours the `false`.
+   *
+   * Absent on org OpenRouter/Bedrock/Ollama/custom rows (their ids never
+   * collide) and on server-lifted host models.
    */
   hosted?: boolean;
   /**
