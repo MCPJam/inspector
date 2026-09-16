@@ -106,8 +106,18 @@ describe("FirstRunOnboardingOverlay", () => {
       "bg-[size:auto,24px_24px]",
       "duration-700",
     );
+    expect(
+      screen.getByText(
+        "Test and evaluate your MCP server for every user, across every major AI client.",
+      ),
+    ).toHaveClass("text-foreground");
     const continueButton = screen.getByRole("button", { name: "Get started" });
-    expect(continueButton).toHaveClass("justify-self-start");
+    expect(continueButton).toHaveClass(
+      "justify-self-start",
+      "bg-primary",
+      "text-primary-foreground",
+    );
+    expect(continueButton).not.toHaveClass("underline");
     expect(continueButton).not.toHaveClass(
       "focus-visible:!border-0",
       "focus-visible:!ring-0",
@@ -270,7 +280,12 @@ describe("FirstRunOnboardingOverlay", () => {
     );
     expect(onConnectDemo).toHaveBeenCalledOnce();
 
-    fireEvent.click(screen.getByRole("button", { name: "Set up later" }));
+    const setUpLaterButton = screen.getByRole("button", {
+      name: "Set up later",
+    });
+    expect(setUpLaterButton).toHaveClass("text-foreground");
+    expect(setUpLaterButton).not.toHaveClass("underline");
+    fireEvent.click(setUpLaterButton);
     expect(onSkip).toHaveBeenCalledOnce();
   });
 
@@ -322,7 +337,10 @@ describe("FirstRunOnboardingOverlay", () => {
     expect(screen.getByText("Negotiate MCP compatibility")).toBeInTheDocument();
     expect(screen.getByText("Load tools")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    const cancelButton = screen.getByRole("button", { name: "Cancel" });
+    expect(cancelButton).toHaveClass("text-foreground");
+    expect(cancelButton).not.toHaveClass("underline");
+    fireEvent.click(cancelButton);
     expect(onCancelConnection).toHaveBeenCalledOnce();
     expect(
       screen.getByRole("heading", { name: "Connect to your MCP server" }),

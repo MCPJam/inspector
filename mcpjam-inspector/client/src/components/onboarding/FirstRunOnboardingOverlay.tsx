@@ -283,15 +283,14 @@ export function FirstRunOnboardingOverlay({
                   className="mt-4 block h-px w-[72px] bg-primary"
                   aria-hidden
                 />
-                <DialogDescription className="mt-4 max-w-[42ch] text-[14.5px] leading-[1.5] text-muted-foreground">
+                <DialogDescription className="mt-4 max-w-[42ch] text-[14.5px] leading-[1.5] text-foreground">
                   Test and evaluate your MCP server for every user, across every
                   major AI client.
                 </DialogDescription>
               </DialogHeader>
               <Button
                 type="button"
-                variant="link"
-                className="mt-7 h-auto justify-self-start p-0 text-[12.5px] font-semibold text-foreground underline decoration-foreground/35 underline-offset-4 hover:text-foreground hover:decoration-foreground"
+                className="mt-7 h-auto justify-self-start rounded-md px-4 py-2.5 text-[12.5px] font-semibold shadow-none"
                 onClick={continueToChoice}
               >
                 Get started
@@ -391,8 +390,8 @@ export function FirstRunOnboardingOverlay({
               </div>
               <Button
                 type="button"
-                variant="link"
-                className="mx-auto mt-3 h-auto p-1 text-[11px] font-normal text-muted-foreground underline decoration-border underline-offset-4 hover:text-foreground hover:decoration-primary"
+                variant="ghost"
+                className="mx-auto mt-3 h-auto px-2 py-1 text-[11px] font-normal text-foreground"
                 onClick={onSkip}
               >
                 Set up later
@@ -424,8 +423,8 @@ export function FirstRunOnboardingOverlay({
               />
               <Button
                 type="button"
-                variant="link"
-                className="mx-auto mt-4 h-auto p-1 text-[11px] font-normal text-muted-foreground underline decoration-border underline-offset-4 hover:text-foreground hover:decoration-primary"
+                variant="ghost"
+                className="mx-auto mt-4 h-auto px-2 py-1 text-[11px] font-normal text-foreground"
                 onClick={() => {
                   onCancelConnection();
                   setStep("choose");
@@ -503,8 +502,8 @@ export function FirstRunOnboardingOverlay({
               <div className="flex justify-center">
                 <Button
                   type="button"
-                  variant="link"
-                  className="mt-3 h-auto p-1 text-[11px] font-normal text-muted-foreground underline decoration-border underline-offset-4 hover:text-foreground hover:decoration-primary"
+                  variant="ghost"
+                  className="mt-3 h-auto px-2 py-1 text-[11px] font-normal text-foreground"
                   onClick={returnToChoice}
                 >
                   Connect my own server
@@ -617,8 +616,8 @@ export function FirstRunOnboardingOverlay({
               </Button>
               <Button
                 type="button"
-                variant="link"
-                className="mx-auto mt-3 h-auto p-1 text-[11px] font-normal text-muted-foreground underline decoration-border underline-offset-4 hover:text-foreground hover:decoration-primary"
+                variant="ghost"
+                className="mx-auto mt-3 h-auto px-2 py-1 text-[11px] font-normal text-foreground"
                 onClick={returnToChoice}
               >
                 Back
@@ -653,8 +652,8 @@ function ConnectionFailureNotice({ error }: { error: string }) {
           </p>
           <Button
             type="button"
-            variant="link"
-            className="mt-1 h-auto gap-1 p-0 text-[10.5px] font-normal text-muted-foreground underline decoration-border underline-offset-4 hover:text-foreground hover:decoration-primary"
+            variant="ghost"
+            className="mt-1 h-auto gap-1 px-2 py-1 text-[10.5px] font-normal text-foreground"
             aria-expanded={isExpanded}
             aria-controls={detailsId}
             onClick={() => setIsExpanded((current) => !current)}
