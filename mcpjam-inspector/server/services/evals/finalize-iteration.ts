@@ -676,7 +676,8 @@ export function buildIterationFinishParams(args: {
    * blocked run for real the second time.
    */
   toolPolicy?: EvalSuiteFileToolPolicy;
-  iterationMetadataBase: Record<string, string | number | boolean>;
+  // Metadata includes structured timeout and experiment attribution.
+  iterationMetadataBase: Record<string, unknown>;
   hostPolicy?: HostExecutionPolicy;
   toolSignals?: ToolExposureSignals;
   /**

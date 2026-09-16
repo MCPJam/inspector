@@ -1,3 +1,5 @@
+import { planPlatformSuiteGradingUpdate } from "@mcpjam/sdk";
+import type { EvalGradingPolicyEdit } from "@mcpjam/sdk/contract";
 import { fetchArtifactBytes } from "../lib/download-screenshot.js";
 import {
   existsSync,
@@ -1007,13 +1009,82 @@ async function executeOp<TInput, TOutput>(
       quiet: globalOptions.quiet,
     }
   );
-  writeResult(result, globalOptions.format);
+  if (result !== undefined) writeResult(result, globalOptions.format);
+}
+
+/**
+ * Parse grading flags before any request. The canonical planner maps these
+ * edits to the current scope's fields and units after reading the suite.
+ * --min-accuracy retains its raw suite-wide percentage compatibility field.
+ */
+function applyGradingFlags(
+  options: Record<string, any>,
+  settings: Record<string, any>
+): EvalGradingPolicyEdit {
+  const edit: EvalGradingPolicyEdit = {};
+  if (
+    options.minAccuracy !== undefined &&
+    options.passThreshold !== undefined
+  ) {
+    throw usageError(
+      "Use either --min-accuracy or --pass-threshold, not both: --min-accuracy is one suite-wide percentage over the whole run and --pass-threshold is the fraction each case must pass on its own. They are different criteria, not two units of one number."
+    );
+  }
+  if (options.minIterations !== undefined && options.iterations !== undefined) {
+    throw usageError(
+      "Use either --min-iterations or --iterations, not both: --min-iterations is a floor that raises a case's own count and --iterations is the default that replaces it."
+    );
+  }
+  if (options.minAccuracy !== undefined) {
+    const percent = Number(options.minAccuracy);
+    if (!Number.isFinite(percent) || percent < 0 || percent > 100) {
+      throw usageError("--min-accuracy must be a percentage from 0 to 100.");
+    }
+    settings.minimumAccuracy = percent;
+  }
+  if (options.passThreshold !== undefined) {
+    const fraction = Number(options.passThreshold);
+    // A FRACTION. `--pass-threshold 90` would reach the wire as a 9000%
+    // per-case bar, which the route refuses — but only after the request, and
+    // the error would name a field the caller did spell correctly.
+    if (!Number.isFinite(fraction) || fraction < 0 || fraction > 1) {
+      throw usageError(
+        "--pass-threshold must be a fraction from 0 to 1 (0.9, not 90)."
+      );
+    }
+    edit.passThreshold = fraction;
+  }
+  if (options.minIterations !== undefined) {
+    if (options.minIterations === "off") {
+      // NULL, not undefined. `undefined` is "leave this alone" all the way
+      // down the stack, so writing it here would make `--min-iterations off`
+      // a no-op that reports success.
+      edit.minimumIterations = null;
+    } else {
+      const floor = Number(options.minIterations);
+      if (!Number.isInteger(floor) || floor < 1 || floor > 10) {
+        throw usageError(
+          '--min-iterations must be a whole number from 1 to 10, or "off".'
+        );
+      }
+      edit.minimumIterations = floor;
+    }
+  }
+  if (options.iterations !== undefined) {
+    const count = Number(options.iterations);
+    if (!Number.isInteger(count) || count < 1 || count > 100) {
+      throw usageError("--iterations must be a whole number from 1 to 100.");
+    }
+    edit.iterations = count;
+  }
+  return edit;
 }
 
 /** Merge `eval update` flags onto an optional --file/--json suite-update body. */
-function buildSuiteUpdateInput(
-  options: Record<string, any>
-): Record<string, unknown> {
+function buildSuiteUpdateInput(options: Record<string, any>): {
+  input: Record<string, unknown>;
+  edit: EvalGradingPolicyEdit;
+} {
   const input: Record<string, any> = { ...loadBodyObject(options) };
   input.suite = options.suite;
   if (options.project !== undefined) input.project = options.project;
@@ -1054,24 +1125,16 @@ function buildSuiteUpdateInput(
   if (Object.keys(exec).length > 0) input.executionConfig = exec;
 
   const settings = { ...(input.settings ?? {}) };
-  if (options.minAccuracy !== undefined)
-    settings.minimumAccuracy = Number(options.minAccuracy);
-  if (options.minIterations !== undefined) {
-    if (options.minIterations === "off") {
-      // NULL, not undefined. `undefined` is "leave this alone" all the way
-      // down the stack, so writing it here would make `--min-iterations off`
-      // a no-op that reports success.
-      settings.minimumIterations = null;
-    } else {
-      const iterations = Number(options.minIterations);
-      if (!Number.isInteger(iterations) || iterations < 1 || iterations > 10) {
-        throw usageError(
-          '--min-iterations must be a whole number from 1 to 10, or "off".'
-        );
-      }
-      settings.minimumIterations = iterations;
-    }
+  // Compatibility percentage stays on the raw body; other edits use the planner.
+  const edit = applyGradingFlags(options, settings);
+  // Flags override the corresponding body values even when the planned edit
+  // is unchanged and therefore produces no settings patch.
+  if (edit.passThreshold !== undefined) {
+    delete settings.passThreshold;
+    delete settings.minimumAccuracy;
   }
+  if (edit.iterations !== undefined) delete settings.repetitions;
+  if (edit.minimumIterations !== undefined) delete settings.minimumIterations;
   const mo = { ...(settings.matchOptions ?? {}) };
   if (options.toolCallOrder !== undefined)
     mo.toolCallOrder = options.toolCallOrder;
@@ -1100,8 +1163,9 @@ function buildSuiteUpdateInput(
   }
   if (Object.keys(judge).length > 0) settings.judge = judge;
   if (Object.keys(settings).length > 0) input.settings = settings;
+  else delete input.settings;
 
-  return input;
+  return { input, edit };
 }
 
 /**
@@ -1240,7 +1304,8 @@ function collectRepeatable(value: string, previous: string[]): string[] {
   return [...previous, value];
 }
 
-const DEFAULT_RUN_WAIT_TIMEOUT_MS = 600_000;
+// 30-minute eval run default plus grading extension headroom.
+const DEFAULT_RUN_WAIT_TIMEOUT_MS = 35 * 60_000;
 const RUN_POLL_INTERVAL_MS = 3000;
 
 /**
@@ -1419,7 +1484,8 @@ function gateReportCase(
   };
 }
 
-const DEFAULT_GATE_WAIT_TIMEOUT_MS = 600_000;
+// 30-minute eval run default plus grading extension headroom.
+const DEFAULT_GATE_WAIT_TIMEOUT_MS = 35 * 60_000;
 
 async function runEvalGate(
   options: PlatformOptions &
@@ -2310,9 +2376,11 @@ async function runEvalCompare(
 
         // The compare wire's run sides are a COMPARISON projection: they carry
         // `result` and `summary` but no `status` and no `verdictSummary`, so
-        // assembling a decision from one would report a policy-v2 run as a
-        // legacy percent-threshold run — a claim about where its verdict came
-        // from that would simply be false. One small read gets the real thing;
+        // assembling a decision from one would report a per-case-graded run as
+        // one decided by the suite accuracy threshold — a claim about which
+        // criterion decided it that would simply be false, and one that moves
+        // the population its counts are in from cases to iterations. One small
+        // read gets the real thing;
         // the diagnostics still come from the walk already performed, which is
         // more complete than a single endpoint page.
         const compareRunDetail = await client
@@ -5582,10 +5650,26 @@ export function registerEvalCommands(program: Command): void {
     .option("--model <id>", "Execution model id")
     .option("--system-prompt <text>", "Execution system prompt")
     .option("--temperature <n>", "Execution temperature")
-    .option("--min-accuracy <pct>", "Minimum accuracy, 0–100")
+    // The criterion, in the units its scope takes. A suite has ONE of these,
+    // and `mcpjam evals get` reports which under `settings.policy`; passing
+    // both is refused rather than resolved by precedence.
+    .option(
+      "--min-accuracy <pct>",
+      "Suite accuracy threshold: one percentage, 0–100, over the whole run"
+    )
+    .option(
+      "--pass-threshold <0-1>",
+      "Pass threshold, 0–1, preserving the current criterion (suite-wide writes a percentage)"
+    )
+    // How many times each case runs. Same shape: a floor that RAISES a case's
+    // own count, or a default that REPLACES it.
     .option(
       "--min-iterations <1-10|off>",
-      "Floor on per-case iterations; off removes the floor"
+      "Minimum iterations per case: a floor that raises a case's own count; off removes it"
+    )
+    .option(
+      "--iterations <n>",
+      "Iterations per case: the suite default, which a case can override"
     )
     .option("--tool-call-order <any|in-order|exact>", "Tool call order")
     .option("--arguments <ignore|partial|exact>", "Argument matching")
@@ -5597,11 +5681,62 @@ export function registerEvalCommands(program: Command): void {
     .option("--judge-model <id>", "Judge model id")
     .option("--judge-threshold <0-1>", "Judge pass threshold, 0–1")
     .action(async (options: PlatformOptions & Record<string, any>, command) => {
-      const input = validateOpInput(
-        updateEvalSuiteOperation,
-        buildSuiteUpdateInput(options)
+      const built = buildSuiteUpdateInput(options);
+      const input = validateOpInput(updateEvalSuiteOperation, built.input);
+      const edit = built.edit;
+      await executeOp(
+        {
+          ...updateEvalSuiteOperation,
+          async execute(input, context) {
+            if (Object.keys(edit).length > 0) {
+              const detail = await getEvalSuiteOperation.execute(
+                input,
+                context
+              );
+              const plan = planPlatformSuiteGradingUpdate({
+                settings: detail.settings,
+                revisionNumber: detail.revisionNumber,
+                edit,
+              });
+              if (!plan.ok) throw usageError(plan.message);
+              input.settings = { ...input.settings, ...plan.body.settings };
+              if (plan.body.expectedRevisionNumber !== undefined) {
+                // Preserve an explicit caller precondition (for example a
+                // reviewed quality-gate body) rather than replacing it.
+                input.expectedRevisionNumber ??=
+                  plan.body.expectedRevisionNumber;
+              }
+              if (plan.noop) {
+                const hasOtherEdits = Object.entries(input).some(
+                  ([key, value]) =>
+                    ![
+                      "project",
+                      "suite",
+                      "expectedRevisionNumber",
+                      "revisionNote",
+                    ].includes(key) &&
+                    value !== undefined &&
+                    (key !== "settings" ||
+                      Object.keys(input.settings ?? {}).length > 0)
+                );
+                const message =
+                  "No grading change: the suite already has these values.";
+                const format = getGlobalOptions(command).format;
+                if (!hasOtherEdits) {
+                  if (format === "human") process.stdout.write(`${message}\n`);
+                  else writeResult({ noop: true, message }, format);
+                  return undefined;
+                }
+                process.stderr.write(`${message}\n`);
+              }
+            }
+            return updateEvalSuiteOperation.execute(input, context);
+          },
+        },
+        input,
+        options,
+        command
       );
-      await executeOp(updateEvalSuiteOperation, input, options, command);
     });
 
   evals

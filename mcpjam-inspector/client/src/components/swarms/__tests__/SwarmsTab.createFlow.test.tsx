@@ -13,6 +13,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Predicate } from "@/shared/eval-matching";
 import { SwarmGenerateError } from "@/lib/swarm-api";
@@ -86,8 +87,8 @@ vi.mock("@/hooks/use-previewed-environment-id", () => ({
   usePreviewedEnvironmentId: () => [null, vi.fn()] as const,
 }));
 
-vi.mock("@/components/hosts/ServerGroupPicker", () => ({
-  ServerGroupPicker: () => <div data-testid="server-group-picker" />,
+vi.mock("@/components/hosts/server-picker", () => ({
+  ServerPicker: () => <div data-testid="server-group-picker" />,
 }));
 
 vi.mock("@/contexts/db-user-ready-context", () => ({
@@ -2244,10 +2245,92 @@ describe("SwarmsTab — Describe step (Production Redesign)", () => {
     )[0];
     fireEvent.change(counter, { target: { value: "" } });
 
-    expect(counter).toHaveValue(1);
     expect(
       screen.getByTestId("new-swarm-launch-session-estimate"),
     ).toHaveTextContent(/2 conversations/i);
+
+    fireEvent.blur(counter);
+    expect(counter).toHaveValue(1);
+  });
+
+  it("takes a typed count instead of appending it to the current one", async () => {
+    // Clamping every keystroke turned the "1" already in the field plus a
+    // typed "2" into 12, which snapped straight to the maximum.
+    const user = userEvent.setup();
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+
+    const counter = screen.getAllByTestId("new-swarm-persona-iterations")[0];
+    await user.click(counter);
+    await user.keyboard("2");
+
+    expect(counter).toHaveValue(2);
+    expect(
+      screen.getByTestId("new-swarm-launch-session-estimate"),
+    ).toHaveTextContent(/3 conversations/i);
+  });
+
+  it("keeps taking typed counts while the field stays focused", async () => {
+    // The first keystroke replaces the selection, but the second lands next to
+    // it: "2" then "3" read as 23, which used to settle on the maximum.
+    const user = userEvent.setup();
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+
+    const counter = screen.getAllByTestId("new-swarm-persona-iterations")[0];
+    await user.click(counter);
+    await user.keyboard("2");
+    await user.keyboard("3");
+
+    expect(counter).toHaveValue(3);
+    fireEvent.blur(counter);
+    expect(counter).toHaveValue(3);
+    expect(
+      screen.getByTestId("new-swarm-launch-session-estimate"),
+    ).toHaveTextContent(/4 conversations/i);
+  });
+
+  it("takes the digit typed before the current one, not the one it displaced", async () => {
+    // The caret does not have to sit at the end: Home then "2" over a 3 grows
+    // the text to 23, where keeping the last character would drop the 2 and
+    // silently leave the old count standing.
+    const user = userEvent.setup();
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+
+    const counter = screen.getAllByTestId("new-swarm-persona-iterations")[0];
+    await user.click(counter);
+    await user.keyboard("3");
+    fireEvent.change(counter, { target: { value: "23" } });
+
+    expect(counter).toHaveValue(2);
+    expect(
+      screen.getByTestId("new-swarm-launch-session-estimate"),
+    ).toHaveTextContent(/3 conversations/i);
+  });
+
+  it("refuses a digit that no count can be, instead of showing it", async () => {
+    // "1" then "0" is 10, out of range. The 0 must not sit in the field as
+    // though the control accepted zero iterations.
+    const user = userEvent.setup();
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+
+    const counter = screen.getAllByTestId("new-swarm-persona-iterations")[0];
+    await user.click(counter);
+    await user.keyboard("0");
+
+    expect(counter).toHaveValue(1);
+    fireEvent.blur(counter);
+    expect(counter).toHaveValue(1);
   });
   it("moves only the persona whose counter was touched", async () => {
     // The whole reason the control left the footer: two personas can carry

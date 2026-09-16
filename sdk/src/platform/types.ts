@@ -1300,7 +1300,8 @@ export type PlatformEvalLlmTouchpointId =
   | "groundedness"
   | "serverQuality"
   | "runInsights"
-  | "runGroupQuality";
+  | "runGroupQuality"
+  | "evalFindingsPipeline";
 
 export type PlatformDisclosureFires =
   | "auto-on-completion"
@@ -1311,7 +1312,11 @@ export interface PlatformAnalysisTouchpointDisclosure {
   touchpoint: PlatformEvalLlmTouchpointId;
   label: string;
   model: string;
-  rail: { fixed: "openrouter"; because: string };
+  rail: {
+    fixed: "openrouter" | null;
+    because: string;
+    routing?: "gateway_preferred";
+  };
   destinations: readonly string[];
   evidenceSent: readonly string[];
   fires: PlatformDisclosureFires;
@@ -1658,13 +1663,19 @@ export type PlatformEvalSuiteGroundednessJudge = {
  */
 export interface PlatformEvalSuiteSettingsBase {
   /**
-   * The LEGACY suite-wide floor, as a percentage in [0, 100].
+   * The SUITE-WIDE accuracy threshold, as a percentage in [0, 100].
+   *
+   * One rate over the whole run must reach this; individual cases have no
+   * threshold of their own. It is not the per-case criterion in other units —
+   * ten cases, nine always passing and one always failing, passes a 90%
+   * suite-wide bar and fails a 0.9 per-case one — so dividing it by 100 moves
+   * the bar for every suite with more than one case.
    *
    * ALWAYS `null` when {@link policy} is `"v2"`, whatever the suite's storage
-   * still holds: a v2 suite is decided by
-   * `verdictPolicyDefaults.passThreshold` (a fraction), and the legacy column
-   * an upgrade leaves behind is read by nothing. Read the threshold from
-   * `verdictPolicyDefaults` for a v2 suite — converting this one would be a
+   * still holds: such a suite is decided by
+   * `verdictPolicyDefaults.passThreshold`, and the percent column left behind
+   * by a criterion change is read by nothing. Read the threshold from
+   * `verdictPolicyDefaults` there — converting this one would report a
    * threshold no run uses.
    */
   minimumAccuracy: number | null;
@@ -1673,6 +1684,10 @@ export interface PlatformEvalSuiteSettingsBase {
    * this many times (`max(case.iterations, minimumIterations)`). `null` means
    * no floor — the suite's real state, not a stand-in for 1. Absent on older
    * API deployments.
+   *
+   * A FLOOR, not a default: it RAISES a case's own count and never lowers it,
+   * where `verdictPolicyDefaults.repetitions` REPLACES it. A case at 7
+   * resolves to 7 under a floor of 3 and to 3 under a default count of 3.
    */
   minimumIterations?: number | null;
   matchOptions: PublicMatchOptions | null;
@@ -1695,29 +1710,40 @@ export interface PlatformEvalSuiteSettingsBase {
     groundedness?: PlatformEvalSuiteGroundednessJudge;
   };
   /**
-   * The verdict policy this suite's runs are decided under.
+   * The stored spelling of which criterion decides this suite's runs.
    *
-   * `2` is the fraction-and-validity policy: each case is graded against a
-   * `passThreshold` FRACTION over its own `repetitions`, and a run is decided
-   * valid-first (an invalid run is `"inconclusive"`, not failed).
+   * `2` is PER-CASE GRADING: each case is graded against a `passThreshold`
+   * FRACTION over its own `repetitions`, and a run is decided valid-first (an
+   * invalid run is `"inconclusive"`, not failed).
    *
-   * ABSENT means legacy: runs are graded by `minimumAccuracy` (a suite-wide
-   * PERCENT) over `max(case.iterations, minimumIterations)`. The two are not
-   * convertible, which is why absence is reported rather than defaulted —
-   * reading a historical percent as a fraction silently moves every bar.
+   * ABSENT means the SUITE-WIDE ACCURACY THRESHOLD: runs are graded by
+   * `minimumAccuracy` (a suite-wide PERCENT) over
+   * `max(case.iterations, minimumIterations)`, and there is no validity phase
+   * at all, so such a run is never `"inconclusive"`. The two criteria differ
+   * in SCOPE as well as units and are not convertible, which is why absence is
+   * reported rather than defaulted — reading a historical percent as a
+   * fraction silently moves every bar.
+   *
+   * The `2` is a WIRE spelling and stays one. It is not a version a caller
+   * upgrades to and not a thing to render in front of a person; use
+   * {@link policy} to branch, and the SDK's grading vocabulary for the words.
    */
   verdictPolicyVersion?: 2;
   /**
-   * Which policy decides this suite's runs, said in one word.
+   * Which criterion decides this suite's runs, said in one word.
    *
    * The same fact `verdictPolicyVersion`'s presence carries, without the
-   * inference — and without the ambiguity, since a v2 suite whose stored
+   * inference — and without the ambiguity, since a per-case suite whose stored
    * defaults fail validation projects no version either. It is also the field
    * that tells a writer which threshold to send: `minimumAccuracy` (a percent)
-   * on `legacy`, `passThreshold` (a fraction) on `v2`. Sending both is refused.
+   * on `legacy`, `passThreshold` (a fraction) on `v2`. Sending both is refused,
+   * because there is no edit that means both.
    *
    * Absent on older API deployments; read absence as `legacy` only after
-   * checking `verdictPolicyVersion`.
+   * checking `verdictPolicyVersion`. When NEITHER is present the deployment
+   * predates both and cannot say which criterion decides ANY suite — the two
+   * are indistinguishable in its response, so the SDK refuses to read a policy
+   * there rather than guessing (`gradingPolicyFromPlatformSuiteSettings`).
    */
   policy?: "legacy" | "v2";
   /**
@@ -4244,6 +4270,146 @@ export interface PlatformActionableFinding {
   evidence: PlatformActionableFindingEvidence[];
 }
 
+/**
+ * How much of the population an OBSERVATION describes.
+ *
+ * Additive and separate from `status`, which describes a model GENERATION.
+ * A deployment that predates findings omits it, and a consumer must read
+ * absence as "this server does not report observations", never as
+ * `unavailable`.
+ */
+export type PlatformInsightsObservationState =
+  "ready" | "partial" | "unavailable";
+
+/** Coverage for `currentFindings`, describing its OWN population. */
+export interface PlatformInsightsObservationCoverage {
+  unit: "iterations";
+  analyzed: number;
+  total: number;
+  gradedCount: number;
+  /** Counted reasons an iteration was left out. Open map: a new exclusion
+   * class must not require a consumer change to keep validating. */
+  exclusions: Record<string, number>;
+}
+
+/** Where a finding's observation came from, and how complete it is. */
+export interface PlatformInsightsFindingProvenance {
+  candidateId: string;
+  stage?: import("../contract/chain.js").UserValueStage;
+  reason?: import("../contract/stage-derivation.js").StageReason;
+  groupKind: string;
+  basis: "measured" | "judged" | "mixed" | "unknown";
+  /**
+   * How the CATEGORY was decided: `schema` proved it against the tool's
+   * pinned input schema, `error_code` read a standardized JSON-RPC/HTTP code,
+   * `error_text` matched keywords in prose a server author wrote freely,
+   * `none` did not decide.
+   */
+  classificationBasis?: "schema" | "error_code" | "error_text" | "none";
+  /** `sampled` ⇒ tool identity came from inspected exemplars only, so no
+   * run-wide mechanism rate is claimed. */
+  mechanismBasis: "complete" | "sampled" | "none";
+  affectedIterationIds: string[];
+  /** Per-prose-field origin for the view this provenance accompanies.
+   * Producer-owned: a deterministic fallback sentence and a model that wrote
+   * the same sentence are indistinguishable to a consumer. */
+  proseOrigin?: {
+    observed: "deterministic" | "ai" | "unknown";
+    title: "deterministic" | "ai" | "unknown";
+    rootCause: "deterministic" | "ai" | "unknown";
+    recommendation: "deterministic" | "ai" | "unknown";
+    acceptanceCriteria: "deterministic" | "ai" | "unknown";
+  };
+  judgeCoverage?: {
+    evaluatorId: string;
+    evaluatorLabel: string;
+    graded: number;
+    eligible: number;
+    nonGraded: { pending: number; skipped: number; errored: number };
+  };
+  populationCaveat?: string;
+}
+
+/** One iteration's trace report, as the run page's iteration drawer reads it. */
+export interface PlatformEvalIterationReport {
+  schemaVersion: 1;
+  iterationId: string;
+  runRevision: string;
+  builtAt: number;
+  modelUsed?: string;
+  status: "ready" | "stale" | "failed";
+  reason?: string;
+  rows: Array<{
+    joinKey: string;
+    stage: import("../contract/chain.js").UserValueStage;
+    verdictSeen: string;
+    actual: string;
+    citations: string[];
+  }>;
+  stageNotes?: Array<{
+    stage: import("../contract/chain.js").UserValueStage;
+    actual: string;
+    citations: string[];
+  }>;
+}
+
+/** The trace analysis pipeline's progress, while one exists for the run. */
+export interface PlatformEvalFindingsAnalysis {
+  phase: "reading" | "grouping" | "checking" | "done" | "failed";
+  progress: { done: number; total: number; unit: "iterations" };
+  models: string[];
+  completeness: {
+    iterationReports: number;
+    total: number;
+    missingTraces: number;
+  };
+}
+
+/**
+ * An eval run's findings. Shaped so a consumer can tell an older server
+ * (field absent on the envelope) from a run with no snapshot yet
+ * (`snapshot: null`).
+ */
+export interface PlatformUnifiedFindings {
+  capability: "unified_findings_v1";
+  analysis?: PlatformEvalFindingsAnalysis;
+  snapshot: {
+    builtAt: number;
+    sourceRevision: string;
+    minerVersion: number;
+    omittedGroups: number;
+    /** The zero-AI view, kept reachable after a model succeeds. */
+    deterministicFindings: PlatformActionableFinding[];
+    provenance: PlatformInsightsFindingProvenance[];
+    trim?: { droppedEvidence: number; droppedCandidates: number };
+    enrichment: null | {
+      status: "ready" | "stale";
+      generatedAt: number;
+      modelUsed: string;
+      /** What the pipeline inspected; counts describe inspected evidence. */
+      discovery: {
+        reviewedIterations: number;
+        totalIterations: number;
+        reviewedFailedIterations: number;
+        totalFailedIterations: number;
+        missingTraces: number;
+        truncatedTraces: number;
+        omittedEvidence: number;
+      };
+    };
+  } | null;
+  job: null | {
+    kind: "build" | "enrich";
+    status: "pending" | "completed" | "failed";
+    startedAt: number;
+    updatedAt: number;
+    errorCode?: string;
+    errorMessage?: string;
+  };
+  canBuild: boolean;
+  canEnrich: boolean;
+}
+
 export interface PlatformInsightsEnvelope {
   schemaVersion: 1;
   scope: PlatformInsightScope;
@@ -4264,6 +4430,17 @@ export interface PlatformInsightsEnvelope {
     lowConfidence: boolean;
   };
   findings: PlatformActionableFinding[];
+  /**
+   * The always-available observation view, populated independently of
+   * `status`. Optional: absent on a server that predates it. An explicit `[]`
+   * is a real "nothing here needs a change" and must NOT fall back to
+   * `findings`.
+   */
+  currentFindings?: PlatformActionableFinding[];
+  observationState?: PlatformInsightsObservationState;
+  observationCoverage?: PlatformInsightsObservationCoverage;
+  /** The run's findings; absent on a server that predates them. */
+  unifiedFindings?: PlatformUnifiedFindings;
   /** Swarm only. Launch outcomes never appear as findings. */
   runHealth?: {
     targets: Array<{

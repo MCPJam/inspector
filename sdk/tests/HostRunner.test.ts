@@ -1,3 +1,4 @@
+import { McpjamModelLeaseScope } from "../src/mcpjam-model-lease.js";
 import { HostRunner } from "../src/HostRunner";
 import { PromptResult } from "../src/PromptResult";
 import { Host } from "../src/host-config/host";
@@ -1980,4 +1981,21 @@ describe("HostRunner", () => {
       expect(callArgs.tools.subtract.description).toBe("Subtract two numbers");
     });
   });
+});
+
+it("carries suite lease ownership through iteration clones into the model", async () => {
+  const scope = new McpjamModelLeaseScope();
+  const runner = new HostRunner({
+    tools: {},
+    apiKey: "sk_test",
+    model: "mcpjam/anthropic/claude-haiku-4.5",
+  });
+  const iteration = runner
+    .withOptions({ mcpjamLeaseScope: scope })
+    .withOptions({});
+  await iteration.run("hello");
+  expect(createModelFromString).toHaveBeenLastCalledWith(
+    "mcpjam/anthropic/claude-haiku-4.5",
+    expect.objectContaining({ mcpjamLeaseScope: scope })
+  );
 });

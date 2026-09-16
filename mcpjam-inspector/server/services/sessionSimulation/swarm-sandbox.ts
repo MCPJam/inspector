@@ -1,3 +1,7 @@
+import {
+  SWARM_SANDBOX_CAPACITY_POLICY,
+  withCapacityRetry,
+} from "../../utils/run-supervisor/capacity-retry.js";
 /**
  * Per-attempt ephemeral sandboxes for swarm (journey) sessions — B-isolation.
  *
@@ -218,57 +222,9 @@ export type ProvisionAttemptResult =
   /** Exhausted the bounded retry; the attempt should fail honestly. */
   | { ok: false; retryable: true; code: string; message: string };
 
-const MAX_PROVISION_ATTEMPTS = 5;
-const BASE_BACKOFF_MS = 4_000;
-const MAX_BACKOFF_MS = 45_000;
-/**
- * Per-REQUEST deadline, distinct from the run-level signal.
- *
- * `postJson` has no timeout of its own, and `sessionSignal` only fires on a
- * run-level stop — which an ordinary control-plane outage is not. So a server
- * that accepts the connection and then stalls would park this await forever:
- * the retry loop never advances past its first attempt, the already-claimed
- * attempt never reaches a terminal, and the target-worker slot is held for the
- * life of the process. Bounding each request is what keeps a hung dependency
- * from becoming a hung run.
- */
-const PROVISION_REQUEST_TIMEOUT_MS = 30_000;
 /** Deadline for the teardown call. Shorter than provisioning: nothing is
  * waiting on the result, and the GC cron reaps whatever this misses. */
 const RELEASE_REQUEST_TIMEOUT_MS = 15_000;
-
-/**
- * Compose the run-level stop with a per-request deadline. `AbortSignal.any`
- * keeps both live, so a run-level abort still cancels an in-flight request
- * immediately rather than waiting out the deadline.
- */
-function requestSignal(runSignal?: AbortSignal): AbortSignal {
-  const deadline = AbortSignal.timeout(PROVISION_REQUEST_TIMEOUT_MS);
-  return runSignal ? AbortSignal.any([runSignal, deadline]) : deadline;
-}
-
-function backoffMs(attempt: number): number {
-  const exponential = Math.min(
-    BASE_BACKOFF_MS * 2 ** (attempt - 1),
-    MAX_BACKOFF_MS
-  );
-  // Jitter so several targets that hit capacity together don't retry in
-  // lockstep and keep colliding.
-  return Math.round(exponential * (0.5 + Math.random() * 0.5));
-}
-
-async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
-  if (signal?.aborted) return;
-  await new Promise<void>((resolve) => {
-    const timer = setTimeout(finish, ms);
-    function finish() {
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", finish);
-      resolve();
-    }
-    signal?.addEventListener("abort", finish, { once: true });
-  });
-}
 
 /**
  * Provision the attempt's sandbox, retrying only what retrying can fix.
@@ -291,105 +247,117 @@ export async function provisionAttemptSandbox(args: {
     code: "provision_failed",
     message: "Could not provision a sandbox for this session.",
   };
-  for (let attempt = 1; attempt <= MAX_PROVISION_ATTEMPTS; attempt++) {
-    if (args.signal?.aborted) {
-      return {
-        ok: false,
-        retryable: false,
-        code: "aborted",
-        message: "Run was cancelled while provisioning a sandbox.",
-      };
-    }
-    const result = await provisionJourneySandbox({
-      bearer: args.bearer,
-      runId: args.runId,
-      targetId: args.targetId,
-      sessionIdx: args.sessionIdx,
-      ...(args.runtimeKind === "desktop-browser"
-        ? { runtimeKind: "desktop-browser" as const }
-        : {}),
-      signal: requestSignal(args.signal),
-    });
-    // `ok: true` is NOT enough to dereference. `postJson` swallows a body-parse
-    // failure and returns `{ok: true, value: null}` on any 2xx — reachable when
-    // the deadline above fires AFTER the response headers arrive but before the
-    // body is read. Blindly reading `.sandboxId` there would throw a TypeError
-    // straight past this bounded retry, turning the hang the deadline exists to
-    // contain into a worse failure. Treat an unusable body as transient.
-    if (result.ok && result.value?.sandboxId && result.value?.sandboxRowId) {
-      // What ACTUALLY booted, read off the response rather than the request: a
-      // reuse answers with the row's own kind, and a browser on a terminal
-      // image would fail with nothing saying why.
-      const bootedKind = result.value.runtimeKind ?? "terminal";
-      if (
-        args.runtimeKind === "desktop-browser" &&
-        bootedKind !== "desktop-browser"
-      ) {
-        // FAIL, do not downgrade. The registry suppresses `browser` for a
-        // terminal binding, so accepting this box would run the whole session
-        // with no browser tools and still report it a success — the attempt
-        // would read as "the model never chose to browse". A control plane
-        // that answers a desktop request with a terminal box is one that
-        // predates per-run desktops, which retrying cannot change.
-        await releaseAttemptSandbox(result.value.sandboxRowId);
+  const outcome = await withCapacityRetry<
+    ProvisionAttemptResult & { status: number }
+  >(
+    async (_attempt, signal) => {
+      const result = await provisionJourneySandbox({
+        bearer: args.bearer,
+        runId: args.runId,
+        targetId: args.targetId,
+        sessionIdx: args.sessionIdx,
+        ...(args.runtimeKind === "desktop-browser"
+          ? { runtimeKind: "desktop-browser" as const }
+          : {}),
+        signal,
+      });
+      // `ok: true` is NOT enough to dereference. `postJson` swallows a body-parse
+      // failure and returns `{ok: true, value: null}` on any 2xx — reachable when
+      // the deadline above fires AFTER the response headers arrive but before the
+      // body is read. Blindly reading `.sandboxId` there would throw a TypeError
+      // straight past this bounded retry, turning the hang the deadline exists to
+      // contain into a worse failure. Treat an unusable body as transient.
+      if (result.ok && result.value?.sandboxId && result.value?.sandboxRowId) {
+        // What ACTUALLY booted, read off the response rather than the request: a
+        // reuse answers with the row's own kind, and a browser on a terminal
+        // image would fail with nothing saying why.
+        const bootedKind = result.value.runtimeKind ?? "terminal";
+        if (
+          args.runtimeKind === "desktop-browser" &&
+          bootedKind !== "desktop-browser"
+        ) {
+          // FAIL, do not downgrade. The registry suppresses `browser` for a
+          // terminal binding, so accepting this box would run the whole session
+          // with no browser tools and still report it a success — the attempt
+          // would read as "the model never chose to browse". A control plane
+          // that answers a desktop request with a terminal box is one that
+          // predates per-run desktops, which retrying cannot change.
+          await releaseAttemptSandbox(result.value.sandboxRowId);
+          return {
+            status: 409,
+            ok: false,
+            retryable: false,
+            code: "desktop_downgraded",
+            message:
+              "This target advertises the browser tool, which needs a desktop " +
+              "computer, but the control plane provisioned a terminal one — it " +
+              "does not support per-run desktop boxes yet. Remove the browser " +
+              "tool from this target, or update the deployment.",
+          };
+        }
         return {
-          ok: false,
-          retryable: false,
-          code: "desktop_downgraded",
-          message:
-            "This target advertises the browser tool, which needs a desktop " +
-            "computer, but the control plane provisioned a terminal one — it " +
-            "does not support per-run desktop boxes yet. Remove the browser " +
-            "tool from this target, or update the deployment.",
+          status: 200,
+          ok: true,
+          sandbox: {
+            sandboxRowId: result.value.sandboxRowId,
+            binding: {
+              sandboxId: result.value.sandboxId,
+              // The CONTROL-PLANE row, which a browser session is recorded
+              // against and every teardown keys on. `bash` never needed it.
+              sandboxRowId: result.value.sandboxRowId,
+              runtimeKind: bootedKind,
+              ...(result.value.workdir
+                ? { workdir: result.value.workdir }
+                : {}),
+            },
+          },
         };
       }
-      return {
-        ok: true,
-        sandbox: {
-          sandboxRowId: result.value.sandboxRowId,
-          binding: {
-            sandboxId: result.value.sandboxId,
-            // The CONTROL-PLANE row, which a browser session is recorded
-            // against and every teardown keys on. `bash` never needed it.
-            sandboxRowId: result.value.sandboxRowId,
-            runtimeKind: bootedKind,
-            ...(result.value.workdir ? { workdir: result.value.workdir } : {}),
-          },
-        },
+      if (result.ok) {
+        logger.warn("[swarm.sandbox] provision returned an unusable body", {
+          runId: args.runId,
+          targetId: args.targetId,
+          sessionIdx: args.sessionIdx,
+        });
+      }
+      // 0 is a network error — also transient. A request that hit its own
+      // deadline surfaces the same way, and is likewise worth retrying; only the
+      // RUN-level signal means "stop", which the loop head checks separately.
+      // An `ok`-but-unusable body reaches here too and is likewise transient.
+      const status = result.ok ? 0 : result.status;
+      const retryable = status === 503 || status === 0;
+      last = {
+        code: status === 503 ? "sandbox_at_capacity" : "sandbox_error",
+        message: result.ok
+          ? "The control plane returned an incomplete provisioning response."
+          : describeAttemptSandboxRefusal(result),
       };
-    }
-    if (result.ok) {
-      logger.warn("[swarm.sandbox] provision returned an unusable body", {
-        runId: args.runId,
-        targetId: args.targetId,
-        sessionIdx: args.sessionIdx,
-      });
-    }
-    // 0 is a network error — also transient. A request that hit its own
-    // deadline surfaces the same way, and is likewise worth retrying; only the
-    // RUN-level signal means "stop", which the loop head checks separately.
-    // An `ok`-but-unusable body reaches here too and is likewise transient.
-    const status = result.ok ? 0 : result.status;
-    const retryable = status === 503 || status === 0;
-    last = {
-      code: status === 503 ? "sandbox_at_capacity" : "sandbox_error",
-      message: result.ok
-        ? "The control plane returned an incomplete provisioning response."
-        : describeAttemptSandboxRefusal(result),
+      return { status, ok: false as const, retryable, ...last };
+    },
+    {
+      ...SWARM_SANDBOX_CAPACITY_POLICY,
+      signal: args.signal,
+      onWait: ({ attempt, result }) =>
+        logger.warn("[swarm.sandbox] provision retrying", {
+          runId: args.runId,
+          targetId: args.targetId,
+          sessionIdx: args.sessionIdx,
+          attempt,
+          status: result.status,
+        }),
+    },
+  );
+  if (outcome.kind === "settled") {
+    const { status: _status, ...result } = outcome.result;
+    return result;
+  }
+  if (outcome.reason === "aborted") {
+    return {
+      ok: false,
+      retryable: false,
+      code: "aborted",
+      message: "Run was cancelled while provisioning a sandbox.",
     };
-    if (!retryable) {
-      return { ok: false, retryable: false, ...last };
-    }
-    if (attempt < MAX_PROVISION_ATTEMPTS) {
-      logger.warn("[swarm.sandbox] provision retrying", {
-        runId: args.runId,
-        targetId: args.targetId,
-        sessionIdx: args.sessionIdx,
-        attempt,
-        status,
-      });
-      await sleep(backoffMs(attempt), args.signal);
-    }
   }
   return { ok: false, retryable: true, ...last };
 }

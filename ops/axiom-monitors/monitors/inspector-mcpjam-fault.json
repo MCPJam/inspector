@@ -52,5 +52,6 @@
     "5. Cross-check Sentry. Capture policy is `origin == 'mcpjam'` and nothing else, so every row here SHOULD have a matching Sentry event with tags `error_origin`, `error_slug`, `capture_source`, and (when a boundary drove it) `error_boundary`. A row here with no Sentry event means the capture half regressed and is its own bug.",
     "",
     "ROLLBACK: revert the definition file, then run `node ops/axiom-monitors/apply.mjs --apply --only inspector-mcpjam-fault`. The --apply flag is required: the script defaults to read-only plan mode. To remove entirely: `node ops/axiom-monitors/apply.mjs --delete inspector-mcpjam-fault`."
-  ]
+  ],
+  "descriptionLengthExempt": true
 }

@@ -6,6 +6,7 @@ import {
   environmentLaunchRejectionError,
   environmentServerIds,
   environmentServerNames,
+  environmentServerRefsForManager,
   isEnvironmentLaunchConflict,
   resolveEnvironmentForLaunch,
   type ResolvedEnvironmentForLaunch,
@@ -108,6 +109,36 @@ describe("environmentServerNames", () => {
       })
     ).toEqual([]);
     expect(environmentServerNames({ ...RESOLVED, servers: [] })).toEqual([]);
+  });
+});
+
+describe("environmentServerRefsForManager", () => {
+  const managerWith = (keys: string[]) => ({
+    hasServer: (serverId: string) => keys.includes(serverId),
+  });
+
+  it("keeps the ids an id-keyed (hosted) manager already holds", () => {
+    expect(
+      environmentServerRefsForManager(RESOLVED, managerWith(["ps_1", "ps_2"]))
+    ).toEqual(["ps_1", "ps_2"]);
+  });
+
+  it("falls back to the display name for a name-keyed (local) manager", () => {
+    expect(
+      environmentServerRefsForManager(
+        RESOLVED,
+        managerWith(["linear", "asana"])
+      )
+    ).toEqual(["linear", "asana"]);
+  });
+
+  it("keeps the id when no name is known, so the caller still reports it", () => {
+    expect(
+      environmentServerRefsForManager(
+        { ...RESOLVED, servers: undefined },
+        managerWith([])
+      )
+    ).toEqual(["ps_1", "ps_2"]);
   });
 });
 

@@ -9,7 +9,7 @@
  * even after somebody edits the shared host.
  *
  * "Server group" is the user-facing vocabulary (it matches the `serverGroup`
- * compose field and the web `ServerGroupPicker`); `serverAttachment` is the
+ * compose field and the web `ServerPicker`); `serverAttachment` is the
  * backend's internal name and stays out of the public contract.
  *
  * These are thin proxies over the same Convex `serverAttachments:*` functions

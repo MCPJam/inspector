@@ -123,6 +123,28 @@ export function environmentServerNames(
 }
 
 /**
+ * Connectable refs for a manager that may key its servers by DISPLAY NAME.
+ *
+ * An environment resolves Convex server IDs, but `/api/mcp` managers register
+ * each server under its display name (see the `managerKey` note in
+ * `local-server-resolver.ts`) — so on the local route every id misses and an
+ * env-backed run reports a connected server as "not connected". Falls back to
+ * the healed name ONLY for an id the manager doesn't hold: hosted managers key
+ * by id and resolve exactly as before, and a server that is genuinely absent
+ * still fails to resolve, now under the name a human recognizes.
+ */
+export function environmentServerRefsForManager(
+  resolved: ResolvedEnvironmentForLaunch,
+  manager: { hasServer(serverId: string): boolean }
+): string[] {
+  const serverIds = environmentServerIds(resolved);
+  const serverNames = environmentServerNames(resolved);
+  return serverIds.map((serverId, index) =>
+    manager.hasServer(serverId) ? serverId : serverNames[index] ?? serverId
+  );
+}
+
+/**
  * The effective server set to echo as `expectedEnvironmentServerIds`. This is
  * the STORED closed set the backend compares against, so it is deliberately
  * NOT the live-healed projection: the backend's drift check re-derives the same

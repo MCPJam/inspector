@@ -330,13 +330,94 @@ In suite settings, the **Computer environment** select lets you pin a built Dock
 
 Once a run completes, the **Run detail** page shows an **Environment** row with the name of the environment used. If the environment has since been deleted, the row shows its raw identifier instead so the record remains durable. Hovering the label shows the image template, digest, and provider from the frozen snapshot taken at run time.
 
+## Grading
+
+Suite settings has a **Grading** tab with three rows, in the order the questions
+get asked: **Pass criteria** (what must pass), **Iterations** (how many times),
+and **Quality gate** (does it regress against a baseline). They are three
+separate settings with three separate Edit affordances — raising the iteration
+count does not move the bar, and moving the bar does not change how much
+evidence there is.
+
+### Pass criteria
+
+A suite has exactly ONE pass criterion, and which one it is decides both the
+field you edit and the units it takes.
+
+| On screen | What it asks | Units | API field |
+| --- | --- | --- | --- |
+| **Suite accuracy** | Does one rate across the whole run reach this percentage? Individual cases have no threshold of their own. | Percentage, 0–100 | `settings.minimumAccuracy` |
+| **Per-case pass rate** | Does each case pass at least this share of its own iterations? A case that falls short fails, whatever the rest of the suite did. | Fraction, 0–1 | `settings.passThreshold` |
+
+<Warning>
+  **These are not two units of one number.** Take ten equally sized cases, nine
+  of which always pass and one of which always fails. A 90% suite accuracy
+  threshold **passes** that run — nine of ten iterations passed. A 0.9 per-case
+  pass rate **fails** it — case ten passed none of its own iterations. Dividing
+  a percentage by 100 therefore moves the bar for every suite with more than
+  one case, and multiplying a fraction by 100 does the same in reverse.
+
+  `mcpjam cloud eval get --suite <name>` reports which criterion a suite uses
+  under `settings.policy`. The CLI and MCP read this criterion first and refuse
+  iteration fields the suite does not use. The CLI converts `--pass-threshold`
+  to the current criterion’s units: `0.9` writes `minimumAccuracy: 90` on a
+  suite-wide suite and `passThreshold: 0.9` on a per-case suite.
+</Warning>
+
+Changing which criterion decides a suite re-decides every case in it. The app,
+CLI and MCP do not offer this change today; it requires a direct API `PATCH`
+with both `settings.repetitions` and `settings.passThreshold`. An explicit
+scope-change operation is a follow-up.
+
+### Iterations
+
+How many times each case runs. Like the criterion, there is one rule per suite,
+and the difference between the two rules is the word in the label:
+
+| On screen | What it does to a case that sets its own count | API field |
+| --- | --- | --- |
+| **Minimum iterations per case** | RAISES it to the floor. A case configured for more keeps its own count. `Off` means no floor — the suite's real state, not a stand-in for 1. | `settings.minimumIterations` |
+| **Iterations per case** | REPLACES it with the suite default. A case that sets its own count uses that instead. | `settings.repetitions` |
+
+So a case configured for 7 iterations runs **7** times under a floor of 3, and
+**3** times under a default count of 3. A per-run iteration override wins
+outright under either rule.
+
+### Evidence requirements
+
+Under a per-case pass rate, a run that did not measure enough can be withheld
+as **inconclusive** rather than passed or failed. Three fields declare what
+"enough" means, and an EMPTY field is not "no minimum" — it selects the
+contract's default:
+
+- **Minimum completion rate** — share of attempted iterations that must finish. Default 80%.
+- **Maximum evaluator error rate** — share of iterations the evaluator may fail on. Default 10%.
+- **Minimum gradeable iterations** — leave empty to require every configured iteration attempted and at least one gradeable, which is the *stricter* rule. A number relaxes that to a count.
+
+A suite decided by the suite accuracy threshold has **no evidence
+requirements**, because it has no validity phase: its runs are always passed or
+failed, never inconclusive. The row says so rather than showing an inactive
+completion floor the suite has never applied.
+
+### Quality gate
+
+A different question from the pass criteria: not "did this run meet the bar"
+but "should this run block a merge". It has its own conditions and requires a
+reason on every change, which appears in the suite's revision history.
+
+The settings page lets you toggle **Any required evaluator errored** — the one
+condition that does not need a baseline. Baseline comparison conditions
+(allowed pass-rate drop, deterministic regressions, p95 latency increase) are
+set via the API or CLI only; if a suite carries one, the settings page lists it
+read-only so you can see what the run will enforce. See [Quality gates](#ci-tab)
+for the full condition reference.
+
 ## Suite execution config
 
 Each eval suite has a **Default Execution Config** section that controls the model, system prompt, temperature, tool approval, connection settings, capabilities, and host context used when running the suite.
 
 - **Model and prompt** — Set the default model ID, system prompt, and temperature for all runs in the suite. When running evals against MCP Apps that render widgets, the eval harness automatically enables browser interaction (screenshot, click, type) for any model that supports both vision and tool calling — not just Claude. Models that lack vision or tool calling run without browser interaction.
 - **Tool approval** — Toggle `requireToolApproval` to pause before each tool call during a run.
-- **Minimum iterations** — Set a floor on how many times each case runs. Every case runs at least this many times, regardless of its own iteration count. Use `mcpjam cloud eval update --suite <name> --min-iterations <1-10>` to set this from the CLI; `off` removes the floor.
 - **Server selection** — Servers are not configured here. They come from the suite's environment. The server picker is intentionally hidden in this editor.
 - **Save / Reset** — Click **Save config** to persist changes. Click **Reset** to revert to the last saved state. Unsaved edits are preserved if the page refreshes the config from the server, but are discarded when you switch to a different suite.
 
@@ -425,7 +506,7 @@ Opening the Evaluate tab lands on the **Overview** view by default, showing run 
 - **Suite accuracy** — pass rate of the most recent run, with the last three runs' trend so you can see whether you're improving or regressing.
 - **Run insights** — an AI-written diff against your previous completed run: which cases moved, which tools changed behavior, which models diverged. Skim this first; it usually points at the right rabbit hole.
 - **Overview tab** — every run with its summary metrics, plus a Suite Health chart whose bars link to individual run rows. Click in for the iteration-level breakdown. The table shows **Date** first, then **Run**, with separate **Client**, **Model**, **Platform**, **Commit**, **Rate**, **Latency**, **Tokens**, and **Calls** columns. The Client column counts unique clients; when there are more than two, a **+N** badge appears — hover it to see all clients in a tooltip.
-- **Cases tab** — every case with its latest verdict and a quick replay button.
+- **Cases tab** — every case with its latest verdict and a quick replay button. To delete a case, hover its row and click the trash icon; a confirmation dialog appears before the case is removed. The trash icon is hidden for CI-managed suites and read-only configurations. You can also delete the open case from the case editor header using the same trash icon — it is hidden for unsaved drafts.
 - **Executions tab** — a flat, filterable list of every individual test execution across all cases, sorted most-recent-first. Each row shows the case name, result (passed/failed/pending/cancelled), and timestamp. Click any row to open it in the compare view.
 
 When you run a suite against multiple host configurations at once, the Runs list groups them into a single collapsible **run group** row showing mean accuracy and longest duration across all hosts. Expand it to inspect each host's individual run.
@@ -489,9 +570,11 @@ rather than as a pass.
 
 ### Run view
 
-The run header shows a **HOLD** or **SHIP** pill for each client/model pairing in the launch. All pairings that share the same decision are grouped into one pill — a single **HOLD** pill lists every client that did not pass, and a **SHIP** pill lists every client that did. Intermediate states (**Running**, **Grading**, **Inconclusive**) each get their own pill. The **Compare runs** and **Run again** buttons are visible directly in the header.
+While a run is in progress, the run header shows a **HOLD** or **SHIP** pill for each client/model pairing to indicate the current trajectory. All pairings that share the same decision are grouped into one pill — a single **HOLD** pill lists every client not yet on track to pass, and a **SHIP** pill lists every client on track to pass. Intermediate states (**Running**, **Grading**, **Inconclusive**) each get their own pill. Once a run finishes, these pills are removed from the header. The **Compare runs** and **Run again** buttons are visible directly in the header.
 
-Below the header, the hero section shows a row per client/model pairing with a pass/fail bar and counts, plus P50 and P95 latency, average tokens, and average tool calls for that pairing. When a previous launch exists, each pairing row also shows a delta — how many more or fewer cases passed compared to the equivalent pairing in the prior launch. The first launch of a suite shows no deltas.
+Below the header, the hero section shows a row per client/model pairing with a pass/fail bar and counts, plus P50 and P95 latency, average tokens, and average tool calls for that pairing. When a previous launch exists and the current run has finished, each pairing row also shows a delta — how many more or fewer cases passed compared to the equivalent pairing in the prior launch. Deltas are hidden while a run is still in progress. The first launch of a suite shows no deltas.
+
+Below the pairing rows, the hero renders a **Findings** block. When findings have been built for the run, it shows a lead finding with a carousel and a **See details** sheet. When no findings have been built yet, a **Build findings** button appears instead — building is deterministic and does not call a model. When findings are unavailable for the run, the hero falls back to a contract-derived "What broke / Next step" summary. For combined runs (multiple clients or models in one report), a **Findings for** selector scopes the findings block to one member run at a time.
 
 The **Test cases** section (formerly the matrix) lists every test case with a search box and **Status**, **Client**, and **Model** filters on one row. There is no master pass/fail bar or "RUN RESULTS" eyebrow label in this section.
 
@@ -500,7 +583,7 @@ A **Results / Metrics** toggle above the case list switches what each cell shows
 - **Results** (default) — pass/fail status, a pass-count fraction, and a progress bar broken down by outcome.
 - **Metrics** — P50 and P95 latency, average tokens per iteration, and average tool calls per iteration.
 
-Click a **test case name** to open its definition — the user prompt, checks, and expected outcome. Click a **result cell** (pass/fail) to open a **case drawer** with per-pairing averages (passed count, P50, P95, tokens, calls) and a flat iteration list. Click an iteration row to open its full detail view — scorecard, transcript, tool calls, and trace — without leaving the run page. A **Back** breadcrumb returns to the iteration list.
+Click a **test case name** to open its definition — the user prompt, checks, and expected outcome. Click a **result cell** (pass/fail) to open a **case drawer** with per-pairing averages (passed count, P50, P95, tokens, calls) and a flat iteration list. Click an iteration row to open its full detail view — scorecard, transcript, tool calls, and trace — without leaving the run page. A **Back** breadcrumb returns to the iteration list. In the scorecard, each scorer row shows an **Expected** field (the configured criterion) and an **Actual** field (what the run recorded). When the findings pipeline has produced a narrative for the iteration, the **Actual** field shows the AI-generated explanation with a cited trace evidence disclosure; if the narrative predates the latest grade it is marked stale and the recorded evidence is shown instead.
 
 For CI-managed (SDK) suites, clicking a test name still opens the definition in read-only mode — configuration edits remain locked, but you can inspect the prompt and checks.
 
@@ -518,7 +601,7 @@ For CI-managed (SDK) suites, clicking a test name still opens the definition in 
 
 #### Comparing two runs
 
-Select any two completed runs and click **Compare**. The diff view shows per-case status changes: **Passed**, **Still failing**, **Regressed** (pass→fail), **Fixed** (fail→pass), **New**, **Removed**, and **Changed** (config differed). Summary metrics show deltas for tokens, cost, and duration.
+Select any two completed runs and click **Compare**. The diff view shows per-case status changes: **Passed**, **Still failing**, **Regressed** (pass→fail), **Fixed** (fail→pass), **New**, **Removed**, and **Changed** (config differed). Summary metrics show deltas for tokens, cost, and duration. In the per-run comparison table, metric deltas (pass rate, P50, P95, tokens) appear inline beside their value rather than in separate Δ columns.
 
 ### Case view
 
@@ -539,6 +622,12 @@ In both cases the dialog shows the servers recorded for that session, lets you s
 ## Generating cases from your tools
 
 The **Generate** button reads your attached servers' tool catalog and drafts realistic cases — a mix of positive ("call `search` with a query") and negative ("don't call `delete_user` on a meta-question"). Treat it as a draft: skim, edit the prompts to match how your users actually talk, tighten the assertions, then save.
+
+While generation is open, the breadcrumb reads **Evaluate / &lt;suite&gt; / Generate test cases**. Click the suite name in the breadcrumb to exit the generation view and return to the suite overview at any time.
+
+If generation fails because no tools are marked read-only, the workspace offers **Change generation settings** rather than a retry — retrying the same request would fail identically. Change the scope in the settings dialog, then generate again. For other failures (such as model-dependent ones), **Retry generation** is offered instead.
+
+Once every draft has been saved or discarded, the workspace shows **Every generated case has been reviewed** and a **Back to &lt;suite&gt;** button. A run that produced no cases at all shows **No cases were generated** instead.
 
 When the suite has a saved server group spanning two or more servers, the generator produces coverage for each server individually plus at least one cross-server case. Suites without a saved server group treat all available servers as a single pool.
 

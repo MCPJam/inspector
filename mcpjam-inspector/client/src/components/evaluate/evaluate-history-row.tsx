@@ -4,6 +4,7 @@ import {
   TableHeader,
   TableRow,
 } from "@mcpjam/design-system/table";
+import { Skeleton } from "@mcpjam/design-system/skeleton";
 import { cn } from "@/lib/utils";
 import { runClientIdentity } from "../evals/helpers";
 import {
@@ -95,6 +96,48 @@ function historyTimestamp(value: number): number | null {
   return Number.isFinite(value) && value > 0 ? value : null;
 }
 
+/**
+ * One row, entirely unread.
+ *
+ * A launch is keyed by its runs' `runGroupId`, which is only known once the
+ * run's detail has been read — so before that, a fanned-out launch is split
+ * across one row per run and merges into one as the detail arrives. Rows
+ * therefore appear, merge and renumber under the reader. Drawing a real row
+ * out of half-read data reports run numbers and clients that are about to
+ * change; this reports that the row is not known yet, which is the truth.
+ */
+export function EvaluateHistoryRowSkeleton({
+  showSuite = false,
+}: {
+  showSuite?: boolean;
+}) {
+  // Paired with the header above: one entry per column, sized to what the
+  // loaded cell holds so the columns do not jump when the real row lands.
+  const widths = [
+    "w-6",
+    ...(showSuite ? ["w-24"] : []),
+    "w-16",
+    "w-24",
+    "w-14",
+    "w-11",
+    "w-10",
+    "w-14",
+    "w-28",
+    "w-9",
+    "w-9",
+    "w-5",
+  ];
+  return (
+    <TableRow aria-hidden data-testid="run-history-row-skeleton">
+      {widths.map((width, index) => (
+        <TableCell key={index}>
+          <Skeleton className={cn("h-3", width)} />
+        </TableCell>
+      ))}
+    </TableRow>
+  );
+}
+
 /** One row per launch, preserving fan-out client/model pairs and loaded-data gaps. */
 export function EvaluateHistoryRow({
   rows,
@@ -144,14 +187,22 @@ export function EvaluateHistoryRow({
   // alone. Keying it by commit as well printed "GitHub Actions" once per
   // distinct commit in a launch that fanned out over several.
   const platforms = [
-    ...new Map(rows.map((row) => [resolveRunOrigin(row) ?? "ui", row])).values(),
+    ...new Map(
+      rows.map((row) => [resolveRunOrigin(row) ?? "ui", row]),
+    ).values(),
   ];
   const createdAt = historyTimestamp(representative.createdAt);
-  const clientRows = rows.map((row) => historyRows.get(row._id) ?? {
-    client: runClientIdentity({ client: row.client, namedHostId: row.namedHostId ?? undefined }, hostNamesById).name,
-    hostStyle: row.client?.hostStyle,
-    models: row.client?.modelId ? [row.client.modelId] : [],
-  });
+  const clientRows = rows.map(
+    (row) =>
+      historyRows.get(row._id) ?? {
+        client: runClientIdentity(
+          { client: row.client, namedHostId: row.namedHostId ?? undefined },
+          hostNamesById,
+        ).name,
+        hostStyle: row.client?.hostStyle,
+        models: row.client?.modelId ? [row.client.modelId] : [],
+      },
+  );
   return (
     <TableRow
       data-testid={testId}
@@ -209,7 +260,9 @@ export function EvaluateHistoryRow({
             : undefined
         }
       >
-        <span>{rollup?.passRate != null ? `${rollup.passRate}%` : MISSING}</span>
+        <span>
+          {rollup?.passRate != null ? `${rollup.passRate}%` : MISSING}
+        </span>
         {/* Rendered, not just a tooltip: the counts behind the percentage are
             unreachable on touch and to a screen reader when they live in a
             `title` alone. */}

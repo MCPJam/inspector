@@ -1,3 +1,4 @@
+import { PricingFeatureSignInGate } from "./components/billing/PricingFeatureSignInGate";
 import { useCurrentPathname } from "./lib/app-navigation";
 import { SettingsDraftProvider } from "./components/settings/SettingsDraftProvider";
 import { SettingsNavigation } from "./components/settings/SettingsNavigation";
@@ -19,6 +20,7 @@ import { toast } from "@/lib/toast";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
 import { PlanLimitDialog } from "./components/billing/PlanLimitDialog";
 import { SessionRefreshBanner } from "./components/session-refresh-banner";
+import { GuestSessionRefusedBanner } from "./components/guest-session-refused-banner";
 import { HomeTab } from "./components/HomeTab";
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
@@ -916,10 +918,10 @@ export function HostsRoute() {
     idShapedHostId === null
       ? "none"
       : isRouteHostListLoading
-        ? "pending"
-        : routeHosts.some((h) => h.hostId === idShapedHostId)
-          ? "live"
-          : "dead";
+      ? "pending"
+      : routeHosts.some((h) => h.hostId === idShapedHostId)
+      ? "live"
+      : "dead";
 
   // The id the canvas may open. A dead id resolves to null HERE, before it
   // reaches shared state, which is what keeps this route out of a fight with
@@ -1435,6 +1437,14 @@ export function ToolsRoute() {
  * billing feature because they are one tab.
  */
 export function EvalsRoute({ mode }: { mode?: EvalsMode } = {}) {
+  return (
+    <PricingFeatureSignInGate feature="Evals">
+      <EvalsRouteContent mode={mode} />
+    </PricingFeatureSignInGate>
+  );
+}
+
+function EvalsRouteContent({ mode }: { mode?: EvalsMode } = {}) {
   const {
     billingUiEnabled,
     activeTabBillingLocked,
@@ -1482,6 +1492,14 @@ export function EvalsRoute({ mode }: { mode?: EvalsMode } = {}) {
  * on `/evals/runs`.
  */
 export function EvaluateRoute() {
+  return (
+    <PricingFeatureSignInGate feature="Evals">
+      <EvaluateRouteContent />
+    </PricingFeatureSignInGate>
+  );
+}
+
+function EvaluateRouteContent() {
   const {
     billingUiEnabled,
     activeTabBillingLocked,
@@ -1530,7 +1548,7 @@ export function ConformanceRoute() {
     projectId: convexProjectId,
   });
   const savedServerId = selectedServerEntry?.name
-    ? (serversByName.get(selectedServerEntry.name) ?? null)
+    ? serversByName.get(selectedServerEntry.name) ?? null
     : null;
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -1608,6 +1626,14 @@ export function CompatibilityRoute() {
 // `/user-testing/:scenarioId` (one scenario). Same billing feature and
 // `sandboxes-enabled` flag as Swarms below.
 export function ScenariosRoute() {
+  return (
+    <PricingFeatureSignInGate feature="User testing">
+      <ScenariosRouteContent />
+    </PricingFeatureSignInGate>
+  );
+}
+
+function ScenariosRouteContent() {
   const {
     billingUiEnabled,
     activeTabBillingLocked,
@@ -1710,6 +1736,14 @@ function decodeParam(raw: string): string | null {
 }
 
 export function SwarmsRoute() {
+  return (
+    <PricingFeatureSignInGate feature="Swarm">
+      <SwarmsRouteContent />
+    </PricingFeatureSignInGate>
+  );
+}
+
+function SwarmsRouteContent() {
   // Project-scoped Swarms surface (Persona → Journey → Run redesign) — no
   // longer a per-host scenario tab. Keeps the same billing gate as the scenario
   // product surface, and re-mounts per project so selection state can't leak
@@ -1981,7 +2015,8 @@ export function SkillsRoute() {
   const { convexProjectId, isAuthenticated, isGuestProjectActor, appState } =
     useAppRouteContext();
   const servers = appState?.servers as
-    Record<string, ServerWithName> | undefined;
+    | Record<string, ServerWithName>
+    | undefined;
   // Names, in both modes. The local manager registers connections under their
   // name, and the hosted API layer resolves a name to its Convex server id
   // inside `buildServerRequest` — so resolving here too would duplicate that,
@@ -2582,8 +2617,8 @@ export default function App() {
     activeTab === "oauth-flow"
       ? "oauth"
       : activeTab === "xaa-flow" && xaaEnabled === true
-        ? "xaa"
-        : null;
+      ? "xaa"
+      : null;
   const { hidden: hiddenHeaderServers, hide: hideHeaderServer } =
     useHiddenHeaderServers(headerHiddenSurface);
 
@@ -3017,8 +3052,8 @@ export default function App() {
         !appReturnPath
           ? "absent"
           : restoredPath === appReturnPath
-            ? "restored"
-            : "superseded",
+          ? "restored"
+          : "superseded",
       );
       const projectReturnIntent =
         createProjectSignInReturnRecoveryIntent(restoredPath);
@@ -3232,8 +3267,8 @@ export default function App() {
     const names = appState.selectedMultipleServers.length
       ? appState.selectedMultipleServers
       : appState.selectedServer && appState.selectedServer !== "none"
-        ? [appState.selectedServer]
-        : [];
+      ? [appState.selectedServer]
+      : [];
     publishSelectedServerNames(names);
   }, [appState.selectedMultipleServers, appState.selectedServer]);
   const persistRuntimeServerToProjectRef = useRef(
@@ -3521,7 +3556,7 @@ export default function App() {
     setHostsTabSelectedHostId(null);
   }, [convexProjectId]);
   const routeScopedOrganizationId = hasRouteOrganization
-    ? (routeOrganizationId ?? null)
+    ? routeOrganizationId ?? null
     : null;
   const rawBillingOrganizationId =
     routeScopedOrganizationId ??
@@ -3626,10 +3661,10 @@ export default function App() {
   const createProjectDisabledReason = guestProjectLimitReached
     ? "Sign in to create more projects"
     : noOrganizationsAvailable
-      ? "Create or join an organization to create projects"
-      : insufficientOrgRoleForCreate
-        ? "You don't have permission to create projects"
-        : (projectCreationGate.denialMessage ?? undefined);
+    ? "Create or join an organization to create projects"
+    : insufficientOrgRoleForCreate
+    ? "You don't have permission to create projects"
+    : projectCreationGate.denialMessage ?? undefined;
   const [trialModalDismissedForOrg, setTrialModalDismissedForOrg] = useState<
     string | null
   >(null);
@@ -4097,8 +4132,8 @@ export default function App() {
         const selectedServers = appState.selectedMultipleServers?.length
           ? appState.selectedMultipleServers
           : focused
-            ? [focused]
-            : [];
+          ? [focused]
+          : [];
         return {
           path: pathname,
           activeTab: pathnameToActiveTab(pathname),
@@ -4633,7 +4668,7 @@ export default function App() {
   const fallbackProjectIdForStaleReturn =
     activeProject && authoritativeMembershipProjectIds?.has(activeProjectId)
       ? activeProjectId
-      : (allMembershipProjects?.[0]?._id ?? null);
+      : allMembershipProjects?.[0]?._id ?? null;
   const projectReturnRecoveryDecision = resolveProjectSignInReturnRecovery({
     intent: pendingProjectReturnRecovery,
     membershipProjectIds: authoritativeMembershipProjectIds,
@@ -4797,7 +4832,8 @@ export default function App() {
     ]);
 
   const playgroundServerSelectorProps = useMemo(():
-    PlaygroundServerSelectorProps | undefined => {
+    | PlaygroundServerSelectorProps
+    | undefined => {
     if (activeTab !== "playground") return undefined;
     return {
       serverConfigs: displayServerConfigs,
@@ -4988,8 +5024,8 @@ export default function App() {
             activeTab === "xaa-flow" && xaaEnabled === true
               ? () => setXaaServerModalNonce((n) => n + 1)
               : activeTab === "oauth-flow"
-                ? () => setOauthServerModalNonce((n) => n + 1)
-                : undefined,
+              ? () => setOauthServerModalNonce((n) => n + 1)
+              : undefined,
           isMultiSelectEnabled: activeTab === "chat",
           onMultiServerToggle: toggleServerSelection,
           selectedMultipleServers: appState.selectedMultipleServers,
@@ -5380,6 +5416,7 @@ export default function App() {
             <MCPJamLimitDialog />
             <PlanLimitDialog />
             <SessionRefreshBanner />
+            <GuestSessionRefusedBanner />
             <div
               data-testid="app-shell"
               aria-hidden={shouldShowBillingHandoffOverlay || undefined}

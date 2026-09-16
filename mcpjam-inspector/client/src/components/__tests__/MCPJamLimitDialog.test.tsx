@@ -155,7 +155,10 @@ beforeEach(() => {
     period: null,
     pendingInput: null,
   });
-  useModelPickerIntentStore.setState({ openProvidersTabNonce: 0 });
+  useModelPickerIntentStore.setState({
+    openProvidersTabNonce: 0,
+    providersTabResponderCount: 0,
+  });
 });
 
 afterEach(() => {
@@ -652,11 +655,13 @@ describe("MCPJamLimitDialog", () => {
     expect(href).not.toContain("upgrade Acme Robotics to the Team plan");
   });
 
-  it("opens the model picker's Your providers tab on BYOK click (no org redirect)", async () => {
+  it("opens the model picker's Your providers tab when a picker is mounted", async () => {
     const user = userEvent.setup();
     authState.user = { id: "user-1" };
     localStorage.setItem("active-organization-id:user-1", "org-active");
     useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "topup" });
+    // A picker that honours the intent is on screen (the chat composer).
+    useModelPickerIntentStore.setState({ providersTabResponderCount: 1 });
     const nonceBefore =
       useModelPickerIntentStore.getState().openProvidersTabNonce;
     render(<MCPJamLimitDialog />);
@@ -672,6 +677,53 @@ describe("MCPJamLimitDialog", () => {
       nonceBefore + 1
     );
     expect(window.location.pathname).not.toContain("/models");
+  });
+
+  it("sends BYOK to the org AI providers page when no picker is mounted", async () => {
+    // The wall is raised from the eval generation screen, the Ask MCPJam
+    // panel and the Markdown import dialog too, and none of them mounts a
+    // picker that listens. Firing the intent there closed the dialog and did
+    // nothing at all, which is the bug this branch fixes.
+    const user = userEvent.setup();
+    authState.user = { id: "user-1" };
+    localStorage.setItem("active-organization-id:user-1", "org-active");
+    useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "topup" });
+    const nonceBefore =
+      useModelPickerIntentStore.getState().openProvidersTabNonce;
+    render(<MCPJamLimitDialog />);
+
+    await user.click(
+      screen.getByRole("button", { name: /use your own API key/i })
+    );
+
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
+    expect(window.location.pathname).toContain(
+      "/organizations/org-active/models"
+    );
+    // No point asking a picker that isn't there.
+    expect(useModelPickerIntentStore.getState().openProvidersTabNonce).toBe(
+      nonceBefore
+    );
+  });
+
+  it("holds the dialog open when BYOK has no organization to route to", async () => {
+    const user = userEvent.setup();
+    authState.user = { id: "user-1" };
+    useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "topup" });
+    // jsdom keeps one location for the whole file, so compare against where
+    // we started rather than asserting the absence of a path a sibling test
+    // may already have pushed.
+    const pathBefore = window.location.pathname;
+    render(<MCPJamLimitDialog />);
+
+    await user.click(
+      screen.getByRole("button", { name: /use your own API key/i })
+    );
+
+    // Same guard as Buy credits: dropping the user on nothing is worse than
+    // leaving the wall up while the membership query lands.
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
+    expect(window.location.pathname).toBe(pathBefore);
   });
 
   const openSwarmWall = (

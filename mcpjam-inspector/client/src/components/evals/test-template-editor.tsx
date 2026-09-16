@@ -4,7 +4,7 @@ import {
   readEvalToolMetadata,
   useEvalToolMetadata,
 } from "@/lib/mcpjam-agent/eval-tool-metadata";
-import { DEFAULTS } from "./constants";
+import { DEFAULTS, EVAL_DESTRUCTIVE_BUTTON_CLASS } from "./constants";
 import {
   caseViewModel,
   capturedCaseChanged,
@@ -34,10 +34,19 @@ import {
   RotateCw,
   Save,
   Square,
+  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { listEvalTools, streamEvalTestCase } from "@/lib/apis/evals-api";
 import { Button } from "@mcpjam/design-system/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@mcpjam/design-system/dialog";
 import {
   Tooltip,
   TooltipContent,
@@ -246,22 +255,16 @@ import { SimpleCaseForm } from "../evaluate/simple-case/simple-case-form";
 import { CaseSpine } from "../evaluate/case-spine/case-spine";
 import { CaseJudgeAnswer } from "../evaluate/case-scorecard/case-judge-answer";
 import {
-  appendCaseScorer,
   buildCaseScorecard,
   type CaseScorecardInput,
 } from "../evaluate/case-scorecard/case-scorecard-model";
 import { coverageDetailByStage } from "../evaluate/case-scorecard/case-coverage";
 import { NextQuestionLine } from "../evaluate/case-scorecard/next-question-line";
 import { groupCaseIterations } from "./runs/group-case-iterations";
-import {
-  SuggestedFromRunSection,
-  useSuggestedScorers,
-} from "../evaluate/case-scorecard/suggested-from-run-section";
-import type { Suggestion } from "../evaluate/case-scorecard/suggest-from-run";
+import { useSuggestedScorers } from "../evaluate/case-scorecard/suggested-from-run-section";
 import { CaseRunSetup } from "../evaluate/case-workspace/case-run-setup";
 import {
   caseHasOwnAssertion,
-  deriveCaseKind,
   initialToolsChoice,
   isToolCalledWithAssert,
   readSimpleCase,
@@ -295,7 +298,6 @@ import { chainForQuickRunIteration } from "../evaluate/simple-case/quick-run-cha
 import { TrialJudgeReviewPanel } from "./trial-judge-review";
 import { TrialScorecard } from "../evaluate/case-scorecard/trial-scorecard";
 import { authoredForTrial } from "../evaluate/case-scorecard/trial-authored";
-import { adoptRouteFromIteration } from "../evaluate/simple-case/route-rollup";
 
 interface TestTemplate {
   title: string;
@@ -320,6 +322,12 @@ interface TestTemplate {
 interface TestTemplateEditorProps {
   suiteId: string;
   selectedTestCaseId: string;
+  /**
+   * Delete this case and leave the editor. The caller owns both halves —
+   * the mutation is the suite list's batch delete, and only the caller knows
+   * where the editor should land afterwards. Absent hides the header trash.
+   */
+  onDeleteCase?: (testCaseId: string) => Promise<void>;
   connectedServerNames: Set<string>;
   projectId: string | null;
   /**
@@ -967,6 +975,7 @@ function CaseEditorTabs({
 export function TestTemplateEditor({
   suiteId,
   selectedTestCaseId,
+  onDeleteCase,
   connectedServerNames,
   projectId,
   availableModels,
@@ -1084,7 +1093,6 @@ export function TestTemplateEditor({
     iterationId: string;
     mode: "steps";
   } | null>(null);
-  const suggestionsRef = useRef<HTMLDivElement>(null);
   const [mobileVisibleModelValue, setMobileVisibleModelValue] = useState<
     string | null
   >(null);
@@ -1174,6 +1182,23 @@ export function TestTemplateEditor({
   // locally and only persist on Save. See ./draft-test-case.ts.
   const draftKind = parseDraftTestCaseId(selectedTestCaseId);
   const isDraft = draftKind !== null;
+  const [deleteCaseOpen, setDeleteCaseOpen] = useState(false);
+  const [isDeletingCase, setIsDeletingCase] = useState(false);
+
+  const confirmDeleteCase = async () => {
+    if (!onDeleteCase || isDeletingCase) return;
+    setIsDeletingCase(true);
+    try {
+      await onDeleteCase(selectedTestCaseId);
+      toast.success("Test case deleted");
+      setDeleteCaseOpen(false);
+    } catch (error) {
+      console.error("Failed to delete test case:", error);
+      toast.error("Failed to delete test case");
+    } finally {
+      setIsDeletingCase(false);
+    }
+  };
 
   // Same readiness gate the suite list upstream uses: a signed-in actor must
   // wait for its `users` row, while an actor that will never have one (a
@@ -1472,7 +1497,9 @@ export function TestTemplateEditor({
           hasChecks:
             Boolean(editForm?.predicates?.list?.length) ||
             (editForm?.steps ?? []).some((step) => step.kind === "assert"),
-          hasSuggestions: chainSuggestions.output.suggestions.length > 0,
+          // The suggestions section left the scorecard, so "Review the
+          // suggestions" has nothing to point at. The other prompts stand.
+          hasSuggestions: false,
           suiteHasGate: Boolean(
             suite?.defaultPredicates?.some(
               (p: Predicate) => p.role !== "advisory",
@@ -1493,11 +1520,6 @@ export function TestTemplateEditor({
           } else if (action === "gate") onOpenSuiteSettings?.();
           else if (action === "failure") {
             setTrialTabRequest({ iterationId: iteration._id, mode: "steps" });
-          } else if (action === "harden") {
-            suggestionsRef.current?.scrollIntoView?.({
-              block: "nearest",
-              behavior: "smooth",
-            });
           }
         }}
       />
@@ -2000,125 +2022,6 @@ export function TestTemplateEditor({
         chainSuggestions.output.suggestions,
       ),
     [chainCoverageInput, chainSuggestions.output.suggestions],
-  );
-
-  const [dismissedSuggestions, setDismissedSuggestions] = useState<
-    ReadonlySet<string>
-  >(() => new Set());
-  const [acceptedSuggestions, setAcceptedSuggestions] = useState<
-    ReadonlySet<string>
-  >(() => new Set());
-
-  /**
-   * Accept one or more suggestions, in ONE draft update.
-   *
-   * "Add all" cannot be a loop of single accepts: `editFormStepsRef` only
-   * refreshes after a render, so the second insert would compute its anchor
-   * from the pre-insert list and the two would collide. Folding them means a
-   * later anchor still resolves against the steps the earlier one produced.
-   */
-  const acceptSuggestions = useCallback(
-    (list: Suggestion[], via: "row" | "all" | "chain") => {
-      if (list.length === 0) return;
-      const batchKey = suggestionBatch?.key ?? "";
-      setEditForm((current) => {
-        if (!current) return current;
-        let steps = current.steps;
-        let predicates = current.predicates;
-        for (const suggestion of list) {
-          if (suggestion.kind === "route" && suggestion.route) {
-            // "No tool should be called" is a CASE-LEVEL claim, not a step.
-            // `adoptRouteFromIteration` only removes tool assertions for an
-            // empty observed route, which leaves the case unrestricted — the
-            // row said "Added" while nothing was saved. The tool question is
-            // what carries it, and it is what `buildSavePayload` reads to send
-            // `isNegativeTest`.
-            if (suggestion.route.noTool) {
-              setSimpleToolsChoice("noTool");
-            } else {
-              setSimpleToolsChoice("tools");
-            }
-            const iteration = recentIterations.find(
-              (it) => it._id === suggestion.route!.iterationId,
-            );
-            if (iteration) {
-              steps = adoptRouteFromIteration(
-                steps,
-                iteration,
-                deriveCaseKind(
-                  resolveMatchOptions(
-                    suite?.defaultMatchOptions,
-                    current.matchOptions,
-                  ),
-                ),
-              );
-            }
-            continue;
-          }
-          if (suggestion.placement.kind === "afterStep") {
-            const anchor = suggestion.placement.anchorStepId;
-            const assertion =
-              suggestion.predicate ?? suggestion.widgetAssertion;
-            if (!assertion) continue;
-            // The anchor came from the trial's frozen snapshot; a draft edited
-            // since may no longer contain it. A turn-scoped check still means
-            // something as a whole-run check, so it falls back rather than
-            // being dropped; a widget assertion does not, and is skipped.
-            if (!steps.some((step) => step.id === anchor)) {
-              if (suggestion.predicate) {
-                predicates = appendCaseScorer(predicates, suggestion.predicate);
-              }
-              continue;
-            }
-            steps = insertStepAfter(steps, anchor, {
-              id: newStepId("assert"),
-              kind: "assert",
-              assertion,
-            } as TestStep);
-            continue;
-          }
-          if (suggestion.predicate) {
-            predicates = appendCaseScorer(predicates, suggestion.predicate);
-          }
-        }
-        return { ...current, steps, predicates };
-      });
-      setAcceptedSuggestions((current) => {
-        const next = new Set(current);
-        for (const suggestion of list) {
-          next.add(`${batchKey}|${suggestion.key}`);
-        }
-        return next;
-      });
-      for (const suggestion of list) {
-        track("eval_suggestion_accepted", {
-          kind: suggestion.predicate?.type ?? suggestion.kind,
-          role: suggestion.role,
-          stability_held: suggestion.stability.held,
-          stability_of: suggestion.stability.of,
-          placement: suggestion.placement.kind,
-          stage: suggestion.stage,
-          via,
-        });
-      }
-    },
-    [suggestionBatch?.key, recentIterations, suite?.defaultMatchOptions],
-  );
-
-  const dismissSuggestion = useCallback(
-    (suggestion: Suggestion) => {
-      const batchKey = suggestionBatch?.key ?? "";
-      setDismissedSuggestions((current) =>
-        new Set(current).add(`${batchKey}|${suggestion.key}`),
-      );
-      track("eval_suggestion_dismissed", {
-        kind: suggestion.predicate?.type ?? suggestion.kind,
-        role: suggestion.role,
-        placement: suggestion.placement.kind,
-        stage: suggestion.stage,
-      });
-    },
-    [suggestionBatch?.key],
   );
 
   /** Save the current draft before launching a judged, case-scoped run. */
@@ -4051,11 +3954,6 @@ export function TestTemplateEditor({
                 Undo
               </Button>
             )}
-            {draftKind === "describe" && (
-              <Button size="sm" variant="outline" onClick={evalAgent.open}>
-                Ask MCPJam
-              </Button>
-            )}
           </div>
         </div>
       )}
@@ -4430,6 +4328,26 @@ export function TestTemplateEditor({
                     </TooltipTrigger>
                     <TooltipContent variant="muted" side="top" sideOffset={6}>
                       Iterations for the next run
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+                {onDeleteCase && !isDraft && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 px-2 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                        aria-label="Delete test case"
+                        data-testid="case-header-delete"
+                        onClick={() => setDeleteCaseOpen(true)}
+                      >
+                        <Trash2 className="size-3.5" aria-hidden />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent variant="muted" side="top" sideOffset={6}>
+                      Delete test case
                     </TooltipContent>
                   </Tooltip>
                 )}
@@ -5224,54 +5142,6 @@ export function TestTemplateEditor({
                               )}
                               envelope={ctx.envelope}
                               judgeHidden={ctx.reviewActive && ctx.judgeHidden}
-                              suggestionsSlot={
-                                useSpine ? (
-                                  <div ref={suggestionsRef}>
-                                    <SuggestedFromRunSection
-                                      enabled
-                                      batch={suggestionBatch}
-                                      authored={
-                                        authoredForTrial({
-                                          trial: workspaceSelectedTrial,
-                                          draft: workspaceDraftScorecardInput,
-                                          run: workspaceTrialRun ?? null,
-                                        }).authored
-                                      }
-                                      judgeFor={(iteration) =>
-                                        resolveIterationJudge(
-                                          iteration,
-                                          suiteRuns,
-                                        )
-                                      }
-                                      selectedBlob={
-                                        ctx.envelope
-                                          ? {
-                                              iterationId:
-                                                workspacePersistedIteration._id,
-                                              blob: ctx.envelope as never,
-                                            }
-                                          : null
-                                      }
-                                      prompts={(editForm?.steps ?? [])
-                                        .filter(
-                                          (step) => step.kind === "prompt",
-                                        )
-                                        .map((step) =>
-                                          "prompt" in step ? step.prompt : "",
-                                        )}
-                                      dismissed={dismissedSuggestions}
-                                      accepted={acceptedSuggestions}
-                                      onAccept={(suggestion) =>
-                                        acceptSuggestions([suggestion], "row")
-                                      }
-                                      onAcceptAll={(all) =>
-                                        acceptSuggestions(all, "all")
-                                      }
-                                      onDismiss={dismissSuggestion}
-                                    />
-                                  </div>
-                                ) : null
-                              }
                               judgeSlot={
                                 // The tab owns launch-triggered judging; this
                                 // row owns presentation and the review control.
@@ -5835,6 +5705,42 @@ export function TestTemplateEditor({
           </div>
         </div>
       )}
+      <Dialog
+        open={deleteCaseOpen}
+        onOpenChange={(open) => {
+          if (!open && !isDeletingCase) setDeleteCaseOpen(false);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Trash2 className="size-5 text-destructive" aria-hidden />
+              Delete test case
+            </DialogTitle>
+            <DialogDescription>
+              Delete “{editForm?.title || "Untitled test case"}”? This cannot be
+              undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setDeleteCaseOpen(false)}
+              disabled={isDeletingCase}
+            >
+              Cancel
+            </Button>
+            <Button
+              className={EVAL_DESTRUCTIVE_BUTTON_CLASS}
+              data-testid="case-header-delete-confirm"
+              onClick={confirmDeleteCase}
+              disabled={isDeletingCase}
+            >
+              {isDeletingCase ? "Deleting…" : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

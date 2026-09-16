@@ -6,6 +6,9 @@ import { CreditBalanceCard } from "../CreditBalanceCard";
 
 let balanceState:
   | {
+      outstandingDeficitCredits?: number;
+      rolloverCreditsRemaining?: number;
+      topUpEligible?: boolean;
       paidCreditsRemaining: number;
       hasPurchaseHistory: boolean;
       freeDailyPercentUsed: number;
@@ -13,7 +16,7 @@ let balanceState:
       freeDailyCreditsTotal: number;
       freeDailyResetAt: number;
       walletLocked: boolean;
-      billingModel?: "daily" | "monthly_per_seat";
+      billingModel?: "daily" | "monthly_per_seat" | "monthly_flat";
       monthlyAllowanceTotal?: number;
       monthlyAllowanceRemaining?: number;
       monthlyResetAt?: number | null;
@@ -39,7 +42,17 @@ vi.mock("@/hooks/useCreditBalance", () => ({
 
 vi.mock("@/hooks/useAutoTopup", () => ({
   useAutoTopup: () => ({
-    enrollment: null,
+    view: {
+      revision: 0,
+      preferences: null,
+      status: "not_configured",
+      eligible: true,
+      activationAllowed: false,
+      refillPriceCents: null,
+      card: null,
+      paymentIssue: null,
+      monthlySpend: { month: "2026-09", chargedCents: 0, reservedCents: 0 },
+    },
     isLoading: false,
     querySkipped: false,
     error: null,
@@ -55,8 +68,8 @@ vi.mock("@/hooks/use-eval-iteration-quota", () => ({
     isLoading: evalQuotaLoadingState,
     isAtLimit: Boolean(
       evalQuotaState &&
-      evalQuotaState.allowed !== null &&
-      evalQuotaState.used >= evalQuotaState.allowed,
+        evalQuotaState.allowed !== null &&
+        evalQuotaState.used >= evalQuotaState.allowed,
     ),
   }),
 }));
@@ -99,6 +112,111 @@ describe("CreditBalanceCard", () => {
     window.location.hash = "";
   });
 
+  it("shows debt and carried credits separately from available credits", () => {
+    balanceState = {
+      ...balanceState!,
+      outstandingDeficitCredits: 125,
+      rolloverCreditsRemaining: 700,
+    };
+    render(<CreditBalanceCard />);
+    expect(screen.getByTestId("usage-debt")).toHaveTextContent("125 credits");
+    expect(screen.getByTestId("usage-rollover")).toHaveTextContent(
+      "700 credits",
+    );
+  });
+  it("hides purchase controls for an ineligible Free wallet, including deep links", () => {
+    balanceState = { ...balanceState!, topUpEligible: false };
+    window.history.replaceState({}, "", "/?topup=open");
+    render(<CreditBalanceCard organizationId="org-1" canManageCredits />);
+    expect(
+      screen.queryByRole("button", { name: "Buy credits" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "Auto-reload" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByTestId("topup-dialog")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Upgrade to Pro to buy credits" }),
+    ).toHaveAttribute("href", "/organizations/org-1/plans");
+    window.history.replaceState({}, "", "/");
+  });
+
+  it("does not prescribe an upgrade to a locked wallet", () => {
+    balanceState = {
+      ...balanceState!,
+      topUpEligible: false,
+      walletLocked: true,
+    };
+    render(<CreditBalanceCard organizationId="org-1" canManageCredits />);
+    expect(
+      screen.queryByText("Upgrade to Pro to buy credits"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("usage-wallet-locked")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Buy credits" }),
+    ).not.toBeInTheDocument();
+  });
+  it("keeps eligible Pro purchase controls available", () => {
+    balanceState = {
+      ...balanceState!,
+      topUpEligible: true,
+      billingModel: "monthly_flat",
+    };
+    render(<CreditBalanceCard canManageCredits />);
+    expect(
+      screen.getByRole("button", { name: "Buy credits" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: "Auto-reload" }),
+    ).toBeInTheDocument();
+  });
+  it("omits absent or zero debt and rollover", () => {
+    balanceState = {
+      ...balanceState!,
+      outstandingDeficitCredits: 0,
+      rolloverCreditsRemaining: 0,
+    };
+    render(<CreditBalanceCard />);
+    expect(screen.queryByTestId("usage-debt")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("usage-rollover")).not.toBeInTheDocument();
+  });
+
+  it("waits for eligibility before opening a top-up deep link", () => {
+    balanceState = undefined;
+    isLoadingState = true;
+    window.history.replaceState({}, "", "/?topup=open");
+    const { rerender } = render(
+      <CreditBalanceCard organizationId="org-1" canManageCredits />,
+    );
+    expect(screen.queryByTestId("topup-dialog")).not.toBeInTheDocument();
+    balanceState = {
+      paidCreditsRemaining: 0,
+      hasPurchaseHistory: false,
+      freeDailyPercentUsed: 0,
+      freeDailyCreditsRemaining: 10,
+      freeDailyCreditsTotal: 10,
+      freeDailyResetAt: 0,
+      walletLocked: false,
+      topUpEligible: false,
+    };
+    isLoadingState = false;
+    rerender(<CreditBalanceCard organizationId="org-1" canManageCredits />);
+    expect(screen.queryByTestId("topup-dialog")).not.toBeInTheDocument();
+    window.history.replaceState({}, "", "/");
+  });
+
+  it("uses a plan-neutral label for flat monthly credits", () => {
+    balanceState = {
+      ...balanceState!,
+      billingModel: "monthly_flat",
+      monthlyAllowanceTotal: 5000,
+      monthlyAllowanceRemaining: 4000,
+    };
+    render(<CreditBalanceCard organizationId="org-1" />);
+    expect(
+      screen.getByLabelText("Monthly credits remaining"),
+    ).toBeInTheDocument();
+  });
   it("opens enrollment from Auto-reload beneath the balance", async () => {
     const user = userEvent.setup();
     render(<CreditBalanceCard canManageCredits />);
@@ -117,7 +235,7 @@ describe("CreditBalanceCard", () => {
     ).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Manage" }));
     expect(
-      screen.getByLabelText("Maximum monthly spend (optional)"),
+      screen.getByLabelText("Maximum monthly spend (USD, optional)"),
     ).toBeDisabled();
     expect(screen.getByRole("dialog")).toHaveTextContent(
       "Ask an organization admin",
@@ -147,7 +265,7 @@ describe("CreditBalanceCard", () => {
     render(<CreditBalanceCard />);
 
     const dailyRow = screen.getByTestId("usage-daily");
-    expect(dailyRow).toHaveTextContent(/27 \/ 300/);
+    expect(dailyRow).toHaveTextContent(/273 \/ 300/);
     expect(dailyRow).toHaveTextContent(/resets/);
     // Regression guard: free credit dollar value must never appear.
     expect(dailyRow.textContent ?? "").not.toMatch(/\$/);
@@ -357,7 +475,7 @@ describe("CreditBalanceCard", () => {
     it("renders the monthly allowance row instead of the daily row", () => {
       render(<CreditBalanceCard />);
       const row = screen.getByTestId("usage-monthly");
-      expect(within(row).getByText(/Monthly team credits/)).toBeInTheDocument();
+      expect(within(row).getByText(/Monthly credits/)).toBeInTheDocument();
       expect(within(row).getByText(/13,950 \/ 18,000/)).toBeInTheDocument();
       expect(within(row).getByText(/resets in 12 days/)).toBeInTheDocument();
       expect(screen.queryByTestId("usage-daily")).not.toBeInTheDocument();

@@ -84,6 +84,21 @@ test("renders the client summary and failed-case tables from stored results", ()
   assert.match(reports.summary, /Usage and performance/);
 });
 
+test("deep-links the run into the Evaluate tab, not the tab it replaces", () => {
+  const reports = renderReports([
+    {
+      receipt,
+      run: { id: "run1", runNumber: 3, status: "completed", result: "passed" },
+      iterations: [iteration("cart", "Add to cart", "passed", 900)],
+    },
+  ]);
+  assert.match(
+    reports.comment,
+    /https:\/\/app\.mcpjam\.com\/evaluate\/suite\/suite1\/runs\/run1\?project=project1/,
+  );
+  assert.doesNotMatch(reports.comment, /\/evals\/suite\//);
+});
+
 test("uses the backend case verdict through its encoded declared identity", () => {
   const reports = renderReports([
     {

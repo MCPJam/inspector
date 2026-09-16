@@ -182,10 +182,14 @@ describe("per-case verdict-policy fields", () => {
         expect(res.status).toBe(400);
         const text = await message(res);
         expect(text).toContain(field);
-        // The message has to name the policy AND the way out, or the caller
-        // learns only that something they read on a GET is not writable.
-        expect(text).toContain("verdict policy 2");
-        expect(text).toMatch(/legacy/);
+        // The message has to name the CRITERION this suite is actually decided
+        // by AND the way out, or the caller learns only that something they
+        // read on a GET is not writable. It names the criterion rather than a
+        // policy version: "legacy" told a caller their suite was old, which is
+        // not a fact they can act on.
+        expect(text).toContain("per-case-graded suite");
+        expect(text).toContain("suite-wide accuracy threshold");
+        expect(text).toMatch(/Switch the suite to per-case grading first/);
         expect(convexMutationMock).not.toHaveBeenCalled();
       });
     }

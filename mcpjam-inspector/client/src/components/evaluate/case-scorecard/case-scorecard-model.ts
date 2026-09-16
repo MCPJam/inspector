@@ -959,3 +959,12 @@ export function removeCaseScorer(
   if (list.length === 0 && current?.mode !== "replace") return undefined;
   return { mode: current?.mode === "replace" ? "replace" : "extend", list };
 }
+
+/** The configured expectation, without running the evaluator again. */
+export function expectationOf(row: ScorecardRow): string {
+  if (row.predicate) return formatCriterion({ predicate: row.predicate });
+  if (row.route) return routeLabel(row.route);
+  if (row.widgetAssertion) return purposeOf(row.widgetAssertion);
+  if (row.provenance === "judge") return "Satisfy the task according to the configured judge rubric.";
+  return row.kindLabel;
+}

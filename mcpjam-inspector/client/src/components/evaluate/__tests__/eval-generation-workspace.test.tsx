@@ -9,6 +9,10 @@ import {
   registerEvalSuite,
 } from "@/lib/mcpjam-agent/eval-workspace";
 import { EvalGenerationWorkspace } from "../eval-generation-workspace";
+import {
+  NO_READ_ONLY_CASES_MESSAGE,
+  NO_READ_ONLY_TOOLS_MESSAGE,
+} from "@/shared/eval-generation-errors";
 
 const target = { projectId: "p", suiteId: "s", suiteName: "Suite" };
 const key = evalSuiteKey(target);
@@ -103,6 +107,80 @@ it("retains drafts and exposes errors without endless skeletons", () => {
     screen.getByRole("button", { name: "Retry generation" }),
   ).toBeEnabled();
 });
+/**
+ * A scope no server can satisfy fails identically on every attempt, so the
+ * retry button was an offer that could not be met. The way out is the setting
+ * the message names.
+ */
+it("offers the settings, not a retry, when retrying cannot succeed", () => {
+  const generate = vi.fn(() => new Promise<void>(() => {}));
+  const unregister = registerEvalSuite(target, {
+    read: () => ({}),
+    generate,
+    save: vi.fn(),
+  });
+  const onChangeSettings = vi.fn();
+  seed("error", [], NO_READ_ONLY_TOOLS_MESSAGE);
+  renderWithProviders(
+    <EvalGenerationWorkspace
+      {...target}
+      autoStart={false}
+      onChangeSettings={onChangeSettings}
+    />,
+  );
+  expect(screen.queryByRole("button", { name: "Retry generation" })).toBeNull();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Change generation settings" }),
+  );
+  expect(onChangeSettings).toHaveBeenCalledTimes(1);
+  expect(generate).not.toHaveBeenCalled();
+  unregister();
+});
+
+/** The sibling scope failure IS model-dependent, so the retry stands. */
+it("keeps the retry when a fresh attempt could still succeed", () => {
+  seed("error", [], NO_READ_ONLY_CASES_MESSAGE);
+  renderWithProviders(
+    <EvalGenerationWorkspace
+      {...target}
+      autoStart={false}
+      onChangeSettings={vi.fn()}
+    />,
+  );
+  expect(screen.getByRole("button", { name: "Retry generation" })).toBeEnabled();
+});
+
+/**
+ * The list empties as drafts are saved or discarded, so "no drafts" is
+ * normally the END of the work rather than a generation that produced
+ * nothing — and the page said the opposite of what had happened.
+ */
+it("says the work is finished once every draft has been reviewed", () => {
+  const onDone = vi.fn();
+  seed("ready", ["Reviewed case"]);
+  const view = renderWithProviders(
+    <EvalGenerationWorkspace {...target} autoStart={false} onDone={onDone} />,
+  );
+  act(() => seed("ready", []));
+  view.rerender(
+    <EvalGenerationWorkspace {...target} autoStart={false} onDone={onDone} />,
+  );
+  expect(
+    screen.getByText("Every generated case has been reviewed."),
+  ).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: /Back to/ }));
+  expect(onDone).toHaveBeenCalledTimes(1);
+});
+
+/** A run that genuinely produced nothing must not claim a review happened. */
+it("says nothing was generated when no draft ever arrived", () => {
+  seed("ready", []);
+  renderWithProviders(
+    <EvalGenerationWorkspace {...target} autoStart={false} onDone={vi.fn()} />,
+  );
+  expect(screen.getByText("No cases were generated.")).toBeVisible();
+});
+
 it("shows startup failures and retries directly", () => {
   const generate = vi.fn(() => new Promise<void>(() => {}));
   renderWithProviders(<EvalGenerationWorkspace {...target} />);
@@ -134,4 +212,21 @@ it("keeps the confirmed options for retries even if stored preferences change", 
   fireEvent.click(screen.getByRole("button", { name: "Retry generation" }));
   expect(generate.mock.calls[1]).toEqual(generate.mock.calls[0].map((arg) => typeof arg === "function" ? expect.any(Function) : arg));
   unregister();
+});
+
+it("explains a model-limit refusal instead of echoing its raw body", () => {
+  seed(
+    "error",
+    [],
+    'Failed to generate test cases: {"ok":false,"code":"user_rate_limit","limitKind":"total","error":"Daily MCPJam model limit reached. Use BYOK or try again tomorrow.","isRetryable":true}',
+  );
+  renderWithProviders(
+    <EvalGenerationWorkspace {...target} autoStart={false} />,
+  );
+  const alert = screen.getByRole("alert");
+  expect(alert).toHaveTextContent(/MCPJam (model )?limit reached\./);
+  expect(alert).not.toHaveTextContent("user_rate_limit");
+  expect(
+    screen.getByRole("button", { name: "Retry generation" }),
+  ).toBeEnabled();
 });
