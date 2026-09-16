@@ -6720,7 +6720,7 @@
           "Eval runs"
         ],
         "summary": "Revoke a model lease",
-        "description": "Kills every lease minted by this caller under `runId`, immediately — the proxy fails a revoked lease closed from that moment. Leases also expire on their own, so this is for ending a run early (an SDK suite calls it at teardown) rather than something a caller must do.",
+        "description": "Kills this caller's SDK model leases under `runId` in the addressed project, immediately — the proxy fails a revoked lease closed from that moment. Leases also expire on their own, so this is for ending a run early (an SDK suite calls it at teardown) rather than something a caller must do.",
         "parameters": [
           {
             "name": "projectId",
