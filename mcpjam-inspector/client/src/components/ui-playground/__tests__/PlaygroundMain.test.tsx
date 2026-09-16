@@ -555,6 +555,18 @@ vi.mock("@/components/ui-playground/multi-model-playground-card", () => ({
   },
 }));
 
+// The org provider config the tab root resolves for its own `useChatSession`.
+// Every compare column must receive this same object: a column composes its
+// own model list from it, and a "Your providers" model is only in that list
+// when the column sees the org providers too.
+const mockHostedOrgModelConfig = {
+  providers: [{ providerKey: "anthropic", enabled: true, hasSecret: true }],
+};
+
+vi.mock("@/hooks/use-hosted-org-model-config", () => ({
+  useHostedOrgModelConfig: () => mockHostedOrgModelConfig,
+}));
+
 // Mock ConfirmChatResetDialog
 vi.mock(
   "@/components/chat-v2/chat-input/dialogs/confirm-chat-reset-dialog",
@@ -3679,4 +3691,65 @@ describe("PlaygroundMain", () => {
       expect(notice.textContent).toContain("env_recorded");
     });
   });
+
+describe("multi-model columns", () => {
+  const snapshot: Record<string, unknown> = {};
+  const fields = [
+    "isSelectedModelResolved",
+    "selectedModel",
+    "availableModels",
+    "selectedModelIds",
+    "multiModelEnabled",
+  ] as const;
+
+  beforeEach(() => {
+    for (const field of fields) {
+      snapshot[field] = (mockUseChatSession as Record<string, unknown>)[field];
+    }
+    mockMultiModelPlaygroundCard.mockClear();
+  });
+
+  afterEach(() => {
+    Object.assign(mockUseChatSession, snapshot);
+  });
+
+  // The multi-host columns always received the org config; the multi-model
+  // columns did not. A "Your providers" model (bare id, e.g. `claude-fable-5`)
+  // was then missing from the column's model list, its provider was guessed
+  // from the bare id as Ollama, and the turn failed with "ollama is not
+  // enabled for this workspace's organization".
+  it("hands every multi-model column the org provider config the tab resolves", () => {
+    const hosted = {
+      id: "anthropic/claude-haiku-4.5",
+      name: "Claude Haiku 4.5",
+      provider: "anthropic",
+      hosted: true,
+    };
+    const ownKey = {
+      id: "claude-fable-5",
+      name: "Claude Fable 5",
+      provider: "anthropic",
+    };
+    Object.assign(mockUseChatSession, {
+      isSelectedModelResolved: true,
+      selectedModel: hosted,
+      availableModels: [hosted, ownKey],
+      selectedModelIds: [hosted.id, ownKey.id],
+      multiModelEnabled: true,
+    });
+
+    render(<PlaygroundMain {...defaultProps} enableMultiModelChat={true} />);
+
+    const cardProps = mockMultiModelPlaygroundCard.mock.calls.map(
+      (call) => call[0] as { compareKind: string; model: { id: string }; hostedOrgModelConfig?: unknown },
+    );
+    const modelColumns = cardProps.filter((props) => props.compareKind === "model");
+    expect(modelColumns.map((props) => String(props.model.id))).toEqual(
+      expect.arrayContaining([hosted.id, ownKey.id]),
+    );
+    for (const props of modelColumns) {
+      expect(props.hostedOrgModelConfig).toBe(mockHostedOrgModelConfig);
+    }
+  });
+});
 });
