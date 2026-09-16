@@ -1669,9 +1669,16 @@ function toRunEnvironmentDto(run: RunDoc) {
  * judge is a key here rather than a reshaped response.
  *
  * `status: null` means the judge was NEVER requested for this run, which is a
- * different answer from "requested and produced nothing". A `pending` or
- * failed job may retain scored cases alongside unscored errors. A pending job
- * exposes progress while its per-iteration results are being committed.
+ * different answer from "requested and produced nothing".
+ *
+ * A FAILED job still carries whatever it measured: grading is per trial, so a
+ * job that died partway produced real verdicts for the trials it reached, and
+ * reporting none of them would discard work the customer paid for.
+ *
+ * A PENDING job carries `progress` and no cases. Its verdicts land on the
+ * iterations as they are produced, but they are not projected here until the
+ * job settles — a half-written `cases` array read twice would change under a
+ * caller who is entitled to treat one response as one answer.
  *
  * `caseKey` keeps its persisted name. It is the stable AUTHORED-case identity,
  * not a Convex row id; calling it `caseId` at this boundary would invite
@@ -1729,7 +1736,17 @@ function toRunJudgesDto(run: RunDoc) {
         ...(typeof row.iterationId === "string" && row.iterationId.length > 0
           ? { iterationId: row.iterationId }
           : {}),
-        status: row.status ?? "scored",
+        // A legacy row predates the status field and was, by definition,
+        // scored. An UNKNOWN value is not defaulted into a valid one: the DTO
+        // admits three states, and forwarding a fourth would have a caller
+        // believe the judge reported something it cannot express.
+        ...(row.status === undefined
+          ? { status: "scored" as const }
+          : row.status === "scored" ||
+              row.status === "error" ||
+              row.status === "skipped"
+            ? { status: row.status }
+            : {}),
         ...(typeof row.gradingKey === "string"
           ? { gradingKey: row.gradingKey }
           : {}),

@@ -1610,6 +1610,16 @@ export type PlatformEvalSuiteGoalCompletionJudge = {
    */
   threshold?: number;
   /**
+   * Whether the judge's verdict may DECIDE a trial or only describe it.
+   *
+   * Spelled in the vocabulary the request asked for: `required` under
+   * vocabulary 2, `gating` under vocabulary 1. The API has always returned
+   * this; the type omitted it, which left the CLI exporter unable to read
+   * back a role a caller had just written. Absent on a suite that never set
+   * one, and on older API deployments.
+   */
+  role?: "advisory" | "required" | "gating";
+  /**
    * Presentation severity. Legal only with an advisory role. Absent when
    * the suite has none, and on older API deployments.
    */
