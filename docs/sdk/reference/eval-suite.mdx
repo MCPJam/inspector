@@ -67,6 +67,22 @@ const reportingSuite = new EvalSuite({
 Run code-authored tests with the latest saved client in your project:
 
 ```typescript
+runWithClient(client: EvalSuiteClientOptions, options?: EvalTestRunOptions): Promise<EvalSuiteResult>
+```
+
+#### EvalSuiteClientOptions
+
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| `client` | `string` | Yes | Saved client name or ID. The latest version is fetched once per run. |
+| `projectId` | `string` | Yes | MCPJam project ID to run against and save results to. |
+| `apiKey` | `string` | Yes | MCPJam API key (`sk_…`). |
+| `manager` | `MCPClientManager` | Yes | Connected MCP client manager. Your code owns server connections and credentials. |
+| `baseUrl` | `string` | No | MCPJam app origin for a custom deployment (e.g. `https://app.mcpjam.com`). Overrides `mcpjam.baseUrl` from the suite or run options. |
+
+#### Example
+
+```typescript
 import { EvalSuite, EvalTest, MCPClientManager } from "@mcpjam/sdk";
 
 const manager = new MCPClientManager({
