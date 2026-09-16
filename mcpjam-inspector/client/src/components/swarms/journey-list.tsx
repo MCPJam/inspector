@@ -29,6 +29,7 @@ import {
 import {
   SWARM_QUERIES,
   DEFAULT_PAGE_SIZE,
+  LaunchJourneyRunError,
   type JourneyRun,
   type JourneyRollup,
 } from "@/lib/swarm-api";
@@ -359,6 +360,10 @@ function JourneyBlock({
       if (result.status === "already_launching") return;
       toast.success("Goal run started");
     } catch (e) {
+      // A model limit is owned by its dialog, which carries the same sentence
+      // plus the actions that clear it. Repeating it inline under the goal
+      // would say the same thing twice with nothing to act on.
+      if (e instanceof LaunchJourneyRunError && e.limitDialogRaised) return;
       setLaunchError(e instanceof Error ? e.message : "Failed to start run");
     } finally {
       setLaunching(false);

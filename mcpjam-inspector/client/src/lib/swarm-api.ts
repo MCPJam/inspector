@@ -887,10 +887,14 @@ export interface LaunchJourneyRunResult {
  */
 export class LaunchJourneyRunError extends Error {
   readonly status: number;
-  constructor(status: number, message: string) {
+  /** A model limit the dialog took over. The caller must not also render this
+   * message inline — the modal already carries it, with the actions. */
+  readonly limitDialogRaised: boolean;
+  constructor(status: number, message: string, limitDialogRaised = false) {
     super(message);
     this.name = "LaunchJourneyRunError";
     this.status = status;
+    this.limitDialogRaised = limitDialogRaised;
   }
 }
 
@@ -928,15 +932,38 @@ export async function launchJourneyRun(
   }
 
   if (!response.ok) {
-    const rawMessage =
+    const parsed =
       body && typeof body === "object"
-        ? (body as { message?: unknown }).message
-        : undefined;
+        ? (body as Record<string, unknown>)
+        : null;
+    const rawMessage = parsed?.message;
     const message =
       typeof rawMessage === "string" && rawMessage.length > 0
         ? rawMessage
         : `Failed to launch goal run (${response.status})`;
-    throw new LaunchJourneyRunError(response.status, message);
+    // `code` first, `error` as the fallback: the limit body sets both, and the
+    // generic fallback message above would otherwise be all the classifier
+    // sees.
+    const code =
+      typeof parsed?.code === "string"
+        ? parsed.code
+        : typeof parsed?.error === "string"
+          ? parsed.error
+          : null;
+    // Raise the wall HERE, while the body still carries the route's `code` —
+    // same reasoning as `postGenerate`. Launching a goal run spends model
+    // budget like every other action that already shows this dialog.
+    const limitDialogRaised = notifyMCPJamLimitError({
+      ...(code ? { code } : {}),
+      details: body,
+      message,
+      surface: "swarm",
+    });
+    throw new LaunchJourneyRunError(
+      response.status,
+      message,
+      limitDialogRaised
+    );
   }
 
   const runId =

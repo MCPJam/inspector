@@ -328,6 +328,13 @@ export function GenerateSwarmDialog({
       );
       onOpenChange(false);
     } catch (error) {
+      // A model limit is owned by its dialog, which carries the same sentence
+      // plus the actions that clear it. Condition on the FLAG, not the class:
+      // this catch also sees persona-cap and goal-write failures whose
+      // messages must keep rendering.
+      if (error instanceof SwarmGenerateError && error.limitDialogRaised) {
+        return;
+      }
       // 429 (quota/wallet) and other 4xx carry backend copy worth showing
       // inline rather than as a transient toast.
       setErrorMessage(
