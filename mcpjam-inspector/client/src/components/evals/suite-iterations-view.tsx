@@ -664,8 +664,8 @@ export function SuiteIterationsView({
     route.type === "run-detail"
       ? "run-detail"
       : route.type === "test-detail"
-        ? "test-detail"
-        : route.type === "test-edit" && !editingDisabled
+        ? evaluateCaseEditor ? "test-edit" : "test-detail"
+        : route.type === "test-edit" && (!editingDisabled || evaluateCaseEditor)
           ? "test-edit"
           : route.type === "test-edit"
             ? "test-detail"
@@ -1222,6 +1222,10 @@ export function SuiteIterationsView({
     if (route.type !== "run-detail" || !group.testCaseId) {
       return;
     }
+    if (evaluateCaseEditor) {
+      navigation.toTestEdit(route.suiteId, group.testCaseId);
+      return;
+    }
     navigation.toRunDetail(route.suiteId, route.runId, undefined, {
       testCaseId: group.testCaseId,
     });
@@ -1253,7 +1257,7 @@ export function SuiteIterationsView({
       return;
     }
     const iter = caseGroupsForSelectedRun.find((i) => i._id === iterationId);
-    if (editingDisabled) {
+    if (editingDisabled && !evaluateCaseEditor) {
       navigation.toRunDetail(route.suiteId, route.runId, iterationId, {
         testCaseId: selectedRunTestCaseId ?? iter?.testCaseId ?? undefined,
       });
@@ -1851,6 +1855,7 @@ export function SuiteIterationsView({
                 <TestTemplateEditor
                   suiteId={suite._id}
                   selectedTestCaseId={selectedTestId}
+                  readOnly={editingDisabled}
                   onDeleteCase={
                     onDeleteTestCasesBatch
                       ? async (testCaseId) => {
@@ -1878,10 +1883,11 @@ export function SuiteIterationsView({
                   projectServers={projectServers}
                   onExportDraft={handleOpenDraftExport}
                   openCompareFromRoute={
-                    route.type === "test-edit" && Boolean(route.openCompare)
+                    (route.type === "test-edit" && Boolean(route.openCompare)) ||
+                    (route.type === "test-detail" && Boolean(route.iteration))
                   }
                   openCompareIterationId={
-                    route.type === "test-edit"
+                    route.type === "test-edit" || route.type === "test-detail"
                       ? (route.iteration ?? null)
                       : null
                   }
@@ -1898,7 +1904,7 @@ export function SuiteIterationsView({
                     })
                   }
                   checksPage={
-                    route.type === "test-edit" && Boolean(route.checks)
+                    !editingDisabled && route.type === "test-edit" && Boolean(route.checks)
                   }
                   onOpenCaseChecks={() =>
                     navigation.toTestEdit(suite._id, selectedTestId, {

@@ -179,7 +179,7 @@ export function CiEvalsTab({
     [visibleSuites],
   );
 
-  // CI/CD: suite config and tests are defined in code (SDK); close edit URLs.
+  // Suite settings remain code-owned. Case URLs open the read-only workspace.
   useEffect(() => {
     if (route.type === "suite-edit") {
       navigateToCiEvalsPath(
@@ -187,16 +187,6 @@ export function CiEvalsTab({
         { replace: true },
       );
       return;
-    }
-    if (route.type === "test-edit") {
-      navigateToCiEvalsPath(
-        {
-          type: "test-detail",
-          suiteId: route.suiteId,
-          testId: route.testId,
-        },
-        { replace: true },
-      );
     }
   }, [route]);
 
@@ -635,15 +625,20 @@ export function CiEvalsTab({
                   selectedTestCaseId={route.testCaseId ?? null}
                   onSelectTestCase={(group) => {
                     if (!group.testCaseId) return;
-                    navigateToCiEvalsPath({
-                      type: "run-detail",
-                      suiteId: route.suiteId,
-                      runId: route.runId,
-                      testCaseId: group.testCaseId,
-                    });
+                    ciNavigation.toTestEdit(route.suiteId, group.testCaseId);
                   }}
                   selectedIterationId={route.iteration ?? null}
                   onSelectIteration={(iterationId) => {
+                    const testCaseId = queries.sortedIterations.find(
+                      (iteration) => iteration._id === iterationId,
+                    )?.testCaseId;
+                    if (testCaseId) {
+                      ciNavigation.toTestEdit(route.suiteId, testCaseId, {
+                        openCompare: true,
+                        iteration: iterationId,
+                      });
+                      return;
+                    }
                     navigateToCiEvalsPath({
                       type: "run-detail",
                       suiteId: route.suiteId,
@@ -837,6 +832,8 @@ export function CiEvalsTab({
                     canDeleteRuns={canDeleteRuns}
                     canDeleteRun={(run) => canDeleteArtifact(run.createdBy)}
                     readOnlyConfig
+                    evaluateCaseEditor
+                    projectId={convexProjectId}
                     omitSuiteHeader
                     onRunTestCase={
                       selectedSuite
