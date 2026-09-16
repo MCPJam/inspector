@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import type { Context } from "hono";
 import { getConnInfo } from "@hono/node-server/conninfo";
 
@@ -54,9 +55,10 @@ const TRUSTED_CLIENT_IP_HEADER_ENV = "MCPJAM_TRUSTED_CLIENT_IP_HEADER";
 //
 // Attested here means "an ingress we trust wrote it, and a client's own copy
 // could not have survived":
-// - cf-connecting-ip, which Cloudflare rewrites on every hop (the hosted edge;
-//   see routes/web/guest-token.ts for the same reliance).
-// - Whatever header an operator names in MCPJAM_TRUSTED_CLIENT_IP_HEADER, for
+// - In hosted mode, cf-connecting-ip only with a matching server-side edge
+//   secret. Current and previous secrets allow rotation. No attestation pools
+//   the caller rather than trusting an origin request's copied CF header.
+// - Outside hosted mode, the header named in MCPJAM_TRUSTED_CLIENT_IP_HEADER, for
 //   a deployment that terminates somewhere other than Cloudflare.
 // - The TCP peer, but ONLY with no forwarding header in sight. Behind a proxy
 //   the peer IS the proxy, so trusting it there would put every caller in one
@@ -67,7 +69,14 @@ const TRUSTED_CLIENT_IP_HEADER_ENV = "MCPJAM_TRUSTED_CLIENT_IP_HEADER";
 // routes/web/bench.ts.
 export function getAttestedClientIp(c: Context): string | null {
   const cfConnectingIp = c.req.header("cf-connecting-ip")?.trim();
-  if (cfConnectingIp) return cfConnectingIp;
+  const presented = c.req.header("x-mcpjam-edge-secret");
+  const attested = !!presented && [process.env.MCPJAM_EDGE_SECRET, process.env.MCPJAM_EDGE_SECRET_PREVIOUS].some(secret => {
+    if (!secret) return false;
+    const a = Buffer.from(presented), b = Buffer.from(secret);
+    return a.length === b.length && timingSafeEqual(a, b);
+  });
+  if (cfConnectingIp && (attested || process.env.VITE_MCPJAM_HOSTED_MODE !== "true")) return cfConnectingIp;
+  if (process.env.VITE_MCPJAM_HOSTED_MODE === "true") return null;
 
   const trustedHeader =
     process.env[TRUSTED_CLIENT_IP_HEADER_ENV]?.trim().toLowerCase();

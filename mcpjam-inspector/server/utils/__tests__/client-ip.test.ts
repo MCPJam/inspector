@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { getClientIp } from "../client-ip.js";
+import { describe, it, expect, afterEach, vi } from "vitest";
+import { getClientIp, getAttestedClientIp } from "../client-ip.js";
 import { canonicalizeClientIp } from "../guest-spend-ip.js";
 
 function makeCtx(headers: Record<string, string>) {
@@ -113,5 +113,20 @@ describe("canonicalizeClientIp", () => {
 
   it("trims whitespace before canonicalization", () => {
     expect(canonicalizeClientIp("  1.2.3.4  ")).toBe("1.2.3.4");
+  });
+});
+
+
+describe("hosted IP attestation", () => {
+  afterEach(() => vi.unstubAllEnvs());
+  it("pools forged Cloudflare headers, accepts the edge secret, and supports rotation", () => {
+    vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+    vi.stubEnv("MCPJAM_EDGE_SECRET", "current-secret");
+    vi.stubEnv("MCPJAM_EDGE_SECRET_PREVIOUS", "previous-secret");
+    expect(getAttestedClientIp(makeCtx({ "cf-connecting-ip": "1.2.3.4" }))).toBeNull();
+    for (const secret of ["current-secret", "previous-secret"]) {
+      expect(getAttestedClientIp(makeCtx({ "cf-connecting-ip": "1.2.3.4", "x-mcpjam-edge-secret": secret }))).toBe("1.2.3.4");
+    }
+    expect(getAttestedClientIp(makeCtx({ "cf-connecting-ip": "1.2.3.4", "x-mcpjam-edge-secret": "forged" }))).toBeNull();
   });
 });

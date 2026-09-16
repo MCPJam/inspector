@@ -114,9 +114,9 @@ export function guestIpForwardHeaders(
   ipHash: string | null | undefined,
 ): Record<string, string> {
   const token = process.env.INSPECTOR_SERVICE_TOKEN?.trim();
-  if (!ipHash || !token) return {};
+  if (!token) return {};
   return {
-    "x-mcpjam-guest-ip-hash": ipHash,
+    "x-mcpjam-guest-ip-hash": ipHash ?? "_unattested",
     "x-inspector-service-token": token,
   };
 }

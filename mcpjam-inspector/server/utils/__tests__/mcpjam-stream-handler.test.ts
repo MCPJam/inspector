@@ -2691,7 +2691,7 @@ describe("mcpjam-stream-handler", () => {
       delete process.env.GUEST_SESSION_HASH_PEPPER;
     });
 
-    it("omits the guest IP hash header when clientIp is null", async () => {
+    it("forwards the shared unattested key when clientIp is null", async () => {
       process.env.GUEST_SESSION_HASH_PEPPER = "test-pepper-for-ip-hash";
 
       await handleMCPJamFreeChatModel({
@@ -2709,7 +2709,7 @@ describe("mcpjam-stream-handler", () => {
 
       const headers = (global.fetch as any).mock.calls[0]?.[1]
         ?.headers as Record<string, string>;
-      expect(headers["x-mcpjam-guest-ip-hash"]).toBeUndefined();
+      expect(headers["x-mcpjam-guest-ip-hash"]).toBe("_unattested");
 
       delete process.env.GUEST_SESSION_HASH_PEPPER;
     });
@@ -2761,7 +2761,7 @@ describe("mcpjam-stream-handler", () => {
 
       const headers = (global.fetch as any).mock.calls[0]?.[1]
         ?.headers as Record<string, string>;
-      expect(headers["x-mcpjam-guest-ip-hash"]).toBeUndefined();
+      expect(headers["x-mcpjam-guest-ip-hash"]).toBe("_unattested");
       expect(headers["X-MCPJam-Guest-IP-Hash"]).toBeUndefined();
     });
 

@@ -120,7 +120,7 @@ import {
 } from "./../routes/web/hosted-rpc-logs.js";
 import { buildServerNamesById } from "./../routes/web/auth.js";
 import type { CustomProviderConfig } from "./chat-helpers.js";
-import { getClientIp } from "./client-ip.js";
+import { getAttestedClientIp } from "./client-ip.js";
 import { convertToMcpjamModelMessages } from "./mcp-tool-result-model-output.js";
 import {
   resolveWebAuthorizedHarnessStrategy,
@@ -514,7 +514,7 @@ export interface WebChatTurnRuntime {
    * fail for "your sandbox was reset, earlier files are gone".
    */
   ackSandboxNotices?: (notices: SandboxNoticeReason[]) => void;
-  /** Hono context (needed for getClientIp fallback / future hooks). */
+  /** Hono context (needed for getAttestedClientIp fallback / future hooks). */
   c: Context;
 }
 
@@ -1290,7 +1290,7 @@ export async function streamWebChatTurn(
       progressivePlan,
       discoveryState,
       authHeader: runtime.authHeader,
-      clientIp: runtime.clientIp ?? getClientIp(c),
+      clientIp: runtime.clientIp ?? getAttestedClientIp(c),
       scenarioId: persist.scenarioId,
       accessVersion: persist.accessVersion,
       mcpClientManager: manager,
@@ -1372,7 +1372,7 @@ export async function streamWebChatTurn(
     progressivePlan,
     discoveryState,
     authHeader: runtime.authHeader,
-    clientIp: runtime.clientIp ?? getClientIp(c),
+    clientIp: runtime.clientIp ?? getAttestedClientIp(c),
     scenarioId: persist.scenarioId,
     accessVersion: persist.accessVersion,
     projectId: persist.projectId,
