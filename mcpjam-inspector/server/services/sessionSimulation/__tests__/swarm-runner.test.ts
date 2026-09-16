@@ -203,12 +203,18 @@ describe("swarm single-host runner — attempt ordering", () => {
     expect(
       captureWidgetSnapshotsMock.mock.calls[0]![0].capturedToolCallIds
     ).toBe(captureWidgetSnapshotsMock.mock.calls[1]![0].capturedToolCallIds);
-    // Persona driver routes through the swarm backend client.
+    // Persona driver routes through the swarm backend client, carrying the
+    // full wire identity: the backend bills the turn against (target, session)
+    // and refuses it outright when it cannot resolve one.
     await adapter.nextPersonaTurn([{ role: "user", content: "hi" }]);
     expect(swarmPersonaNextTurnMock).toHaveBeenCalledWith(
       "https://convex.site",
       "token",
-      expect.objectContaining({ runId: "run-1", hostId: "host-1" })
+      expect.objectContaining({
+        runId: "run-1",
+        hostId: "host-1",
+        sessionIdx: 0,
+      })
     );
   });
 });
