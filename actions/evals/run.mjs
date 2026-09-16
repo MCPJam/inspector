@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   SUMMARY_LIMIT,
+  accessHeadersFromEnv,
   fetchRunBundle,
   publishPullRequestComment,
   readActionReceipts,
@@ -298,13 +299,22 @@ async function output(env, values, apiKey) {
 // One run at a time, and a run that cannot be read costs only itself: a
 // concurrent fetch that rejects discards every bundle already paid for and
 // leaves the reader with no report at all.
-async function loadRunBundles(receipts, apiKey, fetchImpl, log) {
+async function loadRunBundles(receipts, apiKey, fetchImpl, log, env) {
+  const accessHeaders = accessHeadersFromEnv(env);
   const bundles = [];
   const missing = [];
   for (const receipt of receipts) {
     try {
-      bundles.push(await fetchRunBundle(receipt, apiKey, fetchImpl));
-    } catch {
+      bundles.push(
+        await fetchRunBundle(receipt, apiKey, fetchImpl, accessHeaders),
+      );
+    } catch (error) {
+      // Name the reason: an identity proxy in front of the deployment answers
+      // every read the same way, and "could not load" alone sent readers
+      // looking at the run instead of at the request.
+      log(
+        `::warning::Could not read MCPJam run ${receipt.runId}: ${redactSecret(error.message, apiKey)}`,
+      );
       missing.push(receipt.runId);
     }
   }
@@ -367,6 +377,10 @@ export async function runAction(
   if (key) log(`::add-mask::${escapeCommand(key)}`);
   const githubToken = (env.MCPJAM_ACTION_GITHUB_TOKEN ?? "").trim();
   if (githubToken) log(`::add-mask::${escapeCommand(githubToken)}`);
+  // The identity-proxy service token, when one is configured, is a credential
+  // like the others and never belongs in a log line.
+  const accessSecret = (env.CF_ACCESS_CLIENT_SECRET ?? "").trim();
+  if (accessSecret) log(`::add-mask::${escapeCommand(accessSecret)}`);
   let directory;
   try {
     const inputs = parseInputs(env);
@@ -403,6 +417,7 @@ export async function runAction(
         inputs.apiKey,
         fetchImpl,
         log,
+        env,
       );
       if (bundles.length === 0) {
         state.message = "Could not load any uploaded MCPJam run.";
@@ -542,6 +557,7 @@ export async function runAction(
             inputs.apiKey,
             fetchImpl,
             log,
+            env,
           );
           if (bundles.length > 0)
             renderedSummary = await publishDetailedReports({
