@@ -4105,7 +4105,7 @@ export function TestTemplateEditor({
                   ?.lastSdkWriteAt != null ? (
                   <p className="mt-0.5 text-[11px] text-muted-foreground">
                     {readOnly
-                      ? "Managed in code — update this test in your repository."
+                      ? "Managed in code. Update this test in your repository."
                       : "Synced from CI — the next CI report may overwrite manual edits."}
                   </p>
                 ) : null}
