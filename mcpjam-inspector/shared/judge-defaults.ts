@@ -39,7 +39,7 @@ export type ResolvedGoalCompletionConfig = {
 
 export const GOAL_COMPLETION_DEFAULTS: ResolvedGoalCompletionConfig = {
   enabled: true,
-  judgeModel: "openai/gpt-5.4-mini",
+  judgeModel: "deepseek/deepseek-v4.1-flash",
   threshold: 0.7,
   autoRun: false,
   role: "advisory",
