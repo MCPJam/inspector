@@ -20,6 +20,7 @@ import {
   AlertTitle,
 } from "@mcpjam/design-system/alert";
 import { Button } from "@mcpjam/design-system/button";
+import { getEffectiveSuiteServers } from "./helpers";
 import type { EvalSuite } from "./types";
 import { CopyableCodeBlock } from "./copyable-code-block";
 import type { EvalExportCaseInput } from "@/lib/evals/eval-export";
@@ -96,7 +97,11 @@ export function EvalExportModal({
     error: null,
   });
 
-  const serverIds = suite.environment?.servers ?? [];
+  // The suite's EFFECTIVE servers, not the legacy flat list: a suite that
+  // picks its server through a host or a standalone attachment leaves
+  // `environment.servers` empty, which read as "no server configured" and
+  // switched the agent prompt off for a suite that has one.
+  const serverIds = useMemo(() => getEffectiveSuiteServers(suite), [suite]);
   const serverConnections = useMemo(
     () => buildServerConnections(serverIds, serverEntries),
     [serverEntries, serverIds]

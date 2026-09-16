@@ -49,7 +49,7 @@ import {
 } from "@/hooks/useProjectEnvironments";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { isAdhocEnvironment } from "@/lib/environment-label";
-import { convexErrMessage } from "@/lib/convex-error";
+import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import {
   buildUserTestingScenarioEditPath,
   buildUserTestingScenarioPath,
@@ -310,7 +310,10 @@ export function UserTestingScenarioDetail({
         toast.error(
           isAdhocUnavailable(err)
             ? "This workspace's backend doesn't support editing a scenario's setup yet."
-            : convexErrMessage(err, "Could not update this scenario's setup"),
+            : getBillingErrorMessage(
+                err,
+                "Could not update this scenario's setup",
+              ),
         );
       } finally {
         committingRef.current = false;
@@ -374,7 +377,7 @@ export function UserTestingScenarioDetail({
     try {
       await updateScenario({ scenarioId: scenario.scenarioId, name } as any);
     } catch (err) {
-      toast.error(convexErrMessage(err, "Failed to rename the scenario"));
+      toast.error(getBillingErrorMessage(err, "Failed to rename the scenario"));
       // Rethrow so EditableTitle reverts to the persisted name.
       throw err;
     }
@@ -412,7 +415,9 @@ export function UserTestingScenarioDetail({
       // A newer save has taken over: its value is the one to keep, and
       // resyncing from here would drop it.
       if (generation !== descriptionSaveRef.current) return;
-      toast.error(convexErrMessage(err, "Failed to save the description"));
+      toast.error(
+        getBillingErrorMessage(err, "Failed to save the description"),
+      );
       // Also rolls the marked seed back to what is actually stored.
       adoptRemoteDescription();
     }

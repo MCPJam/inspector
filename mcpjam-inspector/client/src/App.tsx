@@ -20,6 +20,7 @@ import { toast } from "@/lib/toast";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
 import { PlanLimitDialog } from "./components/billing/PlanLimitDialog";
 import { SessionRefreshBanner } from "./components/session-refresh-banner";
+import { GuestSessionRefusedBanner } from "./components/guest-session-refused-banner";
 import { HomeTab } from "./components/HomeTab";
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
@@ -5415,6 +5416,7 @@ export default function App() {
             <MCPJamLimitDialog />
             <PlanLimitDialog />
             <SessionRefreshBanner />
+            <GuestSessionRefusedBanner />
             <div
               data-testid="app-shell"
               aria-hidden={shouldShowBillingHandoffOverlay || undefined}

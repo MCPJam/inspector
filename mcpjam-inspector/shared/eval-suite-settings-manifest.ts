@@ -114,7 +114,7 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   },
   {
     key: "checks",
-    label: "Checks by stage",
+    label: "Evaluators",
     api: "settings.checks",
   },
   {
@@ -124,7 +124,7 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   },
   {
     key: "judgeRubric",
-    label: "Judge criteria",
+    label: "Grading instructions",
     api: "settings.judge.rubric",
   },
   {

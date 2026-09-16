@@ -306,6 +306,40 @@ describe("NewSwarmRunningStep — session stream pane", () => {
     expect(chips[0]).toHaveTextContent("Running: Refund a charge");
   });
 
+  it("drops wizard chrome on the run-detail page", async () => {
+    render(
+      <div className="h-[40rem]">
+        <NewSwarmRunningStep
+          projectId="proj-1"
+          chrome="page"
+          runs={[
+            {
+              runId: "run-1",
+              journeyId: "j-1",
+              personaId: "p-1",
+              personaName: "Async Documentation Writer",
+              personaRole: "Writer",
+              label: "Async Documentation Writer · Refund a charge",
+              goalLabel: "Refund a charge",
+            },
+          ]}
+          fallbackColumns={[{ key: "environment:env-1", label: "Prod-like" }]}
+          hosts={[{ hostId: "host-1", name: "MCPJam" }]}
+          onLeave={vi.fn()}
+          onOpenSession={vi.fn()}
+        />
+      </div>,
+    );
+
+    await screen.findByTestId("new-swarm-running-step");
+    expect(screen.getByTestId("new-swarm-running-stream")).toBeInTheDocument();
+    expect(screen.queryByTestId("new-swarm-running-title")).toBeNull();
+    expect(screen.queryByTestId("new-swarm-running-open-findings")).toBeNull();
+    expect(screen.queryByTestId("new-swarm-running-progress")).toBeNull();
+    expect(screen.queryByTestId("swarm-running-hero")).toBeNull();
+    expect(screen.queryByText(/Clients:/)).toBeNull();
+  });
+
   it("opens the live stream pane when a session chip is clicked", async () => {
     render(
       <div className="h-[40rem]">

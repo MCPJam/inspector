@@ -654,6 +654,12 @@ export function SwarmsTab({
             landedUnderNewWave = true;
           }
         } catch (err) {
+          // The limit dialog owns this failure and carries its own copy. Skip
+          // it HERE: the throw below re-wraps into a plain `Error`, so the
+          // flag is gone by the time the detail page toasts the message.
+          if (err instanceof LaunchJourneyRunError && err.limitDialogRaised) {
+            continue;
+          }
           errors.push(
             err instanceof LaunchJourneyRunError
               ? err.message

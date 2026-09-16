@@ -14,6 +14,8 @@
  * card used to render (standup, 2026-09-12).
  */
 
+import { SectionLabel } from "@/components/shared/section-label";
+
 export function FindingsSummaryCard({
   sessionCount,
   summary,
@@ -53,13 +55,10 @@ export function FindingsSummaryCard({
             short name. The summary below is prose and was doing that job
             badly: three sentences read as the region's label, then again as a
             heading, before any content. */}
-        <p
-          id="swarm-findings-headline"
-          className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground"
-        >
+        <SectionLabel id="swarm-findings-headline">
           Finding summary · {sessionCount} session
           {sessionCount === 1 ? "" : "s"}
-        </p>
+        </SectionLabel>
         <div className="max-w-md" data-testid="findings-summary">
           {/* A <p>, not an <h2>. It reads at the size a headline does, but a
               paragraph is what it is, and `H` navigation should not land on

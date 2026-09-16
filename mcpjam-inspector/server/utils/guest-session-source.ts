@@ -49,6 +49,8 @@ export type GuestSessionFetchResult =
       kind: "error";
       status: number;
       setCookies: string[];
+      /** Seconds from the upstream `Retry-After` header on a 429. */
+      retryAfterSeconds?: number;
     };
 
 function getConvexHttpUrl(): string {
@@ -133,6 +135,12 @@ function parseSessionPayload(raw: unknown): RemoteGuestSession | null {
   };
 }
 
+function parseRetryAfterSeconds(raw: string | null): number | undefined {
+  if (!raw) return undefined;
+  const seconds = Number.parseInt(raw, 10);
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : undefined;
+}
+
 async function performGuestSessionFetch(
   url: string,
   init: RequestInit,
@@ -159,7 +167,16 @@ async function performGuestSessionFetch(
       logger.warn(
         `[guest-auth] Failed to fetch ${source} guest session: ${response.status} ${response.statusText}`,
       );
-      return { kind: "error", status: response.status, setCookies };
+      const retryAfterSeconds =
+        response.status === 429
+          ? parseRetryAfterSeconds(response.headers.get("retry-after"))
+          : undefined;
+      return {
+        kind: "error",
+        status: response.status,
+        setCookies,
+        ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
+      };
     }
 
     let body: unknown;

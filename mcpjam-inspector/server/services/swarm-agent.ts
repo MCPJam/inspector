@@ -437,6 +437,7 @@ export async function createJourneyRun(
     projectId: string;
     journeyRefId: string;
     launchKey: string;
+    kind?: "swarm" | "user_testing";
     maxHosts?: number;
     /**
      * Opaque id shared by every run of one co-launched swarm wave. Omitted by
@@ -466,6 +467,7 @@ export async function createJourneyRun(
       projectId: args.projectId,
       journeyRefId: args.journeyRefId,
       launchKey: args.launchKey,
+      kind: args.kind ?? "swarm",
       ...(args.maxHosts !== undefined ? { maxHosts: args.maxHosts } : {}),
       ...(args.swarmRunGroupId
         ? { swarmRunGroupId: args.swarmRunGroupId }
@@ -825,6 +827,13 @@ export async function swarmPersonaNextTurn(
     projectId: string;
     runId: string;
     hostId: string;
+    // Two env targets may resolve to the SAME host, so the backend cannot
+    // identify the target from `hostId` alone and refuses the turn as
+    // ambiguous. Absent only on legacy runs, where hosts are already unique.
+    targetId?: string;
+    // Billed per (target, session, turn): the backend validates this against
+    // the run's immutable fan-out and refuses the turn when it is missing.
+    sessionIdx: number;
     transcriptSoFar: Array<{ role: "user" | "assistant"; content: string }>;
     // Run abort signal. This call can PARK for up to LLM_TIMEOUT_MS (120s) in
     // an uncancellable place; forwarding the run's signal lets a shutdown/cancel
@@ -844,6 +853,10 @@ export async function swarmPersonaNextTurn(
       projectId: args.projectId,
       runId: args.runId,
       hostId: args.hostId,
+      ...(args.targetId ? { targetId: args.targetId } : {}),
+      // Unconditional: session 0 is the common case and a truthiness spread
+      // would drop exactly the index the backend validates most often.
+      sessionIdx: args.sessionIdx,
       transcriptSoFar: args.transcriptSoFar,
     },
     LLM_TIMEOUT_MS,

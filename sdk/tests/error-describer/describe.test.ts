@@ -206,6 +206,20 @@ const CASES: Case[] = [
     build: () => new Error("Missing or invalid bearer token"),
     expectSlug: "auth/missing_bearer",
   },
+  // MCPJam's own consent wording. Both strings are produced by the client's
+  // OAuth orchestrator and used to land on `internal/unknown`, which rendered
+  // an expected one-click state as "Unknown error".
+  {
+    name: "consent-required wording",
+    build: () =>
+      new Error("OAuth consent is required for asana. Click Reconnect to continue."),
+    expectSlug: "auth/consent_required",
+  },
+  {
+    name: "reauthenticate-to-continue wording",
+    build: () => new Error("Reauthenticate asana to continue."),
+    expectSlug: "auth/consent_required",
+  },
   // Provider quota / rate limit. A 429 reaches us in three shapes: the AI-SDK
   // `APICallError` carries `statusCode`, some transports set a numeric `code`,
   // and the local-BYOK swarm path loses both and leaves only the message.

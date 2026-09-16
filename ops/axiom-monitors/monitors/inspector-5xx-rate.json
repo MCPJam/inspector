@@ -37,5 +37,6 @@
     "3. Check deploy. Compare `release` on the failing rows against the previous hour. A version change at the boundary is your answer; roll back.",
     "",
     "ROLLBACK: node ops/axiom-monitors/apply.mjs --apply --only inspector-5xx-rate after reverting the definition file, or disable in the Axiom UI. Do not raise the threshold to silence a real regression."
-  ]
+  ],
+  "descriptionLengthExempt": true
 }

@@ -6,6 +6,7 @@
 
 import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { SectionLabel } from "@/components/shared/section-label";
 import { PersonaPixelAvatar } from "@/components/swarms/persona-pixel-avatar";
 import { SentimentPill } from "./findings-sentiment-pill";
 import { FindingsGoalInspect } from "./findings-goal-inspect";
@@ -73,9 +74,7 @@ export function FindingsPersonaCard({
       </aside>
 
       <div className="px-5 pb-5 pt-4">
-        <p className="pb-2 text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
-          Goals they tried
-        </p>
+        <SectionLabel className="pb-2">Goals they tried</SectionLabel>
         {persona.goals.map((goal) => {
           const expanded = goal.runId === expandedGoalRunId;
           return (

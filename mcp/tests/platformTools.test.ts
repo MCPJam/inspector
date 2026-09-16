@@ -210,6 +210,7 @@ const PLAIN_TOOLS = [
   "get_eval_run_steps",
   "cancel_eval_run",
   "backtest_eval_run",
+  "backtest_eval_run_judge",
   "request_eval_run_judge",
   // The description-rewrite experiment: agent-oriented payloads (a diff and
   // two arm counts), no widget view.
@@ -474,6 +475,7 @@ describe("platform tool registration", () => {
       "get_eval_run_steps",
       "cancel_eval_run",
       "backtest_eval_run",
+      "backtest_eval_run_judge",
       "request_eval_run_judge",
       "propose_eval_description_rewrite",
       "start_eval_description_experiment",
@@ -635,6 +637,7 @@ describe("platform tool registration", () => {
       // Grading SPENDS but writes only an advisory result onto the run — the
       // deterministic verdict stays authoritative, so nothing is destroyed.
       "backtest_eval_run",
+      "backtest_eval_run_judge",
       "request_eval_run_judge",
       // Proposing SPENDS one model call and starting SPENDS trials, but both
       // only ever create rows: the proposal and two replay runs. The source

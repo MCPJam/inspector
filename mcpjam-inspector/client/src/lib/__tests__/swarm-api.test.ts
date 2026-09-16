@@ -385,3 +385,86 @@ describe("generateSwarmPersonaBatch — MCPJam limit", () => {
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
   });
 });
+
+/**
+ * Launching a goal run spends model budget exactly like generation does, so it
+ * gets the same wall. Before this it threw a bare message that each caller
+ * printed raw.
+ */
+describe("launchJourneyRun — MCPJam limit", () => {
+  beforeEach(() => {
+    useMCPJamLimitDialogStore.setState({
+      isOpen: false,
+      hasPendingLimit: false,
+      outOfCreditsHit: false,
+      outOfCreditsOrganizationId: null,
+      intent: null,
+      organizationId: null,
+      pendingInput: null,
+      surface: null,
+      // Without a known auth status `notifyLimitHit` stops on the pending
+      // branch and the dialog never opens — the assertions below would pass
+      // vacuously.
+      authStatus: "signedIn",
+    });
+  });
+
+  it("raises the top-up dialog on the daily cap, and still throws", async () => {
+    authFetchMock.mockResolvedValue(
+      jsonResponse(429, {
+        ok: false,
+        code: "user_rate_limit",
+        limitKind: "total",
+        message:
+          "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
+      })
+    );
+
+    let err: unknown;
+    try {
+      await launchJourneyRun({ projectId: "proj-1", journeyId: "goal-1" });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(LaunchJourneyRunError);
+    // Every launch caller reads this to stay out of the dialog's way.
+    expect((err as LaunchJourneyRunError).limitDialogRaised).toBe(true);
+    const state = useMCPJamLimitDialogStore.getState();
+    expect(state.isOpen).toBe(true);
+    expect(state.intent).toBe("topup");
+    // No swarm screen mounts the model picker the BYOK link drives.
+    expect(state.surface).toBe("swarm");
+  });
+
+  it("classifies a body that names the limit only under `error`", async () => {
+    authFetchMock.mockResolvedValue(
+      jsonResponse(429, {
+        ok: false,
+        error: "user_rate_limit",
+      })
+    );
+
+    await expect(
+      launchJourneyRun({ projectId: "proj-1", journeyId: "goal-1" })
+    ).rejects.toBeInstanceOf(LaunchJourneyRunError);
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
+  });
+
+  it("leaves an ordinary launch rejection to the caller", async () => {
+    authFetchMock.mockResolvedValue(
+      jsonResponse(409, { ok: false, message: "This goal is already running." })
+    );
+
+    let err: unknown;
+    try {
+      await launchJourneyRun({ projectId: "proj-1", journeyId: "goal-1" });
+    } catch (e) {
+      err = e;
+    }
+    expect((err as LaunchJourneyRunError).limitDialogRaised).toBe(false);
+    expect((err as LaunchJourneyRunError).message).toBe(
+      "This goal is already running."
+    );
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
+  });
+});

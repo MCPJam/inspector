@@ -592,7 +592,7 @@ export function describeChange(
     case "judgeRubric":
       return {
         key,
-        label: "Judge criteria",
+        label: "Grading instructions",
         before: summarizeRubric(before.judgeRubric),
         after: summarizeRubric(after.judgeRubric),
       };

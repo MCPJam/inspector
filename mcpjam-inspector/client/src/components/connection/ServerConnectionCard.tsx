@@ -37,7 +37,6 @@ import {
   ExternalLink,
   Cable,
   Trash2,
-  AlertCircle,
   FileText,
   FolderInput,
   Building2,
@@ -187,6 +186,18 @@ export function ServerConnectionCard({
         },
       }
     : undefined;
+
+  /**
+   * A consent-required state is one click from resolved, so the card offers
+   * that click directly instead of telling the user to go find Reconnect in
+   * the overflow menu.
+   *
+   * `allowInteractiveOAuthFlow: true` is the exact inverse of the condition
+   * that produced the state — the orchestrator returns `reauth_required`
+   * only when a caller asked it NOT to open the consent window.
+   */
+  const needsConsent =
+    server.lastNormalizedError?.slug === "auth/consent_required";
 
   const { getAccessToken } = useAuth();
   const { isAuthenticated } = useConvexAuth();
@@ -620,21 +631,11 @@ export function ServerConnectionCard({
                 )}
               </div>
 
-              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                {hasError && (
-                  <button
-                    data-server-card-context-menu-exempt
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setIsErrorExpanded(true);
-                    }}
-                    className="inline-flex items-center gap-1 rounded-full border border-red-300/60 bg-red-500/10 px-2 py-0.5 text-[11px] text-red-700 dark:text-red-300 cursor-pointer"
-                  >
-                    <AlertCircle className="h-3 w-3" />
-                    Error
-                  </button>
-                )}
-              </div>
+              {/* The red "Error" pill that used to sit here was the fourth
+                  red element announcing one failure — after the status dot,
+                  the "Failed" label and the error card itself — and it only
+                  opened a disclosure the card already owns. The card below is
+                  the affordance; this row stays for future status chips. */}
             </div>
 
             <div className="flex flex-col items-end gap-1.5">
@@ -651,7 +652,10 @@ export function ServerConnectionCard({
                     />
                   )}
                   <span>
-                    {server.connectionStatus === "failed"
+                    {/* "(0)" is not information. The count is only worth the
+                        parentheses once something has actually been retried. */}
+                    {server.connectionStatus === "failed" &&
+                    server.retryCount > 0
                       ? `${connectionStatusLabel} (${server.retryCount})`
                       : connectionStatusLabel}
                   </span>
@@ -1061,7 +1065,7 @@ export function ServerConnectionCard({
           {hasError && (
             <div className="mt-3" onClick={(e) => e.stopPropagation()}>
               {oauthFailureStep ? (
-                <div className="mb-1 text-xs font-medium text-red-700 dark:text-red-300">
+                <div className="mb-1 text-xs text-muted-foreground">
                   OAuth failed during {oauthFailureStep.title}
                 </div>
               ) : null}
@@ -1069,12 +1073,22 @@ export function ServerConnectionCard({
                 // Prefer the rich block; fall back to the message string
                 // (the card calls `describeError` internally when needed).
                 error={server.lastNormalizedError ?? server.lastError ?? ""}
-                // Controlled — the Error badge above toggles
+                // Controlled — the status row above toggles
                 // `isErrorExpanded`; the card must reflect that on every
                 // change, not just at mount.
                 open={isErrorExpanded}
                 onOpenChange={setIsErrorExpanded}
-                action={protocolPinAction}
+                action={
+                  needsConsent
+                    ? {
+                        label: "Reconnect",
+                        onClick: () =>
+                          void handleReconnect({
+                            allowInteractiveOAuthFlow: true,
+                          }),
+                      }
+                    : protocolPinAction
+                }
               />
               {server.retryCount > 0 && (
                 <div className="mt-1 text-xs text-muted-foreground">
@@ -1085,7 +1099,11 @@ export function ServerConnectionCard({
             </div>
           )}
 
-          {server.connectionStatus === "failed" && (
+          {/* Only when there is no error card. The card carries its own
+              "Learn more", pointed at the specific error rather than the
+              generic index, so showing both offered two docs links for one
+              failure and the weaker one sat lower and looked more prominent. */}
+          {server.connectionStatus === "failed" && !hasError && (
             <div
               className="mt-2 text-xs text-muted-foreground"
               onClick={(e) => e.stopPropagation()}

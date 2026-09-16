@@ -971,6 +971,14 @@ export {
   traceIndicatesToolExecutionFailure,
   traceMessagePartIndicatesToolFailure,
 } from "./eval-tool-execution.js";
+
+// `executeTool` returns `CallToolResult | Record<string, unknown>`, so reading
+// `.content` off it does not type-check. These are the narrowings the manager
+// itself uses; a caller in TypeScript needs one of them to get past the union.
+export {
+  assertCallToolResult,
+  isCallToolResult,
+} from "./mcp-client-manager/result-guards.js";
 export type { FinalizeEvalPassedParams } from "./eval-tool-execution.js";
 
 // Eval result mapping utilities
@@ -1739,6 +1747,19 @@ export type { EvalVariantEntry } from "./eval-variants.js";
 export type { EvalSelectionManifest } from "./eval-selection.js";
 export { formatRunSummaryTable } from "./eval-summary.js";
 export { buildRunUrl } from "./report-eval-results.js";
+
+// MCPJam-hosted inference for `mcpjam/…` models — the eval that needs no
+// provider key. `EvalSuite.run` already revokes at teardown; export the
+// release so a suite built by hand (a vitest `afterAll`, say) can too.
+export {
+  releaseMcpjamModelLeases,
+  McpjamLeaseClient,
+  McpjamLeaseError,
+} from "./mcpjam-model-lease.js";
+export type {
+  McpjamModelLease,
+  McpjamLeaseClientOptions,
+} from "./mcpjam-model-lease.js";
 export type { EvaluatorOverride } from "./EvalTest.js";
 export type {
   EvalExecutionContext,
