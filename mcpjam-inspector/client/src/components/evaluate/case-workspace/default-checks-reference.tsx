@@ -17,7 +17,7 @@ export function DefaultChecksReference({
       onClick={onOverride ?? onConfigureSuite}
     >
       <ListChecks className="size-3.5" />
-      Show default evaluators
+      Configure test case evaluators
     </Button>
   );
 }
