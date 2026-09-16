@@ -44,7 +44,7 @@ describe("Everything MCP example", () => {
       a: 2,
       b: 3,
     });
-    expect(result.content[0].text).toBe("5");
+    expect(result.content[0].text).toContain("5");
   });
 });
 ```
