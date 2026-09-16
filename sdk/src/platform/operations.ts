@@ -1,6 +1,14 @@
 import { gradingPolicyFromPlatformSuiteSettings } from "../eval-grading-policy.js";
 import { planEvalGradingPolicyEdit } from "../contract/grading-policy.js";
 import {
+  caseJudgeSettingsSchema,
+  judgeRubricSchema,
+} from "../contract/judge-settings.js";
+import {
+  judgeBacktestRequestSchema,
+  type JudgeBacktestReport,
+} from "../contract/judge-backtest.js";
+import {
   evalBacktestDraftSchema,
   evalBacktestContinuationSchema,
   type EvalBacktestReport,
@@ -5179,6 +5187,7 @@ const caseModelSchema = z.object({
 // Per-case editable fields, shared by create and update. All optional so a
 // PATCH carries only what changes; create layers required fields on top.
 const caseFieldsShape = {
+  judge: caseJudgeSettingsSchema.nullable().optional(),
   title: z.string().trim().min(1).optional().describe("Short case label."),
   intent: caseIntentSchema
     .optional()
@@ -5644,31 +5653,11 @@ const updateEvalSuiteInput = z
               .describe(
                 "Presentation severity for an advisory judge: flag it without failing the run. Legal only with role: advisory."
               ),
-            rubric: z
-              .union([
-                z.strictObject({
-                  criteria: z
-                    .array(
-                      z.strictObject({
-                        id: z
-                          .string()
-                          .regex(/^[A-Za-z0-9_-]{1,64}$/)
-                          .describe(
-                            "Stable id the judge cites in its reasons. Unique within the rubric; editing it retires the suite's calibration."
-                          ),
-                        label: z.string().trim().min(1).max(200),
-                        description: z.string().max(1000).optional(),
-                        required: z.boolean().optional(),
-                      })
-                    )
-                    .min(1)
-                    .max(25),
-                }),
-                z.null(),
-              ])
+            rubric: judgeRubricSchema
+              .nullable()
               .optional()
               .describe(
-                "The suite's own grading criteria, handed to the judge alongside each case's expected output. null CLEARS them; an empty criteria array is refused, because a rubric that asks nothing still changes what the judge was asked. Editing this retires the suite's judge calibration."
+                "Optional grading instructions and structured criteria, alongside each case's task and expected output. null clears both. Editing either retires judge calibration."
               ),
           })
           .optional(),
@@ -7915,6 +7904,12 @@ export const revokeEvalGateWaiverOperation: PlatformOperation<
 };
 
 const requestEvalRunJudgeInput = evalRunScopedInput.extend({
+  scope: z
+    .enum(["all", "failed"])
+    .optional()
+    .describe(
+      "Retry failed or ungraded iterations without rerunning measured iterations. Failed-only retries keep their original grading settings."
+    ),
   force: z
     .boolean()
     .optional()
@@ -7944,6 +7939,55 @@ export type RequestEvalRunJudgeInput = z.infer<typeof requestEvalRunJudgeInput>;
 export type RequestEvalRunJudgeResult = {
   project: SelectedProjectInfo;
   judge: PlatformEvalRunJudgeRequested;
+};
+
+const backtestEvalRunJudgeInput = evalRunScopedInput.extend(
+  judgeBacktestRequestSchema.shape
+);
+export const backtestEvalRunJudgeOperation: PlatformOperation<
+  z.infer<typeof backtestEvalRunJudgeInput>,
+  {
+    project: SelectedProjectInfo;
+    runId: string;
+    suiteId: string;
+    report: JudgeBacktestReport;
+  }
+> = {
+  name: "backtest_eval_run_judge",
+  title: "Preview MCPJam judge grading",
+  description:
+    "Grade one recorded iteration against a draft rubric using the full evidence. Uses model budget; leaves the run verdict unchanged. Supply rubric.instructions and optional criteria, or null for objective-only grading. Continue with the same rubric and the returned cursor, sourceHash and reservationId. Completed page retries reuse the cached result. CLI: mcpjam cloud eval judge-backtest --run <id> --json <request>.",
+  readOnly: false,
+  risk: "spend",
+  permalink: derivePermalinks((result) => [
+    evalRunRef(result.runId, result.suiteId, result.project.id),
+  ]),
+  inputSchema: backtestEvalRunJudgeInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const run = await client.getEvalRun(
+      { projectId: project.id, runId: input.runId },
+      { signal }
+    );
+    const report = await client.backtestEvalRunJudge(
+      {
+        projectId: project.id,
+        runId: input.runId,
+        rubric: input.rubric,
+        continuation: input.continuation,
+      },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      runId: run.id,
+      suiteId: run.suiteId,
+      report,
+    };
+  },
 };
 
 const backtestEvalRunInput = evalRunScopedInput.extend({
@@ -8004,7 +8048,7 @@ export const requestEvalRunJudgeOperation: PlatformOperation<
   name: "request_eval_run_judge",
   title: "Request MCPJam eval run grading",
   description:
-    "Run LLM-as-judge grading over a finished eval run: each case's final answer is scored against its expected output. SPENDS the organization's model budget. Returns immediately with a pending receipt — read the results from get_eval_run's `judges.goalCompletion`, do not re-request. Pass `enable: true` to grade a run recorded while the judge was off; a run's grading config is pinned when it starts, so enabling the judge on the suite does not reach it.",
+    "Run LLM-as-judge grading over a finished eval run: each iteration’s full recorded trace and tool definitions are graded against its task and grading instructions. SPENDS the organization's model budget. Returns immediately with a pending receipt — read the results from get_eval_run's `judges.goalCompletion`, do not re-request. Pass `enable: true` to grade a run recorded while the judge was off; a run's grading config is pinned when it starts, so enabling the judge on the suite does not reach it.",
   readOnly: false,
   risk: "spend",
   permalink: noPermalink("mutation-only"),
@@ -8018,6 +8062,7 @@ export const requestEvalRunJudgeOperation: PlatformOperation<
       {
         projectId: project.id,
         runId: input.runId,
+        ...(input.scope ? { scope: input.scope } : {}),
         ...(input.force !== undefined ? { force: input.force } : {}),
         ...(input.enable !== undefined ? { enable: input.enable } : {}),
         ...(input.model !== undefined ? { model: input.model } : {}),
@@ -16313,6 +16358,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   getEvalGateWaiverOperation,
   revokeEvalGateWaiverOperation,
   backtestEvalRunOperation,
+  backtestEvalRunJudgeOperation,
   requestEvalRunJudgeOperation,
   listEvalGithubReposOperation,
   connectEvalGithubRepoOperation,

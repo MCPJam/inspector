@@ -386,6 +386,17 @@ describe("launchJourneyRun", () => {
     await settle();
   });
 
+  it.each([undefined, "", "wave_9"])(
+    "bills a launch with wave %s by run kind",
+    async (waveId) => {
+      createRunMock.mockResolvedValue(created());
+      await launchJourneyRun(DEPS, { ...INPUT, waveId });
+      expect(createRunMock.mock.calls[0][2]).toMatchObject({
+        kind: waveId ? "swarm" : "user_testing",
+      });
+    },
+  );
+
   it("passes the wave id and environment fan-out through to the create", async () => {
     createRunMock.mockResolvedValue(created());
 

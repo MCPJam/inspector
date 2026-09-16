@@ -1231,7 +1231,7 @@ describe("TestTemplateEditor run view from route", () => {
     ).not.toBeInTheDocument();
     expect(screen.getAllByTestId("spine-action-row").length).toBeGreaterThan(0);
     const defaultChecks = screen.getByRole("button", {
-      name: "Show default evaluators",
+      name: "Configure test case evaluators",
     });
     expect(screen.getByTestId("case-spine")).not.toContainElement(
       defaultChecks,
@@ -1239,6 +1239,31 @@ describe("TestTemplateEditor run view from route", () => {
     expect(defaultChecks.parentElement).toContainElement(
       screen.getByRole("button", { name: "Setup Run" }),
     );
+  });
+
+  it("deletes the open case from the header, after confirming", async () => {
+    activeCaseDoc = goldenCaseDoc;
+    const onDeleteCase = vi.fn().mockResolvedValue(undefined);
+    renderGoldenCase({ observeFirst: true, onDeleteCase });
+
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("button", { name: "Delete test case" }),
+    );
+    await user.click(screen.getByTestId("case-header-delete-confirm"));
+
+    await waitFor(() => {
+      expect(onDeleteCase).toHaveBeenCalledWith("case-1");
+    });
+  });
+
+  it("offers no header delete when the surface passes no handler", async () => {
+    activeCaseDoc = goldenCaseDoc;
+    renderGoldenCase({ observeFirst: true });
+    await waitFor(() => {
+      expect(screen.getByTestId("case-spine")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("case-header-delete")).not.toBeInTheDocument();
   });
 
   it("shows a step-authored case in the workspace and leaves its flag alone", async () => {

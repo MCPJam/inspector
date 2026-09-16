@@ -1,4 +1,9 @@
-import { suppressedSuiteStandardCheckIdsSchema } from "@mcpjam/sdk/contract";
+import {
+  suiteJudgeSettingsSchema,
+  caseJudgeSettingsSchema,
+  judgeRubricSchema,
+  suppressedSuiteStandardCheckIdsSchema,
+} from "@mcpjam/sdk/contract";
 /**
  * Public v1 eval surface: async suite runs + polling reads.
  *
@@ -818,6 +823,7 @@ const evalSuiteFileProvenanceWireSchema = z
  */
 const syncFileOwnedSuiteSchema = z
   .object({
+    judge: suiteJudgeSettingsSchema.nullable().optional(),
     declaredSuiteId: opaqueIdSchema,
     name: z.string().trim().min(1).max(200),
     description: z.string().optional(),
@@ -1664,10 +1670,16 @@ function toRunEnvironmentDto(run: RunDoc) {
  * judge is a key here rather than a reshaped response.
  *
  * `status: null` means the judge was NEVER requested for this run, which is a
- * different answer from "requested and produced nothing". A `pending` or
- * `failed` judge carries no cases: `cases` is `[]` and `status` carries the
- * meaning, so a caller never has to distinguish "graded nothing" from "has not
- * graded yet" by the emptiness of a list.
+ * different answer from "requested and produced nothing".
+ *
+ * A FAILED job still carries whatever it measured: grading is per trial, so a
+ * job that died partway produced real verdicts for the trials it reached, and
+ * reporting none of them would discard work the customer paid for.
+ *
+ * A PENDING job carries `progress` and no cases. Its verdicts land on the
+ * iterations as they are produced, but they are not projected here until the
+ * job settles — a half-written `cases` array read twice would change under a
+ * caller who is entitled to treat one response as one answer.
  *
  * `caseKey` keeps its persisted name. It is the stable AUTHORED-case identity,
  * not a Convex row id; calling it `caseId` at this boundary would invite
@@ -1687,9 +1699,17 @@ function toRunJudgeDto(
   errorCode: unknown,
   result: Record<string, any> | undefined,
   toCase: (row: Record<string, any>) => Record<string, unknown>,
+  progress?: unknown,
 ) {
-  const terminal = status === "completed";
+  const terminal = status === "completed" || status === "failed";
   return {
+    ...(progress ? { progress } : {}),
+    ...(typeof result?.judgeTemplateVersion === "number"
+      ? { judgeTemplateVersion: result.judgeTemplateVersion }
+      : {}),
+    ...(typeof result?.judgeTemplateHash === "string"
+      ? { judgeTemplateHash: result.judgeTemplateHash }
+      : {}),
     status:
       status === "pending" || status === "completed" || status === "failed"
         ? status
@@ -1717,13 +1737,47 @@ function toRunJudgesDto(run: RunDoc) {
         ...(typeof row.iterationId === "string" && row.iterationId.length > 0
           ? { iterationId: row.iterationId }
           : {}),
-        score: typeof row.score === "number" ? row.score : null,
+        // A legacy row predates the status field and was, by definition,
+        // scored. An UNKNOWN value is not defaulted into a valid one: the DTO
+        // admits three states, and forwarding a fourth would have a caller
+        // believe the judge reported something it cannot express.
+        ...(row.status === undefined
+          ? { status: "scored" as const }
+          : row.status === "scored" ||
+              row.status === "error" ||
+              row.status === "skipped"
+            ? { status: row.status }
+            : {}),
+        ...(typeof row.gradingKey === "string"
+          ? { gradingKey: row.gradingKey }
+          : {}),
+        ...(typeof row.errorCode === "string"
+          ? { errorCode: row.errorCode }
+          : {}),
+        ...(typeof row.judgeTemplateVersion === "number"
+          ? { judgeTemplateVersion: row.judgeTemplateVersion }
+          : {}),
+        ...(typeof row.judgeTemplateHash === "string"
+          ? { judgeTemplateHash: row.judgeTemplateHash }
+          : {}),
+        ...(typeof row.evidenceHash === "string"
+          ? { evidenceHash: row.evidenceHash }
+          : {}),
+        ...(row.evidenceManifest
+          ? { evidenceManifest: row.evidenceManifest }
+          : {}),
+        score:
+          (row.status === undefined || row.status === "scored") &&
+          typeof row.score === "number"
+            ? row.score
+            : null,
         passed: row.passed === true,
         reason: typeof row.reason === "string" ? row.reason : null,
         rubricHits: Array.isArray(row.rubricHits)
           ? row.rubricHits.map(String)
           : [],
       }),
+      run.goalCompletionProgress,
     ),
     groundedness: toRunJudgeDto(
       run.groundednessStatus,
@@ -2325,6 +2379,9 @@ function toCaseDto(testCase: CaseDoc, vocabulary: EvalVocabulary = 1) {
     ...(testCase.matchOptions
       ? { matchOptions: toPublicMatchOptions(testCase.matchOptions) }
       : {}),
+    ...(testCase.judgeConfigOverride?.goalCompletion
+      ? { judge: testCase.judgeConfigOverride.goalCompletion }
+      : {}),
     ...(testCase.suppressedSuiteStandardCheckIds !== undefined
       ? {
           suppressedSuiteStandardCheckIds:
@@ -2389,7 +2446,8 @@ function toSuiteDetailDto(
   resolved: { computerEnvironmentName?: string | null } = {},
   vocabulary: EvalVocabulary = 1,
 ) {
-  const goal = suite.judgeConfig?.goalCompletion;
+  const goal =
+    suite.judgePolicy?.effective ?? suite.judgeConfig?.goalCompletion;
   return {
     id: String(suite._id),
     ...(typeof suite.declaredSuiteId === "string"
@@ -2497,7 +2555,14 @@ function toSuiteDetailDto(
         model: goal?.judgeModel ?? GOAL_COMPLETION_DEFAULTS.judgeModel,
         // `autoRun` is the flag that makes grading HAPPEN; `enabled` alone only
         // makes the judge available to a manual request.
-        autoRun: goal?.autoRun ?? GOAL_COMPLETION_DEFAULTS.autoRun,
+        ...(goal?.autoRun !== undefined ? { autoRun: goal.autoRun } : {}),
+        ...(suite.judgePolicy
+          ? {
+              executionPaused: suite.judgePolicy.executionPaused,
+              automatic: suite.judgePolicy.automatic,
+              contractVersion: suite.judgePolicy.contractVersion,
+            }
+          : {}),
         threshold:
           typeof goal?.threshold === "number"
             ? goal.threshold
@@ -2534,16 +2599,27 @@ function toSuiteDetailDto(
         // The suite's own criteria, so a caller can read back what it wrote.
         // `null` for a suite with none — distinct from an empty list, which the
         // write side refuses precisely because "asks nothing" is not "absent".
-        rubric: Array.isArray(suite.judgeRubric?.criteria)
+        rubric: suite.judgeRubric
           ? {
-              criteria: suite.judgeRubric.criteria.map((criterion: any) => ({
-                id: String(criterion.id),
-                label: String(criterion.label),
-                ...(typeof criterion.description === "string"
-                  ? { description: criterion.description }
-                  : {}),
-                ...(criterion.required === true ? { required: true } : {}),
-              })),
+              ...(Array.isArray(suite.judgeRubric.criteria)
+                ? {
+                    criteria: suite.judgeRubric.criteria.map(
+                      (criterion: any) => ({
+                        id: String(criterion.id),
+                        label: String(criterion.label),
+                        ...(typeof criterion.description === "string"
+                          ? { description: criterion.description }
+                          : {}),
+                        ...(typeof criterion.required === "boolean"
+                          ? { required: criterion.required }
+                          : {}),
+                      }),
+                    ),
+                  }
+                : {}),
+              ...(typeof suite.judgeRubric.instructions === "string"
+                ? { instructions: suite.judgeRubric.instructions }
+                : {}),
             }
           : null,
       },
@@ -2811,6 +2887,7 @@ function assertCasePolicyFieldsSupported(
 // The case body is the `steps` contract (`TestStep[]`); it REPLACES the old
 // `kind` / `prompt` / `turns` / `expectedToolCalls` / `renderCheck` vocabulary.
 const publicCaseBodyShape = {
+  judge: caseJudgeSettingsSchema.nullable().optional(),
   title: z.string().min(1).optional(),
   // Replaces the case test definition wholesale when provided. A `prompt` step
   // is a model turn; a single model-free `toolCall` step is a render-check;
@@ -3199,29 +3276,7 @@ const suiteSettingsShape = {
       // one — it still changes what the judge was asked. The limits mirror
       // the platform's own so a rejection arrives before the write rather
       // than taking the settings beside it down with it.
-      rubric: z
-        .union([
-          z.object({
-            criteria: z
-              .array(
-                z.object({
-                  id: z
-                    .string()
-                    .regex(
-                      /^[A-Za-z0-9_-]{1,64}$/,
-                      "criterion id must be 1-64 characters of letters, digits, hyphen or underscore",
-                    ),
-                  label: z.string().trim().min(1).max(200),
-                  description: z.string().max(1000).optional(),
-                  required: z.boolean().optional(),
-                }),
-              )
-              .min(1)
-              .max(25),
-          }),
-          z.null(),
-        ])
-        .optional(),
+      rubric: judgeRubricSchema.nullable().optional(),
     })
     .superRefine((judge, ctx) => {
       if (judge.groundedness !== undefined) {
@@ -3481,6 +3536,7 @@ function suiteResource(
  */
 const requestRunJudgeSchema = z
   .object({
+    scope: z.enum(["all", "failed"]).optional(),
     /** Re-grade a run that already has a result. */
     force: z.boolean().optional(),
     enable: z.boolean().optional(),
@@ -3619,6 +3675,13 @@ function buildCaseMutationArgs(
   if (body.kind !== undefined) args.kind = body.kind;
   if (body.expectedOutput !== undefined)
     args.expectedOutput = body.expectedOutput;
+  if (body.judge !== undefined)
+    args.judgeConfigOverride =
+      body.judge === null
+        ? opts.forCreate
+          ? undefined
+          : null
+        : { goalCompletion: body.judge };
 
   // The case body is the `steps` contract. Project it onto the internal case
   // fields. The derived kind (render-check ⇔ a single model-free `toolCall`
@@ -5227,6 +5290,7 @@ evals.post("/projects/:projectId/eval-suites/from-file", async (c) => {
       "testSuites:resolveOrCreateFileOwnedSuite" as any,
       {
         projectId,
+        ...(body.judge !== undefined ? { judge: body.judge } : {}),
         declaredSuiteId: body.declaredSuiteId,
         name: body.name,
         ...(body.description !== undefined
@@ -5609,6 +5673,7 @@ evals.post("/projects/:projectId/eval-runs/:runId/judge", async (c) => {
   try {
     await convex.mutation("goalCompletion:requestGoalCompletion" as any, {
       suiteRunId: runId,
+      ...(parsed.scope ? { scope: parsed.scope } : {}),
       ...(parsed.force === true ? { force: true } : {}),
       ...(Object.keys(override).length > 0 ? { runOverride: override } : {}),
     });

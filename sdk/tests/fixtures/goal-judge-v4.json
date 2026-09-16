@@ -1,0 +1,31 @@
+{
+  "templateHash": "3e7241764facbabad00b573d20136c9216599824ab56ab5e4b59575e5a6042cd",
+  "input": {
+    "caseKey": "create-ticket",
+    "gradingKey": "create-ticket#2",
+    "title": "Create ticket",
+    "query": "Create and verify the ticket",
+    "suiteRubric": { "instructions": "Verify durable completion" },
+    "evidence": {
+      "version": 1,
+      "trace": {
+        "messages": [
+          { "role": "user", "content": "Create ticket" },
+          { "role": "tool", "content": { "id": "ticket-17", "created": true } }
+        ],
+        "spans": [],
+        "recordedExtension": { "preserved": true }
+      },
+      "toolDefinitions": [
+        { "name": "create_ticket" },
+        { "name": "uncalled_read_ticket" }
+      ]
+    }
+  },
+  "output": {
+    "score": 1,
+    "reason": "The tool created ticket-17",
+    "rubricHits": []
+  },
+  "expectedScore": 0.85
+}

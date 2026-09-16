@@ -5,7 +5,9 @@
  * one inside the other. Storage does not change: every selection is still a
  * `serverAttachments` row. Picking a single server resolves to the row that
  * holds exactly that server — reusing one when it exists — so a bare server
- * needs no new column, and the rows minted that way stay off the Groups tab.
+ * needs no new column. Those rows stay listed on the Groups tab so a group
+ * the user named after its only server is not indistinguishable from a
+ * stand-in and then hidden.
  *
  * Pure so the rules are testable without a popover and a Convex mock, the same
  * way `server-group-name.ts` and `cloud-server-readiness.ts` are.
@@ -43,12 +45,12 @@ const TRIO = group(
 );
 
 describe("listGroupsForTab", () => {
-  it("hides a one-server row named after its server", () => {
-    // That is the shape `findSoloGroup` mints for a bare server pick, so
-    // listing it here would offer the same choice twice under two names.
+  it("keeps a one-server row named after its server", () => {
+    // Same shape as a group the user created and named after that server.
+    // Hiding it made the Groups tab lie about what they had just written.
     expect(
       listGroupsForTab([SOLO_ALPHA, PAIR, TRIO]).map((g) => g._id),
-    ).toEqual(["g_pair", "g_trio"]);
+    ).toEqual(["g_alpha", "g_pair", "g_trio"]);
   });
 
   it("KEEPS a one-server group the user named themselves", () => {
@@ -61,11 +63,12 @@ describe("listGroupsForTab", () => {
     ]);
   });
 
-  it("matches the name ignoring case and padding", () => {
+  it("keeps a stand-in whose name differs only by case or padding", () => {
     // Same normalization `deriveServerGroupName` uses for its collision
-    // check — "Alpha" is still that server's stand-in.
+    // check — "Alpha" is still that server's stand-in, and still listed.
     const padded = group("g_p", "  Alpha ", ["srv_1"], ["alpha"]);
     expect(listGroupsForTab([padded, PAIR]).map((g) => g._id)).toEqual([
+      "g_p",
       "g_pair",
     ]);
   });
@@ -126,8 +129,9 @@ describe("a stand-in whose name had to be suffixed", () => {
     expect(findSoloGroup([SUFFIXED], "srv_1")).toBe(SUFFIXED);
   });
 
-  it("stays off the Groups tab, like any other stand-in", () => {
+  it("stays on the Groups tab, like any other stand-in", () => {
     expect(listGroupsForTab([SUFFIXED, PAIR]).map((g) => g._id)).toEqual([
+      "g_2",
       "g_pair",
     ]);
   });
@@ -304,9 +308,7 @@ describe("resolvePickerSelection", () => {
   it("reads a one-server group the USER named as a GROUP, not as a server", () => {
     // Both halves of the stand-in rule must hold here too, or selecting
     // `group A` reports the server it happens to hold: the trigger names
-    // `big-mcp`, the Groups tab shows no mark, and the Servers tab marks a row
-    // the user never picked. `listGroupsForTab` already applies both halves —
-    // one criterion, two rules, is the bug.
+    // `big-mcp` and the Servers tab marks a row the user never picked.
     const named = group("g_a", "group A", ["srv_1"], ["alpha"]);
     expect(resolvePickerSelection([named], "g_a")).toEqual({
       kind: "group",

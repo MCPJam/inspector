@@ -104,3 +104,19 @@ export async function hashGuestSpendIp(rawIp: string): Promise<string | null> {
   );
   return bytesToBase64Url(new Uint8Array(sig));
 }
+
+/**
+ * Headers that forward a hashed client IP to Convex. The hash is only sent
+ * with the service token that proves it came from this server; Convex keys
+ * an unproven request on its own edge IP and ignores the hash.
+ */
+export function guestIpForwardHeaders(
+  ipHash: string | null | undefined,
+): Record<string, string> {
+  const token = process.env.INSPECTOR_SERVICE_TOKEN?.trim();
+  if (!ipHash || !token) return {};
+  return {
+    "x-mcpjam-guest-ip-hash": ipHash,
+    "x-inspector-service-token": token,
+  };
+}

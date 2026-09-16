@@ -119,6 +119,167 @@
     }
   ],
   "paths": {
+    "/projects/{projectId}/eval-runs/{runId}/judge/backtest": {
+      "post": {
+        "operationId": "backtestEvalRunJudge",
+        "tags": [
+          "Eval runs"
+        ],
+        "summary": "Preview draft judge grading on one recorded iteration",
+        "description": "Uses model budget and complete recorded evidence without changing the run verdict. Supply rubric.instructions, optional structured criteria, or null for objective-only grading. Continue with the unchanged rubric and returned cursor, sourceHash and reservationId. Completed page retries return cached results. Error cases have a null draft measurement.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/evalVocabularyHeader"
+          },
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/runId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "rubric"
+                ],
+                "properties": {
+                  "rubric": {
+                    "type": [
+                      "object",
+                      "null"
+                    ],
+                    "additionalProperties": false,
+                    "properties": {
+                      "instructions": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 2000
+                      },
+                      "criteria": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 25,
+                        "items": {
+                          "type": "object",
+                          "required": [
+                            "id",
+                            "label"
+                          ],
+                          "additionalProperties": false,
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "pattern": "^[A-Za-z0-9_-]{1,64}$"
+                            },
+                            "label": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "description": {
+                              "type": "string",
+                              "maxLength": 1000
+                            },
+                            "required": {
+                              "type": "boolean"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "continuation": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "cursor",
+                      "sourceHash",
+                      "reservationId"
+                    ],
+                    "properties": {
+                      "cursor": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "sourceHash": {
+                        "type": "string",
+                        "pattern": "^[a-f0-9]{64}$"
+                      },
+                      "reservationId": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "One cached or newly graded page. Errors are unscored; isDone indicates the end of the population.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "cases": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "cursor": {
+                      "type": "integer"
+                    },
+                    "sourceHash": {
+                      "type": "string"
+                    },
+                    "reservationId": {
+                      "type": "string"
+                    },
+                    "isDone": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "409": {
+            "description": "Run is not terminal or source evidence changed."
+          },
+          "504": {
+            "description": "Backtest deadline or cancellation."
+          }
+        }
+      }
+    },
     "/browser-sessions/session": {
       "post": {
         "tags": [
@@ -6615,6 +6776,152 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/EvalIngestResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/model-leases": {
+      "post": {
+        "operationId": "createModelLease",
+        "tags": [
+          "Eval runs"
+        ],
+        "summary": "Mint a model lease for MCPJam-hosted inference",
+        "description": "How an SDK eval running OUTSIDE the platform (local dev, CI) uses MCPJam-hosted inference on the organization's credits, with no provider key of its own. Authenticate like any other `/api/v1` route (typically an `sk_` key).\n\nThe lease is strictly narrower than the key used to get it: one organization, one project, one model, one proxy host, about 30 minutes, a per-lease spend and call cap, and revocable by `runId`.\n\nThe `{projectId}` segment declares which project's organization pays, and always wins over any `projectId` in the body. The literal `default` resolves to the key org's Default project — the zero-config CI case, and the same resolution the eval-ingest routes use, so a lease and the results it produces land in the same project.",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Project id, or the literal `default` for the key org's Default project."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelLeaseRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A short-lived lease and the proxy to present it to.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelLease"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/model-leases/revoke": {
+      "post": {
+        "operationId": "revokeModelLease",
+        "tags": [
+          "Eval runs"
+        ],
+        "summary": "Revoke a model lease",
+        "description": "Kills this caller's SDK model leases under `runId` in the addressed project, immediately — the proxy fails a revoked lease closed from that moment. Leases also expire on their own, so this is for ending a run early (an SDK suite calls it at teardown) rather than something a caller must do.",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Project id, or the literal `default` for the key org's Default project."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelLeaseRevokeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "How many leases were revoked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "revoked"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "revoked": {
+                      "type": "integer"
+                    }
+                  }
                 }
               }
             }
@@ -14804,6 +15111,16 @@
         "required": ["id", "title", "steps", "legacyIterations", "isNegative", "models"],
         "description": "`EvalCase` as projected under `x-mcpjam-eval-vocabulary: 2`: the legacy floor is `legacyIterations`, the exact policy-2 count is `iterations`, the rule override is `assertions`. Every other field is as in `EvalCase`, in the same position.",
         "properties": {
+          "judge": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              }
+            },
+            "description": "Per-case judge override. enabled: false skips goal-completion grading for this case."
+          },
           "id": {
             "type": "string"
           },
@@ -14922,6 +15239,17 @@
         "required": ["title", "steps"],
         "description": "Create one case. `title` and a non-empty `steps` array are both required — a case persisted without executable steps could never run. Vocabulary 2 (`x-mcpjam-eval-vocabulary: 2`): `legacyIterations`/`runs` is the floor, `iterations`/`repetitions` the exact count, `assertions`/`checks`/`predicates` the rules; two spellings of one field is a `400`. A canonical client projects a GET into this body rather than echoing both spellings back.",
         "properties": {
+          "judge": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              }
+            },
+            "nullable": true,
+            "description": "Per-case judge override. enabled: false skips goal-completion grading for this case; null clears the override and restores the suite setting."
+          },
           "declaredSuiteId": {
             "type": "string",
             "maxLength": 128,
@@ -15114,6 +15442,17 @@
         "type": "object",
         "description": "Partial update. Every field is optional; omitted fields are left as they are. `steps` REPLACES the definition rather than merging into it. Vocabulary 2 (`x-mcpjam-eval-vocabulary: 2`): same spellings as `EvalCaseCreateRequestV2`; two spellings of one field is a `400`. A PATCH that names neither spelling of the floor leaves the stored floor exactly as it was.",
         "properties": {
+          "judge": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              }
+            },
+            "nullable": true,
+            "description": "Per-case judge override. enabled: false skips goal-completion grading for this case; null clears the override and restores the suite setting."
+          },
           "declaredSuiteId": {
             "type": "string",
             "maxLength": 128,
@@ -15756,6 +16095,16 @@
         ],
         "description": "A persisted eval case, in the public steps-first shape. Note this is NOT `EvalTestCase`, which is the INLINE authoring shape accepted by suite creation.",
         "properties": {
+          "judge": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              }
+            },
+            "description": "Per-case judge override. enabled: false skips goal-completion grading for this case."
+          },
           "id": {
             "type": "string"
           },
@@ -16054,6 +16403,17 @@
         ],
         "description": "Create one case. `title` and a non-empty `steps` array are both required — a case persisted without executable steps could never run.",
         "properties": {
+          "judge": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              }
+            },
+            "nullable": true,
+            "description": "Per-case judge override. enabled: false skips goal-completion grading for this case; null clears the override and restores the suite setting."
+          },
           "declaredSuiteId": {
             "type": "string",
             "maxLength": 128,
@@ -16458,6 +16818,17 @@
         "type": "object",
         "description": "Partial update. Every field is optional; omitted fields are left as they are. `steps` REPLACES the definition rather than merging into it.",
         "properties": {
+          "judge": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              }
+            },
+            "nullable": true,
+            "description": "Per-case judge override. enabled: false skips goal-completion grading for this case; null clears the override and restores the suite setting."
+          },
           "declaredSuiteId": {
             "type": "string",
             "maxLength": 128,
@@ -16608,6 +16979,82 @@
         "description": "Forwarded VERBATIM to the backend's eval-ingestion surface, which owns the schema. The `projectId` path segment always wins: it overwrites any `projectId` in the body, and the literal `default` omits it so the key's org Default project is used. Bodies are capped at ~6 MiB here and 5 MiB by the backend.",
         "additionalProperties": true
       },
+    "ModelLeaseRequest": {
+      "type": "object",
+      "required": [
+        "model"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "model": {
+          "type": "string",
+          "description": "Canonical model id. Only `anthropic/claude-*` and `openai/gpt-5*` are served, and only if the model has a gateway pricing row.",
+          "example": "anthropic/claude-sonnet-4.5"
+        },
+        "runId": {
+          "type": "string",
+          "description": "Caller-chosen id to revoke by. Generated if omitted."
+        },
+        "maxOutputTokens": {
+          "type": "integer",
+          "description": "Per-call output ceiling, clamped to the server maximum."
+        }
+      }
+    },
+    "ModelLease": {
+      "type": "object",
+      "required": [
+        "lease",
+        "protocol",
+        "proxyBaseUrl",
+        "expiresAt",
+        "runId",
+        "model"
+      ],
+      "properties": {
+        "lease": {
+          "type": "string",
+          "description": "Present it as the `x-mcpjam-harness-lease` header on requests to `proxyBaseUrl`. Never as a bearer token, and never sent to any other host."
+        },
+        "protocol": {
+          "type": "string",
+          "enum": [
+            "anthropic",
+            "openai"
+          ],
+          "description": "Which vendor wire format `proxyBaseUrl` speaks, derived from the model's vendor prefix."
+        },
+        "proxyBaseUrl": {
+          "type": "string",
+          "format": "uri",
+          "description": "Base URL for the metered model proxy. Anthropic leases accept `POST /v1/messages`; OpenAI leases accept `POST /v1/responses`."
+        },
+        "expiresAt": {
+          "type": "integer",
+          "description": "Epoch milliseconds. Mint a new lease before this; the proxy fails an expired one closed."
+        },
+        "runId": {
+          "type": "string",
+          "description": "Pass to the revoke operation to kill this lease early."
+        },
+        "model": {
+          "type": "string"
+        }
+      }
+    },
+    "ModelLeaseRevokeRequest": {
+      "type": "object",
+      "required": [
+        "runId"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "runId": {
+          "type": "string",
+          "description": "The `runId` returned when the lease was minted."
+        }
+      }
+    },
       "EvalIngestResponse": {
         "type": "object",
         "description": "The backend's response, passed through verbatim along with its status code. Success shapes are the legacy `{ ok: true, ... }` envelopes the SDK reporter parses — deliberately NOT the v1 resource envelope. Errors are canonical v1 `{ code, message }`.",
@@ -19236,6 +19683,35 @@
           "cases"
         ],
         "properties": {
+          "progress": {
+            "type": "object",
+            "required": [
+              "total",
+              "completed",
+              "errors",
+              "skipped"
+            ],
+            "properties": {
+              "total": {
+                "type": "number"
+              },
+              "completed": {
+                "type": "number"
+              },
+              "errors": {
+                "type": "number"
+              },
+              "skipped": {
+                "type": "number"
+              }
+            }
+          },
+          "judgeTemplateVersion": {
+            "type": "number"
+          },
+          "judgeTemplateHash": {
+            "type": "string"
+          },
           "status": {
             "type": ["string", "null"],
             "enum": ["pending", "completed", "failed", null],
@@ -19264,7 +19740,7 @@
             "items": {
               "$ref": "#/components/schemas/EvalRunGoalCompletionCase"
             },
-            "description": "Per-case grades. EMPTY unless `status` is `completed` — a pending or failed judge carries no cases, and `status` is what says which."
+            "description": "Per-iteration measurements and unscored error or skipped rows on terminal jobs. Failed jobs retain completed measurements. Pending jobs expose progress and an empty cases array."
           }
         }
       },
@@ -19341,6 +19817,106 @@
         "type": "object",
         "required": ["caseKey", "score", "passed", "reason", "rubricHits"],
         "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "scored",
+              "error",
+              "skipped"
+            ],
+            "description": "Measurement state. Interpret score and passed only for scored rows. Legacy scored rows are projected as scored."
+          },
+          "gradingKey": {
+            "type": "string"
+          },
+          "errorCode": {
+            "type": "string"
+          },
+          "judgeTemplateVersion": {
+            "type": "number"
+          },
+          "judgeTemplateHash": {
+            "type": "string"
+          },
+          "evidenceHash": {
+            "type": "string"
+          },
+          "evidenceManifest": {
+            "type": "object",
+            "required": [
+              "version",
+              "traceComplete",
+              "traceFields",
+              "messageCount",
+              "spanCount",
+              "artifactSources",
+              "uncaptured",
+              "inputBytes"
+            ],
+            "properties": {
+              "version": {
+                "type": "number",
+                "enum": [
+                  1
+                ]
+              },
+              "traceComplete": {
+                "type": "boolean",
+                "enum": [
+                  true
+                ]
+              },
+              "traceFields": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "messageCount": {
+                "type": "number"
+              },
+              "spanCount": {
+                "type": "number"
+              },
+              "artifactSources": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "sourceId",
+                    "mediaType",
+                    "modality"
+                  ],
+                  "properties": {
+                    "sourceId": {
+                      "type": "string"
+                    },
+                    "mediaType": {
+                      "type": "string"
+                    },
+                    "modality": {
+                      "type": "string",
+                      "enum": [
+                        "image",
+                        "audio",
+                        "video",
+                        "file"
+                      ]
+                    }
+                  }
+                }
+              },
+              "uncaptured": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "inputBytes": {
+                "type": "number"
+              }
+            }
+          },
           "caseKey": {
             "type": "string",
             "description": "The stable AUTHORED-case identity, as persisted. NOT a case row id — do not join it against the ids the per-case routes take."

@@ -29,6 +29,53 @@ import {
   importedDraftBlockedReason,
 } from "@/lib/mcpjam-agent/eval-workspace";
 import type { EvalAgentScope } from "@/shared/eval-agent-scope";
+import { describeMCPJamLimitMessage } from "@/lib/mcpjam-limit";
+
+/**
+ * Convex rejects a mutation with `OptimisticConcurrencyControlFailure` when two
+ * writers touch the same document at once — here, two draft saves landing on
+ * the same suite. The raw message is a JSON blob whose readable text sits one
+ * level down, so match the whole string rather than a parsed field.
+ */
+export function isWriteConflictMessage(message: string): boolean {
+  return /OptimisticConcurrencyControlFailure/i.test(message);
+}
+
+/** Named the retry, because retrying is the entire fix. */
+const WRITE_CONFLICT_MESSAGE =
+  "Another change to this suite landed first. Try adding it again.";
+
+/**
+ * The one place a stored draft/generation error becomes user-facing copy. The
+ * store keeps the wire message verbatim on purpose, so the shaping happens at
+ * render: a model limit gets the catalog sentence, a write conflict gets the
+ * retry line, and anything else is shown as-is.
+ */
+export function describeEvalDraftError(message: string): string {
+  return (
+    describeMCPJamLimitMessage(message) ??
+    (isWriteConflictMessage(message) ? WRITE_CONFLICT_MESSAGE : message)
+  );
+}
+
+/**
+ * Save drafts ONE AT A TIME. Every `saveGeneratedDraft` ends in a mutation that
+ * reads and writes the same `testSuite` document, so firing them together loses
+ * the optimistic-concurrency check and all but one fail. Serializing removes
+ * the collision at its source — no retry needed.
+ *
+ * Keeps going after a failure: `saveGeneratedDraft` swallows its own error onto
+ * the draft, so the failures stay in the list and the successes drop out, the
+ * same as before.
+ */
+async function saveDraftsSequentially(
+  scope: EvalAgentScope,
+  drafts: ReadonlyArray<{ id: string }>,
+): Promise<void> {
+  for (const draft of drafts) {
+    await saveGeneratedDraft(scope, draft.id);
+  }
+}
 
 export function EvalGeneratedDrafts({
   projectId,
@@ -123,13 +170,7 @@ export function EvalGeneratedDrafts({
             <Button
               size="sm"
               disabled={saving || running || revealing || !readyTargets.length}
-              onClick={() =>
-                void Promise.all(
-                  readyTargets.map((draft) =>
-                    saveGeneratedDraft(scope, draft.id),
-                  ),
-                )
-              }
+              onClick={() => void saveDraftsSequentially(scope, readyTargets)}
             >
               {saving
                 ? "Adding cases…"
@@ -149,7 +190,7 @@ export function EvalGeneratedDrafts({
           </p>
           {!saveVisibleOnly && state.error && (
             <p role="alert" className="text-sm text-destructive">
-              {state.error}
+              {describeEvalDraftError(state.error)}
             </p>
           )}
           {visibleDrafts.map((draft) => {
@@ -314,7 +355,7 @@ export function EvalGeneratedDrafts({
                 </footer>
                 {draft.error && (
                   <p role="alert" className="mt-3 text-xs text-destructive">
-                    {draft.error}
+                    {describeEvalDraftError(draft.error)}
                   </p>
                 )}
               </article>

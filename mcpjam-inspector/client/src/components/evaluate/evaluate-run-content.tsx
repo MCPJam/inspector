@@ -24,7 +24,6 @@ import { copyToClipboard } from "@/lib/clipboard";
 import { useEvalRunDecisionDetail } from "@/hooks/use-eval-run-decision-summary";
 import { useEvalRunIterationChains } from "@/hooks/use-eval-run-iteration-chains";
 import { useDescriptionExperimentEnabled } from "@/hooks/useDescriptionExperimentEnabled";
-import { useFailureGroupsEnabled } from "@/hooks/useFailureGroupsEnabled";
 import {
   evalRunDecisionRevision,
   isTerminalEvalRunStatus,
@@ -38,7 +37,6 @@ import {
   summarizeRunChanges,
 } from "./evaluate-run-diff-model";
 import { useEvalRunCompare } from "./use-eval-run-compare";
-import { FailureGroupsCard } from "./failure-groups-card";
 import { UnifiedFindingsSection } from "./unified-findings-section";
 import { RunResultsMatrix } from "./run-results-matrix";
 import { RunDescriptionExperimentCard } from "./run-description-experiment-card";
@@ -197,7 +195,6 @@ export function SingleRunContent({
     revision: evalRunDecisionRevision(run),
     enabled: descriptionExperimentEnabled && active,
   });
-  const failureGroupsEnabled = useFailureGroupsEnabled();
   // What changed since the previous run. One read, no store: the answer is not
   // shared with another surface and a cache would be more machinery than it is
   // worth.
@@ -428,10 +425,6 @@ export function SingleRunContent({
             descriptionExperiment.experiment.status === "proposed"
           }
         />
-      ) : null}
-
-      {failureGroupsEnabled && run.suiteId ? (
-        <FailureGroupsCard suiteId={String(run.suiteId)} />
       ) : null}
     </div>
   );

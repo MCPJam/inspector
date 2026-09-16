@@ -57,13 +57,7 @@ export function getSubsectionsForGroup(
         },
         {
           id: "checks",
-          // The manifest label, which #5088 brought back into agreement with
-          // the section heading by renaming both to "Checks by stage". This
-          // entry had briefly read an exported heading constant instead,
-          // because the row said "Assertions" while the section said something
-          // else and the jump link named one thing and scrolled to another.
-          // Fixing the manifest is the better fix and it is the one that
-          // landed, so the indirection goes away.
+          // Keep the jump link aligned with the section heading.
           label: manifestLabel("checks"),
           target: { type: "passOrFailChecks" },
         },

@@ -365,6 +365,7 @@ export {
   createTunnelOperation,
   cancelEvalRunOperation,
   backtestEvalRunOperation,
+  backtestEvalRunJudgeOperation,
   requestEvalRunJudgeOperation,
   listEvalGithubReposOperation,
   connectEvalGithubRepoOperation,
@@ -875,3 +876,8 @@ export type {
   EvalBacktestReport,
   EvalBacktestDifference,
 } from "../contract/eval-backtest.js";
+
+export type {
+  JudgeBacktestRequest,
+  JudgeBacktestReport,
+} from "../contract/judge-backtest.js";

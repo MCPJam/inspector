@@ -312,7 +312,6 @@ describe("v1 eval-edit routes", () => {
     expect(body.settings.judge).toEqual({
       enabled: true,
       model: "openai/gpt-5-mini",
-      autoRun: false,
       threshold: 0.7,
       // S6 — the suite's own criteria, `null` when it has none. Distinct from
       // an empty list, which the write side refuses.
@@ -651,7 +650,7 @@ describe("v1 eval-edit routes", () => {
     });
   });
 
-  it("GET reports resolved judge defaults for a suite with no judgeConfig", async () => {
+  it("GET leaves inherited automation unknown when an older backend supplies no policy", async () => {
     // A suite that never touched the judge reports what a run WOULD grade
     // with, not a half-resolved `enabled: true` beside `model: null` — a
     // combination that never exists at run time.
@@ -669,10 +668,19 @@ describe("v1 eval-edit routes", () => {
     expect(body.settings.judge).toEqual({
       enabled: true,
       model: "openai/gpt-5.4-mini",
-      autoRun: false,
       threshold: 0.7,
       rubric: null,
     });
+  });
+
+  it("GET reports the backend automatic policy for an untouched suite", async () => {
+    convexQueryMock.mockImplementation((name: string) => name === "testSuites:getTestSuite"
+      ? Promise.resolve({ ...SUITE_DOC, judgeConfig: undefined, judgePolicy: { contractVersion: 4, executionPaused: false, automatic: true, effective: { enabled: true, autoRun: true, judgeModel: "openai/gpt-5.4-mini", threshold: 0.7, role: "advisory" } } })
+      : defaultQueryImpl(name));
+    const res = await request("GET", "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx");
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.settings.judge).toMatchObject({ autoRun: true, automatic: true, contractVersion: 4 });
   });
 
   it("PATCH partial settings merge onto current values (no field reset)", async () => {
@@ -3816,6 +3824,38 @@ describe("v1 eval-edit routes", () => {
    * every verdict is hashed against it.
    */
   describe("judge rubric on PATCH", () => {
+    it("preserves instructions-only rubrics and refuses overlong mixed rubrics before writing", async () => {
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        {
+          settings: {
+            judge: { rubric: { instructions: "  Verify the tool result  " } },
+          },
+        },
+      );
+      expect(res.status).toBe(200);
+      expect(suiteUpdateArgs().judgeRubric).toEqual({
+        instructions: "Verify the tool result",
+      });
+      convexMutationMock.mockClear();
+      const invalid = await request(
+        "PATCH",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        {
+          settings: {
+            judge: {
+              rubric: {
+                instructions: "x".repeat(2001),
+                criteria: [{ id: "a", label: "A" }],
+              },
+            },
+          },
+        },
+      );
+      expect(invalid.status).toBe(400);
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
     function suiteUpdateArgs(): any {
       return convexMutationMock.mock.calls.find(
         (c) => c[0] === "testSuites:updateTestSuite",
