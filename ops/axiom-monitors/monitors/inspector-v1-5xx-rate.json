@@ -49,5 +49,6 @@
     "4. Cross-check the canary. `prod-canary.yml` probes `GET /api/v1/me`; if that is also failing the whole surface is down rather than one route.",
     "",
     "ROLLBACK: revert the definition file, then `node ops/axiom-monitors/apply.mjs --apply --only inspector-v1-5xx-rate`. The --apply flag is required — the script defaults to read-only plan mode. Raise the threshold only against measured traffic (see WHY 5 / 30m), never to silence an active regression."
-  ]
+  ],
+  "descriptionLengthExempt": true
 }
