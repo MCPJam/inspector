@@ -512,15 +512,21 @@ export function buildOrganizationPath(
 }
 
 /**
- * Build an eval route path in Suites mode from a typed EvalRoute.
+ * Build a Suites route; test cases always open Ding Dong.
  */
 export function buildEvalsPath(route: EvalRoute): string {
-  return buildEvalRoutePath(routePaths.evals, route);
+  return buildEvalRoutePath(
+    route.type === "test-edit" || route.type === "test-detail"
+      ? routePaths.evaluate : routePaths.evals, route,
+  );
 }
 
-/** Build the same typed EvalRoute in Runs mode (`/evals/runs/...`). */
+/** Build a Runs route; test cases always open Ding Dong. */
 export function buildEvalsRunsPath(route: EvalRoute): string {
-  return buildEvalRoutePath(routePaths.evalsRuns, route);
+  return buildEvalRoutePath(
+    route.type === "test-edit" || route.type === "test-detail"
+      ? routePaths.evaluate : routePaths.evalsRuns, route,
+  );
 }
 
 /**
@@ -532,6 +538,11 @@ export function buildEvalsRunsPath(route: EvalRoute): string {
  */
 export function buildEvaluatePath(route: EvalRoute): string {
   return buildEvalRoutePath(routePaths.evaluate, route);
+}
+
+/** Old case bookmarks open Ding Dong without dropping subtab or project context. */
+export function legacyEvalCasePathToEvaluatePath(pathname: string, search = "", hash = ""): string {
+  return `${pathname.replace(/^\/evals(?:\/runs)?(?=\/suite\/[^/]+\/test\/[^/]+(?:\/edit)?$)/, routePaths.evaluate)}${search}${hash}`;
 }
 
 /**

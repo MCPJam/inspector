@@ -1,3 +1,4 @@
+import { legacyEvalCasePathToEvaluatePath } from "./lib/app-navigation";
 import { CreditUsagePage } from "./components/billing/CreditUsagePage";
 import { createBrowserRouter, RouterProvider, redirect } from "react-router";
 import { RouteErrorScreen } from "./components/RouteErrorScreen";
@@ -69,6 +70,15 @@ import {
 export { getAppRouter };
 
 type AppRouter = ReturnType<typeof createBrowserRouter>;
+
+function evalCaseRedirect({ request }: { request: Request }) {
+  const url = new URL(request.url);
+  const scoped = parseProjectPath(url.pathname);
+  const target = legacyEvalCasePathToEvaluatePath(
+    scoped ? scoped.relativePath : url.pathname, url.search, url.hash,
+  );
+  return redirect(scoped ? buildProjectPath(scoped.projectId, target) : target);
+}
 
 /**
  * Legacy `/ci-evals/*` → `/evals/runs/*`, under a project or not.
@@ -281,8 +291,8 @@ const ROUTE_ELEMENTS: Record<
   "evals/create": { element: <EvalsRoute /> },
   "evals/suite/:suiteId": { element: <EvalsRoute /> },
   "evals/suite/:suiteId/runs/:runId": { element: <EvalsRoute /> },
-  "evals/suite/:suiteId/test/:testId": { element: <EvalsRoute /> },
-  "evals/suite/:suiteId/test/:testId/edit": { element: <EvalsRoute /> },
+  "evals/suite/:suiteId/test/:testId": { loader: evalCaseRedirect },
+  "evals/suite/:suiteId/test/:testId/edit": { loader: evalCaseRedirect },
   "evals/suite/:suiteId/edit": { element: <EvalsRoute /> },
   // Runs mode. `mode` comes from the route table rather than sniffing the URL
   // inside the component, so the two lenses stay one route element with one
@@ -295,10 +305,10 @@ const ROUTE_ELEMENTS: Record<
     element: <EvalsRoute mode="runs" />,
   },
   "evals/runs/suite/:suiteId/test/:testId": {
-    element: <EvalsRoute mode="runs" />,
+    loader: evalCaseRedirect,
   },
   "evals/runs/suite/:suiteId/test/:testId/edit": {
-    element: <EvalsRoute mode="runs" />,
+    loader: evalCaseRedirect,
   },
   "evals/runs/suite/:suiteId/edit": { element: <EvalsRoute mode="runs" /> },
   // Evaluate (New). Its own element, so nothing about the shipped Evaluate
