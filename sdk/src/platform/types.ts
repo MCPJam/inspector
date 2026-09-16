@@ -4285,6 +4285,27 @@ export interface PlatformInsightsFindingProvenance {
    * run-wide mechanism rate is claimed. */
   mechanismBasis: "complete" | "sampled" | "none";
   affectedIterationIds: string[];
+  /** For a mechanism consolidated across error groups: the deterministic
+   * candidates it was merged from. */
+  sourceCandidateIds?: string[];
+  /**
+   * Per-member verification of an AI mechanism. Every trial the mechanism
+   * proposed was checked against its own recorded evidence; `confirmed` is
+   * the published count, and the others are disclosed, never counted.
+   * Absent on deterministic groups and on older backends.
+   */
+  verification?: {
+    proposed: number;
+    confirmed: number;
+    unsupported: number;
+    inconclusive: number;
+    unchecked: number;
+    members?: Array<{
+      iterationId: string;
+      verdict: "supported" | "unsupported" | "inconclusive" | "unchecked";
+      reason?: string;
+    }>;
+  };
   /** Per-prose-field origin for the view this provenance accompanies.
    * Producer-owned: a deterministic fallback sentence and a model that wrote
    * the same sentence are indistinguishable to a consumer. */
