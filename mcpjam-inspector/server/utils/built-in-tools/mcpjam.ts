@@ -38,7 +38,6 @@ import {
   cancelProjectServerConnectionOperation,
   cancelEvalRunOperation,
   backtestEvalRunOperation,
-  backtestEvalRunJudgeOperation,
   requestEvalRunJudgeOperation,
   listEvalGithubReposOperation,
   listEvalCheckReposOperation,
@@ -204,7 +203,6 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   getEvalRunStepsOperation,
   cancelEvalRunOperation,
   backtestEvalRunOperation,
-  backtestEvalRunJudgeOperation,
   requestEvalRunJudgeOperation,
   listEvalGithubReposOperation,
   listEvalCheckReposOperation,
@@ -588,7 +586,6 @@ const APPROVAL_REQUIRED_IDS = new Set([
   // useful if you can ask for them — but the spend is the user's to approve,
   // so it sits here with `cancel_eval_run` rather than executing on request.
   requestEvalRunJudgeOperation.name,
-  backtestEvalRunJudgeOperation.name,
   // The description-rewrite experiment: proposing SPENDS one model call and
   // starting SPENDS eval-iteration credits across two replayed runs. Same
   // rule as the judge request — advertised so the agent can drive the loop,

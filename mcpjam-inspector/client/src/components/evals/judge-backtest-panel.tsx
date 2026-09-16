@@ -79,7 +79,7 @@ export function JudgeBacktestPanel({
   ) as unknown as (args: {
     suiteId: string;
     runId: string;
-    judgeRubricDraft: EvalJudgeRubric["criteria"] | null;
+    judgeRubricDraft: EvalJudgeRubric | null;
   }) => Promise<BacktestResult>;
 
   const run = async () => {
@@ -91,7 +91,10 @@ export function JudgeBacktestPanel({
         runId,
         // `null`, not an empty array: the backend reads an empty list as a
         // rubric that asks nothing, and null as no rubric at all.
-        judgeRubricDraft: draftRubric?.criteria ?? null,
+        // The whole rubric: grading instructions are part of what the judge
+        // was asked, so a preview that sent only the criteria would measure a
+        // different question than the one the author is about to save.
+        judgeRubricDraft: draftRubric ?? null,
       });
       setResult(next);
     } catch (caught) {
