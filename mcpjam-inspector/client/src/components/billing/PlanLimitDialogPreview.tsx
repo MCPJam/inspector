@@ -174,7 +174,7 @@ const CREDITS_VARIANTS: CreditsVariant[] = [
 ];
 
 const WALLS = [
-  { id: "evals" as const, label: "Eval iterations" },
+  { id: "evals" as const, label: "Eval iterations (legacy)" },
   { id: "credits" as const, label: "Credits" },
   { id: "guest" as const, label: "Guest sign-up" },
   { id: "frontier" as const, label: "Frontier sign-in" },
