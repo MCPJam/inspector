@@ -378,9 +378,12 @@ export async function runAction(
   const githubToken = (env.MCPJAM_ACTION_GITHUB_TOKEN ?? "").trim();
   if (githubToken) log(`::add-mask::${escapeCommand(githubToken)}`);
   // The identity-proxy service token, when one is configured, is a credential
-  // like the others and never belongs in a log line.
-  const accessSecret = (env.CF_ACCESS_CLIENT_SECRET ?? "").trim();
-  if (accessSecret) log(`::add-mask::${escapeCommand(accessSecret)}`);
+  // like the others and never belongs in a log line. Both halves: Cloudflare
+  // issues and revokes the id and the secret as one pair.
+  for (const name of ["CF_ACCESS_CLIENT_ID", "CF_ACCESS_CLIENT_SECRET"]) {
+    const value = (env[name] ?? "").trim();
+    if (value) log(`::add-mask::${escapeCommand(value)}`);
+  }
   let directory;
   try {
     const inputs = parseInputs(env);
