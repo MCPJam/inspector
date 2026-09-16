@@ -67,6 +67,7 @@ describe("org model helpers", () => {
       id: "custom:local:llama-3",
       name: "Local / llama-3",
       provider: "custom",
+      hosted: false,
       customProviderName: "local",
     });
   });
@@ -93,11 +94,13 @@ describe("org model helpers", () => {
       id: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
       name: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
       provider: "bedrock",
+      hosted: false,
     });
     expect(models).toContainEqual({
       id: "us.amazon.nova-pro-v1:0",
       name: "us.amazon.nova-pro-v1:0",
       provider: "bedrock",
+      hosted: false,
     });
   });
 
@@ -350,5 +353,78 @@ describe("getDefaultModel", () => {
     ]);
 
     expect(picked.id).toBe("anthropic/claude-haiku-4.5");
+  });
+});
+
+describe("own-provider model provenance", () => {
+  it("marks all local provider selections even when their ids collide with hosted models", () => {
+    const ollama = {
+      id: "openai/gpt-5-nano",
+      name: "local alias",
+      provider: "ollama",
+    };
+    const models = buildAvailableModels({
+      ...NO_KEYS,
+      hostedCatalog: [],
+      hasToken: () => true,
+      isOllamaRunning: true,
+      ollamaModels: [ollama],
+      getOpenRouterSelectedModels: () => ["openai/gpt-5-nano"],
+      customProviders: [
+        {
+          name: "acme",
+          protocol: "openai-compatible",
+          baseUrl: "https://example.com",
+          modelIds: ["model"],
+        },
+      ],
+    });
+    expect(models.length).toBeGreaterThan(0);
+    for (const model of models) {
+      expect(model.hosted, `${model.provider}/${model.id}`).toBe(false);
+      expect(isMCPJamProvidedModelMenuItem(model)).toBe(false);
+    }
+    expect(ollama).not.toHaveProperty("hosted");
+  });
+
+  it("marks every dynamically configured org provider as BYOK", () => {
+    const models = buildAvailableModelsFromOrgConfig(
+      {
+        providers: [
+          {
+            providerKey: "openrouter",
+            enabled: true,
+            hasSecret: true,
+            selectedModels: ["openai/gpt-5-nano"],
+          },
+          {
+            providerKey: "bedrock",
+            enabled: true,
+            hasSecret: true,
+            selectedModels: ["amazon.nova-pro-v1:0"],
+          },
+          {
+            providerKey: "ollama",
+            enabled: true,
+            hasSecret: false,
+            baseUrl: "http://localhost:11434",
+            modelIds: ["openai/gpt-5-nano"],
+          },
+          {
+            providerKey: "custom:acme",
+            enabled: true,
+            hasSecret: false,
+            baseUrl: "https://example.com",
+            modelIds: ["model"],
+          },
+        ],
+      },
+      [],
+    );
+    expect(models).toHaveLength(4);
+    for (const model of models) {
+      expect(model.hosted, model.provider).toBe(false);
+      expect(isMCPJamProvidedModelMenuItem(model)).toBe(false);
+    }
   });
 });

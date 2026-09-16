@@ -325,17 +325,11 @@ export interface ModelDefinition {
    * MCPJam credits). Drives `isMCPJamProvidedModelMenuItem` and the free/paid
    * locks.
    *
-   * Explicitly FALSE on the picker's own-provider rows built from
-   * `SUPPORTED_MODELS` (`buildAvailableModels` / `buildAvailableModelsFromOrgConfig`).
-   * That is the one fact the server cannot recover from the id: 25 of those
-   * bare ids (`claude-fable-5`, `gpt-5-nano`, `gemini-2.5-pro`, …) canonicalize
-   * with their provider to a hosted twin, and the server deliberately reads a
-   * bare id + provider as hosted because legacy host pins are stored that way.
-   * So `(id, provider)` alone says "hosted" for a row the user picked under
-   * "Your providers" — `isHostedModelDefinition` (server) honours the `false`.
-   *
-   * Absent on org OpenRouter/Bedrock/Ollama/custom rows (their ids never
-   * collide) and on server-lifted host models.
+   * Explicitly false on every own-provider picker row, including dynamic
+   * OpenRouter, Bedrock, Ollama and custom models. IDs can overlap the hosted
+   * catalog; provider + ID alone cannot recover the user's credential choice.
+   * The server treats false as a BYOK opt-out, while true still requires a
+   * hosted catalog match. Omitted preserves legacy ID-based classification.
    */
   hosted?: boolean;
   /**

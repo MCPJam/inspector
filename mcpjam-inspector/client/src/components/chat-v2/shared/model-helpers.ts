@@ -78,8 +78,7 @@ export function buildAvailableModels(params: {
   const byok = SUPPORTED_MODELS.filter((m) => {
     if (isMCPJamProvidedModel(String(m.id))) return false;
     return providerHasKey[m.provider];
-  }).map((m) => ({ ...m, hosted: false }));
-  const cloud = [...hosted, ...byok];
+  });
 
   const openRouterModels: ModelDefinition[] = providerHasKey.openrouter
     ? getOpenRouterSelectedModels().map((id) => ({
@@ -98,12 +97,12 @@ export function buildAvailableModels(params: {
     }))
   );
 
-  let models: ModelDefinition[] = cloud;
+  let models: ModelDefinition[] = byok;
   if (isOllamaRunning && ollamaModels.length > 0)
     models = models.concat(ollamaModels);
   if (openRouterModels.length > 0) models = models.concat(openRouterModels);
   if (customModels.length > 0) models = models.concat(customModels);
-  return models;
+  return [...hosted, ...models.map((model) => ({ ...model, hosted: false }))];
 }
 
 /**
@@ -170,8 +169,8 @@ export function buildAvailableModelsFromOrgConfig(
   const orgKeyModels = SUPPORTED_MODELS.filter((m) => {
     if (isMCPJamProvidedModel(String(m.id))) return false;
     return availableProviderKeys.has(m.provider);
-  }).map((m) => ({ ...m, hosted: false }));
-  const models: ModelDefinition[] = [...hosted, ...orgKeyModels];
+  });
+  const models: ModelDefinition[] = [...orgKeyModels];
 
   // OpenRouter: include selectedModels from org config
   const openRouterConfig = orgConfig.providers.find(
@@ -247,7 +246,7 @@ export function buildAvailableModelsFromOrgConfig(
     }
   }
 
-  return models;
+  return [...hosted, ...models.map((model) => ({ ...model, hosted: false }))];
 }
 
 /** Strip the redundant "(Free)" tier suffix for denser labels. */
