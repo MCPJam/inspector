@@ -1,3 +1,4 @@
+import { useFrontierSignInDialogStore } from "@/stores/frontier-sign-in-dialog-store";
 import { describeAsSlug, describeError } from "@mcpjam/sdk/browser";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 import type { MCPJamLimitSurface } from "@/stores/mcpjam-limit-dialog-store";
@@ -340,6 +341,18 @@ export function isMCPJamModelLimitError(args: MCPJamLimitErrorInput): boolean {
 }
 
 export function notifyMCPJamLimitError(args: MCPJamLimitErrorInput): boolean {
+  // Authentication gating is not credit exhaustion: do not mark the wallet empty.
+  if (
+    args.code === "guest_model_not_allowed" ||
+    [args.message, ...collectStringValues(args.details)].some(
+      (value) =>
+        typeof value === "string" &&
+        /sign in to use frontier models/i.test(value),
+    )
+  ) {
+    useFrontierSignInDialogStore.getState().open();
+    return true;
+  }
   if (!isMCPJamModelLimitError(args)) return false;
   const period = findMCPJamLimitPeriod(args.message);
   useMCPJamLimitDialogStore.getState().notifyLimitHit({

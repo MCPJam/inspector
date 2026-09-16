@@ -1,3 +1,4 @@
+import { JamIllustration } from "./JamIllustration";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Dialog,
@@ -17,6 +18,7 @@ import {
 
 export interface CreditsLimitDialogViewProps {
   description: string;
+  isFreePlan?: boolean;
   /** Can't buy credits or upgrade. Gets the owner-request path instead. */
   isKnownNonManager: boolean;
   /** Free orgs whose user can manage billing. A paid org gets credits only. */
@@ -41,6 +43,7 @@ export interface CreditsLimitDialogViewProps {
   isLoadingPrices?: boolean;
   onUpgrade: () => void;
   onBuyCredits: () => void;
+  onExplorePlans?: () => void;
   onUseOwnKey: () => void;
   onDismiss: () => void;
   /** Dev preview only; see PlanLimitDialogView. Production renders modal. */
@@ -58,6 +61,7 @@ export interface CreditsLimitDialogViewProps {
  */
 export function CreditsLimitDialogView({
   description,
+  isFreePlan = false,
   isKnownNonManager,
   showUpgrade,
   showRequestUpgrade = false,
@@ -78,6 +82,7 @@ export function CreditsLimitDialogView({
   isLoadingPrices = false,
   onUpgrade,
   onBuyCredits,
+  onExplorePlans,
   onUseOwnKey,
   onDismiss,
   modal = true,
@@ -91,6 +96,7 @@ export function CreditsLimitDialogView({
       }}
     >
       <DialogContent className="sm:max-w-md">
+        {isFreePlan && <JamIllustration />}
         <DialogHeader>
           <DialogTitle>Your org is out of credits</DialogTitle>
           <DialogDescription
@@ -100,7 +106,14 @@ export function CreditsLimitDialogView({
             {description}
           </DialogDescription>
         </DialogHeader>
-        {isKnownNonManager ? (
+        {isFreePlan && !isKnownNonManager ? (
+          <div className="grid grid-cols-2 gap-2">
+            <Button variant="outline" onClick={onUseOwnKey}>
+              Learn more about BYOK
+            </Button>
+            <Button onClick={onExplorePlans}>Explore plans</Button>
+          </div>
+        ) : isKnownNonManager ? (
           <RequestUpgradeButton
             recipients={requestRecipients}
             organizationName={organizationName}
@@ -146,7 +159,7 @@ export function CreditsLimitDialogView({
                 className="px-0 text-muted-foreground"
                 onClick={onUseOwnKey}
               >
-                Use your own API key
+                Learn more about BYOK
               </Button>
               <Button type="button" variant="outline" onClick={onBuyCredits}>
                 Buy credits

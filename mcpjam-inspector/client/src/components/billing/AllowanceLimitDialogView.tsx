@@ -1,3 +1,4 @@
+import { JamIllustration } from "./JamIllustration";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Dialog,
@@ -16,12 +17,14 @@ export interface AllowanceLimitDialogViewProps {
   /** Both vary by which allowance ran out; see `MCPJamLimitPeriod`. */
   title: string;
   description: string;
+  isFreePlan?: boolean;
   /** Can't buy credits or upgrade. Gets the owner-request path instead. */
   isKnownNonManager: boolean;
   requestRecipients: UpgradeRequestRecipient[];
   organizationId?: string | null;
   organizationName: string;
   teamName: string;
+  onLearnMore?: () => void;
   onBuyCredits: () => void;
   onExplorePlans: () => void;
   onDismiss: () => void;
@@ -29,24 +32,17 @@ export interface AllowanceLimitDialogViewProps {
   modal?: boolean;
 }
 
-/**
- * The MCPJam model-allowance wall for a swarm. Deliberately the same shape as
- * `CreditsLimitDialogView` — full-width primary, then a footer with the link
- * left — so the two walls read as one pattern.
- *
- * Separate from it because two of that wall's actions dead-end here: no swarm
- * screen mounts the model picker its "use your own API key" link drives, and
- * an own key would not lift this limit anyway, since swarm generation and
- * persona turns are always MCPJam-billed.
- */
+/** Swarm allowance wall: Free explores plans; eligible paid organizations top up. */
 export function AllowanceLimitDialogView({
   title,
   description,
+  isFreePlan = false,
   isKnownNonManager,
   requestRecipients,
   organizationId,
   organizationName,
   teamName,
+  onLearnMore,
   onBuyCredits,
   onExplorePlans,
   onDismiss,
@@ -61,6 +57,7 @@ export function AllowanceLimitDialogView({
       }}
     >
       <DialogContent className="sm:max-w-md">
+        {isFreePlan && <JamIllustration />}
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription
@@ -70,14 +67,21 @@ export function AllowanceLimitDialogView({
             {description}
           </DialogDescription>
         </DialogHeader>
-        {isKnownNonManager ? (
+        {isFreePlan && !isKnownNonManager ? (
+          <div className="grid grid-cols-2 gap-2">
+            <Button variant="outline" onClick={onLearnMore}>
+              Learn more about BYOK
+            </Button>
+            <Button onClick={onExplorePlans}>Explore plans</Button>
+          </div>
+        ) : isKnownNonManager ? (
           <RequestUpgradeButton
             recipients={requestRecipients}
             organizationName={organizationName}
             teamName={teamName}
             origin="credits"
             limitKind="credits"
-            requestAction="buyCredits"
+            requestAction={isFreePlan ? "upgrade" : "buyCredits"}
             organizationId={organizationId}
           />
         ) : (

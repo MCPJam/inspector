@@ -1,3 +1,4 @@
+import { useFrontierSignInDialogStore } from "@/stores/frontier-sign-in-dialog-store";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -11,7 +12,7 @@ const trackMock = vi.hoisted(() => vi.fn());
 // Guest credit-wall A/B flag. Defaults to control (undefined); treatment tests
 // flip it to "treatment".
 const guestVariantMock = vi.hoisted(() =>
-  vi.fn<() => string | boolean | undefined>(() => undefined)
+  vi.fn<() => string | boolean | undefined>(() => undefined),
 );
 // Controls posthog's hasLoadedFlags so tests can exercise the flags-loading gate.
 const flagsLoadedMock = vi.hoisted(() => ({ value: true }));
@@ -113,7 +114,7 @@ vi.mock("@/hooks/useOrganizations", () => ({
     isLoading: false,
   }),
   canManageOrgCredits: (
-    org: { myRole?: string; isCreator?: boolean } | null | undefined
+    org: { myRole?: string; isCreator?: boolean } | null | undefined,
   ) =>
     !!org &&
     (org.myRole === "owner" ||
@@ -124,6 +125,7 @@ vi.mock("@/hooks/useOrganizations", () => ({
 const originalHash = window.location.hash;
 
 beforeEach(() => {
+  useFrontierSignInDialogStore.getState().close();
   signIn.mockReset();
   signUp.mockReset();
   guestVariantMock.mockReset();
@@ -155,10 +157,7 @@ beforeEach(() => {
     period: null,
     pendingInput: null,
   });
-  useModelPickerIntentStore.setState({
-    openProvidersTabNonce: 0,
-    providersTabResponderCount: 0,
-  });
+  useModelPickerIntentStore.setState({ openProvidersTabNonce: 0 });
 });
 
 afterEach(() => {
@@ -191,11 +190,11 @@ describe("MCPJamLimitDialog", () => {
     expect(
       screen.getByRole("heading", {
         name: /you've used up your free guest credits/i,
-      })
+      }),
     ).toBeInTheDocument();
     expect(screen.getByText(/10×/i)).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /^sign in$/i })
+      screen.getByRole("button", { name: /^sign in$/i }),
     ).toBeInTheDocument();
   });
 
@@ -206,7 +205,7 @@ describe("MCPJamLimitDialog", () => {
     view.rerender(<MCPJamLimitDialog />);
 
     const impressions = trackMock.mock.calls.filter(
-      ([event]) => event === "plan_limit_dialog_shown"
+      ([event]) => event === "plan_limit_dialog_shown",
     );
     expect(impressions).toHaveLength(1);
     expect(impressions[0]?.[1]).toEqual(
@@ -215,7 +214,7 @@ describe("MCPJamLimitDialog", () => {
         audience: "guest",
         variant: "control",
         primary_action: "sign_in",
-      })
+      }),
     );
   });
 
@@ -243,22 +242,22 @@ describe("MCPJamLimitDialog", () => {
     render(<MCPJamLimitDialog />);
 
     expect(
-      screen.getByRole("heading", { name: /there's so much more to jam on/i })
+      screen.getByRole("heading", { name: /there's so much more to jam on/i }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /^create free account$/i })
+      screen.getByRole("button", { name: /^create free account$/i }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /^see paid plans$/i })
+      screen.getByRole("button", { name: /^see paid plans$/i }),
     ).toBeInTheDocument();
     // The control headline and single Sign in button are gone in treatment.
     expect(
       screen.queryByRole("heading", {
         name: /you've used up your free guest credits/i,
-      })
+      }),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /^sign in$/i })
+      screen.queryByRole("button", { name: /^sign in$/i }),
     ).not.toBeInTheDocument();
   });
 
@@ -269,7 +268,7 @@ describe("MCPJamLimitDialog", () => {
     render(<MCPJamLimitDialog />);
 
     await user.click(
-      screen.getByRole("button", { name: /^create free account$/i })
+      screen.getByRole("button", { name: /^create free account$/i }),
     );
     expect(signUp).toHaveBeenCalledTimes(1);
     expect(signIn).not.toHaveBeenCalled();
@@ -287,7 +286,7 @@ describe("MCPJamLimitDialog", () => {
     expect(openSpy).toHaveBeenCalledWith(
       "https://www.mcpjam.com/pricing",
       "_blank",
-      "noopener,noreferrer"
+      "noopener,noreferrer",
     );
     openSpy.mockRestore();
   });
@@ -298,7 +297,7 @@ describe("MCPJamLimitDialog", () => {
     render(<MCPJamLimitDialog />);
 
     const impressions = trackMock.mock.calls.filter(
-      ([event]) => event === "plan_limit_dialog_shown"
+      ([event]) => event === "plan_limit_dialog_shown",
     );
     expect(impressions).toHaveLength(1);
     expect(impressions[0]?.[1]).toEqual(
@@ -308,7 +307,7 @@ describe("MCPJamLimitDialog", () => {
         variant: "treatment",
         primary_action: "create_account",
         secondary_action: "see_plans",
-      })
+      }),
     );
   });
 
@@ -319,11 +318,14 @@ describe("MCPJamLimitDialog", () => {
     render(<MCPJamLimitDialog />);
 
     await user.click(
-      screen.getByRole("button", { name: /^create free account$/i })
+      screen.getByRole("button", { name: /^create free account$/i }),
     );
     expect(trackMock).toHaveBeenCalledWith(
       "plan_limit_create_account_clicked",
-      expect.objectContaining({ wall_kind: "guest_credits", variant: "treatment" })
+      expect.objectContaining({
+        wall_kind: "guest_credits",
+        variant: "treatment",
+      }),
     );
   });
 
@@ -337,10 +339,30 @@ describe("MCPJamLimitDialog", () => {
     await user.click(screen.getByRole("button", { name: /^see paid plans$/i }));
     expect(trackMock).toHaveBeenCalledWith(
       "plan_limit_see_plans_clicked",
-      expect.objectContaining({ wall_kind: "guest_credits", variant: "treatment" })
+      expect.objectContaining({
+        wall_kind: "guest_credits",
+        variant: "treatment",
+      }),
     );
     openSpy.mockRestore();
   });
+
+  it.each(["control", "treatment"])(
+    "reuses the jam artwork for the %s guest wall",
+    (variant) => {
+      guestVariantMock.mockReturnValue(variant);
+      useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "guest" });
+      render(<MCPJamLimitDialog />);
+      expect(document.querySelector("img")).toHaveAttribute(
+        "src",
+        "/guest-credit-wall.png",
+      );
+      expect(document.querySelector("img")).toHaveAttribute(
+        "aria-hidden",
+        "true",
+      );
+    },
+  );
 
   it("hides the treatment illustration if the asset fails to load", () => {
     guestVariantMock.mockReturnValue("treatment");
@@ -350,6 +372,7 @@ describe("MCPJamLimitDialog", () => {
     // The dialog renders through a portal on document.body, not the container.
     const img = document.querySelector("img");
     expect(img).not.toBeNull();
+    expect(img).toHaveAttribute("src", "/guest-credit-wall.png");
     // A missing asset must degrade to no image, not a broken one.
     fireEvent.error(img as HTMLImageElement);
     expect((img as HTMLImageElement).style.display).toBe("none");
@@ -363,10 +386,10 @@ describe("MCPJamLimitDialog", () => {
     expect(
       screen.getByRole("heading", {
         name: /you've used up your free guest credits/i,
-      })
+      }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /^sign in$/i })
+      screen.getByRole("button", { name: /^sign in$/i }),
     ).toBeInTheDocument();
   });
 
@@ -381,15 +404,15 @@ describe("MCPJamLimitDialog", () => {
 
     // Copy must not swap under the user...
     expect(
-      screen.getByRole("heading", { name: /there's so much more to jam on/i })
+      screen.getByRole("heading", { name: /there's so much more to jam on/i }),
     ).toBeInTheDocument();
     // ...and exactly one impression was recorded, still tagged treatment.
     const impressions = trackMock.mock.calls.filter(
-      ([event]) => event === "plan_limit_dialog_shown"
+      ([event]) => event === "plan_limit_dialog_shown",
     );
     expect(impressions).toHaveLength(1);
     expect(impressions[0]?.[1]).toEqual(
-      expect.objectContaining({ variant: "treatment" })
+      expect.objectContaining({ variant: "treatment" }),
     );
   });
 
@@ -413,14 +436,14 @@ describe("MCPJamLimitDialog", () => {
     // Flags still loading: render the safe control fallback and do NOT enroll
     // or record a variant yet.
     expect(
-      screen.getByRole("button", { name: /^sign in$/i })
+      screen.getByRole("button", { name: /^sign in$/i }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /^create free account$/i })
+      screen.queryByRole("button", { name: /^create free account$/i }),
     ).not.toBeInTheDocument();
     expect(trackMock).not.toHaveBeenCalledWith(
       "plan_limit_dialog_shown",
-      expect.anything()
+      expect.anything(),
     );
 
     // Flags resolve to treatment.
@@ -428,14 +451,14 @@ describe("MCPJamLimitDialog", () => {
     view.rerender(<MCPJamLimitDialog />);
 
     expect(
-      screen.getByRole("heading", { name: /there's so much more to jam on/i })
+      screen.getByRole("heading", { name: /there's so much more to jam on/i }),
     ).toBeInTheDocument();
     const impressions = trackMock.mock.calls.filter(
-      ([event]) => event === "plan_limit_dialog_shown"
+      ([event]) => event === "plan_limit_dialog_shown",
     );
     expect(impressions).toHaveLength(1);
     expect(impressions[0]?.[1]).toEqual(
-      expect.objectContaining({ variant: "treatment" })
+      expect.objectContaining({ variant: "treatment" }),
     );
   });
 
@@ -449,16 +472,16 @@ describe("MCPJamLimitDialog", () => {
 
     // The guest still sees a usable control wall so they aren't stuck...
     expect(
-      screen.getByRole("button", { name: /^sign in$/i })
+      screen.getByRole("button", { name: /^sign in$/i }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /^create free account$/i })
+      screen.queryByRole("button", { name: /^create free account$/i }),
     ).not.toBeInTheDocument();
     // ...but nothing is recorded until the real variant resolves, so a late
     // treatment guest is never misattributed to control.
     expect(trackMock).not.toHaveBeenCalledWith(
       "plan_limit_dialog_shown",
-      expect.anything()
+      expect.anything(),
     );
   });
 
@@ -474,8 +497,7 @@ describe("MCPJamLimitDialog", () => {
     // "See paid plans" follows "Create free account" in the DOM, so Radix's
     // focus scope lands on the primary and Enter converts.
     expect(
-      create.compareDocumentPosition(plans) &
-        Node.DOCUMENT_POSITION_FOLLOWING
+      create.compareDocumentPosition(plans) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
   });
 
@@ -496,19 +518,23 @@ describe("MCPJamLimitDialog", () => {
     expect(
       screen.getByRole("heading", {
         name: /your org is out of credits/i,
-      })
+      }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /^buy credits$/i })
+      screen.getByRole("button", { name: /^Explore plans$/i }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /use your own API key/i })
+      screen.getByRole("button", { name: /Learn more/i }),
     ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^buy credits$/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByTestId("upgrade-plan-cta")).not.toBeInTheDocument();
     expect(upgradeHookOrganizationIdMock).toHaveBeenLastCalledWith("org-1");
     expect(recipientHookOrganizationIdMock).toHaveBeenLastCalledWith("org-1");
   });
 
-  it("closes after an in-place plan change succeeds", async () => {
+  it("opens plans settings for Free users", async () => {
     const user = userEvent.setup();
     authState.user = { id: "user-1" };
     sortedOrganizationsState.push({ _id: "org-1", myRole: "owner" });
@@ -519,7 +545,7 @@ describe("MCPJamLimitDialog", () => {
     useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "topup" });
     render(<MCPJamLimitDialog />);
 
-    await user.click(screen.getByTestId("upgrade-plan-cta"));
+    await user.click(screen.getByRole("button", { name: "Explore plans" }));
 
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
   });
@@ -533,11 +559,11 @@ describe("MCPJamLimitDialog", () => {
     render(<MCPJamLimitDialog />);
 
     expect(screen.getByTestId("limit-dialog-description")).toHaveTextContent(
-      /Buy credits to keep your team going/
+      /Buy credits to keep your team going/,
     );
     expect(screen.queryByTestId("upgrade-plan-cta")).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /^buy credits$/i })
+      screen.getByRole("button", { name: /^buy credits$/i }),
     ).toBeInTheDocument();
   });
 
@@ -550,23 +576,23 @@ describe("MCPJamLimitDialog", () => {
     // Owners, not admins: the only action here emails the resolved owners, and
     // an admin can't upgrade anyway.
     expect(screen.getByTestId("limit-dialog-description")).toHaveTextContent(
-      /Ask an organization owner to buy credits or upgrade/
+      /Ask an organization owner to upgrade/,
     );
     expect(
-      screen.getByTestId("limit-dialog-description")
+      screen.getByTestId("limit-dialog-description"),
     ).not.toHaveTextContent(/admin/i);
     // Members can't buy or upgrade, so those CTAs stay gone. They now get one
     // action: email an owner who can.
     expect(
-      screen.queryByRole("button", { name: /^buy credits$/i })
+      screen.queryByRole("button", { name: /^buy credits$/i }),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /use your own API key/i })
+      screen.queryByRole("button", { name: /use your own API key/i }),
     ).not.toBeInTheDocument();
     // Decoded first: the address is percent-encoded in the href, so asserting
     // the raw string would be checking the encoding rather than the recipient.
     const memberHref = decodeURIComponent(
-      screen.getByTestId("request-upgrade-mail").getAttribute("href") ?? ""
+      screen.getByTestId("request-upgrade-mail").getAttribute("href") ?? "",
     );
     expect(memberHref).toContain("mailto:dana@acme.test");
   });
@@ -581,7 +607,7 @@ describe("MCPJamLimitDialog", () => {
 
     expect(trackMock).not.toHaveBeenCalledWith(
       "plan_limit_dialog_shown",
-      expect.anything()
+      expect.anything(),
     );
 
     recipientsState.recipients = [
@@ -596,7 +622,7 @@ describe("MCPJamLimitDialog", () => {
         wall_kind: "organization_credits",
         primary_action: "request_owner",
         request_recipient_count: 1,
-      })
+      }),
     );
   });
 
@@ -614,7 +640,7 @@ describe("MCPJamLimitDialog", () => {
 
     expect(trackMock).not.toHaveBeenCalledWith(
       "plan_limit_dialog_shown",
-      expect.anything()
+      expect.anything(),
     );
 
     recipientsState.recipients = [
@@ -627,12 +653,14 @@ describe("MCPJamLimitDialog", () => {
       "plan_limit_dialog_shown",
       expect.objectContaining({
         wall_kind: "organization_credits",
-        can_buy_credits: true,
+        can_buy_credits: false,
         can_manage_billing: false,
         request_recipient_count: 1,
-      })
+      }),
     );
-    expect(screen.getByTestId("request-upgrade-mail")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Explore plans" }),
+    ).toBeInTheDocument();
   });
 
   it("asks paid-org members to request credits instead of a Team upgrade", () => {
@@ -644,10 +672,10 @@ describe("MCPJamLimitDialog", () => {
     render(<MCPJamLimitDialog />);
 
     expect(screen.getByTestId("limit-dialog-description")).toHaveTextContent(
-      /Ask an organization owner to buy credits\./
+      /Ask an organization owner to buy credits\./,
     );
     const href = decodeURIComponent(
-      screen.getByTestId("request-upgrade-mail").getAttribute("href") ?? ""
+      screen.getByTestId("request-upgrade-mail").getAttribute("href") ?? "",
     );
     expect(href).toContain("Credit purchase request for Acme Robotics");
     expect(href).toContain("Our organization has run out of MCPJam credits.");
@@ -655,80 +683,28 @@ describe("MCPJamLimitDialog", () => {
     expect(href).not.toContain("upgrade Acme Robotics to the Team plan");
   });
 
-  it("opens the model picker's Your providers tab when a picker is mounted", async () => {
+  it("opens the billed organization's BYOK explainer", async () => {
     const user = userEvent.setup();
     authState.user = { id: "user-1" };
     localStorage.setItem("active-organization-id:user-1", "org-active");
-    useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "topup" });
-    // A picker that honours the intent is on screen (the chat composer).
-    useModelPickerIntentStore.setState({ providersTabResponderCount: 1 });
-    const nonceBefore =
-      useModelPickerIntentStore.getState().openProvidersTabNonce;
+    useMCPJamLimitDialogStore.setState({
+      isOpen: true,
+      intent: "topup",
+      organizationId: "org-billed",
+    });
     render(<MCPJamLimitDialog />);
-
     await user.click(
-      screen.getByRole("button", { name: /use your own API key/i })
+      screen.getByRole("button", { name: "Learn more about BYOK" }),
     );
-
-    // Closes the dialog and asks the picker to open its "Your providers" tab —
-    // it must NOT navigate to the org models settings page.
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
-    expect(useModelPickerIntentStore.getState().openProvidersTabNonce).toBe(
-      nonceBefore + 1
+    expect(window.location.pathname).toBe(
+      "/organizations/org-billed/billing/byok",
     );
-    expect(window.location.pathname).not.toContain("/models");
-  });
-
-  it("sends BYOK to the org AI providers page when no picker is mounted", async () => {
-    // The wall is raised from the eval generation screen, the Ask MCPJam
-    // panel and the Markdown import dialog too, and none of them mounts a
-    // picker that listens. Firing the intent there closed the dialog and did
-    // nothing at all, which is the bug this branch fixes.
-    const user = userEvent.setup();
-    authState.user = { id: "user-1" };
-    localStorage.setItem("active-organization-id:user-1", "org-active");
-    useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "topup" });
-    const nonceBefore =
-      useModelPickerIntentStore.getState().openProvidersTabNonce;
-    render(<MCPJamLimitDialog />);
-
-    await user.click(
-      screen.getByRole("button", { name: /use your own API key/i })
-    );
-
-    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
-    expect(window.location.pathname).toContain(
-      "/organizations/org-active/models"
-    );
-    // No point asking a picker that isn't there.
-    expect(useModelPickerIntentStore.getState().openProvidersTabNonce).toBe(
-      nonceBefore
-    );
-  });
-
-  it("holds the dialog open when BYOK has no organization to route to", async () => {
-    const user = userEvent.setup();
-    authState.user = { id: "user-1" };
-    useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "topup" });
-    // jsdom keeps one location for the whole file, so compare against where
-    // we started rather than asserting the absence of a path a sibling test
-    // may already have pushed.
-    const pathBefore = window.location.pathname;
-    render(<MCPJamLimitDialog />);
-
-    await user.click(
-      screen.getByRole("button", { name: /use your own API key/i })
-    );
-
-    // Same guard as Buy credits: dropping the user on nothing is worse than
-    // leaving the wall up while the membership query lands.
-    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
-    expect(window.location.pathname).toBe(pathBefore);
   });
 
   const openSwarmWall = (
     org: { _id: string; myRole?: string },
-    period?: "daily" | "monthly"
+    period?: "daily" | "monthly",
   ) => {
     authState.user = { id: "user-1" };
     localStorage.setItem("active-organization-id:user-1", org._id);
@@ -746,15 +722,15 @@ describe("MCPJamLimitDialog", () => {
     render(<MCPJamLimitDialog />);
 
     expect(
-      screen.getByRole("heading", { name: /daily MCPJam limit reached/i })
+      screen.getByRole("heading", { name: /daily MCPJam limit reached/i }),
     ).toBeInTheDocument();
     // "I have my own key, why am I blocked" is the question that filed this
     // bug, and this modal is the only thing on screen to answer it.
     expect(screen.getByTestId("limit-dialog-description")).toHaveTextContent(
-      /your own API key doesn't cover it/i
+      /your own API key doesn't cover it/i,
     );
     expect(screen.getByTestId("limit-dialog-description")).toHaveTextContent(
-      /resets tomorrow/i
+      /resets tomorrow/i,
     );
   });
 
@@ -763,15 +739,15 @@ describe("MCPJamLimitDialog", () => {
     render(<MCPJamLimitDialog />);
 
     expect(
-      screen.getByRole("heading", { name: /monthly MCPJam credits spent/i })
+      screen.getByRole("heading", { name: /monthly MCPJam credits spent/i }),
     ).toBeInTheDocument();
     // Telling a monthly org to wait for "tomorrow" would be plain wrong: the
     // allowance renews with the billing period, which can be weeks out.
     expect(screen.getByTestId("limit-dialog-description")).toHaveTextContent(
-      /renew with the billing period/i
+      /renew with the billing period/i,
     );
     expect(
-      screen.getByTestId("limit-dialog-description")
+      screen.getByTestId("limit-dialog-description"),
     ).not.toHaveTextContent(/resets tomorrow/i);
   });
 
@@ -780,10 +756,10 @@ describe("MCPJamLimitDialog", () => {
     render(<MCPJamLimitDialog />);
 
     expect(
-      screen.getByRole("heading", { name: /MCPJam model limit reached/i })
+      screen.getByRole("heading", { name: /MCPJam model limit reached/i }),
     ).toBeInTheDocument();
     expect(
-      screen.getByTestId("limit-dialog-description")
+      screen.getByTestId("limit-dialog-description"),
     ).not.toHaveTextContent(/tomorrow|billing period/i);
   });
 
@@ -792,15 +768,15 @@ describe("MCPJamLimitDialog", () => {
     render(<MCPJamLimitDialog />);
 
     expect(
-      screen.getByRole("button", { name: /buy MCPJam credits/i })
+      screen.getByRole("button", { name: /Learn more/i }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /explore MCPJam plans/i })
+      screen.getByRole("button", { name: /explore plans/i }),
     ).toBeInTheDocument();
     // Both dead ends on a swarm: no screen there mounts the model picker the
     // BYOK link drives, and the upgrade picker belongs to the credits wall.
     expect(
-      screen.queryByRole("button", { name: /use your own API key/i })
+      screen.queryByRole("button", { name: /use your own API key/i }),
     ).not.toBeInTheDocument();
     expect(screen.queryByText(/\$30/)).not.toBeInTheDocument();
   });
@@ -810,7 +786,7 @@ describe("MCPJamLimitDialog", () => {
     render(<MCPJamLimitDialog />);
 
     expect(
-      screen.queryByRole("button", { name: /buy MCPJam credits/i })
+      screen.queryByRole("button", { name: /buy MCPJam credits/i }),
     ).not.toBeInTheDocument();
     expect(screen.getByTestId("request-upgrade-mail")).toBeInTheDocument();
     // The owner guidance is ADDED to the explanation, not swapped for it. A
@@ -821,23 +797,21 @@ describe("MCPJamLimitDialog", () => {
     expect(description).toHaveTextContent(/ask an organization owner/i);
   });
 
-  it("sends Explore MCPJam plans to billing without the topup flag", async () => {
+  it("sends Explore plans to organization plans settings", async () => {
     const user = userEvent.setup();
     openSwarmWall({ _id: "org-active", myRole: "owner" });
     render(<MCPJamLimitDialog />);
 
-    await user.click(
-      screen.getByRole("button", { name: /explore MCPJam plans/i })
-    );
+    await user.click(screen.getByRole("button", { name: /explore plans/i }));
 
-    expect(window.location.pathname).toBe("/organizations/org-active/billing");
-    // Plans sit below credits and payment history; the flag is what scrolls
-    // the page to them. Not `topup`, which opens the purchase dialog instead.
-    expect(window.location.search).toContain("plans=open");
+    expect(window.location.pathname).toBe("/organizations/org-active/plans");
+    // Exploring plans must not open a credit purchase.
+    expect(window.location.search).toBe("");
     expect(window.location.search).not.toContain("topup");
   });
 
   it("redirects to the active org's billing page with the topup flag on CTA click", async () => {
+    upgradeState.effectivePlan = "team";
     const user = userEvent.setup();
     authState.user = { id: "user-1" };
     localStorage.setItem("active-organization-id:user-1", "org-active");
@@ -853,12 +827,13 @@ describe("MCPJamLimitDialog", () => {
   });
 
   it("prefers the org that hit the limit over the stored active org", async () => {
+    upgradeState.effectivePlan = "team";
     const user = userEvent.setup();
     authState.user = { id: "user-1" };
     localStorage.setItem("active-organization-id:user-1", "org-b");
     sortedOrganizationsState.push(
       { _id: "org-a", myRole: "owner" },
-      { _id: "org-b", myRole: "owner" }
+      { _id: "org-b", myRole: "owner" },
     );
     useMCPJamLimitDialogStore.setState({
       isOpen: true,
@@ -874,6 +849,7 @@ describe("MCPJamLimitDialog", () => {
   });
 
   it("falls back to the most-recent membership org when no active org is stored", async () => {
+    upgradeState.effectivePlan = "team";
     const user = userEvent.setup();
     authState.user = { id: "user-1" };
     sortedOrganizationsState.push({ _id: "org-fallback", myRole: "owner" });
@@ -883,12 +859,13 @@ describe("MCPJamLimitDialog", () => {
     await user.click(screen.getByRole("button", { name: /^buy credits$/i }));
 
     expect(window.location.pathname).toBe(
-      "/organizations/org-fallback/billing"
+      "/organizations/org-fallback/billing",
     );
     expect(window.location.search).toBe("?topup=open");
   });
 
   it("keeps the modal open when no org is resolvable yet (e.g. membership still loading)", async () => {
+    upgradeState.effectivePlan = "team";
     const user = userEvent.setup();
     authState.user = { id: "user-1" };
     useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "topup" });
@@ -908,5 +885,34 @@ describe("MCPJamLimitDialog", () => {
 
     const { container } = render(<MCPJamLimitDialog />);
     expect(container).toBeEmptyDOMElement();
+  });
+});
+
+describe("frontier sign-in modal", () => {
+  it("shows Jam and provider artwork and starts sign-in", async () => {
+    useFrontierSignInDialogStore.getState().open();
+    render(<MCPJamLimitDialog />);
+    expect(
+      screen.getByRole("heading", { name: "Get access to frontier models" }),
+    ).toBeInTheDocument();
+    expect(
+      document.querySelector('img[src="/guest-credit-wall.png"]'),
+    ).not.toBeNull();
+    expect(
+      document.querySelector('img[src="/openai_logo.png"]'),
+    ).not.toBeNull();
+    expect(
+      document.querySelector('img[src="/claude_logo.png"]'),
+    ).not.toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    expect(signIn).toHaveBeenCalled();
+    expect(useFrontierSignInDialogStore.getState().isOpen).toBe(false);
+  });
+  it("can dismiss without starting authentication", async () => {
+    useFrontierSignInDialogStore.getState().open();
+    render(<MCPJamLimitDialog />);
+    await userEvent.click(screen.getByRole("button", { name: "Not now" }));
+    expect(useFrontierSignInDialogStore.getState().isOpen).toBe(false);
+    expect(signIn).not.toHaveBeenCalled();
   });
 });
