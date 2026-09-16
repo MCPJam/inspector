@@ -1452,6 +1452,17 @@ export function NewSwarmCreateFlow({
                 }
               }
             } catch (err) {
+              // The limit dialog already carries this sentence plus the
+              // actions that clear it, so record NO message — an inline copy
+              // would say the same thing twice with nothing to act on. The
+              // wave still stops, for the reason below.
+              if (
+                err instanceof LaunchJourneyRunError &&
+                err.limitDialogRaised
+              ) {
+                billingBlocked = true;
+                return "stop";
+              }
               // BILLING is terminal for the WHOLE wave, not for this target.
               // Every sibling would be rejected identically, so stop
               // scheduling and report the limit ONCE — `firstError` already
