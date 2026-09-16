@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   useEvalHandlers: vi.fn(),
   evalTabContext: { organizationId: "org-1" as string | null },
   deleteSuiteMutation: vi.fn(),
+  suiteView: vi.fn(),
   directDeleteRun: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -157,7 +158,7 @@ vi.mock("../evals/project-runs-table", () => ({
 }));
 
 vi.mock("../evals/suite-iterations-view", () => ({
-  SuiteIterationsView: () => <div data-testid="suite-iterations-view" />,
+  SuiteIterationsView: (props: unknown) => { mocks.suiteView(props); return <div data-testid="suite-iterations-view" />; },
 }));
 
 vi.mock("../evals/sdk-eval-quickstart", () => ({
@@ -295,6 +296,16 @@ describe("CiEvalsTab first-run NUX", () => {
     expect(
       screen.queryByText("Select a suite or commit")
     ).not.toBeInTheDocument();
+  });
+
+  it.each(["test-edit", "test-detail"])("opens the current read-only workspace from a CI %s link", type => {
+    mocks.route.current = {type, suiteId: "suite-1", testId: "case-1", iteration: "iter-1"};
+    mocks.useEvalQueries.mockReturnValue(makeQueries({sortedSuites: [makeEntry()]}));
+    render(<CiEvalsTab convexProjectId="ws-1" />);
+    expect(mocks.suiteView).toHaveBeenCalledWith(expect.objectContaining({
+      evaluateCaseEditor: true, readOnlyConfig: true, projectId: "ws-1",
+      route: mocks.route.current,
+    }));
   });
 
   it("hides the first-run NUX when suites exist even before any runs", () => {
