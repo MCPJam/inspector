@@ -172,6 +172,7 @@ export function SuiteScorerTable({
         judgeConfig,
         judgeEnabled,
         judgeCapabilities: capabilities?.judge,
+        judgePolicy: capabilities?.judges?.goalCompletion.policy,
       }),
     [
       model,
@@ -181,6 +182,7 @@ export function SuiteScorerTable({
       judgeConfig,
       judgeEnabled,
       capabilities?.judge,
+      capabilities?.judges?.goalCompletion.policy,
     ],
   );
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());

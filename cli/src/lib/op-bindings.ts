@@ -196,6 +196,7 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   run_eval_suite: { command: "cloud eval run" },
   cancel_eval_run: { command: "cloud eval cancel" },
   backtest_eval_run: { command: "cloud eval backtest" },
+  backtest_eval_run_judge: { command: "cloud eval judge-backtest" },
   request_eval_run_judge: { command: "cloud eval judge" },
   list_eval_github_repos: { command: "cloud eval github list" },
   connect_eval_github_repo: { command: "cloud eval github connect" },

@@ -1,4 +1,8 @@
 import type {
+  JudgeBacktestRequest,
+  JudgeBacktestReport,
+} from "../contract/judge-backtest.js";
+import type {
   EvalBacktestDraft,
   EvalBacktestContinuation,
   EvalBacktestReport,
@@ -2630,6 +2634,30 @@ export class PlatformApiClient {
         params.projectId
       )}/eval-runs/${encodeURIComponent(params.runId)}/insights`,
       { body: params.force ? { force: true } : {} },
+      options
+    );
+  }
+
+  /**
+   * Preview a judge rubric using stored evidence. Spends model budget without
+   * changing saved verdicts. Resume a bounded result with its continuation
+   * and the unchanged draft.
+   */
+  backtestEvalRunJudge(
+    params: JudgeBacktestRequest & { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<JudgeBacktestReport> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(params.runId)}/judge/backtest`,
+      {
+        body: {
+          rubric: params.rubric,
+          ...(params.continuation ? { continuation: params.continuation } : {}),
+        },
+      },
       options
     );
   }

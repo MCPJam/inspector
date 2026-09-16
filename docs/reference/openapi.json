@@ -119,6 +119,167 @@
     }
   ],
   "paths": {
+    "/projects/{projectId}/eval-runs/{runId}/judge/backtest": {
+      "post": {
+        "operationId": "backtestEvalRunJudge",
+        "tags": [
+          "Eval runs"
+        ],
+        "summary": "Preview draft judge grading on one recorded iteration",
+        "description": "Uses model budget and complete recorded evidence without changing the run verdict. Supply rubric.instructions, optional structured criteria, or null for objective-only grading. Continue with the unchanged rubric and returned cursor, sourceHash and reservationId. Completed page retries return cached results. Error cases have a null draft measurement.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/evalVocabularyHeader"
+          },
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/runId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "rubric"
+                ],
+                "properties": {
+                  "rubric": {
+                    "type": [
+                      "object",
+                      "null"
+                    ],
+                    "additionalProperties": false,
+                    "properties": {
+                      "instructions": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 2000
+                      },
+                      "criteria": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 25,
+                        "items": {
+                          "type": "object",
+                          "required": [
+                            "id",
+                            "label"
+                          ],
+                          "additionalProperties": false,
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "pattern": "^[A-Za-z0-9_-]{1,64}$"
+                            },
+                            "label": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "description": {
+                              "type": "string",
+                              "maxLength": 1000
+                            },
+                            "required": {
+                              "type": "boolean"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "continuation": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "cursor",
+                      "sourceHash",
+                      "reservationId"
+                    ],
+                    "properties": {
+                      "cursor": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "sourceHash": {
+                        "type": "string",
+                        "pattern": "^[a-f0-9]{64}$"
+                      },
+                      "reservationId": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "One cached or newly graded page. Errors are unscored; isDone indicates the end of the population.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "cases": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "cursor": {
+                      "type": "integer"
+                    },
+                    "sourceHash": {
+                      "type": "string"
+                    },
+                    "reservationId": {
+                      "type": "string"
+                    },
+                    "isDone": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "409": {
+            "description": "Run is not terminal or source evidence changed."
+          },
+          "504": {
+            "description": "Backtest deadline or cancellation."
+          }
+        }
+      }
+    },
     "/browser-sessions/session": {
       "post": {
         "tags": [

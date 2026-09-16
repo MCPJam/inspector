@@ -29,6 +29,7 @@ import {
   startEvalDescriptionExperimentOperation,
   listEvalSuiteStageAnalyticsOperation,
   backtestEvalRunOperation,
+  backtestEvalRunJudgeOperation,
   requestEvalRunJudgeOperation,
   listEvalGithubReposOperation,
   connectEvalGithubRepoOperation,
@@ -4660,6 +4661,39 @@ export function registerEvalCommands(program: Command): void {
         options,
         command
       );
+    }
+  );
+
+  addProjectOption(
+    evals
+      .command("judge-backtest")
+      .description(
+        "Preview draft grading instructions on recorded evidence (uses credits)"
+      )
+      .requiredOption("--run <id>", "Terminal eval run ID")
+      .requiredOption(
+        "--json <request>",
+        "JSON or @file with rubric and optional continuation"
+      )
+  ).action(
+    async (
+      options: PlatformOptions & {
+        project?: string;
+        run: string;
+        json: string;
+      },
+      command
+    ) => {
+      const body = new JsonInputContext().parseJsonInputRecord(
+        options.json,
+        "--json"
+      );
+      const input = validateOpInput(
+        backtestEvalRunJudgeOperation,
+        { ...body, runId: options.run, project: options.project },
+        { projectOptional: true }
+      );
+      await executeOp(backtestEvalRunJudgeOperation, input, options, command);
     }
   );
 

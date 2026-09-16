@@ -44,6 +44,7 @@ import {
   observeChatSessionBrowserOperation,
   cancelEvalRunOperation,
   backtestEvalRunOperation,
+  backtestEvalRunJudgeOperation,
   requestEvalRunJudgeOperation,
   listEvalGithubReposOperation,
   connectEvalGithubRepoOperation,
@@ -1848,6 +1849,18 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
         }, putting the gate back`,
       buttonLabel: "Revoke the waiver",
       kind: "update",
+    },
+  },
+  {
+    operation: backtestEvalRunJudgeOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Preview draft grading on run ${
+          named(input, "runId") ?? "(unnamed)"
+        } (uses model budget)`,
+      buttonLabel: "Preview grading",
+      kind: "generate",
     },
   },
   // Deterministic preview only reserves a bounded cooldown; it does not spend.

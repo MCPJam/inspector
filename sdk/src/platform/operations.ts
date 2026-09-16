@@ -5,6 +5,10 @@ import {
   judgeRubricSchema,
 } from "../contract/judge-settings.js";
 import {
+  judgeBacktestRequestSchema,
+  type JudgeBacktestReport,
+} from "../contract/judge-backtest.js";
+import {
   evalBacktestDraftSchema,
   evalBacktestContinuationSchema,
   type EvalBacktestReport,
@@ -7937,6 +7941,54 @@ export type RequestEvalRunJudgeResult = {
   judge: PlatformEvalRunJudgeRequested;
 };
 
+const backtestEvalRunJudgeInput = evalRunScopedInput.extend(
+  judgeBacktestRequestSchema.shape
+);
+export const backtestEvalRunJudgeOperation: PlatformOperation<
+  z.infer<typeof backtestEvalRunJudgeInput>,
+  {
+    project: SelectedProjectInfo;
+    runId: string;
+    suiteId: string;
+    report: JudgeBacktestReport;
+  }
+> = {
+  name: "backtest_eval_run_judge",
+  title: "Preview MCPJam judge grading",
+  description:
+    "Grade one recorded iteration against a draft rubric using the full evidence. Uses model budget; leaves the run verdict unchanged. Supply rubric.instructions and optional criteria, or null for objective-only grading. Continue with the same rubric and the returned cursor, sourceHash and reservationId. Completed page retries reuse the cached result. CLI: mcpjam cloud eval judge-backtest --run <id> --json <request>.",
+  readOnly: false,
+  risk: "spend",
+  permalink: derivePermalinks((result) => [
+    evalRunRef(result.runId, result.suiteId, result.project.id),
+  ]),
+  inputSchema: backtestEvalRunJudgeInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const run = await client.getEvalRun(
+      { projectId: project.id, runId: input.runId },
+      { signal }
+    );
+    const report = await client.backtestEvalRunJudge(
+      {
+        projectId: project.id,
+        runId: input.runId,
+        rubric: input.rubric,
+        continuation: input.continuation,
+      },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      runId: run.id,
+      suiteId: run.suiteId,
+      report,
+    };
+  },
+};
 
 const backtestEvalRunInput = evalRunScopedInput.extend({
   draft: evalBacktestDraftSchema,
@@ -16306,6 +16358,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   getEvalGateWaiverOperation,
   revokeEvalGateWaiverOperation,
   backtestEvalRunOperation,
+  backtestEvalRunJudgeOperation,
   requestEvalRunJudgeOperation,
   listEvalGithubReposOperation,
   connectEvalGithubRepoOperation,
