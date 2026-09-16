@@ -610,6 +610,70 @@ describe("run results matrix", () => {
     expect(drawer.getByRole("button", { name: "Scorecard" })).toBeVisible();
   });
 
+  it.each([
+    ["passed", "Passed"],
+    ["failed", "Failures"],
+    ["pending", "Pending"],
+    ["cancelled", "Cancelled"],
+  ] as const)(
+    "clears %s only when no visible cell still matches",
+    async (result, label) => {
+      const user = userEvent.setup();
+      const onFilterChange = vi.fn();
+      const props = {
+        run: run("one", { status: "running" }),
+        hostNamesById: names,
+        onFilterChange,
+      };
+      const match = iteration("match", "one", {
+        result,
+        status:
+          result === "pending"
+            ? "running"
+            : result === "cancelled"
+              ? "cancelled"
+              : "completed",
+      });
+      const { rerender } = render(
+        <RunResultsMatrix {...props} iterations={[match]} />,
+      );
+      await user.click(
+        screen.getByRole("combobox", { name: "Filter by status" }),
+      );
+      await user.click(screen.getByRole("option", { name: label }));
+      rerender(<RunResultsMatrix {...props} iterations={[{ ...match }]} />);
+      expect(
+        screen.getByRole("combobox", { name: "Filter by status" }),
+      ).toHaveTextContent(label);
+      expect(onFilterChange).toHaveBeenLastCalledWith({
+        search: "",
+        status: result,
+      });
+      rerender(
+        <RunResultsMatrix
+          {...props}
+          iterations={[
+            iteration("changed", "one", {
+              result: result === "passed" ? "failed" : "passed",
+            }),
+          ]}
+        />,
+      );
+      expect(
+        screen.getByRole("combobox", { name: "Filter by status" }),
+      ).toHaveTextContent("Status");
+      expect(onFilterChange).toHaveBeenLastCalledWith({
+        search: "",
+        status: "__all__",
+      });
+      expect(
+        screen.getByRole("button", {
+          name: "Inspect Refund order on Claude · sonnet",
+        }),
+      ).toBeVisible();
+    },
+  );
+
   it("keeps Pending while a run is live and hides it once every run is terminal", async () => {
     const user = userEvent.setup();
     const live = run("one", { status: "running" });
