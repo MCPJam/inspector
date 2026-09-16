@@ -82,7 +82,7 @@ import {
   extractMcpInitializeOptions,
 } from "./auth.js";
 import { createHostedRpcLogCollector } from "./hosted-rpc-logs.js";
-import { getAttestedClientIp } from "../../utils/client-ip.js";
+import { getSpendClientIp } from "../../utils/client-ip.js";
 import { getRequestLogger } from "../../utils/request-logger.js";
 import {
   fetchScenarioRuntimeConfig,
@@ -2159,7 +2159,7 @@ chatV2.post("/", async (c) => {
         },
         runtime: {
           authHeader: c.req.header("authorization"),
-          clientIp: getAttestedClientIp(c),
+          clientIp: getSpendClientIp(c),
           abortSignal: c.req.raw.signal as AbortSignal | undefined,
           rpcCollector,
           elicitationBridge,

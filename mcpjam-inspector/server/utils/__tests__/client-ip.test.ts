@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { getClientIp, getAttestedClientIp } from "../client-ip.js";
+import { getClientIp, getAttestedClientIp, getSpendClientIp } from "../client-ip.js";
 import { canonicalizeClientIp } from "../guest-spend-ip.js";
 
 function makeCtx(headers: Record<string, string>) {
@@ -129,4 +129,14 @@ describe("hosted IP attestation", () => {
     }
     expect(getAttestedClientIp(makeCtx({ "cf-connecting-ip": "1.2.3.4", "x-mcpjam-edge-secret": "forged" }))).toBeNull();
   });
+});
+
+
+it("keeps legacy spend IP behavior until attestation is configured", () => {
+  vi.stubEnv("MCPJAM_EDGE_SECRET", "");
+  vi.stubEnv("MCPJAM_EDGE_SECRET_PREVIOUS", "");
+  expect(getSpendClientIp(makeCtx({ "x-real-ip": "203.0.113.10" }))).toBe("203.0.113.10");
+  vi.stubEnv("MCPJAM_EDGE_SECRET", "configured");
+  expect(getSpendClientIp(makeCtx({ "x-real-ip": "203.0.113.10" }))).toBeNull();
+  vi.unstubAllEnvs();
 });

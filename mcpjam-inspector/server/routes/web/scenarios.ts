@@ -1,4 +1,4 @@
-import { getAttestedClientIp } from "../../utils/client-ip.js";
+import { getSpendClientIp } from "../../utils/client-ip.js";
 import { hashGuestSpendIp } from "../../utils/guest-spend-ip.js";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -69,7 +69,7 @@ scenarios.post("/redeem", async (c) =>
     const timeout = setTimeout(() => controller.abort(), 10_000);
     let result;
     try {
-      const ip = getAttestedClientIp(c);
+      const ip = getSpendClientIp(c);
       result = await redeemScenarioToken({
         guestIpHash: ip ? await hashGuestSpendIp(ip) : null,
         scenarioToken: body.scenarioToken,

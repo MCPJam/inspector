@@ -42,7 +42,7 @@ import type { SkillsFetchFailure } from "../../utils/computers/cloud-skill-tools
 import { getCanonicalModelId } from "@/shared/types";
 import type { ModelProvider } from "@/shared/types";
 import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
-import { getAttestedClientIp } from "../../utils/client-ip.js";
+import { getSpendClientIp } from "../../utils/client-ip.js";
 import { toolCallCancellationFromMcpProfile } from "../../utils/effective-auth.js";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { logger } from "../../utils/logger";
@@ -2020,7 +2020,7 @@ chatV2.post("/", async (c) => {
         progressivePlan,
         discoveryState,
         authHeader,
-        clientIp: getAttestedClientIp(c),
+        clientIp: getSpendClientIp(c),
         mcpClientManager,
         selectedServers,
         requireToolApproval,
@@ -2308,7 +2308,7 @@ chatV2.post("/", async (c) => {
         progressivePlan,
         discoveryState,
         authHeader: requestAuthHeader,
-        clientIp: getAttestedClientIp(c),
+        clientIp: getSpendClientIp(c),
         mcpClientManager,
         selectedServers,
         serverIds: hostConfigServerIds,

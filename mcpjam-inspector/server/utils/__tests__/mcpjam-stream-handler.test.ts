@@ -2709,7 +2709,7 @@ describe("mcpjam-stream-handler", () => {
 
       const headers = (global.fetch as any).mock.calls[0]?.[1]
         ?.headers as Record<string, string>;
-      expect(headers["x-mcpjam-guest-ip-hash"]).toBe("_unattested");
+      expect(headers["x-mcpjam-guest-ip-hash"]).toBeUndefined();
 
       delete process.env.GUEST_SESSION_HASH_PEPPER;
     });
@@ -2761,7 +2761,7 @@ describe("mcpjam-stream-handler", () => {
 
       const headers = (global.fetch as any).mock.calls[0]?.[1]
         ?.headers as Record<string, string>;
-      expect(headers["x-mcpjam-guest-ip-hash"]).toBe("_unattested");
+      expect(headers["x-mcpjam-guest-ip-hash"]).toBeUndefined();
       expect(headers["X-MCPJam-Guest-IP-Hash"]).toBeUndefined();
     });
 
