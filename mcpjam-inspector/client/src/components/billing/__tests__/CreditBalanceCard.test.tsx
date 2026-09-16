@@ -188,6 +188,31 @@ describe("CreditBalanceCard", () => {
     ).toHaveStyle({ transform: `translateX(-${100 - percent}%)` });
   });
 
+  it("explains rollover as part of available credits, without an overfull fraction", () => {
+    balanceState = {
+      ...balanceState!,
+      billingModel: "monthly_flat",
+      monthlyAllowanceTotal: 5000,
+      monthlyAllowanceRemaining: 6000,
+      rolloverCreditsRemaining: 1000,
+      paidCreditsRemaining: 1500,
+    };
+    render(<CreditBalanceCard pricingVersion="v2" />);
+    expect(screen.getByTestId("usage-monthly")).toHaveTextContent(
+      "6,000 credits remaining",
+    );
+    expect(screen.getByTestId("usage-monthly")).not.toHaveTextContent(
+      "6,000 / 5,000",
+    );
+    expect(screen.getByTestId("usage-rollover")).toHaveTextContent(
+      "5,000 monthly credits + 1,000 rollover credits",
+    );
+    expect(screen.getByTestId("usage-rollover")).toHaveTextContent(
+      "Included in your available balance",
+    );
+    expect(screen.getByTestId("usage-paid")).toHaveTextContent("1,500 credits");
+  });
+
   it("does not flash legacy allowances while V2 balances load", () => {
     balanceState = undefined;
     isLoadingState = true;
@@ -201,13 +226,16 @@ describe("CreditBalanceCard", () => {
   it("shows debt and carried credits separately from available credits", () => {
     balanceState = {
       ...balanceState!,
+      billingModel: "monthly_flat",
+      monthlyAllowanceTotal: 5000,
+      monthlyAllowanceRemaining: 5700,
       outstandingDeficitCredits: 125,
       rolloverCreditsRemaining: 700,
     };
     render(<CreditBalanceCard />);
     expect(screen.getByTestId("usage-debt")).toHaveTextContent("125 credits");
     expect(screen.getByTestId("usage-rollover")).toHaveTextContent(
-      "700 credits",
+      "700 rollover credits",
     );
   });
   it("hides purchase controls for an ineligible Free wallet, including deep links", () => {

@@ -114,6 +114,14 @@ export function CreditBalanceCard({
     balance?.billingModel === "monthly_flat";
   const monthlyTotal = balance?.monthlyAllowanceTotal ?? 0;
   const monthlyRemaining = balance?.monthlyAllowanceRemaining ?? 0;
+  const rolloverRemaining = Math.min(
+    Math.max(0, balance?.rolloverCreditsRemaining ?? 0),
+    Math.max(0, monthlyRemaining),
+  );
+  const hasRollover = showMonthly && rolloverRemaining > 0;
+  // The API reports remaining rollover, not the initial rollover grant.
+  // Compare against the monthly allowance plus currently available rollover.
+  const meterCapacity = monthlyTotal + rolloverRemaining;
   const paidRemaining = balance?.paidCreditsRemaining ?? 0;
   const monthlyExhausted =
     !isLoading &&
@@ -180,7 +188,7 @@ export function CreditBalanceCard({
 
         {showMonthly ? (
           <UsageRow
-            label="Monthly credits"
+            label={hasRollover ? "Available plan credits" : "Monthly credits"}
             tooltip={
               balance?.rolloverCapCredits != null
                 ? `Unused credits can roll over up to ${balance.rolloverCapCredits.toLocaleString()} credits under your plan.`
@@ -189,20 +197,26 @@ export function CreditBalanceCard({
             rightText={
               isLoading || !balance
                 ? null
+                : hasRollover
+                ? `${monthlyRemaining.toLocaleString()} credits remaining`
                 : `${monthlyRemaining.toLocaleString()} / ${monthlyTotal.toLocaleString()} remaining · ${formatMonthlyResetText(
                     balance.monthlyResetAt,
                   )}`
             }
             fillPercent={
-              isLoading || monthlyTotal <= 0
+              isLoading || meterCapacity <= 0
                 ? 0
                 : Math.min(
                     100,
-                    Math.max(0, (monthlyRemaining / monthlyTotal) * 100),
+                    Math.max(0, (monthlyRemaining / meterCapacity) * 100),
                   )
             }
             ariaLabel="Monthly credits remaining"
-            ariaValueText={`${monthlyRemaining.toLocaleString()} of ${monthlyTotal.toLocaleString()} monthly credits remaining`}
+            ariaValueText={
+              hasRollover
+                ? `${monthlyRemaining.toLocaleString()} plan credits remaining, including ${rolloverRemaining.toLocaleString()} rollover credits`
+                : `${monthlyRemaining.toLocaleString()} of ${monthlyTotal.toLocaleString()} monthly credits remaining`
+            }
             isLoading={isLoading}
             showCoin
             testId="usage-monthly"
@@ -228,6 +242,31 @@ export function CreditBalanceCard({
             showCoin
             testId="usage-daily"
           />
+        )}
+
+        {!isLoading && (balance?.rolloverCreditsRemaining ?? 0) > 0 && (
+          <div
+            className="-mt-2 rounded-lg border border-border bg-muted/30 p-3 text-xs"
+            data-testid="usage-rollover"
+          >
+            <p className="font-medium">
+              {Math.max(
+                0,
+                monthlyRemaining - rolloverRemaining,
+              ).toLocaleString()}{" "}
+              monthly credits +{" "}
+              {balance!.rolloverCreditsRemaining!.toLocaleString()} rollover
+              credits
+            </p>
+            <p className="mt-1 text-muted-foreground">
+              Included in your available balance. Rollover is unused credit
+              carried from a previous billing period.
+            </p>
+            <p className="mt-1 text-muted-foreground">
+              Monthly allowance: {monthlyTotal.toLocaleString()} credits ·{" "}
+              {formatMonthlyResetText(balance?.monthlyResetAt)}
+            </p>
+          </div>
         )}
 
         {!isV2 && evalIterationQuota?.starterRemaining != null && (
@@ -327,17 +366,6 @@ export function CreditBalanceCard({
             <span>Outstanding credit debt</span>
             <span>
               {balance!.outstandingDeficitCredits!.toLocaleString()} credits
-            </span>
-          </div>
-        )}
-        {!isLoading && (balance?.rolloverCreditsRemaining ?? 0) > 0 && (
-          <div
-            className="flex items-center justify-between gap-2 text-xs"
-            data-testid="usage-rollover"
-          >
-            <span>Carried credits (included in monthly balance)</span>
-            <span>
-              {balance!.rolloverCreditsRemaining!.toLocaleString()} credits
             </span>
           </div>
         )}
