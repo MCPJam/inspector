@@ -326,8 +326,11 @@ function renderBundle(bundle, full, outcome) {
   const passed = cases.reduce((sum, row) => sum + row.passed, 0);
   const runNumber = bundle.run.runNumber ? `Run #${bundle.run.runNumber}` : `Run ${bundle.run.id}`;
   const threshold = cases.find((row) => Number.isFinite(row.threshold))?.threshold;
+  // Deep-link into the redesigned Evaluate tab (`/evaluate`), which is the one
+  // replacing `/evals`. Same run-detail route shape; a reader still flagged out
+  // of it is bounced to `/evals` by the route itself.
   const link = new URL(
-    `/evals/suite/${encodeURIComponent(bundle.receipt.suiteId)}/runs/${encodeURIComponent(bundle.receipt.runId)}`,
+    `/evaluate/suite/${encodeURIComponent(bundle.receipt.suiteId)}/runs/${encodeURIComponent(bundle.receipt.runId)}`,
     bundle.receipt.baseUrl,
   );
   link.searchParams.set("project", bundle.receipt.projectId);
