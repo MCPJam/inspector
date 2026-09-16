@@ -8,6 +8,7 @@ import {
   getCachedGuestSession,
   getOrCreateGuestSession,
   markGuestActivated,
+  getGuestSessionRefusal,
 } from "@/lib/guest-session";
 
 /**
@@ -167,6 +168,15 @@ export function useUnifiedConvexAuth() {
         if (cancelled) return;
         if (session) {
           setGuestToken(session?.token ?? null);
+          setGuestLoading(false);
+          return;
+        }
+
+        // A refused creation (per-IP daily cap) is deterministic for the rest
+        // of its window: retrying cannot succeed and is not an error worth
+        // paging on. The banner offers sign-in instead.
+        if (getGuestSessionRefusal()) {
+          setGuestToken(null);
           setGuestLoading(false);
           return;
         }
