@@ -13,8 +13,21 @@
  * stack trace, and support can go screenshot -> Sentry -> Convex logs.
  */
 
-/** A support reference as it is spliced into a message: `(ref <id>)`. */
-const SUPPORT_REFERENCE = /\(ref ([0-9a-f]+)\)\s*$/;
+/**
+ * A support reference as it is spliced into a message: `(ref <id>)`.
+ *
+ * Bounded to the 16 hex digits Convex actually stamps, unlike the patterns
+ * that READ a Convex message below. The asymmetry is deliberate: those parse
+ * a third party's output, where being liberal costs nothing and being strict
+ * would silently drop every reference if Convex ever changed the shape. This
+ * one re-parses OUR own output, and it runs against every error toast string
+ * in the app, so a sentence that merely happens to end in something like
+ * `(ref deadbeef)` must not be restructured into a Reference line.
+ *
+ * If the two ever disagree, the reference stays inline in the sentence rather
+ * than moving to its own line. Still readable, still copied, nothing lost.
+ */
+const SUPPORT_REFERENCE = /\(ref ([0-9a-f]{16})\)\s*$/;
 
 /**
  * `[Request ID: …]`, optionally behind the browser client's own
@@ -46,6 +59,15 @@ export type ConvexFailure = {
   requestId: string | null;
   /** True when production masked the real failure as `Server Error`. */
   redacted: boolean;
+  /**
+   * True when the backend worded this for the user — a `ConvexError` payload.
+   * An expected outcome rather than an incident, so it gets no reference.
+   *
+   * Carried on the result rather than re-derived by callers: answering it a
+   * second time means running a foreign object's getters twice on the path
+   * that is already handling a failure.
+   */
+  refusal: boolean;
 };
 
 /** The text a thrown value carries, if it carries any. */
@@ -163,11 +185,12 @@ export function describeConvexFailure(
   const requestId = getConvexRequestId(error);
 
   const payload = applicationPayload(error);
-  if (payload) return { message: payload, requestId, redacted: false };
+  if (payload)
+    return { message: payload, requestId, redacted: false, refusal: true };
 
   const raw = messageOf(error);
   if (!raw || !raw.trim()) {
-    return { message: fallback, requestId, redacted: false };
+    return { message: fallback, requestId, redacted: false, refusal: false };
   }
 
   const rejection = CONVEX_REJECTION.exec(raw);
@@ -179,12 +202,18 @@ export function describeConvexFailure(
       body.startsWith(REDACTED_BODY) ? body.slice(REDACTED_BODY.length) : body,
     );
     if (!disclosed) {
-      return { message: REDACTED_MESSAGE, requestId, redacted: true };
+      return {
+        message: REDACTED_MESSAGE,
+        requestId,
+        redacted: true,
+        refusal: false,
+      };
     }
     return {
       message: disclosed.slice(0, MAX_MESSAGE_LENGTH),
       requestId,
       redacted: false,
+      refusal: false,
     };
   }
 
@@ -193,7 +222,12 @@ export function describeConvexFailure(
   const message = firstMeaningfulLine(
     raw.replace(LEADING_BRACKET_PREFIX, ""),
   ).slice(0, MAX_MESSAGE_LENGTH);
-  return { message: message || fallback, requestId, redacted: false };
+  return {
+    message: message || fallback,
+    requestId,
+    redacted: false,
+    refusal: false,
+  };
 }
 
 /**
@@ -207,8 +241,11 @@ export function describeConvexFailure(
  * reference on it reads as a crash.
  */
 export function convexErrMessage(error: unknown, fallback: string): string {
-  const { message, requestId } = describeConvexFailure(error, fallback);
-  if (!requestId || applicationPayload(error)) return message;
+  const { message, requestId, refusal } = describeConvexFailure(
+    error,
+    fallback,
+  );
+  if (!requestId || refusal) return message;
   return `${message} ${formatSupportReference(requestId)}`;
 }
 

@@ -36,6 +36,7 @@ describe("describeConvexFailure", () => {
       message: "Something went wrong",
       requestId: REQUEST_ID,
       redacted: true,
+      refusal: false,
     });
   });
 
@@ -62,6 +63,9 @@ describe("describeConvexFailure", () => {
 
     expect(failure.message).toBe("You are not an admin of this project.");
     expect(failure.redacted).toBe(false);
+    // The verdict rides on the result so `convexErrMessage` need not re-read a
+    // foreign object's getters to ask the same question a second time.
+    expect(failure.refusal).toBe(true);
   });
 
   it("reads a structured ConvexError payload's message field", () => {
@@ -116,6 +120,7 @@ describe("describeConvexFailure", () => {
       message: "Something went wrong",
       requestId: "abc",
       redacted: true,
+      refusal: false,
     });
     expect(convexErrMessage(hostile, "fallback")).toBe(
       "Something went wrong (ref abc)",
@@ -199,6 +204,19 @@ describe("support references", () => {
       text: "Something went wrong",
       requestId: REQUEST_ID,
     });
+  });
+
+  it("only lifts a reference of the shape Convex actually stamps", () => {
+    // This runs against every error toast string in the app, so a sentence
+    // that merely ends in hex must not be restructured into a Reference line.
+    // 16 digits is the documented shape; anything else stays part of the text.
+    expect(splitSupportReference("Build failed (ref deadbeef)")).toEqual({
+      text: "Build failed (ref deadbeef)",
+      requestId: null,
+    });
+    expect(
+      splitSupportReference("Build failed (ref da0bbc6cf9261481)").requestId,
+    ).toBe("da0bbc6cf9261481");
   });
 
   it("leaves a message that carries no reference untouched", () => {
