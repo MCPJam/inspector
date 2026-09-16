@@ -34,7 +34,7 @@ export function FrontierSignInDialogView({
           </DialogDescription>
         </DialogHeader>
         <div
-          className="isolate flex items-center py-1"
+          className="isolate grid w-full max-w-[25rem] grid-cols-[repeat(10,minmax(0,1fr))_2.5rem] items-center py-1"
           role="img"
           aria-label="ChatGPT, Claude, Gemini, Grok, DeepSeek, Meta, Mistral, Qwen, Kimi, MiniMax, and Z.ai"
         >
@@ -54,7 +54,7 @@ export function FrontierSignInDialogView({
             <span
               key={name}
               title={name}
-              className="relative -ml-5 flex size-10 shrink-0 items-center justify-center rounded-full border border-border bg-background ring-2 ring-background first:ml-0 motion-safe:transition-transform motion-safe:duration-150 motion-safe:hover:-translate-y-1"
+              className="relative flex size-10 shrink-0 items-center justify-center rounded-full border border-border bg-background ring-2 ring-background motion-safe:transition-transform motion-safe:duration-150 motion-safe:hover:-translate-y-1"
               style={{ zIndex: 11 - index }}
             >
               <img src={src} alt="" className="size-5 object-contain" />
