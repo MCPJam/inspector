@@ -46,8 +46,8 @@ import {
 import { RouteFactsSection } from "./route-facts-section";
 
 function groupHeading(group: CaseFailureGroup, count: number): string {
-  // The unit is the contract's word for it. These rows count TRIALS, and this
-  // pane's own control is labelled Trials.
+  // The unit is the contract's word for it. These rows count iterations, and
+  // this pane's own control is labelled Iterations.
   const trials = `${count} ${measurementUnitLabel("trial", count)}`;
   if (group.stage) {
     return `${trials} broke at ${USER_VALUE_STAGE_LABELS[group.stage]}`;

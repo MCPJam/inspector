@@ -61,8 +61,8 @@ vi.mock("@/hooks/useSandboxImages", () => ({
 vi.mock("@/components/hosts/HostPicker", () => ({
   HostPicker: () => <div data-testid="host-picker" />,
 }));
-vi.mock("@/components/hosts/ServerGroupPicker", () => ({
-  ServerGroupPicker: () => <div data-testid="server-group-picker" />,
+vi.mock("@/components/hosts/server-picker", () => ({
+  ServerPicker: () => <div data-testid="server-group-picker" />,
 }));
 vi.mock("../EnvironmentCanvasPanel", () => ({
   EnvironmentCanvasPanel: () => <div data-testid="stub-env-canvas" />,

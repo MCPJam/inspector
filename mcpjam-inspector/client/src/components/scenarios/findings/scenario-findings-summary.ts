@@ -1,5 +1,8 @@
 /**
- * The Findings summary card's lines for User Testing.
+ * The Findings summary card's sentences for User Testing.
+ *
+ * Returned separately and joined into one paragraph by the card, same as the
+ * swarm composer.
  *
  * The swarm composer answers "which goal broke, for which authored persona, at
  * which stage". This surface cannot answer the stage half yet, and its personas
@@ -14,7 +17,7 @@ import type { PersonaFindingsModel } from "@/components/swarms/findings/findings
 import type { ScenarioFindingsModel } from "./scenario-findings-derivation";
 
 /**
- * How a persona's sessions ENDED, as the lead line says it. Keyed on the pill
+ * How a persona's sessions ENDED, as the lead sentence says it. Keyed on the pill
  * label this module's derivation sets, so the two stay in step.
  *
  * `gave_up` gets a clause rather than an adjective: the backend only admits it

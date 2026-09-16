@@ -71,6 +71,106 @@ const entry = (
 });
 
 describe("SuitesOverview", () => {
+  it("shows and filters inherited client models while keeping explicit model overrides", async () => {
+    const user = userEvent.setup();
+    render(
+      <SuitesOverview
+        overview={[
+          entry({
+            suite: suite({
+              environmentIds: ["inherited", "override", "second"],
+            }),
+          }),
+        ]}
+        environments={[
+          { environmentId: "inherited", hostId: "claude" },
+          { environmentId: "override", hostId: "claude", modelId: "sonnet" },
+          { environmentId: "second", hostId: "chatgpt" },
+        ]}
+        hostModelsById={
+          new Map([
+            ["claude", "haiku"],
+            ["chatgpt", "gpt-5"],
+          ])
+        }
+        onSelectSuite={vi.fn()}
+        {...idleActions}
+      />,
+    );
+    expect(screen.queryByText("Client default")).toBeNull();
+    const compact = within(screen.getByTestId("suite-compact-models"));
+    expect(compact.getByText("haiku")).toBeVisible();
+    expect(compact.getByText("+2")).toHaveAttribute("title", "sonnet, gpt-5");
+    await user.click(screen.getByRole("combobox", { name: "Filter by model" }));
+    await user.click(
+      screen.getByRole("option", { name: "gpt-5", exact: true }),
+    );
+    expect(screen.getAllByTestId("evals-suites-overview-row")).toHaveLength(1);
+  });
+
+  it("resolves environment clients and models and filters through the header chevrons", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    render(
+      <SuitesOverview
+        overview={[
+          entry({
+            latestRun: run({ completedAt: 100 }),
+            suite: suite({
+              _id: "multi",
+              name: "Multi",
+              environmentIds: ["a", "b", "c"],
+            }),
+          }),
+          entry({
+            latestRun: run({ completedAt: 200 }),
+            suite: suite({
+              _id: "other",
+              name: "Other",
+              defaultConfig: {
+                modelId: "other-model",
+                systemPrompt: "",
+                temperature: 0,
+              },
+            }),
+          }),
+        ]}
+        environments={[
+          { environmentId: "a", hostId: "claude", modelId: "haiku" },
+          { environmentId: "b", hostId: "claude", modelId: "sonnet" },
+          { environmentId: "c", hostId: "claude", modelId: "opus" },
+        ]}
+        hostNamesById={new Map([["claude", "Claude"]])}
+        onSelectSuite={vi.fn()}
+        {...idleActions}
+      />,
+    );
+    expect(screen.getByRole("columnheader", { name: "Model" })).toBeVisible();
+    // Recent activity determines row order; inspect this suite by identity.
+    const multiRow = screen.getAllByTestId("evals-suites-overview-row").find(
+      (row) => row.dataset.suiteId === "multi",
+    )!;
+    const compact = within(within(multiRow).getByTestId("suite-compact-models"));
+    expect(compact.getByText("haiku")).toBeVisible();
+    expect(compact.getByText("+2")).toHaveAttribute("title", "sonnet, opus");
+    const client = screen.getByRole("combobox", { name: "Filter by client" });
+    // Dispatch on the chevron itself: the whole header trigger must open.
+    await user.click(client.querySelector("svg")!);
+    await user.click(
+      await screen.findByRole("option", { name: "Claude", exact: true }),
+    );
+    expect(screen.getAllByTestId("evals-suites-overview-row")).toHaveLength(1);
+    await user.click(screen.getByRole("combobox", { name: "Filter by model" }));
+    await user.click(
+      screen.getByRole("option", { name: "sonnet", exact: true }),
+    );
+    expect(screen.getByText("Multi")).toBeVisible();
+    await user.click(screen.getByRole("combobox", { name: "Filter by model" }));
+    expect(screen.queryByRole("option", { name: "other-model", exact: true })).toBeNull();
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(screen.getAllByTestId("evals-suites-overview-row")).toHaveLength(2);
+  });
+
   it("renders suites as a User Testing-style list with client, server, and last run", () => {
     render(
       <SuitesOverview
@@ -449,8 +549,8 @@ it("combines client and server filters, including secondary attachments, and cle
   await user.click(screen.getByRole("option", { name: "Beta", exact: true }));
   expect(screen.getByText("Multi-client suite")).toBeVisible();
   await user.click(screen.getByRole("combobox", { name: "Filter by server" }));
-  await user.click(screen.getByRole("option", { name: "Gamma", exact: true }));
-  expect(screen.getByText("No suites match these filters.")).toBeVisible();
+  expect(screen.queryByRole("option", { name: "Gamma", exact: true })).toBeNull();
+  await user.keyboard("{Escape}");
   await user.click(screen.getByRole("button", { name: "Clear filters" }));
   expect(screen.getAllByTestId("evals-suites-overview-row")).toHaveLength(2);
 });

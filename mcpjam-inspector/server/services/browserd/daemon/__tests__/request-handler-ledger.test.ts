@@ -353,3 +353,41 @@ describe("BrowserdRequestHandler — /v1/trace and /v1/artifact", () => {
     expect(res.body).toMatchObject({ error: "ledger_unavailable" });
   });
 });
+
+describe("BrowserdRequestHandler — a Playground act on the ledger", () => {
+  it("carries the tool call AND the chat session on its row", async () => {
+    // The field has existed since the ledger did, and only the CODING-AGENT
+    // door ever filled it: every command the model sent arrived with a bare
+    // `commandId` and nothing joining it to the turn that caused it. A row
+    // could be read and could not be traced back to why it happened.
+    const { handler, ledger } = makeHandler();
+    const res = await handler.handle(
+      commandReq({
+        correlation: {
+          chatSessionId: "chat-7",
+          toolCallId: "call_abc123",
+        },
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(rows(ledger)[0]).toMatchObject({
+      correlation: { chatSessionId: "chat-7", toolCallId: "call_abc123" },
+    });
+  });
+
+  it("records an eval iteration's act against its iteration", async () => {
+    const { handler, ledger } = makeHandler();
+    await handler.handle(
+      commandReq({ correlation: { iterationId: "iter-3", toolCallId: "c1" } }),
+    );
+    expect(rows(ledger)[0]).toMatchObject({
+      correlation: { iterationId: "iter-3" },
+    });
+  });
+
+  it("records a row with no correlation at all, as every caller used to", async () => {
+    const { handler, ledger } = makeHandler();
+    await handler.handle(commandReq({}));
+    expect(rows(ledger)[0]?.correlation).toBeUndefined();
+  });
+});

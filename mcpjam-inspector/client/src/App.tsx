@@ -1,3 +1,7 @@
+import { PricingFeatureSignInGate } from "./components/billing/PricingFeatureSignInGate";
+import { useCurrentPathname } from "./lib/app-navigation";
+import { SettingsDraftProvider } from "./components/settings/SettingsDraftProvider";
+import { SettingsNavigation } from "./components/settings/SettingsNavigation";
 import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
 import { useConvexAuth, useQuery } from "convex/react";
 import {
@@ -174,6 +178,7 @@ import {
 } from "./lib/inspector-command-handlers";
 import { resolveUiNavigationTarget } from "./lib/webmcp/ui-actions";
 import { useRegisterUiTools } from "./lib/webmcp/use-register-ui-tools";
+import { usePublishNativeUiTools } from "./lib/webmcp/use-publish-native-ui-tools";
 import { waitForUiCommit } from "./lib/wait-for-ui-commit";
 import { subscribeToOAuthDebuggerRequests } from "./lib/oauth/oauth-debugger-navigation";
 import {
@@ -534,11 +539,12 @@ function AppChromeSidebar({ hidden, ...props }: AppChromeSidebarProps) {
 
 type AppChromeHeaderProps = ComponentProps<typeof Header> & {
   hidden: boolean;
+  settings?: boolean;
 };
 
-function AppChromeHeader({ hidden, ...props }: AppChromeHeaderProps) {
+function AppChromeHeader({ hidden, settings, ...props }: AppChromeHeaderProps) {
   const { isMobile } = useSidebar();
-  if (hidden && !isMobile) {
+  if (settings || (hidden && !isMobile)) {
     return null;
   }
 
@@ -565,7 +571,13 @@ import { BenchResultsPage } from "@/components/score/BenchResultsPage";
  * Both are explicit arms now, pointing at the same destinations `router.tsx`
  * uses. When you add a route there, add it here.
  */
+/** Drop trailing slashes so `/settings/` dispatches like `/settings`. */
+function normalizePathname(pathname: string): string {
+  return pathname.replace(/\/+$/, "") || "/";
+}
+
 function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
+  const pathname = normalizePathname(useCurrentPathname());
   switch (activeTab) {
     // Legacy aliases, mirroring router.tsx's ChatAliasRoute /
     // ServersRedirectRoute. A navigate-away effect also fires for these; the
@@ -620,6 +632,13 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
     case "support":
       return <SupportRoute />;
     case "settings":
+      if (pathname === "/settings/api-keys") return <ApiKeysSettingsRoute />;
+      if (pathname === "/settings/integrations/github/callback")
+        return <GithubInstallCallbackSettingsRoute />;
+      if (pathname === "/settings/integrations/github")
+        return <GithubChecksSettingsRoute />;
+      if (pathname === "/settings/integrations")
+        return <IntegrationsSettingsRoute />;
       return <SettingsRoute />;
     case "profile":
       return <ProfileRoute />;
@@ -898,10 +917,10 @@ export function HostsRoute() {
     idShapedHostId === null
       ? "none"
       : isRouteHostListLoading
-        ? "pending"
-        : routeHosts.some((h) => h.hostId === idShapedHostId)
-          ? "live"
-          : "dead";
+      ? "pending"
+      : routeHosts.some((h) => h.hostId === idShapedHostId)
+      ? "live"
+      : "dead";
 
   // The id the canvas may open. A dead id resolves to null HERE, before it
   // reaches shared state, which is what keeps this route out of a fight with
@@ -952,8 +971,7 @@ export function HostsRoute() {
   }, [urlHostState, idShapedHostId, navigate]);
 
   // URL is the source of truth for the open host canvas. Sync into shared
-  // state so `GlobalHostBar`, `onCanvasReplaceHost`, and other surfaces that
-  // still read `hostsTabSelectedHostId` stay aligned.
+  // state so surfaces reading `hostsTabSelectedHostId` stay aligned.
   useEffect(() => {
     if (hostsTabSelectedHostId !== openableHostId) {
       setHostsTabSelectedHostId(openableHostId);
@@ -1418,6 +1436,14 @@ export function ToolsRoute() {
  * billing feature because they are one tab.
  */
 export function EvalsRoute({ mode }: { mode?: EvalsMode } = {}) {
+  return (
+    <PricingFeatureSignInGate feature="Evals">
+      <EvalsRouteContent mode={mode} />
+    </PricingFeatureSignInGate>
+  );
+}
+
+function EvalsRouteContent({ mode }: { mode?: EvalsMode } = {}) {
   const {
     billingUiEnabled,
     activeTabBillingLocked,
@@ -1465,6 +1491,14 @@ export function EvalsRoute({ mode }: { mode?: EvalsMode } = {}) {
  * on `/evals/runs`.
  */
 export function EvaluateRoute() {
+  return (
+    <PricingFeatureSignInGate feature="Evals">
+      <EvaluateRouteContent />
+    </PricingFeatureSignInGate>
+  );
+}
+
+function EvaluateRouteContent() {
   const {
     billingUiEnabled,
     activeTabBillingLocked,
@@ -1513,7 +1547,7 @@ export function ConformanceRoute() {
     projectId: convexProjectId,
   });
   const savedServerId = selectedServerEntry?.name
-    ? (serversByName.get(selectedServerEntry.name) ?? null)
+    ? serversByName.get(selectedServerEntry.name) ?? null
     : null;
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -1591,6 +1625,14 @@ export function CompatibilityRoute() {
 // `/user-testing/:scenarioId` (one scenario). Same billing feature and
 // `sandboxes-enabled` flag as Swarms below.
 export function ScenariosRoute() {
+  return (
+    <PricingFeatureSignInGate feature="User testing">
+      <ScenariosRouteContent />
+    </PricingFeatureSignInGate>
+  );
+}
+
+function ScenariosRouteContent() {
   const {
     billingUiEnabled,
     activeTabBillingLocked,
@@ -1693,6 +1735,14 @@ function decodeParam(raw: string): string | null {
 }
 
 export function SwarmsRoute() {
+  return (
+    <PricingFeatureSignInGate feature="Swarm">
+      <SwarmsRouteContent />
+    </PricingFeatureSignInGate>
+  );
+}
+
+function SwarmsRouteContent() {
   // Project-scoped Swarms surface (Persona → Journey → Run redesign) — no
   // longer a per-host scenario tab. Keeps the same billing gate as the scenario
   // product surface, and re-mounts per project so selection state can't leak
@@ -1964,7 +2014,8 @@ export function SkillsRoute() {
   const { convexProjectId, isAuthenticated, isGuestProjectActor, appState } =
     useAppRouteContext();
   const servers = appState?.servers as
-    Record<string, ServerWithName> | undefined;
+    | Record<string, ServerWithName>
+    | undefined;
   // Names, in both modes. The local manager registers connections under their
   // name, and the hosted API layer resolves a name to its Convex server id
   // inside `buildServerRequest` — so resolving here too would duplicate that,
@@ -2351,6 +2402,8 @@ export function ProjectSettingsRoute() {
 
 export function SettingsRoute() {
   const { activeOrganizationId, handleNavigate } = useAppRouteContext();
+  const pathname = normalizePathname(useCurrentPathname());
+  if (pathname === "/settings") return <ProfileTab />;
   return (
     <SettingsTab
       activeOrganizationId={activeOrganizationId}
@@ -2360,8 +2413,9 @@ export function SettingsRoute() {
 }
 
 export function ApiKeysSettingsRoute() {
-  const { activeOrganizationId } = useAppRouteContext();
-  return <ApiKeysRoute activeOrganizationId={activeOrganizationId} />;
+  // Personal keys. The organization inventory mounts ApiKeysRoute with an
+  // explicit organizationId from OrganizationsTab instead.
+  return <ApiKeysRoute />;
 }
 
 export function IntegrationsSettingsRoute() {
@@ -2370,7 +2424,13 @@ export function IntegrationsSettingsRoute() {
   // GitHub availability, and `IntegrationsRoute` already wraps that card in its
   // own boundary so a GitHub-side failure hides one card instead of the page.
   // Slack has to stay reachable regardless.
-  return <IntegrationsRoute activeOrganizationId={activeOrganizationId} />;
+  return activeOrganizationId ? (
+    <OrganizationsRoute organizationId={activeOrganizationId}>
+      <IntegrationsRoute activeOrganizationId={activeOrganizationId} />
+    </OrganizationsRoute>
+  ) : (
+    <IntegrationsRoute />
+  );
 }
 
 export function GithubChecksSettingsRoute() {
@@ -2390,7 +2450,9 @@ export function GithubChecksSettingsRoute() {
       }
       fallback={<Navigate to="/settings" replace />}
     >
-      <GithubChecksRoute activeOrganizationId={activeOrganizationId} />
+      <OrganizationsRoute organizationId={activeOrganizationId}>
+        <GithubChecksRoute activeOrganizationId={activeOrganizationId} />
+      </OrganizationsRoute>
     </ErrorBoundary>
   );
 }
@@ -2434,7 +2496,10 @@ export function ProfileRoute() {
   return <ProfileTab />;
 }
 
-export function OrganizationsRoute() {
+export function OrganizationsRoute({
+  children,
+  organizationId,
+}: { children?: React.ReactNode; organizationId?: string } = {}) {
   const {
     routeOrganizationId,
     routeOrganizationSection,
@@ -2446,7 +2511,13 @@ export function OrganizationsRoute() {
 
   return (
     <OrganizationsTab
-      organizationId={routeOrganizationId}
+      organizationId={organizationId ?? routeOrganizationId}
+      children={
+        children ??
+        (routeOrganizationSection === "integrations" ? (
+          <IntegrationsRoute activeOrganizationId={routeOrganizationId} />
+        ) : undefined)
+      }
       section={routeOrganizationSection ?? "overview"}
       checkoutIntent={checkoutIntentForBilling}
       onCheckoutIntentConsumed={consumeCheckoutIntent}
@@ -2545,8 +2616,8 @@ export default function App() {
     activeTab === "oauth-flow"
       ? "oauth"
       : activeTab === "xaa-flow" && xaaEnabled === true
-        ? "xaa"
-        : null;
+      ? "xaa"
+      : null;
   const { hidden: hiddenHeaderServers, hide: hideHeaderServer } =
     useHiddenHeaderServers(headerHiddenSurface);
 
@@ -2980,8 +3051,8 @@ export default function App() {
         !appReturnPath
           ? "absent"
           : restoredPath === appReturnPath
-            ? "restored"
-            : "superseded",
+          ? "restored"
+          : "superseded",
       );
       const projectReturnIntent =
         createProjectSignInReturnRecoveryIntent(restoredPath);
@@ -3108,7 +3179,10 @@ export default function App() {
   // gets a chance to run.
   const disconnectRuntimeServersForAuthExit = useCallback(async () => {
     const inspection = useWebmcpInspectorStore.getState();
-    if (inspection.session && !inspection.session.sessionId.startsWith("hosted:")) {
+    if (
+      inspection.session &&
+      !inspection.session.sessionId.startsWith("hosted:")
+    ) {
       await inspection.closeSession();
     }
     const serverNames = Object.keys(appState.servers);
@@ -3156,13 +3230,18 @@ export default function App() {
     [appState],
   );
   useInspectorCommandBus({ onScopeStepUp: handleInspectorScopeStepUp });
-  // MCPJam UI tools: registered in both modes for the in-app "Ask MCPJam"
-  // agent (the registry's only consumer); the always-available side panel
-  // drives whichever inspector surface is open, so registration lives at the
-  // App root. Never exposed to browser-native agents. Disabled on the
-  // standalone scenario chat route: its end user is not the inspector
-  // operator, so inspector-driving tools must not exist on that page.
+  // MCPJam UI tools: registered in both modes; the always-available side
+  // panel drives whichever inspector surface is open, so registration lives
+  // at the App root. Disabled on the standalone scenario chat route: its end
+  // user is not the inspector operator, so inspector-driving tools must not
+  // exist on that page — for either agent below.
   useRegisterUiTools({ enabled: !isScenarioChatRoute });
+  // The same tools, published to whatever WebMCP agent the browser is running
+  // (`document.modelContext`), so an external agent can operate the inspector
+  // without anyone opening Ask MCPJam. Subscribes to the registry, so a
+  // surface's mount-scoped tools follow their screen. A no-op where the
+  // browser has no WebMCP API.
+  usePublishNativeUiTools({ enabled: !isScenarioChatRoute });
   // One-time migration from legacy localStorage state to Convex. No-op in
   // hosted mode and after the first successful run; safe to keep in the tree.
   useLocalStateMigration({
@@ -3187,8 +3266,8 @@ export default function App() {
     const names = appState.selectedMultipleServers.length
       ? appState.selectedMultipleServers
       : appState.selectedServer && appState.selectedServer !== "none"
-        ? [appState.selectedServer]
-        : [];
+      ? [appState.selectedServer]
+      : [];
     publishSelectedServerNames(names);
   }, [appState.selectedMultipleServers, appState.selectedServer]);
   const persistRuntimeServerToProjectRef = useRef(
@@ -3476,7 +3555,7 @@ export default function App() {
     setHostsTabSelectedHostId(null);
   }, [convexProjectId]);
   const routeScopedOrganizationId = hasRouteOrganization
-    ? (routeOrganizationId ?? null)
+    ? routeOrganizationId ?? null
     : null;
   const rawBillingOrganizationId =
     routeScopedOrganizationId ??
@@ -3581,10 +3660,10 @@ export default function App() {
   const createProjectDisabledReason = guestProjectLimitReached
     ? "Sign in to create more projects"
     : noOrganizationsAvailable
-      ? "Create or join an organization to create projects"
-      : insufficientOrgRoleForCreate
-        ? "You don't have permission to create projects"
-        : (projectCreationGate.denialMessage ?? undefined);
+    ? "Create or join an organization to create projects"
+    : insufficientOrgRoleForCreate
+    ? "You don't have permission to create projects"
+    : projectCreationGate.denialMessage ?? undefined;
   const [trialModalDismissedForOrg, setTrialModalDismissedForOrg] = useState<
     string | null
   >(null);
@@ -4052,8 +4131,8 @@ export default function App() {
         const selectedServers = appState.selectedMultipleServers?.length
           ? appState.selectedMultipleServers
           : focused
-            ? [focused]
-            : [];
+          ? [focused]
+          : [];
         return {
           path: pathname,
           activeTab: pathnameToActiveTab(pathname),
@@ -4588,7 +4667,7 @@ export default function App() {
   const fallbackProjectIdForStaleReturn =
     activeProject && authoritativeMembershipProjectIds?.has(activeProjectId)
       ? activeProjectId
-      : (allMembershipProjects?.[0]?._id ?? null);
+      : allMembershipProjects?.[0]?._id ?? null;
   const projectReturnRecoveryDecision = resolveProjectSignInReturnRecovery({
     intent: pendingProjectReturnRecovery,
     membershipProjectIds: authoritativeMembershipProjectIds,
@@ -4752,7 +4831,8 @@ export default function App() {
     ]);
 
   const playgroundServerSelectorProps = useMemo(():
-    PlaygroundServerSelectorProps | undefined => {
+    | PlaygroundServerSelectorProps
+    | undefined => {
     if (activeTab !== "playground") return undefined;
     return {
       serverConfigs: displayServerConfigs,
@@ -4943,8 +5023,8 @@ export default function App() {
             activeTab === "xaa-flow" && xaaEnabled === true
               ? () => setXaaServerModalNonce((n) => n + 1)
               : activeTab === "oauth-flow"
-                ? () => setOauthServerModalNonce((n) => n + 1)
-                : undefined,
+              ? () => setOauthServerModalNonce((n) => n + 1)
+              : undefined,
           isMultiSelectEnabled: activeTab === "chat",
           onMultiServerToggle: toggleServerSelection,
           selectedMultipleServers: appState.selectedMultipleServers,
@@ -4973,14 +5053,12 @@ export default function App() {
       : undefined;
 
   const isEvalsTab = activeTab === "evals" || activeTab === "evaluate";
-  const globalHostBarProps =
+  const clientBootstrapProps =
     isAuthenticated &&
     convexProjectId &&
     !isEvalsTab &&
-    // The playground has its own client chip in the chat-input toolbar
-    // (switch / compare / add host), so the global host bar is redundant
-    // there. User Testing and Swarms are project-scoped lists, not per-host
-    // screens, so a global host selector would be selecting nothing.
+    // Preserve the existing initialization scope; these workflows own their
+    // client initialization and selection.
     activeTab !== "playground" &&
     activeTab !== "scenarios" &&
     activeTab !== "swarms" &&
@@ -4990,23 +5068,6 @@ export default function App() {
     activeTab !== "xaa-flow"
       ? {
           projectId: convexProjectId,
-          onEditHost: (hostId: string) => {
-            setHostsTabSelectedHostId(hostId);
-            navigateApp(buildHostsPath(hostId));
-          },
-          // Active whenever the clients tab is mounted — the URL is the
-          // source of truth for which host the canvas renders, so every
-          // dropdown/cycle change must push `/clients/<hostId>`. Without
-          // this, bare `/clients` (no `:hostId`) renders the cached
-          // `previewedHostId` and clicking a different host only updates
-          // the preview store, leaving the canvas stuck on the original.
-          onCanvasReplaceHost:
-            activeTab === "clients"
-              ? (hostId: string) => {
-                  setHostsTabSelectedHostId(hostId);
-                  navigateApp(buildHostsPath(hostId), { replace: true });
-                }
-              : undefined,
         }
       : undefined;
 
@@ -5128,130 +5189,176 @@ export default function App() {
   const appChromeHeaderHidden =
     playgroundOnboarding || (activeTab === "home" && !!workOsUser);
 
+  const settingsProject =
+    activeProject?.organizationId === activeOrganizationId
+      ? activeProject
+      : Object.values(projects).find(
+          (project) => project.organizationId === activeOrganizationId,
+        );
+  const settingsShellActive = [
+    "settings",
+    "profile",
+    "organizations",
+    "project-settings",
+    "billing",
+  ].includes(activeTab);
   const appContent = (
-    <SidebarProvider defaultOpen={true}>
-      {/* Wide working surfaces (Playground, Evaluate, OAuth Debugger, Swarms)
+    <SettingsDraftProvider enabled={settingsShellActive}>
+      <SidebarProvider defaultOpen={true}>
+        {/* Wide working surfaces (Playground, Evaluate, OAuth Debugger, Swarms)
           collapse the sidebar to its icon rail; navigating back out of them
           expands it again. */}
-      <SidebarAutoCollapse activeTab={activeTab} />
-      <AppChromeSidebar
-        hidden={playgroundOnboarding}
-        onNavigate={handleNavigate}
-        activeTab={activeTab}
-        projects={projects}
-        activeProjectId={activeProjectId}
-        onSwitchProject={handleSidebarSwitchProject}
-        onOpenProjectSettings={handleSidebarOpenProjectSettings}
-        onCreateProject={handleSidebarCreateProject}
-        onDeleteProject={handleDeleteProjectAndLeave}
-        isLoadingProjects={isLoadingRemoteProjects}
-        activeOrganizationId={activeOrganizationId}
-        activeOrganizationName={activeOrganizationName}
-        onSwitchOrganization={handleSidebarSwitchOrganization}
-        onProjectShared={handleProjectShared}
-        billingUiEnabled={billingUiEnabled}
-        billingGateDenied={sidebarGateDenied}
-        billingGateEnforcementActive={billingGateEnforcementActive}
-        isCreateProjectDisabled={isCreateProjectDisabled}
-        createProjectDisabledReason={createProjectDisabledReason}
-        onBeforeSignOut={disconnectRuntimeServersForAuthExit}
-      />
-      {/* The inset is the linen shell: the sidebar and top bar read as one
+        <SidebarAutoCollapse activeTab={activeTab} />
+        <AppChromeSidebar
+          hidden={playgroundOnboarding || settingsShellActive}
+          onNavigate={handleNavigate}
+          activeTab={activeTab}
+          projects={projects}
+          activeProjectId={activeProjectId}
+          onSwitchProject={handleSidebarSwitchProject}
+          onOpenProjectSettings={handleSidebarOpenProjectSettings}
+          onCreateProject={handleSidebarCreateProject}
+          onDeleteProject={handleDeleteProjectAndLeave}
+          isLoadingProjects={isLoadingRemoteProjects}
+          activeOrganizationId={activeOrganizationId}
+          activeOrganizationName={activeOrganizationName}
+          onSwitchOrganization={handleSidebarSwitchOrganization}
+          onProjectShared={handleProjectShared}
+          billingUiEnabled={billingUiEnabled}
+          billingGateDenied={sidebarGateDenied}
+          billingGateEnforcementActive={billingGateEnforcementActive}
+          isCreateProjectDisabled={isCreateProjectDisabled}
+          createProjectDisabledReason={createProjectDisabledReason}
+          onBeforeSignOut={disconnectRuntimeServersForAuthExit}
+        />
+        <SettingsNavigation
+          enabled={settingsShellActive}
+          context={{
+            organizationId: activeOrganizationId,
+            projectId: settingsProject?.sharedProjectId ?? settingsProject?.id,
+            authenticated: isAuthenticated,
+            remoteProject: !!settingsProject?.sharedProjectId,
+            personalOrganization: sortedOrganizations.find(
+              (org) => org._id === activeOrganizationId,
+            )?.isPersonal,
+          }}
+          organizations={sortedOrganizations}
+          projects={Object.values(projects).map((project) => ({
+            ...project,
+            id: project.sharedProjectId ?? project.id,
+            remoteProject: !!project.sharedProjectId,
+          }))}
+          defaultHub={defaultHubRoute}
+          onSwitchLocalProject={async (id) => {
+            await handleSwitchProject(id);
+          }}
+        />
+        {/* The inset is the linen shell: the sidebar and top bar read as one
           continuous outer chrome and the off-white panel below is the working
           surface. `bg-sidebar` overrides the primitive's `bg-background`. */}
-      <div className="flex min-h-0 min-w-0 flex-1 flex-row has-[[data-agent-dock=bottom]]:flex-col">
-      <SidebarInset className="bg-sidebar flex flex-col min-h-0">
-        <AppChromeHeader
-          // "make nux clean" (#2868) hid this on Home for everyone, but that
-          // also hid guests' only Sign in / Create account affordance there
-          // (PUR-35). Keep Home clean for signed-in users; show the header
-          // for guests so they still get sign-in/sign-up.
-          hidden={appChromeHeaderHidden}
-          activeServerSelectorProps={activeServerSelectorProps}
-          globalHostBarProps={globalHostBarProps}
-        />
-        <AppChromePanel headerHidden={appChromeHeaderHidden}>
-          {showTrialDecisionNotice ? (
-            <div className="border-b border-border/60 px-4 py-3">
-              <Alert>
-                <AlertTriangle className="h-4 w-4" />
-                <AlertTitle>Billing decision required</AlertTitle>
-                <AlertDescription>
-                  This organization&apos;s trial has ended. An owner must
-                  upgrade or choose the free plan to restore full access.
-                </AlertDescription>
-              </Alert>
-            </div>
-          ) : null}
-          <AppRouteReactContext.Provider value={routeContext}>
-            {locationContext ? (
-              <Outlet context={routeContext} />
-            ) : (
-              <NoRouterRouteBody activeTab={activeTab} />
-            )}
-          </AppRouteReactContext.Provider>
-        </AppChromePanel>
-      </SidebarInset>
-      <AgentSidePanelMount
-        projectId={activeProjectId ?? null}
-        organizationId={activeOrganizationId ?? null}
-        activeTab={activeTab}
-      />
-      </div>
-      <Dialog
-        open={showTrialDecisionModal}
-        onOpenChange={(open) => {
-          if (!open)
-            setTrialModalDismissedForOrg(billingOrganizationId ?? null);
-        }}
-      >
-        <DialogContent
-          onPointerDownOutside={(e) => e.preventDefault()}
-          onEscapeKeyDown={(e) => e.preventDefault()}
-          data-testid="trial-decision-modal"
+        <div className="flex min-h-0 min-w-0 flex-1 flex-row has-[[data-agent-dock=bottom]]:flex-col">
+          <SidebarInset className="bg-sidebar flex flex-col min-h-0">
+            <AppChromeHeader
+              // "make nux clean" (#2868) hid this on Home for everyone, but that
+              // also hid guests' only Sign in / Create account affordance there
+              // (PUR-35). Keep Home clean for signed-in users; show the header
+              // for guests so they still get sign-in/sign-up.
+              settings={settingsShellActive}
+              hidden={appChromeHeaderHidden || settingsShellActive}
+              activeServerSelectorProps={activeServerSelectorProps}
+              clientBootstrapProps={clientBootstrapProps}
+            />
+            <AppChromePanel
+              settings={settingsShellActive}
+              headerHidden={appChromeHeaderHidden || settingsShellActive}
+            >
+              {showTrialDecisionNotice ? (
+                <div className="border-b border-border/60 px-4 py-3">
+                  <Alert>
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertTitle>Billing decision required</AlertTitle>
+                    <AlertDescription>
+                      This organization&apos;s trial has ended. An owner must
+                      upgrade or choose the free plan to restore full access.
+                    </AlertDescription>
+                  </Alert>
+                </div>
+              ) : null}
+              <AppRouteReactContext.Provider value={routeContext}>
+                {locationContext ? (
+                  <Outlet context={routeContext} />
+                ) : (
+                  <NoRouterRouteBody activeTab={activeTab} />
+                )}
+              </AppRouteReactContext.Provider>
+            </AppChromePanel>
+          </SidebarInset>
+          <div className={settingsShellActive ? "hidden" : "contents"}>
+            <AgentSidePanelMount
+              hidden={settingsShellActive}
+              projectId={activeProjectId ?? null}
+              organizationId={activeOrganizationId ?? null}
+              activeTab={activeTab}
+            />
+          </div>
+        </div>
+        <Dialog
+          open={showTrialDecisionModal}
+          onOpenChange={(open) => {
+            if (!open)
+              setTrialModalDismissedForOrg(billingOrganizationId ?? null);
+          }}
         >
-          <DialogHeader>
-            <DialogTitle>Choose how to continue</DialogTitle>
-            <DialogDescription>
-              Your trial has ended. Upgrade to keep paid features, or move this
-              organization to the Free plan.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              disabled={isSelectingFreeAfterTrial}
-              onClick={() => {
-                void (async () => {
-                  try {
-                    await selectFreeAfterTrial();
-                    toast.success("This organization is now on the Free plan.");
-                  } catch {
-                    toast.error("Could not update plan. Try again.");
+          <DialogContent
+            onPointerDownOutside={(e) => e.preventDefault()}
+            onEscapeKeyDown={(e) => e.preventDefault()}
+            data-testid="trial-decision-modal"
+          >
+            <DialogHeader>
+              <DialogTitle>Choose how to continue</DialogTitle>
+              <DialogDescription>
+                Your trial has ended. Upgrade to keep paid features, or move
+                this organization to the Free plan.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter className="gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={isSelectingFreeAfterTrial}
+                onClick={() => {
+                  void (async () => {
+                    try {
+                      await selectFreeAfterTrial();
+                      toast.success(
+                        "This organization is now on the Free plan.",
+                      );
+                    } catch {
+                      toast.error("Could not update plan. Try again.");
+                    }
+                  })();
+                }}
+              >
+                {isSelectingFreeAfterTrial ? "Saving…" : "Choose free"}
+              </Button>
+              <Button
+                type="button"
+                onClick={() => {
+                  setTrialModalDismissedForOrg(billingOrganizationId ?? null);
+                  if (billingOrganizationId) {
+                    navigateToTarget(
+                      `organizations/${billingOrganizationId}/billing`,
+                    );
                   }
-                })();
-              }}
-            >
-              {isSelectingFreeAfterTrial ? "Saving…" : "Choose free"}
-            </Button>
-            <Button
-              type="button"
-              onClick={() => {
-                setTrialModalDismissedForOrg(billingOrganizationId ?? null);
-                if (billingOrganizationId) {
-                  navigateToTarget(
-                    `organizations/${billingOrganizationId}/billing`,
-                  );
-                }
-              }}
-            >
-              Upgrade
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </SidebarProvider>
+                }}
+              >
+                Upgrade
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </SidebarProvider>
+    </SettingsDraftProvider>
   );
 
   // Vanity-domain caniuse.dev pages: render the matched route full-bleed

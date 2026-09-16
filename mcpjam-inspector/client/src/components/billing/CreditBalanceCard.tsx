@@ -1,7 +1,15 @@
 import { useEffect, useState } from "react";
-import { Info } from "lucide-react";
+import { Info, Settings } from "lucide-react";
 import { CoinStackIcon } from "@/components/ui/coin-stack-icon";
 import { Card, CardContent } from "@mcpjam/design-system/card";
+import { Button } from "@mcpjam/design-system/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@mcpjam/design-system/dialog";
 import { Progress } from "@mcpjam/design-system/progress";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
 import {
@@ -9,6 +17,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
+import { AutoTopupDialogBody } from "./AutoTopupDialogBody";
 import { CreditTopupDialog } from "@/components/billing/CreditTopupDialog";
 import { PendingCreditTopupsBanner } from "@/components/billing/PendingCreditTopupsBanner";
 import { TopupActionButton } from "@/components/billing/TopupActionButton";
@@ -24,6 +33,7 @@ import {
   formatMonthlyResetText,
 } from "@/lib/credit-usage";
 import type { CreditTopupSource } from "@/hooks/useCreditTopup";
+import { useAppNavigate, buildOrganizationPath } from "@/lib/app-navigation";
 import { consumeUrlFlag } from "@/lib/url-flag";
 
 interface CreditBalanceCardProps {
@@ -38,6 +48,7 @@ export function CreditBalanceCard({
   canManageCredits = false,
   chatSessionId,
 }: CreditBalanceCardProps = {}) {
+  const navigate = useAppNavigate();
   const { balance, isLoading } = useCreditBalance({
     organizationId,
   });
@@ -46,6 +57,7 @@ export function CreditBalanceCard({
       organizationId,
     });
   const [isTopupOpen, setIsTopupOpen] = useState(false);
+  const [isAutoManageOpen, setIsAutoManageOpen] = useState(false);
   const [topupSource, setTopupSource] =
     useState<CreditTopupSource>("billing_page");
   // Whether the user landed here from the global limit modal (`?topup=open`).
@@ -85,7 +97,9 @@ export function CreditBalanceCard({
   // Team-plan orgs bill against a monthly per-seat allowance instead of the
   // daily free bucket. Paid top-ups are shown separately and spent only after
   // the allowance runs out.
-  const showMonthly = balance?.billingModel === "monthly_per_seat";
+  const showMonthly =
+    balance?.billingModel === "monthly_per_seat" ||
+    balance?.billingModel === "monthly_flat";
   const monthlyTotal = balance?.monthlyAllowanceTotal ?? 0;
   const monthlyRemaining = balance?.monthlyAllowanceRemaining ?? 0;
   const paidRemaining = balance?.paidCreditsRemaining ?? 0;
@@ -95,12 +109,12 @@ export function CreditBalanceCard({
     isEvalIterationQuotaLoading ||
     (evalIterationQuota !== undefined && evalIterationQuota.allowed !== null);
   const evalIterationLabel = getEvalIterationQuotaLabel(
-    evalIterationQuota?.windowKind
+    evalIterationQuota?.windowKind,
   );
 
   return (
-    <Card className="border-border/60 py-6 shadow-sm">
-      <CardContent className="flex flex-col gap-5 px-4 sm:px-6">
+    <Card className="border-0 bg-transparent py-0 shadow-none">
+      <CardContent className="flex flex-col gap-5 p-0">
         <div className="flex items-center justify-between gap-3">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wider text-primary">
@@ -114,25 +128,21 @@ export function CreditBalanceCard({
               organization.
             </p>
           </div>
-          {canManageCredits ? (
-            <ErrorBoundary
-              name="credit_balance_topup_button"
-              fallback={
-                <span className="self-center text-xs text-muted-foreground">
-                  Top up unavailable
-                </span>
+          {organizationId && canManageCredits ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="shrink-0 self-start"
+              onClick={() =>
+                navigate(
+                  `${buildOrganizationPath(organizationId, "billing")}/usage`,
+                )
               }
             >
-              <TopupActionButton onClick={handleManualTopup} />
-            </ErrorBoundary>
-          ) : (
-            <span
-              className="self-center text-xs text-muted-foreground"
-              data-testid="usage-ask-admin"
-            >
-              Ask org admin to top up credits
-            </span>
-          )}
+              See more
+            </Button>
+          ) : null}
         </div>
 
         {canManageCredits ? (
@@ -150,13 +160,17 @@ export function CreditBalanceCard({
 
         {showMonthly ? (
           <UsageRow
-            label="Monthly team credits"
-            tooltip="Refreshes each billing cycle. Unused credits don't roll over."
+            label="Monthly credits"
+            tooltip={
+              balance?.rolloverCapCredits != null
+                ? `Unused credits can roll over up to ${balance.rolloverCapCredits.toLocaleString()} credits under your plan.`
+                : "Your organization’s available monthly credit allowance."
+            }
             rightText={
               isLoading || !balance
                 ? null
                 : `${monthlyRemaining.toLocaleString()} / ${monthlyTotal.toLocaleString()} · ${formatMonthlyResetText(
-                    balance.monthlyResetAt
+                    balance.monthlyResetAt,
                   )}`
             }
             fillPercent={
@@ -164,7 +178,7 @@ export function CreditBalanceCard({
                 ? 0
                 : (monthlyRemaining / monthlyTotal) * 100
             }
-            ariaLabel="Monthly team credits remaining"
+            ariaLabel="Monthly credits remaining"
             ariaValueText={`${monthlyRemaining.toLocaleString()} of ${monthlyTotal.toLocaleString()} monthly credits remaining`}
             isLoading={isLoading}
             showCoin
@@ -176,21 +190,14 @@ export function CreditBalanceCard({
             rightText={
               isLoading || !balance
                 ? null
-                : `${(
-                    balance.freeDailyCreditsTotal -
-                    balance.freeDailyCreditsRemaining
-                  ).toLocaleString()} / ${balance.freeDailyCreditsTotal.toLocaleString()} · ${formatCreditResetText(
-                    balance.freeDailyResetAt
+                : `${balance.freeDailyCreditsRemaining.toLocaleString()} / ${balance.freeDailyCreditsTotal.toLocaleString()} · ${formatCreditResetText(
+                    balance.freeDailyResetAt,
                   )}`
             }
-            // "spent / total": count and bar both grow as credits are used —
-            // 0/300 empty when fresh, 300/300 full when drained. Matches the
-            // sidebar usage strip.
             fillPercent={
               isLoading || !balance || balance.freeDailyCreditsTotal <= 0
                 ? 0
-                : ((balance.freeDailyCreditsTotal -
-                    balance.freeDailyCreditsRemaining) /
+                : (balance.freeDailyCreditsRemaining /
                     balance.freeDailyCreditsTotal) *
                   100
             }
@@ -200,6 +207,16 @@ export function CreditBalanceCard({
           />
         )}
 
+        {evalIterationQuota?.starterRemaining != null && (
+          <p className="text-sm">
+            Starter eval iterations:{" "}
+            {evalIterationQuota.starterRemaining.toLocaleString()} remaining ·
+            one-time allowance.{" "}
+            {evalIterationQuota.starterRemaining === 0
+              ? "Further runs use your plan’s metered credits."
+              : "This allowance does not renew."}
+          </p>
+        )}
         {monthlyExhausted ? (
           <p
             className="text-xs text-muted-foreground"
@@ -217,7 +234,7 @@ export function CreditBalanceCard({
             tooltip={
               evalIterationQuota
                 ? `Resets ${formatEvalIterationResetTime(
-                    evalIterationQuota.resetsAt
+                    evalIterationQuota.resetsAt,
                   )}`
                 : undefined
             }
@@ -230,7 +247,7 @@ export function CreditBalanceCard({
                 ? null
                 : `${Math.max(
                     0,
-                    evalIterationQuota.allowed - evalIterationQuota.used
+                    evalIterationQuota.allowed - evalIterationQuota.used,
                   ).toLocaleString()} / ${evalIterationQuota.allowed.toLocaleString()}`
             }
             fillPercent={
@@ -242,7 +259,7 @@ export function CreditBalanceCard({
                     0,
                     ((evalIterationQuota.allowed - evalIterationQuota.used) /
                       evalIterationQuota.allowed) *
-                      100
+                      100,
                   )
             }
             ariaLabel={`${evalIterationLabel} remaining`}
@@ -250,7 +267,7 @@ export function CreditBalanceCard({
               evalIterationQuota && evalIterationQuota.allowed !== null
                 ? `${Math.max(
                     0,
-                    evalIterationQuota.allowed - evalIterationQuota.used
+                    evalIterationQuota.allowed - evalIterationQuota.used,
                   ).toLocaleString()} of ${evalIterationQuota.allowed.toLocaleString()} eval iterations remaining`
                 : undefined
             }
@@ -284,7 +301,75 @@ export function CreditBalanceCard({
             Credit spending is paused pending review.
           </p>
         ) : null}
+        <div className="grid gap-4 border-t border-border/60 pt-5 sm:grid-cols-2">
+          <section
+            className="flex flex-col gap-4 rounded-lg border border-border/60 p-4"
+            aria-label="Buy Credits"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h3 className="text-sm font-semibold">Buy Credits</h3>
+              {canManageCredits ? (
+                <ErrorBoundary
+                  name="credit_balance_topup_button"
+                  fallback={
+                    <span className="self-center text-xs text-muted-foreground">
+                      Top up unavailable
+                    </span>
+                  }
+                >
+                  <TopupActionButton onClick={handleManualTopup} />
+                </ErrorBoundary>
+              ) : (
+                <span
+                  className="self-center text-xs text-muted-foreground"
+                  data-testid="usage-ask-admin"
+                >
+                  Ask org admin to top up credits
+                </span>
+              )}
+            </div>
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              Add credits when you need them. Purchased credits are shared
+              across your organization.
+            </p>
+          </section>
+          <section
+            className="flex flex-col gap-4 rounded-lg border border-border/60 p-4"
+            aria-label="Auto-reload"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h3 className="text-sm font-semibold">Auto-reload</h3>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => setIsAutoManageOpen(true)}
+              >
+                <Settings className="size-4" aria-hidden="true" />
+                Manage
+              </Button>
+            </div>
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              Automatically add credits when your balance runs low.
+            </p>
+          </section>
+        </div>
       </CardContent>
+      <Dialog open={isAutoManageOpen} onOpenChange={setIsAutoManageOpen}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Auto-reload</DialogTitle>
+            <DialogDescription>
+              Automatically purchase credits when you’re running low.
+            </DialogDescription>
+          </DialogHeader>
+          <AutoTopupDialogBody
+            organizationId={organizationId}
+            canManage={canManageCredits}
+            onClose={() => setIsAutoManageOpen(false)}
+          />
+        </DialogContent>
+      </Dialog>
       {isTopupOpen && canManageCredits && (
         <CreditTopupDialog
           open
@@ -368,7 +453,12 @@ function UsageRow({
       ) : (
         <Progress
           value={fillPercent}
-          aria-label={ariaLabel ?? `${label} used`}
+          aria-label={ariaLabel ?? `${label} remaining`}
+          className={
+            fillPercent <= 10
+              ? "bg-muted [&_[data-slot=progress-indicator]]:bg-destructive"
+              : "bg-muted [&_[data-slot=progress-indicator]]:bg-foreground/60"
+          }
           aria-valuetext={ariaValueText}
         />
       )}

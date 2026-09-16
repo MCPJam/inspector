@@ -3,7 +3,8 @@
  * caller branches straight into a success or failure toast — so the boolean has
  * to describe what actually reached the clipboard, including in the deprecated
  * `execCommand` fallback, which reports failure by returning false rather than
- * by throwing.
+ * by throwing, and reports success for a copy that never happened when the
+ * selection never took.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -85,5 +86,54 @@ describe("copyToClipboard", () => {
     await expect(copyToClipboard("text")).resolves.toBe(false);
     // A throw must not strand the scratch textarea in the document either.
     expect(document.querySelector("textarea")).toBeNull();
+  });
+
+  it("reports FAILURE when the fallback selection does not take", async () => {
+    stubClipboard(vi.fn().mockRejectedValue(new Error("denied")));
+    const execCommand = stubExecCommand(() => true);
+    // A Radix dialog's focus trap pulls focus off the scratch textarea before
+    // the copy runs, which collapses the selection `select()` just made.
+    vi.spyOn(HTMLTextAreaElement.prototype, "select").mockImplementation(
+      () => {},
+    );
+
+    // Regression (BB-215): execCommand answered `true` for this copy, so the
+    // share modal toasted "Link copied" over an untouched clipboard.
+    await expect(copyToClipboard("text")).resolves.toBe(false);
+    expect(execCommand).not.toHaveBeenCalled();
+    expect(document.querySelector("textarea")).toBeNull();
+  });
+
+  it("still copies multi-line text with CRLF newlines", async () => {
+    stubClipboard(vi.fn().mockRejectedValue(new Error("denied")));
+    stubExecCommand(() => true);
+
+    // A textarea normalizes CRLF to LF, so its selection is shorter than the
+    // string handed in — measuring against the input would reject a good copy.
+    await expect(copyToClipboard("line one\r\nline two")).resolves.toBe(true);
+  });
+
+  it("puts the scratch textarea inside the open dialog", async () => {
+    stubClipboard(vi.fn().mockRejectedValue(new Error("denied")));
+    const dialog = document.createElement("div");
+    dialog.setAttribute("role", "dialog");
+    const trigger = document.createElement("button");
+    dialog.appendChild(trigger);
+    document.body.appendChild(dialog);
+    trigger.focus();
+
+    let host: Element | null = null;
+    stubExecCommand(() => {
+      host = document.querySelector("textarea")?.parentElement ?? null;
+      return true;
+    });
+
+    const copied = await copyToClipboard("text");
+    // Removed before asserting so a failure can't strand it in the next test.
+    dialog.remove();
+
+    expect(copied).toBe(true);
+    // On <body> the dialog's focus trap would steal the selection back.
+    expect(host).toBe(dialog);
   });
 });

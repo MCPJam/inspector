@@ -52,7 +52,7 @@ function request(
 }
 
 const LEGACY_SUITE = {
-  _id: "suite_1",
+  _id: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
   projectId: "p1",
   name: "Legacy suite",
   minIterations: 3,
@@ -65,8 +65,8 @@ const V2_SUITE = {
 };
 
 const CASE_DOC = {
-  _id: "case_1",
-  testSuiteId: "suite_1",
+  _id: "case1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  testSuiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
   projectId: "p1",
   caseKey: "ui_abc",
   title: "Lists tools",
@@ -110,7 +110,7 @@ async function message(res: Response): Promise<string> {
   return ((await res.json()) as { message?: string }).message ?? "";
 }
 
-const SUITE_PATH = "/api/v1/projects/p1/eval-suites/suite_1";
+const SUITE_PATH = "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx";
 
 describe("per-case verdict-policy fields", () => {
   beforeEach(() => {
@@ -163,7 +163,7 @@ describe("per-case verdict-policy fields", () => {
       {
         name: "PATCH …/cases/:caseId",
         method: "PATCH",
-        path: `${SUITE_PATH}/cases/case_1`,
+        path: `${SUITE_PATH}/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx`,
         body: (field) => ({ title: "Lists tools", ...field }),
       },
     ];
@@ -182,16 +182,20 @@ describe("per-case verdict-policy fields", () => {
         expect(res.status).toBe(400);
         const text = await message(res);
         expect(text).toContain(field);
-        // The message has to name the policy AND the way out, or the caller
-        // learns only that something they read on a GET is not writable.
-        expect(text).toContain("verdict policy 2");
-        expect(text).toMatch(/legacy/);
+        // The message has to name the CRITERION this suite is actually decided
+        // by AND the way out, or the caller learns only that something they
+        // read on a GET is not writable. It names the criterion rather than a
+        // policy version: "legacy" told a caller their suite was old, which is
+        // not a fact they can act on.
+        expect(text).toContain("per-case-graded suite");
+        expect(text).toContain("suite-wide accuracy threshold");
+        expect(text).toMatch(/Switch the suite to per-case grading first/);
         expect(convexMutationMock).not.toHaveBeenCalled();
       });
     }
 
     it("leaves an ordinary edit alone — and does not read the suite for it", async () => {
-      const res = await request("PATCH", `${SUITE_PATH}/cases/case_1`, {
+      const res = await request("PATCH", `${SUITE_PATH}/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx`, {
         title: "Renamed",
       });
 
@@ -223,7 +227,7 @@ describe("per-case verdict-policy fields", () => {
     });
 
     it("forwards repetitions and passThreshold on patch", async () => {
-      const res = await request("PATCH", `${SUITE_PATH}/cases/case_1`, {
+      const res = await request("PATCH", `${SUITE_PATH}/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx`, {
         repetitions: 7,
         passThreshold: 0.5,
       });

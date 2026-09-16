@@ -1,98 +1,92 @@
+/**
+ * A case's checks: the suite's scorer table, in case scope.
+ *
+ * The same `SuiteScorerTable` the suite settings page renders, so a person
+ * reads one numbered 01–06 layout on both pages. Here the suite's rules are
+ * inherited — read-only, switchable off by standard-check family — and the
+ * case's own rules are edited in place. The judge row is the case's
+ * judge-skipped flag. Match options and the judge cards are the suite's and
+ * stay on its page.
+ */
+
 import { Button } from "@mcpjam/design-system/button";
-import { useState } from "react";
 import type { CasePredicates, Predicate } from "@/shared/eval-matching";
-import { SuiteStageChecks } from "@/components/evals/suite-stage-checks";
+import type { SuiteCapabilities } from "@/hooks/use-suite-capabilities";
+import { SuiteScorerTable } from "@/components/evals/suite-scorer-table";
+import {
+  JUDGE_HINT,
+  PASS_OR_FAIL_HINT,
+} from "@/components/evals/suite-pass-or-fail-section";
+import type { StandardCheckDraft } from "@/components/evals/standard-checks-model";
+import type { EvalJudgeConfig } from "@/components/evals/types";
 
 export function CaseChecksPage({
   title,
-  disabledChecks,
+  predicates,
+  suppressedSuiteStandardCheckIds,
+  suitePredicates,
+  suiteJudgeConfig,
+  onChecksChange,
+  capabilities,
   judgeSkipped,
   onJudgeSkippedChange,
-  onSave,
-  saveDisabled,
-  onBack,
   onConfigureSuite,
+  saveStatus,
 }: {
   title: string;
-  disabledChecks?: string[];
   predicates?: CasePredicates;
+  suppressedSuiteStandardCheckIds?: string[];
   suitePredicates: Predicate[];
-  availableTools: string[];
-  onPredicatesChange: (next: CasePredicates | undefined) => void;
+  /** Read only here: the judge row shows the suite's threshold and role. */
+  suiteJudgeConfig?: EvalJudgeConfig;
+  onChecksChange: (next: StandardCheckDraft) => void;
+  capabilities?: SuiteCapabilities | null;
   judgeSkipped: boolean;
   onJudgeSkippedChange: (skipped: boolean) => void;
-  onSave: () => void;
-  saveDisabled: boolean;
-  onBack?: () => void;
   onConfigureSuite?: () => void;
+  saveStatus?: string | null;
 }) {
-  const suiteDisabled = disabledChecks ?? [];
-  const [stageOverrides, setStageOverrides] = useState<Record<string, boolean>>(
-    {},
-  );
-  const effectiveDisabled = new Set(suiteDisabled);
-  if (judgeSkipped) effectiveDisabled.add("userValue.outcome");
-  for (const [id, enabled] of Object.entries(stageOverrides)) {
-    if (enabled) effectiveDisabled.delete(id);
-    else effectiveDisabled.add(id);
-  }
-  const hasUnsavedStageChanges = Object.keys(stageOverrides).length > 0;
+  const draft = { predicates, suppressedSuiteStandardCheckIds };
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
+    <div className="min-h-0 flex-1 overflow-y-auto px-6 py-8 sm:px-10 sm:py-10 lg:px-12">
       <div className="mx-auto max-w-4xl space-y-6">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h2 className="text-lg font-semibold">
-              User Value Chain Assertions
-            </h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Overrides for {title}
-            </p>
-          </div>
-          <div className="flex gap-2">
-            <Button variant="ghost" onClick={onBack}>
-              Back to case
-            </Button>
-            <Button
-              onClick={onSave}
-              disabled={saveDisabled || hasUnsavedStageChanges}
-            >
-              Save overrides
-            </Button>
-          </div>
-        </div>
-        <SuiteStageChecks
-          disabledChecks={[...effectiveDisabled]}
-          suiteDisabledChecks={suiteDisabled}
-          onChange={(next) => {
-            const nextDisabled = next ?? [];
-            const overrides: Record<string, boolean> = {};
-            for (const id of new Set([...nextDisabled, ...suiteDisabled])) {
-              if (id === "userValue.outcome" && !suiteDisabled.includes(id))
-                continue;
-              if (nextDisabled.includes(id) !== suiteDisabled.includes(id)) {
-                overrides[id] = !nextDisabled.includes(id);
-              }
-            }
-            setStageOverrides(overrides);
-            if (!suiteDisabled.includes("userValue.outcome")) {
-              onJudgeSkippedChange(nextDisabled.includes("userValue.outcome"));
-            }
+        <SuiteScorerTable
+          headerContent={
+            <h2 className="text-lg font-semibold">Test Case Evaluators</h2>
+          }
+          headerDescription={
+            <div className="space-y-2">
+              <p className="text-sm leading-relaxed text-foreground/80">
+                Overrides for {title}. Step assertions are authored in the case
+                flow.
+              </p>
+              {saveStatus ? (
+                <p role="status" className="text-sm text-muted-foreground">
+                  {saveStatus}
+                </p>
+              ) : null}
+            </div>
+          }
+          headerActions={
+            onConfigureSuite ? (
+              <Button variant="outline" size="sm" onClick={onConfigureSuite}>
+                Configure suite assertions
+              </Button>
+            ) : null
+          }
+          scope={{
+            kind: "case",
+            suitePredicates,
+            draft,
+            onDraftChange: onChecksChange,
+            judgeSkipped,
+            onJudgeSkippedChange,
           }}
+          judgeConfig={suiteJudgeConfig}
+          capabilities={capabilities}
+          passOrFailHint={PASS_OR_FAIL_HINT}
+          judgeHint={JUDGE_HINT}
         />
-        {hasUnsavedStageChanges ? (
-          <p role="status" className="text-sm text-muted-foreground">
-            These stage changes are a preview. Saving them requires case-level
-            stage override support in the backend.
-          </p>
-        ) : null}
-        {onConfigureSuite ? (
-          <div className="border-t border-border pt-4">
-            <Button variant="outline" size="sm" onClick={onConfigureSuite}>
-              Configure suite checks
-            </Button>
-          </div>
-        ) : null}
       </div>
     </div>
   );

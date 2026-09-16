@@ -22,6 +22,7 @@
  * These tests are wire shape tests, not behavior tests — they assert
  * that the helper's contract matches what PR 4b's eval call site needs.
  */
+import { buildPageTools } from "../chat-v2-orchestration";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const streamTextMock = vi.hoisted(() => vi.fn());
@@ -67,6 +68,42 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
       mcpjam: { serverId: "srv-1" },
     });
   });
+
+  it.each(["tool-input-start", "tool-input-available", "tool-input-error"])(
+    "preserves inspector tool names in %s metadata",
+    (type) => {
+      const tools = buildPageTools([
+        {
+          alias: "page_1a2b3c4d",
+          sessionId: "s",
+          toolKey: "add_topping",
+          rawName: "add_topping",
+          origin: "https://pizza.test",
+        },
+      ]);
+      const chunk = withMcpToolOriginChunkMetadata(
+        { type, toolName: "page_1a2b3c4d" },
+        tools,
+      ) as any;
+      expect(chunk.providerMetadata.mcpjam.pageTool).toEqual({
+        rawName: "add_topping",
+        origin: "https://pizza.test",
+      });
+      const resumed = withMcpToolOriginChunkMetadata(
+        chunk,
+        buildPageTools([
+          {
+            alias: "page_1a2b3c4d",
+            sessionId: "s",
+            toolKey: "changed",
+            rawName: "changed",
+            origin: "https://other.test",
+          },
+        ]),
+      ) as any;
+      expect(resumed.providerMetadata).toEqual(chunk.providerMetadata);
+    },
+  );
 
   function defaultStreamTextReturn(
     overrides: Partial<{

@@ -1,4 +1,6 @@
+import { useSettingsDraft } from "./SettingsDraftProvider";
 import { GithubForkCredentialsToggle } from "./github-fork-credentials-toggle";
+import { GithubPrServerOAuthControl } from "./github-pr-server-oauth-control";
 import {
   useCallback,
   useEffect,
@@ -264,7 +266,6 @@ export function GithubChecksRoute({
     availability,
     repos,
     suites,
-    prServerOAuthSources,
     bindings,
     connectVerifiedRepo,
     setRepoEnabled,
@@ -363,6 +364,22 @@ export function GithubChecksRoute({
   const [pickerPolicy, setPickerPolicy] = useState<
     GithubCheckOutagePolicy | ""
   >("");
+
+  useSettingsDraft(
+    !!pickerRepo || !!pickerSuite || !!pickerPolicy,
+    () => {
+      setPickerRepo("");
+      setPickerSuite("");
+      setPickerPolicy("");
+    },
+    connecting ||
+      bindingBusy ||
+      pendingToggles.size > 0 ||
+      pendingPolicies.size > 0 ||
+      pendingConformance.size > 0 ||
+      pendingFeedback.size > 0 ||
+      pendingOAuth.size > 0,
+  );
 
   // The organization a completion belongs to. `activeOrganizationId` is a prop
   // and this component stays mounted across a switch, so an in-flight connect
@@ -834,10 +851,7 @@ export function GithubChecksRoute({
   const bindingRows: GithubInstallationBinding[] = bindings ?? [];
 
   return (
-    <SettingsPageShell
-      active="integrations"
-      activeOrganizationId={activeOrganizationId}
-    >
+    <SettingsPageShell>
       {/* This page sits one level below the Integrations directory, and the
             nav's Integrations tab reads as active while you are on it — so
             without this there is no visible way back up. */}
@@ -1126,51 +1140,15 @@ export function GithubChecksRoute({
                 canManage={canManage}
                 onChange={setRepoForkCredentials}
               />
-              <div className="flex flex-wrap items-center gap-3 border-t border-border/40 pt-3">
-                <div className="min-w-52">
-                  <p className="text-sm font-medium">Server authentication</p>
-                  <p className="text-xs text-muted-foreground">
-                    Reuse one project-shared test OAuth connection when this
-                    repository&apos;s PR server requires login.
-                  </p>
-                </div>
-                <Select
-                  value={row.prServerOAuthSourceServerId ?? "none"}
-                  disabled={pendingOAuth.has(row._id) || !canManage}
-                  onValueChange={(value) =>
-                    void handlePrServerOAuthChange(row, value)
-                  }
-                >
-                  <SelectTrigger
-                    className="w-64"
-                    aria-label={`Server authentication for ${row.repoFullName}`}
-                  >
-                    <SelectValue placeholder="No saved authorization" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">No saved authorization</SelectItem>
-                    {(prServerOAuthSources ?? [])
-                      .filter((source) => source.projectId === row.projectId)
-                      .map((source) => (
-                        <SelectItem
-                          key={source.serverId}
-                          value={source.serverId}
-                          disabled={!source.authorized}
-                        >
-                          {source.name}
-                          {source.authorized ? "" : " — authorize first"}
-                        </SelectItem>
-                      ))}
-                  </SelectContent>
-                </Select>
-                <Button
-                  variant="link"
-                  size="sm"
-                  onClick={() => appNavigate(`/p/${row.projectId}/servers`)}
-                >
-                  Authorize or reconnect
-                </Button>
-              </div>
+              <GithubPrServerOAuthControl
+                row={row}
+                canManage={canManage}
+                pending={pendingOAuth.has(row._id)}
+                onChange={(sourceServerId) =>
+                  void handlePrServerOAuthChange(row, sourceServerId)
+                }
+                onManage={() => appNavigate(`/p/${row.projectId}/servers`)}
+              />
             </div>
           ))
         )}

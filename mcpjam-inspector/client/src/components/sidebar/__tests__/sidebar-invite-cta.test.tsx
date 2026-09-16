@@ -13,9 +13,8 @@ const mockFeatureFlags: Record<string, boolean | undefined> = {};
 // The guest invite CTA only exists on hosted deployments — a local/self-hosted
 // install has no WorkOS to sign up through — so these tests run hosted.
 vi.mock("@/lib/config", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/config")>(
-    "@/lib/config",
-  );
+  const actual =
+    await vi.importActual<typeof import("@/lib/config")>("@/lib/config");
   return { ...actual, HOSTED_MODE: true };
 });
 
@@ -83,6 +82,12 @@ vi.mock("@/components/sidebar/nav-main", () => ({
   NavMain: () => <div data-testid="nav-main" />,
 }));
 
+vi.mock("@/components/sidebar/sidebar-credits", () => ({
+  SidebarCredits: () => (
+    <button data-testid="sidebar-see-credits">See credits</button>
+  ),
+}));
+
 vi.mock("@/components/sidebar/sidebar-user", () => ({
   SidebarUser: () => <div data-testid="sidebar-user" />,
 }));
@@ -91,8 +96,8 @@ vi.mock("@/components/sidebar/sidebar-context-switcher", () => ({
   SidebarContextSwitcher: () => <div data-testid="context-switcher" />,
 }));
 
-vi.mock("@/components/project/ShareProjectDialog", () => ({
-  ShareProjectDialog: (props: unknown) => mockShareProjectDialog(props),
+vi.mock("@/components/organization/InviteTeamMembersDialog", () => ({
+  InviteTeamMembersDialog: (props: unknown) => mockShareProjectDialog(props),
 }));
 
 vi.mock("@/components/auth/InviteTeamSignUpDialog", () => ({
@@ -214,12 +219,11 @@ describe("sidebar invite CTA", () => {
       },
     });
     mockShareProjectDialog.mockImplementation(
-      ({ isOpen, projectName }: { isOpen: boolean; projectName: string }) =>
-        isOpen ? (
-          <div data-testid="share-project-dialog">
-            Share dialog for {projectName}
-          </div>
-        ) : null,
+      ({ organizationId }: { organizationId: string }) => (
+        <div data-testid="share-project-dialog">
+          Invite dialog for {organizationId}
+        </div>
+      ),
     );
     mockInviteSignUpDialog.mockImplementation(
       ({ isOpen }: { isOpen: boolean }) =>
@@ -276,7 +280,7 @@ describe("sidebar invite CTA", () => {
     renderSidebar();
 
     expect(screen.getByTestId("share-project-dialog")).toHaveTextContent(
-      "Share dialog for Acme",
+      "Invite dialog for org-1",
     );
   });
 
@@ -311,7 +315,7 @@ describe("sidebar invite CTA", () => {
     );
   });
 
-  it("orders the signed-in footer invite CTA, See credits, then the profile menu", () => {
+  it("orders the signed-in footer See credits, invite CTA, then the profile menu", () => {
     renderSidebar();
 
     const inviteButton = screen.getByRole("button", {
@@ -321,11 +325,11 @@ describe("sidebar invite CTA", () => {
     const sidebarUser = screen.getByTestId("sidebar-user");
 
     expect(
-      inviteButton.compareDocumentPosition(seeCredits) &
+      seeCredits.compareDocumentPosition(inviteButton) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(
-      seeCredits.compareDocumentPosition(sidebarUser) &
+      inviteButton.compareDocumentPosition(sidebarUser) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
   });
@@ -384,7 +388,7 @@ describe("sidebar invite CTA", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("opens the share dialog for the active project", () => {
+  it("opens the team invite dialog for the active organization", () => {
     renderSidebar();
 
     fireEvent.click(
@@ -392,7 +396,7 @@ describe("sidebar invite CTA", () => {
     );
 
     expect(screen.getByTestId("share-project-dialog")).toHaveTextContent(
-      "Share dialog for Acme",
+      "Invite dialog for org-1",
     );
   });
 
@@ -406,6 +410,7 @@ describe("sidebar invite CTA", () => {
           "project-b": makeProject("project-b", "Beta"),
         }}
         activeProjectId="project-b"
+        activeOrganizationId="org-1"
         onSwitchProject={vi.fn()}
         onCreateProject={vi.fn(async () => "project-created")}
         onDeleteProject={vi.fn()}

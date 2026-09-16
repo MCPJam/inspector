@@ -197,6 +197,20 @@ function baseAdapter(overrides?: {
     projectId: "proj-1",
     chatSessionId: "synth_run-1_p1_0",
     maxTurns: 3,
+    // The platform swarm defaults. `maxTurns` bounds how MANY turns a session
+    // takes; these bound how long it and each of its turns may take.
+    budgets: {
+      turnTimeoutMs: 5 * 60_000,
+      unitTimeoutMs: 20 * 60_000,
+      runTimeoutMs: 2 * 60 * 60_000,
+      turnRetries: 2,
+      sources: {
+        turnTimeoutMs: "default",
+        unitTimeoutMs: "default",
+        runTimeoutMs: "default",
+        turnRetries: "default",
+      },
+    },
     runtime: {
       modelDefinition: {
         id: overrides?.modelId ?? "anthropic/claude-haiku-4.5",
@@ -652,5 +666,122 @@ describe("runSyntheticHostSession — durable browser-artifact capture", () => {
 
     expect(fake.collectVideo).not.toHaveBeenCalled();
     expect(callOrder.at(-1)).toBe("dispose");
+  });
+});
+
+describe("runSyntheticHostSession — execution budgets", () => {
+  /**
+   * A swarm session had no wall clock before this. `maxTurns` bounds how MANY
+   * turns it takes; nothing bounded how long they take, so a wedged host held
+   * its sandbox and its spend for as long as the provider kept the connection
+   * open.
+   *
+   * The asymmetry with the eval runner is the part worth pinning: there, a
+   * turn that runs out of clock is a failed TURN and the iteration carries on
+   * to its next authored prompt. Here it ends the whole SESSION, because a
+   * swarm session is one conversation — turn N+1 is the persona reacting to
+   * turn N's reply, and there is no reply to react to.
+   */
+  // The browser context is set up per-describe in this file, and the session
+  // constructs one unconditionally — without it the turn loop dies before it
+  // ever reaches a clock.
+  beforeEach(() => {
+    createBrowserSessionContextMock.mockReturnValue(
+      buildFakeBrowserContext({ computerUse: false }),
+    );
+  });
+
+  const budgetsWith = (over: Record<string, number>) => ({
+    turnTimeoutMs: 5 * 60_000,
+    unitTimeoutMs: 20 * 60_000,
+    runTimeoutMs: 2 * 60 * 60_000,
+    turnRetries: 2,
+    ...over,
+    sources: {
+      turnTimeoutMs: "default",
+      unitTimeoutMs: "default",
+      runTimeoutMs: "default",
+      turnRetries: "default",
+    },
+  });
+
+  /** A turn that never returns on its own — only its signal ends it. */
+  const hangUntilAborted = () =>
+    runAssistantTurnMock.mockImplementation(
+      (opts: any) =>
+        new Promise((_resolve, reject) => {
+          const signal: AbortSignal | undefined = opts.abortSignal;
+          if (!signal) return;
+          const fail = () =>
+            reject(
+              signal.reason instanceof Error
+                ? signal.reason
+                : new Error("aborted"),
+            );
+          if (signal.aborted) fail();
+          else signal.addEventListener("abort", fail, { once: true });
+        }),
+    );
+
+  it("ends the session when a turn outlives its budget", async () => {
+    hangUntilAborted();
+    const adapter = baseAdapter() as any;
+    adapter.budgets = budgetsWith({ turnTimeoutMs: 20 });
+
+    const result = await runSyntheticHostSession(adapter);
+
+    expect(result.outcome).toBe("failed");
+    // Named, not just "aborted": the runtime's own AbortError message says
+    // nothing about which bound tripped, and a reader of a failed swarm needs
+    // to know it was the clock rather than a cancel.
+    expect(result.errorReason).toBe("turn_timeout");
+    expect(result.errorMessage).toMatch(/Turn exceeded its/);
+  });
+
+  it("ends the session when the session itself outlives its budget", async () => {
+    hangUntilAborted();
+    const adapter = baseAdapter() as any;
+    // Session bound tighter than the turn bound, so the OUTER clock is the one
+    // that fires — the discrimination is the point of the test.
+    adapter.budgets = budgetsWith({
+      unitTimeoutMs: 20,
+      turnTimeoutMs: 5 * 60_000,
+    });
+
+    const result = await runSyntheticHostSession(adapter);
+
+    expect(result.outcome).toBe("failed");
+    expect(result.errorReason).toBe("session_timeout");
+    expect(result.errorMessage).toMatch(/Session exceeded its/);
+  });
+
+  it("hands the engine a signal that fires on the turn budget", async () => {
+    // The composition itself: the engine sees ONE signal, and it is not the
+    // caller's — a turn-budget abort has to reach it without anything
+    // upstream having aborted.
+    hangUntilAborted();
+    const adapter = baseAdapter() as any;
+    adapter.budgets = budgetsWith({ turnTimeoutMs: 20 });
+    const outerAbort = new AbortController();
+    adapter.abortSignal = outerAbort.signal;
+
+    await runSyntheticHostSession(adapter);
+
+    const engineSignal = runAssistantTurnMock.mock.calls[0]![0]
+      .abortSignal as AbortSignal;
+    expect(engineSignal).toBeDefined();
+    expect(engineSignal).not.toBe(outerAbort.signal);
+    expect(engineSignal.aborted).toBe(true);
+    expect(outerAbort.signal.aborted).toBe(false);
+  });
+
+  it("leaves a session that finishes inside its budget alone", async () => {
+    // The negative: arming clocks must not change a run that never hits them.
+    const adapter = baseAdapter() as any;
+    adapter.budgets = budgetsWith({});
+
+    const result = await runSyntheticHostSession(adapter);
+
+    expect(result.outcome).toBe("succeeded");
   });
 });

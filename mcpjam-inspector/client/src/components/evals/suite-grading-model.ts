@@ -45,13 +45,18 @@ import {
   MATCH_OPTIONS_DEFAULTS,
   resolveMatchOptions,
 } from "@/shared/eval-matching";
-import { checkRole, checkSeverity, type Predicate } from "@mcpjam/sdk/predicates";
+import {
+  checkRole,
+  checkSeverity,
+  type Predicate,
+} from "@mcpjam/sdk/predicates";
 import {
   formatCriterion,
   PREDICATE_KIND_LABELS,
 } from "@/shared/predicate-kinds";
 import { ARGS_OPTIONS, ORDER_OPTIONS } from "./validators-section";
 import type { EvalJudgeConfig } from "./types";
+import { isRequiredRole } from "@mcpjam/sdk/predicates";
 
 /** Which of the suite's three grader sources a row came from. */
 export type GraderRowKind = "match" | "predicate" | "judge";
@@ -59,10 +64,11 @@ export type GraderRowKind = "match" | "predicate" | "judge";
 /**
  * One grader, as the settings page shows it.
  *
- * `role` is DERIVED. Match rules are always gates. A predicate's role is
- * `checkRole(predicate)` — absent means gating; only the literal `"advisory"`
- * is advisory. The judge's role is whatever `judgeConfig.goalCompletion.role`
- * says, defaulting to advisory.
+ * `role` is DERIVED and carries the STORAGE spelling, not the label: a match
+ * rule is always required, a predicate's role is `checkRole(predicate)` —
+ * absent means required; only the literal `"advisory"` is advisory — and the
+ * judge's role is whatever `judgeConfig.goalCompletion.role` says, defaulting
+ * to advisory. `ROLE_LEGEND` turns `"gating"` into the word "Required".
  */
 export type GraderRow = {
   /** Stable within one render; used as a React key, not persisted. */
@@ -143,9 +149,9 @@ function matchRows(matchOptions: EvalMatchOptions | undefined): GraderRow[] {
     {
       id: "match:toolCallOrder",
       kind: "match",
-      label: `Tool call order — ${
+      label: `Tool call order (${
         ORDER_LABEL.get(resolved.toolCallOrder) ?? resolved.toolCallOrder
-      }`,
+      })`,
       role: "gating",
       matchField: "toolCallOrder",
     },
@@ -154,8 +160,8 @@ function matchRows(matchOptions: EvalMatchOptions | undefined): GraderRow[] {
       kind: "match",
       label:
         resolved.maxExtraToolCalls === null
-          ? "Extra tool calls — unlimited"
-          : `Extra tool calls — at most ${resolved.maxExtraToolCalls}`,
+          ? "Extra tool calls (unlimited)"
+          : `Extra tool calls (at most ${resolved.maxExtraToolCalls})`,
       role: "gating",
       matchField: "maxExtraToolCalls",
     },
@@ -169,9 +175,9 @@ function argumentRow(matchOptions: EvalMatchOptions | undefined): GraderRow {
   return {
     id: "match:argumentMatching",
     kind: "match",
-    label: `Arguments — ${
+    label: `Arguments (${
       ARGS_LABEL.get(resolved.argumentMatching) ?? resolved.argumentMatching
-    }`,
+    })`,
     role: "gating",
     matchField: "argumentMatching",
   };
@@ -228,10 +234,9 @@ export function groupGradersByStage(input: {
     id: "judge:goalCompletion",
     kind: "judge",
     label: "Goal completion judge",
-    role:
-      input.judgeConfig?.goalCompletion?.role === "gating"
-        ? "gating"
-        : "advisory",
+    role: isRequiredRole(input.judgeConfig?.goalCompletion?.role)
+      ? "gating"
+      : "advisory",
     severity: input.judgeConfig?.goalCompletion?.severity,
     judgeSlot: "goalCompletion",
   });
@@ -253,8 +258,8 @@ export function groupGradersByStage(input: {
  * THREE ANSWERS, and the distinction is the point. `connection`, `discovery`
  * and `call` have no authorable grader on this page at all — the runner
  * measures them on every trial whether or not anyone configured anything — so
- * "no grader" would read as a gap the reader should close. The other three are
- * genuinely unconfigured.
+ * "No evaluator" would read as a gap the reader should close. The other three
+ * are genuinely unconfigured.
  *
  * Neither answer is `STAGE_STATE_LABELS.notMeasured`. That phrase describes a
  * RUN: a stage no trial reached, or one the analyzer could not decide. Settings
@@ -269,31 +274,33 @@ export const STAGE_EMPTY_COPY: Record<UserValueStage, string> = {
   connection:
     "Observed by the runner — decided by the client and server connection settings",
   discovery:
-    "Observed by the runner — decided by the client's discovery settings",
-  selection: "No grader",
+    "Observed by the runner; add assertions to check the advertised catalog",
+  selection: "No evaluator",
   call: "Observed by the runner — nothing to configure",
-  response: "No grader",
-  userValue: "No grader",
+  response: "No evaluator",
+  userValue: "No evaluator",
 };
 
 /** True when this stage's empty state is a gap rather than a runner concern. */
 export function stageEmptyIsGap(stage: UserValueStage): boolean {
-  return STAGE_EMPTY_COPY[stage] === "No grader";
+  return STAGE_EMPTY_COPY[stage] === "No evaluator";
 }
 
 /**
  * How the judge is configured, not what a run did.
  *
  * Absent config is `manual`: `enabled` defaults on and `autoRun` defaults off,
- * matching `judges-section.tsx`. `role` is only `gating` when the literal
- * `"gating"` is stored.
+ * matching `judges-section.tsx`. The `gating` mode means the stored role is
+ * required — under EITHER spelling. Storage said `"gating"` before the rename
+ * and says `"required"` after it, and a comparator that took one word would
+ * read a required judge as merely manual on one side of that line.
  */
 export type JudgeMode = "off" | "manual" | "automatic" | "gating";
 
 export function judgeMode(judgeConfig: EvalJudgeConfig | undefined): JudgeMode {
   const goal = judgeConfig?.goalCompletion;
   if (goal?.enabled === false) return "off";
-  if (goal?.role === "gating") return "gating";
+  if (isRequiredRole(goal?.role)) return "gating";
   if (goal?.autoRun === true) return "automatic";
   return "manual";
 }
@@ -307,12 +314,14 @@ export type StageConfigState = {
     | "judgeOnRequest"
     | "judgeAutomatic"
     | "judgeOff";
-  /** Deterministic gating rows (match + predicate). The judge is excluded. */
-  gates: number;
-  /** Advisory predicates authored as Warn. The judge is excluded. */
-  warn: number;
-  /** Advisory predicates without warn severity. The judge is excluded. */
-  report: number;
+  /** Deterministic required rows (match + predicate). The judge is excluded. */
+  required: number;
+  /**
+   * Advisory predicates, with or without `severity: "warn"`. The judge is
+   * excluded. Warn and Report were one tier by consequence — neither failed
+   * the iteration — so they count as one here.
+   */
+  advisory: number;
   /** Only on `userValue`. */
   judge?: JudgeMode;
 };
@@ -323,29 +332,24 @@ export function stageConfigStates(
 ): StageConfigState[] {
   return USER_VALUE_STAGES.map((stage) => {
     const rows = model.byStage[stage].filter((row) => row.kind !== "judge");
-    const gates = rows.filter((row) => row.role === "gating").length;
-    const warn = rows.filter(
-      (row) => row.role === "advisory" && row.severity === "warn",
-    ).length;
-    const report = rows.filter(
-      (row) => row.role === "advisory" && row.severity !== "warn",
-    ).length;
+    const advisory = rows.filter((row) => row.role === "advisory").length;
+    const required = rows.length - advisory;
     if (stage !== "userValue") {
-      if (gates >= 1) return { stage, state: "gated", gates, warn, report };
+      if (required >= 1) return { stage, state: "gated", required, advisory };
       if (!stageEmptyIsGap(stage)) {
-        return { stage, state: "runner", gates, warn, report };
+        return { stage, state: "runner", required, advisory };
       }
-      return { stage, state: "gap", gates, warn, report };
+      return { stage, state: "gap", required, advisory };
     }
-    if (gates >= 1 || judge === "gating") {
-      return { stage, state: "gated", gates, warn, report, judge };
+    if (required >= 1 || judge === "gating") {
+      return { stage, state: "gated", required, advisory, judge };
     }
     if (judge === "automatic") {
-      return { stage, state: "judgeAutomatic", gates, warn, report, judge };
+      return { stage, state: "judgeAutomatic", required, advisory, judge };
     }
     if (judge === "manual") {
-      return { stage, state: "judgeOnRequest", gates, warn, report, judge };
+      return { stage, state: "judgeOnRequest", required, advisory, judge };
     }
-    return { stage, state: "judgeOff", gates, warn, report, judge };
+    return { stage, state: "judgeOff", required, advisory, judge };
   });
 }

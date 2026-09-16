@@ -65,7 +65,9 @@ const GOLDEN: EvalStageAnalyticsV1 = evalStageAnalyticsSchema.parse(
 ) as EvalStageAnalyticsV1;
 
 const PROJECT_ID = "proj_1";
-const SUITE_ID = "suite_1";
+// Id-SHAPED: `:suiteId` is checked for the Convex id shape before it is
+// forwarded, so a `suite_1` label would exercise the gate, not this route.
+const SUITE_ID = "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx";
 const BEARER = "caller-bearer-token";
 
 /** The golden document re-homed onto this test's project/suite ids. */

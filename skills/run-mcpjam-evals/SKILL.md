@@ -47,7 +47,7 @@ Two tools spend the organization's model budget. Both are marked `COSTS MONEY` i
 
 Rules:
 
-- **Confirm before the first spend in a conversation.** Say which suite, how many cases, and — if the user set `repetitions` or `iterations` — what that multiplies out to. "Run the evals?" is not a confirmation if the user has not been told it bills.
+- **Confirm before the first spend in a conversation.** Say which suite, how many cases, and — if the user set `iterations` (or its legacy spelling `repetitions`) — what that multiplies out to. "Run the evals?" is not a confirmation if the user has not been told it bills.
 - **Never call either in a loop, or to poll.** Polling is `get_eval_run`, which is free.
 - **Pass `idempotencyKey` when a launch might be retried.** A transport error is not proof the run did not start; retrying without the key can bill the same run twice.
 - **A failed run has already been paid for.** Re-running to "see if it passes this time" spends again and is rarely the right next step — triage first.

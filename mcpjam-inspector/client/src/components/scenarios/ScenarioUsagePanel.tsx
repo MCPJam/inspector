@@ -31,7 +31,6 @@ import { getShareableAppOrigin } from "@/lib/scenario-session";
 import { usePromoteCapability } from "@/hooks/usePromoteCapability";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { ScenarioSessionsMetricStrip } from "@/components/scenarios/scenario-sessions-metric-strip";
-import { ScenarioStageFunnelPanel } from "@/components/shared/user-value-chain/StageFunnelPanels";
 
 interface ScenarioUsagePanelProps {
   scenario: ScenarioSettings;
@@ -94,7 +93,7 @@ const RATING_FILTER_LABELS: Record<RatingFilterValue, string> = {
  */
 function buildRatingFilter(
   rating: RatingFilterValue,
-  base: typeof SESSIONS_TRAFFIC_FILTER
+  base: typeof SESSIONS_TRAFFIC_FILTER,
 ) {
   if (rating === "all") return base;
   if (rating === "none") {
@@ -104,8 +103,8 @@ function buildRatingFilter(
     rating === "low"
       ? "negative"
       : rating === "neutral"
-      ? "neutral"
-      : "positive";
+        ? "neutral"
+        : "positive";
   return {
     ...base,
     chips: [
@@ -139,18 +138,18 @@ export function ScenarioUsagePanel({
   const setSelectedThreadId = useCallback(
     (threadId: string | null) =>
       setSelection({ scenarioId: scenario.scenarioId, threadId }),
-    [scenario.scenarioId]
+    [scenario.scenarioId],
   );
 
   const [ratingFilter, setRatingFilter] = useState<RatingFilterValue>("all");
   const sessionsFilter = useMemo(
     () => buildRatingFilter(ratingFilter, SESSIONS_TRAFFIC_FILTER),
-    [ratingFilter]
+    [ratingFilter],
   );
   // The user-visible half of the filter, for the list's empty-state copy.
   const ratingOnlyFilter = useMemo(
     () => buildRatingFilter(ratingFilter, EMPTY_USAGE_FILTER),
-    [ratingFilter]
+    [ratingFilter],
   );
 
   const { threads } = useUsageInsights({
@@ -229,14 +228,6 @@ export function ScenarioUsagePanel({
         <ScenarioSessionsMetricStrip scenarioId={scenario.scenarioId} />
       </ErrorBoundary>
 
-      {/* D8: this scenario's REAL sessions, and only those — never combined
-          with a swarm run's funnel or with eval trials. Self-hiding until the
-          backend query exists, same dark-ship reasoning as the strip above. */}
-      <ScenarioStageFunnelPanel
-        scenarioId={scenario.scenarioId}
-        className="mx-3 mb-3"
-      />
-
       <div className="min-h-0 flex-1">
         <ResizablePanelGroup direction="horizontal">
           <ResizablePanel defaultSize={30} minSize={20} maxSize={50}>
@@ -294,13 +285,21 @@ export function ScenarioUsagePanel({
                   threadId={selectedThreadId}
                   sessionLink={`${getShareableAppOrigin()}${buildUserTestingScenarioPath(
                     scenario.scenarioId,
-                    { tab: "sessions", session: selectedThreadId }
+                    { tab: "sessions", session: selectedThreadId },
                   )}`}
                   promote={
                     scenario.projectId
                       ? { projectId: scenario.projectId, canPromote }
                       : undefined
                   }
+                  // Reported here: scrolling a tester's session felt like
+                  // something was missing, because a hard edge cuts a message
+                  // mid-line and says nothing about whether that was the end.
+                  // Covers Chat and Raw — both panes scroll, and the complaint
+                  // is about the edge, not about what is behind it. Opt-in, so
+                  // the four other surfaces this detail serves are unchanged
+                  // until their owners ask for the same.
+                  fadeScrollEdges
                 />
               ) : (
                 <div className="flex h-full items-center justify-center px-6">

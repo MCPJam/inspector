@@ -8,6 +8,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  authoredRequiredRole,
   PREDICATE_KINDS,
   USER_VALUE_STAGES,
 } from "@mcpjam/sdk/contract";
@@ -15,6 +16,7 @@ import type { Predicate } from "@mcpjam/sdk/predicates";
 import { groupGradersByStage } from "../suite-grading-model";
 import {
   LEGACY_PREDICATE_KINDS,
+  RUNNER_MEASUREMENT_LABELS,
   ROLE_LEGEND,
   authorablePredicateKinds,
   buildScorerTable,
@@ -26,6 +28,10 @@ import {
   withPredicateRole,
   type ScorerUiRole,
 } from "../suite-scorer-table-model";
+import {
+  STANDARD_ASSERTION_CHECKS,
+  listEffectiveRules,
+} from "../standard-checks-model";
 
 function samplePredicate(kind: string): Predicate {
   const base = { type: kind } as Record<string, unknown>;
@@ -57,9 +63,10 @@ describe("library categories", () => {
     // does ask for it.
     for (const category of scorerLibraryCategories(PREDICATE_KINDS)) {
       for (const kind of category.kinds) {
-        expect(seen.has(kind), `${kind} listed in ${seen.get(kind)} and ${category.id}`).toBe(
-          false,
-        );
+        expect(
+          seen.has(kind),
+          `${kind} listed in ${seen.get(kind)} and ${category.id}`,
+        ).toBe(false);
         seen.set(kind, category.id);
         expect(libraryCategoryOfKind(kind)).toBe(category.id);
       }
@@ -67,9 +74,10 @@ describe("library categories", () => {
     const missing = (PREDICATE_KINDS as readonly string[]).filter(
       (kind) => !seen.has(kind),
     );
-    expect(missing, `kinds with no library category: ${missing.join(", ")}`).toEqual(
-      [],
-    );
+    expect(
+      missing,
+      `kinds with no library category: ${missing.join(", ")}`,
+    ).toEqual([]);
   });
 
   it("shows Response now that kinds file there", () => {
@@ -130,10 +138,11 @@ describe("buildScorerTable groups", () => {
       predicates: [],
     });
     const userValue = groups.find((group) => group.stage === "userValue");
-    expect(userValue?.rows.map((row) => row.judgeSlot)).toEqual([
-      "goalCompletion",
-      "groundedness",
-    ]);
+    expect(
+      userValue?.rows
+        .filter((row) => row.kind === "judge")
+        .map((row) => row.judgeSlot),
+    ).toEqual(["goalCompletion", "groundedness"]);
     expect(
       userValue?.rows.find((row) => row.judgeSlot === "groundedness")
         ?.thresholdKind,
@@ -155,19 +164,120 @@ describe("buildScorerTable groups", () => {
     });
     for (const stage of ["connection", "discovery"] as const) {
       const group = groups.find((entry) => entry.stage === stage);
-      expect(group?.rows).toEqual([
+      // First, ahead of any standard check the stage lists as off.
+      expect(group?.rows[0]).toEqual(
         expect.objectContaining({
           kind: "observed",
           muted: true,
-          name: "Observed by the runner",
+          enabled: true,
+          name: RUNNER_MEASUREMENT_LABELS[stage],
         }),
-      ]);
+      );
+      expect(
+        group?.rows.slice(1).every((row) => row.kind === "preset"),
+        stage,
+      ).toBe(true);
     }
+  });
+
+  it("lists every standard check nothing authors as an off preset row, once", () => {
+    const { groups } = buildScorerTable({
+      model: groupGradersByStage({ predicates: [] }),
+      predicates: [],
+    });
+    const presets = groups.flatMap((group) =>
+      group.rows.filter((row) => row.kind === "preset"),
+    );
+    expect(presets.map((row) => row.family?.id).sort()).toEqual(
+      STANDARD_ASSERTION_CHECKS.map((check) => check.id).sort(),
+    );
+    for (const row of presets) {
+      expect(row.enabled).toBe(false);
+      // The presets still carry `severity: "warn"` on the wire; the tier they
+      // read as is Advisory, because severity no longer names one.
+      expect(row.role).toBe("advisory");
+      const stage = groups.find((group) => group.rows.includes(row))?.stage;
+      expect(stage).toBe(
+        STANDARD_ASSERTION_CHECKS.find((check) => check.id === row.family?.id)
+          ?.stage,
+      );
+    }
+    // Listing can be switched off for a surface that only wants what is on.
+    const bare = buildScorerTable({
+      model: groupGradersByStage({ predicates: [] }),
+      predicates: [],
+      listPresets: false,
+    });
+    expect(
+      bare.groups.flatMap((group) =>
+        group.rows.filter((row) => row.kind === "preset"),
+      ),
+    ).toEqual([]);
+  });
+
+  it("drops the preset row once any rule of its kind is listed, suppressed or not", () => {
+    const latency = STANDARD_ASSERTION_CHECKS.find(
+      (check) => check.id === "response.performance",
+    )!;
+    const suite: Predicate[] = [{ type: "toolLatencyUnder", ms: 1234 }];
+    const rules = listEffectiveRules(suite, {
+      suppressedSuiteStandardCheckIds: [latency.id],
+    });
+    const { groups, cards } = buildScorerTable({
+      model: groupGradersByStage({ predicates: suite }),
+      activeModel: groupGradersByStage({ predicates: [] }),
+      predicates: suite,
+      rules,
+    });
+    const response = groups.find((group) => group.stage === "response")!;
+    const listed = response.rows.filter((row) => row.family?.id === latency.id);
+    expect(listed).toEqual([
+      expect.objectContaining({
+        kind: "predicate",
+        source: "suite",
+        suppressed: true,
+        enabled: false,
+        muted: true,
+        family: expect.objectContaining({ id: latency.id, suiteRules: 1 }),
+      }),
+    ]);
+    // A suppressed rule is listed, not counted: the card reads as ungraded.
+    expect(cards.find((card) => card.stage === "response")?.chip.label).toBe(
+      "No evaluator",
+    );
+  });
+
+  it("reads a case's judge-skipped flag into the judge row and the card", () => {
+    const build = (judgeEnabled?: boolean) =>
+      buildScorerTable({
+        model: groupGradersByStage({ predicates: [] }),
+        predicates: [],
+        judgeConfig: { goalCompletion: { autoRun: true } },
+        judgeEnabled,
+      });
+    const judgeRow = (view: ReturnType<typeof build>) =>
+      view.groups
+        .find((group) => group.stage === "userValue")
+        ?.rows.find((row) => row.judgeSlot === "goalCompletion");
+    const card = (view: ReturnType<typeof build>) =>
+      view.cards.find((card) => card.stage === "userValue")?.chip.label;
+    expect(judgeRow(build())?.enabled).toBe(true);
+    expect(card(build())).toBe("Judge automatic");
+    expect(judgeRow(build(false))?.enabled).toBe(false);
+    expect(card(build(false))).toBe("Judge off");
+    // A case cannot switch on a judge the suite turned off.
+    const off = buildScorerTable({
+      model: groupGradersByStage({ predicates: [] }),
+      predicates: [],
+      judgeConfig: { goalCompletion: { enabled: false } },
+      judgeEnabled: true,
+    });
+    expect(judgeRow(off)?.enabled).toBe(false);
   });
 });
 
 describe("roleOfPredicate / withPredicateRole", () => {
-  const roles: ScorerUiRole[] = ["gate", "warn", "report"];
+  const roles: ScorerUiRole[] = ["required", "advisory"];
 
   it("round-trips every role", () => {
     const base = samplePredicate("noToolErrors");
@@ -176,83 +286,111 @@ describe("roleOfPredicate / withPredicateRole", () => {
     }
   });
 
-  it("strips both policy fields for gate", () => {
+  it("strips both policy fields for required", () => {
     const next = withPredicateRole(
       { type: "noToolErrors", role: "advisory", severity: "warn" },
-      "gate",
+      "required",
     );
     expect(next).toEqual({ type: "noToolErrors" });
     expect("role" in next).toBe(false);
     expect("severity" in next).toBe(false);
   });
 
-  it("writes advisory + warn for warn", () => {
-    expect(withPredicateRole({ type: "noToolErrors" }, "warn")).toEqual({
-      type: "noToolErrors",
-      role: "advisory",
-      severity: "warn",
-    });
+  it("writes advisory with no severity", () => {
+    const next = withPredicateRole({ type: "noToolErrors" }, "advisory");
+    expect(next).toEqual({ type: "noToolErrors", role: "advisory" });
+    expect("severity" in next).toBe(false);
   });
 
-  it("writes advisory without severity for report", () => {
+  it("drops a stored severity when the author re-picks advisory", () => {
     const next = withPredicateRole(
       { type: "noToolErrors", role: "advisory", severity: "warn" },
-      "report",
+      "advisory",
     );
     expect(next).toEqual({ type: "noToolErrors", role: "advisory" });
     expect("severity" in next).toBe(false);
   });
+
+  // Severity no longer names a tier, so a stored `severity: "warn"` row reads
+  // as Advisory exactly like one without it. This is the Warn/Report collapse.
+  it("reads a stored warn severity as advisory, not a third tier", () => {
+    expect(
+      roleOfPredicate({
+        type: "noToolErrors",
+        role: "advisory",
+        severity: "warn",
+      }),
+    ).toBe("advisory");
+    expect(roleOfPredicate({ type: "noToolErrors", role: "advisory" })).toBe(
+      "advisory",
+    );
+  });
+
+  it("fails closed: an absent or unknown role is required", () => {
+    expect(roleOfPredicate({ type: "noToolErrors" })).toBe("required");
+    expect(
+      roleOfPredicate({
+        type: "noToolErrors",
+        role: "nonsense",
+      } as unknown as Predicate),
+    ).toBe("required");
+  });
 });
 
 describe("roleOfJudgeSlot", () => {
-  it("reads gating only as the literal gating role", () => {
-    expect(roleOfJudgeSlot("goalCompletion", undefined)).toBe("report");
+  it("reads required only as the literal gating role", () => {
+    expect(roleOfJudgeSlot("goalCompletion", undefined)).toBe("advisory");
     expect(
-      roleOfJudgeSlot("goalCompletion", { goalCompletion: { role: "advisory" } }),
-    ).toBe("report");
+      roleOfJudgeSlot("goalCompletion", {
+        goalCompletion: { role: "advisory" },
+      }),
+    ).toBe("advisory");
     expect(
       roleOfJudgeSlot("goalCompletion", { goalCompletion: { role: "gating" } }),
-    ).toBe("gate");
+    ).toBe("required");
   });
 
   it("never lets groundedness gate", () => {
     expect(
       roleOfJudgeSlot("groundedness", { goalCompletion: { role: "gating" } }),
-    ).toBe("report");
+    ).toBe("advisory");
   });
 
-  it("reads goal-completion warn severity as warn", () => {
+  it("reads a goal-completion warn severity as advisory", () => {
     expect(
       roleOfJudgeSlot("goalCompletion", {
         goalCompletion: { role: "advisory", severity: "warn" },
       }),
-    ).toBe("warn");
+    ).toBe("advisory");
   });
 });
 
 describe("withGoalCompletionRole", () => {
-  it("writes advisory + warn and strips severity for report and gate", () => {
-    expect(
-      withGoalCompletionRole({ role: "gating", threshold: 0.8 }, "warn"),
-    ).toEqual({ threshold: 0.8, role: "advisory", severity: "warn" });
+  // The wire value is whatever THIS BUILD emits: the client and the server it
+  // writes to are one deployment, so there is no handshake to wait for — a
+  // deployment that shipped this build shipped the boundary with it.
+  it("writes the emitted spelling for required and strips severity", () => {
     expect(
       withGoalCompletionRole(
         { role: "advisory", severity: "warn", threshold: 0.8 },
-        "report",
+        "required",
+      ),
+    ).toEqual({ threshold: 0.8, role: authoredRequiredRole() });
+    expect(
+      withGoalCompletionRole(
+        { role: "advisory", severity: "warn", threshold: 0.8 },
+        "advisory",
       ),
     ).toEqual({ threshold: 0.8, role: "advisory" });
     expect(
-      withGoalCompletionRole(
-        { role: "advisory", severity: "warn", threshold: 0.8 },
-        "gate",
-      ),
-    ).toEqual({ threshold: 0.8, role: "gating" });
+      withGoalCompletionRole({ role: "gating", threshold: 0.8 }, "advisory"),
+    ).toEqual({ threshold: 0.8, role: "advisory" });
   });
 });
 
 describe("ROLE_LEGEND", () => {
-  it("names the three authored roles", () => {
-    expect(Object.keys(ROLE_LEGEND).sort()).toEqual(["gate", "report", "warn"]);
+  it("names the two authored tiers", () => {
+    expect(Object.keys(ROLE_LEGEND).sort()).toEqual(["advisory", "required"]);
   });
 });
 
@@ -264,8 +402,31 @@ describe("cards", () => {
       predicates,
     });
     const selection = cards.find((card) => card.stage === "selection");
-    expect(selection?.detail?.label).toMatch(/gate/);
+    expect(selection?.detail?.label).toMatch(/required/);
     expect(selection?.detail?.label).not.toMatch(/%/);
     expect(selection?.chip.label.toLowerCase()).not.toContain("not measured");
   });
+});
+
+it("requires advertised runner support before offering responseCloseTo", () => {
+  expect(authorablePredicateKinds(undefined)).not.toContain("responseCloseTo");
+  expect(authorablePredicateKinds([])).not.toContain("responseCloseTo");
+  expect(authorablePredicateKinds(["responseCloseTo"])).toEqual([
+    "responseCloseTo",
+  ]);
+});
+
+it("uses the catalog name for authored and preset families", () => {
+  const predicates = [STANDARD_ASSERTION_CHECKS[0].preset];
+  const table = buildScorerTable({
+    model: groupGradersByStage({ predicates }),
+    predicates,
+  });
+  for (const row of table.groups.flatMap((group) => group.rows)) {
+    if (row.family)
+      expect(row.family.name).toBe(
+        STANDARD_ASSERTION_CHECKS.find((check) => check.id === row.family!.id)!
+          .name,
+      );
+  }
 });

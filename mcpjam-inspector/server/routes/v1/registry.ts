@@ -22,6 +22,7 @@ import { readJsonObjectBody } from "./adapter.js";
 import { v1Resource } from "./envelope.js";
 import { logger } from "../../utils/logger.js";
 import { redactForLog } from "./redact-log-message.js";
+import { looksLikeConvexId } from "./convex-id-param.js";
 import {
   fetchConvexV1Read,
   forwardQueryParams,
@@ -56,17 +57,6 @@ const installRegistrySchema = z.strictObject({
   registryServerId: z.string().trim().min(1),
   expectedUpdatedAt: z.number().finite().optional(),
 });
-
-/**
- * Convex document ids are lowercase unhyphenated base32-ish tokens of ~32
- * characters. Directory `serverName` values are usually short slugs
- * (`linear`, `github`). A path segment that looks like an id is tried as
- * `catalogServerId` FIRST, with a name-lookup fallback below for the scraped
- * `serverName` that happens to be id-shaped; anything else is `name`.
- */
-function looksLikeConvexId(value: string): boolean {
-  return /^[a-z0-9]{30,36}$/.test(value);
-}
 
 function convexErrorData(
   error: unknown
@@ -154,6 +144,9 @@ registry.get("/registry/directory-servers/:idOrName", async (c) => {
     target.searchParams.set("name", idOrName);
     if (source && source.length > 0) target.searchParams.set("source", source);
   };
+  // Shape-tested, never REJECTED on shape: this slot legitimately takes a
+  // directory `serverName` (`linear`, `github`), which is why the v1 id gate
+  // in `convex-id-param.ts` is opt-in per route rather than middleware.
   if ((source && source.length > 0) || !looksLikeConvexId(idOrName)) {
     return proxyConvexV1Read(c, "/v1/registry/directory-server", byName);
   }
@@ -272,4 +265,4 @@ registry.delete(
 );
 
 export default registry;
-export { looksLikeConvexId, translateRegistryWriteError };
+export { translateRegistryWriteError };

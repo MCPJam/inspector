@@ -1,4 +1,8 @@
 import {
+  dependentFilterOptions,
+  selectedFilter,
+} from "../evals/filter-options";
+import {
   EvalListFilter,
   ALL_EVAL_FILTER_VALUES,
 } from "../evals/eval-list-filter";
@@ -10,6 +14,13 @@ import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { resolveHostLogoByName } from "@/lib/host-logo";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { cn } from "@/lib/utils";
+import { useConvexAuth } from "convex/react";
+import { useHostList } from "@/hooks/useClients";
+import {
+  useProjectEnvironments,
+  type ProjectEnvironmentView,
+} from "@/hooks/useProjectEnvironments";
+import { compactModelIdTail } from "@/lib/environment-label";
 import { getEffectiveSuiteServers } from "../evals/helpers";
 import type {
   EvalSuite,
@@ -18,6 +29,12 @@ import type {
 } from "../evals/types";
 
 interface SuitesOverviewProps {
+  environments?: readonly Pick<
+    ProjectEnvironmentView,
+    "environmentId" | "hostId" | "modelId"
+  >[];
+  hostNamesById?: ReadonlyMap<string, string>;
+  hostModelsById?: ReadonlyMap<string, string>;
   overview: EvalSuiteOverviewEntry[];
   onSelectSuite: (id: string) => void;
   onRerun: (suite: EvalSuite) => void;
@@ -41,8 +58,31 @@ interface SuitesOverviewProps {
 // extra so Run/Cancel don't steal space from Suite/Client/Server.
 const ROW_PAD = "flex w-full items-center gap-4 px-3";
 const DATA_COLS =
-  "grid min-w-0 flex-1 items-center gap-4 grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,1fr)_5rem_7rem]";
+  "grid min-w-0 flex-1 items-center gap-4 grid-cols-[minmax(0,1.6fr)_minmax(0,0.7fr)_minmax(0,1fr)_minmax(0,1fr)_5rem_7rem]";
 const ACTION_COL = "flex w-40 shrink-0 items-center justify-end gap-1";
+
+export function ConnectedSuitesOverview({
+  projectId,
+  ...props
+}: SuitesOverviewProps & { projectId?: string | null }) {
+  const { isAuthenticated } = useConvexAuth();
+  const environments = useProjectEnvironments(projectId ?? null, {
+    includeAdhoc: true,
+  });
+  const { hosts } = useHostList({
+    isAuthenticated,
+    projectId: projectId ?? null,
+    includePrivateBacking: true,
+  });
+  return (
+    <SuitesOverview
+      {...props}
+      environments={environments}
+      hostNamesById={new Map(hosts.map((host) => [host.hostId, host.name]))}
+      hostModelsById={new Map(hosts.map((host) => [host.hostId, host.modelId]))}
+    />
+  );
+}
 
 export function SuitesOverview(props: SuitesOverviewProps) {
   return (
@@ -69,6 +109,9 @@ export function SuitesOverview(props: SuitesOverviewProps) {
 }
 
 function OverviewBody({
+  environments = [],
+  hostNamesById = new Map(),
+  hostModelsById = new Map(),
   overview,
   onSelectSuite,
   onRerun,
@@ -82,15 +125,85 @@ function OverviewBody({
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const [clientFilter, setClientFilter] = useState(ALL_EVAL_FILTER_VALUES);
   const [serverFilter, setServerFilter] = useState(ALL_EVAL_FILTER_VALUES);
-  const clientOptions = [
-    ...new Set(overview.flatMap((entry) => suiteClientNames(entry.suite))),
-  ].sort();
-  const serverOptions = [
-    ...new Set(
-      overview.flatMap((entry) => getEffectiveSuiteServers(entry.suite)),
-    ),
-  ].sort();
+  const [modelFilter, setModelFilter] = useState(ALL_EVAL_FILTER_VALUES);
+  // Resolved once per suite per data change, not four times per render: the
+  // model pass alone is a scan of `environments` for every environment id.
+  const resolved = useMemo(() => {
+    const environmentsById = new Map(
+      environments.map((environment) => [
+        environment.environmentId,
+        environment,
+      ]),
+    );
+    const entries = overview.map(({ suite }) => {
+      const ids = suite.environmentIds?.length
+        ? suite.environmentIds
+            .map((id) => environmentsById.get(id)?.hostId)
+            .filter((hostId): hostId is string => Boolean(hostId))
+        : (suite.hostAttachments ?? []).map((host) => host.namedHostId);
+      // A host id is not a name. Until `useHostList` resolves, an unnamed id
+      // is UNKNOWN, not a label — printing the raw id put opaque Convex ids in
+      // the column and, worse, in the filter's option list.
+      const clients = [
+        ...new Set(
+          ids
+            .map(
+              (id) =>
+                hostNamesById.get(id)?.trim() ||
+                suite.hostAttachments
+                  ?.find((host) => host.namedHostId === id)
+                  ?.hostName?.trim() ||
+                null,
+            )
+            .filter((name): name is string => Boolean(name)),
+        ),
+      ];
+      // `null` where the model is not resolved YET, so the placeholder stays a
+      // display string and never becomes a value the Model filter offers.
+      const models = [
+        ...new Set(
+          suite.environmentIds?.length
+            ? suite.environmentIds.map((id) => {
+                const environment = environmentsById.get(id);
+                return environment
+                  ? environment.modelId ||
+                      hostModelsById.get(environment.hostId) ||
+                      null
+                  : null;
+              })
+            : [suite.defaultConfig?.modelId || null],
+        ),
+      ];
+      return [suite._id, { clients, models }] as const;
+    });
+    return new Map(entries);
+  }, [overview, environments, hostNamesById, hostModelsById]);
+  const clientsForSuite = (suite: EvalSuite) =>
+    resolved.get(suite._id)?.clients ?? [];
+  const modelsForSuite = (suite: EvalSuite) =>
+    resolved.get(suite._id)?.models ?? [];
+  const options = dependentFilterOptions(overview, {
+    client: {
+      selected: selectedFilter(clientFilter),
+      values: ({ suite }) => clientsForSuite(suite),
+    },
+    model: {
+      selected: selectedFilter(modelFilter),
+      values: ({ suite }) =>
+        modelsForSuite(suite).filter((model): model is string =>
+          Boolean(model),
+        ),
+    },
+    server: {
+      selected: selectedFilter(serverFilter),
+      values: ({ suite }) => getEffectiveSuiteServers(suite),
+    },
+  });
+  const clientOptions = options.client;
+  const modelOptions = options.model;
+  const serverOptions = options.server;
   const isFiltering =
+    modelFilter !== ALL_EVAL_FILTER_VALUES ||
     clientFilter !== ALL_EVAL_FILTER_VALUES ||
     serverFilter !== ALL_EVAL_FILTER_VALUES;
 
@@ -107,7 +220,9 @@ function OverviewBody({
   const filteredOverview = sortedOverview.filter(
     ({ suite }) =>
       (clientFilter === ALL_EVAL_FILTER_VALUES ||
-        suiteClientNames(suite).includes(clientFilter)) &&
+        clientsForSuite(suite).includes(clientFilter)) &&
+      (modelFilter === ALL_EVAL_FILTER_VALUES ||
+        modelsForSuite(suite).includes(modelFilter)) &&
       (serverFilter === ALL_EVAL_FILTER_VALUES ||
         getEffectiveSuiteServers(suite).includes(serverFilter)),
   );
@@ -117,7 +232,10 @@ function OverviewBody({
   }
 
   return (
-    <div className="min-w-0" data-testid="evals-suites-overview">
+    <div
+      className="@container/suites min-w-0"
+      data-testid="evals-suites-overview"
+    >
       <div className={cn(ROW_PAD, "border-b border-border/40 pb-3")} role="row">
         <div className={DATA_COLS}>
           <span
@@ -130,14 +248,27 @@ function OverviewBody({
             <EvalListFilter
               label="Client"
               variant="header"
+              className="-ml-1 min-h-8 w-full justify-start px-1"
               value={clientFilter}
               options={clientOptions}
               onChange={setClientFilter}
             />
           </div>
+          <div role="columnheader" aria-label="Model" className="min-w-0">
+            <EvalListFilter
+              label="Model"
+              variant="header"
+              className="-ml-1 min-h-8 w-full justify-start px-1"
+              value={modelFilter}
+              options={modelOptions}
+              formatOption={compactModelIdTail}
+              onChange={setModelFilter}
+            />
+          </div>
           <div role="columnheader" aria-label="Server" className="min-w-0">
             <EvalListFilter
               label="Server"
+              className="-ml-1 min-h-8 w-full justify-start px-1"
               variant="header"
               value={serverFilter}
               options={serverOptions}
@@ -166,6 +297,7 @@ function OverviewBody({
               aria-label="Clear filters"
               onClick={() => {
                 setClientFilter(ALL_EVAL_FILTER_VALUES);
+                setModelFilter(ALL_EVAL_FILTER_VALUES);
                 setServerFilter(ALL_EVAL_FILTER_VALUES);
               }}
             >
@@ -199,10 +331,11 @@ function OverviewBody({
                   {entry.suite.name || "Untitled suite"}
                 </span>
                 <ClientCell
-                  suite={entry.suite}
+                  names={clientsForSuite(entry.suite)}
                   themeMode={themeMode}
                   className="flex"
                 />
+                <ModelCell models={modelsForSuite(entry.suite)} />
                 <span className="min-w-0 truncate text-sm text-muted-foreground">
                   {serverLabel(entry.suite)}
                 </span>
@@ -371,24 +504,19 @@ function RowDeleteControl({
 }
 
 function ClientCell({
-  suite,
+  names,
   themeMode,
   className,
 }: {
-  suite: EvalSuite;
+  names: string[];
   themeMode: "light" | "dark";
   className?: string;
 }) {
-  const attachments = suite.hostAttachments ?? [];
-  if (attachments.length === 0) {
+  if (names.length === 0) {
     return (
       <span className={cn(className, "text-sm text-muted-foreground")}>-</span>
     );
   }
-
-  const names = attachments.map(
-    (attachment) => attachment.hostName?.trim() || attachment.namedHostId,
-  );
 
   return (
     <span
@@ -409,7 +537,7 @@ function ClientCell({
           </span>
         ))}
       </span>
-      <span className="min-w-0 truncate text-sm text-foreground">
+      <span className="hidden min-w-0 truncate text-sm text-foreground @min-[1100px]/suites:inline">
         {names.join(", ")}
       </span>
     </span>
@@ -450,8 +578,32 @@ function lastRunLabel(entry: EvalSuiteOverviewEntry): string {
   return formatDistanceToNow(timestamp, { addSuffix: true });
 }
 
-function suiteClientNames(suite: EvalSuite): string[] {
-  return (suite.hostAttachments ?? []).map(
-    (host) => host.hostName?.trim() || host.namedHostId,
+/** `null` is a model this view could not resolve; it is shown, never filtered on. */
+function ModelCell({ models }: { models: (string | null)[] }) {
+  const labels = models.map((model) => model ?? "-");
+  return (
+    <span
+      className="min-w-0 text-sm text-muted-foreground"
+      title={labels.join(", ")}
+    >
+      <span className="hidden truncate @min-[1100px]/suites:block">
+        {models
+          .map((model) => (model ? compactModelIdTail(model) : "-"))
+          .join(", ")}
+      </span>
+      <span
+        className="flex min-w-0 items-center gap-1 @min-[1100px]/suites:hidden"
+        data-testid="suite-compact-models"
+      >
+        <span className="truncate">
+          {models[0] ? compactModelIdTail(models[0]) : "-"}
+        </span>
+        {models.length > 1 && (
+          <span className="shrink-0" title={labels.slice(1).join(", ")}>
+            +{models.length - 1}
+          </span>
+        )}
+      </span>
+    </span>
   );
 }

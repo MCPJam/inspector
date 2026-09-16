@@ -18,13 +18,15 @@ import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEna
 import {
   runEnvironmentRef,
   runHostLabel,
+  runClientIdentity,
+  runClientLogo,
   runRevisionLabel,
   type RunContextSource,
 } from "./helpers";
 
 type RunAttributionSource = RunContextSource & {
   effectiveModelId?: string;
-  modelSource?: "client_default" | "override";
+  modelSource?: "client_default" | "override" | "case";
 };
 
 /**
@@ -135,7 +137,9 @@ export function RunContextChip({
   // only names the client, not which model actually ran.
   return (
     <span className="inline-flex min-w-0 items-center gap-1.5">
-      <HostChip name={name} hostId={run.namedHostId} className={className} />
+      <HostChip name={name} hostId={runClientIdentity(run).namedHostId}
+        logoSrc={runClientLogo(run)}
+        className={className} />
       {resolvedModelLabel ? (
         <span
           className={cn(

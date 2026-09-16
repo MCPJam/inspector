@@ -44,11 +44,11 @@ describe("coverageForCase", () => {
         ],
       }),
     );
-    expect(c.userValue).toMatchObject({ gates: 0, warn: 1 });
-    expect(c.response).toMatchObject({ gates: 1, warn: 0 });
+    expect(c.userValue).toMatchObject({ required: 0, advisory: 1 });
+    expect(c.response).toMatchObject({ required: 1, advisory: 0 });
   });
 
-  it("counts a real route as one Selection gate", () => {
+  it("counts a real route as one required Selection rule", () => {
     const c = coverageForCase(
       card({
         steps: [
@@ -66,7 +66,7 @@ describe("coverageForCase", () => {
         toolsChoice: "tools",
       }),
     );
-    expect(c.selection.gates).toBe(1);
+    expect(c.selection.required).toBe(1);
   });
 
   it("does NOT count a route that asserts nothing", () => {
@@ -79,7 +79,7 @@ describe("coverageForCase", () => {
         ],
       }),
     );
-    expect(c.selection.gates).toBe(0);
+    expect(c.selection.required).toBe(0);
   });
 
   it("marks the links only the runner observes", () => {
@@ -105,7 +105,7 @@ describe("coverageForCase", () => {
 });
 
 describe("coverageDetail", () => {
-  const empty = { gates: 0, warn: 0, report: 0, judge: false, runner: false };
+  const empty = { required: 0, advisory: 0, judge: false, runner: false };
 
   it("says what the runner observes", () => {
     expect(coverageDetail({ ...empty, runner: true }, 0).label).toBe(
@@ -114,27 +114,27 @@ describe("coverageDetail", () => {
   });
 
   it("prints the configuration line the suite table prints", () => {
-    expect(coverageDetail({ ...empty, gates: 2, warn: 1 }, 0).label).toBe(
-      "2 gates · 1 warn",
+    expect(coverageDetail({ ...empty, required: 2, advisory: 1 }, 0).label).toBe(
+      "2 required · 1 advisory",
     );
   });
 
   it("names the judge alongside the checks", () => {
-    expect(coverageDetail({ ...empty, gates: 1, judge: true }, 0).label).toBe(
-      "1 gate · judge",
+    expect(coverageDetail({ ...empty, required: 1, judge: true }, 0).label).toBe(
+      "1 required · judge",
     );
   });
 
   it("goes amber ONLY when a gap has something that would fill it", () => {
     const withSuggestion = coverageDetail(empty, 2);
     const without = coverageDetail(empty, 0);
-    expect(withSuggestion.label).toBe("Nothing checks this · 2 suggested");
-    expect(without.label).toBe("No grader");
+    expect(withSuggestion.label).toBe("No assertion here · 2 suggested");
+    expect(without.label).toBe("No evaluator");
     expect(withSuggestion.toneClass).not.toBe(without.toneClass);
   });
 
   it("keeps a configured stage neutral — the chip above carries the tone", () => {
-    const configured = coverageDetail({ ...empty, gates: 1 }, 0);
+    const configured = coverageDetail({ ...empty, required: 1 }, 0);
     const gap = coverageDetail(empty, 0);
     expect(configured.toneClass).toBe(gap.toneClass);
   });
@@ -145,7 +145,7 @@ describe("coverageDetailByStage", () => {
     // Nothing routes to Response under PREDICATE_STAGE in this release, so
     // every case would be permanently amber there if a bare gap were amber.
     const detail = coverageDetailByStage(card(), []);
-    expect(detail.response?.label).toBe("No grader");
+    expect(detail.response?.label).toBe("No evaluator");
   });
 
   it("counts suggestions against the stage they would land on", () => {
@@ -153,7 +153,7 @@ describe("coverageDetailByStage", () => {
       suggestionAt("selection"),
       suggestionAt("selection"),
     ]);
-    expect(detail.selection?.label).toBe("Nothing checks this · 2 suggested");
+    expect(detail.selection?.label).toBe("No assertion here · 2 suggested");
   });
 
   it("covers every stage of the chain", () => {

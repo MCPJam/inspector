@@ -1,20 +1,14 @@
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { HandDrawnSendHint } from "../HandDrawnSendHint";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
 describe("HandDrawnSendHint", () => {
-  it("uses arrow-8.svg for the illustrated arrow (not arrow-3)", () => {
-    const src = readFileSync(
-      join(__dirname, "../HandDrawnSendHint.tsx"),
-      "utf-8",
-    );
-    expect(src).toMatch(/from\s+["']\.\/arrow-8\.svg\?raw["']/);
-    expect(src).not.toMatch(/arrow-3\.svg/);
+  it("renders the arrow inline as JSX, not as raw HTML", () => {
+    const { container } = render(<HandDrawnSendHint theme="light" />);
+    const path = container.querySelector("svg path");
+    // arrow-8 opens on the arrowhead at x=129; arrow-3 started elsewhere.
+    expect(path?.getAttribute("d")).toMatch(/^M129\.189/);
+    expect(path?.getAttribute("fill")).toBe("currentColor");
   });
 
   it("renders the hint label", () => {

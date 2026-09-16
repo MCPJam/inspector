@@ -423,6 +423,75 @@ The OAuth `.well-known` discovery endpoint could not be fetched.
 
 ---
 
+### Insufficient scope
+
+`auth/insufficient_scope`
+
+The server reported `insufficient_scope`: the grant does not cover this operation.
+
+**Likely causes**
+- The authorization did not request the scopes the server now requires.
+- The server added a scope requirement after the grant was issued.
+
+**Next steps**
+- Re-authorize and grant the scopes the server names in its challenge.
+
+### Authorization server unreachable
+
+`auth/authorization_server_unreachable`
+
+The stored token could not be refreshed because the authorization server was unreachable or did not return a usable response.
+
+**Likely causes**
+- The authorization server is down or slow.
+- The refresh request could not leave the network it was made from.
+
+**Next steps**
+- Retry in a minute; if it persists, check the authorization server's status.
+- Reconnect the server to obtain a fresh token once the authorization server is reachable.
+
+### Proxy rejected
+
+`auth/proxy_rejected`
+
+The response was HTTP 403 with an HTML content type and no authentication challenge. A proxy or firewall may be involved, but the response format alone does not establish its source.
+
+**Likely causes**
+- An IP allowlist or WAF blocks the address the request came from.
+- A corporate proxy or SSO portal intercepted the request.
+
+**Next steps**
+- Allow MCPJam's egress addresses, or the address you connect from, on the server's firewall.
+- Open the server URL in a browser from the same network to see what answers.
+
+### No Bearer challenge
+
+`oauth/no_bearer_challenge`
+
+The response was HTTP 401 without a Bearer challenge. It did not explain how to authorize; this does not establish whether well-known metadata discovery is available.
+
+**Likely causes**
+- The server or an intermediary omitted a Bearer challenge.
+- The server expects a static API key and does not implement OAuth.
+
+**Next steps**
+- Check OAuth discovery, including the well-known metadata fallback supported by newer MCP versions.
+- If the server expects an API key, configure it as a header on the server instead of OAuth.
+
+### Non-compliant challenge
+
+`oauth/non_compliant_challenge`
+
+The response reported `invalid_token` with HTTP 403; MCP requires HTTP 401 for an invalid or expired token. A bare Bearer challenge on a 403 is not enough to diagnose this mismatch.
+
+**Likely causes**
+- The server maps every authorization failure to 403.
+- A gateway rewrites the server's 401 to 403.
+
+**Next steps**
+- Re-authorize the server to replace the rejected token.
+- Report the status mismatch to the server author; invalid-token recovery expects HTTP 401.
+
 ## Inspector-specific
 
 These come from the inspector's own SDK runtime.
@@ -610,6 +679,16 @@ This environment's server group is gone.
 - Attach a different server group, or clear the attachment.
 
 ---
+
+## Model empty response
+
+`provider/empty_response`
+
+The model request ended without usable content, so the turn could not complete.
+The recorded error names the provider's finish reason where one was reported.
+
+Rerun the affected cases. If the error recurs on an MCPJam model, report it with
+those run details. For BYOK, check the recorded provider error and account configuration.
 
 ## Unknown error
 

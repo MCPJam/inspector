@@ -9,10 +9,11 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@mcpjam/design-system/breadcrumb";
+import { type ViewModeSelectorOption } from "@/components/shared/view-mode-selector";
 import {
-  ViewModeSelector,
-  type ViewModeSelectorOption,
-} from "@/components/shared/view-mode-selector";
+  LandingPageHeader,
+  PAGE_HEADER_STRIP_CLASSNAME,
+} from "@/components/shared/landing-page-header";
 
 import {
   DropdownMenu,
@@ -25,16 +26,12 @@ const EVALUATE_HEADER_DESCRIPTION =
   "Build a durable test suite from the prompts you already run by hand and automatically measure performance over time.";
 
 export const EVAL_LANDING_VIEW_OPTIONS = [
-  { value: "runs", label: "Runs" },
+  { value: "runs", label: "Overview" },
   { value: "suites", label: "Suites" },
 ] as const satisfies readonly ViewModeSelectorOption<"suites" | "runs">[];
 
 export type EvalLandingView =
   (typeof EVAL_LANDING_VIEW_OPTIONS)[number]["value"];
-
-// Same tab chrome as Swarm — title | tabs on one baseline.
-const TAB_CLASSNAME =
-  "mt-0 w-auto min-w-0 shrink justify-start overflow-x-auto [&_button]:min-h-8 [&_button]:px-2.5 [&_button]:py-1 [&_button]:text-sm sm:[&_button]:min-h-8 sm:[&_button]:px-3 sm:[&_button]:text-sm md:[&_button]:min-h-8 lg:[&_button]:px-3.5";
 
 export type EvalsHeaderParentCrumb = {
   label: string;
@@ -74,15 +71,10 @@ export function EvalsHeader({
   isDetail?: boolean;
 }) {
   const isDetail = isDetailProp ?? Boolean(children || parentCrumb);
-  const showLandingTabs =
-    !isDetail && landingView != null && onLandingViewChange != null;
 
-  return (
-    <div
-      className="relative shrink-0 border-b border-border/40 px-4 py-4 sm:px-6"
-      data-testid="evals-header"
-    >
-      {isDetail ? (
+  if (isDetail) {
+    return (
+      <div className={PAGE_HEADER_STRIP_CLASSNAME} data-testid="evals-header">
         <Breadcrumb className="min-w-0">
           <BreadcrumbList className="min-w-0 flex-nowrap">
             <BreadcrumbItem>
@@ -135,7 +127,7 @@ export function EvalsHeader({
                     </button>
                   </BreadcrumbLink>
                 ) : (
-                  <BreadcrumbPage className="truncate font-semibold text-foreground">
+                  <BreadcrumbPage className="truncate">
                     {children}
                   </BreadcrumbPage>
                 )}
@@ -159,97 +151,85 @@ export function EvalsHeader({
             ) : null}
           </BreadcrumbList>
         </Breadcrumb>
-      ) : (
-        <>
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div
-              className="flex min-w-0 items-center gap-3"
-              data-testid="evals-header-title-row"
+      </div>
+    );
+  }
+
+  const showLandingTabs = landingView != null && onLandingViewChange != null;
+
+  return (
+    <LandingPageHeader
+      testId="evals-header"
+      title="Evaluate"
+      description={EVALUATE_HEADER_DESCRIPTION}
+      tabs={
+        showLandingTabs
+          ? {
+              value: landingView,
+              options: EVAL_LANDING_VIEW_OPTIONS,
+              onChange: onLandingViewChange,
+              ariaLabel: "Evaluate view",
+              indicatorId: "evals-landing",
+            }
+          : undefined
+      }
+      actions={
+        landingView != null && onSetupRun && onCreateSuite ? (
+          <div className="inline-flex shrink-0 items-center">
+            <Button
+              size="sm"
+              className="gap-1.5 rounded-r-none"
+              onClick={landingView === "runs" ? onSetupRun : onCreateSuite}
             >
-              <h1 className="shrink-0 text-xl font-bold tracking-tight text-foreground">
-                Evaluate
-              </h1>
-              {showLandingTabs ? (
-                <>
-                  <div
-                    className="hidden h-4 w-px shrink-0 bg-border/60 sm:block"
-                    aria-hidden="true"
-                    data-testid="evals-header-title-rule"
-                  />
-                  <ViewModeSelector
-                    value={landingView}
-                    options={EVAL_LANDING_VIEW_OPTIONS}
-                    onChange={onLandingViewChange}
-                    ariaLabel="Evaluate view"
-                    indicatorId="evals-landing"
-                    className={TAB_CLASSNAME}
-                  />
-                </>
-              ) : null}
-            </div>
-            {landingView != null && onSetupRun && onCreateSuite ? (
-              <div className="inline-flex shrink-0 items-center">
+              {landingView === "runs" ? (
+                <Play className="h-4 w-4" aria-hidden />
+              ) : (
+                <Plus className="h-4 w-4" aria-hidden />
+              )}
+              {landingView === "runs" ? "Setup Run" : "Create suite"}
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
                 <Button
                   size="sm"
-                  className="gap-1.5 rounded-r-none"
-                  onClick={landingView === "runs" ? onSetupRun : onCreateSuite}
+                  className="rounded-l-none border-l border-primary-foreground/30 px-2"
+                  aria-label="More evaluate actions"
                 >
-                  {landingView === "runs" ? (
-                    <Play className="h-4 w-4" aria-hidden />
-                  ) : (
-                    <Plus className="h-4 w-4" aria-hidden />
-                  )}
-                  {landingView === "runs" ? "Setup Run" : "Create suite"}
+                  <ChevronDown className="h-4 w-4" aria-hidden />
                 </Button>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      size="sm"
-                      className="rounded-l-none border-l border-primary-foreground/30 px-2"
-                      aria-label="More evaluate actions"
-                    >
-                      <ChevronDown className="h-4 w-4" aria-hidden />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    {landingView === "runs" && onCreateSuite && (
-                      <DropdownMenuItem onSelect={onCreateSuite}>
-                        <Plus className="h-4 w-4" />
-                        Create suite
-                      </DropdownMenuItem>
-                    )}
-                    {landingView === "suites" && (
-                      <DropdownMenuItem onSelect={onSetupRun}>
-                        <Play className="h-4 w-4" />
-                        Setup run
-                      </DropdownMenuItem>
-                    )}
-                    {onAddCase && (
-                      <DropdownMenuItem onSelect={onAddCase}>
-                        <Plus className="h-4 w-4" />
-                        Add test case
-                      </DropdownMenuItem>
-                    )}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-            ) : onCreateSuite ? (
-              <Button
-                type="button"
-                size="sm"
-                className="shrink-0 gap-1.5"
-                onClick={onCreateSuite}
-              >
-                <Plus className="h-4 w-4" aria-hidden />
-                Create suite
-              </Button>
-            ) : null}
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {landingView === "runs" && onCreateSuite && (
+                  <DropdownMenuItem onSelect={onCreateSuite}>
+                    <Plus className="h-4 w-4" />
+                    Create suite
+                  </DropdownMenuItem>
+                )}
+                {/* Each landing offers ONE alternative to its primary
+                    action, and it is the other landing's subject. Runs
+                    does not offer a case: a case belongs to a suite, and
+                    the runs list never names one. */}
+                {landingView === "suites" && onAddCase && (
+                  <DropdownMenuItem onSelect={onAddCase}>
+                    <Plus className="h-4 w-4" />
+                    Add test case
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
-          <p className="mt-2 w-full text-sm text-muted-foreground">
-            {EVALUATE_HEADER_DESCRIPTION}
-          </p>
-        </>
-      )}
-    </div>
+        ) : onCreateSuite ? (
+          <Button
+            type="button"
+            size="sm"
+            className="shrink-0 gap-1.5"
+            onClick={onCreateSuite}
+          >
+            <Plus className="h-4 w-4" aria-hidden />
+            Create suite
+          </Button>
+        ) : null
+      }
+    />
   );
 }

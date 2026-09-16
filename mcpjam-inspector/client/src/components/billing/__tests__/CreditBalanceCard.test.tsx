@@ -13,7 +13,7 @@ let balanceState:
       freeDailyCreditsTotal: number;
       freeDailyResetAt: number;
       walletLocked: boolean;
-      billingModel?: "daily" | "monthly_per_seat";
+      billingModel?: "daily" | "monthly_per_seat" | "monthly_flat";
       monthlyAllowanceTotal?: number;
       monthlyAllowanceRemaining?: number;
       monthlyResetAt?: number | null;
@@ -37,6 +37,28 @@ vi.mock("@/hooks/useCreditBalance", () => ({
   }),
 }));
 
+vi.mock("@/hooks/useAutoTopup", () => ({
+  useAutoTopup: () => ({
+    view: {
+      revision: 0,
+      preferences: null,
+      status: "not_configured",
+      eligible: true,
+      activationAllowed: false,
+      refillPriceCents: null,
+      card: null,
+      paymentIssue: null,
+      monthlySpend: { month: "2026-09", chargedCents: 0, reservedCents: 0 },
+    },
+    isLoading: false,
+    querySkipped: false,
+    error: null,
+    isSaving: false,
+    save: vi.fn(),
+    disable: vi.fn(),
+  }),
+}));
+
 vi.mock("@/hooks/use-eval-iteration-quota", () => ({
   useEvalIterationQuota: () => ({
     quota: evalQuotaState,
@@ -44,7 +66,7 @@ vi.mock("@/hooks/use-eval-iteration-quota", () => ({
     isAtLimit: Boolean(
       evalQuotaState &&
         evalQuotaState.allowed !== null &&
-        evalQuotaState.used >= evalQuotaState.allowed
+        evalQuotaState.used >= evalQuotaState.allowed,
     ),
   }),
 }));
@@ -87,6 +109,43 @@ describe("CreditBalanceCard", () => {
     window.location.hash = "";
   });
 
+  it("uses a plan-neutral label for flat monthly credits", () => {
+    balanceState = {
+      ...balanceState!,
+      billingModel: "monthly_flat",
+      monthlyAllowanceTotal: 5000,
+      monthlyAllowanceRemaining: 4000,
+    };
+    render(<CreditBalanceCard organizationId="org-1" />);
+    expect(
+      screen.getByLabelText("Monthly credits remaining"),
+    ).toBeInTheDocument();
+  });
+  it("opens enrollment from Auto-reload beneath the balance", async () => {
+    const user = userEvent.setup();
+    render(<CreditBalanceCard canManageCredits />);
+    expect(
+      screen.getByRole("region", { name: "Buy Credits" }),
+    ).toContainElement(screen.getByRole("button", { name: "Buy credits" }));
+    await user.click(screen.getByRole("button", { name: "Manage" }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("Minimum balance");
+  });
+
+  it("lets members review auto-reload without buying credits", async () => {
+    const user = userEvent.setup();
+    render(<CreditBalanceCard />);
+    expect(
+      screen.queryByRole("button", { name: "Buy credits" }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Manage" }));
+    expect(
+      screen.getByLabelText("Maximum monthly spend (USD, optional)"),
+    ).toBeDisabled();
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "Ask an organization admin",
+    );
+  });
+
   it("renders a skeleton state while balance is loading", () => {
     isLoadingState = true;
     balanceState = undefined;
@@ -110,7 +169,7 @@ describe("CreditBalanceCard", () => {
     render(<CreditBalanceCard />);
 
     const dailyRow = screen.getByTestId("usage-daily");
-    expect(dailyRow).toHaveTextContent(/27 \/ 300/);
+    expect(dailyRow).toHaveTextContent(/273 \/ 300/);
     expect(dailyRow).toHaveTextContent(/resets/);
     // Regression guard: free credit dollar value must never appear.
     expect(dailyRow.textContent ?? "").not.toMatch(/\$/);
@@ -158,7 +217,7 @@ describe("CreditBalanceCard", () => {
     expect(paidRow).toHaveTextContent(/0 credits/);
     // The lock notice lives in its own block, not inside the paid row.
     expect(screen.getByTestId("usage-wallet-locked")).toHaveTextContent(
-      /paused pending review/
+      /paused pending review/,
     );
   });
 
@@ -179,7 +238,7 @@ describe("CreditBalanceCard", () => {
 
     expect(screen.queryByTestId("usage-paid")).toBeNull();
     expect(screen.getByTestId("usage-wallet-locked")).toHaveTextContent(
-      /paused pending review/
+      /paused pending review/,
     );
   });
 
@@ -187,7 +246,7 @@ describe("CreditBalanceCard", () => {
     render(<CreditBalanceCard />);
     const dailyRow = screen.getByTestId("usage-daily");
     expect(
-      within(dailyRow).queryByRole("button", { name: /About/i })
+      within(dailyRow).queryByRole("button", { name: /About/i }),
     ).not.toBeInTheDocument();
   });
 
@@ -224,7 +283,7 @@ describe("CreditBalanceCard", () => {
     await user.hover(
       within(screen.getByTestId("usage-eval-iterations")).getByRole("button", {
         name: /About Monthly eval iterations/,
-      })
+      }),
     );
 
     expect((await screen.findAllByText(/^Resets /)).length).toBeGreaterThan(0);
@@ -241,7 +300,7 @@ describe("CreditBalanceCard", () => {
     render(<CreditBalanceCard organizationId="org-1" />);
 
     expect(
-      screen.queryByTestId("usage-eval-iterations")
+      screen.queryByTestId("usage-eval-iterations"),
     ).not.toBeInTheDocument();
   });
 
@@ -249,10 +308,10 @@ describe("CreditBalanceCard", () => {
     render(<CreditBalanceCard organizationId="org-1" />);
 
     expect(
-      screen.queryByRole("button", { name: /Buy credits/i })
+      screen.queryByRole("button", { name: /Buy credits/i }),
     ).not.toBeInTheDocument();
     expect(screen.getByTestId("usage-ask-admin")).toHaveTextContent(
-      /Ask org admin to top up credits/
+      /Ask org admin to top up credits/,
     );
   });
 
@@ -271,7 +330,7 @@ describe("CreditBalanceCard", () => {
     window.history.replaceState(
       {},
       "",
-      "/organizations/org-1/billing?topup=open"
+      "/organizations/org-1/billing?topup=open",
     );
     render(<CreditBalanceCard organizationId="org-1" canManageCredits />);
 
@@ -295,8 +354,8 @@ describe("CreditBalanceCard", () => {
     expect(screen.getByText(/Organization usage/)).toBeInTheDocument();
     expect(
       screen.getByText(
-        /Model credits and eval iterations are shared across this organization/
-      )
+        /Model credits and eval iterations are shared across this organization/,
+      ),
     ).toBeInTheDocument();
   });
 
@@ -320,7 +379,7 @@ describe("CreditBalanceCard", () => {
     it("renders the monthly allowance row instead of the daily row", () => {
       render(<CreditBalanceCard />);
       const row = screen.getByTestId("usage-monthly");
-      expect(within(row).getByText(/Monthly team credits/)).toBeInTheDocument();
+      expect(within(row).getByText(/Monthly credits/)).toBeInTheDocument();
       expect(within(row).getByText(/13,950 \/ 18,000/)).toBeInTheDocument();
       expect(within(row).getByText(/resets in 12 days/)).toBeInTheDocument();
       expect(screen.queryByTestId("usage-daily")).not.toBeInTheDocument();
@@ -341,7 +400,7 @@ describe("CreditBalanceCard", () => {
       };
       render(<CreditBalanceCard canManageCredits />);
       expect(screen.getByTestId("usage-monthly-exhausted")).toHaveTextContent(
-        /Monthly credits used/
+        /Monthly credits used/,
       );
     });
   });

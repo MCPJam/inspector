@@ -89,7 +89,7 @@ import { useEvalMutations } from "./evals/use-eval-mutations";
 import { useEvalHandlers } from "./evals/use-eval-handlers";
 import { LaunchedCaseJudge } from "./evaluate/case-scorecard/launched-case-judge";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
-import { SuitesOverview } from "./evaluate/suites-overview";
+import { ConnectedSuitesOverview as SuitesOverview } from "./evaluate/suites-overview";
 import { SuiteListRunReview } from "./evaluate/suite-list-run-review";
 import { ProjectRunsTable } from "./evals/project-runs-table";
 import { stripTimestampSuffix } from "./evals/suite-overview-presentation";
@@ -522,6 +522,9 @@ function EvaluateTabContent({
         isExcalidrawConnected: connectedServerNames.has(EXCALIDRAW_SERVER_NAME),
         existingQuickstartSuiteId,
         previewedHostId,
+        // Stay in Evaluate. The default lands on `/evals/...`, which dropped
+        // the reader into the shipped tab's copy of the suite they just made.
+        navigate: navigatePlaygroundEvalsRoute,
       });
     } finally {
       setIsQuickstartRunning(false);
@@ -1168,11 +1171,6 @@ function EvaluateTabContent({
 
       if (failedDeletes.length > 0) {
         console.error("Failed to delete some test cases:", failedDeletes);
-        toast.error(
-          `Failed to delete ${failedDeletes.length} test case${
-            failedDeletes.length === 1 ? "" : "s"
-          }.`,
-        );
       }
 
       if (selectedSuiteId && selectedTestId && deletedIds.has(selectedTestId)) {
@@ -1183,6 +1181,18 @@ function EvaluateTabContent({
             view: "test-cases",
           },
           { replace: true },
+        );
+      }
+
+      // Resolving has to mean "every id is gone". Callers report the outcome
+      // — a success toast, closing the confirm, leaving the case editor — and
+      // `allSettled` swallowing the rejection told all of them the delete had
+      // worked while the case was still there.
+      if (failedDeletes.length > 0) {
+        throw new Error(
+          `Failed to delete ${failedDeletes.length} test case${
+            failedDeletes.length === 1 ? "" : "s"
+          }.`,
         );
       }
     },
@@ -1200,6 +1210,15 @@ function EvaluateTabContent({
   const suiteBreadcrumbLabel = selectedSuite
     ? stripTimestampSuffix(selectedSuite.name || "") || "Untitled suite"
     : null;
+  // Breadcrumb for a run: number it like the run list does ("Run #6") when the
+  // run row is loaded, so the crumb and the page heading agree.
+  const runBreadcrumbNumber =
+    route.type === "run-detail"
+      ? (runsForSelectedSuite.find((run) => run._id === route.runId)
+          ?.runNumber ?? null)
+      : null;
+  const runBreadcrumbLabel =
+    runBreadcrumbNumber != null ? `Run #${runBreadcrumbNumber}` : "Run";
   const isNestedDetail =
     route.type === "test-edit" ||
     route.type === "test-detail" ||
@@ -1213,12 +1232,22 @@ function EvaluateTabContent({
             (testCase) => testCase._id === selectedTestId,
           )?.title || "Test case"
       : route.type === "suite-edit"
-        ? "Settings"
+        ? "Test Suite Evaluators"
         : route.type === "run-detail"
-          ? "Run"
+          ? runBreadcrumbLabel
           : null;
 
+  /**
+   * Case generation replaces the suite page WITHOUT changing the route, so
+   * the breadcrumb has to be told. `exit` is how its suite crumb gets back:
+   * navigating to the route we are already on would change nothing.
+   */
+  const [generatingCases, setGeneratingCases] = useState<{
+    exit: () => void;
+  } | null>(null);
+
   const renderPlaygroundBreadcrumb = () => {
+    if (generatingCases) return "Generate test cases";
     if (!hasDetailRoute) return null;
     return isNestedDetail ? nestedPageLabel : suiteBreadcrumbLabel;
   };
@@ -1343,7 +1372,7 @@ function EvaluateTabContent({
           data-testid="evals-runs-landing"
         >
           <ProjectRunsTable
-            metricBars
+            evaluateLayout
             historyMetricsEnabled
             projectId={projectId}
             onSelectRun={handleSelectRunFromAllRuns}
@@ -1394,6 +1423,7 @@ function EvaluateTabContent({
       >
         <div>
           <SuitesOverview
+            projectId={projectId}
             overview={visibleSuites}
             onSelectSuite={handleSelectSuite}
             onRerun={(suite) => {
@@ -1452,9 +1482,7 @@ function EvaluateTabContent({
           onDuplicateSuite={() => handlers.handleDuplicateSuite(selectedSuite)}
           alwaysShowEditIterationRows
           onEditTestCase={(testCaseId) =>
-            playgroundNavigation.toTestEdit(selectedSuite._id, testCaseId, {
-              openCompare: true,
-            })
+            playgroundNavigation.toTestEdit(selectedSuite._id, testCaseId)
           }
           onCreateTestCase={async () =>
             handlers.handleCreateTestCase(selectedSuite._id)
@@ -1493,6 +1521,7 @@ function EvaluateTabContent({
           evaluateDecisionSummary={decisionSummaryEnabled}
           evaluateCaseEditor
           evaluateObserveFirst={observeFirstEnabled}
+          onGeneratingChange={setGeneratingCases}
           evalRunsDisabledReason={evalRunsDisabledReason}
           onDeleteTestCasesBatch={handleDeleteTestCasesBatch}
           onRunTestCase={(testCase, opts) => {
@@ -1547,15 +1576,27 @@ function EvaluateTabContent({
               route.type === "list" ? handleOpenCreateSuite : undefined
             }
             detailCrumb={
-              route.type === "test-edit" && route.checks
-                ? { label: "UVC checks" }
-                : undefined
+              route.type === "suite-edit" && route.fromCaseChecks
+                ? { label: "Test Suite Evaluators" }
+                : route.type === "test-edit" && route.checks
+                  ? { label: "Test Case Evaluators" }
+                  : undefined
             }
             onCurrentCrumbClick={
-              route.type === "test-edit" && route.checks
+              route.type === "suite-edit" && route.fromCaseChecks
                 ? () =>
-                    playgroundNavigation.toTestEdit(route.suiteId, route.testId)
-                : undefined
+                    playgroundNavigation.toTestEdit(
+                      route.suiteId,
+                      route.fromCaseChecks!,
+                      { checks: true },
+                    )
+                : route.type === "test-edit" && route.checks
+                  ? () =>
+                      playgroundNavigation.toTestEdit(
+                        route.suiteId,
+                        route.testId,
+                      )
+                  : undefined
             }
             landingView={landingView}
             onLandingViewChange={setLandingView}
@@ -1568,24 +1609,31 @@ function EvaluateTabContent({
                     onClick: () =>
                       handleBackToEvalServer(route.fromEvalServer!),
                   }
-                : isNestedDetail && suiteBreadcrumbLabel && selectedSuiteId
+                : generatingCases && suiteBreadcrumbLabel
                   ? {
                       label: suiteBreadcrumbLabel,
-                      onClick: () =>
-                        playgroundNavigation.toSuiteOverview(selectedSuiteId),
+                      onClick: generatingCases.exit,
                     }
-                  : undefined
+                  : isNestedDetail && suiteBreadcrumbLabel && selectedSuiteId
+                    ? {
+                        label: suiteBreadcrumbLabel,
+                        onClick: () =>
+                          playgroundNavigation.toSuiteOverview(selectedSuiteId),
+                      }
+                    : undefined
             }
           >
-            {route.type === "eval-server"
-              ? evalServer?.name
-              : route.type === "test-edit" && route.fromEvalServer
-                ? (previewCaseTitleFromDraft(
-                    route.fromEvalServer,
-                    route.suiteId,
-                    route.testId,
-                  ) ?? nestedPageLabel)
-                : renderPlaygroundBreadcrumb()}
+            {route.type === "suite-edit" && route.fromCaseChecks
+              ? "Test Case Evaluators"
+              : route.type === "eval-server"
+                ? evalServer?.name
+                : route.type === "test-edit" && route.fromEvalServer
+                  ? (previewCaseTitleFromDraft(
+                      route.fromEvalServer,
+                      route.suiteId,
+                      route.testId,
+                    ) ?? nestedPageLabel)
+                  : renderPlaygroundBreadcrumb()}
           </EvalsHeader>
         )
       }

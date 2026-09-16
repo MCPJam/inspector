@@ -87,7 +87,7 @@ function stripUpgradeReturnParams(): void {
     "",
     window.location.pathname +
       (search ? `?${search}` : "") +
-      window.location.hash
+      window.location.hash,
   );
 }
 
@@ -109,7 +109,7 @@ function UpgradeReturnFlow({
   // Seeded from the ticket: a wait reported before a reload still counts, so
   // the confirmation that lands afterwards is recorded as "late".
   const waitReportedRef = useRef(
-    readUpgradeReturnToken(upgradeReturn.userId)?.waited === true
+    readUpgradeReturnToken(upgradeReturn.userId)?.waited === true,
   );
   const { billingStatus, planCatalog, isLoadingBilling } =
     useOrganizationBilling(upgradeReturn.organizationId);
@@ -159,11 +159,13 @@ function UpgradeReturnFlow({
     }
 
     if (upgraded) {
-      const teamName = planCatalog?.plans.team.displayName ?? "Team";
+      const teamName =
+        planCatalog?.plans[billingStatus.plan]?.displayName ??
+        billingStatus.plan;
       toast.success(
         upgradeReturn.origin === "credits"
           ? `You're on the ${teamName} plan. Your credits are available now.`
-          : `You're on the ${teamName} plan. Run your suite again to pick up where you left off.`
+          : `You're on the ${teamName} plan. Run your suite again to pick up where you left off.`,
       );
     }
 
@@ -204,7 +206,7 @@ function UpgradeReturnFlowBoundary() {
   const { user } = useAuth();
   const userId = user?.id ?? null;
   const [upgradeReturn, setUpgradeReturn] = useState<UpgradeReturn | null>(
-    null
+    null,
   );
   const armedForRef = useRef<string | null>(null);
   const strippedRef = useRef(false);
@@ -236,7 +238,7 @@ function UpgradeReturnFlowBoundary() {
             origin: ticket.origin,
             userId: ticket.userId,
           }
-        : null
+        : null,
     );
   }, [userId]);
 
@@ -443,7 +445,7 @@ function PlanLimitWall() {
     : null;
   const resetClause = limit.resetsAt
     ? `${allowanceClause ? "yours reset" : "Yours reset"} at ${formatResetClock(
-        limit.resetsAt
+        limit.resetsAt,
       )}${resetDistance ? `, ${resetDistance} from now` : ""}`
     : "";
   // The conjunction belongs to the pair, not to the allowance. Baking ", and"
@@ -462,7 +464,11 @@ function PlanLimitWall() {
     : isFreePlan
     ? `The ${upgrade.teamName} plan includes ${
         upgrade.teamEvalIterations
-          ? `${formatCount(upgrade.teamEvalIterations)} per seat each month`
+          ? `${formatCount(upgrade.teamEvalIterations)} ${
+              upgrade.isFlatPlan ? "each month" : "per seat each month"
+            }`
+          : upgrade.isFlatPlan
+          ? "metered eval usage"
           : "a monthly allowance instead of a daily cap"
       }, so evals can run smoothly on every PR instead of limiting your daily quality checks.`
     : showEnterprise
@@ -494,6 +500,7 @@ function PlanLimitWall() {
       annualDiscountPct={upgrade.annualDiscountPct}
       annualSupported={upgrade.annualSupported}
       monthlySupported={upgrade.monthlySupported}
+      priceUnit={upgrade.priceUnit}
       teamName={upgrade.teamName}
       isStarting={upgrade.isStarting}
       isLoadingPrices={upgrade.isLoadingPrices}

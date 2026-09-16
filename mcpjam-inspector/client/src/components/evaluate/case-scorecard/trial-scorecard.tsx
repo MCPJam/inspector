@@ -1,3 +1,4 @@
+import type { PlatformEvalIterationReport } from "@mcpjam/sdk/platform";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
 /**
  * The trial, as the same scorers the left pane authored.
@@ -36,6 +37,7 @@ import { buildCaseScorecard } from "./case-scorecard-model";
 import { joinTrialResults, summarizeTrialScorecard } from "./trial-results";
 import { ScorecardGroupSection } from "./scorecard-group";
 import { TrialChainPanel } from "../trial-chain-panel";
+import { judgeDecidedStage } from "../stage-trial-model";
 import { TrialScorecardRow } from "./trial-scorecard-row";
 
 // Explicit step/case assertions remain added checks, even when their kind is
@@ -63,21 +65,19 @@ export function summaryLine(
   summary: ReturnType<typeof summarizeTrialScorecard>,
 ): string {
   const parts: string[] = [];
-  if (summary.gates.counted > 0) {
+  if (summary.required.counted > 0) {
     parts.push(
-      `${summary.gates.passed} of ${summary.gates.counted} ${
-        summary.gates.counted === 1 ? "gate" : "gates"
-      } passed`,
+      `${summary.required.passed} of ${summary.required.counted} required passed`,
     );
-  } else if (summary.warn + summary.report + summary.errors > 0) {
+  } else if (summary.advisory + summary.errors > 0) {
     // Something was measured, but nothing that could fail the trial.
-    parts.push("No gates ran");
+    parts.push("No required assertions ran");
   } else {
-    // Nothing was measured at all. "0 of 0 gates passed" would read like a
+    // Nothing was measured at all. "0 of 0 required passed" would read like a
     // result; this says there is no result to read.
-    parts.push("No scorers ran");
+    parts.push("No evaluators ran");
   }
-  if (summary.warn > 0) parts.push(`${summary.warn} warn`);
+  if (summary.advisory > 0) parts.push(`${summary.advisory} advisory`);
   if (summary.errors > 0) {
     parts.push(`${summary.errors} could not be evaluated`);
   }
@@ -86,6 +86,7 @@ export function summaryLine(
 }
 
 export function TrialScorecard({
+  report,
   authored,
   iteration,
   steps,
@@ -95,13 +96,13 @@ export function TrialScorecard({
   liveStepStatusById,
   judgeSlot,
   scoresSection,
-  suggestionsSlot,
   nextQuestionSlot,
   judgeHidden = false,
   isRunning = false,
   syncedStepId,
   onSyncStep,
 }: {
+  report?: PlatformEvalIterationReport | null;
   authored: CaseScorecardInput;
   iteration: EvalIteration | null;
   /** The steps the trial ran, which are not always the ones on screen. */
@@ -112,14 +113,6 @@ export function TrialScorecard({
   liveStepStatusById?: Map<string, EvalStepStatus>;
   judgeSlot?: ReactNode;
   scoresSection?: ReactNode | null;
-  /**
-   * "Suggested from this run", under the graded rows.
-   *
-   * A slot rather than a hook, for the same reason `IterationDetails.scorecard`
-   * is one: the writers that accept a suggestion and the flag that gates it
-   * belong to the editor, and `RunColumn` mounts this component too.
-   */
-  suggestionsSlot?: ReactNode;
   nextQuestionSlot?: ReactNode;
   /**
    * True while a reviewer is labelling this trial and has not revealed the
@@ -134,6 +127,7 @@ export function TrialScorecard({
   const groups = useMemo(() => {
     const card = buildCaseScorecard(authored);
     return joinTrialResults(card.groups, {
+      report,
       iteration,
       steps,
       chain,
@@ -146,6 +140,7 @@ export function TrialScorecard({
     // id — on each keystroke in the prompt box.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
+    report,
     authored.steps,
     authored.numbering,
     authored.toolsChoice,
@@ -187,6 +182,15 @@ export function TrialScorecard({
    * above is drawn from — one source, so the chip's colour and the heading's
    * word can never disagree.
    */
+  /**
+   * Blind review masks ONE card, and only when the judge decided it. The
+   * chain's User value row is assertion-decided or judge-decided, never both
+   * (`deriveUserValue` is two-tier), so a row whose reason names an assertion
+   * has no verdict to leak and stays visible. The other five stages are the
+   * runner's observations and are never masked.
+   */
+  const maskedStage = judgeHidden ? judgeDecidedStage(chain) : null;
+
   const stageState = useMemo(() => {
     const byStage = new Map(
       (chain?.status === "verified" ? chain.stages : []).map((row) => [
@@ -196,7 +200,7 @@ export function TrialScorecard({
     );
     return (stage: string) => {
       const row = byStage.get(stage);
-      if (!row || judgeHidden) return undefined;
+      if (!row || stage === maskedStage) return undefined;
       return {
         label: STAGE_STATE_LABELS[row.state],
         tone:
@@ -207,7 +211,7 @@ export function TrialScorecard({
               : ("neutral" as const),
       };
     };
-  }, [chain, judgeHidden]);
+  }, [chain, maskedStage]);
 
   const userValueStage =
     chain?.status === "verified"
@@ -222,7 +226,7 @@ export function TrialScorecard({
     ...new Set(
       [
         ...(userValueStage?.state === "passed"
-          ? (userValueStage.evidence?.predicateReasons ?? [])
+          ? userValueStage.evidence?.predicateReasons ?? []
           : []),
         ...userValuePassRows.flatMap((row) => [
           ...("reason" in row.result && row.result.reason
@@ -325,52 +329,73 @@ export function TrialScorecard({
   }
 
   return (
-    <div className="flex flex-col gap-3 p-3" data-testid="trial-scorecard">
+    <div className="flex flex-col gap-4 p-4" data-testid="trial-scorecard">
       <section
         className="space-y-4"
         aria-label="User value chain — default assertions"
       >
-        {!judgeHidden ? (
-          <TrialChainPanel
-            layout="report"
-            chain={chain}
-            resetKey={iteration?._id}
-            stageFooter={(stage) => {
-              const selected = defaultGroups.find(
-                (group) => group.stage === stage,
-              );
-              return selected ? (
-                <div
-                  className="mt-3 space-y-2"
-                  aria-label="Recorded assertions"
-                >
-                  {selected.rows.map((row) => (
-                    <TrialScorecardRow
-                      key={row.key}
-                      row={row}
-                      body={row.provenance === "judge" ? judgeSlot : undefined}
-                      hideJudgeResult={judgeHidden}
-                      syncedStepId={syncedStepId}
-                      onSyncStep={onSyncStep}
-                    />
-                  ))}
-                  {stage === "userValue" && showUserValueEvidence && (
-                    <div
-                      className="text-xs text-muted-foreground"
-                      data-testid="user-value-pass-evidence"
-                    >
-                      {userValueEvidence.length
-                        ? userValueEvidence.join(" ")
-                        : "This run recorded a pass without supporting evidence."}
-                    </div>
-                  )}
-                </div>
-              ) : null;
-            }}
-          />
-        ) : null}
-        {(judgeHidden || chain?.status !== "verified") &&
-          renderGroups(defaultGroups)}
+        {/*
+          The rail renders on every trial that has one, blind review included
+          — the same component the run page draws, so the two surfaces cannot
+          drift. Blind review masks the judge-decided card, nothing more.
+        */}
+        <TrialChainPanel
+          layout="report"
+          chain={chain}
+          resetKey={iteration?._id}
+          maskedStage={maskedStage}
+          // The judge row is in User value's footer; open it while a label
+          // is owed, whether or not the card had to be masked.
+          initialStage={judgeHidden ? "userValue" : undefined}
+          stageFooter={(stage) => {
+            const selected = defaultGroups.find(
+              (group) => group.stage === stage,
+            );
+            const note =
+              !judgeHidden && report?.status === "ready"
+                ? report.stageNotes?.find((note) => note.stage === stage)
+                : undefined;
+            return selected || note ? (
+              <ul className="mt-4" aria-label="Recorded assertions">
+                {note && (
+                  <li
+                    className="border-b border-border/60 py-4 text-sm leading-relaxed"
+                    data-narrative-source="ai"
+                  >
+                    <p>{note.actual}</p>
+                    <details className="mt-2 text-xs text-muted-foreground">
+                      <summary>AI explanation · cited trace evidence</summary>
+                      <p>{note.citations.join(" · ")}</p>
+                    </details>
+                  </li>
+                )}
+                {(selected?.rows ?? []).map((row) => (
+                  <TrialScorecardRow
+                    key={row.key}
+                    layout="report"
+                    row={row}
+                    body={row.provenance === "judge" ? judgeSlot : undefined}
+                    hideJudgeResult={judgeHidden}
+                    syncedStepId={syncedStepId}
+                    onSyncStep={onSyncStep}
+                  />
+                ))}
+                {stage === "userValue" && showUserValueEvidence && (
+                  <li
+                    className="text-xs text-muted-foreground"
+                    data-testid="user-value-pass-evidence"
+                  >
+                    {userValueEvidence.length
+                      ? userValueEvidence.join(" ")
+                      : "This run recorded a pass without supporting evidence."}
+                  </li>
+                )}
+              </ul>
+            ) : null;
+          }}
+        />
+        {/* No verified chain ⇒ no rail to hang the rows on; list them flat. */}
+        {chain?.status !== "verified" && renderGroups(defaultGroups)}
         {!judgeHidden ? nextQuestionSlot : null}
       </section>
 
@@ -395,19 +420,6 @@ export function TrialScorecard({
           </p>
         )}
       </section>
-
-      {/*
-        The integrity view stays reachable, collapsed. It answers a different
-        question — which score rows the backend could not join, and whether it
-        downgraded the verdict for it — and a reader who needs that is looking
-        for it.
-      */}
-      {(!judgeHidden || !judgeCase) && suggestionsSlot ? (
-        <details className="text-xs text-muted-foreground">
-          <summary className="cursor-pointer py-2">Suggested checks</summary>
-          {suggestionsSlot}
-        </details>
-      ) : null}
 
       {scoresSection ? (
         <details

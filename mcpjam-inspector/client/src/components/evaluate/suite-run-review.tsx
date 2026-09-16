@@ -75,6 +75,7 @@ export function suiteReviewTargets(
     }));
   return [
     {
+      // Defensive fallback for older suites; the backend self-heals on launch.
       id: "suite-default",
       client: "Suite configuration",
       model: "Case models",
@@ -297,7 +298,7 @@ export function SuiteRunReviewContent({
               }}
             >
               <Settings2 className="size-4" aria-hidden />
-              Edit Suite Settings
+              Configure suite evaluators
             </Button>
           )}
         </div>

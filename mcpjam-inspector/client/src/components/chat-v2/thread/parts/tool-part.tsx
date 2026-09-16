@@ -167,13 +167,12 @@ export function ToolPart({
   // through the shared app-tool registry/log helper so UI never leaks the
   // model-facing alias when a human-readable tool name is available.
   const appToolAttribution = useAppToolAttribution(label, chatSessionId);
-  // WebMCP page tools: read from the RESULT, never from a live store. A store
-  // answers for the browser as it is now, so a card scrolled back after the
-  // model navigated elsewhere would be attributed to whatever tool happens to
-  // carry that name today — the card would change its own history.
+  // Page-tool names belong to the recorded call/result, not the live page.
+  // Call metadata also labels inspector aliases while approval is pending.
   const pageToolAttribution = resolvePageToolAttribution({
     toolName: label,
     output: (part as any).output,
+    callProviderMetadata: (part as any).callProviderMetadata,
   });
   const displayLabel =
     pageToolAttribution?.rawName ?? appToolAttribution?.rawName ?? label;

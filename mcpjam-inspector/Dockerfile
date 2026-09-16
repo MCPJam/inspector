@@ -19,12 +19,20 @@ FROM base AS deps
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
 COPY package.json package-lock.json ./
+COPY evaluators/package.json ./evaluators/package.json
 COPY sdk/package.json ./sdk/package.json
 COPY cli/package.json ./cli/package.json
 COPY design-system/package.json ./design-system/package.json
 COPY chat-ui/package.json ./chat-ui/package.json
 COPY widget-react/package.json ./widget-react/package.json
 COPY mcpjam-inspector/package.json ./mcpjam-inspector/package.json
+
+COPY soundcheck/package.json ./soundcheck/package.json
+COPY mcp/package.json ./mcp/package.json
+COPY slack-app/package.json ./slack-app/package.json
+COPY surface-core/package.json ./surface-core/package.json
+COPY discord-app/package.json ./discord-app/package.json
+COPY vitest/package.json ./vitest/package.json
 
 RUN npm ci --legacy-peer-deps
 
@@ -38,6 +46,7 @@ ARG VITE_MCPJAM_HOSTED_MODE
 ARG VITE_MCPJAM_NONPROD_LOCKDOWN
 ARG VITE_MCPJAM_EMPLOYEE_EMAIL_DOMAINS
 ARG VITE_WORKOS_API_HOSTNAME
+ARG VITE_STRIPE_PUBLISHABLE_KEY
 ARG VITE_CONVEX_URL
 ARG VITE_WORKOS_CLIENT_ID
 ARG VITE_MCPJAM_SANDBOX_ORIGIN
@@ -60,6 +69,9 @@ ARG VITE_MCPJAM_VIEW_SUBDOMAINS
 # neither of which Railway publishes. Mark the variable Sealed in Railway so it
 # is not readable back out of the dashboard or API.
 ARG SENTRY_AUTH_TOKEN
+
+COPY evaluators ./evaluators
+RUN npm run build -w @mcpjam/evaluators
 
 COPY sdk/tsconfig.json sdk/tsup.config.ts sdk/package.json ./sdk/
 COPY cli/package.json ./cli/package.json
@@ -114,7 +126,8 @@ RUN npm run bundle:browser-harness -w @mcpjam/inspector && \
 # Dockerfile builds. Without it this bundle's events resolve against the npm or
 # desktop artifacts, which share the same bare `release`. See
 # SENTRY_BUILD_SURFACES in shared/sentry-config.ts.
-RUN if [ -n "$VITE_MCPJAM_HOSTED_MODE" ]; then export VITE_MCPJAM_HOSTED_MODE; fi; \
+RUN if [ -n "$VITE_STRIPE_PUBLISHABLE_KEY" ]; then export VITE_STRIPE_PUBLISHABLE_KEY; fi; \
+    if [ -n "$VITE_MCPJAM_HOSTED_MODE" ]; then export VITE_MCPJAM_HOSTED_MODE; fi; \
     if [ -n "$VITE_MCPJAM_NONPROD_LOCKDOWN" ]; then export VITE_MCPJAM_NONPROD_LOCKDOWN; fi; \
     if [ -n "$VITE_MCPJAM_EMPLOYEE_EMAIL_DOMAINS" ]; then export VITE_MCPJAM_EMPLOYEE_EMAIL_DOMAINS; fi; \
     if [ -n "$VITE_WORKOS_API_HOSTNAME" ]; then export VITE_WORKOS_API_HOSTNAME; fi; \
@@ -141,6 +154,7 @@ USER node
 WORKDIR /usr/src/app/mcpjam-inspector
 
 COPY package.json /usr/src/app/package.json
+COPY evaluators/package.json /usr/src/app/evaluators/package.json
 COPY sdk/package.json /usr/src/app/sdk/package.json
 COPY cli/package.json /usr/src/app/cli/package.json
 COPY mcpjam-inspector/package.json ./package.json
@@ -171,6 +185,7 @@ USER node
 COPY --from=build /usr/src/app/mcpjam-inspector/bin ./bin
 COPY --from=build /usr/src/app/mcpjam-inspector/dist ./dist
 COPY --from=build /usr/src/app/mcpjam-inspector/.env.production ./.env.production
+COPY --from=build /usr/src/app/evaluators/dist /usr/src/app/evaluators/dist
 COPY --from=build /usr/src/app/sdk/dist /usr/src/app/sdk/dist
 
 EXPOSE 6274

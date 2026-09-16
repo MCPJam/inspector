@@ -97,7 +97,8 @@ import { PREDICATE_STAGE, type PredicateKind } from "./grader-stage.js";
  * Re-uses `predicateFailed`, `toolError` and `argumentMismatch`, so
  * `STAGE_REASONS` does not move and the backend mirror needs no re-pin.
  */
-export const STAGE_ANALYZER_VERSION = 11;
+// v12: scored gating discovery assertions precede successful tools/list.
+export const STAGE_ANALYZER_VERSION = 12;
 
 /**
  * The 7 above, named — the first analyzer that can report an errored tool call
@@ -377,6 +378,16 @@ const SELECTION_PREDICATE_REASONS: Record<string, StageReason> =
  * Response while the analyzer files its failures at User value, and no test
  * catches it because neither list is wrong on its own.
  */
+const DISCOVERY_PREDICATE_KINDS = new Set(
+  Object.entries(PREDICATE_STAGE)
+    .filter(([, stage]) => stage === "discovery")
+    .map(([kind]) => kind)
+);
+
+export function isDiscoveryPredicateKind(kind: string | undefined): boolean {
+  return kind !== undefined && DISCOVERY_PREDICATE_KINDS.has(kind);
+}
+
 const RESPONSE_PREDICATE_KINDS = new Set(
   Object.entries(PREDICATE_STAGE)
     .filter(([, stage]) => stage === "response")
@@ -515,6 +526,16 @@ export type StageSetupPhaseSignal = {
   egressVerified?: boolean;
   /** Culprit synthetic-span ids (`run-connect-<id>` / `run-toolslist-<id>`). */
   spanIds?: string[];
+  /**
+   * What the producer can say about a FAILED phase, in one line a person can
+   * act on — "rejected the stored token (invalid_token)", "MCPJam could not
+   * reach its authorization server". Producer-summarised and already
+   * redacted: never a raw header, never a token. Copied into the row's
+   * `predicateReasons` (the refs type's one free-text slot, the same way
+   * judge reasons travel) under the usual caps. Inert to the row's STATE:
+   * attribution and the canary decide that, this only explains it.
+   */
+  reasons?: string[];
   /**
    * How long this setup PHASE took, in milliseconds — its wall-clock envelope.
    *
@@ -802,7 +823,14 @@ function nonTransportLocalToolSpans(e: StageEvidence): StageSpanLike[] {
 }
 
 function signalEvidence(signal: StageSetupPhaseSignal): StageEvidenceRefs {
-  return signal.spanIds?.length ? { spanIds: signal.spanIds.slice(0, 5) } : {};
+  return {
+    ...(signal.spanIds?.length ? { spanIds: signal.spanIds.slice(0, 5) } : {}),
+    // Only a failed phase has anything to explain; an `ok` signal carrying
+    // reasons is a producer bug, not evidence, and is not copied.
+    ...(signal.outcome === "failed"
+      ? (boundedJudgeReasons(signal.reasons) ?? {})
+      : {}),
+  };
 }
 
 function deriveConnection(e: StageEvidence): StageResultRow {
@@ -857,34 +885,58 @@ function connectionPositivelyReached(e: StageEvidence): boolean {
   return false;
 }
 
+/**
+ * Discovery, analyzer 12. Precedence, top to bottom:
+ *
+ *   1. An explicit tools/list FAILURE from setup, with the v6+ attribution
+ *      rules (`toolsListFailed` only when connection was positively reached
+ *      and the failure is theirs; ours ⇒ `setupAborted`; unknown ⇒
+ *      `egressUnverified`). A server that never listed cannot be graded on
+ *      what it listed.
+ *   2. A failed, scored, GATING discovery assertion ⇒ `failed/predicateFailed`.
+ *      This must sit ABOVE the success returns below: before v12 a completed
+ *      tools/list short-circuited to `passed`, so an authored catalog check
+ *      could never fail the stage it files at. Advisory and errored rows are
+ *      excluded by `gatingPredicateResults`, so a Warn never fails a stage.
+ *   3. Success. A completed tools/list signal, a non-zero inventory, or a
+ *      PASSING scored discovery assertion all establish `passed/observed`.
+ *      The last is deliberate: every discovery kind errors unless the raw
+ *      catalog capture is `complete`, so a scored row is itself evidence that
+ *      a tools/list round-trip finished.
+ *   4. Tool spans imply discovery (`impliedByLaterEvidence`); otherwise the
+ *      stage is `notMeasured`.
+ */
 function deriveDiscovery(e: StageEvidence): StageResultRow {
   const signal = e.setupSignals?.discovery;
-  if (signal?.outcome === "ok") {
-    return row("discovery", "passed", "observed", signalEvidence(signal));
-  }
-  if ((e.toolSignals?.toolsTotalBefore ?? 0) > 0) {
-    return row("discovery", "passed", "observed");
-  }
-  const tools = (e.spans ?? []).filter(isToolSpan);
-  if (tools.length > 0) {
-    return row("discovery", "passed", "impliedByLaterEvidence", {
-      spanIds: spanIds(tools).slice(0, 5),
-    });
-  }
   if (signal?.outcome === "failed") {
     const refs = signalEvidence(signal);
-    // Failed + initialize completed + theirs ⇒ measured discovery miss.
-    // A completed initialize is the egress evidence; no canary needed.
-    // Unknown (unobserved tools/list) stays notMeasured — incomplete
-    // observation is not a server failure.
     if (connectionPositivelyReached(e) && signal.attribution === "theirs") {
       return row("discovery", "failed", "toolsListFailed", refs);
     }
-    if (signal.attribution === "ours") {
+    if (signal.attribution === "ours")
       return row("discovery", "notMeasured", "setupAborted", refs);
-    }
     return row("discovery", "notMeasured", "egressUnverified", refs);
   }
+  const assertions = gatingPredicateResults(e.predicateResults).filter((r) =>
+    isDiscoveryPredicateKind(r.predicate?.type)
+  );
+  const failed = assertions.filter((r) => r.passed === false);
+  if (failed.length > 0)
+    return row(
+      "discovery",
+      "failed",
+      "predicateFailed",
+      boundedPredicateReasons(failed)
+    );
+  if (signal?.outcome === "ok")
+    return row("discovery", "passed", "observed", signalEvidence(signal));
+  if ((e.toolSignals?.toolsTotalBefore ?? 0) > 0 || assertions.length > 0)
+    return row("discovery", "passed", "observed");
+  const tools = (e.spans ?? []).filter(isToolSpan);
+  if (tools.length > 0)
+    return row("discovery", "passed", "impliedByLaterEvidence", {
+      spanIds: spanIds(tools).slice(0, 5),
+    });
   if (e.traceAbsent) return row("discovery", "notMeasured", "traceAbsent");
   return row("discovery", "notMeasured", "noEvidenceCaptured");
 }
@@ -1222,6 +1274,7 @@ function deriveUserValue(e: StageEvidence): StageResultRow {
   // skipped (v10), and so are rows that could not be scored (v11).
   const results = gatingPredicateResults(e.predicateResults).filter(
     (r) =>
+      !isDiscoveryPredicateKind(r.predicate?.type) &&
       !isSelectionPredicateKind(r.predicate?.type) &&
       !isResponsePredicateKind(r.predicate?.type) &&
       !isCallPredicateKind(r.predicate?.type)

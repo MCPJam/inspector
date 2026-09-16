@@ -107,13 +107,15 @@ export function ScorecardRowView({
         {canRole && onChangePredicate ? (
           <RoleSegmentGroup
             value={row.role}
-            // An observation is a heuristic, so it is offered as Warn or
-            // Report and never as a Gate — the same rule the Zod schema
+            // An observation is a heuristic, so it is offered as Advisory
+            // only and never as Required — the same rule the Zod schema
             // enforces at the save, and the same restriction the suite table
-            // applies. Offering a Gate the save is going to refuse is a
+            // applies. Offering a Required the save is going to refuse is a
             // control that lies.
             roles={rolesForPredicateKind(row.predicate!.type)}
-            ariaLabel={`Role for ${row.label}`}
+            // Same label the suite table uses, so one vocabulary names one
+            // control wherever an author meets it.
+            ariaLabel="Assertion role"
             onChange={(role) =>
               onChangePredicate(withPredicateRole(row.predicate!, role))
             }
@@ -151,6 +153,7 @@ export function ScorecardRowView({
       {open && canEditFields && row.predicate && onChangePredicate ? (
         <div className="border-t border-border/50 px-2.5 py-2">
           <CheckRow
+            noun="assertion"
             embedded
             predicate={row.predicate}
             onChange={onChangePredicate}
