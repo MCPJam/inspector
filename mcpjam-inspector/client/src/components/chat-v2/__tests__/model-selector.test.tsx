@@ -781,3 +781,36 @@ describe("modelFilter", () => {
     expect(modelFilter(opus, "opus")).toBe(defaultFilter(opus, "opus"));
   });
 });
+
+describe("model routing selection", () => {
+  it.each(["openai", "openrouter"])(
+    "switches a hosted id to the %s BYOK row",
+    async (provider) => {
+      const user = userEvent.setup();
+      const hosted: ModelDefinition = {
+        id: "openai/gpt-5-nano",
+        name: "Hosted GPT",
+        provider: "openai",
+        hosted: true,
+      };
+      const byok: ModelDefinition = {
+        ...hosted,
+        name: "Own GPT",
+        provider,
+        hosted: false,
+      };
+      const onModelChange = vi.fn();
+      render(
+        <ModelSelector
+          currentModel={hosted}
+          availableModels={[hosted, byok]}
+          onModelChange={onModelChange}
+        />,
+      );
+      await user.click(screen.getByTestId("model-selector-trigger"));
+      await user.click(await screen.findByText("Your providers"));
+      await user.click(await screen.findByText("Own GPT"));
+      expect(onModelChange).toHaveBeenCalledWith(byok, { userInitiated: true });
+    },
+  );
+});
