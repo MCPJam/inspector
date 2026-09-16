@@ -996,6 +996,7 @@ describe("eval export", () => {
                 enabled: true,
                 autoRun: false,
                 model: "anthropic/claude-sonnet-4-6",
+                rubric: { instructions: "Require confirming evidence" },
               },
             },
           },
@@ -1009,6 +1010,10 @@ describe("eval export", () => {
       );
       assert.equal(reloaded.ok, true);
       if (!reloaded.ok) return;
+      assert.equal(reloaded.authored.defaults.judge?.autoRun, false);
+      assert.deepEqual(reloaded.authored.defaults.judge?.rubric, {
+        instructions: "Require confirming evidence",
+      });
       assert.equal(reloaded.authored.target.environment, "Production");
       assert.deepEqual(reloaded.authored.target.servers, undefined);
       assert.deepEqual(reloaded.authored.target.hosts, [
@@ -1160,24 +1165,6 @@ describe("eval export", () => {
           },
         },
         pointer: "settings.matchOptions",
-      },
-      {
-        label: "LLM-as-judge grading",
-        state: {
-          detail: {
-            settings: {
-              minimumAccuracy: 80,
-              matchOptions: null,
-              checks: [],
-              judge: {
-                enabled: true,
-                autoRun: true,
-                model: "anthropic/claude-sonnet-4-6",
-              },
-            },
-          },
-        },
-        pointer: "settings.judge",
       },
       {
         label: "a compare-across-models case",
@@ -1772,7 +1759,9 @@ async function startFileRunFixture(options?: {
           role: "owner",
           projectRole: "owner",
           surface: "api",
-          features: { sandboxes: { enabled: false, mode: "off", enforced: false } },
+          features: {
+            sandboxes: { enabled: false, mode: "off", enforced: false },
+          },
           plan: null,
           ...(options?.vocabulary === 2
             ? {
@@ -3151,7 +3140,13 @@ describe("eval run --file", () => {
         await writeFile(file, VALID_SUITE_FILE, "utf8");
         const run = await captureProcessOutput(() =>
           main(
-            runFileArgv(advertising.baseUrl, "--file", file, "--project", "Alpha"),
+            runFileArgv(
+              advertising.baseUrl,
+              "--file",
+              file,
+              "--project",
+              "Alpha"
+            ),
             { telemetry: telemetryDisabled }
           )
         );
@@ -3344,11 +3339,12 @@ describe("file-owned case bodies and idempotency", () => {
         ...testCase,
         suppressedSuiteStandardCheckIds: ["response.errors"],
       }).suppressedSuiteStandardCheckIds,
-      ["response.errors"],
+      ["response.errors"]
     );
     assert.deepEqual(
-      fileCaseToUpdateBody(testCase, ["response.errors"]).suppressedSuiteStandardCheckIds,
-      [],
+      fileCaseToUpdateBody(testCase, ["response.errors"])
+        .suppressedSuiteStandardCheckIds,
+      []
     );
     const created = fileCaseToCreateBody(testCase);
     assert.equal("isNegative" in created, false);
@@ -3392,7 +3388,10 @@ describe("file-owned case bodies and idempotency", () => {
 
     // And vocabulary 1 is still the default: the same call with no
     // vocabulary is byte-for-byte the body every earlier release sent.
-    assert.deepEqual(fileCaseToCreateBody(testCase), fileCaseToCreateBody(testCase, 1));
+    assert.deepEqual(
+      fileCaseToCreateBody(testCase),
+      fileCaseToCreateBody(testCase, 1)
+    );
     assert.deepEqual(
       Object.keys(fileCaseToUpdateBody(testCase)),
       Object.keys(fileCaseToUpdateBody(testCase, undefined, 1))
@@ -3441,7 +3440,10 @@ describe("file-owned case bodies and idempotency", () => {
     const loaded = loadEvalSuiteFile(VALID_SUITE_FILE);
     assert.equal(loaded.ok, true);
     if (!loaded.ok) return;
-    const labelled = { ...loaded.resolved.cases[0], kind: "regression" as const };
+    const labelled = {
+      ...loaded.resolved.cases[0],
+      kind: "regression" as const,
+    };
     assert.equal(fileCaseToCreateBody(labelled).kind, "regression");
     assert.equal(fileCaseToUpdateBody(labelled).kind, "regression");
     assert.equal(fileCaseToUpdateBody(loaded.resolved.cases[0]).kind, null);

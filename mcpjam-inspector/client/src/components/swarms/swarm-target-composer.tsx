@@ -18,6 +18,7 @@ import {
   type EnvironmentComposerState,
 } from "@/components/environment-composer/environment-stack";
 import { MAX_ENVIRONMENTS_PER_JOURNEY } from "@/components/swarms/journey-environments";
+import { SwarmProductionNotice } from "@/components/swarms/swarm-production-notice";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useEphemeralCloudAvailable } from "@/hooks/useProjectComputer";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
@@ -145,6 +146,8 @@ export function SwarmTargetComposer({
             : {})}
         />
       ) : null}
+
+      <SwarmProductionNotice data-testid="new-swarm-production-notice" />
 
       <EnvironmentComposer
         projectId={projectId}

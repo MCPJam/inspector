@@ -63,12 +63,28 @@ describe("Suite Health", () => {
     data.details.get("old")!.run.runGroupId = "shared-launch";
     data.details.get("new")!.run.runGroupId = "shared-launch";
     data.details.get("new")!.run.client = {
-      source: "suite_default", name: "Cursor", hostStyle: "cursor",
+      source: "suite_default",
+      name: "Cursor",
+      hostStyle: "cursor",
     };
     const onSelectRun = vi.fn();
-    render(<SuiteHealth {...data} complete failed={false} onRetry={vi.fn()} hostNamesById={new Map()} onSelectRun={onSelectRun} />);
+    render(
+      <SuiteHealth
+        {...data}
+        complete
+        failed={false}
+        onRetry={vi.fn()}
+        hostNamesById={new Map()}
+        onSelectRun={onSelectRun}
+      />,
+    );
     // The newest client is Cursor, but both clients share row #1.
-    const point = buildSuiteHealth(data.rows, data.details, "s1", "style:cursor").points[0];
+    const point = buildSuiteHealth(
+      data.rows,
+      data.details,
+      "s1",
+      "style:cursor",
+    ).points[0];
     expect(point.runNumber).toBe(1);
     expect(point.rate).toBeCloseTo(100 / 3);
     await userEvent.setup().click(screen.getByTestId("suite-health-bar"));
@@ -182,6 +198,29 @@ describe("Suite Health", () => {
     expect(screen.queryByTestId("suite-health-average")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(onRetry).toHaveBeenCalledOnce();
+  });
+
+  it("holds the card's full height while the history loads", () => {
+    render(
+      <SuiteHealth
+        {...fixture()}
+        complete={false}
+        failed={false}
+        onRetry={vi.fn()}
+        hostNamesById={new Map()}
+      />,
+    );
+    // No number at all until it is real — a skeleton cannot be misread as one.
+    expect(screen.queryByTestId("suite-health-average")).toBeNull();
+    const loading = screen.getByRole("status", {
+      name: "Loading run history",
+    });
+    expect(
+      loading.querySelectorAll('[data-slot="skeleton"]').length,
+    ).toBeGreaterThan(0);
+    // The axis is the card's real one, so the chart does not resize on load.
+    expect(loading).toHaveTextContent("100%");
+    expect(loading).toHaveTextContent("0%");
   });
 
   it("excludes in-flight runs and does not invent empty results", () => {

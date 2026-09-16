@@ -6,6 +6,9 @@ import { CreditBalanceCard } from "../CreditBalanceCard";
 
 let balanceState:
   | {
+      outstandingDeficitCredits?: number;
+      rolloverCreditsRemaining?: number;
+      topUpEligible?: boolean;
       paidCreditsRemaining: number;
       hasPurchaseHistory: boolean;
       freeDailyPercentUsed: number;
@@ -107,6 +110,99 @@ describe("CreditBalanceCard", () => {
     evalQuotaState = undefined;
     evalQuotaLoadingState = false;
     window.location.hash = "";
+  });
+
+  it("shows debt and carried credits separately from available credits", () => {
+    balanceState = {
+      ...balanceState!,
+      outstandingDeficitCredits: 125,
+      rolloverCreditsRemaining: 700,
+    };
+    render(<CreditBalanceCard />);
+    expect(screen.getByTestId("usage-debt")).toHaveTextContent("125 credits");
+    expect(screen.getByTestId("usage-rollover")).toHaveTextContent(
+      "700 credits",
+    );
+  });
+  it("hides purchase controls for an ineligible Free wallet, including deep links", () => {
+    balanceState = { ...balanceState!, topUpEligible: false };
+    window.history.replaceState({}, "", "/?topup=open");
+    render(<CreditBalanceCard organizationId="org-1" canManageCredits />);
+    expect(
+      screen.queryByRole("button", { name: "Buy credits" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "Auto-reload" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByTestId("topup-dialog")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Upgrade to Pro to buy credits" }),
+    ).toHaveAttribute("href", "/organizations/org-1/plans");
+    window.history.replaceState({}, "", "/");
+  });
+
+  it("does not prescribe an upgrade to a locked wallet", () => {
+    balanceState = {
+      ...balanceState!,
+      topUpEligible: false,
+      walletLocked: true,
+    };
+    render(<CreditBalanceCard organizationId="org-1" canManageCredits />);
+    expect(
+      screen.queryByText("Upgrade to Pro to buy credits"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("usage-wallet-locked")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Buy credits" }),
+    ).not.toBeInTheDocument();
+  });
+  it("keeps eligible Pro purchase controls available", () => {
+    balanceState = {
+      ...balanceState!,
+      topUpEligible: true,
+      billingModel: "monthly_flat",
+    };
+    render(<CreditBalanceCard canManageCredits />);
+    expect(
+      screen.getByRole("button", { name: "Buy credits" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: "Auto-reload" }),
+    ).toBeInTheDocument();
+  });
+  it("omits absent or zero debt and rollover", () => {
+    balanceState = {
+      ...balanceState!,
+      outstandingDeficitCredits: 0,
+      rolloverCreditsRemaining: 0,
+    };
+    render(<CreditBalanceCard />);
+    expect(screen.queryByTestId("usage-debt")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("usage-rollover")).not.toBeInTheDocument();
+  });
+
+  it("waits for eligibility before opening a top-up deep link", () => {
+    balanceState = undefined;
+    isLoadingState = true;
+    window.history.replaceState({}, "", "/?topup=open");
+    const { rerender } = render(
+      <CreditBalanceCard organizationId="org-1" canManageCredits />,
+    );
+    expect(screen.queryByTestId("topup-dialog")).not.toBeInTheDocument();
+    balanceState = {
+      paidCreditsRemaining: 0,
+      hasPurchaseHistory: false,
+      freeDailyPercentUsed: 0,
+      freeDailyCreditsRemaining: 10,
+      freeDailyCreditsTotal: 10,
+      freeDailyResetAt: 0,
+      walletLocked: false,
+      topUpEligible: false,
+    };
+    isLoadingState = false;
+    rerender(<CreditBalanceCard organizationId="org-1" canManageCredits />);
+    expect(screen.queryByTestId("topup-dialog")).not.toBeInTheDocument();
+    window.history.replaceState({}, "", "/");
   });
 
   it("uses a plan-neutral label for flat monthly credits", () => {

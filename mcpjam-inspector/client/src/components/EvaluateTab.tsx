@@ -522,6 +522,9 @@ function EvaluateTabContent({
         isExcalidrawConnected: connectedServerNames.has(EXCALIDRAW_SERVER_NAME),
         existingQuickstartSuiteId,
         previewedHostId,
+        // Stay in Evaluate. The default lands on `/evals/...`, which dropped
+        // the reader into the shipped tab's copy of the suite they just made.
+        navigate: navigatePlaygroundEvalsRoute,
       });
     } finally {
       setIsQuickstartRunning(false);
@@ -1168,11 +1171,6 @@ function EvaluateTabContent({
 
       if (failedDeletes.length > 0) {
         console.error("Failed to delete some test cases:", failedDeletes);
-        toast.error(
-          `Failed to delete ${failedDeletes.length} test case${
-            failedDeletes.length === 1 ? "" : "s"
-          }.`,
-        );
       }
 
       if (selectedSuiteId && selectedTestId && deletedIds.has(selectedTestId)) {
@@ -1183,6 +1181,18 @@ function EvaluateTabContent({
             view: "test-cases",
           },
           { replace: true },
+        );
+      }
+
+      // Resolving has to mean "every id is gone". Callers report the outcome
+      // — a success toast, closing the confirm, leaving the case editor — and
+      // `allSettled` swallowing the rejection told all of them the delete had
+      // worked while the case was still there.
+      if (failedDeletes.length > 0) {
+        throw new Error(
+          `Failed to delete ${failedDeletes.length} test case${
+            failedDeletes.length === 1 ? "" : "s"
+          }.`,
         );
       }
     },
@@ -1227,7 +1237,17 @@ function EvaluateTabContent({
           ? runBreadcrumbLabel
           : null;
 
+  /**
+   * Case generation replaces the suite page WITHOUT changing the route, so
+   * the breadcrumb has to be told. `exit` is how its suite crumb gets back:
+   * navigating to the route we are already on would change nothing.
+   */
+  const [generatingCases, setGeneratingCases] = useState<{
+    exit: () => void;
+  } | null>(null);
+
   const renderPlaygroundBreadcrumb = () => {
+    if (generatingCases) return "Generate test cases";
     if (!hasDetailRoute) return null;
     return isNestedDetail ? nestedPageLabel : suiteBreadcrumbLabel;
   };
@@ -1501,6 +1521,7 @@ function EvaluateTabContent({
           evaluateDecisionSummary={decisionSummaryEnabled}
           evaluateCaseEditor
           evaluateObserveFirst={observeFirstEnabled}
+          onGeneratingChange={setGeneratingCases}
           evalRunsDisabledReason={evalRunsDisabledReason}
           onDeleteTestCasesBatch={handleDeleteTestCasesBatch}
           onRunTestCase={(testCase, opts) => {
@@ -1588,13 +1609,18 @@ function EvaluateTabContent({
                     onClick: () =>
                       handleBackToEvalServer(route.fromEvalServer!),
                   }
-                : isNestedDetail && suiteBreadcrumbLabel && selectedSuiteId
+                : generatingCases && suiteBreadcrumbLabel
                   ? {
                       label: suiteBreadcrumbLabel,
-                      onClick: () =>
-                        playgroundNavigation.toSuiteOverview(selectedSuiteId),
+                      onClick: generatingCases.exit,
                     }
-                  : undefined
+                  : isNestedDetail && suiteBreadcrumbLabel && selectedSuiteId
+                    ? {
+                        label: suiteBreadcrumbLabel,
+                        onClick: () =>
+                          playgroundNavigation.toSuiteOverview(selectedSuiteId),
+                      }
+                    : undefined
             }
           >
             {route.type === "suite-edit" && route.fromCaseChecks

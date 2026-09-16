@@ -714,10 +714,21 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       }
     });
 
-    it("keeps a real result produced inside the grace window", async () => {
-      // A trial that beat the buzzer by a hair produced real evidence.
-      // Discarding it for a timeout we no longer need would be manufacturing
-      // an exclusion.
+    it("still times out when a result arrives inside the grace window", async () => {
+      // This pins a CORRECTED contract. The first version kept a value that
+      // arrived after the clock fired, reasoning that a trial finishing by a
+      // hair had produced real evidence.
+      //
+      // That reasoning does not survive the control flow: we only reach the
+      // grace window because the ABORT won the race, so the trial had not
+      // finished, and what arrives afterwards is post-abort. In practice it is
+      // the runner's own cancellation stub — and once the runners began
+      // THROWING on a budget abort instead, the same arm propagated the throw
+      // out of the helper, which is the reject-don't-resolve failure that
+      // strands a case's remaining iterations at `pending`.
+      //
+      // Reading the clock before honouring the race winner covers both shapes.
+      // The grace window stays, for letting partial writes land.
       vi.useFakeTimers();
       try {
         const onTimeout = vi.fn().mockResolvedValue(undefined);
@@ -733,8 +744,43 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         await vi.advanceTimersByTimeAsync(UNIT_MS + 1);
         finish("late-but-real" as never);
         await vi.advanceTimersByTimeAsync(1);
-        await expect(promise).resolves.toBe("late-but-real");
-        expect(onTimeout).not.toHaveBeenCalled();
+        await expect(promise).resolves.toBe(timedOut);
+        expect(onTimeout).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("RESOLVES a timed-out outcome when the runner throws its budget abort", async () => {
+      // The runners throw on a budget abort so the timeout cannot be swallowed
+      // as a benign cancellation. This helper must absorb that throw, not
+      // propagate it: `runSingleIteration` rejecting means iterations
+      // `runIndex+1..N` of that case never start, land `pending`, and block the
+      // run's terminal transition until the stale reaper takes the whole run.
+      vi.useFakeTimers();
+      try {
+        const onTimeout = vi.fn().mockResolvedValue(undefined);
+        const promise = runIterationUnderBudget({
+          run: (iterationSignal) =>
+            new Promise<never>((_resolve, reject) => {
+              iterationSignal.addEventListener(
+                "abort",
+                () => reject(iterationSignal.reason),
+                { once: true },
+              );
+            }),
+          runSignal: undefined,
+          unitTimeoutMs: UNIT_MS,
+          graceMs: 1_000,
+          onTimeout,
+          timedOutOutcome: () => timedOut,
+        });
+
+        await vi.advanceTimersByTimeAsync(UNIT_MS + 1);
+        await vi.advanceTimersByTimeAsync(1_001);
+
+        await expect(promise).resolves.toBe(timedOut);
+        expect(onTimeout).toHaveBeenCalledTimes(1);
       } finally {
         vi.useRealTimers();
       }

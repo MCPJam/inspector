@@ -8,7 +8,7 @@
  * renders it.
  */
 import { useMemo, useState } from "react";
-import { ArrowDown, ArrowLeft, ArrowUp, ChevronDown } from "lucide-react";
+import { ArrowLeft, ChevronDown } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Collapsible,
@@ -81,27 +81,26 @@ function RunResultPill({ status }: { status: RunCompareStatus }) {
   );
 }
 
-/** The arrow follows the number; the colour follows whether it helped. */
-function DeltaCell({ delta }: { delta: HeroStatDelta | null }) {
-  if (!delta) return <td className="px-3 py-2 text-muted-foreground">—</td>;
-  const Arrow =
-    delta.direction === "up"
-      ? ArrowUp
-      : delta.direction === "down"
-        ? ArrowDown
-        : null;
+/**
+ * The change sits BESIDE its number rather than in a column of its own.
+ *
+ * Four "Δ" headers said the same word four times and never which metric they
+ * belonged to, and the reader had to pair each one with the column to its
+ * left. The sign already carries the direction, so the arrow that preceded it
+ * was a third encoding of one fact — the colour says whether it helped.
+ */
+function Delta({ delta }: { delta: HeroStatDelta | null }) {
+  if (!delta) return null;
   return (
-    <td className="px-3 py-2" data-testid="run-compare-delta">
-      <span
-        className={cn(
-          "inline-flex items-center gap-0.5 text-[11px] font-medium tabular-nums",
-          DELTA_TONE_CLASS[delta.tone],
-        )}
-      >
-        {Arrow ? <Arrow className="size-3" aria-hidden /> : null}
-        {delta.label}
-      </span>
-    </td>
+    <span
+      data-testid="run-compare-delta"
+      className={cn(
+        "ml-2 text-[11px] font-medium tabular-nums",
+        DELTA_TONE_CLASS[delta.tone],
+      )}
+    >
+      {delta.label}
+    </span>
   );
 }
 
@@ -120,6 +119,7 @@ function MetricCell({
           {detail}
         </span>
       ) : null}
+      <Delta delta={cell.delta} />
     </td>
   );
 }
@@ -150,7 +150,6 @@ function LaneRow({
         <RunResultPill status={row.status} />
       </td>
       <MetricCell cell={row.pass} detail={row.passDetail} />
-      <DeltaCell delta={row.pass.delta} />
       <td className="whitespace-nowrap px-3 py-2">
         <div className="flex items-center gap-2">
           <RunPlatformBadge run={row.run} neutral />
@@ -166,11 +165,8 @@ function LaneRow({
         })}
       </td>
       <MetricCell cell={row.p50} />
-      <DeltaCell delta={row.p50.delta} />
       <MetricCell cell={row.p95} />
-      <DeltaCell delta={row.p95.delta} />
       <MetricCell cell={row.tokens} />
-      <DeltaCell delta={row.tokens.delta} />
     </tr>
   );
 }
@@ -231,23 +227,11 @@ function LaneSection({
                   <th className={HEADER_CLASS}>Run</th>
                   <th className={HEADER_CLASS}>Result</th>
                   <th className={HEADER_CLASS}>Pass</th>
-                  <th className={HEADER_CLASS} aria-label="Pass change">
-                    Δ
-                  </th>
                   <th className={HEADER_CLASS}>Platform</th>
                   <th className={HEADER_CLASS}>Date</th>
                   <th className={HEADER_CLASS}>P50</th>
-                  <th className={HEADER_CLASS} aria-label="P50 change">
-                    Δ
-                  </th>
                   <th className={HEADER_CLASS}>P95</th>
-                  <th className={HEADER_CLASS} aria-label="P95 change">
-                    Δ
-                  </th>
                   <th className={HEADER_CLASS}>Tokens</th>
-                  <th className={HEADER_CLASS} aria-label="Tokens change">
-                    Δ
-                  </th>
                 </tr>
               </thead>
               <tbody>

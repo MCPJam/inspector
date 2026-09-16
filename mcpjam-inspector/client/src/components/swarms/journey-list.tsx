@@ -1,3 +1,5 @@
+import type { GoalJudgePolicy } from "@/shared/judge-defaults";
+import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { SharedSettingsGate } from "@/components/billing/SharedSettingsGate";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, usePaginatedQuery } from "convex/react";
@@ -28,6 +30,7 @@ import {
 import {
   SWARM_QUERIES,
   DEFAULT_PAGE_SIZE,
+  LaunchJourneyRunError,
   type JourneyRun,
   type JourneyRollup,
 } from "@/lib/swarm-api";
@@ -74,6 +77,7 @@ export type JourneyListJourney = {
    * declared here because `autoRun` decides whether the pre-run credit estimate
    * carries a judge line at all. */
   judgeConfig?: GoalJudgeConfig;
+  judgePolicy?: GoalJudgePolicy;
   /** Deterministic criteria. `null` from the wire when the journey has none. */
   rubric?: JourneyCriterion[] | null;
 };
@@ -358,6 +362,10 @@ function JourneyBlock({
       if (result.status === "already_launching") return;
       toast.success("Goal run started");
     } catch (e) {
+      // A model limit is owned by its dialog, which carries the same sentence
+      // plus the actions that clear it. Repeating it inline under the goal
+      // would say the same thing twice with nothing to act on.
+      if (e instanceof LaunchJourneyRunError && e.limitDialogRaised) return;
       setLaunchError(e instanceof Error ? e.message : "Failed to start run");
     } finally {
       setLaunching(false);
@@ -679,7 +687,7 @@ function JourneyGradingEditor({
       toast.success("Grading updated — applies to future runs");
       setOpen(false);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to update grading");
+      toast.error(getBillingErrorMessage(e, "Failed to update grading"));
     } finally {
       setSaving(false);
     }
@@ -714,6 +722,7 @@ function JourneyGradingEditor({
           resource="swarm settings"
         >
           <JudgesSection
+            policy={journey.judgePolicy}
             chrome="bare"
             value={judgeConfig}
             onChange={setJudgeConfig}
@@ -827,9 +836,7 @@ function JourneyEnvironmentsEditor({
       toast.success("Goal environments updated");
       setOpen(false);
     } catch (e) {
-      toast.error(
-        e instanceof Error ? e.message : "Failed to update environments",
-      );
+      toast.error(getBillingErrorMessage(e, "Failed to update environments"));
     } finally {
       setSaving(false);
     }
@@ -863,9 +870,7 @@ function JourneyEnvironmentsEditor({
       toast.success("Goal switched back to clients");
       setOpen(false);
     } catch (e) {
-      toast.error(
-        e instanceof Error ? e.message : "Failed to update environments",
-      );
+      toast.error(getBillingErrorMessage(e, "Failed to update environments"));
     } finally {
       setSaving(false);
     }

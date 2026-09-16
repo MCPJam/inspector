@@ -44,6 +44,7 @@ import {
   observeChatSessionBrowserOperation,
   cancelEvalRunOperation,
   backtestEvalRunOperation,
+  backtestEvalRunJudgeOperation,
   requestEvalRunJudgeOperation,
   listEvalGithubReposOperation,
   connectEvalGithubRepoOperation,
@@ -432,8 +433,8 @@ function describeComposeEvalSuiteRun(
         ? "and the composed environment is attached to the suite"
         : "and the composed environments are attached to the suite"
       : n <= 1
-        ? "ephemeral when supported; otherwise attached"
-        : "without attaching them to the suite";
+      ? "ephemeral when supported; otherwise attached"
+      : "without attaching them to the suite";
   if (n <= 1) {
     return (
       `Run eval suite ${suite} on a composed setup${hostNote}` +
@@ -1850,6 +1851,18 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       kind: "update",
     },
   },
+  {
+    operation: backtestEvalRunJudgeOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Preview draft grading on run ${
+          named(input, "runId") ?? "(unnamed)"
+        } (uses model budget)`,
+      buttonLabel: "Preview grading",
+      kind: "generate",
+    },
+  },
   // Deterministic preview only reserves a bounded cooldown; it does not spend.
   {
     operation: backtestEvalRunOperation,
@@ -1884,7 +1897,9 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     tier: "gated",
     proposal: {
       describe: (input) =>
-        `Draft a rewritten description for ${named(input, "toolName") ?? "(unnamed tool)"} from run ${named(input, "runId") ?? "(unnamed)"}`,
+        `Draft a rewritten description for ${
+          named(input, "toolName") ?? "(unnamed tool)"
+        } from run ${named(input, "runId") ?? "(unnamed)"}`,
       buttonLabel: "Propose the rewrite",
       kind: "generate",
       confirmSeverity: "spend",
@@ -1898,7 +1913,9 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     tier: "gated",
     proposal: {
       describe: (input) =>
-        `Launch the two-arm description experiment ${named(input, "experiment") ?? "(unnamed)"} (original + rewrite)`,
+        `Launch the two-arm description experiment ${
+          named(input, "experiment") ?? "(unnamed)"
+        } (original + rewrite)`,
       buttonLabel: "Start the experiment",
       kind: "start",
       confirmSeverity: "spend",

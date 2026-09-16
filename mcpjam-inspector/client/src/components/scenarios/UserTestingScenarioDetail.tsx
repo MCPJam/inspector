@@ -49,8 +49,7 @@ import {
 } from "@/hooks/useProjectEnvironments";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { isAdhocEnvironment } from "@/lib/environment-label";
-import { convexErrMessage } from "@/lib/convex-error";
-import { ScenarioGradingSection } from "./ScenarioGradingSection";
+import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import {
   buildUserTestingScenarioEditPath,
   buildUserTestingScenarioPath,
@@ -71,8 +70,8 @@ import { toast } from "@/lib/toast";
  *
  * Detail (`/user-testing/:id`): Insights | Sessions under one header carrying
  * Edit / Open preview / Share. Edit (`/user-testing/:id/edit`) wears the same
- * action row and holds Settings — environment, sharing permissions, ratings,
- * grading — beside a docked live Preview. Only the back link differs: Edit is
+ * action row and holds Settings — environment, sharing permissions, ratings —
+ * beside a docked live Preview. Only the back link differs: Edit is
  * a sub-route, so it returns to the scenario rather than out to the list.
  *
  * Preview embeds the share link, so opening Edit starts a REAL guest session —
@@ -113,7 +112,7 @@ const TAB_OPTIONS: ReadonlyArray<{
 /**
  * One settings card. Stacked in a single column, the edge is what keeps a run
  * of sections from reading as one undifferentiated form — it is the only thing
- * saying where "Ratings" stops and "Grading" starts.
+ * saying where "Sharing permissions" stops and "Ratings" starts.
  */
 const SETTINGS_CARD =
   "space-y-4 rounded-xl border border-border bg-card p-5 shadow-sm";
@@ -311,7 +310,10 @@ export function UserTestingScenarioDetail({
         toast.error(
           isAdhocUnavailable(err)
             ? "This workspace's backend doesn't support editing a scenario's setup yet."
-            : convexErrMessage(err, "Could not update this scenario's setup"),
+            : getBillingErrorMessage(
+                err,
+                "Could not update this scenario's setup",
+              ),
         );
       } finally {
         committingRef.current = false;
@@ -375,7 +377,7 @@ export function UserTestingScenarioDetail({
     try {
       await updateScenario({ scenarioId: scenario.scenarioId, name } as any);
     } catch (err) {
-      toast.error(convexErrMessage(err, "Failed to rename the scenario"));
+      toast.error(getBillingErrorMessage(err, "Failed to rename the scenario"));
       // Rethrow so EditableTitle reverts to the persisted name.
       throw err;
     }
@@ -413,7 +415,9 @@ export function UserTestingScenarioDetail({
       // A newer save has taken over: its value is the one to keep, and
       // resyncing from here would drop it.
       if (generation !== descriptionSaveRef.current) return;
-      toast.error(convexErrMessage(err, "Failed to save the description"));
+      toast.error(
+        getBillingErrorMessage(err, "Failed to save the description"),
+      );
       // Also rolls the marked seed back to what is actually stored.
       adoptRemoteDescription();
     }
@@ -787,13 +791,6 @@ export function UserTestingScenarioDetail({
                         scenario={scenario}
                       />
                     </section>
-
-                    {/* Production scoring: grade sampled real sessions against
-                      deterministic checks. Its own card — grading config is a
-                      peer of sharing, not part of it. */}
-                    <div className={SETTINGS_CARD}>
-                      <ScenarioGradingSection scenario={scenario} />
-                    </div>
                   </div>
                 </div>
 

@@ -23,6 +23,7 @@ import {
   captureEvalReporting,
   notRequestedReceipt,
 } from "./eval-reporting-receipt.js";
+import { McpjamModelLeaseScope } from "./mcpjam-model-lease.js";
 import { suiteTestResultsToEvalResultInputs } from "./eval-result-mapping.js";
 import { aggregateEvaluationConfigHash } from "./contract/derive.js";
 import { resolveServerReplayConfigs } from "./server-replay-configs.js";
@@ -286,6 +287,7 @@ export class EvalSuite {
         "runTimeoutMs must be a positive timer-sized integer"
       );
     this.running = true;
+    const leaseScope = new McpjamModelLeaseScope();
     let timer: ReturnType<typeof setTimeout> | undefined;
     let dispose: (() => void) | undefined;
     try {
@@ -303,17 +305,21 @@ export class EvalSuite {
       );
       dispose = composed.dispose;
       const signal = composed.signal;
-      return await this.runInternal(executor, {
-        ...options,
-        signal,
-        // Execution cancellation must still allow its evidence to be persisted.
-        // Only an explicitly authored transport signal cancels reporting.
-        mcpjam: reporting,
-      });
+      return await this.runInternal(
+        executor.withOptions({ mcpjamLeaseScope: leaseScope }),
+        {
+          ...options,
+          signal,
+          // Execution cancellation must still allow its evidence to be persisted.
+          // Only an explicitly authored transport signal cancels reporting.
+          mcpjam: reporting,
+        }
+      );
     } finally {
       if (timer !== undefined) clearTimeout(timer);
       dispose?.();
       this.running = false;
+      await leaseScope.release();
     }
   }
 

@@ -13,7 +13,7 @@ describe("Default checks navigation and page", () => {
     const navigate = vi.fn();
     render(<DefaultChecksReference onOverride={navigate} />);
     await user.click(
-      screen.getByRole("button", { name: "Show default evaluators" }),
+      screen.getByRole("button", { name: "Configure test case evaluators" }),
     );
     expect(navigate).toHaveBeenCalledOnce();
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
@@ -46,7 +46,7 @@ describe("Default checks navigation and page", () => {
       screen.getByRole("heading", { name: "Test Case Evaluators" }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByText("Show default evaluators"),
+      screen.queryByText("Configure test case evaluators"),
     ).not.toBeInTheDocument();
     expect(container.querySelectorAll("[data-stage-group]").length).toBe(6);
     // Runner-measured stages are rows without an On box: nothing to author.

@@ -151,7 +151,13 @@ export const EVAL_SANDBOX_CAPACITY_POLICY = {
   maxAttempts: 4,
   baseDelayMs: 15_000,
   maxDelayMs: 60_000,
-  minDelayMs: 15_000,
+  // Deliberately BELOW the jitter's own floor. `defaultJitter` maps a delay
+  // onto [0.5x, 1x], so the first retry's 15s becomes 7.5–15s — and a
+  // `minDelayMs` of 15s clamps every one of those back to exactly 15s,
+  // undoing the spreading this policy adds jitter for in the first place.
+  // What the floor is actually for is a server-sent `Retry-After` of one
+  // second against a pool that is not going to clear in one second.
+  minDelayMs: 7_500,
   totalBudgetMs: 2 * 60_000,
   attemptTimeoutMs: 30_000,
   jitter: defaultJitter,

@@ -1,3 +1,4 @@
+import { ConvexError } from "convex/values";
 /**
  * Scenario detail. Two behaviours are load-bearing beyond layout:
  *
@@ -693,6 +694,22 @@ describe("UserTestingScenarioDetail", () => {
       await screen.findByText("Payments beta");
     });
 
+    it("toasts the collaborative editing denial when saving a description", async () => {
+      updateScenarioMock.mockRejectedValueOnce(
+        new ConvexError({ code: "COLLABORATIVE_EDITING_REQUIRED" }),
+      );
+      renderEdit({ description: "Old copy" });
+      fireEvent.change(screen.getByTestId("user-testing-description"), {
+        target: { value: "New copy" },
+      });
+      fireEvent.blur(screen.getByTestId("user-testing-description"));
+      await waitFor(() =>
+        expect(toast.error).toHaveBeenCalledWith(
+          "Editing another member's work requires Team or Enterprise.",
+        ),
+      );
+    });
+
     it("persists the description on blur, only when it changed", () => {
       // BB-202 moved this field off the header row and into Edit.
       renderEdit({ description: "Old copy" });
@@ -1213,7 +1230,6 @@ describe("UserTestingScenarioDetail — settings layout", () => {
     const order = [
       "user-testing-description-section",
       "user-testing-tasks-section",
-      "scenario-grading-section",
       "user-testing-delete",
     ].map((id) =>
       Array.prototype.indexOf.call(
@@ -1239,7 +1255,6 @@ describe("UserTestingScenarioDetail — settings layout", () => {
     expect(
       screen.getByRole("heading", { name: "Ratings" }),
     ).toBeInTheDocument();
-    expect(screen.getByTestId("scenario-grading-section")).toBeInTheDocument();
     expect(
       screen.getByTestId("user-testing-tasks-section"),
     ).toBeInTheDocument();

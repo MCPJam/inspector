@@ -677,3 +677,12 @@ describe("getEvalIterationLimitFromError", () => {
     expect(getEvalIterationLimitFromError(new Error("boom"))).toBeNull();
   });
 });
+
+it("explains the collaborative editing error even without backend prose", () => {
+  expect(
+    getBillingErrorMessage(
+      new ConvexError({ code: "COLLABORATIVE_EDITING_REQUIRED" }),
+      "Failed to save",
+    ),
+  ).toBe("Editing another member's work requires Team or Enterprise.");
+});

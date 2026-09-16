@@ -1,3 +1,4 @@
+import type { GoalJudgePolicy } from "@/shared/judge-defaults";
 import { filterSuppressedSuiteAssertions } from "@mcpjam/sdk/contract";
 /**
  * One case's scorers, in the order the chain grades them.
@@ -159,12 +160,7 @@ export function spineLibraryKinds(): PredicateKind[] {
 }
 
 export type ScorecardProvenance =
-  | "route"
-  | "step"
-  | "case"
-  | "suite"
-  | "snapshot"
-  | "judge";
+  "route" | "step" | "case" | "suite" | "snapshot" | "judge";
 
 /** How a row finds its result on a trial. See `joinTrialResults`. */
 export type ScorecardJoin =
@@ -227,10 +223,7 @@ export type JudgeFacts = {
  * here is "this is what the judge will read".
  */
 export type RubricSource =
-  | "expected_output"
-  | "assertions"
-  | "suite_criteria"
-  | "objective";
+  "expected_output" | "assertions" | "suite_criteria" | "objective";
 
 /** The cap the backend applies when a case has no rubric at all. */
 export const OBJECTIVE_MODE_SCORE_CAP = 0.85;
@@ -250,6 +243,8 @@ export const JUDGE_MODE_WORD: Record<JudgeMode, string> = {
   manual: "on request",
   automatic: "automatic",
   gating: "gating",
+  unknown: "state unavailable",
+  paused: "paused",
 };
 
 export type ScorecardRow = {
@@ -326,6 +321,7 @@ export type CaseScorecardInput = {
   expectedOutput?: string;
   judgeConfigOverride?: EvalJudgeConfigOverride;
   suiteJudgeConfig?: EvalJudgeConfig;
+  judgePolicy?: GoalJudgePolicy;
   suiteJudgeRubric?: EvalJudgeRubric;
   /**
    * How a step row is numbered.
@@ -546,21 +542,23 @@ export function judgeFacts(input: {
   expectedOutput?: string;
   judgeConfigOverride?: EvalJudgeConfigOverride;
   suiteJudgeConfig?: EvalJudgeConfig;
+  judgePolicy?: GoalJudgePolicy;
   suiteJudgeRubric?: EvalJudgeRubric;
   route: RouteState;
 }): JudgeFacts {
   const slot = input.suiteJudgeConfig?.goalCompletion;
-  const suiteMode = judgeMode(input.suiteJudgeConfig);
+  const suiteMode = judgeMode(input.suiteJudgeConfig, input.judgePolicy);
   const skippedForCase =
     input.judgeConfigOverride?.goalCompletion?.enabled === false;
-  const suiteCriteriaCount = input.suiteJudgeRubric?.criteria.length ?? 0;
+  const suiteCriteriaCount = input.suiteJudgeRubric?.criteria?.length ?? 0;
   return {
     suiteMode,
     model: slot?.judgeModel ?? GOAL_COMPLETION_DEFAULTS.judgeModel,
     threshold: slot?.threshold ?? GOAL_COMPLETION_DEFAULTS.threshold,
     suiteCriteriaCount,
     skippedForCase,
-    runsForCase: suiteMode !== "off" && !skippedForCase,
+    runsForCase:
+      !["off", "unknown", "paused"].includes(suiteMode) && !skippedForCase,
     rubricSource: deriveRubricSource({
       expectedOutput: input.expectedOutput,
       route: input.route,
@@ -737,6 +735,7 @@ export function buildCaseScorecard(input: CaseScorecardInput): CaseScorecard {
     expectedOutput: input.expectedOutput,
     judgeConfigOverride: input.judgeConfigOverride,
     suiteJudgeConfig: input.suiteJudgeConfig,
+    judgePolicy: input.judgePolicy,
     suiteJudgeRubric: input.suiteJudgeRubric,
     route,
   });
@@ -804,7 +803,7 @@ export function buildCaseScorecard(input: CaseScorecardInput): CaseScorecard {
           roleLock: "inherited",
         }),
       )
-    : (envelopeMode === "inherit" ? [] : input.predicates?.list ?? []).map(
+    : (envelopeMode === "inherit" ? [] : (input.predicates?.list ?? [])).map(
         (predicate, index) =>
           predicateRow({
             predicate,
@@ -866,8 +865,7 @@ export function buildCaseScorecard(input: CaseScorecardInput): CaseScorecard {
     hiddenSuiteCount:
       !frozen && envelopeMode === "replace" ? suiteDefaults.length : 0,
     negativeContradiction: route.kind === "noTool" && contradicting,
-    unsetBlockReason:
-      route.kind === "unset" ? UNSET_TOOLS_BLOCK_REASON : null,
+    unsetBlockReason: route.kind === "unset" ? UNSET_TOOLS_BLOCK_REASON : null,
   };
 }
 
@@ -958,4 +956,13 @@ export function removeCaseScorer(
   const list = (current?.list ?? []).filter((_, i) => i !== index);
   if (list.length === 0 && current?.mode !== "replace") return undefined;
   return { mode: current?.mode === "replace" ? "replace" : "extend", list };
+}
+
+/** The configured expectation, without running the evaluator again. */
+export function expectationOf(row: ScorecardRow): string {
+  if (row.predicate) return formatCriterion({ predicate: row.predicate });
+  if (row.route) return routeLabel(row.route);
+  if (row.widgetAssertion) return purposeOf(row.widgetAssertion);
+  if (row.provenance === "judge") return "Satisfy the task according to the configured judge rubric.";
+  return row.kindLabel;
 }

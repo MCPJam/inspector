@@ -203,6 +203,24 @@ function turnTimeoutMessage(budgetMs: number, turn?: number): string {
   return `Turn exceeded its ${formatBudgetMs(budgetMs)} budget${where}`;
 }
 
+/**
+ * Rejects when `signal` aborts, and otherwise never settles.
+ *
+ * Its rejection carries the signal's REASON — the deadline's own stamped
+ * error when a clock fired — so the session's catch can tell a blown budget
+ * from a cancel rather than seeing a bare "aborted".
+ */
+function whenSessionAborted(signal: AbortSignal): Promise<never> {
+  return new Promise<never>((_resolve, reject) => {
+    const fail = () =>
+      reject(
+        signal.reason instanceof Error ? signal.reason : new Error("aborted"),
+      );
+    if (signal.aborted) fail();
+    else signal.addEventListener("abort", fail, { once: true });
+  });
+}
+
 async function settleWithin<T>(
   promise: Promise<T>,
   timeoutMs: number,
@@ -639,7 +657,24 @@ export async function runSyntheticHostSession(
   let messageHistory: ModelMessage[] = [];
 
   try {
-    const built = await managerFactory();
+    // Raced against the session clock, because the factory takes no signal:
+    // it awaits plugin re-gating, a bearer mint and `createAuthorizedManager`,
+    // and none of them observes `sessionSignal`. Without the race a factory
+    // that hangs parks execution here forever — the deadline fires, aborts the
+    // signal, and nothing is left running to notice, so the session never
+    // reaches the terminal timeout path the clock exists to provide.
+    const built = await Promise.race([
+      // A factory that settles LATE still owns a live manager and a browser
+      // context. Nothing downstream will dispose it, because the session has
+      // already unwound — so the loser of the race tears down its own work.
+      managerFactory().then((value) => {
+        if (sessionSignal.aborted) {
+          void Promise.resolve(value.dispose()).catch(() => undefined);
+        }
+        return value;
+      }),
+      whenSessionAborted(sessionSignal),
+    ]);
     manager = built.manager;
     dispose = built.dispose;
     selectedServerIds = built.connectedServerIds;

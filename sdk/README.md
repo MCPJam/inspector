@@ -17,7 +17,7 @@ Compatible with your favorite testing framework like [Jest](https://jestjs.io/) 
 Test the individual parts, request response flow of your MCP server. MCP unit tests are deterministic.
 
 ```ts
-import { MCPClientManager } from "@mcpjam/sdk";
+import { MCPClientManager, assertCallToolResult } from "@mcpjam/sdk";
 
 describe("Everything MCP example", () => {
   let manager: MCPClientManager;
@@ -40,11 +40,14 @@ describe("Everything MCP example", () => {
   });
 
   test("get-sum tool returns correct result", async () => {
-    const result = await manager.executeTool("everything", "get-sum", {
-      a: 2,
-      b: 3,
-    });
-    expect(result.content[0].text).toBe("5");
+    // `executeTool` can also resolve to a task envelope, and a content block
+    // can be an image or a resource, so narrow both before reading the text.
+    const result = assertCallToolResult(
+      await manager.executeTool("everything", "get-sum", { a: 2, b: 3 }),
+    );
+    const [block] = result.content;
+    if (block.type !== "text") throw new Error("Expected a text block");
+    expect(block.text).toBe("The sum of 2 and 3 is 5.");
   });
 });
 ```
@@ -173,7 +176,9 @@ const host = new Host({
 }).requireServer("everything");
 
 // Bind the spec to a live MCP manager. `apiKey` lives on the runtime, not per-call.
-const runtime = host.withManager(manager, { apiKey: process.env.OPENAI_API_KEY! });
+const runtime = host.withManager(manager, {
+  apiKey: process.env.OPENAI_API_KEY!,
+});
 
 const evalTest = new EvalTest({
   id: "c_add",
@@ -461,6 +466,21 @@ const r5 = await runner.run("Search tasks", {
 r5.getToolArguments("search_tasks"); // captured even if the prompt stops early
 ```
 
+No provider key? Prefix the model with `mcpjam/` and MCPJam runs it on your
+organization's credits, with an MCPJam API key as the only secret:
+
+```ts
+const runner = new HostRunner({
+  tools: await manager.getToolsForAiSdk(),
+  model: "mcpjam/anthropic/claude-sonnet-4.5",
+  apiKey: process.env.MCPJAM_API_KEY!, // or omit it and set MCPJAM_API_KEY
+});
+```
+
+Hosted models are `mcpjam/anthropic/claude-*` and `mcpjam/openai/gpt-5*`. An
+`EvalSuite` releases its leases when it finishes; if you build runs by hand,
+call `releaseMcpjamModelLeases()` when you are done.
+
 `stopWhen` does not skip tool execution. It controls whether the prompt loop continues after the current step completes, and `HostRunner` also applies `stepCountIs(maxSteps)` as a safety guard.
 
 `timeout` bounds prompt runtime. `number` and `totalMs` cap the full prompt, `stepMs` caps each step, and `chunkMs` is accepted for parity but mainly matters in streaming flows. The runtime creates an internal abort signal, so tools can stop early if their implementation respects the provided `abortSignal`.
@@ -654,3 +674,26 @@ export DO_NOT_TRACK=1
 # or
 export MCPJAM_TELEMETRY_DISABLED=1
 ```
+
+### Goal-completion grading
+
+`judge({ mode: "goalCompletion", ... })` uses the same versioned policy as hosted
+MCPJam evals. It receives the recorded trace, tool definitions (including uncalled
+tools), runtime context and captured media. Supply provider-verified `modelLimits`
+and an `evidence` resolver if your runner stores evidence outside the trace.
+Missing captured evidence, unsupported media and context overflow produce an
+unscored error. The judge never shortens evidence to make it fit.
+
+Use `rubric.instructions` for optional grading instructions. They supplement the
+case objective and expected outcome; structured `rubric.criteria` remain supported.
+Instructions alone do not raise objective-only scores above 0.85. Hosted suites
+inherit automatic advisory grading, while explicit manual/off settings survive.
+
+For recorded runs, `client.requestEvalRunJudge({ projectId, runId, scope: "failed" })`
+retries only failed or ungraded iterations without rerunning the agent. Use
+`client.backtestEvalRunJudge({ projectId, runId, rubric })` to preview a draft on one
+iteration without changing the recorded verdict. Continue with the same rubric and
+`continuation: { cursor, sourceHash, reservationId }` from the preceding response.
+Completed page retries reuse their saved result. New pages use model budget.
+The matching CLI is `mcpjam cloud eval judge-backtest --run <id> --json <request>`;
+the MCP operation is `backtest_eval_run_judge`.

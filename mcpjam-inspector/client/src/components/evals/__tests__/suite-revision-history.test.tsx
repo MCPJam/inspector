@@ -73,7 +73,7 @@ function renderHistory(
 describe("SuiteRevisionHistory", () => {
   it("labels a storage key the way the settings page names it", () => {
     renderHistory([row()]);
-    expect(screen.getByText("Checks by stage")).toBeTruthy();
+    expect(screen.getByText("Evaluators")).toBeTruthy();
     // The storage spelling never reaches a reader.
     expect(screen.queryByText("defaultPredicates")).toBeNull();
   });

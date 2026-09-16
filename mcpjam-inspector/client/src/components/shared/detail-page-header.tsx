@@ -2,7 +2,7 @@
  * Shared chrome for detail pages (Swarm run, User Testing scenario, …).
  *
  * Layout:
- *   Row: [back] | [title]  [tabs]                 [actions]
+ *   Row: [back] | [title]  [tabs]          [meta] [actions]
  *   Optional body (children)
  *
  * Surfaces keep different title/body content; spacing, back-link style, and
@@ -16,14 +16,12 @@ import {
 } from "@/components/shared/view-mode-selector";
 import { cn } from "@/lib/utils";
 
-// `lg:shrink-0` is load-bearing: the tab buttons are individually shrink-0, so
-// a shrinkable strip can only clip them — "Sessions" rendered as "Sess" next to
-// a long run name. It starts at lg, not md: with the sidebar expanded these
-// headers need ~590px of min-content, which a 768px viewport cannot give, and
-// a non-shrinkable strip there would overflow the ancestor's `overflow-hidden`
-// and clip Share instead. Below lg the strip shrinks and scrolls, as before.
+// The strip always yields to the trailing meta + actions. Tab buttons stay
+// shrink-0, so a tight row scrolls ("Sessions" stays "Sessions") instead of
+// painting over Complete. `lg:shrink-0` used to win at desktop viewports even
+// when the sidebar had already eaten the width the strip needed.
 const TAB_CLASSNAME =
-  "w-auto min-w-0 shrink lg:shrink-0 justify-start overflow-x-auto [&_button]:min-h-8 [&_button]:px-2.5 [&_button]:py-1 [&_button]:text-sm sm:[&_button]:min-h-8 sm:[&_button]:px-3 sm:[&_button]:text-sm md:[&_button]:min-h-8 lg:[&_button]:px-3.5";
+  "w-auto min-w-0 shrink justify-start overflow-x-auto [&_button]:min-h-8 [&_button]:px-2.5 [&_button]:py-1 [&_button]:text-sm sm:[&_button]:min-h-8 sm:[&_button]:px-3 sm:[&_button]:text-sm md:[&_button]:min-h-8 lg:[&_button]:px-3.5";
 
 /**
  * The way back out of a detail page.
@@ -102,6 +100,7 @@ export function DetailPageHeader<T extends string>({
   onBack,
   backTestId,
   title,
+  meta,
   actions,
   tabs,
   children,
@@ -112,6 +111,8 @@ export function DetailPageHeader<T extends string>({
   onBack: () => void;
   backTestId?: string;
   title: ReactNode;
+  /** Outcome / count in the gap before the actions, not against the tabs. */
+  meta?: ReactNode;
   actions?: ReactNode;
   /** Omit on sibling routes (e.g. User Testing Edit) that share this chrome. */
   tabs?: {
@@ -133,8 +134,8 @@ export function DetailPageHeader<T extends string>({
       )}
       data-testid={testId}
     >
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex min-w-0 items-center gap-3">
+      <div className="flex items-center justify-between gap-6">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
           <DetailBackLink
             label={backLabel}
             onBack={onBack}
@@ -147,7 +148,7 @@ export function DetailPageHeader<T extends string>({
           {/* Bounds how far a long name can push the tabs right; past the cap
               the surface's own title ellipsizes. Names under it still size the
               slot to content, so the tab row is not pinned to one spot. */}
-          <div className="min-w-0 md:max-w-[52ch]">{title}</div>
+          <div className="min-w-[10rem] max-w-[52ch] shrink">{title}</div>
           {tabs ? (
             <>
               <div
@@ -165,8 +166,21 @@ export function DetailPageHeader<T extends string>({
             </>
           ) : null}
         </div>
-        {actions ? (
-          <div className="flex shrink-0 items-center gap-2">{actions}</div>
+        {meta || actions ? (
+          <div className="flex shrink-0 items-center gap-3">
+            {meta ? (
+              <div className="flex items-center">{meta}</div>
+            ) : null}
+            {meta && actions ? (
+              <div
+                className="hidden h-4 w-px shrink-0 bg-border/60 sm:block"
+                aria-hidden="true"
+              />
+            ) : null}
+            {actions ? (
+              <div className="flex shrink-0 items-center gap-2">{actions}</div>
+            ) : null}
+          </div>
         ) : null}
       </div>
 
