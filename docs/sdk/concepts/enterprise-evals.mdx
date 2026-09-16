@@ -80,6 +80,8 @@ Use `@mcpjam/vitest` for native test registration, visible skips, executor clean
 
 Deterministic previews return a `continuation` object when their bounded page budget is reached. Pass it unchanged with the same draft to `backtestEvalRun`, or use **Load more evidence** in settings. New assertion previews have a one-minute cooldown independent of judge previews; pagination reuses the reservation. Stored SDK and hosted evaluator identities remain distinct, so changing a hosted content-derived assertion appears as an added and removed observation rather than a guessed outcome flip.
 
+`client.requestEvalRunJudge({ projectId, runId, scope: "failed" })` retries only failed or ungraded iterations without rerunning the agent. Omit `scope` to use the suite's default behavior; `scope: "all"` regrades every iteration. `client.backtestEvalRunJudge({ projectId, runId, rubric })` previews a draft rubric — including `rubric.instructions` — against one iteration without changing the recorded verdict. Continue with the same rubric and `continuation: { cursor, sourceHash, reservationId }` from the preceding response; completed page retries reuse their saved result. The matching CLI is `mcpjam cloud eval judge --run <id> --scope failed`; the MCP operation is `backtest_eval_run_judge`.
+
 
 ## Rollout order
 
