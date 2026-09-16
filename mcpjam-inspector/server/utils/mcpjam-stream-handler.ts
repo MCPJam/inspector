@@ -569,6 +569,13 @@ export interface MCPJamEngineErrorEvent {
  *   "callers that know the failure happened on an internal boundary escalate
  *   it themselves" case the catalog documents.
  */
+/**
+ * Backend refusal code for the free-allowance model gate (convex
+ * `stream/routes.ts`, `lib/llmCallShell.ts`, harness lease starts): the free
+ * daily bucket cannot buy frontier-priced models. Arrives as HTTP 403.
+ */
+const FREE_TIER_MODEL_RESTRICTED_CODE = "free_tier_model_restricted";
+
 export function describeBackendStreamFailure(
   status: number | undefined,
   rawText: string,
@@ -584,6 +591,15 @@ export function describeBackendStreamFailure(
   // rejected the key" IS what happened — it was just our key).
   if (isMcpjamOwnedFailureCode(code)) {
     return { ...backendFailureSlug(status, detail), origin: "mcpjam" };
+  }
+
+  // A 403 carrying the free-allowance code is an account-state refusal, not a
+  // credential wall: read by status alone it would become `provider/auth_error`
+  // ("the provider rejected the key"), which is not what happened. The
+  // allowance slug's copy ("top up or upgrade") is the actual fix, and its
+  // catalog origin is `user_config`, so nothing here pages.
+  if (code === FREE_TIER_MODEL_RESTRICTED_CODE) {
+    return describeAsSlug("provider/mcpjam_limit", detail);
   }
 
   if (status !== undefined && status >= 500) {
@@ -1774,6 +1790,9 @@ export const USER_OWNED_DENIAL_CODES: ReadonlySet<string> = new Set<string>([
   "billing_feature_not_included",
   // convex org spend budget (admin-set cap) — a refusal, not a fault
   "spend_budget_reached",
+  // convex free-allowance model gate — the caller's plan, not our fault; see
+  // `describeBackendStreamFailure` for the slug it maps to.
+  FREE_TIER_MODEL_RESTRICTED_CODE,
 ]);
 
 /** Exported for the capture-policy tests; see {@link USER_OWNED_DENIAL_CODES}. */
