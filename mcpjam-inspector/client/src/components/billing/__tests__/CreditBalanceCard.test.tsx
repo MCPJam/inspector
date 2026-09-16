@@ -112,6 +112,31 @@ describe("CreditBalanceCard", () => {
     window.location.hash = "";
   });
 
+  it.each([5000, 50000])("drains the V2 %i-credit tank without legacy allowances", (total) => {
+    balanceState = { ...balanceState!, billingModel: "monthly_flat", monthlyAllowanceTotal: total, monthlyAllowanceRemaining: total * 0.6 };
+    evalQuotaState = { used: 10, allowed: 500, resetsAt: 0, windowKind: "month" };
+    const { rerender } = render(<CreditBalanceCard pricingVersion="v2" />);
+    expect(screen.queryByText(/eval iterations/i)).not.toBeInTheDocument();
+    expect(screen.queryByTestId("usage-daily")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("progressbar")).toHaveLength(1);
+    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "60");
+    expect(screen.getByTestId("usage-monthly")).toHaveTextContent(`${(total * 0.6).toLocaleString()} / ${total.toLocaleString()} remaining`);
+    expect(screen.getByTestId("usage-paid")).toHaveTextContent("Top-up credits");
+    expect(screen.getByTestId("usage-paid")).toHaveTextContent("Never expire");
+    balanceState = { ...balanceState!, monthlyAllowanceRemaining: 0, paidCreditsRemaining: 1200 };
+    rerender(<CreditBalanceCard pricingVersion="v2" />);
+    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "0");
+    expect(screen.getByTestId("usage-paid")).toHaveTextContent("1,200 credits");
+  });
+
+  it("does not flash legacy allowances while V2 balances load", () => {
+    balanceState = undefined;
+    isLoadingState = true;
+    evalQuotaLoadingState = true;
+    render(<CreditBalanceCard pricingVersion="v2" />);
+    expect(screen.queryByText(/free daily|eval iterations/i)).not.toBeInTheDocument();
+  });
+
   it("shows debt and carried credits separately from available credits", () => {
     balanceState = {
       ...balanceState!,
