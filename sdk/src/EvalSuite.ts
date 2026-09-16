@@ -278,7 +278,11 @@ export class EvalSuite {
       iterations?: number;
     } = {}
   ): Promise<EvalSuiteResult> {
-    const selection = { ...client };
+    const selection = {
+      ...client,
+      baseUrl:
+        client.baseUrl ?? options.mcpjam?.baseUrl ?? this.mcpjamConfig?.baseUrl,
+    };
     return this.runPrepared(async (signal) => {
       const resolved = await createSavedClientRunner(selection, signal);
       return {
@@ -306,9 +310,7 @@ export class EvalSuite {
   private async runPrepared(
     source:
       | HostExecutor
-      | ((
-          signal: AbortSignal
-        ) => Promise<{
+      | ((signal: AbortSignal) => Promise<{
           executor: HostExecutor;
           reporting: MCPJamReportingConfig;
         }>),
@@ -329,6 +331,7 @@ export class EvalSuite {
       throw new TypeError(
         "runTimeoutMs must be a positive timer-sized integer"
       );
+    this.validateRunOptions(options);
     this.running = true;
     const leaseScope = new McpjamModelLeaseScope();
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -376,13 +379,9 @@ export class EvalSuite {
     }
   }
 
-  private async runInternal(
-    executor: HostExecutor,
-    options: Omit<EvalTestRunOptions, "iterations"> & {
-      iterations?: number;
-    } = {}
-  ): Promise<EvalSuiteResult> {
-    this.lastReportingReceipt = notRequestedReceipt("disabled");
+  private validateRunOptions(
+    options: Omit<EvalTestRunOptions, "iterations"> & { iterations?: number }
+  ): void {
     const iterations = options.iterations ?? this.defaults.iterations;
     if (!Number.isSafeInteger(iterations) || iterations! < 1)
       throw new TypeError(
@@ -419,6 +418,16 @@ export class EvalSuite {
       throw new TypeError(
         "Choose evaluatorTimeoutMs or scorerTimeoutMs, not both"
       );
+  }
+
+  private async runInternal(
+    executor: HostExecutor,
+    options: Omit<EvalTestRunOptions, "iterations"> & {
+      iterations?: number;
+    } = {}
+  ): Promise<EvalSuiteResult> {
+    this.lastReportingReceipt = notRequestedReceipt("disabled");
+    const iterations = options.iterations ?? this.defaults.iterations;
     this.lastSelection = this.freezeSelection(iterations!);
     const plannedIterations = this.tests.size * iterations!;
     const suiteReportingConfig = await prepareReportingConfig(

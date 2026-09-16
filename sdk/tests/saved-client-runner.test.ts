@@ -55,7 +55,10 @@ describe("latest saved client SDK runs", () => {
       .spyOn(PlatformApiClient.prototype, "getClient")
       .mockImplementation(async () => structuredClone(saved));
     const snapshots: unknown[] = [];
-    const suite = new EvalSuite({ mcpjam: { enabled: false } });
+    const suite = new EvalSuite({
+      defaults: { iterations: 1 },
+      mcpjam: { enabled: false },
+    });
     suite.add(
       new EvalTest({
         id: "client_case",
@@ -124,15 +127,85 @@ describe("latest saved client SDK runs", () => {
     );
   });
 
+  it("ignores the project local-browser availability preference", async () => {
+    vi.spyOn(PlatformApiClient.prototype, "getClient").mockResolvedValue({
+      ...detail(),
+      config: { ...detail().config, localBrowserEnabled: true },
+    });
+    const { executor } = await createSavedClientRunner(
+      input(),
+      new AbortController().signal
+    );
+    expect(executor.getHostSnapshot()?.localBrowserEnabled).not.toBe(true);
+  });
+
+  it.each([
+    { iterations: 0 },
+    { concurrency: 0 },
+    { timeoutMs: -1 },
+    { retries: -1 },
+  ])("rejects invalid options before fetching: %j", async (options) => {
+    const fetch = vi.spyOn(PlatformApiClient.prototype, "getClient");
+    const selected = input();
+    await expect(
+      new EvalSuite({ defaults: { iterations: 1 } }).runWithClient(
+        selected,
+        options
+      )
+    ).rejects.toThrow();
+    expect(fetch).not.toHaveBeenCalled();
+    expect(selected.manager.getToolsForAiSdk).not.toHaveBeenCalled();
+  });
+
+  it.each(["suite", "options", "selection"])(
+    "uses the %s origin for setup and reporting",
+    async (level) => {
+      const fetch = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValue(
+          new Response(JSON.stringify(detail()), { status: 200 })
+        );
+      const report = vi
+        .spyOn(receipts, "captureEvalReporting")
+        .mockResolvedValue({
+          receipt: receipts.notRequestedReceipt("disabled"),
+        });
+      const suite = new EvalSuite({
+        defaults: { iterations: 1 },
+        mcpjam: { baseUrl: "https://suite.example" },
+      });
+      suite.add(
+        new EvalTest({ id: "case", name: "case", test: async () => true })
+      );
+      await suite.runWithClient(
+        {
+          ...input(),
+          ...(level === "selection"
+            ? { baseUrl: "https://selection.example" }
+            : {}),
+        },
+        level === "suite"
+          ? {}
+          : { mcpjam: { baseUrl: "https://options.example" } }
+      );
+      expect(String(fetch.mock.calls[0][0])).toContain(
+        `https://${level}.example/api/v1/`
+      );
+      expect(report).toHaveBeenCalledWith(
+        expect.objectContaining({ baseUrl: `https://${level}.example` })
+      );
+    }
+  );
+
   it("rejects a backend without saved version support", async () => {
     vi.spyOn(PlatformApiClient.prototype, "getClient").mockResolvedValue({
       ...detail(),
       versionId: undefined,
       versionNumber: undefined,
     });
-    await expect(new EvalSuite().runWithClient(input())).rejects.toThrow(
-      "no recorded version"
-    );
+    await expect(
+      new EvalSuite({ defaults: { iterations: 1 } }).runWithClient(input())
+    ).rejects.toThrow("no recorded version");
   });
 
   it("passes the frozen client and selected project to suite reporting", async () => {
@@ -171,7 +244,10 @@ describe("latest saved client SDK runs", () => {
     vi.mocked(options.manager.getToolsForAiSdk).mockImplementation(
       () => new Promise(() => {})
     );
-    const suite = new EvalSuite({ mcpjam: { enabled: false } });
+    const suite = new EvalSuite({
+      defaults: { iterations: 1 },
+      mcpjam: { enabled: false },
+    });
     const pending = suite.runWithClient(options, { runTimeoutMs: 25 });
     const check = expect(pending).rejects.toThrow("Suite deadline exceeded");
     await vi.advanceTimersByTimeAsync(25);
@@ -180,7 +256,7 @@ describe("latest saved client SDK runs", () => {
 
   it.each([
     { computer: { id: "computer" } },
-    { localBrowserEnabled: true },
+    { browserProfileId: "browser-profile" },
     { harness: "claude-code" },
     { requireToolApproval: true },
     { progressiveToolDiscovery: true },
@@ -195,7 +271,10 @@ describe("latest saved client SDK runs", () => {
       config: { ...detail().config, ...patch },
     });
     const test = vi.fn(async () => true);
-    const suite = new EvalSuite({ mcpjam: { enabled: false } });
+    const suite = new EvalSuite({
+      defaults: { iterations: 1 },
+      mcpjam: { enabled: false },
+    });
     suite.add(new EvalTest({ id: "client_case", name: "client case", test }));
     await expect(suite.runWithClient(input())).rejects.toThrow(
       /unsupported|supports/
@@ -211,9 +290,9 @@ describe("latest saved client SDK runs", () => {
     vi.mocked(options.manager.getConnectionStatus).mockReturnValue(
       "disconnected"
     );
-    await expect(new EvalSuite().runWithClient(options)).rejects.toThrow(
-      'Connect MCP server "local-server"'
-    );
+    await expect(
+      new EvalSuite({ defaults: { iterations: 1 } }).runWithClient(options)
+    ).rejects.toThrow('Connect MCP server "local-server"');
   });
 
   it.each(["Client not found", "Access denied"])(
@@ -222,9 +301,9 @@ describe("latest saved client SDK runs", () => {
       vi.spyOn(PlatformApiClient.prototype, "getClient").mockRejectedValue(
         new Error(message)
       );
-      await expect(new EvalSuite().runWithClient(input())).rejects.toThrow(
-        message
-      );
+      await expect(
+        new EvalSuite({ defaults: { iterations: 1 } }).runWithClient(input())
+      ).rejects.toThrow(message);
     }
   );
 
@@ -233,7 +312,10 @@ describe("latest saved client SDK runs", () => {
     const fetch = vi
       .spyOn(PlatformApiClient.prototype, "getClient")
       .mockImplementation(() => new Promise(() => {}));
-    const suite = new EvalSuite({ mcpjam: { enabled: false } });
+    const suite = new EvalSuite({
+      defaults: { iterations: 1 },
+      mcpjam: { enabled: false },
+    });
     const pending = suite.runWithClient(input(), { runTimeoutMs: 25 });
     const check = expect(pending).rejects.toThrow("Suite deadline exceeded");
     await vi.advanceTimersByTimeAsync(25);
@@ -250,7 +332,7 @@ describe("latest saved client SDK runs", () => {
       () => new Promise(() => {})
     );
     const controller = new AbortController();
-    const suite = new EvalSuite();
+    const suite = new EvalSuite({ defaults: { iterations: 1 } });
     const pending = suite.runWithClient(input(), { signal: controller.signal });
     await expect(suite.runWithClient(input())).rejects.toThrow(
       "already running"
@@ -265,7 +347,9 @@ describe("latest saved client SDK runs", () => {
     const controller = new AbortController();
     controller.abort(new Error("cancelled"));
     await expect(
-      new EvalSuite().runWithClient(input(), { signal: controller.signal })
+      new EvalSuite({ defaults: { iterations: 1 } }).runWithClient(input(), {
+        signal: controller.signal,
+      })
     ).rejects.toThrow("cancelled");
     expect(fetch).not.toHaveBeenCalled();
   });

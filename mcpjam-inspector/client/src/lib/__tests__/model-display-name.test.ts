@@ -2,6 +2,15 @@ import { describe, expect, it } from "vitest";
 import { modelDisplayName } from "../model-display-name";
 
 describe("modelDisplayName", () => {
+  it("ignores synthetic SDK provider labels", () => {
+    expect(modelDisplayName("external/gpt-5")).toBe("GPT-5");
+    expect(modelDisplayName("external/n/a")).toBe("n/a");
+    expect(
+      modelDisplayName("external/custom/my-model", [
+        { id: "custom/my-model", name: "Custom" },
+      ]),
+    ).toBe("Custom");
+  });
   it.each([
     "claude-haiku-4-5-20251001",
     "anthropic/claude-haiku-4.5",

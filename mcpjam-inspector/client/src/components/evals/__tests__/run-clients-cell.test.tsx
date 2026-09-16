@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { within } from "@testing-library/react";
 import { renderWithProviders, screen, userEvent } from "@/test";
 import { RunClientsCell } from "../run-clients-cell";
@@ -11,6 +11,55 @@ const row = (client: string, models: string[]): SuiteRunHistoryRow =>
   }) as SuiteRunHistoryRow;
 
 describe("RunClientsCell", () => {
+  it("keeps client clicks and keys connected to the run row", async () => {
+    const onClick = vi.fn();
+    const onKeyDown = vi.fn();
+    const user = userEvent.setup();
+    renderWithProviders(
+      <div role="button" tabIndex={0} onClick={onClick} onKeyDown={onKeyDown}>
+        <RunClientsCell
+          column="client"
+          rows={[{ ...row("Client", []), clientVersionNumber: 2 }]}
+        />
+      </div>,
+    );
+    const trigger = screen.getByText("Client").parentElement!;
+    await user.click(trigger);
+    expect(onClick).toHaveBeenCalledTimes(1);
+    trigger.focus();
+    await user.keyboard("{Enter}");
+    expect(onKeyDown).toHaveBeenCalled();
+  });
+  it("does not add tab stops for unversioned visible names", () => {
+    const { container } = renderWithProviders(
+      <RunClientsCell column="client" rows={[row("Client", [])]} />,
+    );
+    expect(container.querySelector('[tabindex="0"]')).toBeNull();
+  });
+  it("keeps distinct ids as overflow keys even with matching names", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const user = userEvent.setup();
+      renderWithProviders(
+        <RunClientsCell
+          column="model"
+          rows={[
+            row("Client", [
+              "one",
+              "two",
+              "claude-haiku-4-5-20251001",
+              "anthropic/claude-haiku-4.5",
+            ]),
+          ]}
+        />,
+      );
+      await user.hover(screen.getByLabelText("2 more models"));
+      await screen.findByRole("tooltip");
+      expect(error).not.toHaveBeenCalled();
+    } finally {
+      error.mockRestore();
+    }
+  });
   it.each(["client", "model"] as const)(
     "shows a dash for the SDK placeholder %s",
     (column) => {

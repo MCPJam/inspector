@@ -66,7 +66,6 @@ export async function createSavedClientRunner(
   const config = structuredClone(client.config);
   if (
     config.computer ||
-    config.localBrowserEnabled ||
     config.browserProfileId ||
     (config.harness && config.harness !== "emulated") ||
     (Array.isArray(config.builtInToolIds) && config.builtInToolIds.length) ||
@@ -103,6 +102,8 @@ export async function createSavedClientRunner(
     canonicalizeHostConfigV2({
       ...config,
       modelId: `mcpjam/${model}`,
+      // Local browser availability is a UI preference, not a runtime requirement.
+      localBrowserEnabled: false,
       serverIds,
       optionalServerIds: [],
       connectionDefaults: { headers: {}, requestTimeout: 10000 },

@@ -11,7 +11,10 @@ export function modelDisplayName(
   models: readonly (Pick<ModelDefinition, "id" | "name"> &
     Partial<Pick<ModelDefinition, "provider">>)[] = [],
 ): string {
-  const value = id.trim().replace(/^mcpjam\//, "");
+  const value = id
+    .trim()
+    .replace(/^external\//, "")
+    .replace(/^mcpjam\//, "");
   const candidates = [...models, ...SUPPORTED_MODELS];
   const exact = candidates.find((model) => String(model.id) === value);
   if (exact) return exact.name;
@@ -30,5 +33,5 @@ export function modelDisplayName(
         String(model.id).startsWith(`${provider}/`)) &&
       key(String(model.id)) === key(value),
   );
-  return known?.name ?? id;
+  return known?.name ?? (id.startsWith("external/") ? id.slice(9) : id);
 }

@@ -210,9 +210,7 @@ export function RunClientsCell({
               >
                 <TooltipTrigger asChild>
                   <span
-                    tabIndex={0}
-                    onClick={(event) => event.stopPropagation()}
-                    onKeyDown={(event) => event.stopPropagation()}
+                    tabIndex={mapping.clientVersionNumber ? 0 : undefined}
                     className="inline-flex min-w-0 items-center gap-1.5"
                   >
                     {mapping.client !== "-" &&
@@ -264,12 +262,11 @@ export function RunClientsCell({
               className="max-w-xs text-left"
             >
               <ul className="space-y-1">
-                {(column === "model"
-                  ? hiddenModels.map(modelName)
-                  : allLabels
-                ).map((label) => (
-                  <li key={label}>{label}</li>
-                ))}
+                {column === "model"
+                  ? hiddenModels.map((id) => <li key={id}>{modelName(id)}</li>)
+                  : allLabels.map((label, index) => (
+                      <li key={index}>{label}</li>
+                    ))}
               </ul>
             </TooltipContent>
           </Tooltip>
