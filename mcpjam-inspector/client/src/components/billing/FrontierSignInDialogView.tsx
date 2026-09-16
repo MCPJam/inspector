@@ -36,21 +36,28 @@ export function FrontierSignInDialogView({
         <div
           className="isolate flex items-center py-1"
           role="img"
-          aria-label="ChatGPT, Claude, Gemini, and DeepSeek"
+          aria-label="ChatGPT, Claude, Gemini, Grok, DeepSeek, Meta, Mistral, Qwen, Kimi, MiniMax, and Z.ai"
         >
           {[
             { name: "ChatGPT", src: "/openai_logo.png" },
             { name: "Claude", src: "/claude_logo.png" },
             { name: "Gemini", src: "/google_logo.png" },
+            { name: "Grok", src: "/grok_light.svg" },
             { name: "DeepSeek", src: "/deepseek_logo.svg" },
+            { name: "Meta", src: "/meta_logo.svg" },
+            { name: "Mistral", src: "/mistral_logo.png" },
+            { name: "Qwen", src: "/qwen_logo.png" },
+            { name: "Kimi", src: "/moonshot_light.png" },
+            { name: "MiniMax", src: "/minimax_logo.svg" },
+            { name: "Z.ai", src: "/z-ai.png" },
           ].map(({ name, src }, index) => (
             <span
               key={name}
               title={name}
-              className="relative -ml-6 flex size-12 shrink-0 items-center justify-center rounded-full border border-border bg-background ring-2 ring-background first:ml-0 motion-safe:transition-transform motion-safe:duration-150 motion-safe:hover:-translate-y-1"
-              style={{ zIndex: 4 - index }}
+              className="relative -ml-5 flex size-10 shrink-0 items-center justify-center rounded-full border border-border bg-background ring-2 ring-background first:ml-0 motion-safe:transition-transform motion-safe:duration-150 motion-safe:hover:-translate-y-1"
+              style={{ zIndex: 11 - index }}
             >
-              <img src={src} alt="" className="size-6 object-contain" />
+              <img src={src} alt="" className="size-5 object-contain" />
             </span>
           ))}
         </div>
