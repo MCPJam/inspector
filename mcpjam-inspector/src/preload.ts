@@ -4,7 +4,10 @@ import { contextBridge, ipcRenderer } from "electron";
 type UpdateStatus =
   | { kind: "idle" }
   | { kind: "pending"; version?: string; installRequested: boolean }
-  | { kind: "downloaded"; version: string; releaseNotes?: string };
+  | { kind: "downloaded"; version: string; releaseNotes?: string }
+  // Auto-update announced a version and then could not install it; the UI
+  // sends the user to the releases page instead of a dead Update button.
+  | { kind: "manual"; version?: string };
 
 // Define the API interface
 interface ElectronAPI {

@@ -85,25 +85,46 @@ function resolveNormalized(input: unknown): NormalizedError {
 }
 
 /**
- * Severity is carried by ONE accent — the icon and a hairline left rule —
- * over a neutral surface, never by a filled colour panel.
+ * The app's severity palette, and the thing the design system's ErrorCard
+ * node documents by name (Figma `Design System — MCPJam App`, node 119-2).
  *
- * The filled version this replaces put a saturated red box inside a server
- * card that already showed a red status dot, a red "Failed" label and a red
- * badge, so a single recoverable state lit up four separate alarms and the
- * surface read as broken rather than informative. Colour here answers "how
- * bad", and it only has to answer it once.
+ * Exported because that node is what product points at when it asks for "the
+ * blue informational treatment" — `SwarmProductionNotice` reads `info` from
+ * here rather than restating the class strings, so the palette has one home
+ * and a change to it cannot leave a sibling surface behind. Consumers outside
+ * this card want the STYLES only; the card's own error-reporting affordances
+ * (details, copy, docs, `role="alert"`) are not part of the contract.
+ *
+ * Two treatments of one palette, because the two surfaces are doing different
+ * jobs:
+ *
+ * - `container` is the FILLED panel. It suits a standing notice that is the
+ *   only coloured thing on an otherwise healthy screen, which is exactly
+ *   `SwarmProductionNotice`'s case.
+ * - `accent` is a hairline left rule meant to sit on a NEUTRAL surface, and
+ *   it is what this card wears. Filling the card put a saturated red box
+ *   inside a server card that already showed a red status dot, a red "Failed"
+ *   label and a red badge, so one recoverable state lit up four separate
+ *   alarms and the surface read as broken rather than informative.
+ *
+ * Both are kept deliberately. Colour should answer "how bad" once per screen,
+ * and which treatment does that depends on what else is already coloured
+ * around it — that is the caller's knowledge, not the palette's.
  */
-function severityStyles(severity: NormalizedError["severity"]) {
+export function severityStyles(severity: NormalizedError["severity"]) {
   switch (severity) {
     case "info":
       return {
+        container:
+          "border-blue-300/40 bg-blue-500/10 text-blue-700 dark:text-blue-300",
         accent: "border-l-blue-500/60",
         icon: Info,
         iconClass: "text-blue-600 dark:text-blue-400",
       };
     case "warning":
       return {
+        container:
+          "border-amber-300/40 bg-amber-500/10 text-amber-700 dark:text-amber-300",
         accent: "border-l-amber-500/60",
         icon: AlertTriangle,
         iconClass: "text-amber-600 dark:text-amber-400",
@@ -111,6 +132,7 @@ function severityStyles(severity: NormalizedError["severity"]) {
     case "error":
     default:
       return {
+        container: "border-destructive/20 bg-destructive/10 text-destructive",
         accent: "border-l-destructive/60",
         icon: CircleAlert,
         iconClass: "text-destructive",
