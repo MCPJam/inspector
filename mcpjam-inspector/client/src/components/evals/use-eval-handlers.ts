@@ -23,6 +23,10 @@ import {
   getEnvironmentConflictMessage,
   getSelectedSuiteHostRunPlan,
 } from "./helpers";
+import {
+  cancelEvalRun,
+  isCancelEvalRunError,
+} from "@/lib/apis/eval-cancel-api";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 import { useEnvironmentLabelContext } from "@/components/project-environments/use-environment-label-context";
 import { disambiguateLabels, environmentLabel } from "@/lib/environment-label";
@@ -259,6 +263,23 @@ interface UseEvalHandlersProps {
 /**
  * Hook for all eval event handlers (rerun, delete, duplicate, etc.)
  */
+/**
+ * Did this cancel fail because the run had ALREADY stopped?
+ *
+ * The launch fans out into one run per client-model pairing, and a sibling can
+ * settle between render and click. Both paths say so in their own words: the
+ * platform route as `notCancellable`, the Convex mutation as a bare
+ * `Cannot cancel run with status: …`. Neither leaves anything running, so
+ * neither belongs in a count of runs the user still has to worry about.
+ */
+function isAlreadySettled(reason: unknown): boolean {
+  if (isCancelEvalRunError(reason)) return reason.kind === "notCancellable";
+  return (
+    reason instanceof Error &&
+    /Cannot cancel (a )?run/i.test(reason.message)
+  );
+}
+
 export function useEvalHandlers({
   mutations,
   selectedSuiteEntry,
@@ -1541,23 +1562,82 @@ export function useEvalHandlers({
   );
 
   // Cancel handler
+  //
+  // Takes one run id or several. A single launch fans out into one run per
+  // client-model pairing, and the Convex mutation is per-run, so the surfaces
+  // that show a whole launch (the run page, the suite page, a runs-table row)
+  // hand us every in-progress id at once. `Promise.allSettled` rather than
+  // `Promise.all`: a sibling that settled between render and click throws
+  // `Cannot cancel run with status: …`, and that must not hide the cancels
+  // that did land.
+  /**
+   * Stop ONE run, preferring the platform route over the raw Convex mutation.
+   *
+   * The route checks the run belongs to this project and is idempotent on a run
+   * already cancelled, neither of which the mutation can do. Two cases still
+   * belong to the mutation: a direct guest, who the v1 guest allowlist refuses
+   * at the boundary — calling the route would turn a "sign in to use this"
+   * message into a bare 401 — and a surface with no project id. A deployment
+   * that predates the route falls back the same way, so an older build keeps
+   * cancelling instead of reporting a failure the user cannot act on.
+   */
+  const cancelOneRun = useCallback(
+    async (id: string) => {
+      const viaMutation = () => mutations.cancelRunMutation({ runId: id });
+      if (isDirectGuest || !projectId) return await viaMutation();
+      try {
+        return await cancelEvalRun({ projectId, runId: id });
+      } catch (error) {
+        if (isCancelEvalRunError(error) && error.kind === "routeUnavailable") {
+          return await viaMutation();
+        }
+        throw error;
+      }
+    },
+    [isDirectGuest, projectId, mutations.cancelRunMutation],
+  );
+
   const handleCancelRun = useCallback(
-    async (runId: string) => {
+    async (runId: string | readonly string[]) => {
       if (cancellingRunId) return;
 
-      setCancellingRunId(runId);
+      const runIds = typeof runId === "string" ? [runId] : [...runId];
+      if (runIds.length === 0) return;
+
+      setCancellingRunId(runIds[0]);
 
       try {
-        await mutations.cancelRunMutation({ runId });
-        toast.success("Run cancelled successfully");
-      } catch (error) {
-        console.error("Failed to cancel run:", error);
-        toast.error(getBillingErrorMessage(error, "Failed to cancel run"));
+        const outcomes = await Promise.allSettled(
+          runIds.map((id) => cancelOneRun(id)),
+        );
+        // A pairing that settled between render and click is NOT a failure —
+        // nothing was left running, which is the state the click asked for.
+        // Every other rejection is a run still burning spend, and saying
+        // "cancelled successfully" over it is the one report the user cannot
+        // recover from: they walk away believing it stopped.
+        const stillRunning = outcomes.flatMap((outcome) =>
+          outcome.status === "rejected" && !isAlreadySettled(outcome.reason)
+            ? [outcome.reason]
+            : [],
+        );
+        if (stillRunning.length === 0) {
+          toast.success("Run cancelled successfully");
+        } else if (stillRunning.length < runIds.length) {
+          console.error("Failed to cancel some runs:", stillRunning);
+          toast.warning(
+            `Stopped ${runIds.length - stillRunning.length} of ${runIds.length} runs. ${stillRunning.length} could not be stopped.`,
+          );
+        } else {
+          console.error("Failed to cancel run:", stillRunning[0]);
+          toast.error(
+            getBillingErrorMessage(stillRunning[0], "Failed to cancel run"),
+          );
+        }
       } finally {
         setCancellingRunId(null);
       }
     },
-    [cancellingRunId, mutations.cancelRunMutation],
+    [cancellingRunId, cancelOneRun],
   );
 
   // Delete run handler - opens confirmation modal (for single run from detail view)
