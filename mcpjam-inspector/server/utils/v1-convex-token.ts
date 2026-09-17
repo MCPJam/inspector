@@ -262,10 +262,12 @@ export async function getConvexBearerForRequest(c: Context): Promise<string> {
  * re-mints (or returns the cached token, which `getConvexBearerForDelegation`
  * already refreshes near expiry).
  *
- * For a session/guest JWT caller there is nothing to re-mint — the token's
- * lifetime is the browser session's and we cannot extend it — so the thunk is
- * constant. That is not a gap this can close; a run whose launching tab closed
- * is what the backend's stale-run sweep is for.
+ * For a session/guest JWT caller the thunk captures one access token. It does
+ * NOT receive the browser's refreshed tokens, and the access token can expire
+ * while the browser remains signed in. A longer background run can therefore
+ * lose authorization for heartbeats and persistence. Fixing that requires a
+ * renewable, scoped execution credential; the stale-run sweep only reports
+ * the resulting loss of contact, not its cause.
  */
 export function getConvexBearerThunkForRequest(
   c: Context

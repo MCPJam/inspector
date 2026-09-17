@@ -714,6 +714,22 @@ describe("NewSwarmRunningStep — session stream pane", () => {
 });
 
 describe("NewSwarmRunningStep — frame copy", () => {
+  it("does not claim checks passed when only execution completed", () => {
+    expect(
+      swarmCellHeadline({
+        outcome: "succeeded",
+        primary: "done",
+        goal: "Export board",
+      }),
+    ).toBe("Run completed: Export board");
+    expect(
+      swarmCellHeadline({
+        outcome: "succeeded",
+        primary: "0/0 pass",
+        goal: "Export board",
+      }),
+    ).toBe("Run completed: Export board");
+  });
   it("titles the wave the way the running and finished frames do", () => {
     expect(
       swarmRunningTitle({

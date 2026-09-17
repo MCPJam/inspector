@@ -64,7 +64,10 @@ export function usePersistedSessionTrace(threadId: string | null): {
    */
   pluginVersions: SessionPluginVersion[];
 } {
-  const { thread } = useSharedChatThread({ threadId });
+  const { thread } = useSharedChatThread({
+    threadId,
+    includeRecordedContext: true,
+  });
   const { traces: turnTraces } = useSharedChatTurnTraces({ threadId });
   // MCP App widget snapshots captured by the swarm runner per turn. Joined
   // into the envelope (same as ShareUsageThreadDetail) so the Chat view
@@ -235,6 +238,9 @@ export function usePersistedSessionTrace(threadId: string | null): {
       ? null
       : {
           traceVersion: 1,
+          ...(thread?.recordedContext
+            ? { recordedContext: thread.recordedContext }
+            : {}),
           messages: messages as TraceEnvelope["messages"],
           ...(spans.length > 0 ? { spans } : {}),
           ...(wallClock.startedAtMs !== null

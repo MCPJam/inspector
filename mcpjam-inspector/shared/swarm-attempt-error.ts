@@ -154,6 +154,13 @@ export function humanizeSwarmAttemptError(
   raw: string | undefined | null,
   errorCode?: string | null
 ): SwarmAttemptErrorInfo {
+  if (errorCode === "stale_runner") {
+    return {
+      code: errorCode,
+      message:
+        "The runner stopped reporting progress, so this run was marked interrupted. Sessions may have run before the interruption; inspect their saved traces. The reason contact was lost was not recorded.",
+    };
+  }
   const sandboxMessage = errorCode
     ? SANDBOX_ERROR_CODE_MESSAGES[errorCode]
     : undefined;

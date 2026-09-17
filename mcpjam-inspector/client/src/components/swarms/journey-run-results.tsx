@@ -425,8 +425,18 @@ export function SwarmLiveStreamPane({
     if (!fallbackTrace) return persisted.trace;
     const finalized = persisted.trace;
     if (!finalized) return fallbackTrace;
+    // A late SSE subscriber can receive lifecycle events without messages.
+    // Prefer the fuller transcript instead of letting that empty envelope
+    // hide the saved conversation. Live wins ties while text is streaming.
+    const transcript =
+      (finalized.messages?.length ?? 0) > (fallbackTrace.messages?.length ?? 0)
+        ? finalized
+        : fallbackTrace;
     return {
-      ...fallbackTrace,
+      ...transcript,
+      ...(finalized.recordedContext
+        ? { recordedContext: finalized.recordedContext }
+        : {}),
       ...(finalized.widgetRenderObservations?.length
         ? { widgetRenderObservations: finalized.widgetRenderObservations }
         : {}),
@@ -518,6 +528,13 @@ export function SwarmLiveStreamPane({
         )
       : null;
   const showLoading = !displayTrace && (isStreaming || persisted.loading);
+  const failureInfo =
+    outcome === "failed" || outcome === "rate_limited"
+      ? humanizeSwarmAttemptError(
+          attempt?.errorMessage ?? live?.errorMessage,
+          attempt?.errorCode,
+        )
+      : null;
 
   return (
     <div
@@ -558,8 +575,10 @@ export function SwarmLiveStreamPane({
         <div data-testid="swarm-live-pane-rate-limit">
           <ErrorCard error={providerRateLimit} variant="inline" />
         </div>
-      ) : live?.errorMessage ? (
-        <p className="text-[11px] text-muted-foreground">{live.errorMessage}</p>
+      ) : failureInfo || live?.errorMessage ? (
+        <p className="text-[11px] text-destructive" data-testid="swarm-live-pane-failure">
+          {failureInfo?.message ?? live?.errorMessage}
+        </p>
       ) : null}
 
       {/* Setup notes for this session — e.g. a host built-in that was
@@ -689,7 +708,7 @@ export function SwarmLiveStreamPane({
             ) : (persisted.error ?? persisted.spanError) ? (
               (persisted.error ?? persisted.spanError)
             ) : !convexSession ? (
-              "No session transcript for this attempt."
+              "No saved transcript is available for this attempt. This does not establish whether the model ran; recording may have failed."
             ) : (
               "No transcript for this attempt."
             )}

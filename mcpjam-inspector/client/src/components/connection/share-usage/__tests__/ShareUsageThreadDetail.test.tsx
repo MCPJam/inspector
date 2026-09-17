@@ -47,7 +47,11 @@ const {
   // a session written before the pin existed.
   mockCopyToClipboard: vi.fn().mockResolvedValue(true),
   mockHostConfigState: {
-    config: null as { hostStyle?: string; currentHostName?: string | null; modelId?: string } | null,
+    config: null as {
+      hostStyle?: string;
+      currentHostName?: string | null;
+      modelId?: string;
+    } | null,
   },
 }));
 
@@ -77,6 +81,18 @@ vi.mock("@/hooks/useSharedChatThreads", () => ({
       runAttemptStatus: mockThreadState.runAttemptStatus,
       messagesBlobUrl: "https://storage.example.com/thread.json",
       modelId: "openai/gpt-oss-120b",
+      recordedContext: {
+        toolSnapshots: [
+          {
+            hash: "frozen-catalog",
+            snapshot: {
+              servers: [
+                { serverId: "recorded-server", tools: [{ name: "search" }] },
+              ],
+            },
+          },
+        ],
+      },
       visitorDisplayName: "Marcelo Jimenez",
       messageCount: 2,
       startedAt: Date.now() - 1000,
@@ -251,7 +267,12 @@ describe("ShareUsageThreadDetail", () => {
   it("links a direct session to its Playground conversation", async () => {
     mockThreadState.sourceType = "direct";
     render(<ShareUsageThreadDetail threadId="thread-1" />);
-    expect(await screen.findByRole("link", { name: "Open in Playground" })).toHaveAttribute("href", "/playground?conversation=wire-uuid&project=project-1");
+    expect(
+      await screen.findByRole("link", { name: "Open in Playground" }),
+    ).toHaveAttribute(
+      "href",
+      "/playground?conversation=wire-uuid&project=project-1",
+    );
   });
 
   it("renders formatted share traces with collapsed reasoning", async () => {
@@ -290,6 +311,24 @@ describe("ShareUsageThreadDetail", () => {
         expect.objectContaining({ rawFadeScrollEdges: true }),
       );
     });
+  });
+
+  it("passes the frozen tool catalog into the shared Raw trace viewer", async () => {
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Raw" }));
+    await waitFor(() =>
+      expect(mockTraceViewer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          trace: expect.objectContaining({
+            recordedContext: expect.objectContaining({
+              toolSnapshots: expect.arrayContaining([
+                expect.objectContaining({ hash: "frozen-catalog" }),
+              ]),
+            }),
+          }),
+        }),
+      ),
+    );
   });
 
   it("leaves Raw alone on a surface that did not ask for the fade", async () => {
