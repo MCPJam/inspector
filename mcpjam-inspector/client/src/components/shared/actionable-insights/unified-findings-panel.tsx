@@ -262,7 +262,7 @@ export function UnifiedFindingsPanel({
       {enrichment?.status === "stale" ? (
         <div className="mb-5">
           <StateNote tone="warning" testId="unified-findings-stale-enrichment">
-            The evidence changed. Analyze again to update the suggested fixes.
+            The evidence changed after this analysis ran.
           </StateNote>
         </div>
       ) : null}
