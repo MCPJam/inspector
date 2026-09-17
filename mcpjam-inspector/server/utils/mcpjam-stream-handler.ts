@@ -293,6 +293,10 @@ import {
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import { normalizeFinishReason } from "@/shared/eval-trace";
 import {
+  describeEmptyStepFailure,
+  hasSettledToolCallThisPrompt,
+} from "./empty-step-failure.js";
+import {
   mergeLiveChatTraceUsage,
   type LiveChatTraceUsage,
 } from "@/shared/live-chat-trace";
@@ -1304,6 +1308,14 @@ interface StreamResult {
    */
   toolInputErrors: string[];
   /**
+   * Name of every tool call this step STARTED but never finished: a
+   * `tool-input-start` with no `tool-input-available` or `tool-input-error`
+   * after it, which is what a stream cut off mid-call leaves behind. Like a
+   * rejected input it adds no `contentParts` entry, so without this an empty
+   * step would claim "no tool call" about a model that was writing one.
+   */
+  unfinishedToolNames: string[];
+  /**
    * Absolute Date.now() of the first emitted stream chunk, for
    * time-to-first-chunk (OTel gen_ai.response.time_to_first_chunk). Undefined
    * if the stream produced no chunks.
@@ -1455,62 +1467,6 @@ function getPromptAssistantStepBaseIndex(
   return assistantCount;
 }
 
-/**
- * Did THIS prompt already land a tool call that actually came back with a
- * result?
- *
- * Scoped to the current prompt by `promptMessageStartIndex` — a tool call from
- * an earlier turn says nothing about whether this one acted, and the whole
- * point of the caller's check is "this turn already did the work". Reading the
- * MESSAGES rather than `traceTurn.turnSpans` is what makes that hold on a
- * RESUMED turn: spans start empty in a fresh process, while the history is
- * seeded from the caller and carries the earlier steps. It is the same reason
- * {@link getPromptAssistantStepBaseIndex} recovers the step count from here.
- *
- * Reads the same id pairing as {@link hasUnresolvedToolCalls}, in the opposite
- * direction: that one asks whether any call is still outstanding, this one
- * whether any call is genuinely DONE. A call with no result is a turn still
- * mid-flight, which must not excuse an empty step.
- *
- * An `error-` output does NOT count. A tool that threw, or one auto-denied by
- * policy, is the model TRYING to act and being refused — the opposite of
- * having acted — so "every tool failed, then the model said nothing" stays a
- * failure. A domain error from a server that did reply travels the ordinary
- * `content` shape and counts as the completed round-trip it is.
- */
-function hasSettledToolCallThisPrompt(
-  messageHistory: ModelMessage[],
-  promptMessageStartIndex: number,
-): boolean {
-  const toolCallIds = new Set<string>();
-  for (
-    let index = Math.max(0, promptMessageStartIndex);
-    index < messageHistory.length;
-    index += 1
-  ) {
-    const message = messageHistory[index];
-    if (!message || !Array.isArray((message as any).content)) continue;
-    if (message.role === "assistant") {
-      for (const part of (message as any).content) {
-        if (part?.type === "tool-call" && part.toolCallId) {
-          toolCallIds.add(part.toolCallId);
-        }
-      }
-    } else if (message.role === "tool") {
-      for (const part of (message as any).content) {
-        if (part?.type !== "tool-result") continue;
-        if (!toolCallIds.has(part.toolCallId)) continue;
-        const outputType = part.output?.type;
-        if (typeof outputType === "string" && outputType.startsWith("error-")) {
-          continue;
-        }
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
 function readUsageFromFinishChunk(
   finishChunk: UIMessageChunk | null,
 ): LiveChatTraceUsage | undefined {
@@ -1563,85 +1519,6 @@ function readFinishReasonFromChunk(
   type FinishUIMessageChunk = Extract<UIMessageChunk, { type: "finish" }>;
   const source = finishChunk as Partial<FinishUIMessageChunk> | null;
   return normalizeFinishReason(source?.finishReason);
-}
-
-/**
- * The sentence every empty-step failure opens with, verbatim.
- *
- * This family is classified BY TEXT: `describe.ts`'s inspector-sentinel sniff
- * matches it to `provider/empty_response` ("The model returned no response, so
- * the turn could not complete"), and the eval runner's own fallback in
- * `drive-hosted-eval-turn.ts` emits the identical sentence when the engine
- * reported nothing structured. So detail is APPENDED to this prefix, never
- * substituted for it — a message that explains itself must stay classifiable.
- */
-export const EMPTY_STEP_SENTINEL =
-  "Backend step returned no content (stream error or empty response)";
-
-/**
- * Explain a step that produced zero content parts.
- *
- * A step that emits no text, no reasoning and no tool call has failed at the
- * model layer — but the engine used to record it as a SUCCESS: the terminal
- * branch stamped `status: "ok"`, wrote the finish chunk and returned, leaving
- * the eval runner to infer the failure from `newMessages.length === 0` and
- * report a sentence that named no cause. The finish chunk held the answer the
- * whole time.
- *
- * The provider finish reasons that arrive with empty content are different
- * failures with different remedies, so they are named separately:
- *
- *  - `error` — the provider rejected its OWN tool call. Google reports this as
- *    `MALFORMED_FUNCTION_CALL`, and `@ai-sdk/google` maps it to `"error"` with
- *    no parts and NO throw, so a clean 200 arrives carrying nothing. The
- *    flash/lite tiers hit it routinely on non-trivial tool schemas.
- *  - `content-filter` — a safety filter blocked the response.
- *  - `length` — the output-token ceiling was reached before any content.
- *  - `stop` / `tool-calls` — the provider claims a clean finish and still sent
- *    nothing, which is the shape a routed-provider hiccup takes. A `stop`
- *    only reaches here when the turn settled NO tool call: the caller treats a
- *    quiet `stop` after real tool work as a deliberate finish, not a failure,
- *    so the "retry" advice below stays true for everything that still arrives.
- *
- * `toolInputErrors` is the OTHER road here, and the only one with a direct
- * remedy: the model emitted a tool call, the SDK rejected its input against
- * the schema, and `tool-input-error` carries no content part. The backend's
- * `experimental_repairToolCall` fires before this point and forecloses most of
- * them; what reaches here is what repair could not fix.
- */
-export function describeEmptyStepFailure(options: {
-  finishReason?: string;
-  toolInputErrors?: readonly string[];
-}): string {
-  const firstToolInputError = options.toolInputErrors?.[0];
-  if (firstToolInputError) {
-    return `${EMPTY_STEP_SENTINEL} — the model's tool call was rejected before it could run and nothing else was emitted this step: ${firstToolInputError}`;
-  }
-  const finishReason = options.finishReason;
-  let cause: string;
-  switch (finishReason) {
-    case "error":
-      cause =
-        "The provider reported an error without returning a diagnostic. The underlying cause was not recorded.";
-      break;
-    case "content-filter":
-      cause = "The provider's safety filter blocked the response.";
-      break;
-    case "length":
-      cause =
-        "The output-token ceiling was reached before any content was produced.";
-      break;
-    case "stop":
-    case "tool-calls":
-      cause =
-        "The provider reported a clean finish and still returned nothing. The underlying cause was not recorded.";
-      break;
-    default:
-      cause = "The provider ended the stream without a usable finish reason.";
-  }
-  return `${EMPTY_STEP_SENTINEL} — the model emitted no text, no reasoning and no tool call (finishReason: ${
-    finishReason ?? "none reported"
-  }). ${cause}`;
 }
 
 function createClientFinishChunk(
@@ -2050,6 +1927,7 @@ async function processStream(
 ): Promise<StreamResult> {
   const contentParts: PersistedAssistantPart[] = [];
   const toolInputErrors: string[] = [];
+  const unfinishedTools = new Map<string, string>();
   let pendingText = "";
   let pendingReasoning = "";
   let pendingReasoningId: string | null = null;
@@ -2217,6 +2095,13 @@ async function processStream(
           // `NoSuchToolError` / `InvalidToolInputError` on the backend's
           // `streamText`. It is forwarded to the client but pushes nothing
           // onto `contentParts`, so record why for the empty-step classifier.
+          // A call that starts and never resolves either way was cut off
+          // mid-input; remember its name until one of the two arrives.
+          if (chunk.type === "tool-input-start") {
+            unfinishedTools.set(String(chunk.toolCallId), chunk.toolName);
+          } else if (chunk.type === "tool-input-error") {
+            unfinishedTools.delete(String(chunk.toolCallId));
+          }
           if (chunk.type === "tool-input-error") {
             const toolInputErrorText = (chunk as { errorText?: unknown })
               .errorText;
@@ -2245,6 +2130,7 @@ async function processStream(
         case "tool-input-available": {
           flushText();
           flushReasoning();
+          unfinishedTools.delete(String(chunk.toolCallId));
           const toolCallId = normalizeToolCallId(chunk.toolCallId);
           const serverIdForToolCall = readToolServerId(tools, chunk.toolName);
           // AND THE PAGE TOOL'S BINDING, on the same channel. It rides the
@@ -2405,6 +2291,7 @@ async function processStream(
     finishChunk,
     firstChunkAt,
     toolInputErrors,
+    unfinishedToolNames: [...unfinishedTools.values()],
   };
 }
 
@@ -3249,20 +3136,25 @@ async function processOneStep(
   }
 
   // Process the stream
-  const { contentParts, finishChunk, firstChunkAt, toolInputErrors } =
-    await processStream(
-      res.body,
-      writer,
-      normalizeToolCallId,
-      traceTurn,
-      stepIndex,
-      tools,
-      approvalDecisions,
-      messageHistory,
-      onLiveTextDelta,
-      abortSignal,
-      onToolCall,
-    );
+  const {
+    contentParts,
+    finishChunk,
+    firstChunkAt,
+    toolInputErrors,
+    unfinishedToolNames,
+  } = await processStream(
+    res.body,
+    writer,
+    normalizeToolCallId,
+    traceTurn,
+    stepIndex,
+    tools,
+    approvalDecisions,
+    messageHistory,
+    onLiveTextDelta,
+    abortSignal,
+    onToolCall,
+  );
   const llmEndAbs = Date.now();
   traceTurn.turnUsage = mergeLiveChatTraceUsage(
     traceTurn.turnUsage,
@@ -3815,6 +3707,8 @@ async function processOneStep(
     const emptyStepMessage = describeEmptyStepFailure({
       finishReason: harnessSpanMeta.finishReason,
       toolInputErrors,
+      unfinishedToolNames,
+      outputTokens: stepUsage?.outputTokens,
     });
     const emptyStepNormalized = describeError(emptyStepMessage);
     pushBackendStepLlmFailureSpans(
@@ -3870,6 +3764,11 @@ async function processOneStep(
           stepIndex,
           finishReason: harnessSpanMeta.finishReason,
           toolInputErrorCount: toolInputErrors.length,
+          unfinishedToolCallCount: unfinishedToolNames.length,
+          // Without these the row could not tell a small model that spent its
+          // budget reasoning from a provider outage, or say which model.
+          modelId,
+          outputTokens: stepUsage?.outputTokens,
         },
       });
     }
