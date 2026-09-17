@@ -9,6 +9,12 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-09-17 (3)
+
+#### Fixed
+
+- **Guest visitors on frontier-model User Testing scenarios are now sent to the sign-in gate** — a signed-out visitor who opened a guest-permitted scenario backed by a frontier model previously saw the Playground's "Get access to frontier models" dialog, where "Not now" implies switching to a standard model. Because scenario owners choose the model, that dialog was a dead end. The visitor is now redirected to the scenario sign-in gate instead, which preserves the return path so they land back on the scenario after signing in. Signed-in visitors and the embedded preview are unaffected.
+
 ### 2026-09-17 (2)
 
 #### Added
