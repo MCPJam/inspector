@@ -235,12 +235,31 @@ chatV2.post("/", async (c) => {
     // ── Convex authorization path: guest and signed-in actors ─────
     const hostedBody = parseWithSchema(hostedChatSchema, rawBody);
     if (!c.get("guestId") && hostedBody.projectId && hostedBody.chatSessionId) {
-      const allowed = await apiSessionWriteAllowed(rawBody.origin, async (signal) => {
-        const service = new BrowserSessionService();
-        if (!service.enabled) return { writable: true };
-        return service.agentRequest<{ writable: boolean }>("assert_web_writable", { bearer: bearerToken, projectId: hostedBody.projectId!, body: { conversationId: hostedBody.chatSessionId }, signal: AbortSignal.any([signal, c.req.raw.signal]) });
-      });
-      if (!allowed) return c.json({ code: "API_SESSION_READ_ONLY", error: "This API session is view-only in Playground. Continue it through the session API." }, 409);
+      const allowed = await apiSessionWriteAllowed(
+        rawBody.origin,
+        async (signal) => {
+          const service = new BrowserSessionService();
+          if (!service.enabled) return { writable: true };
+          return service.agentRequest<{ writable: boolean }>(
+            "assert_web_writable",
+            {
+              bearer: bearerToken,
+              projectId: hostedBody.projectId!,
+              body: { conversationId: hostedBody.chatSessionId },
+              signal: AbortSignal.any([signal, c.req.raw.signal]),
+            },
+          );
+        },
+      );
+      if (!allowed)
+        return c.json(
+          {
+            code: "API_SESSION_READ_ONLY",
+            error:
+              "This API session is view-only in Playground. Continue it through the session API.",
+          },
+          409,
+        );
     }
 
     const { initializePins, mcpProtocolVersionsByServerId } =
@@ -566,6 +585,11 @@ chatV2.post("/", async (c) => {
         // Everything else keeps the generic classification (>=500 collapses
         // to a 502 upstream failure).
         const failClosedMessage = `Couldn't load this scenario's settings, so the turn was stopped to avoid running with the wrong configuration. ${runtime.error}`;
+        if (runtime.code === "SCENARIO_SIGN_IN_REQUIRED") {
+          throw new WebRouteError(401, ErrorCode.UNAUTHORIZED, runtime.error, {
+            code: runtime.code,
+          });
+        }
         if (runtime.code === "SCENARIO_ACCESS_STALE") {
           throw new WebRouteError(
             409,
@@ -649,8 +673,8 @@ chatV2.post("/", async (c) => {
     const environmentSkills = environmentSpec
       ? environmentRuntimeSkills(environmentSpec)
       : scenarioEnvironment
-        ? environmentRuntimeSkills({ skills: scenarioEnvironment.skills ?? [] })
-        : undefined;
+      ? environmentRuntimeSkills({ skills: scenarioEnvironment.skills ?? [] })
+      : undefined;
 
     // Enterprise-managed authorization policy. Server-authoritative wherever
     // a backend host config exists (scenario / host-bound turns above — the
@@ -737,19 +761,19 @@ chatV2.post("/", async (c) => {
       !resolvedExecution.harness
         ? "emulated"
         : harnessSupportsSkills(resolvedExecution.harness)
-          ? "harness"
-          : "unsupported";
+        ? "harness"
+        : "unsupported";
     const turnProvenance = environmentSpec
       ? turnSkillProvenance(environmentSpec, { delivery: skillDeliveryMode })
       : scenarioEnvironment
-        ? turnSkillProvenance(
-            {
-              environmentRef: scenarioEnvironment.environmentRef,
-              skills: scenarioEnvironment.skills ?? [],
-            },
-            { delivery: skillDeliveryMode },
-          )
-        : undefined;
+      ? turnSkillProvenance(
+          {
+            environmentRef: scenarioEnvironment.environmentRef,
+            skills: scenarioEnvironment.skills ?? [],
+          },
+          { delivery: skillDeliveryMode },
+        )
+      : undefined;
 
     for (const entry of resolvedExecution.drift) {
       if (entry.field === "requireToolApproval") {
@@ -825,7 +849,7 @@ chatV2.post("/", async (c) => {
     // standing if the refusal were ever moved.
     const externalAccountHarnessTurn = Boolean(
       resolvedExecution.harness &&
-      harnessUsesExternalAccount(resolvedExecution.harness),
+        harnessUsesExternalAccount(resolvedExecution.harness),
     );
     // FAIL FAST on a mis-configured external-account host, BEFORE the promotion
     // below resolves anything. `resolveHostModelDefinition` asks the org's
