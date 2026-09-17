@@ -1,6 +1,6 @@
 import { useFrontierSignInDialogStore } from "@/stores/frontier-sign-in-dialog-store";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MCPJamLimitDialog } from "../mcpjam-limit-dialog";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
@@ -37,6 +37,7 @@ const upgradeState = {
   currentPlan: "free" as string,
   effectivePlan: "free" as string,
   canManageBilling: true,
+  isLoadingBilling: false,
   start: vi.fn(),
 };
 
@@ -65,7 +66,7 @@ vi.mock("@/hooks/use-upgrade-checkout", () => ({
       effectivePlan: upgradeState.effectivePlan,
       organizationName: "Acme Robotics",
       canManageBilling: upgradeState.canManageBilling,
-      isLoadingBilling: false,
+      isLoadingBilling: upgradeState.isLoadingBilling,
       isStarting: false,
       start: upgradeState.start,
     };
@@ -138,6 +139,7 @@ beforeEach(() => {
   upgradeState.currentPlan = "free";
   upgradeState.effectivePlan = "free";
   upgradeState.canManageBilling = true;
+  upgradeState.isLoadingBilling = false;
   recipientsState.recipients = [{ email: "dana@acme.test", name: "Dana Ruiz" }];
   recipientsState.isLoading = false;
   authState.isLoading = false;
@@ -627,7 +629,7 @@ describe("MCPJamLimitDialog", () => {
   });
 
   it("waits for owner recipients before reporting an admin impression", () => {
-    // An admin can buy credits but can't upgrade, so they still get a
+    // A Free-plan admin cannot upgrade, so they get a
     // request-an-owner button. Reporting before the owners resolve would
     // record a recipient count of 0 for a button that then renders.
     authState.user = { id: "user-1" };
@@ -656,11 +658,13 @@ describe("MCPJamLimitDialog", () => {
         can_buy_credits: false,
         can_manage_billing: false,
         request_recipient_count: 1,
+        primary_action: "request_owner",
       }),
     );
+    expect(screen.getByTestId("request-upgrade-mail")).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Explore plans" }),
-    ).toBeInTheDocument();
+      screen.queryByRole("button", { name: "Explore plans" }),
+    ).not.toBeInTheDocument();
   });
 
   it("asks paid-org members to request credits instead of a Team upgrade", () => {
@@ -916,3 +920,127 @@ describe("frontier sign-in modal", () => {
     expect(signIn).not.toHaveBeenCalled();
   });
 });
+
+describe.each(["swarm", "credits"] as const)(
+  "%s credit-wall decisions",
+  (surface) => {
+    const openCreditWall = () => {
+      authState.user = { id: "user-1" };
+      sortedOrganizationsState.push({ _id: "org-1", myRole: "owner" });
+      useMCPJamLimitDialogStore.setState({
+        isOpen: true,
+        intent: "topup",
+        surface: surface === "swarm" ? "swarm" : null,
+      });
+    };
+    const impressions = () =>
+      trackMock.mock.calls.filter(
+        ([event, properties]) =>
+          event === "plan_limit_dialog_shown" &&
+          properties.wall_kind === "organization_credits",
+      );
+
+    it.each(["free", "team"])(
+      "waits for billing before displaying the %s plan and tracking it",
+      (plan) => {
+        openCreditWall();
+        upgradeState.isLoadingBilling = true;
+        const view = render(<MCPJamLimitDialog />);
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+        expect(impressions()).toHaveLength(0);
+        upgradeState.isLoadingBilling = false;
+        upgradeState.effectivePlan = plan;
+        view.rerender(<MCPJamLimitDialog />);
+        expect(screen.getAllByRole("dialog")).toHaveLength(1);
+        if (plan === "free") {
+          expect(
+            screen.getByRole("button", { name: "Explore plans" }),
+          ).toBeInTheDocument();
+          expect(
+            screen.queryByRole("button", { name: /buy.*credits/i }),
+          ).not.toBeInTheDocument();
+        } else {
+          expect(
+            screen.getByRole("button", { name: /buy.*credits/i }),
+          ).toBeInTheDocument();
+        }
+        expect(impressions()).toHaveLength(1);
+        expect(impressions()[0][1].primary_action).toBe(
+          plan === "free" ? "explore_plans" : "buy_credits",
+        );
+      },
+    );
+
+    it("gives Free admins an owner request and working BYOK navigation without purchase actions", async () => {
+      openCreditWall();
+      sortedOrganizationsState[0].myRole = "admin";
+      upgradeState.canManageBilling = false;
+      render(<MCPJamLimitDialog />);
+      const href = decodeURIComponent(
+        screen.getByTestId("request-upgrade-mail").getAttribute("href") ?? "",
+      );
+      expect(href).toContain("Could you upgrade Acme Robotics");
+      expect(
+        screen.queryByRole("button", { name: /buy.*credits/i }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: /explore.*plans/i }),
+      ).not.toBeInTheDocument();
+      expect(screen.getByTestId("limit-dialog-description")).toHaveTextContent(
+        "Ask an organization owner to upgrade",
+      );
+      expect(impressions()[0][1].primary_action).toBe("request_owner");
+      await userEvent
+        .setup()
+        .click(screen.getByRole("button", { name: "Learn more about BYOK" }));
+      expect(window.location.pathname).toBe(
+        "/organizations/org-1/billing/byok",
+      );
+    });
+
+    it("keeps paid-admin credit purchases available", () => {
+      openCreditWall();
+      sortedOrganizationsState[0].myRole = "admin";
+      upgradeState.canManageBilling = false;
+      upgradeState.effectivePlan = "team";
+      render(<MCPJamLimitDialog />);
+      expect(
+        screen.getByRole("button", { name: /buy.*credits/i }),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByTestId("request-upgrade-mail"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("defers the credit wall and its impression until frontier sign-in closes", () => {
+      openCreditWall();
+      useFrontierSignInDialogStore.getState().open();
+      render(<MCPJamLimitDialog />);
+      expect(screen.getAllByRole("dialog")).toHaveLength(1);
+      expect(
+        screen.getByRole("heading", { name: "Get access to frontier models" }),
+      ).toBeInTheDocument();
+      expect(impressions()).toHaveLength(0);
+      expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
+      act(() => useFrontierSignInDialogStore.getState().close());
+      expect(screen.getAllByRole("dialog")).toHaveLength(1);
+      expect(
+        screen.getByRole("button", { name: "Explore plans" }),
+      ).toBeInTheDocument();
+      expect(impressions()).toHaveLength(1);
+      act(() => useFrontierSignInDialogStore.getState().open());
+      act(() => useFrontierSignInDialogStore.getState().close());
+      expect(impressions()).toHaveLength(1);
+    });
+
+    it("does not revive a credit wall cleared while sign-in was open", () => {
+      openCreditWall();
+      useFrontierSignInDialogStore.getState().open();
+      render(<MCPJamLimitDialog />);
+      act(() => useMCPJamLimitDialogStore.getState().close());
+      act(() => useFrontierSignInDialogStore.getState().close());
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(impressions()).toHaveLength(0);
+    });
+  },
+);

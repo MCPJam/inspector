@@ -277,7 +277,7 @@ export function MCPJamLimitDialog() {
   // button — `handleTopUp` already no-ops until an org id is available, so an
   // actual admin never sees a premature "ask admin" flash.
   const billingOrg = billingOrgId
-    ? (sortedOrganizations.find((org) => org._id === billingOrgId) ?? null)
+    ? sortedOrganizations.find((org) => org._id === billingOrgId) ?? null
     : null;
   const isKnownNonManager = billingOrg
     ? !canManageOrgCredits(billingOrg)
@@ -290,12 +290,14 @@ export function MCPJamLimitDialog() {
   const isBillingReady = !creditsUpgrade.isLoadingBilling;
   const isFreeEffectivePlan =
     isBillingReady && creditsUpgrade.effectivePlan === "free";
+  const showCreditWall =
+    showTopupDialog && isBillingReady && !frontierOpen && !isLoading;
   const showCreditsUpgrade =
     isFreeEffectivePlan && creditsUpgrade.canManageBilling;
   // Buying credits and upgrading the plan are two different permissions:
   // admins can do the first, only owners the second. An admin who can't
   // upgrade must not be pitched the upgrade with no way to act on it — they
-  // get the buy-credits copy plus a way to ask an owner.
+  // get a way to ask an owner plus BYOK information.
   const showCreditsUpgradeRequest =
     !isKnownNonManager &&
     isFreeEffectivePlan &&
@@ -321,6 +323,7 @@ export function MCPJamLimitDialog() {
       return;
     }
     if (
+      !showCreditWall ||
       isLoadingOrganizations ||
       creditsUpgrade.isLoadingBilling ||
       // Both request paths render a recipient button, so both have to wait for
@@ -345,11 +348,12 @@ export function MCPJamLimitDialog() {
       surface: limitSurface,
       // The swarm variant renders no upgrade picker, so reporting "upgrade"
       // there would name an action that isn't on screen.
-      primary_action: isKnownNonManager
-        ? requestRecipients.length > 0
-          ? "request_owner"
-          : "none"
-        : isFreeEffectivePlan
+      primary_action:
+        isKnownNonManager || showCreditsUpgradeRequest
+          ? requestRecipients.length > 0
+            ? "request_owner"
+            : "none"
+          : isFreeEffectivePlan
           ? "explore_plans"
           : "buy_credits",
       current_plan: creditsUpgrade.currentPlan,
@@ -382,6 +386,7 @@ export function MCPJamLimitDialog() {
     showCreditsUpgrade,
     showCreditsUpgradeRequest,
     showTopupDialog,
+    showCreditWall,
   ]);
 
   if (isLoading) return null;
@@ -489,7 +494,7 @@ export function MCPJamLimitDialog() {
         />
       )}
       {showGuestDialog && !frontierOpen && <GuestCreditWall />}
-      {showTopupDialog && isSwarmWall && (
+      {showCreditWall && isSwarmWall && (
         <AllowanceLimitDialogView
           isFreePlan={isFreeEffectivePlan}
           title={allowanceCopy.title}
@@ -498,11 +503,12 @@ export function MCPJamLimitDialog() {
           // question that filed this bug, and it is not a question only
           // billing managers ask.
           description={
-            isKnownNonManager
+            isKnownNonManager || showCreditsUpgradeRequest
               ? `${allowanceCopy.description} ${memberDescription}`
               : allowanceCopy.description
           }
           isKnownNonManager={isKnownNonManager}
+          showRequestUpgrade={showCreditsUpgradeRequest}
           requestRecipients={isBillingReady ? requestRecipients : []}
           organizationId={billingOrgId}
           organizationName={creditsUpgrade.organizationName}
@@ -513,21 +519,23 @@ export function MCPJamLimitDialog() {
           onDismiss={handleCreditsDismiss}
         />
       )}
-      {showTopupDialog && !isSwarmWall && (
+      {showCreditWall && !isSwarmWall && (
         <CreditsLimitDialogView
           isFreePlan={isFreeEffectivePlan}
           description={
-            isFreeEffectivePlan && !isKnownNonManager
+            isFreeEffectivePlan &&
+            !isKnownNonManager &&
+            !showCreditsUpgradeRequest
               ? "Your Free credits reset daily. Explore Pro or Team for more credits and credit top-ups."
-              : isKnownNonManager
-                ? memberDescription
-                : showCreditsUpgrade
-                  ? `Free credits reset daily. The ${
-                      creditsUpgrade.teamName
-                    } plan replaces the daily cap with a monthly allowance${
-                      creditsUpgrade.isFlatPlan ? "" : " per seat"
-                    }, so usage isn't rationed day to day.`
-                  : "Buy credits to keep your team going."
+              : isKnownNonManager || showCreditsUpgradeRequest
+              ? memberDescription
+              : showCreditsUpgrade
+              ? `Free credits reset daily. The ${
+                  creditsUpgrade.teamName
+                } plan replaces the daily cap with a monthly allowance${
+                  creditsUpgrade.isFlatPlan ? "" : " per seat"
+                }, so usage isn't rationed day to day.`
+              : "Buy credits to keep your team going."
           }
           isKnownNonManager={isKnownNonManager}
           showUpgrade={showCreditsUpgrade}

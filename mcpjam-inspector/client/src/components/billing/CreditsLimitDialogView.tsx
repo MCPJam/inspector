@@ -23,8 +23,7 @@ export interface CreditsLimitDialogViewProps {
   isKnownNonManager: boolean;
   /** Free orgs whose user can manage billing. A paid org gets credits only. */
   showUpgrade: boolean;
-  /** Can buy credits but can't upgrade (admins). They keep the credits path
-   * and get a way to ask an owner, instead of a pitch with no button. */
+  /** Free-plan admins request an owner upgrade and retain BYOK information. */
   showRequestUpgrade?: boolean;
   requestRecipients: UpgradeRequestRecipient[];
   requestAction?: UpgradeRequestAction;
@@ -106,23 +105,30 @@ export function CreditsLimitDialogView({
             {description}
           </DialogDescription>
         </DialogHeader>
-        {isFreePlan && !isKnownNonManager ? (
+        {isFreePlan && !isKnownNonManager && !showRequestUpgrade ? (
           <div className="grid grid-cols-2 gap-2">
             <Button variant="outline" onClick={onUseOwnKey}>
               Learn more about BYOK
             </Button>
             <Button onClick={onExplorePlans}>Explore plans</Button>
           </div>
-        ) : isKnownNonManager ? (
-          <RequestUpgradeButton
-            recipients={requestRecipients}
-            organizationName={organizationName}
-            teamName={teamName}
-            origin="credits"
-            limitKind="credits"
-            requestAction={requestAction}
-            organizationId={organizationId}
-          />
+        ) : isKnownNonManager || showRequestUpgrade ? (
+          <>
+            <RequestUpgradeButton
+              recipients={requestRecipients}
+              organizationName={organizationName}
+              teamName={teamName}
+              origin="credits"
+              limitKind="credits"
+              requestAction={requestAction}
+              organizationId={organizationId}
+            />
+            {showRequestUpgrade && (
+              <Button variant="link" onClick={onUseOwnKey}>
+                Learn more about BYOK
+              </Button>
+            )}
+          </>
         ) : (
           <>
             {showUpgrade ? (
@@ -139,17 +145,6 @@ export function CreditsLimitDialogView({
                 isStarting={isStarting}
                 isLoadingPrices={isLoadingPrices}
                 onUpgrade={onUpgrade}
-              />
-            ) : null}
-            {showRequestUpgrade ? (
-              <RequestUpgradeButton
-                recipients={requestRecipients}
-                organizationName={organizationName}
-                teamName={teamName}
-                origin="credits"
-                limitKind="credits"
-                requestAction="upgrade"
-                organizationId={organizationId}
               />
             ) : null}
             <DialogFooter className="sm:justify-between">

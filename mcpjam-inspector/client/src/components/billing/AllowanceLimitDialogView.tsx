@@ -20,6 +20,8 @@ export interface AllowanceLimitDialogViewProps {
   isFreePlan?: boolean;
   /** Can't buy credits or upgrade. Gets the owner-request path instead. */
   isKnownNonManager: boolean;
+  /** Free-plan admins must ask an owner to upgrade. */
+  showRequestUpgrade?: boolean;
   requestRecipients: UpgradeRequestRecipient[];
   organizationId?: string | null;
   organizationName: string;
@@ -38,6 +40,7 @@ export function AllowanceLimitDialogView({
   description,
   isFreePlan = false,
   isKnownNonManager,
+  showRequestUpgrade = false,
   requestRecipients,
   organizationId,
   organizationName,
@@ -67,23 +70,30 @@ export function AllowanceLimitDialogView({
             {description}
           </DialogDescription>
         </DialogHeader>
-        {isFreePlan && !isKnownNonManager ? (
+        {isFreePlan && !isKnownNonManager && !showRequestUpgrade ? (
           <div className="grid grid-cols-2 gap-2">
             <Button variant="outline" onClick={onLearnMore}>
               Learn more about BYOK
             </Button>
             <Button onClick={onExplorePlans}>Explore plans</Button>
           </div>
-        ) : isKnownNonManager ? (
-          <RequestUpgradeButton
-            recipients={requestRecipients}
-            organizationName={organizationName}
-            teamName={teamName}
-            origin="credits"
-            limitKind="credits"
-            requestAction={isFreePlan ? "upgrade" : "buyCredits"}
-            organizationId={organizationId}
-          />
+        ) : isKnownNonManager || showRequestUpgrade ? (
+          <>
+            <RequestUpgradeButton
+              recipients={requestRecipients}
+              organizationName={organizationName}
+              teamName={teamName}
+              origin="credits"
+              limitKind="credits"
+              requestAction={isFreePlan ? "upgrade" : "buyCredits"}
+              organizationId={organizationId}
+            />
+            {showRequestUpgrade && (
+              <Button variant="link" onClick={onLearnMore}>
+                Learn more about BYOK
+              </Button>
+            )}
+          </>
         ) : (
           <>
             <Button type="button" className="w-full" onClick={onBuyCredits}>
