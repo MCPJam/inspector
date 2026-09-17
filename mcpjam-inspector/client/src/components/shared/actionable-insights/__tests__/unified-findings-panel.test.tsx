@@ -124,6 +124,12 @@ const openDetails = () =>
   fireEvent.click(screen.getByRole("button", { name: "See details" }));
 
 describe("walkthrough findings layout", () => {
+  it("keeps findings in the existing slot instead of duplicating the recorded summary", () => {
+    renderPanel({ fallback: <p>Recorded diagnostic summary</p> });
+    expect(screen.getByTestId("unified-findings-list")).toBeVisible();
+    expect(screen.queryByText("Recorded diagnostic summary")).toBeNull();
+  });
+
   it("shows the problem and fix without experiment controls or expanded diagnostics", () => {
     const { analyze } = renderPanel();
     expect(screen.getByRole("heading", { name: "What broke" })).toBeVisible();

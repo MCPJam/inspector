@@ -223,7 +223,7 @@ The eval authoring/editing tools are writes, annotated `readOnlyHint: false`
 hosts can gate them. Two of them SPEND: `run_eval_suite` and `run_eval_case`
 start LLM iterations against the organization's credits. `generate_eval_cases`
 also calls a model, but that one is on MCPJam — no credits are consumed; it
-counts against the project's daily generation quota. By default the
+counts against the organization's daily generation quota. By default the
 platform connects the suite's saved server selection — the exact set the run
 snapshot references; `servers` is an explicit override. Naming a disabled
 server runs it (the platform authorizes eval runs by project membership; the

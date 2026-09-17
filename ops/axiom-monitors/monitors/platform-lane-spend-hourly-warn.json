@@ -1,0 +1,47 @@
+{
+  "key": "platform-lane-spend-hourly-warn",
+  "name": "MCPJam platform-paid AI spend >$10/h",
+  "tier": "WARN",
+  "owner": "marcelo",
+  "dataset": "mcpjam-backend-prod",
+  "notifier": "llm-safety",
+  "monitor": {
+    "type": "Threshold",
+    "columnName": "Spend",
+    "operator": "Above",
+    "threshold": 10,
+    "rangeMinutes": 60,
+    "intervalMinutes": 5,
+    "triggerAfterNPositiveResults": 1,
+    "triggerFromNRuns": 1,
+    "notifyByGroup": false,
+    "alertOnNoData": false,
+    "resolvable": true,
+    "notifyEveryRun": false
+  },
+  "aplQuery": [
+    "['mcpjam-backend-prod']",
+    "| where _sysTime >= ago(60m)",
+    "| where tostring(['data.message']) contains '\"event\":\"platform_lane_settled\"'",
+    "| extend msg=tostring(['data.message'])",
+    "| extend eventKey=extract('\"eventKey\":\"([^\"]+)\"', 1, msg), actualMicros=tolong(extract('\"actualMicros\":([0-9]+)', 1, msg))",
+    "| summarize actualMicros=max(actualMicros) by eventKey",
+    "| summarize Spend = round(sum(actualMicros) / 1000000.0, 2)"
+  ],
+  "description": [
+    "WARN · MCPJam-paid included AI (generation + analyses) settled more than $10 in the last hour.",
+    "",
+    "TRIAGE — open View Query, replace the last two lines with:",
+    "  | extend feature=extract('\"feature\":\"([^\"]+)\"', 1, msg), org=extract('\"organizationId\":\"([^\"]+)\"', 1, msg)",
+    "  | summarize Usd=round(sum(actualMicros)/1000000.0,2), Attempts=dcount(eventKey) by feature, org | sort by Usd desc",
+    "  one org, one feature → a runaway caller; its $25 lane caps it",
+    "  many orgs, one feature → a busy release or a loop in that feature",
+    "Runbook: ops/axiom-monitors/platform-lanes.md"
+  ],
+  "rationale": [
+    "WHY THIS EXISTS: included generation and analyses are MCPJam's money with no customer allowance in front of them. The per-org ($25) and per-feature ($250) lanes cap the day; this says how fast the day is being spent.",
+    "WHY ATTEMPTS, NOT USAGE ROWS: usage records dedupe on the LOGICAL job id, so a retried provider attempt is invisible there. platform_lane_settled fires once per attempt (idempotent settle, stable eventKey), and the max-by-eventKey step drops a duplicated log line. Summing usage totals on top would count the same money twice.",
+    "WHY THIS THRESHOLD: PROVISIONAL. Measured included spend before the flips was well under $1/day. Re-baseline after seven days: | summarize Usd=sum(actualMicros)/1000000.0 by bin(_time, 1h) | summarize max(Usd), percentile(Usd, 95).",
+    "SOURCE IS NEW: emitted by mcpjam-backend #1463 (lane events, usage funding) and #1470 (snapshot). Until both are in PROD this query returns no rows — an Above monitor stays silent and the deadman would page falsely. Apply only after the prod deploy, with --only <key>."
+  ]
+}

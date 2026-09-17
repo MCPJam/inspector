@@ -6,11 +6,7 @@ import {
   swarmReportSchema,
   journeyRunVerdictSummarySchema,
 } from "../src/contract/swarm-report.js";
-import {
-  EVAL_VERDICT_DECISION_REASONS,
-  evalVerdictDecisionSchema,
-} from "../src/contract/verdict-policy.js";
-import { EVAL_VERDICT_DECISION_REASON_LABELS } from "../src/contract/decision-labels.js";
+import { evalVerdictDecisionSchema } from "../src/contract/verdict-policy.js";
 const path = new URL("../../docs/reference/openapi.json", import.meta.url);
 const original = readFileSync(path, "utf8");
 const document = JSON.parse(original);
@@ -37,32 +33,6 @@ schemas.JourneyRunSession.properties.verdict = {
 };
 schemas.JourneyRunSession.properties.outcome.description =
   "Attempt execution lifecycle. Read verdict for the graded goal result.";
-
-// Closed vocabularies spelled out in a GENERATED schema still have to be
-// defined where an integrator reads them — that is what the decision-vocabulary
-// ratchet in `mcpjam-inspector/server/routes/v1/__tests__` asserts, and these
-// three sites are generated, so a description hand-written into the spec is
-// erased by the next run of this script.
-//
-// The words are not new. The reasons carry `decision-labels.ts`'s own, which is
-// what the CLI, the web app, Slack and the HTML report all print; the stage
-// copies the description already on `StageResultRow.stage`, which is the same
-// vocabulary. A spec that says it differently is a second reading of one run.
-const verdictReasonDescription =
-  "Why this verdict is what it is. Phrased as statements of what was " +
-  "measured, never as blame. " +
-  EVAL_VERDICT_DECISION_REASONS.map(
-    (reason) =>
-      `\`${reason}\` — ${EVAL_VERDICT_DECISION_REASON_LABELS[reason]}.`
-  ).join(" ");
-// The run-level list and the per-case one are the same vocabulary answering
-// different questions, and the ratchet registers them separately.
-schemas.EvalVerdictDecision.properties.reasons.items.description =
-  verdictReasonDescription;
-schemas.EvalVerdictDecision.properties.cases.items.properties.reason.description =
-  verdictReasonDescription;
-schemas.SwarmReport.properties.observations.items.properties.stage.description =
-  schemas.StageResultRow.properties.stage.description;
 schemas.JourneyRunSession.properties.criteria = {
   type: "object",
   required: ["status", "generation"],
