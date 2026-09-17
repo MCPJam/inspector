@@ -667,4 +667,12 @@ describe("SwarmRunDetail findings wiring", () => {
       screen.queryByTestId("stub-insights-workbench"),
     ).not.toBeInTheDocument();
   });
+
+  it("keeps Sessions as the conversation browser", () => {
+    window.history.replaceState({}, "", "/swarms/wave-1?tab=sessions");
+    renderDetail();
+    expect(screen.getByTestId("stub-sessions-panel")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Swarm report")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("swarm-findings-tab")).not.toBeInTheDocument();
+  });
 });

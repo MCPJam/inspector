@@ -29,7 +29,6 @@ import {
   SwarmSessionsGroupedList,
   SwarmSessionsGroupCount,
 } from "@/components/swarms/SwarmSessionsGroupedList";
-import { SwarmSessionReport } from "./swarm-report-panel";
 import { SwarmSessionsMetricStrip } from "@/components/swarms/swarm-sessions-metric-strip";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import {
@@ -419,27 +418,20 @@ export function SwarmsSessionsPanel({
           <ResizablePanel defaultSize={68} minSize={40}>
             <div className="h-full overflow-hidden">
               {selectedThreadId ? (
-                <div className="flex h-full min-h-0 flex-col">
-                  <div className="space-y-2 border-b border-border p-3">
-                    <SwarmSessionReport session={selectedRow} />
-                  </div>
-                  <div className="min-h-0 flex-1">
-                    <ShareUsageThreadDetail
-                      threadId={selectedThreadId}
-                      sessionLink={sessionLink}
-                      promote={
-                        selectedRow?.projectId
-                          ? {
-                              projectId: selectedRow.projectId,
-                              // The Swarms route is gated at project member
-                              // (canViewSwarms), so being here is the check.
-                              canPromote: true,
-                            }
-                          : undefined
-                      }
-                    />
-                  </div>
-                </div>
+                <ShareUsageThreadDetail
+                  threadId={selectedThreadId}
+                  sessionLink={sessionLink}
+                  promote={
+                    selectedRow?.projectId
+                      ? {
+                          projectId: selectedRow.projectId,
+                          // The Swarms route is gated at project member
+                          // (canViewSwarms), so being here is the check.
+                          canPromote: true,
+                        }
+                      : undefined
+                  }
+                />
               ) : (
                 <div className="flex h-full items-center justify-center px-6">
                   <div className="text-center">

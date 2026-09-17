@@ -13,7 +13,7 @@ import {
 import { type InsightsSelection } from "@/hooks/scenario-usage-filters";
 import { ClusterTuningControl } from "@/components/shared/usage-insights/ClusterTuningControl";
 import { FlowSankeyDiagram } from "@/components/shared/usage-insights/flow-sankey-diagram";
-import type { ClusterTuning } from "@/lib/cluster-tuning";
+import { SHOW_RECLUSTERING_UI, type ClusterTuning } from "@/lib/cluster-tuning";
 import {
   STAGE_ORDER,
   STAGE_TITLES,
@@ -165,16 +165,17 @@ export function SessionFlowSankey({
    * flow to look at" hides them precisely when they are most useful. It seeds
    * from the defaults when there is no run to read.
    */
-  const tuningControl = onApplyTuning ? (
-    <ClusterTuningControl
-      value={latestRun?.tuning}
-      onApply={onApplyTuning}
-      busy={rebuildBusy}
-      showLinkThreshold={showLinkThreshold}
-      goalGroupsByJourney={goalGroupsByJourney}
-      sessionCount={latestRun?.sessionCount}
-    />
-  ) : null;
+  const tuningControl =
+    SHOW_RECLUSTERING_UI && onApplyTuning ? (
+      <ClusterTuningControl
+        value={latestRun?.tuning}
+        onApply={onApplyTuning}
+        busy={rebuildBusy}
+        showLinkThreshold={showLinkThreshold}
+        goalGroupsByJourney={goalGroupsByJourney}
+        sessionCount={latestRun?.sessionCount}
+      />
+    ) : null;
 
   if (!breakdown) {
     return (
@@ -221,16 +222,19 @@ export function SessionFlowSankey({
           {analysisInFlight
             ? `Grouping ${goalNoun}s, behaviors, outcomes, and sentiment. This can take a few minutes.`
             : signalsVersion === null
-            ? "The last rebuild ran before session signals existed. Rebuild clusters to extract and group goals, behaviors, outcomes, and sentiment."
-            : "Rebuild clusters once there are enough sessions to cluster."}
+            ? SHOW_RECLUSTERING_UI
+              ? "The last rebuild ran before session signals existed. Rebuild clusters to extract and group goals, behaviors, outcomes, and sentiment."
+              : "The last analysis ran before session signals existed, so goals, behaviors, outcomes, and sentiment are not grouped yet."
+            : SHOW_RECLUSTERING_UI
+            ? "Rebuild clusters once there are enough sessions to cluster."
+            : "Session flow appears once there are enough sessions to cluster."}
         </p>
         <div className="flex items-center gap-2">
           {headerActions}
           {/* An analysis already on its way needs no button to start it — and
               on a self-analyzing surface there is never a resting state where
-              one is required. The tuning control stays: choosing HOW to
-              cluster is still a thing to ask for. */}
-          {analysisInFlight ? null : (
+              one is required. Re-clustering is gated off for now. */}
+          {analysisInFlight || !SHOW_RECLUSTERING_UI ? null : (
             <RebuildButton
               onRebuild={onRebuild}
               busy={rebuildBusy}
@@ -363,11 +367,13 @@ export function SessionFlowSankey({
             These sessions were analyzed before every column was clustered, so
             only the goal column has themes.
           </span>
-          <RebuildButton
-            onRebuild={onRebuild}
-            busy={rebuildBusy}
-            label="Rebuild for themes"
-          />
+          {SHOW_RECLUSTERING_UI ? (
+            <RebuildButton
+              onRebuild={onRebuild}
+              busy={rebuildBusy}
+              label="Rebuild for themes"
+            />
+          ) : null}
         </div>
       ) : null}
 
