@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
+import { useAuth } from "@workos-inc/authkit-react";
 import { track } from "@/lib/analytics";
+import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
+import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import { cn } from "@/lib/utils";
 import type { EvalSuiteRun } from "./types";
 import { pickLatestCompletedRun } from "./helpers";
@@ -89,6 +92,7 @@ function RunInsightsBanner({
     failedGeneration,
     requestRunInsights,
     unavailable,
+    signInRequired,
     requested,
     errorMessage,
   } = useRunInsights(targetRun, { autoRequest: true });
@@ -176,7 +180,14 @@ function RunInsightsBanner({
     <InsightBannerShell
       label={title}
       trailing={
-        failedGeneration ? (
+        // A guest gets SIGN IN here, not Retry. Retrying is the one thing that
+        // cannot work — the backend refused because of who is asking, and
+        // pressing again asks the same way. `failedGeneration` and
+        // `signInRequired` cannot both hold (a refused request never reached
+        // generation), so the order below is documentation, not a tiebreak.
+        signInRequired ? (
+          <InsightSignInAction />
+        ) : failedGeneration ? (
           <button
             type="button"
             className="shrink-0 text-xs font-medium text-primary underline-offset-2 hover:underline"
@@ -189,6 +200,35 @@ function RunInsightsBanner({
     >
       {body}
     </InsightBannerShell>
+  );
+}
+
+/**
+ * The sign-in affordance for a banner whose insights were refused because the
+ * viewer is anonymous.
+ *
+ * A control rather than the full {@link GuestSignInMessage} pane: this banner
+ * is a single thin row, and the refusal's own copy is already rendered as the
+ * narrative beside it. What is missing is the one click that fixes it.
+ *
+ * Same wiring as every other sign-in control in the app — `useAuth().signIn`,
+ * the tracked `login_button_clicked`, and the captured return path, so the
+ * user lands back on the run they were reading.
+ */
+function InsightSignInAction() {
+  const { signIn } = useAuth();
+  return (
+    <button
+      type="button"
+      className="shrink-0 text-xs font-medium text-primary underline-offset-2 hover:underline"
+      onClick={() => {
+        track("login_button_clicked", { location: "run_insights_banner" });
+        captureAppSignInReturnPath();
+        signIn(permalinkSignInOptions());
+      }}
+    >
+      Sign in
+    </button>
   );
 }
 

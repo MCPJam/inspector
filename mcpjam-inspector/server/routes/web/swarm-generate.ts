@@ -168,10 +168,18 @@ function upstreamErrorCode(bodyText: string): string | undefined {
  */
 export function rethrowAsRouteError(c: Context, err: unknown): never {
   if (err instanceof SwarmAgentError && err.status >= 400 && err.status < 500) {
+    // The backend's own code, forwarded in `details` so a code-based client
+    // can act on WHICH 4xx this is. `FORWARDED_ERROR_CODES` only has the
+    // status to work with, and 403 alone cannot tell "you are not a member of
+    // this project" from "you are not signed in" — the second has a one-click
+    // remedy and the first does not. Shape-gated by `upstreamErrorCode`, so a
+    // WAF interstitial cannot put arbitrary text in a client-read field.
+    const upstreamCode = upstreamErrorCode(err.bodyText);
     const routeError = new WebRouteError(
       err.status,
       FORWARDED_ERROR_CODES[err.status] ?? ErrorCode.VALIDATION_ERROR,
-      err.message || "Generation request was rejected."
+      err.message || "Generation request was rejected.",
+      upstreamCode ? { upstreamCode } : undefined
     );
     // The 429 above is the backend's burst brake or its daily cap, and both
     // told us when they lift. Forwarding the status without the header left

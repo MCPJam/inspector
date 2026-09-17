@@ -320,6 +320,59 @@ describe("web routes — swarm generation proxy", () => {
     expect(data.code).toBe("RATE_LIMITED");
   });
 
+  it("forwards the backend's own 403 code so a client can tell WHICH 403 it is", async () => {
+    // `FORWARDED_ERROR_CODES` only has the status to work with, and 403 covers
+    // both "sign in" (one click away) and "not a member of this project" (not).
+    // The upstream code is what separates them.
+    generateSwarmPersonaMock.mockRejectedValue(
+      new SwarmAgentError(
+        403,
+        JSON.stringify({
+          ok: false,
+          code: "sign_in_required",
+          feature: "swarm generation",
+        }),
+        "Sign in to generate personas and journeys."
+      )
+    );
+
+    const response = await postJson(
+      app,
+      "/api/web/swarm/generate/persona",
+      { projectId: "proj-1", serverAttachmentId: "att-1" },
+      token
+    );
+    const { status, data } = await expectJson<{
+      code?: string;
+      message?: string;
+      details?: { upstreamCode?: string };
+    }>(response);
+    expect(status).toBe(403);
+    expect(data.code).toBe("FORBIDDEN");
+    expect(data.details?.upstreamCode).toBe("sign_in_required");
+    expect(data.message).toBe("Sign in to generate personas and journeys.");
+  });
+
+  it("does not invent an upstream code when the backend sent none", async () => {
+    // `upstreamErrorCode` is shape-gated: a WAF interstitial or a proxy error
+    // page must not land arbitrary text in a field a client reads.
+    generateSwarmPersonaMock.mockRejectedValue(
+      new SwarmAgentError(403, "<html>Forbidden</html>", "Forbidden.")
+    );
+
+    const response = await postJson(
+      app,
+      "/api/web/swarm/generate/persona",
+      { projectId: "proj-1", serverAttachmentId: "att-1" },
+      token
+    );
+    const { status, data } = await expectJson<{
+      details?: Record<string, unknown>;
+    }>(response);
+    expect(status).toBe(403);
+    expect(data.details).toBeUndefined();
+  });
+
   it("maps a backend 5xx onto 500 and keeps the upstream detail out of the body", async () => {
     generateSwarmJourneysMock.mockRejectedValue(
       new SwarmAgentError(502, "", "swarm-generate upstream failed (502)")

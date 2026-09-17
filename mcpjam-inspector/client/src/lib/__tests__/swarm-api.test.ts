@@ -468,3 +468,54 @@ describe("launchJourneyRun — MCPJam limit", () => {
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
   });
 });
+
+/**
+ * A guest generating personas.
+ *
+ * The backend refuses at the door with 403 `sign_in_required`, before it reads
+ * the body and before it reserves the platform lane. The proxy forwards that
+ * code in `details.upstreamCode` — the envelope's top-level `code` is the
+ * proxy's HTTP-shaped one, `FORBIDDEN` for every 403 whatever caused it, and
+ * "not a member of this project" is also a 403 that signing in does not fix.
+ */
+describe("generateSwarmPersonaBatch — sign-in refusal", () => {
+  const generate = () =>
+    generateSwarmPersonaBatch({
+      projectId: "proj-1",
+      environmentId: "env-1",
+      personaCount: 3,
+      journeyCount: 5,
+    });
+
+  async function refusalFrom(body: unknown): Promise<SwarmGenerateError> {
+    authFetchMock.mockResolvedValue(jsonResponse(403, body));
+    let err: unknown;
+    try {
+      await generate();
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SwarmGenerateError);
+    return err as SwarmGenerateError;
+  }
+
+  it("flags the refusal so the surface can offer sign-in", async () => {
+    const err = await refusalFrom({
+      code: "FORBIDDEN",
+      message: "Sign in to generate personas and journeys.",
+      details: { upstreamCode: "sign_in_required" },
+    });
+    expect(err.signInRequired).toBe(true);
+    expect(err.status).toBe(403);
+    // The backend's own copy reaches the surface verbatim.
+    expect(err.message).toBe("Sign in to generate personas and journeys.");
+  });
+
+  it("does NOT flag a 403 that signing in cannot fix", async () => {
+    const err = await refusalFrom({
+      code: "FORBIDDEN",
+      message: "You are not a member of this project.",
+    });
+    expect(err.signInRequired).toBe(false);
+  });
+});

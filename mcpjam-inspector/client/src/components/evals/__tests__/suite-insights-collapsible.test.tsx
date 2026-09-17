@@ -7,6 +7,12 @@ vi.mock("convex/react", () => ({
   useMutation: () => vi.fn().mockResolvedValue(undefined),
 }));
 
+const { signInMock } = vi.hoisted(() => ({ signInMock: vi.fn() }));
+
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({ signIn: signInMock }),
+}));
+
 const { useRunInsightsMock } = vi.hoisted(() => ({
   useRunInsightsMock: vi.fn(),
 }));
@@ -88,5 +94,40 @@ describe("SuiteInsightsCollapsible", () => {
       />,
     );
     expect(screen.queryByText("Run insights")).not.toBeInTheDocument();
+  });
+});
+
+describe("SuiteInsightsCollapsible sign-in refusal", () => {
+  it("offers sign-in rather than a retry, and keeps the band visible", async () => {
+    const user = userEvent.setup();
+    const requestRunInsights = vi.fn();
+    signInMock.mockReset();
+    useRunInsightsMock.mockReturnValue({
+      summary: null,
+      pending: false,
+      failedGeneration: false,
+      requestRunInsights,
+      unavailable: false,
+      signInRequired: true,
+      requested: false,
+      errorMessage: "Sign in to keep going.",
+    });
+
+    renderWithProviders(<SuiteInsightsCollapsible runs={[completedRun]} />);
+
+    // The band stays: the reader is exactly the person who has never seen an
+    // insight, and hiding it would take the explanation away from them.
+    expect(screen.getByText("Run insights")).toBeInTheDocument();
+    expect(screen.getByText("Sign in to keep going.")).toBeInTheDocument();
+
+    // Retry is the one thing that cannot work here — the refusal is about who
+    // is asking, and pressing again asks the same way.
+    expect(
+      screen.queryByRole("button", { name: /Retry/i }),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Sign in/i }));
+    expect(signInMock).toHaveBeenCalledTimes(1);
+    expect(requestRunInsights).not.toHaveBeenCalled();
   });
 });

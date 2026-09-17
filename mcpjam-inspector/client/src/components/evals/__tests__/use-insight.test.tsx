@@ -247,3 +247,51 @@ describe("useInsight requested lifecycle", () => {
     expect(result.current.unavailable).toBe(true);
   });
 });
+
+describe("useInsight sign-in refusals", () => {
+  it("reports the refusal as a sign-in prompt, not as an unavailable feature", async () => {
+    // The generic branch below this one matches `Server Error`, which Convex
+    // prefixes onto every thrown mutation error. Classifying a guest refusal
+    // there sets `unavailable`, and `SuiteInsightsCollapsible` renders null on
+    // unavailable — so the trial user who just ran their first suite would see
+    // no insights band at all, with no way to learn why.
+    requestMutationMock.mockRejectedValue(
+      new Error(
+        '[CONVEX M(runInsights:requestRunInsights)] Server Error ' +
+          '{"code":"sign_in_required","feature":"run insights",' +
+          '"message":"Sign in to keep going."}',
+      ),
+    );
+
+    const { result } = renderHook(() =>
+      useInsight(makeRun({ _id: "run-guest" }), config),
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(result.current.signInRequired).toBe(true);
+    expect(result.current.unavailable).toBe(false);
+    // The backend's own copy reaches the banner verbatim.
+    expect(result.current.errorMessage).toBe("Sign in to keep going.");
+  });
+
+  it("leaves an undeployed backend classified as unavailable", async () => {
+    // The negative half: `sign_in_required` must not swallow the case the
+    // `unavailable` latch exists for. A missing function is permanent for the
+    // session; who is asking is not.
+    requestMutationMock.mockRejectedValue(
+      new Error("Could not find public function for 'runInsights'"),
+    );
+
+    const { result } = renderHook(() =>
+      useInsight(makeRun({ _id: "run-missing" }), config),
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(result.current.unavailable).toBe(true);
+    expect(result.current.signInRequired).toBe(false);
+  });
+});

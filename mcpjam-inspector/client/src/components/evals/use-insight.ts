@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation } from "convex/react";
 import type { EvalSuiteRun } from "./types";
+import { signInRequiredMessage } from "@/lib/sign-in-required";
 
 export type InsightStatus = "pending" | "completed" | "failed" | undefined;
 
@@ -26,6 +27,16 @@ export interface InsightHookResult<TResult> {
   /** User-facing message for a REQUEST-TIME rejection (e.g. spend-cap). */
   errorMessage: string | null;
   unavailable: boolean;
+  /**
+   * The backend refused because the caller is anonymous. `errorMessage` holds
+   * the refusal's own copy; the surface should render a sign-in call to action
+   * rather than an error, because that is the actual remedy.
+   *
+   * Distinct from `unavailable` on purpose — a surface that hides itself here
+   * would take the explanation away from exactly the person who has never seen
+   * it. Distinct from `error` because this is not a fault.
+   */
+  signInRequired: boolean;
   requested: boolean;
   pending: boolean;
   failedGeneration: boolean;
@@ -88,9 +99,27 @@ export function __resetAutoRequestClaims(): void {
 function classifyInsightError(err: unknown): {
   unavailable: boolean;
   permanent: boolean;
+  /** The caller is anonymous. Render a sign-in call to action, not an error. */
+  signInRequired?: boolean;
   message: string;
 } {
   const raw = err instanceof Error ? err.message : String(err);
+
+  // An anonymous caller on a platform-paid door. FIRST, ahead of the generic
+  // "Server Error" test below, which Convex prefixes onto every thrown
+  // mutation error and which would otherwise latch `unavailable` and hide the
+  // band — telling a trial user the feature does not exist when the truth is
+  // that it is one click away. Not `permanent` either: who is asking can
+  // change within a session; what is deployed cannot.
+  const signInMessage = signInRequiredMessage(err);
+  if (signInMessage) {
+    return {
+      unavailable: false,
+      permanent: false,
+      signInRequired: true,
+      message: signInMessage,
+    };
+  }
 
   // Known structured rejections short-circuit ahead of the generic
   // unavailable/permanent classification. Convex wraps mutation rejections
@@ -137,6 +166,7 @@ export function useInsight<TResult extends { summary?: string }>(
   const autoRequest = options?.autoRequest !== false;
   const [error, setError] = useState<string | null>(null);
   const [unavailable, setUnavailable] = useState(false);
+  const [signInRequired, setSignInRequired] = useState(false);
   const [requested, setRequested] = useState(false);
   const hasAutoAttemptedRef = useRef(false);
   const runIdRef = useRef<string | null>(null);
@@ -178,6 +208,7 @@ export function useInsight<TResult extends { summary?: string }>(
         return;
       }
       setError(null);
+      setSignInRequired(false);
       requestedAtStampRef.current = latestResultStampRef.current;
       setRequested(true);
       requestMut({ suiteRunId: run._id, force, ...extraArgs } as any).catch(
@@ -193,6 +224,7 @@ export function useInsight<TResult extends { summary?: string }>(
             }
             setUnavailable(true);
           } else {
+            setSignInRequired(classified.signInRequired === true);
             setError(classified.message);
           }
         },
@@ -214,6 +246,7 @@ export function useInsight<TResult extends { summary?: string }>(
     if (runIdRef.current !== runKey) {
       runIdRef.current = runKey;
       setError(null);
+      setSignInRequired(false);
       setRequested(false);
       // Re-assess availability per run for run-specific/transient failures
       // (e.g. "Suite run not found") so one bad run doesn't hide the panel for
@@ -290,6 +323,7 @@ export function useInsight<TResult extends { summary?: string }>(
     error,
     errorMessage: error,
     unavailable,
+    signInRequired,
     requested,
     requestInsight,
     cancelInsight,

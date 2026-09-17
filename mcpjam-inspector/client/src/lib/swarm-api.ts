@@ -14,6 +14,7 @@
 import { authFetch } from "@/lib/session-token";
 import { notifyMCPJamLimitError } from "@/lib/mcpjam-limit";
 import { WebApiError } from "@/lib/apis/web/base";
+import { SIGN_IN_REQUIRED_CODE } from "@/lib/sign-in-required";
 import type { NormalizedError } from "@mcpjam/sdk/browser";
 import { isNormalizedError } from "@mcpjam/sdk/browser";
 import type { SharedChatThread } from "@/hooks/useSharedChatThreads";
@@ -1002,11 +1003,26 @@ export class SwarmGenerateError extends Error {
   /** A model limit the dialog took over. The caller must not also render this
    * message inline — the modal already carries it, with the actions. */
   readonly limitDialogRaised: boolean;
-  constructor(status: number, message: string, limitDialogRaised = false) {
+  /**
+   * The backend refused because the caller is anonymous (`sign_in_required`).
+   * The surface should offer sign-in, not a retry: retrying is the one thing
+   * that cannot work, since the refusal is about who is asking.
+   *
+   * A flag rather than a status test — a 403 from this route can also mean
+   * "not a member of this project", which sign-in does not fix.
+   */
+  readonly signInRequired: boolean;
+  constructor(
+    status: number,
+    message: string,
+    limitDialogRaised = false,
+    signInRequired = false
+  ) {
     super(message);
     this.name = "SwarmGenerateError";
     this.status = status;
     this.limitDialogRaised = limitDialogRaised;
+    this.signInRequired = signInRequired;
   }
 }
 
@@ -1049,6 +1065,12 @@ async function postGenerate<T>(
       body?.details && typeof body.details === "object"
         ? (body.details as Record<string, unknown>)
         : undefined;
+    // The backend's own code, forwarded by the proxy in `details` (the
+    // envelope's top-level `code` is the proxy's HTTP-shaped one — `FORBIDDEN`
+    // for every 403, whatever caused it).
+    const signInRequired =
+      details?.upstreamCode === SIGN_IN_REQUIRED_CODE ||
+      code === SIGN_IN_REQUIRED_CODE;
     // Raise the top-up dialog HERE, where the body still carries the route's
     // `code`. `SwarmGenerateError` keeps only status + message, so by the time
     // the create flow catches this the limit is no longer identifiable — and
@@ -1073,7 +1095,12 @@ async function postGenerate<T>(
         details,
       );
     }
-    throw new SwarmGenerateError(response.status, message);
+    throw new SwarmGenerateError(
+      response.status,
+      message,
+      false,
+      signInRequired
+    );
   }
   return parsed as T;
 }
