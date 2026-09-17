@@ -9,6 +9,12 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-09-17
+
+#### Changed
+
+- **Session transcripts now use the host-styled renderer** — User Testing, Swarm, and Scenario session transcripts now render through the same inspector renderer used in Playground and Evaluate, applying the pinned host's visual style (colors, avatar, message layout) instead of a generic fallback. Reasoning modes, timestamps, tool payloads, and tester ratings are all preserved. Widgets recorded during a session appear as static placeholders rather than live interactive components, keeping the review view stable and free of network calls to today's server.
+
 ### 2026-09-16
 
 #### Changed
