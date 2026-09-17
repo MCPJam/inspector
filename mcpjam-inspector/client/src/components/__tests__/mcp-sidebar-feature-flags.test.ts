@@ -287,7 +287,10 @@ describe("declared nav flags are actually resolved", () => {
       title: "Evaluate (Legacy)", featureFlag: "evaluate-enabled",
     });
     for (const enabled of [undefined, false, true]) {
-      const titles = filterByFeatureFlags(navigationSections, { "evaluate-enabled": enabled })
+      const titles = filterByFeatureFlags(
+        navigationSections,
+        enabled === undefined ? {} : { "evaluate-enabled": enabled },
+      )
         .flatMap((section) => section.items).map((item) => item.title);
       expect(titles).toContain("Evaluate");
       expect(titles.includes("Evaluate (Legacy)")).toBe(enabled === true);
