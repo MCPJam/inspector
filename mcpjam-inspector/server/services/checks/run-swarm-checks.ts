@@ -209,6 +209,9 @@ export async function runSwarmChecks(
     criterionResults = claim.criteria.map((entry, index) => ({
       criterionId: entry.id,
       passed: results[index]?.passed ?? false,
+      // Older evaluators omit status on scored rows; only a missing result
+      // or an explicit evaluator error is unmeasured.
+      status: results[index] ? results[index].status ?? "scored" : "error",
       reason: results[index]?.reason ?? "evaluator returned no verdict",
     }));
   } catch (error) {

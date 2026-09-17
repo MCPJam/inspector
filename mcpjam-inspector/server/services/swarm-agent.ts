@@ -590,6 +590,8 @@ export async function reportAttempt(
 export interface SwarmCriterionResult {
   criterionId: string;
   passed: boolean;
+  /** An evaluator error is unmeasured, not a failed assertion. */
+  status?: "scored" | "error";
   reason: string;
   scope?: { kind: "turn"; promptIndex: number };
 }
