@@ -65,13 +65,13 @@ export function SwarmReportPanel({
       </p>
       {report.observations.length > 0 && (
         <div className="space-y-1">
-          <p className="text-xs font-medium">Check observations</p>
+          <p className="text-xs font-medium">Evaluators</p>
           {report.observations.map((o) => (
             <p key={o.evaluatorId} className="text-xs text-muted-foreground">
               {USER_VALUE_STAGE_LABELS[o.stage]} ·{" "}
-              {observationLabel(o.predicateType)} ({o.role}):{" "}
-              {o.passed + o.failed}/{o.total} sessions measured · {o.failed}{" "}
-              findings · {o.pending} pending · {o.unavailable} unavailable
+              {observationLabel(o.predicateType)}: {o.passed + o.failed}/
+              {o.total} sessions measured · {o.failed} findings · {o.pending}{" "}
+              pending · {o.unavailable} unavailable
             </p>
           ))}
         </div>
@@ -119,7 +119,7 @@ export function SwarmSessionReport({
       )}
       {observations.map((o) => (
         <p key={o.evaluatorId} className="text-xs text-muted-foreground">
-          {observationLabel(o.predicateType)} ({o.role}):{" "}
+          {observationLabel(o.predicateType)}:{" "}
           {o.status === "unavailable"
             ? "Not measured"
             : o.status === "failed"

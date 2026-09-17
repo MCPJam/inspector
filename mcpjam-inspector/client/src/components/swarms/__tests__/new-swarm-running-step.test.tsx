@@ -974,7 +974,7 @@ describe("NewSwarmRunningStep — session stream pane", () => {
 });
 
 describe("NewSwarmRunningStep — frame copy", () => {
-  it("does not claim checks passed when only execution completed", () => {
+  it("does not claim evaluators passed when only execution completed", () => {
     expect(
       swarmCellHeadline({
         outcome: "succeeded",
@@ -1059,7 +1059,7 @@ describe("NewSwarmRunningStep — frame copy", () => {
         primary: "3/3 pass",
         goal: "Refund a charge",
       }),
-    ).toBe("Run completed: All checks passed");
+    ).toBe("Run completed: All evaluators passed");
     expect(
       swarmCellHeadline({
         outcome: "rate_limited",

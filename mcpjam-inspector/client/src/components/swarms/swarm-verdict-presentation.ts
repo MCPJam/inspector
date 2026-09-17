@@ -40,7 +40,5 @@ export function runVerdictBadge(verdict: SwarmSessionVerdictValue) {
 }
 
 export function observationLabel(kind: string) {
-  return isKnownPredicateKind(kind)
-    ? PREDICATE_KIND_LABELS[kind]
-    : "Check observation";
+  return isKnownPredicateKind(kind) ? PREDICATE_KIND_LABELS[kind] : "Evaluator";
 }
