@@ -12430,7 +12430,7 @@ export const listJourneyRunSessionsOperation: PlatformOperation<
   name: "list_journey_run_sessions",
   title: "List the sessions a journey run produced",
   description:
-    "The chat sessions a journey run produced — one per persona attempt against each target — with readiness, goal scores and a first-message preview. Transcript bodies are not on this API yet; use the returned `id` in the app to open a session.",
+    "The chat sessions a journey run produced — one per persona attempt against each target — with graded verdicts, check observations, readiness, goal scores and a first-message preview. `verdict` is the graded goal result; `outcome` is execution lifecycle. A broken execution may have met its goal. Transcript bodies are not on this API yet; use the returned `id` in the app to open a session.",
   readOnly: true,
   permalink: derivePermalinks((result) =>
     result.items.map((session) => ({

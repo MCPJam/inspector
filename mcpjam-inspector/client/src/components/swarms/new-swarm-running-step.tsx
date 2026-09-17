@@ -10,13 +10,19 @@
  * (`SwarmLiveStreamPane` — same Trace / Chat / Raw surface as Personas).
  *
  * "Open findings" and Leave both exit this watch surface for the swarm's
- * Findings page; the run keeps going. A finished run goes there on its own —
- * see `COMPLETION_TOAST_DWELL_MS`.
+ * Findings page; the run keeps going. "Stop run" is the control that actually
+ * cancels it. A finished (or stopped) run goes to Findings on its own — see
+ * `COMPLETION_TOAST_DWELL_MS`.
  */
+import { lifecycleChip, verdictBadge } from "./swarm-verdict-presentation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePaginatedQuery, useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { toast } from "@/lib/toast";
+import {
+  StopSwarmRunButton,
+  useStopSwarmRun,
+} from "@/components/swarms/swarm-stop-run";
 import { PersonaPixelAvatar } from "@/components/swarms/persona-pixel-avatar";
 import { SwarmRunningHero } from "@/components/swarms/swarm-running-hero";
 import { JourneyHostLogoMark } from "@/components/swarms/journey-host-logo";
@@ -107,6 +113,7 @@ type RunningSelection = SwarmMatrixSelection & {
 type CellView = {
   outcome: SwarmMatrixCellOutcome | "queued";
   headline: string;
+  verdict?: JourneySessionRow["verdict"];
 };
 
 type SessionSlot = {
@@ -144,6 +151,8 @@ export function swarmRunningTitle(args: {
   rateLimited: number;
   done: number;
   total: number;
+  /** This viewer pressed Stop run and the wave has settled. */
+  stopped?: boolean;
 }): string {
   // Progress count while anything ran; succeeded-count when the wave produced
   // no session — "failed 15 of 15" would count refusals as sessions.
@@ -151,6 +160,7 @@ export function swarmRunningTitle(args: {
     !args.allTerminal || args.succeeded > 0 ? args.done : args.succeeded;
   const count = args.total > 0 ? ` ${shown} of ${args.total} sessions` : "";
   if (!args.allTerminal) return `Swarm running${count}`;
+  if (args.stopped) return `Swarm stopped${count}`;
   if (args.succeeded > 0) return `Swarm finished${count}`;
   if (args.rateLimited > 0) return `Swarm could not run${count}`;
   return `Swarm failed${count}`;
@@ -177,10 +187,10 @@ export function swarmCellHeadline(args: {
   if (args.outcome === "rate_limited") {
     return /\d+\/\d+ pass/.test(args.primary)
       ? "Run completed: Goal completion had mixed results"
-      : "Run limited: not run";
+      : "Execution limited";
   }
   if (args.outcome === "failed") {
-    return `Run failed: ${goal}`;
+    return `Broke: ${goal}`;
   }
   return goal;
 }
@@ -395,7 +405,7 @@ function cellTone(outcome: CellView["outcome"]): string {
   }
 }
 
-function slotView(args: {
+export function slotView(args: {
   liveStatus?: SwarmCellLiveStatus;
   session: JourneySessionRow | null;
   attempt?: SwarmAttemptOutcome | null;
@@ -409,6 +419,19 @@ function slotView(args: {
     attempt,
     runStatus,
   });
+
+  if (session?.verdict) {
+    const verdict = session.verdict;
+    const execution = {
+      pending: "pending",
+      running: "running",
+      ran: "succeeded",
+      broke: "failed",
+      limited: "rate_limited",
+      withdrawn: "failed",
+    } as const;
+    return { outcome: execution[verdict.lifecycle], headline: goal, verdict };
+  }
 
   if (outcome === "running") {
     return {
@@ -441,11 +464,7 @@ function slotView(args: {
     };
   }
 
-  // A non-success terminal is reported BEFORE the rubric, and never dressed up
-  // as one. A rate-limited attempt never ran, so it has no rubric result to
-  // show — and reusing the `rate_limited` tone for a partial rubric pass (as
-  // the block below still does for its own middle case) must not leak into a
-  // cell that was genuinely refused by the provider.
+  // Execution refusal remains distinct from a measured goal result.
   if (outcome === "rate_limited") {
     return {
       outcome: "rate_limited",
@@ -462,26 +481,6 @@ function slotView(args: {
       headline: swarmCellHeadline({
         outcome: "failed",
         primary: "failed",
-        goal,
-      }),
-    };
-  }
-
-  const criteria = session?.criteria;
-  if (criteria?.status === "completed" && criteria.results?.length) {
-    const checks = criteria.results.length;
-    const passed = criteria.results.filter((result) => result.passed).length;
-    const scored: CellView["outcome"] =
-      passed === checks
-        ? "succeeded"
-        : passed === 0
-        ? "failed"
-        : "rate_limited";
-    return {
-      outcome: scored,
-      headline: swarmCellHeadline({
-        outcome: scored,
-        primary: `${passed}/${checks} pass`,
         goal,
       }),
     };
@@ -547,8 +546,7 @@ function collectSessionSlots(args: {
       index,
     );
     const direct = snap.stream.cellStatus[swarmCellKey(columnKey, index)] as
-      | SwarmCellLiveStatus
-      | undefined;
+      SwarmCellLiveStatus | undefined;
     const fromEnvelope = Object.values(snap.stream.sessions).find(
       (entry) =>
         entry.envelope.sessionIndex === index &&
@@ -653,7 +651,7 @@ export function NewSwarmRunningStep({
   chrome?: "wizard" | "page";
   /**
    * Leave the watch surface for the swarm's Findings page. Does not cancel
-   * the run — "Stop" used to imply that and was a lie.
+   * the run — that is "Stop run", a separate, confirmed control.
    */
   onLeave: () => void;
   /**
@@ -725,10 +723,12 @@ export function NewSwarmRunningStep({
           prev.attempts.length === snapshot.attempts.length &&
           prev.attempts.every((attempt, index) => {
             const next = snapshot.attempts[index];
-            return attempt.status === next?.status &&
+            return (
+              attempt.status === next?.status &&
               attempt.errorCode === next?.errorCode &&
               attempt.errorMessage === next?.errorMessage &&
-              attempt.chatSessionId === next?.chatSessionId;
+              attempt.chatSessionId === next?.chatSessionId
+            );
           }) &&
           prev.sessionsPerTarget === snapshot.sessionsPerTarget &&
           prev.stream === snapshot.stream &&
@@ -750,6 +750,10 @@ export function NewSwarmRunningStep({
                 snapshot.sessions[index]?.chatSessionId &&
               session.status === snapshot.sessions[index]?.status &&
               session.messageCount === snapshot.sessions[index]?.messageCount &&
+              JSON.stringify(session.verdict) ===
+                JSON.stringify(snapshot.sessions[index]?.verdict) &&
+              JSON.stringify(session.observations) ===
+                JSON.stringify(snapshot.sessions[index]?.observations) &&
               session.criteria?.status ===
                 snapshot.sessions[index]?.criteria?.status,
           )
@@ -831,6 +835,33 @@ export function NewSwarmRunningStep({
       };
     }, [runs, snapshots]);
 
+  // A launched run with no snapshot yet has not reported a status, so it is
+  // treated as still running — the stop must reach it.
+  const runningRunIds = useMemo(
+    () =>
+      runs
+        .filter((run) => {
+          const status = snapshots[run.runId]?.status;
+          return (
+            status === undefined || status === "running" || status === "pending"
+          );
+        })
+        .map((run) => run.runId),
+    [runs, snapshots],
+  );
+  const {
+    stop: stopRun,
+    busy: stopBusy,
+    stoppedHere,
+  } = useStopSwarmRun(runningRunIds);
+  /**
+   * Set on confirm, before the cancel resolves. Convex can deliver the
+   * now-terminal run rows ahead of the mutation's own result, so waiting for
+   * `stoppedHere` would let "Swarm complete!" fire for a run the viewer
+   * just stopped.
+   */
+  const stopRequestedRef = useRef(false);
+
   // Read through a ref so the effect below depends on `allTerminal` alone:
   // re-running it because a callback's identity changed would clear the
   // pending timer and strand the viewer on a finished run.
@@ -859,7 +890,9 @@ export function NewSwarmRunningStep({
     if (!completionAnnouncedRef.current) {
       completionAnnouncedRef.current = true;
       callbacksRef.current.onRunsComplete?.();
-      toast.success("Swarm complete!");
+      // A stopped wave already said so ("Run stopped"); calling it complete
+      // would contradict the viewer's own action.
+      if (!stopRequestedRef.current) toast.success("Swarm complete!");
     }
     const timer = window.setTimeout(() => {
       callbacksRef.current.onLeave();
@@ -879,7 +912,13 @@ export function NewSwarmRunningStep({
   const runFailure = useMemo(() => {
     // This banner summarizes waves without a successful attempt. Failed
     // attempts may still have recorded conversations and executed tools.
-    if (!allTerminal || succeeded > 0 || rateLimited + failed === 0) {
+    // A wave this viewer stopped reads as failed attempts, but nothing broke.
+    if (
+      !allTerminal ||
+      stoppedHere ||
+      succeeded > 0 ||
+      rateLimited + failed === 0
+    ) {
       return null;
     }
     for (const snap of Object.values(snapshots)) {
@@ -900,7 +939,7 @@ export function NewSwarmRunningStep({
       }
     }
     return null;
-  }, [allTerminal, failed, rateLimited, snapshots, succeeded]);
+  }, [allTerminal, failed, rateLimited, snapshots, stoppedHere, succeeded]);
 
   const progress = total > 0 ? Math.min(1, done / total) : allTerminal ? 1 : 0;
 
@@ -964,11 +1003,11 @@ export function NewSwarmRunningStep({
     // Two providers throttling in the same run name neither: the banner would
     // otherwise blame whichever attempt was read first for both.
     const [only] = labels;
-    return { count, label: labels.size === 1 ? only ?? null : null };
+    return { count, label: labels.size === 1 ? (only ?? null) : null };
   }, [snapshots]);
 
   const selectedRunStatus = selection
-    ? snapshots[selection.runId]?.status ?? "running"
+    ? (snapshots[selection.runId]?.status ?? "running")
     : "running";
 
   const fallbackTrace = useMemo(
@@ -1022,9 +1061,27 @@ export function NewSwarmRunningStep({
                       rateLimited,
                       done,
                       total,
+                      stopped: stoppedHere,
                     })}
                   </h2>
                   <div className="flex shrink-0 items-center gap-2">
+                    {allTerminal ? null : (
+                      <StopSwarmRunButton
+                        runningCount={runningRunIds.length}
+                        busy={stopBusy}
+                        onConfirm={() => {
+                          stopRequestedRef.current = true;
+                          void stopRun().then((outcome) => {
+                            // Nothing stopped: a wave that later finishes on
+                            // its own should still say so.
+                            if (outcome === "refused") {
+                              stopRequestedRef.current = false;
+                            }
+                          });
+                        }}
+                        testIdPrefix="new-swarm-running"
+                      />
+                    )}
                     <Button
                       type="button"
                       size="sm"
@@ -1259,6 +1316,29 @@ export function NewSwarmRunningStep({
                                       />
                                       <p className="min-w-0 flex-1 text-xs font-semibold leading-tight text-foreground">
                                         {slot.view.headline}
+                                        {slot.view.verdict && (
+                                          <span className="block text-[10px] text-muted-foreground">
+                                            <span>
+                                              {
+                                                lifecycleChip(
+                                                  slot.view.verdict.lifecycle,
+                                                ).label
+                                              }
+                                            </span>
+                                            {" · "}
+                                            <span
+                                              className={
+                                                verdictBadge(slot.view.verdict)
+                                                  .tone
+                                              }
+                                            >
+                                              {
+                                                verdictBadge(slot.view.verdict)
+                                                  .label
+                                              }
+                                            </span>
+                                          </span>
+                                        )}
                                       </p>
                                     </button>
                                   );
