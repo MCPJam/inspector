@@ -714,7 +714,7 @@ function JourneyGradingEditor({
         >
           <span className="min-w-0 truncate">
             {criteriaCount > 0
-              ? `${criteriaCount} ${criteriaCount === 1 ? "check" : "checks"}`
+              ? `${criteriaCount} ${criteriaCount === 1 ? "evaluator" : "evaluators"}`
               : "Grading"}
           </span>
           <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
@@ -737,7 +737,7 @@ function JourneyGradingEditor({
             value={judgeConfig}
             onChange={setJudgeConfig}
             availableModels={availableModels}
-            bareAutoGradeBlurb="Grade every session automatically against this goal. Uses credits."
+            bareAutoGradeBlurb="The goal completion judge grades every session against this goal, and its verdict decides whether the session passed. Uses credits."
             bareAutoGradeAriaLabel="Auto-grade every session with LLM as Judge"
           />
           <div className="mt-3 border-t border-border/40 pt-3">
