@@ -43,6 +43,28 @@ API:
 
 Default: `sandbox.mcpjam.com,sandbox-staging.mcpjam.com`.
 
+## Google tag (optional)
+
+The hosted app can load Google's `gtag.js` so GA4 and Google Ads see the same
+visitor on the marketing site and in the app. This is what makes ad-driven
+signups attributable: without it the ad click ends at the landing page and the
+signup on the app is invisible to Google.
+
+```bash
+# Client build time. Comma-separated; GA4 and/or Google Ads ids.
+VITE_GOOGLE_TAG_IDS=G-XXXXXXXXXX,AW-XXXXXXXXXX
+```
+
+Unset or empty, nothing loads. The tag only ever loads on the hosted web
+surface: `npx`/Docker installs, PR previews, and the desktop app never carry
+it. Share URLs that embed a credential (`/results/<token>` and friends) are
+sent to Google with the token redacted, the same scrub PostHog applies.
+
+Two follow-ups happen in Google's own admin, not in this repo: add both
+`mcpjam.com` and the app host to the GA4 property's cross-domain list so the
+tag links the two sessions, and mark a `sign_up` key event as a conversion once
+the app emits one.
+
 Get this list wrong and the listed host stops serving the app, so change it on
 staging first. `SANDBOX_HOSTS=""` disables the partition entirely and is the
 rollback.

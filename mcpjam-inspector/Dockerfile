@@ -52,6 +52,10 @@ ARG VITE_WORKOS_CLIENT_ID
 ARG VITE_MCPJAM_SANDBOX_ORIGIN
 ARG VITE_MCPJAM_VIEW_MOUNT
 ARG VITE_MCPJAM_VIEW_SUBDOMAINS
+# Comma-separated Google tag ids (GA4 `G-…` and/or Ads `AW-…`). Empty means
+# the hosted bundle loads no Google tag, which is what PR previews and
+# staging want. See client/src/lib/google-tag.ts.
+ARG VITE_GOOGLE_TAG_IDS
 # Not a VITE_ var — it is never bundled. `sentryVitePlugin` in
 # client/vite.config.ts reads it at BUILD time to upload source maps for the
 # release, and without it every hosted prod stack trace stays minified
@@ -136,6 +140,7 @@ RUN if [ -n "$VITE_STRIPE_PUBLISHABLE_KEY" ]; then export VITE_STRIPE_PUBLISHABL
     if [ -n "$VITE_MCPJAM_SANDBOX_ORIGIN" ]; then export VITE_MCPJAM_SANDBOX_ORIGIN; fi; \
     if [ -n "$VITE_MCPJAM_VIEW_MOUNT" ]; then export VITE_MCPJAM_VIEW_MOUNT; fi; \
     if [ -n "$VITE_MCPJAM_VIEW_SUBDOMAINS" ]; then export VITE_MCPJAM_VIEW_SUBDOMAINS; fi; \
+    if [ -n "$VITE_GOOGLE_TAG_IDS" ]; then export VITE_GOOGLE_TAG_IDS; fi; \
     if [ -n "$SENTRY_AUTH_TOKEN" ]; then export SENTRY_AUTH_TOKEN; fi; \
     MCPJAM_BUILD_SURFACE=web npm run build:client -w @mcpjam/inspector
 
