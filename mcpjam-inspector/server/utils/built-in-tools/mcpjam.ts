@@ -31,6 +31,9 @@
 import { tool, type ToolSet } from "ai";
 import { needsApprovalFor } from "@/shared/tool-approval";
 import {
+  describePlatformRefusal,
+  platformRefusalHint,
+  type PlatformRefusal,
   callServerToolOperation,
   connectProjectServerOperation,
   diagnoseServerOperation,
@@ -747,9 +750,18 @@ export function capForModel(value: unknown): unknown {
 export function toToolError(
   error: unknown,
   fallback: string,
-): { error: string } {
+): { error: string; refusal?: PlatformRefusal } {
   const message =
     error instanceof Error && error.message.trim() ? error.message : "";
+  // A usage-limit refusal says when to come back and whether credits would
+  // help, so the model waits instead of retrying or suggesting a top-up.
+  const refusal = describePlatformRefusal(error);
+  if (refusal) {
+    return {
+      error: `${message || fallback} ${platformRefusalHint(refusal)}`,
+      refusal,
+    };
+  }
   return { error: message || fallback };
 }
 
