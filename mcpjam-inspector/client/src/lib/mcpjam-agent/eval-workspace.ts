@@ -100,8 +100,7 @@ export function isEvalContextReady(scope: EvalAgentScope) {
 
 let activeDraftScope: EvalAgentScope | undefined;
 let activeSuiteScope:
-  | Omit<EvalAgentScope, "id" | "kind" | "version">
-  | undefined;
+  Omit<EvalAgentScope, "id" | "kind" | "version"> | undefined;
 export function currentEvalPageScope() {
   if (activeDraftScope) {
     const {
@@ -325,7 +324,32 @@ export function stageMarkdownDrafts(
     ...state,
     drafts: [...state.drafts, ...staged],
     reviewRequestId: generateId(),
+    // Generation and import share one per-suite store. A failed generation
+    // left its error here, and the import surface then rendered it above
+    // drafts that had just succeeded — telling the reader to change a tool
+    // coverage setting import does not even offer.
+    error: undefined,
   }));
+}
+
+/**
+ * Short label for the draft card's badge.
+ *
+ * `importedDraftBlockedReason` stays a full sentence because it is also thrown
+ * as an error message on save. A pill needs the problem NAMED instead: the
+ * sentence listed all three fields whichever one was missing, and sat in grey
+ * body copy where it read as a hint rather than the reason Add was refused.
+ */
+export function importedDraftBlockedBadge(
+  draft: GeneratedDraft,
+): string | undefined {
+  if (!importedDraftBlockedReason(draft)) return undefined;
+  const missing = [
+    !draft.input.title?.trim() && "title",
+    !draft.input.query?.trim() && "prompt",
+    !draft.input.expectedOutput?.trim() && "expected outcome",
+  ].filter((field): field is string => typeof field === "string");
+  return missing.length ? `Missing ${missing.join(", ")}` : "Can't be added";
 }
 
 export function importedDraftBlockedReason(
@@ -771,8 +795,8 @@ export async function followAuthoringJob(
             status.status === "pending"
               ? "running"
               : status.status === "completed"
-              ? "ready"
-              : "error",
+                ? "ready"
+                : "error",
           error: status.error ?? undefined,
           authoringJobId:
             status.status === "pending" || status.status === "failed"

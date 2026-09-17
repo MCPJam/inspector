@@ -1220,10 +1220,13 @@ function EvaluateTabContent({
    */
   const [generatingCases, setGeneratingCases] = useState<{
     exit: () => void;
+    /** Import review borrows this crumb; without it every surface reads
+     * "Generate test cases". */
+    label?: string;
   } | null>(null);
 
   const renderPlaygroundBreadcrumb = () => {
-    if (generatingCases) return "Generate test cases";
+    if (generatingCases) return generatingCases.label ?? "Generate test cases";
     if (!hasDetailRoute) return null;
     return isNestedDetail ? nestedPageLabel : suiteBreadcrumbLabel;
   };

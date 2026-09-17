@@ -22,6 +22,7 @@ import {
   evalSurfaceHeaderClass,
 } from "../evals/eval-surface-chrome";
 import { Button } from "@mcpjam/design-system/button";
+import { Badge } from "@mcpjam/design-system/badge";
 import { Input } from "@mcpjam/design-system/input";
 import { CaseSpine } from "./case-spine/case-spine";
 import { caseViewModel } from "./case-workspace/case-view-model";
@@ -32,6 +33,7 @@ import {
   saveGeneratedDraft,
   removeGeneratedDraft,
   importedDraftBlockedReason,
+  importedDraftBlockedBadge,
   followAuthoringJob,
   acceptAuthoringAddition,
   controlAuthoringJob,
@@ -128,9 +130,12 @@ export function EvalGeneratedDrafts({
     }
   }, [state?.reviewRequestId]);
   // A running or failed authoring job owns the status line and its
-  // cancel/retry control before it has produced a single draft.
-  const authoringVisible =
-    !saveVisibleOnly && Boolean(state?.authoringJobId || state?.error);
+  // cancel/retry control before it has produced a single draft. A bare
+  // `error` does NOT: generation writes its failures to the same per-suite
+  // store, and the generation workspace already renders them — opening this
+  // panel for one put the identical message on screen twice and revived an
+  // empty draft section after a failed generation.
+  const authoringVisible = !saveVisibleOnly && Boolean(state?.authoringJobId);
   if (!state || (!state.drafts.length && !authoringVisible))
     return saveVisibleOnly ? (
       <p role="status" className="text-sm">
@@ -202,10 +207,10 @@ export function EvalGeneratedDrafts({
               {saving
                 ? "Adding cases…"
                 : saveVisibleOnly
-                ? "Save all"
-                : readyTargets.length < saveTargets.length
-                ? "Add ready cases"
-                : "Add all to suite"}
+                  ? "Save all"
+                  : readyTargets.length < saveTargets.length
+                    ? "Add ready cases"
+                    : "Add all to suite"}
             </Button>
           )}
         </div>
@@ -215,6 +220,9 @@ export function EvalGeneratedDrafts({
             below, then add individual cases or add them all to make them
             available to Run.
           </p>
+          {/* Reaching here means there ARE drafts or an authoring job — the
+              early return above handles the bare-error case, which belongs to
+              the generation workspace. */}
           {!saveVisibleOnly && state.error && (
             <p role="alert" className="text-sm text-destructive">
               {describeEvalDraftError(state.error)}
@@ -223,6 +231,7 @@ export function EvalGeneratedDrafts({
           {visibleDrafts.map((draft) => {
             const expanded = reviewing === draft.id;
             const blockedReason = importedDraftBlockedReason(draft);
+            const blockedBadge = importedDraftBlockedBadge(draft);
             const locked =
               draft.saving ||
               Boolean(
@@ -241,9 +250,15 @@ export function EvalGeneratedDrafts({
                 )}
               >
                 <header className="flex items-start gap-3">
-                  <h4 className="min-w-0 flex-1 break-words text-sm font-semibold">
+                  <h4 className="min-w-0 break-words text-sm font-semibold">
                     {draft.input.title || "Untitled draft"}
                   </h4>
+                  {blockedBadge && (
+                    <Badge variant="destructive" title={blockedReason}>
+                      {blockedBadge}
+                    </Badge>
+                  )}
+                  <span className="flex-1" />
                   <Button
                     type="button"
                     variant="ghost"
@@ -332,11 +347,6 @@ export function EvalGeneratedDrafts({
                         : "Open this draft to review its steps and assertions."}
                     </p>
                   </div>
-                )}
-                {blockedReason && (
-                  <p className="text-xs text-muted-foreground">
-                    {blockedReason}
-                  </p>
                 )}
                 {draft.authoring && (
                   <div className="space-y-3 text-sm">
@@ -430,9 +440,9 @@ export function EvalGeneratedDrafts({
                     {draft.saving
                       ? "Adding…"
                       : draft.markdownImport?.prepared ||
-                        draft.authoringPrepared
-                      ? "Retry save"
-                      : "Add to suite"}
+                          draft.authoringPrepared
+                        ? "Retry save"
+                        : "Add to suite"}
                   </Button>
                   <Button
                     size="sm"
