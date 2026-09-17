@@ -64,6 +64,11 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "post /browser-sessions/artifact": "browserSession",
   "post /browser-sessions/close": "browserSession",
 
+  "get /projects/{projectId}/eval-suites/{suiteId}/authoring/{jobId}":
+    "generateEvalCases",
+  "post /projects/{projectId}/eval-suites/{suiteId}/authoring/{jobId}/commit":
+    "generateEvalCases",
+
   // Identity and catalogs
   // Spend budget — the organization's ceiling on MCPJam-billed spend.
   "get /organizations/{organizationId}/spend-budget": "getSpendBudget",
@@ -417,6 +422,10 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
  * and it belongs in the map above with a method written for it.
  */
 const EXCLUDED_FROM_SDK: Readonly<Record<string, string>> = {
+  "get /projects/{projectId}/agent/jobs/{jobId}":
+    "Durable headless-agent transport used by surface-core for Slack/Discord; the SDK does not expose the service-credential-only agent entry point.",
+  "post /projects/{projectId}/agent/jobs/{jobId}/cancel":
+    "Durable headless-agent cancellation companion to the service-credential-only agent endpoint; surface clients own its job lifecycle.",
   // The DEPRECATED `/hosts` aliases. Their canonical `/clients` twins are in
   // the map above and are what the SDK's contract covers. The SDK does still
   // reach these paths — `listHosts`…`duplicateHost` remain as executable

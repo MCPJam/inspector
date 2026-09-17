@@ -64,8 +64,9 @@ vi.mock("@/shared/http-tool-calls", () => ({
 }));
 
 vi.mock("../chat-helpers", async () => {
-  const actual =
-    await vi.importActual<typeof import("../chat-helpers")>("../chat-helpers");
+  const actual = await vi.importActual<typeof import("../chat-helpers")>(
+    "../chat-helpers",
+  );
   return {
     ...actual,
     scrubMcpAppsToolResultsForBackend: vi.fn((messages) => messages),
@@ -133,6 +134,64 @@ describe("mcpjam-stream-handler", () => {
   afterEach(() => {
     global.fetch = originalFetch;
     delete process.env.CONVEX_HTTP_URL;
+  });
+
+  it("awaits durable intent before allowing a provider invocation", async () => {
+    await handleMCPJamFreeChatModel({
+      messages: [{ role: "user", content: "Make a case" }],
+      modelId: "gpt-4.1-mini",
+      systemPrompt: "Use tools",
+      tools: {},
+      mcpClientManager: {
+        getAllToolsMetadata: vi.fn().mockReturnValue({}),
+      } as any,
+      durableCheckpoint: async () => {
+        throw new Error("lease lost");
+      },
+    });
+    await lastExecution;
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(executeToolCallsFromMessages).not.toHaveBeenCalled();
+  });
+
+  it("does not execute a tool when persisting the model result fails", async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      createSseResponse([
+        {
+          type: "tool-input-start",
+          toolCallId: "durable-1",
+          toolName: "create_case",
+        },
+        {
+          type: "tool-input-available",
+          toolCallId: "durable-1",
+          toolName: "create_case",
+          input: {},
+        },
+        {
+          type: "finish",
+          finishReason: "tool-calls",
+          totalUsage: { inputTokens: 1, outputTokens: 1 },
+        },
+      ]),
+    );
+    const phases: string[] = [];
+    await handleMCPJamFreeChatModel({
+      messages: [{ role: "user", content: "Make a case" }],
+      modelId: "gpt-4.1-mini",
+      systemPrompt: "Use tools",
+      tools: {},
+      mcpClientManager: {
+        getAllToolsMetadata: vi.fn().mockReturnValue({}),
+      } as any,
+      durableCheckpoint: async ({ phase }) => {
+        phases.push(phase);
+        if (phase === "tools") throw new Error("checkpoint unavailable");
+      },
+    });
+    await lastExecution;
+    expect(phases).toEqual(["model", "tools"]);
+    expect(executeToolCallsFromMessages).not.toHaveBeenCalled();
   });
 
   it("request_payload trace reflects prepareAdvertisedTools narrowing (non-progressive) and matches the Convex request", async () => {

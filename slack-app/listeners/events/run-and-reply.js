@@ -1,4 +1,5 @@
 import { mintConnectUrl } from '../../agent/connect-link.js';
+import { deliverDurableReply } from '../../agent/durable-delivery.js';
 import { McpjamApiError } from '../../agent/mcpjam-client.js';
 import { runTurnForEvent } from '../../agent/turn-runner.js';
 import { createThreadBinding, resolveTurnTarget } from '../../agent/turn-target.js';
@@ -106,7 +107,10 @@ export async function runAndReply(args) {
 
     // Posting is passed INTO the runner so it happens inside the per-thread
     // queue — the next turn's history must already contain this reply.
+    /** @type {{channel:string,ts:string} | undefined} */
+    let replyHandle;
     await runTurnForEvent({
+      replyHandle: () => replyHandle,
       client,
       ctx: credentialCtx,
       channelId: args.channelId,
@@ -119,6 +123,11 @@ export async function runAndReply(args) {
       // Best-effort: the status indicator is cosmetic, so a Slack hiccup
       // here must never cost the user their answer.
       onStart: async () => {
+        if (process.env.DURABLE_AGENT_TURNS_ENABLED === 'true') {
+          const message = await say({ text: 'Working on it…', thread_ts: args.threadTs });
+          if (!message?.ts) throw new Error('Could not create the durable reply handle.');
+          replyHandle = { channel: args.channelId, ts: message.ts };
+        }
         try {
           await setStatus({
             status: 'Working on it…',
@@ -134,6 +143,11 @@ export async function runAndReply(args) {
         }
       },
       onResult: async (result) => {
+        const handle = /** @type {any} */ (result).replyHandle ?? replyHandle;
+        if (handle) {
+          await deliverDurableReply(client, handle, result);
+          return;
+        }
         const streamer = sayStream();
         await streamer.append({
           markdown_text: result.reply || 'Done — though I have nothing to add.',
@@ -157,6 +171,11 @@ export async function runAndReply(args) {
       // streamer — there is nothing to stream, the text already exists, and
       // the note tells the user why an old answer just reappeared.
       onReplay: async (envelope) => {
+        const handle = /** @type {any} */ (envelope).replyHandle;
+        if (handle) {
+          await deliverDurableReply(client, handle, envelope);
+          return;
+        }
         await say({
           text: envelope.reply || 'Done — though I have nothing to add.',
           thread_ts: args.threadTs,

@@ -632,8 +632,8 @@ export class PlatformApiClient {
     this.userAgent = isBrowserPage()
       ? options.userAgent
       : options.userAgent
-        ? `${options.userAgent} ${DEFAULT_PLATFORM_USER_AGENT}`
-        : DEFAULT_PLATFORM_USER_AGENT;
+      ? `${options.userAgent} ${DEFAULT_PLATFORM_USER_AGENT}`
+      : DEFAULT_PLATFORM_USER_AGENT;
     this.launchHeaders = buildLaunchHeaders(options);
     // Lower-cased at construction so `request` cannot end up with two spellings
     // of one header — HTTP names are case-insensitive, but a plain object's
@@ -773,8 +773,8 @@ export class PlatformApiClient {
             params.connectableOnly === undefined
               ? undefined
               : params.connectableOnly
-                ? "true"
-                : "false",
+              ? "true"
+              : "false",
           ...pageQuery({ cursor: params.cursor, limit: params.limit }),
         },
       },
@@ -3445,7 +3445,7 @@ export class PlatformApiClient {
     );
   }
 
-  generateEvalCases(
+  async generateEvalCases(
     params: {
       projectId: string;
       suiteId: string;
@@ -3453,13 +3453,38 @@ export class PlatformApiClient {
     },
     options?: RequestOptions
   ): Promise<PlatformEvalCasesGenerated> {
-    return this.request(
+    const started = await this.request<
+      PlatformEvalCasesGenerated & { jobId?: string }
+    >(
       "POST",
       `/projects/${encodeURIComponent(
         params.projectId
       )}/eval-suites/${encodeURIComponent(params.suiteId)}/cases/generate`,
       { body: params.body },
       options
+    );
+    if (!started.jobId) return started;
+    const jobPath = `/projects/${encodeURIComponent(
+      params.projectId
+    )}/eval-suites/${encodeURIComponent(
+      params.suiteId
+    )}/authoring/${encodeURIComponent(started.jobId)}`;
+    const deadline = Date.now() + 10 * 60_000;
+    while (Date.now() < deadline) {
+      options?.signal?.throwIfAborted();
+      const status = await this.request<{ status: string; error?: string }>(
+        "GET",
+        jobPath,
+        {},
+        options
+      );
+      if (status.status !== "pending") {
+        return this.request("POST", `${jobPath}/commit`, { body: {} }, options);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+    throw new Error(
+      `Generation is still running. Resume authoring job ${started.jobId}; do not start another generation.`
     );
   }
 

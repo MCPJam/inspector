@@ -1,3 +1,8 @@
+import { useAvailableModels } from "@/hooks/use-available-models";
+import { RunIterationControl } from "./run-iteration-control";
+import { EvalModelChoices } from "./eval-target-matrix";
+import type { GeneratedDraft } from "@/lib/mcpjam-agent/eval-workspace";
+import { resolveAuthoringIssue } from "@/lib/mcpjam-agent/eval-workspace";
 import { ImportedDraftEditor } from "./imported-draft-editor";
 import { EVAL_DESCRIBE_ONLY_AGENT } from "@/shared/eval-agent-scope";
 import { useEffect, useRef, useState } from "react";
@@ -27,6 +32,9 @@ import {
   saveGeneratedDraft,
   removeGeneratedDraft,
   importedDraftBlockedReason,
+  followAuthoringJob,
+  acceptAuthoringAddition,
+  controlAuthoringJob,
 } from "@/lib/mcpjam-agent/eval-workspace";
 import type { EvalAgentScope } from "@/shared/eval-agent-scope";
 import { describeMCPJamLimitMessage } from "@/lib/mcpjam-limit";
@@ -104,6 +112,10 @@ export function EvalGeneratedDrafts({
   };
   const [reviewing, setReviewing] = useState<string | null>(null);
   const state = useEvalGeneration((s) => s.suites[evalSuiteKey(scope)]);
+  useEffect(() => {
+    if (state?.authoringJobId)
+      void followAuthoringJob({ projectId, suiteId }, state.authoringJobId);
+  }, [projectId, suiteId, state?.authoringJobId]);
   const [open, setOpen] = useState(defaultOpen);
   const initialReviewRequest = useRef(state?.reviewRequestId);
   useEffect(() => {
@@ -166,6 +178,17 @@ export function EvalGeneratedDrafts({
               </Button>
             </CollapsibleTrigger>
           </h3>
+          {state.authoringJobId && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                void controlAuthoringJob(scope, running ? "cancel" : "retry")
+              }
+            >
+              {running ? "Cancel drafting" : "Retry failed cases"}
+            </Button>
+          )}
           {state.drafts.length > 0 && (
             <Button
               size="sm"
@@ -175,10 +198,10 @@ export function EvalGeneratedDrafts({
               {saving
                 ? "Adding cases…"
                 : saveVisibleOnly
-                  ? "Save all"
-                  : readyTargets.length < saveTargets.length
-                    ? "Add ready cases"
-                    : "Add all to suite"}
+                ? "Save all"
+                : readyTargets.length < saveTargets.length
+                ? "Add ready cases"
+                : "Add all to suite"}
             </Button>
           )}
         </div>
@@ -197,7 +220,10 @@ export function EvalGeneratedDrafts({
             const expanded = reviewing === draft.id;
             const blockedReason = importedDraftBlockedReason(draft);
             const locked =
-              draft.saving || Boolean(draft.markdownImport?.prepared);
+              draft.saving ||
+              Boolean(
+                draft.markdownImport?.prepared || draft.authoringPrepared,
+              );
             const prompt = draft.input.steps?.find(
               (step) => step.kind === "prompt",
             );
@@ -249,6 +275,13 @@ export function EvalGeneratedDrafts({
                         }
                       />
                     </label>
+                    {draft.authoring && (
+                      <AuthoringDraftSettings
+                        scope={scope}
+                        draft={draft}
+                        disabled={locked}
+                      />
+                    )}
                     {draft.markdownImport ? (
                       <ImportedDraftEditor scope={scope} draft={draft} />
                     ) : (
@@ -272,10 +305,10 @@ export function EvalGeneratedDrafts({
                             predicates,
                           })
                         }
-                        availableTools={[]}
-                        suiteServers={[]}
+                        availableTools={state?.availableTools ?? []}
+                        suiteServers={state?.suiteServers ?? []}
                         evalValidationBorderClass="border-border"
-                        readOnly={draft.saving}
+                        readOnly={locked}
                         onStepsChange={(steps) =>
                           editGeneratedDraft(scope, draft.id, draft.revision, {
                             steps,
@@ -301,6 +334,84 @@ export function EvalGeneratedDrafts({
                     {blockedReason}
                   </p>
                 )}
+                {draft.authoring && (
+                  <div className="space-y-3 text-sm">
+                    {draft.authoring.source && (
+                      <details>
+                        <summary>
+                          Source: {draft.authoring.source.fileName}, lines{" "}
+                          {draft.authoring.source.startLine}–
+                          {draft.authoring.source.endLine}
+                        </summary>
+                        <pre className="whitespace-pre-wrap rounded bg-muted p-3">
+                          {draft.authoring.source.excerpt}
+                        </pre>
+                      </details>
+                    )}
+                    {draft.authoring.issues.map((issue, index) => (
+                      <div key={index}>
+                        <p
+                          className={
+                            issue.blocking && !issue.resolution
+                              ? "text-destructive"
+                              : "text-muted-foreground"
+                          }
+                        >
+                          {issue.stepId ? `${issue.stepId}: ` : ""}
+                          {issue.message}
+                        </p>
+                        {issue.blocking && (
+                          <textarea
+                            aria-label={`Resolution for ${issue.message}`}
+                            placeholder="Explain the evidence or edits that resolve this issue (at least 10 characters)."
+                            className="w-full rounded-md border bg-background p-2"
+                            value={
+                              draft.issueResolutions?.[index] ??
+                              issue.resolution ??
+                              ""
+                            }
+                            disabled={locked}
+                            onChange={(event) =>
+                              resolveAuthoringIssue(
+                                scope,
+                                draft.id,
+                                index,
+                                event.target.value,
+                              )
+                            }
+                          />
+                        )}
+                      </div>
+                    ))}
+                    {draft.authoring.additions.map((addition) => (
+                      <label
+                        key={addition.id}
+                        className="flex items-start gap-2"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={
+                            draft.acceptedAdditionIds?.includes(addition.id) ??
+                            false
+                          }
+                          disabled={locked}
+                          onChange={(event) =>
+                            acceptAuthoringAddition(
+                              scope,
+                              draft.id,
+                              addition.id,
+                              event.target.checked,
+                            )
+                          }
+                        />
+                        <span>
+                          Accept proposed addition at {addition.path}:{" "}
+                          {addition.explanation}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                )}
                 <footer className="flex flex-wrap items-center gap-2">
                   <Button
                     size="sm"
@@ -314,9 +425,10 @@ export function EvalGeneratedDrafts({
                   >
                     {draft.saving
                       ? "Adding…"
-                      : draft.markdownImport?.prepared
-                        ? "Retry save"
-                        : "Add to suite"}
+                      : draft.markdownImport?.prepared ||
+                        draft.authoringPrepared
+                      ? "Retry save"
+                      : "Add to suite"}
                   </Button>
                   <Button
                     size="sm"
@@ -364,5 +476,69 @@ export function EvalGeneratedDrafts({
         </CollapsibleContent>
       </section>
     </Collapsible>
+  );
+}
+
+function AuthoringDraftSettings({
+  scope,
+  draft,
+  disabled,
+}: {
+  scope: EvalAgentScope;
+  draft: GeneratedDraft;
+  disabled: boolean;
+}) {
+  const { availableModels } = useAvailableModels({
+    projectId: scope.projectId,
+  });
+  return (
+    <div className="space-y-4">
+      <RunIterationControl
+        value={String(draft.input.runs ?? 5)}
+        disabled={disabled}
+        onChange={(value) =>
+          editGeneratedDraft(scope, draft.id, draft.revision, {
+            runs: Number(value),
+          })
+        }
+      />
+      <label className="flex items-center gap-2 text-sm">
+        <input
+          type="checkbox"
+          disabled={disabled}
+          checked={draft.input.isNegativeTest ?? false}
+          onChange={(event) =>
+            editGeneratedDraft(scope, draft.id, draft.revision, {
+              isNegativeTest: event.target.checked,
+            })
+          }
+        />
+        Negative test
+      </label>
+      <p className="text-sm text-muted-foreground">
+        No model override uses the suite models.
+      </p>
+      <EvalModelChoices
+        testId="authoring-models"
+        disabled={disabled}
+        availableModels={availableModels}
+        value={{
+          includeClientDefaults: false,
+          explicitModelIds: draft.input.models.map((model) => model.model),
+        }}
+        onChange={(value) =>
+          editGeneratedDraft(scope, draft.id, draft.revision, {
+            models: value.explicitModelIds.flatMap((id) => {
+              const model = availableModels.find(
+                (model) => String(model.id) === id,
+              );
+              return model
+                ? [{ model: id, provider: String(model.provider) }]
+                : draft.input.models.filter((model) => model.model === id);
+            }),
+          })
+        }
+      />
+    </div>
   );
 }
