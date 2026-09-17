@@ -1199,6 +1199,13 @@ describe("OrganizationsTab billing", () => {
       "billing_flow_succeeded",
       expect.objectContaining({ flow: "seat_payment_retry" }),
     );
+    expect(trackMock).toHaveBeenCalledWith(
+      "billing_flow_failed",
+      expect.objectContaining({
+        flow: "seat_payment_retry",
+        failure_kind: "no_payment_pending",
+      }),
+    );
   });
 
   it("keeps Remove invite available while a retry is in flight", () => {
