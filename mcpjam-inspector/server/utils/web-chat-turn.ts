@@ -514,6 +514,25 @@ export interface WebChatTurnRuntime {
    * fail for "your sandbox was reset, earlier files are gone".
    */
   ackSandboxNotices?: (notices: SandboxNoticeReason[]) => void;
+  /**
+   * Ask MCPJam only: asks the backend to bill this turn's model calls to
+   * MCPJam rather than to the customer.
+   *
+   * It is a REQUEST, not a decision. Convex honours it only alongside
+   * `x-inspector-service-token` and only for the pinned agent model
+   * (`shared/mcpjam-agent-model.ts`), and refuses the turn outright if either
+   * fails rather than falling back to a customer debit. Set by the agent route
+   * for signed-in callers; absent everywhere else, which leaves every other
+   * surface on exactly the path it has always taken.
+   */
+  billingFeature?: string;
+  /**
+   * Per-turn step budget for the MCPJam-free engine. Set alongside
+   * `billingFeature` because the backend enforces the same ceiling on every
+   * attested step: a loop that runs past it does not get a longer answer, it
+   * gets `agent_billing_rejected` in the middle of one.
+   */
+  maxSteps?: number;
   /** Hono context (needed for getSpendClientIp fallback / future hooks). */
   c: Context;
 }
@@ -1362,6 +1381,13 @@ export async function streamWebChatTurn(
   return handleMCPJamFreeChatModel({
     messages: modelMessages,
     failureReporter,
+    // Ask MCPJam's platform-billing claim. Rides `extraBodyFields`, which the
+    // step loop already merges into every per-step Convex body — the same
+    // channel org BYOK uses for its providerKey.
+    ...(runtime.billingFeature
+      ? { extraBodyFields: { billingFeature: runtime.billingFeature } }
+      : {}),
+    ...(runtime.maxSteps !== undefined ? { maxSteps: runtime.maxSteps } : {}),
     modelId: mcpjamModelId,
     provider: prepare.modelDefinition.provider,
     chatSessionId: hostedChatSessionId,

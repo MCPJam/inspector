@@ -95,6 +95,11 @@ import { resolveTurnRuntime } from "../../utils/resolve-turn-runtime.js";
 import { runUnifiedAssistantTurn } from "../../utils/turn-execution.js";
 import { capForModel, toToolError } from "../../utils/built-in-tools/mcpjam.js";
 import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
+import {
+  MCPJAM_AGENT_BILLING_FEATURE,
+  MCPJAM_AGENT_MODEL,
+  MCPJAM_AGENT_MODEL_DEFINITION,
+} from "../../../shared/mcpjam-agent-model.js";
 import type { ModelDefinition } from "@/shared/types";
 import { captureServerEvent } from "../../utils/analytics.js";
 import type { RequestLogContext } from "../../utils/log-events.js";
@@ -869,25 +874,28 @@ export function buildAgentApiToolSet(opts: {
 // ---------------------------------------------------------------------------
 
 /**
- * Pinned hosted model. There is no "hosted default" lookup in the catalog —
- * this is an explicit product choice, validated against the live catalog per
- * request so a catalog outage/self-hosted install fails loudly instead of
- * mis-billing.
+ * Pinned hosted model, shared with the in-app agent panel.
+ *
+ * It used to be Sonnet 5, chosen here alone. It is now the ONE model the
+ * backend will accept a platform-billing claim for
+ * (`shared/mcpjam-agent-model.ts`), so this surface and the web panel cannot
+ * diverge without one of them losing its billing — which is the point: Slack,
+ * Discord and the panel are the same agent, and MCPJam pays for all three.
+ *
+ * Still validated against the live catalog per request, so a catalog outage or
+ * a self-hosted install fails loudly instead of mis-billing.
  */
-const AGENT_API_MODEL: ModelDefinition = {
-  id: "anthropic/claude-sonnet-5",
-  name: "Claude Sonnet 5",
-  provider: "anthropic",
-  hosted: true,
-};
+const AGENT_API_MODEL: ModelDefinition = MCPJAM_AGENT_MODEL_DEFINITION;
 
 /**
- * Default model for AUTHORED SUITES — deliberately not the agent's own
- * model. Suites run every case × iteration on a schedule, so the default
- * is the cheap eval workhorse (same one the public-API docs examples
- * use); the user can always name a bigger model.
+ * Default model for AUTHORED SUITES. The same id as the agent's own model
+ * today, but for an unrelated reason and pinned separately: suites run every
+ * case × iteration on a schedule against the CUSTOMER's credits, so the
+ * default is the cheap eval workhorse (the one the public-API docs examples
+ * use). The user can always name a bigger model; moving the agent's pin must
+ * not move this one.
  */
-const DEFAULT_SUITE_MODEL = "anthropic/claude-haiku-4.5";
+const DEFAULT_SUITE_MODEL = MCPJAM_AGENT_MODEL;
 
 /**
  * The rules that hold for every operation on this surface.
@@ -1323,7 +1331,17 @@ agent.post("/projects/:projectId/agent", async (c) => {
       | undefined;
 
     const result = await runUnifiedAssistantTurn({
-      runtime: rt.runtime,
+      runtime: {
+        ...rt.runtime,
+        // MCPJam pays for agent turns on every surface, not just the in-app
+        // panel. This rail already requires the Inspector service token at its
+        // boundary and only accepts signed-in delegated org JWTs, which is
+        // exactly what the backend re-checks before honouring the claim.
+        extraBodyFields: {
+          ...(rt.runtime.extraBodyFields ?? {}),
+          billingFeature: MCPJAM_AGENT_BILLING_FEATURE,
+        },
+      },
       streamSink: "none",
       persistMode: "caller",
       approvalMode: "auto-deny",

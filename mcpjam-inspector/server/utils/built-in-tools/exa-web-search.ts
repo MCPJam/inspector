@@ -34,6 +34,15 @@ export interface ExaWebSearchToolOptions {
   scenarioId?: string;
   /** Mirrors the host's requireToolApproval. See the floor note on the tool. */
   requireToolApproval?: boolean;
+  /**
+   * Ask MCPJam only: asks Convex to bill this search to MCPJam instead of the
+   * customer's credits. Honoured only alongside `x-inspector-service-token`
+   * and only for a signed-in member, so on its own this is a request, not a
+   * decision; Convex refuses rather than silently charging when it does not
+   * hold. Absent everywhere else, which keeps the Playground's search exactly
+   * as it was.
+   */
+  billingFeature?: string;
 }
 
 interface ExaWebSearchResult {
@@ -76,17 +85,31 @@ export function buildExaWebSearchTool(
       if (!convexUrl) {
         return { error: "Web search is not configured." };
       }
+      // Only ever sent with the claim below: the claim is meaningless without
+      // it, and Convex refuses a bare one. A missing token here degrades to a
+      // customer-paid search rather than failing the tool call — unlike the
+      // model turn, a search the model can retry is not worth breaking the
+      // answer over.
+      const serviceToken = opts.billingFeature
+        ? process.env.INSPECTOR_SERVICE_TOKEN?.trim()
+        : undefined;
       try {
         const res = await fetch(`${convexUrl}/tools/exa/search`, {
           method: "POST",
           headers: {
             Authorization: opts.authHeader,
             "Content-Type": "application/json",
+            ...(serviceToken
+              ? { "x-inspector-service-token": serviceToken }
+              : {}),
           },
           body: JSON.stringify({
             projectId: opts.projectId,
             chatSessionId: opts.chatSessionId,
             ...(opts.scenarioId ? { scenarioId: opts.scenarioId } : {}),
+            ...(serviceToken && opts.billingFeature
+              ? { billingFeature: opts.billingFeature }
+              : {}),
             toolCallId,
             query,
           }),

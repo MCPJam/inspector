@@ -185,6 +185,17 @@ export interface BuiltInToolContext {
    */
   scenarioId?: string;
   /**
+   * Ask MCPJam only: the turn is platform-paid, so its web search should be
+   * too. Forwarded to Convex alongside the Inspector service token, which is
+   * what makes the claim credible; Convex refuses rather than falling back to
+   * the customer's credits when it does not hold.
+   *
+   * Only `web_search` reads it. The other built-ins here either cost nothing
+   * (workspace reads) or are already bounded by their own rails (bash, the
+   * browser), so there is nothing to re-fund.
+   */
+  billingFeature?: string;
+  /**
    * True when this turn belongs to a Journey (swarm) simulated session.
    * Computer-backed tools are suppressed for those UNLESS the turn holds a
    * {@link sandboxBinding} — see the `bash` gate below.
@@ -457,6 +468,8 @@ export function resolveHostTools(
         // session — so without this it is offered to the model and then
         // fails at execution for every link visitor.
         ...(ctx.scenarioId ? { scenarioId: ctx.scenarioId } : {}),
+        // Ask MCPJam's search follows its turn onto MCPJam's budget.
+        ...(ctx.billingFeature ? { billingFeature: ctx.billingFeature } : {}),
         requireToolApproval: ctx.requireToolApproval,
       });
       continue;

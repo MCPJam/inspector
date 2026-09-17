@@ -93,6 +93,19 @@ The agent acts by driving the inspector UI directly — every action it takes is
 | **Documentation & web search** | Answers questions about MCPJam features and MCP concepts |
 | **Clarifying questions** | Asks a multiple-choice question inline when a request is genuinely ambiguous, then continues the same turn with your answer |
 
+### What it costs
+
+Ask MCPJam is on MCPJam. Its turns and its web searches do not consume your organization's credits or its free daily allowance, and you do not need credits or a paid plan to use it — signing in is enough. Playground chat, evals, and swarms are unchanged; they still spend your credits or your own provider key.
+
+The agent runs on a fixed model chosen by MCPJam, so it does not follow the model you have selected in the Playground.
+
+There are limits, and neither of them is something you can buy your way past:
+
+- **Today's limit** — after a large number of turns in one UTC day, or when MCPJam's daily budget for the feature is used up, the panel says *"Ask MCPJam has reached today's limit. It resets at 00:00 UTC."* Nothing is charged, and the limit clears at 00:00 UTC.
+- **Temporarily unavailable** — an infrastructure problem on our side shows *"Ask MCPJam is temporarily unavailable."* Try again shortly.
+
+Guests (visitors who have not signed in) use the agent on the same shared free allowance the rest of the hosted app gives them.
+
 The same inspector actions are also available to browser-native WebMCP agents via `document.modelContext`, so an external agent can navigate, connect servers, and run playground actions without opening the Ask MCPJam panel. Browser support (Chrome with WebMCP enabled) is a prerequisite; where the API is absent, Ask MCPJam is unaffected.
 
 For server management, adding and connecting are always two separate steps — the agent saves the server first, then connects it, so you can see each change as it happens. If a server requires OAuth authorization, the agent reports that and waits for you to click **Authorize** yourself; it never redirects the page on your behalf. Removing a server is irreversible from chat, so it always pauses for approval even when the **Tool approval** toggle is off.
