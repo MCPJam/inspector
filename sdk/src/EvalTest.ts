@@ -89,6 +89,7 @@ import {
   iterationsToEvalResultInputs,
   iterationTraceFromPrompts,
   traceMessagesFromPrompts,
+  variantFromExecutor,
 } from "./eval-result-mapping.js";
 import { resolveServerReplayConfigs } from "./server-replay-configs.js";
 import { buildHostSnapshotMetadata } from "./host-config/internal.js";
@@ -1399,7 +1400,8 @@ export class EvalTest {
     const results = this.buildEvalResultInputs(
       runResult.iterationDetails,
       config,
-      hostExtras
+      hostExtras,
+      variantFromExecutor(executor)
     );
     if (runResult.runEvaluation) {
       results.forEach((result, index) => {
@@ -1790,7 +1792,8 @@ export class EvalTest {
   private buildEvalResultInputs(
     iterations: IterationResult[],
     reporting?: MCPJamReportingConfig,
-    hostExtras?: Record<string, string | number | boolean>
+    hostExtras?: Record<string, string | number | boolean>,
+    variant?: { provider?: string; model?: string }
   ): EvalResultInput[] {
     return iterationsToEvalResultInputs(
       this.getName(),
@@ -1820,7 +1823,8 @@ export class EvalTest {
         ...(this.config.expectedOutput !== undefined
           ? { expectedOutput: this.config.expectedOutput }
           : {}),
-      }
+      },
+      variant
     );
   }
 

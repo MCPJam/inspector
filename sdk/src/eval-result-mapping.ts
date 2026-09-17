@@ -478,6 +478,44 @@ export function actualToolCallsFromPrompts(
   );
 }
 
+/**
+ * The provider and model an iteration ran on, from the same source
+ * `promptsToEvalResult` reads. `fallback` covers an iteration that never
+ * reached the model (setup failed before the first turn), so a run still names
+ * what it was configured to run — a saved client's model, for instance.
+ */
+export function variantFromPrompts(
+  prompts: PromptResult[],
+  fallback?: { provider?: string; model?: string }
+): { provider?: string; model?: string } {
+  const first = prompts[0];
+  return {
+    provider: first?.getProvider() ?? fallback?.provider,
+    model: first?.getModel() ?? fallback?.model,
+  };
+}
+
+/**
+ * The provider and model an executor is configured to run, for iterations that
+ * produced no prompt of their own. Duck-typed: only `HostRunner` parses a model
+ * string, and the `HostExecutor` interface does not promise these.
+ */
+export function variantFromExecutor(executor: unknown): {
+  provider?: string;
+  model?: string;
+} {
+  const candidate = executor as {
+    getParsedProvider?: () => string;
+    getParsedModel?: () => string;
+  } | null;
+  const provider = candidate?.getParsedProvider?.();
+  const model = candidate?.getParsedModel?.();
+  return {
+    ...(provider ? { provider } : {}),
+    ...(model ? { model } : {}),
+  };
+}
+
 export function iterationTraceFromPrompts(
   prompts: PromptResult[],
   traceMessages: Array<{ role: string; content: unknown }>,
@@ -981,7 +1019,8 @@ export function iterationsToEvalResultInputs(
   predicates?: Predicate[],
   matchOptions?: import("./matchers.js").EvalMatchOptions,
   evaluationConfig?: EvaluationConfigSnapshot,
-  caseIdentity?: EvalCaseIdentity
+  caseIdentity?: EvalCaseIdentity,
+  variant?: { provider?: string; model?: string }
 ): EvalResultInput[] {
   const advancedConfig = syntheticStepsForCase(iterations, predicates);
   return iterations.map((iteration, index) => {
@@ -1019,6 +1058,7 @@ export function iterationsToEvalResultInputs(
       passed,
       status: resolveIterationLifecycleStatus(iteration),
       durationMs: durationMs > 0 ? durationMs : undefined,
+      ...variantFromPrompts(prompts, variant),
       expectedToolCalls,
       actualToolCalls: iteration.captureError ? undefined : actualToolCalls,
       // Hosted↔local identity and semantics, on the wire. `caseId` is the
@@ -1093,7 +1133,8 @@ export function suiteTestResultsToEvalResultInputs(
     string,
     import("./matchers.js").EvalMatchOptions | undefined
   >,
-  caseIdentityByTest?: Record<string, EvalCaseIdentity | undefined>
+  caseIdentityByTest?: Record<string, EvalCaseIdentity | undefined>,
+  variant?: { provider?: string; model?: string }
 ): EvalResultInput[] {
   const inputs: EvalResultInput[] = [];
   for (const [testName, testResult] of testResults) {
@@ -1134,6 +1175,7 @@ export function suiteTestResultsToEvalResultInputs(
         passed,
         status: resolveIterationLifecycleStatus(iteration),
         durationMs: durationMs > 0 ? durationMs : undefined,
+        ...variantFromPrompts(prompts, variant),
         expectedToolCalls,
         actualToolCalls: iteration.captureError ? undefined : actualToolCalls,
         ...(identity?.caseId !== undefined

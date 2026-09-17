@@ -8,6 +8,7 @@ import {
   iterationsToEvalResultInputs,
   suiteTestResultsToEvalResultInputs,
   promptsToEvalResult,
+  variantFromExecutor,
   legacyIterationStatusFromExecutionError,
   resolveIterationLifecycleStatus,
 } from "../src/eval-result-mapping";
@@ -577,9 +578,9 @@ describe("lifecycle status", () => {
   });
 
   it("infers a status only for a struct that carries none", () => {
-    expect(
-      legacyIterationStatusFromExecutionError(undefined)
-    ).toBe("completed");
+    expect(legacyIterationStatusFromExecutionError(undefined)).toBe(
+      "completed"
+    );
     expect(legacyIterationStatusFromExecutionError("   ")).toBe("completed");
     expect(legacyIterationStatusFromExecutionError("connection reset")).toBe(
       "failed"
@@ -602,9 +603,9 @@ describe("lifecycle status", () => {
     expect(
       iterationToEvalResult(graded, 0, { caseTitle: "case-1" }).status
     ).toBe("completed");
-    expect(
-      iterationsToEvalResultInputs("case-1", [graded])[0].status
-    ).toBe("completed");
+    expect(iterationsToEvalResultInputs("case-1", [graded])[0].status).toBe(
+      "completed"
+    );
 
     const abandoned = makeIteration({
       passed: false,
@@ -612,13 +613,119 @@ describe("lifecycle status", () => {
       status: "setup_failed",
       error: "server never started",
     });
-    expect(
-      iterationsToEvalResultInputs("case-1", [abandoned])[0].status
-    ).toBe("setup_failed");
+    expect(iterationsToEvalResultInputs("case-1", [abandoned])[0].status).toBe(
+      "setup_failed"
+    );
     expect(
       runToEvalResults(makeRunResult([abandoned]), { caseTitle: "case-1" })[0]
         .status
     ).toBe("setup_failed");
+  });
+});
+
+describe("provider and model on reported iterations", () => {
+  const prompt = makePrompt({
+    provider: "mcpjam",
+    model: "anthropic/claude-haiku-4.5",
+  });
+
+  it("carries the prompt's provider and model through both mappers", () => {
+    const iteration = makeIteration({ prompts: [prompt] });
+
+    expect(
+      iterationsToEvalResultInputs("case-1", [iteration])[0]
+    ).toMatchObject({
+      provider: "mcpjam",
+      model: "anthropic/claude-haiku-4.5",
+    });
+
+    const suite = suiteTestResultsToEvalResultInputs(
+      new Map([["case-1", makeRunResult([iteration])]])
+    );
+    expect(suite[0]).toMatchObject({
+      provider: "mcpjam",
+      model: "anthropic/claude-haiku-4.5",
+    });
+  });
+
+  it("falls back to the executor when an iteration produced no prompt", () => {
+    // A case that failed in setup never reached the model, but the run still
+    // names what it was configured to run — a saved client's model, say.
+    const iteration = makeIteration({ prompts: [], status: "setup_failed" });
+    const variant = { provider: "mcpjam", model: "anthropic/claude-haiku-4.5" };
+
+    expect(
+      iterationsToEvalResultInputs(
+        "case-1",
+        [iteration],
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        variant
+      )[0]
+    ).toMatchObject(variant);
+
+    expect(
+      suiteTestResultsToEvalResultInputs(
+        new Map([["case-1", makeRunResult([iteration])]]),
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        variant
+      )[0]
+    ).toMatchObject(variant);
+  });
+
+  it("prefers the prompt over the executor fallback", () => {
+    const iteration = makeIteration({ prompts: [prompt] });
+    expect(
+      iterationsToEvalResultInputs(
+        "case-1",
+        [iteration],
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { provider: "openai", model: "gpt-5" }
+      )[0]
+    ).toMatchObject({
+      provider: "mcpjam",
+      model: "anthropic/claude-haiku-4.5",
+    });
+  });
+
+  it("leaves both undefined with no prompt and no fallback", () => {
+    const iteration = makeIteration({ prompts: [] });
+    const result = iterationsToEvalResultInputs("case-1", [iteration])[0];
+    expect(result.provider).toBeUndefined();
+    expect(result.model).toBeUndefined();
+  });
+});
+
+describe("variantFromExecutor", () => {
+  it("reads the parsed provider and model off a HostRunner-shaped executor", () => {
+    expect(
+      variantFromExecutor({
+        getParsedProvider: () => "mcpjam",
+        getParsedModel: () => "anthropic/claude-haiku-4.5",
+      })
+    ).toEqual({ provider: "mcpjam", model: "anthropic/claude-haiku-4.5" });
+  });
+
+  it("returns nothing for an executor that does not parse a model string", () => {
+    // Only `HostRunner` has these; the `HostExecutor` interface does not.
+    expect(variantFromExecutor({ run: async () => ({}) })).toEqual({});
+    expect(variantFromExecutor(undefined)).toEqual({});
   });
 });
 
