@@ -54,6 +54,7 @@ vi.mock("../trace-viewer", () => ({
     hostSnapshot?: { hostStyle: string } | null;
     chromeDensity?: string;
     fillContent?: boolean;
+    frame?: string;
     expectedToolCalls?: unknown[];
     actualToolCalls?: unknown[];
   }) => (
@@ -62,6 +63,7 @@ vi.mock("../trace-viewer", () => ({
       data-host-style={props.hostSnapshot?.hostStyle}
       data-chrome-density={props.chromeDensity ?? "default"}
       data-fill-content={String(props.fillContent ?? false)}
+      data-frame={props.frame}
       data-expected-tool-count={String(props.expectedToolCalls?.length ?? 0)}
       data-actual-tool-count={String(props.actualToolCalls?.length ?? 0)}
     />
@@ -189,6 +191,7 @@ describe("IterationDetails full layout (trace-first)", () => {
 
     expect(viewer).toHaveAttribute("data-chrome-density", "compact");
     expect(viewer).toHaveAttribute("data-fill-content", "true");
+    expect(viewer).toHaveAttribute("data-frame", "none");
     expect(viewer).toHaveAttribute("data-expected-tool-count", "1");
     expect(viewer).toHaveAttribute("data-actual-tool-count", "1");
 

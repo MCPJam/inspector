@@ -84,6 +84,15 @@ describe("swarm transcript host resolution", () => {
     viewer.mockClear();
   });
 
+  it.each([false, true])("keeps one transcript frame in fillHeight=%s", (fillHeight) => {
+    render(<SwarmLiveStreamPane {...props} fillHeight={fillHeight} />);
+    const pane = screen.getByTestId("swarm-live-pane");
+    expect(pane.classList.contains("border")).toBe(!fillHeight);
+    expect(pane.classList.contains("p-3")).toBe(!fillHeight);
+    expect(screen.getByTestId("transcript").parentElement).toHaveClass("border", "flex-1");
+    expect(viewer).toHaveBeenCalledWith(expect.objectContaining({ frame: "none", fillContent: true }));
+  });
+
   it("uses the pinned session and its recorded model, querying by Convex id", () => {
     render(<SwarmLiveStreamPane {...props} />);
     expect(sessionHost).toHaveBeenLastCalledWith("convex-session");

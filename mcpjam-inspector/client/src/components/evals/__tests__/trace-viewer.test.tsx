@@ -549,6 +549,17 @@ describe("TraceViewer", () => {
     expect(await screen.findByText("Estimated total only")).toBeInTheDocument();
   });
 
+  it.each(["inset", "none"] as const)("keeps static replay unclipped with frame %s", (frame) => {
+    render(<TraceViewer trace={simpleTextTrace} forcedViewMode="chat"
+      hostSnapshot={{ hostStyle: "claude" }} frame={frame} hideToolbar />);
+    const chat = screen.getByTestId("trace-viewer-chat");
+    expect(chat.classList.contains("border")).toBe(frame === "inset");
+    expect(chat).not.toHaveClass("overflow-hidden");
+    expect(chat.closest(".scenario-host-shell")).not.toHaveClass("overflow-hidden");
+    expect(screen.queryByTestId("stick-to-bottom")).not.toBeInTheDocument();
+    expect(chat.querySelector(".max-w-4xl")).toHaveClass("px-4", "pt-8", "pb-8");
+  });
+
   it("uses the shared stick-to-bottom shell in chat mode", () => {
     render(
       <TraceViewer trace={simpleTextTrace} forcedViewMode="chat" fillContent />,
@@ -567,7 +578,7 @@ describe("TraceViewer", () => {
     );
 
     fireEvent.click(
-      within(screen.getByTestId("stick-to-bottom")).getByRole("button"),
+      within(screen.getByTestId("stick-to-bottom")).getByRole("button", { name: "Scroll to bottom" }),
     );
 
     expect(mockScrollToBottom).toHaveBeenCalledWith({
