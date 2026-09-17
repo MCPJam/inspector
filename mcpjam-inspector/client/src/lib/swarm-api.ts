@@ -1174,6 +1174,7 @@ export async function generateSwarmPersonaBatch(
 export async function generateSwarmJourneys(
   args: {
     projectId: string;
+    swarmRefId?: string;
     journeyCount: number;
     persona: SwarmGeneratedPersona;
   } & SwarmGenerationGrounding

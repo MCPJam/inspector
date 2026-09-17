@@ -10,7 +10,15 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const setupTurnMock = vi.fn();
+const reportTargetGroundingMock = vi.fn();
 const reportAttemptMock = vi.fn();
+vi.mock("../swarm-setup-turn", async () => ({
+  ...(await vi.importActual<typeof import("../swarm-setup-turn")>(
+    "../swarm-setup-turn",
+  )),
+  runSwarmSetupTurn: (...args: unknown[]) => setupTurnMock(...args),
+}));
 const swarmPersonaNextTurnMock = vi.fn();
 const heartbeatJourneyRunMock = vi.fn();
 const runSyntheticHostSessionMock = vi.fn();
@@ -25,6 +33,7 @@ vi.mock("../../swarm-agent.js", async () => {
   );
   return {
     ...actual,
+    reportTargetGrounding: (...args: unknown[]) => reportTargetGroundingMock(...args),
     reportAttempt: (...args: unknown[]) => reportAttemptMock(...args),
     swarmPersonaNextTurn: (...args: unknown[]) =>
       swarmPersonaNextTurnMock(...args),
@@ -106,6 +115,8 @@ function baseOpts(overrides: Record<string, unknown> = {}) {
 }
 
 beforeEach(() => {
+  setupTurnMock.mockReset();
+  reportTargetGroundingMock.mockReset().mockResolvedValue({});
   // Default: every attempt transition APPLIES (a fresh, uncontended claim/
   // terminal). Duplicate-launch tests override with `applied: false`.
   reportAttemptMock.mockReset().mockResolvedValue({ ok: true, applied: true });
@@ -829,6 +840,99 @@ describe("swarm fan-out runner — spend-cap abort reclassification (finding 5)"
 });
 
 describe("swarm single-host runner — heartbeat", () => {
+  it("does not execute a claim that resolves after the backend ends the run", async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveClaim!: (claim: { ok: true; applied: boolean }) => void;
+      reportAttemptMock.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveClaim = resolve;
+          }),
+      );
+      heartbeatJourneyRunMock.mockResolvedValue("failed");
+      const done = startJourneyRun(baseOpts({ sessionsPerTarget: 2 }));
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(reportAttemptMock).toHaveBeenCalledTimes(1);
+      resolveClaim({ ok: true, applied: true });
+      await done;
+
+      expect(runSyntheticHostSessionMock).not.toHaveBeenCalled();
+      expect(reportAttemptMock).toHaveBeenCalledTimes(1);
+      expect(finalizePendingAttemptsMock).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("ignores a delayed heartbeat response after local execution finishes", async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveHeartbeat!: (status: string) => void;
+      let resolveSession!: (result: { outcome: string }) => void;
+      let sessionSignal: AbortSignal | undefined;
+      heartbeatJourneyRunMock.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolveHeartbeat = resolve;
+          }),
+      );
+      runSyntheticHostSessionMock.mockImplementation((adapter: any) => {
+        sessionSignal = adapter.abortSignal;
+        return new Promise((resolve) => {
+          resolveSession = resolve;
+        });
+      });
+      const done = startJourneyRun(baseOpts({ sessionsPerTarget: 1 }));
+      await vi.advanceTimersByTimeAsync(30_000);
+      resolveSession({ outcome: "succeeded" });
+      await done;
+      resolveHeartbeat("completed");
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(sessionSignal?.aborted).toBe(false);
+      expect(
+        reportAttemptMock.mock.calls.map((call) => call[2].status),
+      ).toEqual(["running", "succeeded"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(["failed", "completed", "partial", "rate_limited", "missing"])(
+    "stops in-flight work and queued sessions when the backend reports %s",
+    async (status) => {
+      vi.useFakeTimers();
+      try {
+        heartbeatJourneyRunMock.mockResolvedValue(status);
+        let signal: AbortSignal | undefined;
+        runSyntheticHostSessionMock.mockImplementation(async (adapter: any) => {
+          signal = adapter.abortSignal;
+          await new Promise<void>((resolve) => {
+            signal!.addEventListener("abort", () => resolve(), { once: true });
+          });
+          return { outcome: "failed", errorMessage: "aborted" };
+        });
+        const done = startJourneyRun(baseOpts({ sessionsPerTarget: 2 }));
+        await vi.advanceTimersByTimeAsync(30_000);
+        await done;
+
+        expect(signal?.aborted).toBe(true);
+        expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(1);
+        // Preserve Convex's terminal cause rather than replacing it with the
+        // local cancellation artifact or claiming the next queued session.
+        expect(
+          reportAttemptMock.mock.calls.map((call) => call[2].status),
+        ).toEqual(["running"]);
+        expect(finalizePendingAttemptsMock).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(heartbeatJourneyRunMock).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it("fires the heartbeat on an independent 30s schedule (not gated on turn completion) and stops it on finally", async () => {
     vi.useFakeTimers();
     try {
@@ -1310,5 +1414,152 @@ describe("classifyRateLimit — a halt needs a real spend signal", () => {
 
   it("defaults an absent message to the narrower per-host stop", () => {
     expect(classifyRateLimit(undefined)).toBe("provider_rate_limit");
+  });
+});
+
+describe("target setup before claims", () => {
+  const record = {
+    status: "completed",
+    readiness: "not_needed",
+    prefix: "swarm-test-",
+    createdEntities: [],
+    observedCreatedEntityCount: 0,
+    unsupportedClaims: 0,
+    missing: [],
+    toolCalls: [],
+    writeCallsDispatched: 0,
+    retried: false,
+    admittedWriteTools: [],
+    excludedToolCount: 0,
+    startedAt: 0,
+    durationMs: 0,
+    chatSessionId: "setup",
+  };
+  it("finishes setup before the first attempt claim", async () => {
+    const order: string[] = [];
+    setupTurnMock.mockImplementation(async () => {
+      order.push("setup");
+      return record;
+    });
+    reportAttemptMock.mockImplementation(async (_url, _bearer, args) => {
+      order.push(args.status);
+      return { ok: true, applied: true };
+    });
+    await startJourneyRun(
+      baseOpts({
+        hosts: [{ ...HOST, targetId: "t" }],
+        setupWrites: true,
+        sessionsPerTarget: 1,
+      }),
+    );
+    expect(order).toEqual(["setup", "running", "succeeded"]);
+  });
+  it("finishes discovery and grounding for each same-host environment before its first claim", async () => {
+    const order = new Map<string, string[]>([
+      ["a", []],
+      ["b", []],
+    ]);
+    setupTurnMock.mockImplementation(async ({ target }) => {
+      order.get(target.targetId)!.push("setup");
+      return record;
+    });
+    reportTargetGroundingMock.mockImplementation(
+      async (_url, _bearer, body) => {
+        if (body.probes) {
+          await Promise.resolve();
+          order.get(body.targetId)!.push("grounded");
+        }
+        return {};
+      },
+    );
+    reportAttemptMock.mockImplementation(async (_url, _bearer, body) => {
+      order.get(body.targetId)!.push(body.status);
+      return { ok: true, applied: true };
+    });
+    const managerFactory = async (target: { targetId: string }) => ({
+      connectedServerIds: ["s"],
+      dispose: async () => {},
+      manager: {
+        listTools: async () => ({
+          tools: [
+            {
+              name: "list_projects",
+              annotations: { readOnlyHint: true },
+              inputSchema: { type: "object" },
+            },
+          ],
+        }),
+        executeTool: async () => {
+          order.get(target.targetId)!.push("discovery");
+          return { structuredContent: { id: target.targetId } };
+        },
+      },
+    });
+    await startJourneyRun(
+      baseOpts({
+        setupWrites: true,
+        sessionsPerTarget: 1,
+        managerFactory,
+        hosts: ["a", "b"].map((id) => ({
+          ...HOST,
+          targetId: id,
+          environmentRef: { environmentId: id, name: id, revision: 1 },
+          pinnedSkills: [],
+        })),
+      }),
+    );
+    for (const events of order.values())
+      expect(events).toEqual([
+        "setup",
+        "discovery",
+        "grounded",
+        "running",
+        "succeeded",
+      ]);
+    expect(
+      reportTargetGroundingMock.mock.calls
+        .filter((c) => c[2].probes)
+        .map((c) => c[2].targetId)
+        .sort(),
+    ).toEqual(["a", "b"]);
+    expect(
+      new Set(
+        runSyntheticHostSessionMock.mock.calls.map((c) => c[0].chatSessionId),
+      ).size,
+    ).toBe(2);
+  });
+  it("fails only the unavailable target and leaves siblings runnable", async () => {
+    setupTurnMock.mockImplementation(async ({ target }) => ({
+      ...record,
+      ...(target.targetId === "bad"
+        ? { readiness: "unavailable", reason: "model_reported_missing" }
+        : {}),
+    }));
+    await startJourneyRun(
+      baseOpts({
+        hosts: [
+          { ...HOST, targetId: "bad" },
+          { ...HOST_2, targetId: "good" },
+        ],
+        setupWrites: true,
+        sessionsPerTarget: 1,
+      }),
+    );
+    // The existing cleanup sweep claims then fails pending attempts; it never runs a session for the failed target.
+    expect(
+      reportAttemptMock.mock.calls
+        .filter((c) => c[2].targetId === "bad")
+        .map((c) => c[2].status),
+    ).toEqual(["running", "failed"]);
+    expect(reportAttemptMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({
+        targetId: "bad",
+        status: "failed",
+        errorCode: "prerequisites_unavailable",
+      }),
+    );
+    expect(runSyntheticHostSessionMock).toHaveBeenCalledOnce();
   });
 });

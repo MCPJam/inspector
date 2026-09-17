@@ -19,11 +19,21 @@ import { SectionLabel } from "@/components/shared/section-label";
 export function FindingsSummaryCard({
   sessionCount,
   summary,
+  recommendation,
   footnotes,
 }: {
   sessionCount: number;
   /** 1–4 sentences, joined into one paragraph here. */
   summary: readonly string[];
+  /**
+   * Lane A's one-line suggested fix, BELOW the summary and in a quieter face.
+   *
+   * It is not the headline and must not become one: the summary answers what
+   * happened (which goal, whose, which stage, how it felt) from counts, and
+   * this answers what to change, from a model. Replacing one with the other
+   * loses the four answers the card exists to give.
+   */
+  recommendation?: string | null;
   footnotes: readonly string[];
 }) {
   // Filtered before joining so an empty or whitespace-only sentence cannot
@@ -70,6 +80,17 @@ export function FindingsSummaryCard({
             {paragraph}
           </p>
         </div>
+        {recommendation ? (
+          <p
+            className="mt-3 max-w-md text-[13px] leading-snug text-muted-foreground"
+            data-testid="findings-recommendation"
+          >
+            <span className="font-semibold text-foreground">
+              Suggested fix:
+            </span>{" "}
+            {recommendation}
+          </p>
+        ) : null}
         {footnotes.length > 0 ? (
           <div
             className="mt-4 flex flex-wrap gap-1.5"

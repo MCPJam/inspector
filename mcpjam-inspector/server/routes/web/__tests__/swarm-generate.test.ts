@@ -103,6 +103,7 @@ describe("web routes — swarm generation proxy", () => {
       "/api/web/swarm/generate/journeys",
       {
         projectId: "proj-1",
+        swarmRefId: "swarm-1",
         serverAttachmentId: "att-1",
         journeyCount: 2,
         persona: { name: "P", role: "R", notes: "N" },
@@ -117,6 +118,7 @@ describe("web routes — swarm generation proxy", () => {
     expect(data.journeys).toHaveLength(2);
     const args = generateSwarmJourneysMock.mock.calls[0]![2] as any;
     expect(args).toMatchObject({
+      swarmRefId: "swarm-1",
       journeyCount: 2,
       persona: { name: "P", role: "R", notes: "N" },
     });
