@@ -11,14 +11,10 @@ import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import { copyToClipboard } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
-import { renderSessionJson } from "./session-json-view";
-import type { ModelDefinition, ModelProvider } from "@/shared/types";
+import { modelDefinitionForId } from "@/lib/model-definition-for-id";
+import { useHostSnapshotForSession } from "@/hooks/use-host-snapshot";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
-import {
-  hydrateMessageTimestamps,
-  ReadOnlyTranscript,
-  type ToolRenderOverride as ChatUiToolRenderOverride,
-} from "@mcpjam/chat-ui";
+import { hydrateMessageTimestamps } from "@mcpjam/chat-ui";
 import {
   adaptTraceToUiMessages,
   snapshotsToTraceWidgetSnapshots,
@@ -261,18 +257,6 @@ export function SwarmJudgeSection({
   );
 }
 
-/**
- * Bridge inspector ToolRenderOverrides — whose widget/CSP fields use the MCP
- * Apps SDK types — to chat-ui's placeholder types. The read-only transcript
- * never reads those widget-specific fields, so the cast is safe. Kept as a
- * named seam so future read-only consumers can reuse it.
- */
-function bridgeToolRenderOverrides(
-  overrides: Record<string, unknown> | undefined,
-): Record<string, ChatUiToolRenderOverride> | undefined {
-  return overrides as Record<string, ChatUiToolRenderOverride> | undefined;
-}
-
 interface ShareUsageThreadDetailProps {
   threadId: string;
   /**
@@ -345,6 +329,7 @@ export function ShareUsageThreadDetail({
   promote,
   fadeScrollEdges = false,
 }: ShareUsageThreadDetailProps) {
+  const host = useHostSnapshotForSession(threadId);
   const { thread } = useSharedChatThread({
     threadId,
     includeRecordedContext: true,
@@ -548,12 +533,8 @@ export function ShareUsageThreadDetail({
     };
   }, [messages, thread?.sourceType, turnTraces, widgetSnapshots]);
 
-  const resolvedModel: ModelDefinition = useMemo(
-    () => ({
-      id: thread?.modelId ?? "unknown",
-      name: thread?.modelId ?? "Unknown",
-      provider: "custom" as ModelProvider,
-    }),
+  const resolvedModel = useMemo(
+    () => modelDefinitionForId(thread?.modelId),
     [thread?.modelId],
   );
 
@@ -873,48 +854,51 @@ export function ShareUsageThreadDetail({
               fadeScrollEdges && "scroll-fade-y",
             )}
           >
-            {/* Ships dark: `sessionScores:listBySession` reaches production
-                only on the next release promotion, and `useQuery` against an
-                undeployed function throws. The fallback is the transcript
-                itself — losing the conversation to a missing ratings query
-                would be a far worse failure than losing the ratings. */}
-            <ErrorBoundary
-              // Keyed on the session so the boundary RETRIES. Without it a
-              // single throw during the pre-deployment window latches the
-              // fallback for the life of the mounted detail — every session a
-              // PM opened afterwards would show a transcript with no ratings
-              // even once the backend went live.
-              key={threadId}
-              fallback={
-                <ReadOnlyTranscript
-                  messages={adaptedTrace.messages}
+            {host.status === "ready" ? (
+              <ErrorBoundary
+                // Retrying for a new session must also retry its ratings query.
+                key={threadId}
+                fallback={
+                  <TraceViewer
+                    trace={traceEnvelope}
+                    adaptedTrace={adaptedTrace}
+                    model={resolvedModel}
+                    hostSnapshot={host.snapshot}
+                    chatSessionId={thread.chatSessionId}
+                    forcedViewMode="chat"
+                    hideToolbar
+                    frame="none"
+                    interactive={false}
+                    reasoningDisplayMode={reasoningDisplayMode}
+                    widgetPolicy="placeholder"
+                  />
+                }
+              >
+                <SessionScoredTranscript
+                  threadId={threadId}
+                  trace={traceEnvelope}
+                  adaptedTrace={adaptedTrace}
                   model={resolvedModel}
-                  toolRenderOverrides={bridgeToolRenderOverrides(
-                    adaptedTrace.toolRenderOverrides,
-                  )}
+                  hostSnapshot={host.snapshot}
+                  chatSessionId={thread.chatSessionId}
+                  forcedViewMode="chat"
+                  hideToolbar
+                  frame="none"
+                  interactive={false}
                   reasoningDisplayMode={reasoningDisplayMode}
                   widgetPolicy="placeholder"
-                  renderJson={renderSessionJson}
-                  className="mx-auto max-w-4xl px-4 py-4"
                 />
-              }
-            >
-              <SessionScoredTranscript
-                threadId={threadId}
-                messages={adaptedTrace.messages}
-                model={resolvedModel}
-                toolRenderOverrides={bridgeToolRenderOverrides(
-                  adaptedTrace.toolRenderOverrides,
-                )}
-                reasoningDisplayMode={reasoningDisplayMode}
-                widgetPolicy="placeholder"
-                // The Playground's own JSON tree, via the package's seam —
-                // see `session-json-view`. Passed to the fallback above too,
-                // so losing the ratings query does not also lose the viewer.
-                renderJson={renderSessionJson}
-                className="mx-auto max-w-4xl px-4 py-4"
-              />
-            </ErrorBoundary>
+              </ErrorBoundary>
+            ) : host.status === "loading" ? (
+              <div role="status" className="flex items-center justify-center gap-2 p-8 text-sm text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" aria-hidden />
+                Loading host configuration…
+              </div>
+            ) : (
+              <p role="alert" className="p-8 text-sm text-muted-foreground">
+                Could not load this session's host configuration.
+              </p>
+            )}
           </div>
         ) : (
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
