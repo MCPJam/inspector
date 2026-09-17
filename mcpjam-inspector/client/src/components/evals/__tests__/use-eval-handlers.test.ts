@@ -104,6 +104,7 @@ vi.mock("sonner", () => ({
     loading: vi.fn().mockReturnValue("toast-id"),
     success: vi.fn().mockReturnValue("toast-id"),
     error: vi.fn(),
+    warning: vi.fn(),
     info: vi.fn(),
     dismiss: vi.fn(),
   },
@@ -2499,6 +2500,28 @@ describe("useEvalHandlers", () => {
 
       expect(toast.success).toHaveBeenCalledWith("Run cancelled successfully");
       expect(toast.error).not.toHaveBeenCalled();
+      expect(toast.warning).not.toHaveBeenCalled();
+    });
+
+    it("says how many are still running when one genuinely could not stop", async () => {
+      // NOT the settled-sibling case: this one is still burning spend, and
+      // "cancelled successfully" would send the user away believing otherwise.
+      mockAuthFetch.mockResolvedValueOnce(
+        createFetchResponse({ id: "run-1", status: "cancelled" }),
+      );
+      mockAuthFetch.mockResolvedValueOnce(
+        createFetchResponse({ code: "INTERNAL", message: "boom" }, 500),
+      );
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+
+      await act(async () => {
+        await result.current.handleCancelRun(["run-1", "run-2"]);
+      });
+
+      expect(toast.success).not.toHaveBeenCalled();
+      expect(toast.warning).toHaveBeenCalledWith(
+        "Stopped 1 of 2 runs. 1 could not be stopped.",
+      );
     });
 
     it("reports the failure when nothing could be cancelled", async () => {
