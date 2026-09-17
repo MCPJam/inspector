@@ -33,6 +33,8 @@ import { buildProposalBlocks, rendersRunProposalFor } from '../views/proposal-bu
  */
 export async function runAndReply(args) {
   const { client, context, logger, say, sayStream, setStatus } = args;
+  /** @type {{channel:string,ts:string} | undefined} */
+  let replyHandle;
   try {
     // WHOSE credentials, and WHICH project. Resolved before any turn work so
     // an unlinked user is offered a connect button instead of a failure, and
@@ -107,8 +109,6 @@ export async function runAndReply(args) {
 
     // Posting is passed INTO the runner so it happens inside the per-thread
     // queue — the next turn's history must already contain this reply.
-    /** @type {{channel:string,ts:string} | undefined} */
-    let replyHandle;
     await runTurnForEvent({
       replyHandle: () => replyHandle,
       client,
@@ -227,8 +227,15 @@ export async function runAndReply(args) {
     const envelope = /** @type {any} */ (error)?.failureEnvelope;
     const salvaged =
       envelope && ((envelope.createdResources?.length ?? 0) > 0 || (envelope.proposedActions?.length ?? 0) > 0);
+    /** @param {any} message */
+    const sendFailure = async (message) => {
+      if (replyHandle) {
+        const { thread_ts: _threadTs, ...content } = message;
+        await client.chat.update({ ...replyHandle, blocks: [], ...content });
+      } else await say(message);
+    };
     if (salvaged) {
-      await say({
+      await sendFailure({
         text,
         thread_ts: args.threadTs,
         blocks: [
@@ -250,7 +257,7 @@ export async function runAndReply(args) {
       });
       return;
     }
-    await say({ text, thread_ts: args.threadTs });
+    await sendFailure({ text, thread_ts: args.threadTs });
   }
 }
 

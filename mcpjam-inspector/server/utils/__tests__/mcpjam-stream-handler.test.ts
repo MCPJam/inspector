@@ -58,7 +58,8 @@ vi.mock("ai", async () => {
   };
 });
 
-vi.mock("@/shared/http-tool-calls", () => ({
+vi.mock("@/shared/http-tool-calls", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
   hasUnresolvedToolCalls: vi.fn().mockReturnValue(false),
   executeToolCallsFromMessages: vi.fn(),
 }));
@@ -442,6 +443,7 @@ describe("mcpjam-stream-handler", () => {
 
   it("preserves spliced denial tool results in the completed conversation history", async () => {
     const onConversationComplete = vi.fn();
+    const durableCheckpoint = vi.fn();
 
     await handleMCPJamFreeChatModel({
       messages: [
@@ -480,10 +482,13 @@ describe("mcpjam-stream-handler", () => {
       } as any,
       requireToolApproval: true,
       onConversationComplete,
+      durableCheckpoint,
     });
 
     await lastExecution;
 
+    expect(durableCheckpoint.mock.calls[0][0].phase).toBe("tools");
+    expect(durableCheckpoint.mock.calls.some(([value]) => value.phase === "model")).toBe(true);
     const fullHistory = onConversationComplete.mock.calls[0]?.[0];
     expect(fullHistory).toHaveLength(3);
     expect(fullHistory[1]).toMatchObject({
@@ -3835,9 +3840,11 @@ describe("mcpjam-stream-handler", () => {
         },
       ];
 
+      const checkpoints = vi.fn();
       vi.mocked(hasUnresolvedToolCalls).mockReturnValue(false);
       vi.mocked(executeToolCallsFromMessages).mockImplementation(
         async (messages: any[]) => {
+          expect(checkpoints.mock.calls[0][0].phase).toBe("tools");
           const toolResultMessage = {
             role: "tool",
             content: [
@@ -3872,6 +3879,7 @@ describe("mcpjam-stream-handler", () => {
         requireToolApproval: true,
         onToolCall,
         onToolResult,
+        durableCheckpoint: checkpoints,
       });
 
       await lastExecution;

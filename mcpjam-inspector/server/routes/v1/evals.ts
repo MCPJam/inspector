@@ -9256,6 +9256,12 @@ evals.post(
           "evalAuthoringState:status" as any,
           { jobId: job.jobId },
         );
+        if (!status)
+          throw new WebRouteError(
+            404,
+            ErrorCode.NOT_FOUND,
+            "Authoring job not found.",
+          );
         if (status.status !== "pending") {
           const { convexClient } = createConvexClients(token);
           return completeGeneratedAuthoringJob(
@@ -9644,6 +9650,7 @@ evals.get(
       jobId: evalIdParam(c, "jobId", "Authoring job"),
     });
     if (
+      !job ||
       job.projectId !== c.req.param("projectId") ||
       job.suiteId !== c.req.param("suiteId")
     )
@@ -9666,6 +9673,7 @@ evals.post(
     });
     const suiteId = c.req.param("suiteId");
     if (
+      !job ||
       job.projectId !== c.req.param("projectId") ||
       job.suiteId !== suiteId ||
       job.source === "markdown"
@@ -9685,9 +9693,15 @@ async function completeGeneratedAuthoringJob(
   job: any,
   suiteId: string,
 ) {
-  const cases = [];
+  if (job.status !== "completed")
+    return v1Resource(c, {
+      jobId: job.jobId,
+      status: job.status,
+      ...(job.error ? { error: job.error } : {}),
+    });
+  const cases: EvalCaseBatchItem[] = [];
   const skipped = [];
-  for (const value of job.drafts) {
+  for (const value of job.drafts ?? []) {
     const draft = evalAuthoringDraftSchema.parse(value);
     if (
       draft.additions.length ||
@@ -9718,14 +9732,17 @@ async function completeGeneratedAuthoringJob(
     : { committed: [], failed: [] };
   const ids = [
     ...new Set<string>([
-      ...job.committedCaseIds,
+      ...(job.committedCaseIds ?? []),
       ...saved.committed.map((entry) => entry.testCaseId),
     ]),
   ];
-  const docs = await Promise.all(
+  const reads = await Promise.allSettled(
     ids.map((testCaseId) =>
       convex.query("testSuites:getTestCase" as any, { testCaseId }),
     ),
+  );
+  const docs = reads.flatMap((read) =>
+    read.status === "fulfilled" && read.value ? [read.value] : [],
   );
   const vocabulary = vocabularyOf(c);
   return v1Resource(c, {
@@ -9739,7 +9756,13 @@ async function completeGeneratedAuthoringJob(
       normal: docs.filter((doc) => !doc.isNegativeTest).length,
       negative: docs.filter((doc) => doc.isNegativeTest).length,
     },
-    skipped: [...skipped, ...saved.failed],
+    skipped: [
+      ...skipped,
+      ...saved.failed.map((failure) => ({
+        title: failure.title ?? cases[failure.index]?.title ?? "Untitled case",
+        error: failure.message,
+      })),
+    ],
     ...(job.error ? { error: job.error } : {}),
   });
 }

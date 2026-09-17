@@ -25,6 +25,7 @@ import {
   environmentServerNames,
 } from "../../services/environments/resolve.js";
 
+import { NO_READ_ONLY_TOOLS_MESSAGE } from "../../../shared/eval-generation-errors.js";
 import { readOnlyGenerationSnapshot } from "../../services/eval-generation-coverage.js";
 
 const startSchema = z
@@ -169,8 +170,22 @@ export async function handleEvalAuthoring(c: Context, local: boolean) {
       } finally {
         await manager.disconnectAllServers();
       }
-      if (input.options?.toolCoverage === "read-only" && toolSnapshot)
-        toolSnapshot = readOnlyGenerationSnapshot(toolSnapshot);
+      if (input.options?.toolCoverage === "read-only" && toolSnapshot) {
+        try {
+          toolSnapshot = readOnlyGenerationSnapshot(toolSnapshot);
+        } catch (error) {
+          if (
+            error instanceof Error &&
+            error.message === NO_READ_ONLY_TOOLS_MESSAGE
+          )
+            throw new WebRouteError(
+              400,
+              ErrorCode.VALIDATION_ERROR,
+              error.message,
+            );
+          throw error;
+        }
+      }
       const { environmentId: _environmentId, ...source } = input;
       const response = await fetch(
         `${requireConvexHttpUrl()}/eval-authoring/v1/jobs`,

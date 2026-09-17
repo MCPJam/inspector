@@ -66,6 +66,7 @@ import {
 import { z } from "zod";
 import {
   hasUnresolvedToolCalls,
+  hasUnresolvedApprovalResponses,
   executeToolCallsFromMessages,
 } from "@/shared/http-tool-calls";
 import { isMrtrSuspendSignalShape } from "@/shared/mrtr-continuation";
@@ -4182,6 +4183,13 @@ export async function runChatEngineLoop(
       // approve path ships a tool-result instead), and the turn hung forever.
       // A history that carries an approval request is the only fact that
       // matters, and it is a fact this function can read for itself.
+      if (options.durableCheckpoint && hasUnresolvedApprovalResponses(messageHistory)) {
+        await options.durableCheckpoint({
+          phase: "tools",
+          messages: messageHistory,
+          step: effectiveSteps(),
+        });
+      }
       await handlePendingApprovals(
         safeWriter,
         messageHistory,

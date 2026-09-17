@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../../../services/evals/route-helpers.js", () => ({
   createConvexClient: () => ({ query: mocks.query }),
   requireConvexHttpUrl: () => "https://backend.test",
-  captureToolSnapshotForEvalAuthoring: async () => ({ toolSnapshot: [] }),
+  captureToolSnapshotForEvalAuthoring: async () => ({ toolSnapshot: { servers: [] } }),
 }));
 vi.mock("../../web/auth.js", () => ({
   callerContextFromHono: () => ({}),
@@ -87,4 +87,10 @@ describe("authoring adapter", () => {
     expect(response.status).toBe(202);
     expect(await response.json()).toEqual({ jobId: "job" });
   });
+});
+
+it("reports no read-only tools as a validation error", async () => {
+  const response = await post(JSON.stringify({ ...start, input: { ...start.input, options: { toolCoverage: "read-only" } } }));
+  expect(response.status).toBe(400);
+  expect(mocks.fetch).not.toHaveBeenCalled();
 });

@@ -75,3 +75,24 @@ received the schema correction; authenticated browser QA remains outstanding.
 Standalone server typecheck still reports the existing declaration, legacy-route,
 and test typing errors; no new errors were reported in the authoring fixes. Backend
 lint passes with its existing warnings. No production deployment or merge was done.
+
+## Review follow-up after rebase
+
+Both feature branches were rebased onto current main. All findings in this review
+were valid: read-only generation now reports a validation error; pending agent
+jobs use the top-level wire shape; absent jobs and failed/cancelled authoring jobs
+are handled without committing; case receipts omit unreadable documents and keep
+skipped entries in the declared shape. Slack retains the completed job ID for
+acknowledgement and edits the existing placeholder on failure.
+
+Approval responses with unresolved calls are checkpointed before reconciliation.
+Recovery sends those responses through the approval handler instead of executing
+raw calls (including denied calls). The model checkpoint remains in place and
+MRTR resume handling is unchanged. No tools-phase checkpoint is introduced for
+histories without pending approval responses: a crash there must still resume the
+model, rather than being mistaken for a completed tool phase.
+
+The schema's predicate exclusion branch stays open to predicate fields. Mirror
+comparison now uses TypeScript lexical tokens, preserving literal values while
+allowing different quote delimiters. CI installs the locked dependencies for the
+checker and tests quote preservation before comparing the pinned backend.

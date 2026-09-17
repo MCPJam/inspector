@@ -1,17 +1,8 @@
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
+import { normalizeAuthoringContract as region } from "./authoring-contract-normalization.mjs";
 const root = resolve(import.meta.dirname, "..");
-const region = (text) =>
-  text
-    .slice(text.indexOf("export const EVAL_AUTHORING_VERSION"))
-    .replace(/\r\n/g, "\n")
-    .replace(/"/g, "'")
-    .split("\n")
-    .map((line) => line.replace(/\s+$/, ""))
-    .join("\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
 const local = region(
   readFileSync(resolve(root, "sdk/src/contract/eval-authoring.ts"), "utf8")
 );

@@ -1306,7 +1306,7 @@
                         "not": {}
                       }
                     },
-                    "additionalProperties": false
+                    "additionalProperties": {}
                   }
                 ]
               }

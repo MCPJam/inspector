@@ -2348,6 +2348,53 @@ describe("v1 eval-edit routes", () => {
     }
   });
 
+  it.each(["failed", "cancelled", "pending", "completed"])("returns %s authoring jobs without missing-collection crashes", async (status) => {
+    convexQueryMock.mockImplementation((name: string) => name === "evalAuthoringState:status"
+      ? Promise.resolve({ jobId: "job", projectId: "p1", suiteId: "s1", source: "generation", status, error: "Stopped" }) : defaultQueryImpl(name));
+    const response = await request("POST", "/api/v1/projects/p1/eval-suites/s1/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/commit", {});
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ status, error: "Stopped" });
+    expect(convexMutationMock).not.toHaveBeenCalled();
+  });
+  it.each(["GET", "POST"])("returns 404 for absent authoring jobs on %s", async (method) => {
+    convexQueryMock.mockResolvedValue(null);
+    const response = await request(method, `/api/v1/projects/p1/eval-suites/s1/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa${method === "POST" ? "/commit" : ""}`, method === "POST" ? {} : undefined);
+    expect(response.status).toBe(404);
+  });
+  it("omits unavailable case reads from receipts and counts", async () => {
+    convexQueryMock.mockImplementation((name: string, args: any) => {
+      if (name === "evalAuthoringState:status") return Promise.resolve({ jobId: "job", projectId: "p1", suiteId: "s1", source: "generation", status: "completed", committedCaseIds: ["valid", "missing", "unreadable"] });
+      if (name === "testSuites:getTestCase") {
+        if (args.testCaseId === "unreadable") return Promise.reject(new Error("Not accessible"));
+        return Promise.resolve(args.testCaseId === "valid" ? CASE_DOC : null);
+      }
+      return defaultQueryImpl(name);
+    });
+    const response = await request("POST", "/api/v1/projects/p1/eval-suites/s1/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/commit", {});
+    expect(response.status).toBe(200);
+    const result = await response.json();
+    expect(result.created).toHaveLength(1);
+    expect(result.counts).toEqual({ normal: 1, negative: 0 });
+  });
+
+  it("keeps review skips and normalizes batch failure messages", async () => {
+    const draft = { version: 1, draftId: "draft", revision: 0, case: { title: "Save failed", steps: [{ id: "p", kind: "prompt", prompt: "Find a document" }], expectedOutput: "Document found" }, issues: [], additions: [], review: "required" };
+    convexQueryMock.mockResolvedValue({ jobId: "job", projectId: "p1", suiteId: "s1", source: "generation", status: "completed", drafts: [
+      { ...draft, draftId: "review", case: { ...draft.case, title: "Needs review" }, additions: [{ id: "a", path: "steps.0", explanation: "Added details" }] }, draft,
+    ] });
+    convexMutationMock.mockImplementation((name: string) => {
+      if (name === "evalAuthoringState:prepareCommit") return Promise.resolve({ title: "Save failed" });
+      if (name === "testSuites:createTestCases") return Promise.resolve({ caseUpsert: { committed: [], failed: [{ index: 0, code: "DUPLICATE", message: "Already exists" }] } });
+      return Promise.resolve(null);
+    });
+    const response = await request("POST", "/api/v1/projects/p1/eval-suites/s1/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/commit", {});
+    expect(response.status).toBe(200);
+    expect((await response.json()).skipped).toEqual([
+      { title: "Needs review", error: "Review this draft's issues and proposed additions in the suite." },
+      { title: "Save failed", error: "Already exists" },
+    ]);
+  });
+
   async function generateWith(init: {
     headers?: Record<string, string>;
     body?: Record<string, unknown>;

@@ -309,6 +309,33 @@ describe("POST /api/v1/projects/:projectId/agent", () => {
     expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
   });
 
+  it.each(["GET", "POST"])("returns 404 for missing agent jobs on %s", async (method) => {
+    const previous = process.env.CONVEX_URL;
+    process.env.CONVEX_URL = "https://convex.test";
+    const client = vi.spyOn(routeHelpers, "createConvexClient").mockReturnValue({ query: vi.fn().mockResolvedValue(null) } as any);
+    try {
+      const response = await makeApp().request(`/api/v1/projects/p1/agent/jobs/job${method === "POST" ? "/cancel" : ""}`, { method, headers: { Authorization: "Bearer tok" } });
+      expect(response.status).toBe(404);
+    } finally {
+      client.mockRestore();
+      if (previous === undefined) delete process.env.CONVEX_URL; else process.env.CONVEX_URL = previous;
+    }
+  });
+  it("returns a top-level job ID for pending durable turns", async () => {
+    const oldFlag = process.env.DURABLE_AGENT_TURNS_ENABLED;
+    process.env.DURABLE_AGENT_TURNS_ENABLED = "true";
+    const client = vi.spyOn(routeHelpers, "createConvexClient").mockReturnValue({} as any);
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ jobId: "job" }));
+    try {
+      const response = await turnRequest(makeApp(), OK_BODY);
+      expect(response.status).toBe(202);
+      expect(await response.json()).toEqual({ jobId: "job", status: "pending" });
+    } finally {
+      client.mockRestore(); fetchMock.mockRestore();
+      if (oldFlag === undefined) delete process.env.DURABLE_AGENT_TURNS_ENABLED; else process.env.DURABLE_AGENT_TURNS_ENABLED = oldFlag;
+    }
+  });
+
   it("requires a bearer token", async () => {
     const app = makeApp();
     const res = await app.request("/api/v1/projects/p1/agent", {

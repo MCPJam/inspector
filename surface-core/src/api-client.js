@@ -270,6 +270,7 @@ export function createApiClient(options = {}) {
 				fetchImpl: opts.fetchImpl,
 			},
 		);
+		let completedJobId = payload?.jobId;
 		if (typeof payload?.jobId === "string" && payload.status === "pending") {
 			const jobId = payload.jobId;
 			const deadline = Date.now() + 35 * 60 * 1000;
@@ -286,6 +287,7 @@ export function createApiClient(options = {}) {
 					},
 				);
 				if (job.status === "completed") {
+					completedJobId = job.jobId ?? jobId;
 					payload = job.result;
 					break;
 				}
@@ -307,7 +309,7 @@ export function createApiClient(options = {}) {
 		}
 		return {
 			...(payload?.replyHandle
-				? { replyHandle: payload.replyHandle, jobId: payload.jobId }
+				? { replyHandle: payload.replyHandle, jobId: completedJobId }
 				: {}),
 			reply: typeof payload?.reply === "string" ? payload.reply : "",
 			toolCalls: Array.isArray(payload?.toolCalls) ? payload.toolCalls : [],

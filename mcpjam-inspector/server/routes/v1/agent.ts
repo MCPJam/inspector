@@ -86,7 +86,11 @@ import { parseWithSchema } from "../web/errors.js";
 import { getSelfFetch } from "../../utils/self-app.js";
 import { createConvexClient } from "../../services/evals/route-helpers.js";
 import { isAuthorizedInternalServiceRequest } from "../../middleware/internal-service-auth.js";
-import { executeToolCallsFromMessages } from "@/shared/http-tool-calls";
+import {
+  executeToolCallsFromMessages,
+  hasUnresolvedToolCalls,
+  hasUnresolvedApprovalResponses,
+} from "@/shared/http-tool-calls";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { requireVerifiedAuth } from "../../middleware/require-verified-auth.js";
 import {
@@ -1120,7 +1124,7 @@ agent.get("/projects/:projectId/agent/jobs/:jobId", async (c) => {
   const result = await convex.query("agentTurnState:status" as any, {
     jobId: c.req.param("jobId"),
   });
-  if (result.projectId !== c.req.param("projectId"))
+  if (!result || result.projectId !== c.req.param("projectId"))
     return v1Error(c, "NOT_FOUND", "Agent job not found.");
   return v1Resource(c, result);
 });
@@ -1135,7 +1139,7 @@ agent.post("/projects/:projectId/agent/jobs/:jobId/cancel", async (c) => {
   const status = await convex.query("agentTurnState:status" as any, {
     jobId: c.req.param("jobId"),
   });
-  if (status.projectId !== c.req.param("projectId"))
+  if (!status || status.projectId !== c.req.param("projectId"))
     return v1Error(c, "NOT_FOUND", "Agent job not found.");
   await convex.mutation("agentTurnState:cancel" as any, {
     jobId: c.req.param("jobId"),
@@ -1201,10 +1205,7 @@ agent.post("/projects/:projectId/agent", async (c) => {
   if (
     durable &&
     (durable.phase === "complete" ||
-      (durable.phase === "tools" &&
-        !durable.messages
-          .at(-1)
-          ?.content?.some?.((part: any) => part.type === "tool-call")))
+      (durable.phase === "tools" && !hasUnresolvedToolCalls(durable.messages)))
   ) {
     const lastAssistant = [...durable.messages]
       .reverse()
@@ -1257,7 +1258,7 @@ agent.post("/projects/:projectId/agent", async (c) => {
         "Could not start the durable agent turn.",
       );
     const { jobId } = await started.json();
-    return c.json({ data: { jobId, status: "pending" } }, 202);
+    return c.json({ jobId, status: "pending" }, 202);
   }
 
   // sk_ callers get their org id from bearer auth; JWT callers reach this
@@ -1504,7 +1505,10 @@ agent.post("/projects/:projectId/agent", async (c) => {
           return result;
         };
       }
-      if (durable.phase === "tools") {
+      if (
+        durable.phase === "tools" &&
+        !hasUnresolvedApprovalResponses(turnMessages)
+      ) {
         const results = await executeToolCallsFromMessages(turnMessages, {
           tools: prepared.allTools,
           skipNonExecutableTools: true,
