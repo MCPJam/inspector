@@ -26,6 +26,7 @@ import {
   parseScoreIntegrity,
 } from "./scores-list";
 import { TraceViewer } from "./trace-viewer";
+import type { HostSnapshot } from "@/lib/host-snapshot";
 import {
   gateMcpToolResultImageRenderingByModelVisibility,
   type HostConfigDtoV2,
@@ -231,6 +232,7 @@ export type ScorecardTabContext = {
 };
 
 export function IterationDetails({
+  hostSnapshot,
   iteration,
   testCase,
   serverNames = EMPTY_SERVER_NAMES,
@@ -246,6 +248,8 @@ export function IterationDetails({
   onSyncStep,
 }: {
   iteration: EvalIteration;
+  /** undefined preserves ambient styling for existing chat callers. */
+  hostSnapshot?: HostSnapshot | null;
   testCase: EvalCase | null;
   serverNames?: string[];
   layoutMode?: "compact" | "full";
@@ -1112,8 +1116,13 @@ export function IterationDetails({
             isDetailsOpen={isBlobErrorDetailsOpen}
             onDetailsOpenChange={setIsBlobErrorDetailsOpen}
           />
+        ) : hostSnapshot === null && previewTraceMode === "chat" ? (
+          <p role="alert" className="p-4 text-sm text-muted-foreground">
+            Could not load this run's host configuration.
+          </p>
         ) : (
           <TraceViewer
+              hostSnapshot={hostSnapshot}
               trace={blob ?? {}}
               mcpToolResultImageRendering={mcpToolResultImageRendering}
               model={traceModel}

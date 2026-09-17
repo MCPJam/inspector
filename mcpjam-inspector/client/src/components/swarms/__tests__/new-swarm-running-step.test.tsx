@@ -27,6 +27,7 @@ const streamState = {
  * the persisted spans or nothing at all.
  */
 const liveTraceState = { trace: null as Record<string, unknown> | null };
+const streamSubscriptions = new Map<string, boolean>();
 
 vi.mock("@/lib/toast", () => ({
   toast: {
@@ -38,7 +39,10 @@ vi.mock("@/lib/toast", () => ({
 }));
 
 vi.mock("@/components/swarms/use-journey-run-stream", () => ({
-  useJourneyRunStream: () => streamState,
+  useJourneyRunStream: (runId: string, enabled: boolean) => {
+    streamSubscriptions.set(runId, enabled);
+    return streamState;
+  },
   liveSessionTrace: () => liveTraceState.trace,
   swarmCellKey: (targetKey: string, sessionIndex: number) =>
     `${targetKey}:${sessionIndex}`,
@@ -134,6 +138,7 @@ const failedSessionFixture = {
 const runQueryState = { run: runFixture as JourneyRun | null };
 
 vi.mock("convex/react", () => ({
+  useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
   useQuery: (name: string) => {
     switch (name) {
       case "journeyRuns:getJourneyRun":
@@ -153,6 +158,7 @@ vi.mock("convex/react", () => ({
 }));
 
 import { toast } from "@/lib/toast";
+import { SwarmLiveStreamPane } from "../journey-run-results";
 import {
   NewSwarmRunningStep,
   swarmCellHeadline,
@@ -162,6 +168,7 @@ import {
 
 describe("NewSwarmRunningStep — session stream pane", () => {
   beforeEach(() => {
+    streamSubscriptions.clear();
     streamState.sessions = {};
     streamState.cellStatus = {
       "environment:env-1:0": "running",
@@ -221,6 +228,28 @@ describe("NewSwarmRunningStep — session stream pane", () => {
     fireEvent.click(chips[0]!);
     return chips;
   };
+
+  it("subscribes only to the selected run in a ten-run wave", async () => {
+    render(
+      <NewSwarmRunningStep
+        projectId="proj-1"
+        runs={Array.from({ length: 10 }, (_, i) => ({
+          runId: `run-${i + 1}`, journeyId: `j-${i}`, personaId: "p-1",
+          personaName: "Tester", personaRole: "Tester", label: `Goal ${i}`,
+        }))}
+        fallbackColumns={[{ key: "environment:env-1", label: "Host" }]}
+        onLeave={vi.fn()}
+        onOpenSession={vi.fn()}
+      />,
+    );
+    const enabledRuns = () => [...streamSubscriptions].filter(([, enabled]) => enabled).map(([id]) => id);
+    const chips = await screen.findAllByTestId("new-swarm-running-session");
+    expect(enabledRuns()).toEqual([]);
+    fireEvent.click(chips[0]!);
+    await waitFor(() => expect(enabledRuns()).toEqual(["run-1"]));
+    fireEvent.click(chips.at(-1)!);
+    await waitFor(() => expect(enabledRuns()).toEqual(["run-10"]));
+  });
 
   it("shows an empty stream pane until a session is clicked", async () => {
     runFixture.hostSummaries![0].targetId = "opaque-target";
@@ -416,6 +445,78 @@ describe("NewSwarmRunningStep — session stream pane", () => {
     };
     expect(props.trace.spans).toHaveLength(1);
     expect(props.traceStartedAtMs).toBe(1_000_000);
+  });
+
+  it("shows saved messages when a completed session's live buffer is empty", async () => {
+    liveTraceState.trace = { traceVersion: 1, messages: [] };
+    const messages = [
+      { role: "user", content: "Inspect the server" },
+      { role: "assistant", content: "The server is reachable" },
+    ];
+    persistedState.trace = { traceVersion: 1, messages };
+    await renderPaneAndSelectSession();
+    await waitFor(() => expect(traceViewerProps).toHaveBeenCalled());
+    expect(traceViewerProps.mock.calls.at(-1)![0].trace.messages).toEqual(messages);
+  });
+
+  it("explains a stale failure even when no session transcript was persisted", () => {
+    render(
+      <SwarmLiveStreamPane
+        selection={{ targetKey: "environment:env-1", hostId: "host-1", sessionIndex: 0, chatSessionId: "missing-session" }}
+        stream={{ ...streamState, sessions: {}, cellStatus: {}, connected: false } as never}
+        convexSession={null}
+        attempt={{ status: "failed", errorCode: "stale_runner", errorMessage: "Runner heartbeat went silent; run marked stale." }}
+        fallbackTrace={null}
+        runStatus="failed"
+        onOpenCompleted={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId("swarm-live-pane-failure")).toHaveTextContent("runner stopped reporting progress");
+    expect(screen.getByTestId("swarm-live-pane")).toHaveTextContent("recording may have failed");
+  });
+
+  it("does not reassure with Done when a completed attempt saved an empty transcript", () => {
+    persistedState.trace = { traceVersion: 1, messages: [] };
+    render(
+      <SwarmLiveStreamPane
+        selection={{
+          targetKey: "environment:env-1",
+          hostId: "host-1",
+          sessionIndex: 0,
+          chatSessionId: "empty-session",
+        }}
+        stream={
+          {
+            ...streamState,
+            sessions: {},
+            cellStatus: {},
+            connected: false,
+          } as never
+        }
+        convexSession={null}
+        attempt={{ status: "succeeded" }}
+        fallbackTrace={null}
+        runStatus="completed"
+        onOpenCompleted={vi.fn()}
+      />
+    );
+    expect(
+      screen.getByTestId("swarm-live-pane-empty-completed")
+    ).toHaveTextContent("does not confirm the assistant was tested");
+    expect(screen.getByTestId("swarm-live-pane")).toHaveTextContent(
+      "No conversation"
+    );
+    expect(screen.getByTestId("swarm-live-pane")).not.toHaveTextContent("Done");
+  });
+
+  it("keeps a live transcript that has progressed beyond the saved snapshot", async () => {
+    const savedMessages = [{ role: "user", content: "Inspect the server" }];
+    const liveMessages = [...savedMessages, { role: "assistant", content: "Checking…" }];
+    liveTraceState.trace = { traceVersion: 1, messages: liveMessages };
+    persistedState.trace = { traceVersion: 1, messages: savedMessages };
+    await renderPaneAndSelectSession();
+    await waitFor(() => expect(traceViewerProps).toHaveBeenCalled());
+    expect(traceViewerProps.mock.calls.at(-1)![0].trace.messages).toEqual(liveMessages);
   });
 
   /**
@@ -714,6 +815,22 @@ describe("NewSwarmRunningStep — session stream pane", () => {
 });
 
 describe("NewSwarmRunningStep — frame copy", () => {
+  it("does not claim checks passed when only execution completed", () => {
+    expect(
+      swarmCellHeadline({
+        outcome: "succeeded",
+        primary: "done",
+        goal: "Export board",
+      }),
+    ).toBe("Run completed: Export board");
+    expect(
+      swarmCellHeadline({
+        outcome: "succeeded",
+        primary: "0/0 pass",
+        goal: "Export board",
+      }),
+    ).toBe("Run completed: Export board");
+  });
   it("titles the wave the way the running and finished frames do", () => {
     expect(
       swarmRunningTitle({
@@ -771,3 +888,12 @@ describe("NewSwarmRunningStep — frame copy", () => {
     ).toBe("Run completed: Goal completion had mixed results");
   });
 });
+
+vi.mock("@/hooks/use-host-snapshot", () => ({
+  useHostSnapshotForSession: () => ({
+    status: "ready", snapshot: { hostStyle: "mcpjam" },
+  }),
+  useHostSnapshotForHost: () => ({
+    status: "ready", snapshot: { hostStyle: "mcpjam" },
+  }),
+}));

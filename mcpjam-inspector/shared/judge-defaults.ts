@@ -48,6 +48,5 @@ export const GOAL_COMPLETION_DEFAULTS: ResolvedGoalCompletionConfig = {
 export type GoalJudgePolicy = {
   contractVersion: 4;
   effective: ResolvedGoalCompletionConfig;
-  executionPaused: boolean;
   automatic: boolean;
 };

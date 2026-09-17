@@ -92,6 +92,12 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     scope: "global",
   },
   {
+    path: "organizations/:orgId/billing/byok",
+    kind: "screen",
+    surfaceId: "organizations",
+    scope: "global",
+  },
+  {
     path: "organizations/:orgId/billing/usage",
     kind: "screen",
     surfaceId: "organizations",

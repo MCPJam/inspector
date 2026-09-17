@@ -5,7 +5,7 @@ import {
   type GuestSessionFetchContext,
   type RemoteGuestSession,
 } from "../../utils/guest-session-source.js";
-import { getClientIp } from "../../utils/client-ip.js";
+import { getSpendClientIp } from "../../utils/client-ip.js";
 import { hashGuestSpendIp } from "../../utils/guest-spend-ip.js";
 
 // IP-based rate limiting: 10 req/min per IP (sliding window).
@@ -181,7 +181,7 @@ export async function mintGuestSessionForDocument(
 ): Promise<DocumentGuestMintResult> {
   const empty: DocumentGuestMintResult = { session: null, setCookies: [] };
 
-  const ip = getClientIp(c);
+  const ip = getSpendClientIp(c);
   // Match the client route's rate-limit key behavior: a missing IP keys to
   // "local-dev" so non-prod runs aren't starved. The route hard-fails a
   // missing IP in production, but the document path must NEVER fail the HTML,

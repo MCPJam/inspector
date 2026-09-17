@@ -1062,6 +1062,7 @@ export function OrganizationBillingSection({
           )}
         >
           <CreditBalanceCard
+            pricingVersion={billingStatus?.pricingVersion}
             organizationId={organizationId}
             canManageCredits={canManageCredits}
           />

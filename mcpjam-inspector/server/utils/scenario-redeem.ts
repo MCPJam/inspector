@@ -1,3 +1,4 @@
+import { guestIpForwardHeaders } from "./guest-spend-ip.js";
 /**
  * Scenario token redemption.
  *
@@ -97,6 +98,7 @@ function buildRedeemUrl(): string {
 }
 
 export async function redeemScenarioToken(args: {
+  guestIpHash?: string | null;
   scenarioToken: string;
   bearer: string;
   signal?: AbortSignal;
@@ -110,9 +112,11 @@ export async function redeemScenarioToken(args: {
   try {
     response = await fetch(url, {
       method: "POST",
+      redirect: "manual",
       headers: {
         "content-type": "application/json",
         authorization,
+        ...guestIpForwardHeaders(args.guestIpHash),
       },
       body: JSON.stringify({ scenarioToken: args.scenarioToken }),
       signal: args.signal,

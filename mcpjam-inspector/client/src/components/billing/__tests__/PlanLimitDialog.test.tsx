@@ -21,6 +21,8 @@ const {
   trackMock: vi.fn(),
   startMock: vi.fn(),
   upgradeState: {
+    pricingVersion: "v1" as "v1" | "v2" | undefined,
+    isLoadingBilling: false,
     currentPlan: "free" as string,
     effectivePlan: "free" as string,
     canManageBilling: true,
@@ -69,7 +71,8 @@ vi.mock("@/hooks/use-upgrade-checkout", async (importOriginal) => {
       effectivePlan: upgradeState.effectivePlan,
       organizationName: "Acme Robotics",
       canManageBilling: upgradeState.canManageBilling,
-      isLoadingBilling: false,
+      pricingVersion: upgradeState.pricingVersion,
+      isLoadingBilling: upgradeState.isLoadingBilling,
       isLoadingPrices: upgradeState.isLoadingPrices,
       isStarting: false,
       start: startMock,
@@ -113,6 +116,8 @@ beforeEach(() => {
   toastSuccess.mockReset();
   trackMock.mockReset();
   startMock.mockReset();
+  upgradeState.pricingVersion = "v1";
+  upgradeState.isLoadingBilling = false;
   upgradeState.currentPlan = "free";
   upgradeState.effectivePlan = "free";
   upgradeState.canManageBilling = true;
@@ -141,6 +146,28 @@ function arriveFromCheckout(
 }
 
 describe("PlanLimitDialog", () => {
+  it.each(["free", "pro", "team"])("suppresses the legacy wall for V2 %s", (plan) => {
+    upgradeState.pricingVersion = "v2";
+    upgradeState.effectivePlan = plan;
+    openEvalLimit();
+    render(<PlanLimitDialog />);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(usePlanLimitDialogStore.getState().isOpen).toBe(false);
+    expect(trackMock).not.toHaveBeenCalledWith("plan_limit_dialog_shown", expect.anything());
+    expect(startMock).not.toHaveBeenCalled();
+  });
+  it("does not flash the legacy upsell while V2 billing resolves", () => {
+    upgradeState.isLoadingBilling = true;
+    upgradeState.pricingVersion = undefined;
+    openEvalLimit();
+    const view = render(<PlanLimitDialog />);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    upgradeState.isLoadingBilling = false;
+    upgradeState.pricingVersion = "v2";
+    view.rerender(<PlanLimitDialog />);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(usePlanLimitDialogStore.getState().isOpen).toBe(false);
+  });
   it("renders nothing while closed", () => {
     const { container } = render(<PlanLimitDialog />);
     expect(container).toBeEmptyDOMElement();
