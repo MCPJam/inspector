@@ -1036,6 +1036,32 @@ export function NewSwarmRunningStep({
     return { count, label: labels.size === 1 ? (only ?? null) : null };
   }, [snapshots]);
 
+  // The other half of that split: sessions MCPJam's own account limit stopped.
+  // Skipping them above is right — no provider throttled anything — but on a
+  // run where other sessions succeeded, the run banner stays silent too, and
+  // the amber chips would be left unexplained.
+  const accountLimit = useMemo(() => {
+    let count = 0;
+    let message: string | null = null;
+    for (const snap of Object.values(snapshots)) {
+      for (const attempt of snap.attempts) {
+        if (attempt.status !== "rate_limited") continue;
+        const info = humanizeSwarmAttemptError(
+          attempt.errorMessage,
+          attempt.errorCode,
+        );
+        if (!isAccountLimit(info.message, attempt.errorCode ?? info.code)) {
+          continue;
+        }
+        count += 1;
+        // The whole-run finalize writes a code and no message; any sibling
+        // that stored the backend's sentence says it better.
+        if (!message && attempt.errorMessage) message = info.message;
+      }
+    }
+    return count === 0 ? null : { count, message };
+  }, [snapshots]);
+
   const selectedRunStatus = selection
     ? (snapshots[selection.runId]?.status ?? "running")
     : "running";
@@ -1052,6 +1078,7 @@ export function NewSwarmRunningStep({
     chrome === "wizard" ||
     missingPlannedClients.length > 0 ||
     providerRateLimit !== null ||
+    accountLimit !== null ||
     runFailure !== null;
 
   return (
@@ -1154,6 +1181,25 @@ export function NewSwarmRunningStep({
                       ? "1 session stopped."
                       : `${providerRateLimit.count} sessions stopped.`}{" "}
                     Retry again later or switch models.
+                  </p>
+                </div>
+              ) : null}
+              {/* The run banner already carries this sentence when nothing
+                  succeeded; saying it twice adds nothing. */}
+              {accountLimit && !runFailure ? (
+                <div
+                  className="rounded-md border border-warning bg-warning/20 px-3 py-2 text-sm text-warning-foreground"
+                  data-testid="new-swarm-running-account-limit"
+                  role="status"
+                >
+                  <p className="font-medium">
+                    {accountLimit.count === 1
+                      ? "1 session stopped at your MCPJam model limit."
+                      : `${accountLimit.count} sessions stopped at your MCPJam model limit.`}
+                  </p>
+                  <p className="mt-0.5">
+                    {accountLimit.message ??
+                      "Add credit or connect your own provider key (BYOK) to keep running."}
                   </p>
                 </div>
               ) : null}
