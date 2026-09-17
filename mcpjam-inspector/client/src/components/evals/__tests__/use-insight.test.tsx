@@ -321,6 +321,122 @@ describe("useInsight sign-in refusals", () => {
     expect(requestMutationMock).toHaveBeenCalledTimes(2);
   });
 
+  it("does not show run A's refusal on run B", async () => {
+    // A rejection is not instant. Navigate inside that window and the catch
+    // still owns this hook's state: without a guard it writes run A's verdict
+    // over the run the viewer is now looking at, and the sign-in call to
+    // action appears on a run that was never refused.
+    let rejectFirst: (err: unknown) => void = () => {};
+    requestMutationMock.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectFirst = reject;
+        }),
+    );
+    requestMutationMock.mockResolvedValue(undefined);
+
+    const { result, rerender } = renderHook(
+      ({ run }: { run: GoalRun }) => useInsight(run, config),
+      { initialProps: { run: makeRun({ _id: "run-a" }) } },
+    );
+
+    rerender({ run: makeRun({ _id: "run-b" }) });
+    await act(async () => {
+      rejectFirst(
+        new Error(
+          'Server Error {"code":"sign_in_required","message":"Sign in to keep going."}',
+        ),
+      );
+      await Promise.resolve();
+    });
+
+    expect(result.current.signInRequired).toBe(false);
+    expect(result.current.errorMessage).toBeNull();
+  });
+
+  it("still latches on a stale refusal — navigating does not change who is asking", async () => {
+    // The other half of the guard above, and the reason it is scoped to
+    // VISIBLE state only. The refusal was late, not wrong: a guest is still a
+    // guest on run B, so the latch must survive even though the banner does
+    // not. Losing it here would restore the doomed request per run that the
+    // latch exists to stop.
+    let rejectFirst: (err: unknown) => void = () => {};
+    requestMutationMock.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectFirst = reject;
+        }),
+    );
+    requestMutationMock.mockResolvedValue(undefined);
+
+    const { rerender } = renderHook(
+      ({ run }: { run: GoalRun }) => useInsight(run, config),
+      { initialProps: { run: makeRun({ _id: "run-a" }) } },
+    );
+    expect(requestMutationMock).toHaveBeenCalledTimes(1);
+
+    rerender({ run: makeRun({ _id: "run-b" }) });
+    await act(async () => {
+      rejectFirst(
+        new Error(
+          'Server Error {"code":"sign_in_required","message":"Sign in."}',
+        ),
+      );
+      await Promise.resolve();
+    });
+
+    // run-b auto-requested before the refusal landed; run-c must not.
+    const afterB = requestMutationMock.mock.calls.length;
+    rerender({ run: makeRun({ _id: "run-c" }) });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(requestMutationMock).toHaveBeenCalledTimes(afterB);
+  });
+
+  it("an in-flight refusal cannot re-latch after an explicit press cleared it", async () => {
+    // The press is the newer claim: it means the viewer may have signed in
+    // since. A request that was already in flight rejects AFTER it and would
+    // otherwise set the latch straight back, suppressing auto-requests for the
+    // rest of the session for someone who has just signed in.
+    let rejectFirst: (err: unknown) => void = () => {};
+    requestMutationMock.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectFirst = reject;
+        }),
+    );
+    requestMutationMock.mockResolvedValue(undefined);
+
+    const { result, rerender } = renderHook(
+      ({ run }: { run: GoalRun }) => useInsight(run, config),
+      { initialProps: { run: makeRun({ _id: "run-a" }) } },
+    );
+    expect(requestMutationMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      result.current.requestInsight(true);
+      await Promise.resolve();
+    });
+    expect(requestMutationMock).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      rejectFirst(
+        new Error(
+          'Server Error {"code":"sign_in_required","message":"Sign in."}',
+        ),
+      );
+      await Promise.resolve();
+    });
+
+    // The latch is clear, so a later run auto-requests as it would for anyone.
+    rerender({ run: makeRun({ _id: "run-b" }) });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(requestMutationMock).toHaveBeenCalledTimes(3);
+  });
+
   it("leaves an undeployed backend classified as unavailable", async () => {
     // The negative half: `sign_in_required` must not swallow the case the
     // `unavailable` latch exists for. A missing function is permanent for the

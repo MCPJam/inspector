@@ -187,6 +187,17 @@ export function useInsight<TResult extends { summary?: string }>(
    * mean the viewer signed in since.
    */
   const signInRefusedRef = useRef(false);
+  /**
+   * Bumped by every EXPLICIT request, so a rejection can tell whether it is
+   * still the newest assertion of identity.
+   *
+   * A request that is already in flight when the viewer presses the button
+   * rejects AFTER that press clears the latch, and would otherwise set it
+   * straight back — stranding someone who just signed in with the auto-request
+   * suppressed for the rest of the session. The press is the newer claim, so
+   * an older request loses the right to latch.
+   */
+  const explicitRequestGenerationRef = useRef(0);
   // The result `generatedAt` captured at request time. Lets us clear the
   // optimistic `requested` flag the instant a NEW result lands — even when a
   // reactive update skips an observable `pending` frame — so the controls
@@ -221,7 +232,14 @@ export function useInsight<TResult extends { summary?: string }>(
       }
       // An explicit press asserts a (possibly new) identity; the auto-request
       // below carries no such assertion and leaves the latch alone.
-      if (!autoClaimedRunId) signInRefusedRef.current = false;
+      if (!autoClaimedRunId) {
+        signInRefusedRef.current = false;
+        explicitRequestGenerationRef.current += 1;
+      }
+      // Captured at REQUEST time: what this rejection, whenever it lands, is
+      // allowed to speak for. See the two guards in the catch below.
+      const originRunId = run._id;
+      const generationAtRequest = explicitRequestGenerationRef.current;
       setError(null);
       setSignInRequired(false);
       requestedAtStampRef.current = latestResultStampRef.current;
@@ -231,15 +249,33 @@ export function useInsight<TResult extends { summary?: string }>(
           if (autoClaimedRunId) {
             releaseAutoRequest(config.requestMutation, autoClaimedRunId);
           }
-          setRequested(false);
           const classified = classifyInsightError(err);
+          // A missing backend function is a fact about the DEPLOYMENT — not
+          // about this run and not about who was asking — so it stands however
+          // long the request took and wherever the viewer has navigated to.
+          if (classified.unavailable && classified.permanent) {
+            featureMissingRef.current = true;
+            setUnavailable(true);
+          }
+          // The latch answers "who is asking", which navigation cannot change
+          // but an explicit press can. Only the newest assertion sets it.
+          if (
+            classified.signInRequired &&
+            explicitRequestGenerationRef.current === generationAtRequest
+          ) {
+            signInRefusedRef.current = true;
+          }
+          // Everything below is what the viewer SEES. A request for run A can
+          // reject after they have moved to run B, and run B is owed its own
+          // verdict rather than A's — including `requested`, which B may have
+          // set for a request of its own that is still in flight.
+          if (runIdRef.current !== originRunId) {
+            return;
+          }
+          setRequested(false);
           if (classified.unavailable) {
-            if (classified.permanent) {
-              featureMissingRef.current = true;
-            }
             setUnavailable(true);
           } else {
-            if (classified.signInRequired) signInRefusedRef.current = true;
             setSignInRequired(classified.signInRequired === true);
             setError(classified.message);
           }
