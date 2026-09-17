@@ -69,13 +69,14 @@ function chipsFromLastCall(): UsageFilterState["chips"] | undefined {
 function renderInspect(
   model: GoalFindingsModel,
   selectedStage: JourneyStageId,
+  onOpenSession: (sessionId: string) => void = vi.fn(),
 ) {
   return render(
     <FindingsGoalInspect
       goal={model}
       selectedStage={selectedStage}
       onSelectStage={vi.fn()}
-      onOpenSession={vi.fn()}
+      onOpenSession={onOpenSession}
       sessionScope={{ kind: "scenario", scenarioId: "scn-1" }}
     />,
   );
@@ -338,11 +339,43 @@ describe("reaching sessions from a stage with several findings", () => {
     };
   }
 
-  it("gives every finding a way in when one session backs several of them", () => {
-    renderInspect(goalWithRows(2, 1), "value");
-    expect(
-      screen.getAllByTestId("findings-evidence-sessions-toggle"),
-    ).toHaveLength(2);
+  /** The panel opens one row at a time, so each finding is walked on its own. */
+  async function expandRow(toggle: HTMLElement) {
+    if (toggle.getAttribute("aria-expanded") === "true") return;
+    await userEvent.click(toggle);
+  }
+
+  it("gives every finding a way in when one session backs several of them", async () => {
+    mockUseGoalOutcomeDrilldown.mockReturnValue({
+      drilldown: {
+        sessions: [
+          {
+            _id: "sess-shared",
+            firstMessagePreview: "Export the board",
+            lastActivityAt: 1,
+          },
+        ],
+        nextBefore: null,
+        total: 1,
+        totalTruncated: false,
+      },
+      isLoading: false,
+    });
+    const onOpenSession = vi.fn();
+    renderInspect(goalWithRows(2, 1), "value", onOpenSession);
+
+    const toggles = screen.getAllByTestId("findings-evidence-sessions-toggle");
+    expect(toggles).toHaveLength(2);
+
+    // Walked one row at a time, all the way to the callback: a toggle that
+    // renders but lists nothing, or lists a session that opens nothing, is
+    // the same dead end to the reader as no toggle at all.
+    for (const [i, toggle] of toggles.entries()) {
+      await expandRow(toggle);
+      await userEvent.click(await screen.findByTestId("findings-goal-session"));
+      // One argument: `FindingsGoalSessions` passes the id alone.
+      expect(onOpenSession).toHaveBeenNthCalledWith(i + 1, "sess-shared");
+    }
   });
 
   it("still shows a lone finding's session without a toggle", () => {
