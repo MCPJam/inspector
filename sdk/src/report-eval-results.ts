@@ -1015,6 +1015,26 @@ async function uploadWidgetSnapshots(
   return rewrittenResults;
 }
 
+/**
+ * Send widget HTML to blob storage when leaving it inline would make a single
+ * result too large to upload. Returns `results` untouched in the common case,
+ * so a small widget still rides along in the one request it always did.
+ */
+async function offloadOversizedWidgetSnapshots(
+  config: RuntimeConfig,
+  results: EvalResultInput[]
+): Promise<EvalResultInput[]> {
+  const hasOversizedResult = results.some(
+    (result) =>
+      Array.isArray(result.widgetSnapshots) &&
+      result.widgetSnapshots.length > 0 &&
+      getByteLength(JSON.stringify({ results: [result] })) > CHUNK_TARGET_BYTES
+  );
+  return hasOversizedResult
+    ? await uploadWidgetSnapshots(config, results)
+    : results;
+}
+
 function shouldUseOneShotUpload(
   input: ReportEvalResultsInput,
   config: RuntimeConfig
@@ -1126,9 +1146,16 @@ async function reportEvalResultsInternal(
   const config = createRuntimeConfig(input);
   await requireReportingCapabilities(config, input);
   const terminalStatus = await resolveTerminationStatus(config, input);
-  // Backend stores inline widget evidence after content hashing and authorization.
-  // Pre-uploading fresh blob IDs would change identical retry payloads.
-  const uploadedResults = input.results;
+  // Backend stores inline widget evidence after content hashing and
+  // authorization, and inline keeps a retry resending identical bytes — so that
+  // stays the default. But widget HTML is a whole built app, and two tool calls
+  // of one can push a single result past the 1MB request-body limit, which
+  // chunking cannot fix because it only splits BETWEEN results. Those offload
+  // to blob storage instead, once, before the retry loop below.
+  const uploadedResults = await offloadOversizedWidgetSnapshots(
+    config,
+    input.results
+  );
   const externalRunId = input.externalRunId ?? generateExternalRunId();
   const serverReplayConfigs = resolveServerReplayConfigs(input);
   input = {

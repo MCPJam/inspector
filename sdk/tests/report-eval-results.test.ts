@@ -672,6 +672,73 @@ describe("reportEvalResults", () => {
     expect(body.results[0].widgetSnapshots[0].widgetHtmlBlobId).toBeUndefined();
   });
 
+  it("offloads widget evidence to storage when one result is too large to send inline", async () => {
+    // Two calls of a ~600KB built app: over the 1MB body limit, and chunking
+    // cannot help because it only splits between results.
+    const bigWidgetHtml = `<html>${"x".repeat(600_000)}</html>`;
+    const snapshot = (toolCallId: string) => ({
+      toolCallId,
+      toolName: "create_view",
+      protocol: "mcp-apps" as const,
+      serverId: "server-1",
+      resourceUri: "ui://widget/create-view.html",
+      toolMetadata: { ui: { resourceUri: "ui://widget/create-view.html" } },
+      widgetCsp: null,
+      widgetPermissions: null,
+      widgetPermissive: true,
+      prefersBorder: true,
+      widgetHtml: bigWidgetHtml,
+    });
+
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes("artifacts/upload-url")) {
+        return Promise.resolve(
+          okResponse({ uploadUrl: "https://example.com/upload" })
+        );
+      }
+      if (String(url) === "https://example.com/upload") {
+        return Promise.resolve(okResponse({ storageId: "storage_1" }));
+      }
+      return Promise.resolve(
+        okResponse({
+          suiteId: "suite_1",
+          runId: "run_1",
+          status: "completed",
+          result: "passed",
+          summary: successSummary,
+        })
+      );
+    });
+    global.fetch = fetchMock as any;
+
+    await reportEvalResults({
+      apiKey: "sk_test_key",
+      baseUrl: "https://example.com",
+      suiteName: "widget-snapshots",
+      results: [
+        {
+          caseTitle: "happy-path",
+          passed: true,
+          widgetSnapshots: [snapshot("call-1"), snapshot("call-2")],
+        },
+      ],
+    });
+
+    const reportCall = fetchMock.mock.calls.find((call) =>
+      String(call[0]).includes("eval-ingest/report")
+    );
+    expect(reportCall).toBeDefined();
+    const body = JSON.parse(reportCall![1].body);
+    for (const sent of body.results[0].widgetSnapshots) {
+      expect(sent.widgetHtml).toBeUndefined();
+      expect(sent.widgetHtmlBlobId).toBe("storage_1");
+    }
+    // The point of the offload: the request now fits.
+    expect(new TextEncoder().encode(reportCall![1].body).length).toBeLessThan(
+      1024 * 1024
+    );
+  });
+
   it("wraps reporting failures in EvalReportingError and captures once", async () => {
     const fetchMock = jest
       .fn()
