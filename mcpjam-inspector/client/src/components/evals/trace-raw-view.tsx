@@ -1,14 +1,12 @@
 /**
  * Raw trace panel — single JsonEditor with bordered chrome around the tree.
- * When `requestPayloadHistory` is provided (live chat or rehydrated session), Raw shows the resolved
- * model request payload (`system`, `tools`, `messages`) from the last entry. For live chat that's the
- * latest `request_payload` SSE event; for rehydrated sessions, `useChatSession` synthesizes a single
- * entry from the current `systemPrompt`, currently-resolved tool schemas, and the converted thread —
- * so tool schemas reflect what would be sent next, not a historical snapshot. `messages` are merged
- * with `trace.messages` from the live envelope when that snapshot is ahead of the last captured
- * request. If both `entries` and `traceTranscriptFromUi` are empty (e.g. no servers connected on
- * rehydration), we fall back to the `trace` blob below. Otherwise shows the stored trace blob
- * (evals / offline).
+ *
+ * With `requestPayloadHistory` (live chat, a reopened session, or a saved
+ * session's persisted requests) Raw shows the resolved model request
+ * (`system`, `tools`, `messages`) from the last entry, with `messages` merged
+ * from the trace envelope when it is ahead of that request — so the reply to
+ * the last request is visible, exactly as in the Playground. Otherwise it
+ * shows the stored trace blob.
  */
 
 import { Copy, Loader2, ScanSearch } from "lucide-react";
@@ -52,6 +50,7 @@ function getTraceEnvelopeMessages(
 /**
  * Last `request_payload` reflects the outgoing API call (no assistant text for the current turn yet).
  * `trace_snapshot` appends the assistant to the live envelope — merge so Raw stays in sync with Chat/Trace.
+ * A saved session's envelope is its full transcript, so the same merge shows the final reply there too.
  */
 function mergeLiveRequestPayloadWithTraceSnapshot(
   payload: ResolvedModelRequestPayload,
@@ -154,8 +153,8 @@ export function TraceRawView({
           <span className="font-medium text-foreground">
             inside the sandbox
           </span>
-          , so the <code className="font-mono">tools</code> above are empty here.
-          Its native built-in tools (see the Trace tab for live calls):
+          , so the <code className="font-mono">tools</code> above are empty
+          here. Its native built-in tools (see the Trace tab for live calls):
         </p>
         <ul className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1">
           {harnessBuiltinTools.map((t) => (
@@ -174,14 +173,28 @@ export function TraceRawView({
     ) : null;
 
   if (requestPayloadHistory) {
-    const hasLiveRequestLine =
-      hasUiMessages && orderedEntries.length > 0 && latestEntry != null;
+    const hasLiveRequestLine = orderedEntries.length > 0 && latestEntry != null;
 
     if (hasLiveRequestLine && latestEntry) {
-      const displayPayload = mergeLiveRequestPayloadWithTraceSnapshot(
+      const merged = mergeLiveRequestPayloadWithTraceSnapshot(
         latestEntry.payload,
         trace,
       );
+      // A capped saved request lost its own copy of `messages`. When the
+      // transcript stood in for it, the conversation shown is complete; when
+      // it did not, say how many there were rather than show an empty list.
+      const messagesDropped =
+        latestEntry.messageCount !== undefined &&
+        merged.messages === latestEntry.payload.messages;
+      const { messages, ...requestConfig } = merged;
+      const displayPayload = {
+        ...requestConfig,
+        ...(messagesDropped ? {} : { messages }),
+        ...(orderedEntries.some((entry) => entry.truncated)
+          ? { truncated: true }
+          : {}),
+        ...(messagesDropped ? { messageCount: latestEntry.messageCount } : {}),
+      };
 
       if (growWithContent) {
         return (
@@ -285,18 +298,28 @@ export function TraceRawView({
     </div>
   );
 
-  const recordedContextNote =
-    !Array.isArray(trace) &&
-    "recordedContext" in trace &&
-    trace.recordedContext ? (
-      <p
-        className="px-3 py-2 text-xs text-muted-foreground"
-        data-testid="trace-raw-recorded-context"
-      >
-        Saved session evidence: messages, timing, and captured tool catalogs.
-        This is not the exact per-step model request shown in live Playground.
-      </p>
-    ) : null;
+  // What this fallback can honestly say about the requests it is NOT showing.
+  // A failed read is not "none were saved", and a read still in flight is
+  // neither — so loading says nothing, and failure says it failed.
+  const envelope =
+    !Array.isArray(trace) && typeof trace === "object"
+      ? (trace as TraceEnvelope)
+      : null;
+  const recordedContextNote = envelope?.requestPayloadsError ? (
+    <p
+      className="px-3 py-2 text-xs text-warning-foreground"
+      data-testid="trace-raw-request-error"
+    >
+      {envelope.requestPayloadsError}; showing saved session evidence.
+    </p>
+  ) : envelope?.recordedContext && !envelope.requestPayloadsPending ? (
+    <p
+      className="px-3 py-2 text-xs text-muted-foreground"
+      data-testid="trace-raw-recorded-context"
+    >
+      Saved session evidence; exact model requests are unavailable.
+    </p>
+  ) : null;
 
   if (growWithContent) {
     return (

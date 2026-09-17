@@ -117,6 +117,14 @@ vi.mock("../../swarm-agent.js", async () => {
 import { startJourneyRun } from "../swarm-runner.js";
 
 const TURN_TRACE = {
+  requestPayloads: [
+    {
+      turnId: "trace-turn",
+      promptIndex: 0,
+      stepIndex: 0,
+      payload: { system: "swarm system", tools: {}, messages: [] },
+    },
+  ],
   turnId: "turn-1",
   promptIndex: 0,
   startedAt: 0,

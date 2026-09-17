@@ -368,6 +368,10 @@ vi.mock("../components/ChatTabV2", () => ({
 vi.mock("../components/EvalsTab", () => ({
   EvalsTab: () => <div data-testid="evals-tab">Evals Tab</div>,
 }));
+vi.mock("../components/EvaluateTab", () => ({
+  EvaluateTab: () => <div data-testid="evaluate-tab">Evaluate</div>,
+}));
+
 vi.mock("../components/CiEvalsTab", () => ({
   CiEvalsTab: () => <div data-testid="ci-evals-tab">CI Evals Tab</div>,
 }));
@@ -1949,7 +1953,7 @@ describe("App hosted OAuth callback handling", () => {
 
     await waitFor(() => {
       expect(`${window.location.pathname}${window.location.search}`).toBe(
-        `/p/${currentProjectId}/evals?view=runs`,
+        `/p/${currentProjectId}/evaluate?view=runs`,
       );
       expect(window.location.hash).toBe("#case-3");
     });
@@ -3599,13 +3603,13 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
-  it("renders Suites mode on /evals", async () => {
+  it("renders legacy Suites mode when enabled", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     window.history.replaceState({}, "", "/evals");
     mockHandleOAuthCallback.mockReset();
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "playground-enabled" || flag === "evaluate-ui",
+      (flag: string) => flag === "playground-enabled" || flag === "evaluate-enabled",
     );
 
     render(<App />);
@@ -3618,16 +3622,13 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("ci-evals-tab")).not.toBeInTheDocument();
   });
 
-  it("renders Runs mode on /evals/runs with no flag gate", async () => {
-    // Runs used to sit behind `evaluate-ci` at its own /ci-evals tab. It is a
-    // mode under Evaluate now and ships to everyone, so there is no flag read,
-    // no "Loading Runs..." spinner, and no redirect back to Suites.
+  it("renders legacy Runs mode when enabled", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     window.history.replaceState({}, "", "/evals/runs");
     mockHandleOAuthCallback.mockReset();
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "playground-enabled" || flag === "evaluate-ui",
+      (flag: string) => flag === "playground-enabled" || flag === "evaluate-enabled",
     );
 
     render(<App />);
