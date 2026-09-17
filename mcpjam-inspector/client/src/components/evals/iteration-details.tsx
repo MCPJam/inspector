@@ -1135,6 +1135,7 @@ export function IterationDetails({
               traceInsight={caseInsightSlot}
               chromeDensity={layoutMode === "full" ? "compact" : "default"}
               fillContent={layoutMode === "full"}
+              frame={layoutMode === "full" ? "none" : "inset"}
               hideToolbar={layoutMode === "full"}
               forcedViewMode={
                 layoutMode === "full" && previewTraceMode !== "scorecard"

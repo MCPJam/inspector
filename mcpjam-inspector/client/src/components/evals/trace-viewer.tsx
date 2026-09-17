@@ -22,7 +22,7 @@ import type {
 import { evalTraceVideoMetaZ } from "@/shared/eval-trace";
 import type { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { JsonEditor } from "@/components/ui/json-editor";
-import { Thread } from "@/components/chat-v2/thread";
+import { Thread, TRANSCRIPT_COLUMN_CLASS } from "@/components/chat-v2/thread";
 import { HostStyledShell } from "@/components/chat-v2/host-styled-shell";
 import type { HostSnapshot } from "@/lib/host-snapshot";
 import type { RecorderProps } from "@/components/chat-v2/thread/recorder-types";
@@ -1024,7 +1024,7 @@ export function TraceViewer({
                       transcriptNavigation.highlightedMessageIds
                     }
                     navigationKey={transcriptNavigation.navigationKey}
-                    contentClassName="min-w-0 mx-auto w-full max-w-4xl space-y-8 px-4 pt-2"
+                    contentClassName={cn(TRANSCRIPT_COLUMN_CLASS, "pt-8 pb-8 space-y-8")}
                     getMessageWrapperProps={({ message }) => {
                       const sourceRange =
                         adaptedTrace.uiMessageSourceRanges[message.id];

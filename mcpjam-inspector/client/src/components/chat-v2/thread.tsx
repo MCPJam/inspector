@@ -47,6 +47,9 @@ import type {
 } from "./thread/app-tool-invocations";
 import type { McpToolResultImageRenderingPolicy } from "@/lib/client-config-v2";
 
+/** Shared transcript width and alignment; each scroll owner supplies vertical inset. */
+export const TRANSCRIPT_COLUMN_CLASS = "min-w-0 w-full max-w-4xl mx-auto px-4";
+
 interface ThreadProps {
   chatSessionId?: string;
   messages: UIMessage[];
@@ -394,7 +397,7 @@ export function Thread({
           lastRenderableMessageId={lastRenderableMessageId}
           contentClassName={
             contentClassName ??
-            "min-w-0 w-full max-w-4xl mx-auto px-4 pt-8 pb-16 space-y-8"
+            cn(TRANSCRIPT_COLUMN_CLASS, "pt-8 pb-16 space-y-8")
           }
           getMessageWrapperProps={getMessageWrapperProps}
           renderUserMessageActions={renderUserMessageActions}
@@ -421,7 +424,7 @@ export function Thread({
         <MrtrElicitationHost />
 
         {shouldShowStandaloneThinkingIndicator && (
-          <div className="min-w-0 w-full max-w-4xl mx-auto px-4">
+          <div className={TRANSCRIPT_COLUMN_CLASS}>
             <ThinkingIndicator model={model} />
           </div>
         )}

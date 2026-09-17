@@ -562,8 +562,8 @@ export function SwarmLiveStreamPane({
   return (
     <div
       className={cn(
-        "flex min-h-0 flex-col gap-2 rounded-lg border border-border/60 bg-background/80 p-3",
-        fillHeight && "h-full flex-1",
+        "flex min-h-0 flex-col gap-2 bg-background/80",
+        fillHeight ? "h-full flex-1" : "rounded-lg border border-border/60 p-3",
       )}
       data-testid="swarm-live-pane"
     >
@@ -735,6 +735,7 @@ export function SwarmLiveStreamPane({
             forcedViewMode={showReplay ? "browser" : viewMode}
             isLoading={isStreaming && !fallbackTrace}
             fillContent
+            frame="none"
             // Read off the trace being DISPLAYED, not off `persisted`, so the
             // clock always describes the spans actually on screen. The merge
             // above carries the persisted anchor in with the persisted spans,
