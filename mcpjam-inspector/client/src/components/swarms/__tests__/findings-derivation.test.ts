@@ -40,7 +40,7 @@ function run(overrides: Partial<SwarmOverviewRun> = {}): SwarmOverviewRun {
 }
 
 function candidate(
-  overrides: Partial<SwarmWaveSignalCandidate> = {}
+  overrides: Partial<SwarmWaveSignalCandidate> = {},
 ): SwarmWaveSignalCandidate {
   return {
     detector: "tool_errors",
@@ -115,13 +115,13 @@ describe("detector → stage map", () => {
       expect(["fail", "warn"]).toContain(mapping.tone);
     }
     expect(Object.keys(DETECTOR_STAGE_MAP).sort()).toEqual(
-      [...ALL_DETECTORS].sort()
+      [...ALL_DETECTORS].sort(),
     );
   });
 
   it("lands each journey-scoped detector's evidence on its mapped stage", () => {
     for (const detector of ALL_DETECTORS.filter(
-      (d) => d !== "persona_struggles"
+      (d) => d !== "persona_struggles",
     )) {
       const mapping = DETECTOR_STAGE_MAP[detector];
       const model = derive({
@@ -206,7 +206,7 @@ describe("attribution", () => {
       const model2 = model.personas[0]!.goals[0]!.stages[stage.id];
       // Connection may hold launch evidence; nothing detector-shaped lands.
       expect(
-        model2.evidence.filter((e) => e.meta !== CONNECTION_CAVEAT)
+        model2.evidence.filter((e) => e.meta !== CONNECTION_CAVEAT),
       ).toEqual([]);
     }
   });
@@ -218,7 +218,7 @@ describe("attribution", () => {
       }),
     });
     expect(
-      model.personas[0]!.goals[0]!.stages.response.evidence[0]!.sessionId
+      model.personas[0]!.goals[0]!.stages.response.evidence[0]!.sessionId,
     ).toBe("sess-9");
   });
 });
@@ -235,6 +235,89 @@ describe("connection stage", () => {
     expect(connection.evidence[0]!.meta).toBe(CONNECTION_CAVEAT);
     expect(connection.evidence[0]!.observation).toContain("failed to launch");
     expect(connection.evidence[0]!.observation).toContain("rate limited");
+  });
+
+  it("never turns a launch failure into a feeling", () => {
+    // Launch outcomes are REPORTING (the miner ships them as `targetHealth`,
+    // not as a candidate). The stage row shows them; nothing that aggregates
+    // evidence into a sentiment or a diagnosis may read them.
+    const model = derive({
+      runs: [
+        run({ summary: { total: 4, succeeded: 1, failed: 3, rateLimited: 0 } }),
+      ],
+    });
+    const goal = model.personas[0]!.goals[0]!;
+    expect(goal.stages.connection.state).toBe("warn");
+    // Warn on connection alone is NOT "Uneasy" — that would claim an
+    // experience the sessions never had.
+    expect(goal.sentiment.label).toBe("Unscored");
+    expect(model.personas[0]!.sentiment.label).toBe("Unscored");
+    expect(goal.diagnosis.title).toBe("Nothing graded yet");
+  });
+
+  it("reads a settled run that never launched as Not run, not Unscored", () => {
+    const model = derive({
+      runs: [
+        run({ summary: { total: 3, succeeded: 0, failed: 3, rateLimited: 0 } }),
+      ],
+    });
+    const goal = model.personas[0]!.goals[0]!;
+    expect(goal.notRun).toBe(true);
+    expect(goal.sentiment).toEqual({ label: "Not run", tone: "muted" });
+    expect(model.personas[0]!.sentiment).toEqual({
+      label: "Not run",
+      tone: "muted",
+    });
+    expect(model.personas[0]!.issue).toBe(
+      "No session launched, so nothing about the server was tested.",
+    );
+    expect(goal.diagnosis.title).toBe("Not run");
+  });
+
+  it("is not Not run while the wave is still going", () => {
+    const model = derive({
+      runs: [
+        run({
+          status: "running",
+          summary: { total: 3, succeeded: 0, failed: 0, rateLimited: 0 },
+        }),
+      ],
+    });
+    expect(model.personas[0]!.goals[0]!.notRun).toBe(false);
+    expect(model.personas[0]!.goals[0]!.sentiment.label).toBe("Unscored");
+  });
+
+  it("lets real evidence outrank Not run", () => {
+    // A goal with graded evidence is a goal that ran, whatever the launch
+    // counters say — the evidence branches are checked first.
+    const model = derive({
+      runs: [
+        run({
+          summary: { total: 3, succeeded: 0, failed: 3, rateLimited: 0 },
+          goalScoreSummary: { gradedCount: 2, passedCount: 0, avgScore: 0 },
+        }),
+      ],
+    });
+    expect(model.personas[0]!.goals[0]!.sentiment.label).toBe("Stalled");
+  });
+
+  it("sums wave launch totals across every run", () => {
+    const model = derive({
+      runs: [
+        run({ summary: { total: 4, succeeded: 1, failed: 2, rateLimited: 1 } }),
+        run({
+          runId: "run-2",
+          journeyRefId: "journey-2",
+          summary: { total: 2, succeeded: 0, failed: 2, rateLimited: 0 },
+        }),
+      ],
+    });
+    expect(model.launch).toEqual({
+      total: 6,
+      succeeded: 1,
+      failed: 4,
+      rateLimited: 1,
+    });
   });
 
   it("is ok only when a TERMINAL run launched everything", () => {
@@ -284,12 +367,12 @@ describe("value stage: rubric findings + judge rollup", () => {
     const value = model.personas[0]!.goals[0]!.stages.value;
     expect(value.state).toBe("fail");
     const blocking = value.evidence.find((e) =>
-      e.observation.includes("Export completes")
+      e.observation.includes("Export completes"),
     )!;
     expect(blocking.tone).toBe("fail");
     expect(blocking.meta).toBe("3 of 4 sessions");
     const degraded = value.evidence.find((e) =>
-      e.observation.includes("Tone stays helpful")
+      e.observation.includes("Tone stays helpful"),
     )!;
     expect(degraded.tone).toBe("warn");
   });
@@ -300,17 +383,17 @@ describe("value stage: rubric findings + judge rollup", () => {
         .stages.value.state;
 
     expect(stateFor({ gradedCount: 4, passedCount: 4, avgScore: 1 })).toBe(
-      "ok"
+      "ok",
     );
     expect(stateFor({ gradedCount: 4, passedCount: 1, avgScore: 0.2 })).toBe(
-      "fail"
+      "fail",
     );
     expect(stateFor({ gradedCount: 4, passedCount: 3, avgScore: 0.8 })).toBe(
-      "warn"
+      "warn",
     );
     // gradedCount 0 contributes NOTHING — never ok, never 0%.
     expect(stateFor({ gradedCount: 0, passedCount: 0, avgScore: null })).toBe(
-      "none"
+      "none",
     );
     expect(stateFor(undefined)).toBe("none");
   });
@@ -476,7 +559,7 @@ describe("diagnosis + defaults", () => {
     expect(goal.stages.connection.state).toBe("ok");
     expect(goal.diagnosis.title).toBe("Nothing graded yet");
     expect(goal.diagnosis.detail).toBe(
-      "No finding landed on any stage of this goal."
+      "No finding landed on any stage of this goal.",
     );
   });
 
@@ -491,7 +574,7 @@ describe("diagnosis + defaults", () => {
     const goal = model.personas[0]!.goals[0]!;
     expect(goal.diagnosis.title).toBe("Landed");
     expect(goal.diagnosis.detail).toBe(
-      "Every measured stage held for this goal."
+      "Every measured stage held for this goal.",
     );
   });
 
@@ -505,7 +588,7 @@ describe("diagnosis + defaults", () => {
     expect(goal.diagnosisStage).toBeNull();
     expect(goal.diagnosis.title).toBe("Friction");
     expect(goal.diagnosis.detail).toBe(
-      "No stage broke outright, but at least one measured stage showed friction."
+      "No stage broke outright, but at least one measured stage showed friction.",
     );
   });
 
@@ -558,8 +641,19 @@ describe("persona rollup", () => {
 
   it("takes the session count from signals, falling back to wave totals", () => {
     expect(
-      derive({ signals: signals({ sessionCount: 12 }) }).sessionCount
+      derive({ signals: signals({ sessionCount: 12 }) }).sessionCount,
     ).toBe(12);
     expect(derive({ signals: null }).sessionCount).toBe(4);
   });
+});
+
+it("never consumes setup or grounding as findings evidence", () => {
+  const withGrounding = run();
+  Object.defineProperty(withGrounding, "grounding", {
+    enumerable: true,
+    get() {
+      throw new Error("Setup must not be graded or mined");
+    },
+  });
+  expect(derive({ runs: [withGrounding] })).toEqual(derive({ runs: [run()] }));
 });

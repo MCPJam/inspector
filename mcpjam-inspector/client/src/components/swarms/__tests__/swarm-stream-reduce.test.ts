@@ -293,6 +293,14 @@ describe("resolveSwarmCellOutcome", () => {
 });
 
 describe("resolveSwarmCellOutcome — attempt row is canonical", () => {
+  it("shows a claimed attempt as running without an SSE connection or transcript", () => {
+    expect(resolveSwarmCellOutcome({
+      attempt: { status: "running" },
+      runStatus: "running",
+      liveStatus: "pending",
+    })).toBe("running");
+  });
+
   const stickyActiveSession = {
     id: "x",
     chatSessionId: "c",
@@ -397,5 +405,38 @@ describe("reduceSwarmStreamEvent — per-target keying (D2)", () => {
       evt({ type: "attempt_status", status: "succeeded" })
     );
     expect(state.cellStatus[swarmCellKey("host_a", 0)]).toBe("succeeded");
+  });
+});
+
+describe("setup stream events", () => {
+  it("records setup without a phantom session or matrix cell", () => {
+    const started = reduceSwarmStreamEvent(
+      empty(),
+      evt({
+        type: "setup_start",
+        targetId: "env-a",
+        chatSessionId: "setup",
+        sessionIndex: -1,
+      }),
+    );
+    const completed = reduceSwarmStreamEvent(
+      started,
+      evt({
+        type: "setup_complete",
+        targetId: "env-a",
+        chatSessionId: "setup",
+        sessionIndex: -1,
+        status: "completed",
+        readiness: "ready",
+        createdCount: 2,
+      }),
+    );
+    expect(completed.sessions).toEqual({});
+    expect(completed.cellStatus).toEqual({});
+    expect(Object.values(completed.setupByTarget ?? {})[0]).toMatchObject({
+      type: "setup_complete",
+      createdCount: 2,
+    });
+    expect(swarmEventToEvalPayload(evt({ type: "setup_start" }))).toBeNull();
   });
 });

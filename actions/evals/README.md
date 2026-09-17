@@ -59,6 +59,11 @@ Failure reasons are copied from stored results in the full summary; the action
 does not infer them. A missing comment permission warns without changing the eval
 verdict.
 
+**Behind an identity proxy:** a deployment fronted by Cloudflare Access needs a
+service token to answer the API at all. Set `CF_ACCESS_CLIENT_ID` and
+`CF_ACCESS_CLIENT_SECRET` in the step's `env:`; the action sends them with its
+MCPJam reads and with nothing else. Both are required — one alone is ignored.
+
 **Release status:** `evals-v1` is published by the `Release` workflow (see
 [Tests and release](#tests-and-release)). Check whether it exists yet:
 

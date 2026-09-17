@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { ErrorCode } from "../web/errors.js";
-import { getClientIp } from "../../utils/client-ip.js";
+import { getSpendClientIp } from "../../utils/client-ip.js";
 import {
   guestIpForwardHeaders,
   hashGuestSpendIp,
@@ -361,7 +361,7 @@ audioTranscriptions.post("/transcriptions", async (c) => {
       ...(audioDurationSeconds !== undefined ? { audioDurationSeconds } : {}),
     };
     const originHeader = c.req.header("origin");
-    const clientIp = getClientIp(c);
+    const clientIp = getSpendClientIp(c);
     const guestIpHash = clientIp ? await hashGuestSpendIp(clientIp) : null;
     const upstreamResponse = await fetch(getMcpjamTranscriptionUrl(), {
       method: "POST",

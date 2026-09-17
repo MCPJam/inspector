@@ -1,3 +1,5 @@
+import { prepareTargetGrounding } from "./target-grounding";
+import { SwarmSetupError, swarmSetupChatSessionId } from "./swarm-setup-turn";
 import { composeAbortSignals } from "@mcpjam/sdk";
 import { logger } from "../../utils/logger.js";
 import { withDeadline } from "../../utils/run-supervisor/deadline.js";
@@ -176,6 +178,8 @@ export type JourneyManagerFactory = (host: PinnedHostExecutionSpec) => Promise<{
 }>;
 
 export interface StartJourneyRunOptions {
+  setupWrites?: boolean;
+  goal?: string;
   runId: string;
   projectId: string;
   /** Every pinned host this run fans out across (`snapshot.hosts`). */
@@ -200,10 +204,9 @@ export interface StartJourneyRunOptions {
    * the run left looking half-finished. `getConvexBearerForDelegation`
    * caches and re-mints near expiry, so calling this repeatedly is cheap.
    *
-   * Session-JWT callers pass a constant thunk: their token's lifetime is the
-   * browser session's and nothing here can extend it. The stale-run sweep
-   * covers a run whose launching tab closed. Precedent for the shape:
-   * `github-checks-worker.ts`.
+   * Browser launches also exchange their verified identity for renewable,
+   * organization-scoped delegation before creating the run. The browser
+   * access token must not be captured for detached work.
    *
    * RESOLVED PER UNIT OF WORK — once per target, once per session attempt,
    * once per finalizer — not per outbound call. That bounds a run's staleness
@@ -484,29 +487,40 @@ async function runJourneyFanOut(
   // Set on an org spend-cap breach — halts scheduling across ALL hosts.
   let spendCapTripped = false;
   let spendCapMessage: string | undefined;
+  let stoppedByBackend = false;
 
   // Reads the RUN deadline's signal, not the raw abort: a run that spent its
   // budget must stop handing out new sessions, and the raw signal knows
   // nothing about that bound.
   const stopScheduling = () =>
-    spendCapTripped || runDeadline.signal.aborted === true;
+    runStop.signal.aborted || runDeadline.signal.aborted === true;
 
   // Independent heartbeat: an interval timer (NOT gated on turn/attempt
   // completion) started before the first attempt and stopped in `finally`.
   // Single-flight so a slow heartbeat can't stack. One per run.
   let heartbeatInFlight = false;
+  let heartbeatActive = true;
   const heartbeat = setInterval(() => {
-    if (abortSignal?.aborted) return;
+    if (abortSignal?.aborted || stoppedByBackend) return;
     if (heartbeatInFlight) return;
     heartbeatInFlight = true;
-    // Re-resolved on every beat. Cheap (the mint is cached) and it makes the
-    // heartbeat the one thing that CANNOT go stale — which matters, because a
-    // silent heartbeat is what the backend's stale sweep reads as a dead
-    // runner.
+    // Re-resolved on every beat, including browser-launched runs, so
+    // heartbeat authorization survives expiration of the launch credential.
     getBearer()
       .then((bearer) =>
         heartbeatJourneyRun(convexHttpUrl, bearer, { projectId, runId }),
       )
+      .then((status) => {
+        if (!heartbeatActive || status === undefined || status === "running") {
+          return;
+        }
+        stoppedByBackend = true;
+        logger.info("[swarm.runner] backend ended run; stopping execution", {
+          runId,
+          status,
+        });
+        runStop.abort();
+      })
       .catch((err) => {
         logger.warn("[swarm.runner] heartbeat failed", {
           runId,
@@ -590,7 +604,9 @@ async function runJourneyFanOut(
       // refetch the live host config — everything comes from the immutable
       // snapshot. A model-less / unresolvable pinned spec throws HERE, before any
       // attempt is claimed — the catch finalizes this target's pending attempts.
-      const modelDefinition = buildSyntheticModelDefinition(modelId);
+      const modelDefinition = buildSyntheticModelDefinition(modelId, {
+        hosted: target.hosted,
+      });
 
       // B-isolation F4/phase 6 — a harness target runs on ITS OWN disposable box
       // or it does not run at all.
@@ -691,6 +707,7 @@ async function runJourneyFanOut(
                 model: {
                   id: String(modelDefinition.id),
                   provider: modelDefinition.provider,
+                  hosted: modelDefinition.hosted,
                 },
                 // The same pinned id under the name the external-account rule
                 // reads. Identical to `model.id` here — a swarm target has no
@@ -770,6 +787,31 @@ async function runJourneyFanOut(
         signal: sessionSignal,
       });
 
+      if (!harnessTargetBlockedReason && !stopScheduling()) {
+        await prepareTargetGrounding({
+          runId,
+          projectId,
+          target,
+          persona: personaSnapshot,
+          goal: opts.goal,
+          setupWrites: opts.setupWrites,
+          modelDefinition,
+          managerFactory,
+          convexHttpUrl,
+          bearer,
+          signal: sessionSignal,
+          emit: (event) =>
+            hub.emit({
+              ...event,
+              runId,
+              hostId,
+              targetId,
+              chatSessionId: swarmSetupChatSessionId(runId, target),
+              sessionIndex: -1,
+            }),
+        });
+      }
+
       for (sessionIdx = 0; sessionIdx < sessionsPerTarget; sessionIdx++) {
         // Run-level stop (spend cap or shutdown/cancel) halts THIS target too.
         if (stopScheduling()) return;
@@ -781,6 +823,7 @@ async function runJourneyFanOut(
         // persona-next-turn calls. Re-reading here means the worst case is one
         // long session outliving its token, not the whole run.
         bearer = await getBearer();
+        if (stoppedByBackend) return;
         // The same value, as a `const`, for the callbacks below. `bearer` is a
         // reassigned `let` (and now starts undefined until the first mint), so
         // TypeScript drops its narrowing the moment it is read inside a
@@ -788,6 +831,11 @@ async function runJourneyFanOut(
         // callback fired later in the session uses the token this session began
         // with — which is the intended semantics, not an accident.
         const sessionBearer = bearer;
+        // Same reason, for the loop counter: `sessionIdx` is hoisted to the
+        // worker scope so the catch can finalize the attempts this target left
+        // behind, so a closure reads wherever the loop has since advanced to —
+        // not the session it was created for.
+        const attemptSessionIdx = sessionIdx;
 
         // Deterministic claim key — the immutable chatSessionId the attempt is
         // claimed with and every persist + terminal reuse (shared mint, D1: env
@@ -843,6 +891,9 @@ async function runJourneyFanOut(
           );
           continue;
         }
+
+        // A heartbeat may have ended the run while the claim was in flight.
+        if (stoppedByBackend) return;
 
         // Duplicate-launch guard: a duplicate-delivered launchKey dedupes to the
         // SAME runId, so two runners can iterate the SAME (run, host, sessionIdx)
@@ -1105,6 +1156,7 @@ async function runJourneyFanOut(
           // failure classification, and NEVER throws (returns a SessionResult).
           // Because it persists per-turn and returns only after the last persist,
           // the transcript is durable before we report the terminal below.
+          if (stoppedByBackend) return;
           const sessionResult = await runSyntheticHostSession({
             runId,
             projectId,
@@ -1186,6 +1238,8 @@ async function runJourneyFanOut(
                 projectId,
                 runId,
                 hostId,
+                ...(targetId ? { targetId } : {}),
+                sessionIdx: attemptSessionIdx,
                 transcriptSoFar,
                 // Forward the run-level stop (composed shutdown/cancel + spend-cap
                 // runStop) so a short-circuit aborts a parked persona fetch
@@ -1227,6 +1281,11 @@ async function runJourneyFanOut(
             },
           });
           const { outcome, errorMessage, errorReason } = sessionResult;
+
+          // The core has persisted its partial transcript before returning.
+          // Convex already settled the attempts; do not replace that outcome
+          // in the live stream with an artifact of aborting this session.
+          if (stoppedByBackend) return;
 
           // Report the terminal with the SAME chatSessionId ONLY after the
           // transcript is persisted. Best-effort: a terminal write failure is
@@ -1569,6 +1628,9 @@ async function runJourneyFanOut(
         { convexHttpUrl, bearer: cleanupBearer, projectId, runId, target },
         sessionIdx,
         sessionsPerTarget,
+        err instanceof SwarmSetupError
+          ? "prerequisites_unavailable"
+          : "host_worker_failed",
       );
     }
   };
@@ -1621,7 +1683,7 @@ async function runJourneyFanOut(
               errorMessage: `Run exceeded its ${budgets.runTimeoutMs}ms budget`,
             }
           : undefined;
-    if (finalizeTerminal) {
+    if (finalizeTerminal && !stoppedByBackend) {
       const finalizeBearer = await getBearer().catch((error: unknown) => {
         logger.error(
           "[swarm.runner] could not mint a credential for the run-level finalize; attempts stay pending for the stale-run sweep",
@@ -1648,6 +1710,7 @@ async function runJourneyFanOut(
       error: error instanceof Error ? error.message : String(error),
     });
   } finally {
+    heartbeatActive = false;
     clearInterval(heartbeat);
     sessionSignals.dispose();
     // `sessionSignals.dispose()` releases the COMPOSITION; the deadline owns
@@ -1884,6 +1947,7 @@ async function markRemainingTargetAttemptsFailed(
   },
   fromIdx: number,
   toIdx: number,
+  errorCode = "host_worker_failed",
 ): Promise<void> {
   const { convexHttpUrl, bearer, projectId, runId, target } = ctx;
   const { hostId, targetId } = target;
@@ -1911,7 +1975,7 @@ async function markRemainingTargetAttemptsFailed(
         sessionIdx,
         status: "failed",
         chatSessionId,
-        errorCode: "host_worker_failed",
+        errorCode,
       });
     } catch (err) {
       logger.warn(

@@ -95,6 +95,9 @@ export type SuiteRunHistoryRow = {
   platform: string;
   source: NonNullable<EvalSuiteRun["source"]>;
   client: string | null;
+  clientId?: string;
+  clientVersionId?: string;
+  clientVersionNumber?: number;
   hostStyle?: string;
   models: string[];
   latencyMs: number | null;
@@ -306,6 +309,9 @@ export function buildSuiteRunHistoryRows(
         source: run.source ?? "ui",
         client: runClientLabel(run, hostNamesById, projectEnvironmentsEnabled),
         hostStyle: runClientIdentity(run).hostStyle,
+        clientId: run.client?.namedHostId,
+        clientVersionId: run.client?.versionId,
+        clientVersionNumber: run.client?.versionNumber,
         models: run.effectiveModelId
           ? [run.effectiveModelId]
           : runModels(iterations),

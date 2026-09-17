@@ -2402,7 +2402,7 @@ describe("useEvalHandlers", () => {
       });
 
       expect(mockNavigateApp).toHaveBeenCalledWith(
-        "/evals/suite/suite-1/test/draft%3Aprompt/edit",
+        "/evaluate/suite/suite-1/test/draft%3Aprompt/edit",
       );
     });
 

@@ -350,6 +350,9 @@ export function translateConvexWriteError(
   // Placed before the coded branches for the same reason `FEATURE_UNAVAILABLE`
   // is: it is a recognized refusal that must keep its own status and its own
   // message, and anything downstream would take one or both away.
+  if (code === "account_suspended") {
+    return new WebRouteError(403, ErrorCode.FORBIDDEN, structuredMessage ?? "Account suspended. Contact support.", { code });
+  }
   if (kind === "forbidden") {
     return adminFailureIsForbidden
       ? new WebRouteError(

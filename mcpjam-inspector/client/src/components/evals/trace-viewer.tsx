@@ -5,6 +5,7 @@ import {
   useState,
   useEffect,
   type ReactNode,
+  type ComponentProps,
 } from "react";
 import type { ContentBlock } from "@modelcontextprotocol/client";
 import { Loader2, Minus, Plus, Code2, Columns2 } from "lucide-react";
@@ -22,11 +23,14 @@ import { evalTraceVideoMetaZ } from "@/shared/eval-trace";
 import type { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { Thread } from "@/components/chat-v2/thread";
+import { HostStyledShell } from "@/components/chat-v2/host-styled-shell";
+import type { HostSnapshot } from "@/lib/host-snapshot";
 import type { RecorderProps } from "@/components/chat-v2/thread/recorder-types";
 import type { DisplayMode } from "@/stores/ui-playground-store";
 import {
   adaptTraceToUiMessages,
   type TraceEnvelope,
+  type AdaptedTraceResult,
   type TraceMessage,
 } from "./trace-viewer-adapter";
 import {
@@ -63,9 +67,8 @@ import type {
   McpToolResultImageRendering,
 } from "@/lib/client-config-v2";
 
-// Default host-style id used when the caller passes `activeHost` but no explicit
-// `hostStyle`. Mirrors the catalog default without importing catalog/client
-// modules into this trace-only surface.
+// Preserve the existing caps seed for activeHost-only callers. Explicit
+// snapshots instead seed their capabilities through HostStyledShell.
 const DEFAULT_TRACE_HOST_STYLE_FALLBACK = "mcpjam";
 
 const TraceTimelineLazy = lazy(() =>
@@ -82,6 +85,12 @@ export type TraceViewerEvalToolCall = {
 interface TraceViewerProps {
   trace: TraceEnvelope | TraceMessage | TraceMessage[] | null;
   model?: ModelDefinition;
+  /** Prepared from the same trace; lets session ratings share the exact rendered IDs. */
+  adaptedTrace?: AdaptedTraceResult;
+  renderAssistantTurnFooter?: ComponentProps<typeof Thread>["renderAssistantTurnFooter"];
+  reasoningDisplayMode?: ComponentProps<typeof Thread>["reasoningDisplayMode"];
+  widgetPolicy?: ComponentProps<typeof Thread>["widgetPolicy"];
+  frame?: "inset" | "none";
   /**
    * Chat: forwarded to the transcript `Thread`. Tools (Results): shows a spinner
    * beside "Actual" while the run is still in progress.
@@ -202,15 +211,8 @@ interface TraceViewerProps {
    * install a scope with no host (template-seed fallback).
    */
   activeHost?: HostConfigDtoV2 | null;
-  /**
-   * Host style fallback used when an inner scope is installed but no
-   * `activeHost` is provided. Like `activeHost`, passing `undefined`
-   * (the default) means "don't install an inner scope" — DO NOT read
-   * the surrounding `ScenarioHostStyleProvider` here, because that
-   * ambient style would synthesize template-seed caps that shadow
-   * outer scope's user-edited caps.
-   */
-  hostStyle?: string;
+  /** undefined inherits the surrounding host; null explicitly uses the generic shell. */
+  hostSnapshot?: HostSnapshot | null;
   /**
    * Human-facing render policy for MCP tool-result images, mirroring the
    * chat surfaces (App.tsx / ChatTabV2). When omitted, the trace `Thread`
@@ -347,6 +349,11 @@ function getBrowserVideoMeta(
 
 export function TraceViewer({
   trace,
+  adaptedTrace: preparedTrace,
+  renderAssistantTurnFooter,
+  reasoningDisplayMode = "collapsed",
+  widgetPolicy = "live",
+  frame = "inset",
   model,
   isLoading = false,
   toolsMetadata = {},
@@ -392,29 +399,16 @@ export function TraceViewer({
   rawGrowWithContent = false,
   rawFadeScrollEdges = false,
   activeHost,
-  hostStyle,
+  hostSnapshot,
   mcpToolResultImageRendering,
 }: TraceViewerProps) {
   // Only live chat shells should opt into the interactive widget path.
   const threadInteractive = interactive || sendFollowUpMessage !== NOOP;
 
-  // Decide whether to install an inner ActiveHostCapsResolverScope around
-  // the trace's `<Thread>`. We only install when the caller passed
-  // explicit `activeHost` or `hostStyle` props. When neither is given,
-  // we pass through to any outer scope (e.g. the chat surface's
-  // ClientStyledChatTabV2 / PlaygroundTab wrap) — installing a scope
-  // here unconditionally would shadow that outer scope with
-  // template-seed caps and silently drop the user's saved
-  // `clientCapabilities` edits. See TL feedback on PR #2169.
-  //
-  // `hostStyle` falls back to `DEFAULT_TRACE_HOST_STYLE_FALLBACK` only
-  // when the inner scope IS being installed (caller passed activeHost
-  // but no explicit hostStyle); we don't reach into the ambient
-  // ScenarioHostStyleProvider here, because that ambient style may not
-  // line up with the explicit `activeHost`.
+  // An explicit snapshot owns the full shell. Otherwise preserve the existing
+  // activeHost-only capability scope and ambient presentation (PR #2169).
   const shouldInstallTraceScope =
-    activeHost !== undefined || hostStyle !== undefined;
-  const traceScopeHostStyle = hostStyle ?? DEFAULT_TRACE_HOST_STYLE_FALLBACK;
+    hostSnapshot === undefined && activeHost !== undefined;
 
   const [viewMode, setViewMode] = useState<
     "timeline" | "chat" | "raw" | "tools" | "browser" | "steps"
@@ -528,14 +522,14 @@ export function TraceViewer({
 
   const adaptedTrace = useMemo(
     () =>
-      adaptTraceToUiMessages({
+      preparedTrace ?? adaptTraceToUiMessages({
         trace,
         toolsMetadata,
         toolServerMap,
         connectedServerIds,
         toolResultDisplay: "tool-card",
       }),
-    [trace, toolsMetadata, toolServerMap, connectedServerIds]
+    [preparedTrace, trace, toolsMetadata, toolServerMap, connectedServerIds]
   );
 
   // Frozen replay: when simply VIEWING a completed run, show each widget's
@@ -709,7 +703,7 @@ export function TraceViewer({
     </div>
   );
 
-  return (
+  const content = (
     <div
       className={cn(flexFillChrome && "flex min-h-0 min-w-0 flex-1 flex-col")}
       data-testid="trace-viewer-root"
@@ -987,21 +981,14 @@ export function TraceViewer({
           ) : (
             <div
               className={cn(
-                "min-w-0 rounded-md border border-border/30 bg-background/50 flex flex-col",
+                "min-w-0 flex flex-col",
+                frame === "inset" && "rounded-md border border-border/30 bg-background/50",
                 fillContent ? "min-h-0 flex-1 overflow-hidden" : "min-h-0"
               )}
               data-testid="trace-viewer-chat"
             >
               {(() => {
-                // Trace `<Thread>` mount. Wrapped in
-                // `ActiveHostCapsResolverScope` ONLY when the caller
-                // passed explicit host inputs (`activeHost` or
-                // `hostStyle`). Otherwise we render Thread directly so
-                // any outer scope from the chat surface
-                // (ClientStyledChatTabV2 / PlaygroundTab) flows through
-                // with the user's saved capability edits intact.
-                // Installing an inner scope unconditionally would
-                // shadow the outer one with template-seed caps.
+                // With no explicit host inputs, inherit the caller's providers.
                 const threadEl = (
                   <Thread
                     chatSessionId={chatSessionId}
@@ -1029,7 +1016,9 @@ export function TraceViewer({
                     minimalMode={false}
                     interactive={threadInteractive}
                     recorder={recorder}
-                    reasoningDisplayMode="collapsed"
+                    reasoningDisplayMode={reasoningDisplayMode}
+                    widgetPolicy={widgetPolicy}
+                    renderAssistantTurnFooter={renderAssistantTurnFooter}
                     focusMessageId={transcriptNavigation.focusMessageId}
                     highlightedMessageIds={
                       transcriptNavigation.highlightedMessageIds
@@ -1050,7 +1039,7 @@ export function TraceViewer({
                 const scoped = shouldInstallTraceScope ? (
                   <ActiveHostCapsResolverScope
                     activeHost={activeHost ?? null}
-                    hostStyle={traceScopeHostStyle}
+                    hostStyle={DEFAULT_TRACE_HOST_STYLE_FALLBACK}
                   >
                     {threadEl}
                   </ActiveHostCapsResolverScope>
@@ -1162,5 +1151,17 @@ export function TraceViewer({
         ) : null}
       </div>
     </div>
+  );
+
+  return hostSnapshot !== undefined ? (
+    <HostStyledShell
+      hostSnapshot={hostSnapshot}
+      activeHost={activeHost ?? null}
+      className={cn(flexFillChrome && "flex min-h-0 min-w-0 flex-1 flex-col")}
+    >
+      {content}
+    </HostStyledShell>
+  ) : (
+    content
   );
 }
