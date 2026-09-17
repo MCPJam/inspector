@@ -9,6 +9,12 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-09-17
+
+#### Added
+
+- **Stop run is now available on the Run swarm wizard step** — while a swarm is running, a **Stop run** button appears next to **Open findings** on the wizard's Run swarm step. Clicking it opens a confirmation popover ("Stop this run? Sessions that have not started yet will not run. Results already collected are kept.") before cancelling. Previously, the only way to stop an in-flight wave was to leave the wizard and find **Stop run** on the swarm detail page. After a confirmed stop, the step title reads **Swarm stopped N of M sessions** instead of "Swarm failed", the failure banner is hidden, and the "Swarm complete!" toast is suppressed. The wizard then navigates to Findings after the usual pause.
+
 ### 2026-09-16
 
 #### Changed
