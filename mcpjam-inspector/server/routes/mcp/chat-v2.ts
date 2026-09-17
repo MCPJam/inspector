@@ -72,6 +72,11 @@ import {
 } from "../../utils/org-model-stream-handler.js";
 import { createRequestStreamFailureReporter } from "../../utils/stream-failure-reporter.js";
 import {
+  createEmptyTurnWatcher,
+  hasSettledToolCallThisPrompt,
+} from "../../utils/empty-step-failure.js";
+import { emitError } from "../../utils/chat-stream-chunks.js";
+import {
   deriveOrgProviderKey,
   isLocalRuntimeEligible,
   resolveHostModelDefinition,
@@ -635,6 +640,14 @@ function streamDirectChatWithLiveTrace(options: {
         traceEvents: buildDirectChatTraceCallbacks(writer),
       });
 
+      // `streamText` finishes an empty last step as if it were a reply, which
+      // left a blank bubble and no record. Same verdict as the hosted engine.
+      const emptyTurn = createEmptyTurnWatcher({
+        settledToolBeforeStream: hasSettledToolCallThisPrompt(
+          turnOptions.messageHistory,
+          handle.traceTurn.promptMessageStartIndex,
+        ),
+      });
       try {
         for await (const chunk of handle.result.toUIMessageStream({
           messageMetadata: ({ part }) => {
@@ -663,6 +676,27 @@ function streamDirectChatWithLiveTrace(options: {
           if (
             isSuspendedScopeStepUpOutputChunk(chunk, suspendedToolCallId?.())
           ) {
+            continue;
+          }
+          emptyTurn.observe(chunk);
+          const emptyTurnMessage =
+            chunk.type === "finish" && !handle.isAborted()
+              ? emptyTurn.failureFor(chunk)
+              : undefined;
+          if (emptyTurnMessage) {
+            // The error REPLACES the finish chunk, as on the hosted engine,
+            // and is written before the report so a reporter throw cannot
+            // swallow it.
+            emitError(writer, emptyTurnMessage);
+            reportRouteFailure(
+              "[mcp/chat-v2] direct step returned no content",
+              new Error(emptyTurnMessage),
+              {
+                source: "mcp.chat-v2.direct-empty-step",
+                hop: "user_server_hop",
+                context: { provider, modelId: handle.modelId },
+              },
+            );
             continue;
           }
           writer.write(

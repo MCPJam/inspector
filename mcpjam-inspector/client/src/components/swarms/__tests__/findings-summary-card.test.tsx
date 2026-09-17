@@ -68,6 +68,23 @@ describe("FindingsSummaryCard", () => {
     );
   });
 
+  it("lets a suggested fix take the headline", () => {
+    render(
+      <FindingsSummaryCard
+        sessionCount={3}
+        summary={["First sentence.", "Second sentence."]}
+        recommendation="Fix the lookup before calling downstream tools."
+        footnotes={[]}
+      />
+    );
+    expect(screen.getByTestId("findings-headline").textContent).toBe(
+      "Fix the lookup before calling downstream tools."
+    );
+    expect(screen.getByTestId("findings-headline").textContent).not.toContain(
+      "First sentence."
+    );
+  });
+
   it("still names the session count and the footnotes", () => {
     render(
       <FindingsSummaryCard

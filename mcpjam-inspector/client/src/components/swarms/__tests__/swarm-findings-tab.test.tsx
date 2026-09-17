@@ -1,3 +1,4 @@
+import { neverStartedReport } from "./swarm-report-fixtures";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
@@ -554,7 +555,7 @@ describe("SwarmFindingsTab", () => {
     }
   });
 
-  it("carries Lane A's narration BESIDE the template, never as the headline", () => {
+  it("promotes Lane A's narration to the headline", () => {
     render(
       <SwarmFindingsTab
         wave={wave()}
@@ -563,19 +564,17 @@ describe("SwarmFindingsTab", () => {
         generatedSummary="The main fix is to stop advertising listSkills. Update the tool guidance so"
       />,
     );
-    // The headline still answers the four questions the card owes: which goal,
-    // whose, which stage, how it felt. A recommendation cannot answer any.
+    // First complete sentence only: the backend stores a hard 320-char slice
+    // that ends mid-clause.
     expect(screen.getByTestId("findings-headline").textContent).toBe(
-      '"Export the board" broke at discovery for Maya Chen. Agents invented a tool named "listSkills" in 2 sessions. Maya Chen left lost.',
+      "The main fix is to stop advertising listSkills.",
     );
-    // The narration rides below it, cut to its first COMPLETE sentence: the
-    // backend stores a hard 320-char slice that ends mid-clause.
-    expect(screen.getByTestId("findings-recommendation").textContent).toBe(
-      "Suggested fix: The main fix is to stop advertising listSkills.",
+    expect(screen.getByTestId("findings-headline").textContent).not.toContain(
+      "broke at discovery",
     );
-    expect(screen.getByTestId("findings-footnotes").textContent).toContain(
-      "Suggested fix is model-written",
-    );
+    expect(
+      screen.queryByTestId("findings-footnotes")?.textContent ?? "",
+    ).not.toContain("model-written");
   });
 
   it("ellipsizes a narration the backend cut inside its first sentence", () => {
@@ -589,12 +588,12 @@ describe("SwarmFindingsTab", () => {
     );
     // No sentence boundary at all means the 320-char cut landed inside the
     // first sentence. It must never read as a finished thought.
-    expect(screen.getByTestId("findings-recommendation").textContent).toBe(
-      "Suggested fix: Resolve the saved server in the correct project and rejects host…",
+    expect(screen.getByTestId("findings-headline").textContent).toBe(
+      "Resolve the saved server in the correct project and rejects host…",
     );
   });
 
-  it("shows no suggested-fix line when the narration is empty or absent", () => {
+  it("keeps the template headline when the narration is empty or absent", () => {
     render(
       <SwarmFindingsTab
         wave={wave()}
@@ -607,9 +606,6 @@ describe("SwarmFindingsTab", () => {
       '"Export the board" broke at discovery',
     );
     expect(
-      screen.queryByTestId("findings-recommendation"),
-    ).not.toBeInTheDocument();
-    expect(
       screen.queryByTestId("findings-footnotes")?.textContent ?? "",
     ).not.toContain("model-written");
   });
@@ -618,7 +614,10 @@ describe("SwarmFindingsTab", () => {
     // Lane A would be describing sessions that never existed. The template's
     // own answer is the only honest one here, so it wins.
     const deadRuns = [
-      run({ summary: { total: 3, succeeded: 0, failed: 3, rateLimited: 0 } }),
+      run({
+        report: neverStartedReport(3),
+        summary: { total: 3, succeeded: 0, failed: 3, rateLimited: 0 },
+      }),
     ];
     render(
       <SwarmFindingsTab
@@ -633,11 +632,7 @@ describe("SwarmFindingsTab", () => {
     expect(headline.textContent).toContain(
       "Nothing about the server was tested.",
     );
-    // Not as the headline, and not as a suggested fix either — a model that
-    // read no sessions has nothing to suggest about them.
-    expect(
-      screen.queryByTestId("findings-recommendation"),
-    ).not.toBeInTheDocument();
+    // A model that read no sessions has nothing to suggest about them.
     expect(screen.getByTestId("swarm-findings-tab").textContent).not.toContain(
       "handled every request",
     );

@@ -1,3 +1,4 @@
+import { buildResolvedModelRequestPayload } from "./model-request-payload";
 import { withPageToolAttributionMetadata } from "./page-tool-call-attribution";
 import {
   streamText,
@@ -21,6 +22,8 @@ import {
   wrapToolSetForEvalTrace,
 } from "../services/evals/eval-trace-capture";
 import {
+  capRequestPayloadsForPersist,
+  cloneTraceValue,
   generateLiveTraceTurnId,
   getPromptIndex,
   getPromptMessageStartIndex,
@@ -695,42 +698,6 @@ export function runDirectChatTurn(
     return out;
   };
 
-  // Mirror the step-0 advertised set into the request-payload trace so it can't
-  // claim tools the model won't see on the first step (parity with the hosted
-  // processOneStep request_payload). Only narrows when the hook is set; chat
-  // (no hook) passes the full map unchanged. This trace is turn-level, so it
-  // reflects step 0; later steps' per-step narrowing isn't re-traced here.
-  let requestPayloadTools: ToolSet = tools;
-  if (prepareAdvertisedTools) {
-    const defaultToolNames =
-      progressivePlan?.enabled && discoveryState
-        ? withInjectedTools(
-            resolveActiveToolNames(progressivePlan, discoveryState),
-          )
-        : Object.keys(tools);
-    const advertised = new Set(
-      applyPrepareAdvertisedTools({
-        defaultToolNames,
-        stepIndex: 0,
-        prepareAdvertisedTools,
-        onWarn: (message, meta) =>
-          logger.warn(`[direct-chat-turn] ${message}`, meta),
-      }),
-    );
-    requestPayloadTools = Object.fromEntries(
-      Object.entries(tools).filter(([name]) => advertised.has(name)),
-    ) as ToolSet;
-  }
-
-  traceEvents?.onRequestPayload?.({
-    turnId: traceTurn.turnId,
-    promptIndex: traceTurn.promptIndex,
-    stepIndex: 0,
-    systemPrompt,
-    messages: messageHistory,
-    tools: requestPayloadTools,
-  });
-
   // Progressive mode: gate execution to the active subset. `activeTools`
   // (set in `prepareStep` below) narrows what the model sees, but a
   // hallucinated/remembered call to a non-active tool would still execute
@@ -856,6 +823,9 @@ export function runDirectChatTurn(
           startedAt: traceTurn.turnStartedAt,
           endedAt: Date.now(),
           spans: [...traceTurn.turnSpans],
+          requestPayloads: capRequestPayloadsForPersist(
+            traceContext.recordedRequestPayloads,
+          ),
           usage: traceTurn.turnUsage,
           finishReason: event.finishReason,
           modelId,
@@ -885,7 +855,7 @@ export function runDirectChatTurn(
     ...(experimentalTelemetry
       ? { experimental_telemetry: experimentalTelemetry }
       : {}),
-    prepareStep: ({ stepNumber }) => {
+    prepareStep: ({ stepNumber, messages: stepMessages }) => {
       currentStepIndex = stepNumber;
       registerAiSdkPrepareStep(traceContext, stepNumber, {
         modelId,
@@ -917,6 +887,25 @@ export function runDirectChatTurn(
         // a hidden tool call can't take effect (read by `executableTools`).
         advertisedToolNames = new Set(activeToolNames);
       }
+      const request = {
+        turnId: traceTurn.turnId,
+        promptIndex: traceTurn.promptIndex,
+        stepIndex: stepNumber,
+        systemPrompt,
+        messages: stepMessages ?? traceHistory,
+        tools: activeToolNames
+          ? Object.fromEntries(
+              activeToolNames.map((name) => [name, tools[name]]),
+            ) as ToolSet
+          : tools,
+      };
+      traceContext.recordedRequestPayloads.push({
+        turnId: request.turnId,
+        promptIndex: request.promptIndex,
+        stepIndex: stepNumber,
+        payload: cloneTraceValue(buildResolvedModelRequestPayload(request)),
+      });
+      traceEvents?.onRequestPayload?.(request);
       const stepOptions: {
         activeTools?: string[];
         toolChoice?: ToolChoice<Record<string, AiTool>>;
@@ -1282,6 +1271,9 @@ export async function consumeDirectChatTurnHeadless(
       startedAt: handle.traceTurn.turnStartedAt,
       endedAt: Date.now(),
       spans: [...handle.traceContext.recordedSpans],
+      requestPayloads: capRequestPayloadsForPersist(
+        handle.traceContext.recordedRequestPayloads,
+      ),
       usage: handle.traceTurn.turnUsage,
       finishReason: finishReason ?? undefined,
       modelId: handle.modelId,
@@ -1312,11 +1304,17 @@ export async function consumeDirectChatTurnHeadless(
     const streamError = handle.lastStreamError();
     if (streamError !== undefined) throw streamError;
     if (handle.isAborted()) {
-      // No transcript survives an aborted `streamText` (every accessor
-      // rejects), so the record carries the cancellation and its source; the
-      // dispatch states it holds are still reported by the ENGINE-side closure
-      // at persist time, which reads the history the caller assembled.
-      const outcome = handle.outcome.record();
+      // No transcript survives an aborted `streamText` — every accessor
+      // rejects — so the builder's own dispatch evidence is the ONLY account
+      // of what was in flight when the abort landed.
+      //
+      // `[]` and not `undefined`: an empty transcript-derived list still opts
+      // into the merge, so a call the SDK sent and never got an answer for is
+      // reported as `outcome_unknown`. `undefined` means "list none at all"
+      // and belongs to a PAUSE, whose dangling call is the resume handle. Used
+      // here it would report a cancelled turn as having left nothing open,
+      // while a charge may well have gone through.
+      const outcome = handle.outcome.record([]);
       const turnTrace: PersistedTurnTrace = {
         turnId: handle.traceTurn.turnId,
         promptIndex: handle.traceTurn.promptIndex,

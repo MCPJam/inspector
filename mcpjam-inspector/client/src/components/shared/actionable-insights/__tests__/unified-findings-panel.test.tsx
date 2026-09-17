@@ -517,11 +517,51 @@ describe("analysis states and provenance", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Analyzing…");
     expect(screen.getByTestId("unified-finding-observed")).toBeVisible();
   });
+  it.each(["run", "analysis", "build"])(
+    "shows a skeleton while %s is pending, then shows settled incomplete evidence",
+    (pendingSource) => {
+      const { unmount } = renderPanel({
+        findings: [],
+        observationState: "partial",
+        runPending: pendingSource === "run",
+        ...(pendingSource === "analysis"
+          ? {
+              analyze: {
+                available: true,
+                pending: true,
+                error: null,
+                onRun: vi.fn(),
+              },
+            }
+          : {}),
+        ...(pendingSource === "build"
+          ? {
+              build: {
+                available: true,
+                pending: true,
+                error: null,
+                onRun: vi.fn(),
+              },
+            }
+          : {}),
+      });
+      expect(screen.getByLabelText("Loading findings")).toBeVisible();
+      expect(
+        screen.queryByTestId("unified-findings-empty"),
+      ).not.toBeInTheDocument();
+      unmount();
+      renderPanel({ findings: [], observationState: "partial" });
+      expect(
+        screen.queryByLabelText("Loading findings"),
+      ).not.toBeInTheDocument();
+      expect(screen.getByTestId("unified-findings-empty")).toBeVisible();
+    },
+  );
   it("distinguishes not analyzed, incomplete, and known-empty results", () => {
     const { unmount } = renderPanel({ snapshot: null, findings: [] });
     expect(
-      screen.getByTestId("unified-findings-no-snapshot"),
-    ).toHaveTextContent("Analyze this run");
+      screen.queryByTestId("unified-findings-no-snapshot"),
+    ).not.toBeInTheDocument();
     unmount();
     renderPanel({ findings: [], observationState: "partial" });
     expect(screen.getByTestId("unified-findings-empty")).toHaveTextContent(
@@ -639,6 +679,32 @@ describe("analysis states and provenance", () => {
     expect(screen.getByTestId("unified-finding-caveat")).toHaveTextContent(
       "No run-wide rate",
     );
+  });
+  it("renders suite recurrence without describing missing history as new", () => {
+    renderPanel({
+      mode: "ai",
+      provenance: [
+        provenance({
+          recurrence: {
+            claimId: "claim",
+            occurrences: 2,
+            analyzedRuns: 3,
+            firstSeenAt: Date.UTC(2026, 8, 16),
+            firstSourceId: "run1",
+            novelty: "measured",
+          },
+        }),
+      ],
+    });
+    openDetails();
+    expect(screen.getByTestId("unified-finding-recurrence")).toHaveTextContent(
+      "Seen in 2 of this suite’s last 3 analyzed runs, first on Sep 16, 2026.",
+    );
+  });
+  it("omits recurrence for results from an older backend", () => {
+    renderPanel({ mode: "ai", provenance: [provenance()] });
+    openDetails();
+    expect(screen.queryByTestId("unified-finding-recurrence")).toBeNull();
   });
   it("discloses proposed trials that were not verified, and stays quiet when all were", () => {
     renderPanel({

@@ -1069,7 +1069,7 @@ describe("SwarmsTab — New swarm create flow", () => {
       environmentIds: ["env-1"],
       config: { sessionsPerTarget: 1, maxTurns: 6, setupWrites: true },
     });
-    // Grading is opt-in: an untouched launch stamps no rubric and no judge.
+    // Untouched authoring omits overrides; the backend applies automatic grading defaults.
     expect(
       screen.queryByTestId("new-swarm-grading-toggle"),
     ).not.toBeInTheDocument();
@@ -1089,6 +1089,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(
       screen.getAllByLabelText(/Watch Refund Chaser/).length,
     ).toBeGreaterThan(0);
+    // No run/session has arrived in this fixture yet; pending is evidence-based.
     expect(screen.getByText(/Pending: Refund a charge/)).toBeInTheDocument();
     const swarmRunGroupId = (launchJourneyRunMock.mock.calls[0]![0] as {
       swarmRunGroupId: string;

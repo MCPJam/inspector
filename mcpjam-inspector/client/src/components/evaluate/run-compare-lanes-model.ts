@@ -365,7 +365,7 @@ export function buildRunCompareLanes({
           delta: deltaOf(
             measurements.passPercent,
             base?.passPercent ?? null,
-            (points) => `${points} pts`,
+            (points) => `${points}%`,
             false,
           ),
         },

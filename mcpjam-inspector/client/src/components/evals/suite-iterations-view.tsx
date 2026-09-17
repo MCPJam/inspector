@@ -384,7 +384,11 @@ export function SuiteIterationsView({
     },
   ) => void | Promise<unknown>;
   onReplayRun?: (suite: EvalSuite, run: EvalSuiteRun) => void;
-  onCancelRun: (runId: string) => void;
+  /**
+   * One id, or every in-progress id of a launch — the run page and the suite
+   * page cancel a whole client-model fan-out in one click.
+   */
+  onCancelRun: (runId: string | readonly string[]) => void;
   onDelete: (suite: EvalSuite) => void;
   onDeleteRun: (runId: string) => void;
   onDirectDeleteRun: (runId: string) => Promise<void>;
@@ -2024,6 +2028,8 @@ export function SuiteIterationsView({
                       (rerunningSuiteId ? "A run is already starting." : null),
                   }}
                   run={selectedRunDetails}
+                  onCancelRun={onCancelRun}
+                  cancellingRunId={cancellingRunId}
                   hostNamesById={hostNamesById}
                   iterations={allIterations}
                   otherRuns={runs.filter(
@@ -2130,6 +2136,8 @@ export function SuiteIterationsView({
                   onTestCaseClick={(testCaseId) =>
                     navigation.toTestEdit(suite._id, testCaseId)
                   }
+                  onCancelRun={onCancelRun}
+                  cancellingRunId={cancellingRunId}
                   rerunningSuiteId={rerunningSuiteId}
                   replayingRunId={replayingRunId}
                   runningTestCaseId={runningTestCaseId}
