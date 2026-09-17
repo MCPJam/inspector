@@ -48,7 +48,7 @@
             "propertyNames": {
               "type": "string"
             },
-            "additionalProperties": false
+            "additionalProperties": {}
           },
           "renderTimeoutMs": {
             "type": "integer",
@@ -616,7 +616,7 @@
                                 "propertyNames": {
                                   "type": "string"
                                 },
-                                "additionalProperties": false
+                                "additionalProperties": {}
                               },
                               "argumentMatching": {
                                 "type": "string",

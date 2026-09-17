@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { zodSchema } from "ai";
+import { z } from "zod";
 import { stepsSchema } from "../../src/contract/steps.js";
 import {
   authoredEvalCaseSchema,
@@ -19,7 +19,10 @@ describe("shared authoring contract", () => {
         "utf8"
       )
     );
-    expect(fixture).toEqual(zodSchema(stepsSchema).jsonSchema);
+    // Native Zod conversion preserves open record values; the AI helper closes them.
+    expect(fixture).toEqual(
+      z.toJSONSchema(stepsSchema, { target: "draft-7", unrepresentable: "any" })
+    );
   });
   it("preserves prompt-only imports and explicit-check cases", () => {
     const legacy = authoredEvalCaseSchema.parse({

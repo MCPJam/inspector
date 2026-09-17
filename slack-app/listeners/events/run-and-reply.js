@@ -213,6 +213,7 @@ export async function runAndReply(args) {
       },
     });
   } catch (error) {
+    if (error instanceof McpjamApiError && error.code === 'AGENT_JOB_PENDING') throw error;
     logger.error(`Agent turn failed: ${error}`);
     const text =
       error instanceof McpjamApiError

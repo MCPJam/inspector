@@ -7,6 +7,12 @@ import {
   type EvalAuthoringDraft,
 } from "@mcpjam/sdk/contract";
 
+export class AuthoringRequestError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
+
 export type AuthoringStatus = {
   jobId: string;
   availableTools?: Array<{
@@ -49,7 +55,7 @@ export async function authoringRequest(
         ? data.error
         : data.error?.message ?? "Case authoring failed.";
     notifyMCPJamLimitError({ code: data.code, details: data, message });
-    throw new Error(message);
+    throw new AuthoringRequestError(message, response.status);
   }
   return data;
 }

@@ -1110,6 +1110,12 @@ agent.get("/agent-ops", async (c) => {
 });
 
 agent.get("/projects/:projectId/agent/jobs/:jobId", async (c) => {
+  if (!process.env.CONVEX_URL)
+    return v1Error(
+      c,
+      "FEATURE_NOT_SUPPORTED",
+      "The agent endpoint requires a hosted MCPJam deployment.",
+    );
   const convex = createConvexClient(await getConvexBearerForRequest(c));
   const result = await convex.query("agentTurnState:status" as any, {
     jobId: c.req.param("jobId"),
@@ -1119,6 +1125,12 @@ agent.get("/projects/:projectId/agent/jobs/:jobId", async (c) => {
   return v1Resource(c, result);
 });
 agent.post("/projects/:projectId/agent/jobs/:jobId/cancel", async (c) => {
+  if (!process.env.CONVEX_URL)
+    return v1Error(
+      c,
+      "FEATURE_NOT_SUPPORTED",
+      "The agent endpoint requires a hosted MCPJam deployment.",
+    );
   const convex = createConvexClient(await getConvexBearerForRequest(c));
   const status = await convex.query("agentTurnState:status" as any, {
     jobId: c.req.param("jobId"),
@@ -1158,12 +1170,19 @@ agent.post("/projects/:projectId/agent", async (c) => {
     }),
   );
 
-  const durableJobId = isAuthorizedInternalServiceRequest(c)
-    ? c.req.header("x-mcpjam-agent-job")
-    : undefined;
-  const durableLease = durableJobId
-    ? c.req.header("x-mcpjam-agent-lease")
-    : undefined;
+  const durableJobId = c.req.header("x-mcpjam-agent-job");
+  const durableLease = c.req.header("x-mcpjam-agent-lease");
+  const hasDurableHeaders =
+    durableJobId !== undefined || durableLease !== undefined;
+  if (
+    hasDurableHeaders &&
+    (!isAuthorizedInternalServiceRequest(c) || !durableJobId || !durableLease)
+  )
+    return v1Error(
+      c,
+      "FORBIDDEN",
+      "Agent job and owned lease are required together.",
+    );
   const durableClient =
     durableJobId || process.env.DURABLE_AGENT_TURNS_ENABLED === "true"
       ? createConvexClient(await getConvexBearerForRequest(c))
@@ -1175,6 +1194,8 @@ agent.post("/projects/:projectId/agent", async (c) => {
           token: durableLease,
         })
       : undefined;
+  if (durableJobId && !durable)
+    return v1Error(c, "FORBIDDEN", "Agent job lease is not owned.");
   if (durable && durable.projectId !== projectId)
     return v1Error(c, "FORBIDDEN", "Agent job belongs to another project.");
   if (
@@ -1197,7 +1218,7 @@ agent.post("/projects/:projectId/agent", async (c) => {
       usage: { inputTokens: 0, outputTokens: 0 },
     });
   }
-  if (durableClient && !durable) {
+  if (durableClient && !durableJobId) {
     const requestKey = body.idempotencyKey ?? crypto.randomUUID();
     const surface = resolveProposalSurface(c, body);
     const started = await fetch(

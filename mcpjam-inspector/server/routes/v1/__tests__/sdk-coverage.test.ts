@@ -575,3 +575,44 @@ describe("/api/v1 -> SDK coverage", () => {
     expect(new Set(reasons).size).toBeGreaterThan(reasons.length / 2);
   });
 });
+
+describe("authoring SDK requests", () => {
+  it.each(["completed", "failed", "cancelled"])(
+    "handles %s without committing unsuccessful jobs",
+    async (status) => {
+      const requests: Array<{ url: string; method: string }> = [];
+      const client = new PlatformApiClient({
+        baseUrl: "https://example.test/api/v1",
+        getAuth: async () => "test-token",
+        fetch: async (url, init) => {
+          requests.push({ url: String(url), method: init?.method ?? "GET" });
+          const data =
+            requests.length === 1
+              ? { jobId: "job" }
+              : requests.length === 2
+              ? { status, error: "Declared job error" }
+              : { created: [] };
+          return Response.json(data);
+        },
+      });
+      const result = client.generateEvalCases({
+        projectId: "p",
+        suiteId: "s",
+        body: {},
+      });
+      if (status === "completed")
+        await expect(result).resolves.toEqual({ created: [] });
+      else await expect(result).rejects.toThrow("Declared job error");
+      expect(requests[1]).toEqual({
+        method: "GET",
+        url: "https://example.test/api/v1/projects/p/eval-suites/s/authoring/job",
+      });
+      if (status === "completed")
+        expect(requests[2]).toEqual({
+          method: "POST",
+          url: "https://example.test/api/v1/projects/p/eval-suites/s/authoring/job/commit",
+        });
+      else expect(requests).toHaveLength(2);
+    },
+  );
+});

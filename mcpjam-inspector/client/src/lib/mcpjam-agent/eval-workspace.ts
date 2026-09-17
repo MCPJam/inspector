@@ -19,6 +19,7 @@ import {
 } from "@mcpjam/sdk/contract";
 import {
   authoringRequest,
+  AuthoringRequestError,
   readAuthoringJob,
 } from "@/lib/apis/eval-authoring-api";
 import type { EvalAgentScope } from "@/shared/eval-agent-scope";
@@ -707,8 +708,32 @@ export async function followAuthoringJob(
     status: "running",
   }));
   try {
+    let failures = 0;
     for (;;) {
-      const status = await readAuthoringJob(jobId);
+      let status;
+      try {
+        status = await readAuthoringJob(jobId);
+        failures = 0;
+      } catch (error) {
+        if (
+          error instanceof AuthoringRequestError &&
+          error.status < 500 &&
+          ![408, 429].includes(error.status)
+        )
+          throw error;
+        if (++failures > 3) throw error;
+        updateGeneration(key, (state) => ({
+          ...state,
+          error:
+            error instanceof Error
+              ? error.message
+              : "Could not read authoring job.",
+        }));
+        await new Promise((resolve) =>
+          setTimeout(resolve, 1000 * 2 ** (failures - 1)),
+        );
+        continue;
+      }
       updateGeneration(key, (state) => {
         const known = new Set(state.drafts.map((d) => d.authoring?.draftId));
         const staged: GeneratedDraft[] = status.drafts

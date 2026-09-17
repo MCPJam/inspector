@@ -7,7 +7,13 @@ import {
 } from "../../services/evals/route-helpers.js";
 import { createAuthorizedManager, callerContextFromHono } from "../web/auth.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
-import { webErrorFromRoute, mapRuntimeError } from "../web/errors.js";
+import { logger } from "../../utils/logger.js";
+import {
+  ErrorCode,
+  WebRouteError,
+  webErrorFromRoute,
+  mapRuntimeError,
+} from "../web/errors.js";
 import { createEvalCasesInBatches } from "./eval-case-batch.js";
 import {
   selectSuiteEnvironmentId,
@@ -79,15 +85,41 @@ export async function handleEvalAuthoring(c: Context, local: boolean) {
   try {
     const raw = await c.req.text();
     if (new TextEncoder().encode(raw).length > 750000)
-      throw new Error("Authoring request is too large.");
-    const body = JSON.parse(raw);
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "Authoring request is too large.",
+      );
+    let body;
+    try {
+      body = JSON.parse(raw);
+    } catch {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "Invalid JSON body.",
+      );
+    }
+    if (!body || typeof body !== "object" || Array.isArray(body))
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "Invalid authoring request.",
+      );
     const token = local
       ? body.convexAuthToken
       : await getConvexBearerForRequest(c);
     if (local) delete body.convexAuthToken;
     if (typeof token !== "string" || !token)
       return c.json({ error: "Sign in to author cases." }, 401);
-    const request = operationSchema.parse(body);
+    const parsed = operationSchema.safeParse(body);
+    if (!parsed.success)
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "Invalid authoring request.",
+      );
+    const request = parsed.data;
     const convex = createConvexClient(token);
     if (request.operation === "start") {
       const { input } = request;
@@ -161,7 +193,26 @@ export async function handleEvalAuthoring(c: Context, local: boolean) {
           signal: AbortSignal.timeout(30_000),
         },
       );
-      return new Response(await response.text(), {
+      const text = await response.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        logger.warn("Authoring service returned a non-JSON response", {
+          status: response.status,
+          contentType: response.headers.get("content-type"),
+        });
+        return c.json(
+          {
+            code: "authoring_upstream_invalid_response",
+            upstreamStatus: response.status,
+            error:
+              "The case authoring service is unavailable. Please try again.",
+          },
+          502,
+        );
+      }
+      return new Response(JSON.stringify(data), {
         status: response.status,
         headers: { "Content-Type": "application/json" },
       });

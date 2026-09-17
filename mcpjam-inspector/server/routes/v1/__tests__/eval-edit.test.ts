@@ -3,6 +3,7 @@ import { isOpaqueId } from "@mcpjam/sdk/contract";
 import { MAX_CASES_PER_BATCH } from "../../shared/eval-case-batch.js";
 import { upstreamRefusalFromResponse } from "../../../services/upstream-refusal.js";
 import { Hono } from "hono";
+import * as authoringHelpers from "../../../services/evals/route-helpers.js";
 
 // Covers the v1 eval-edit surface: suite settings/schedule/delete + case CRUD
 // + generate. Asserts public→internal translation, DTO scrubbing (no internal
@@ -2324,6 +2325,28 @@ describe("v1 eval-edit routes", () => {
       return defaultQueryImpl(name);
     });
   }
+
+  it.each(["", "<html>upstream error</html>"])("maps non-JSON generation replies to 502: %j", async (body) => {
+    const oldFlag = process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED;
+    const oldUrl = process.env.CONVEX_HTTP_URL;
+    process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED = "true";
+    process.env.CONVEX_HTTP_URL = "https://backend.test";
+    const capture = vi.spyOn(authoringHelpers, "captureToolSnapshotForEvalAuthoring").mockResolvedValue({ toolSnapshot: [] } as any);
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(body, { status: 503 }));
+    try {
+      const response = await generateWith({});
+      expect(response.status).toBe(502);
+      expect(await response.json()).toMatchObject({ code: "SERVER_UNREACHABLE" });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      capture.mockRestore();
+      fetchMock.mockRestore();
+      if (oldFlag === undefined) delete process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED;
+      else process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED = oldFlag;
+      if (oldUrl === undefined) delete process.env.CONVEX_HTTP_URL;
+      else process.env.CONVEX_HTTP_URL = oldUrl;
+    }
+  });
 
   async function generateWith(init: {
     headers?: Record<string, string>;
@@ -4656,5 +4679,16 @@ describe("eval vocabulary negotiation", () => {
       settings: { judge: { role: "required" } },
     });
     expect(res.status).toBe(400);
+  });
+});
+
+
+describe("authoring job ID validation", () => {
+  it.each(["GET", "POST"])("rejects malformed IDs on %s before querying Convex", async (method) => {
+    validateGuestTokenMock.mockResolvedValue({ valid: false });
+    convexQueryMock.mockClear();
+    const response = await request(method, `/api/v1/projects/p1/eval-suites/s1/authoring/not-an-id${method === "POST" ? "/commit" : ""}`);
+    expect(response.status).toBe(404);
+    expect(convexQueryMock).not.toHaveBeenCalled();
   });
 });

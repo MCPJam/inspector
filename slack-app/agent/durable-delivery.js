@@ -24,7 +24,14 @@ export async function deliverDurableReply(client, handle, result) {
       ...buildFeedbackBlocks(),
     ]),
   });
-  if (result.jobId) await backend.post('/slack/turns/delivered', { jobId: result.jobId });
+  if (result.jobId) {
+    try {
+      await backend.post('/slack/turns/delivered', { jobId: result.jobId });
+    } catch {
+      // The reply is already delivered. Recovery retries this saved handle
+      // until the backend acknowledges it; do not post a failure reply.
+    }
+  }
 }
 
 /** @param {{error:Function}} logger */

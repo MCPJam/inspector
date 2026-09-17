@@ -137,3 +137,65 @@ it("waits for the exact case context and recovers when its bridges register", ()
   expect(changed).toHaveBeenCalledTimes(4);
   unsubscribe();
 });
+
+vi.mock("@/lib/apis/eval-authoring-api", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  readAuthoringJob: vi.fn(),
+  authoringRequest: vi.fn(),
+}));
+import { readAuthoringJob } from "@/lib/apis/eval-authoring-api";
+import { followAuthoringJob } from "../eval-workspace";
+describe("authoring polling recovery", () => {
+  it("retries reads with the same job ID and resets the budget after success", async () => {
+    vi.useFakeTimers();
+    const read = vi.mocked(readAuthoringJob);
+    read.mockReset();
+    const status = {
+      jobId: "job",
+      phase: "draft",
+      drafts: [],
+      warnings: [],
+      error: null,
+    };
+    read
+      .mockRejectedValueOnce(new Error("Network"))
+      .mockRejectedValueOnce(new Error("Network"))
+      .mockRejectedValueOnce(new Error("Network"))
+      .mockResolvedValueOnce({ ...status, status: "pending" })
+      .mockRejectedValueOnce(new Error("Network"))
+      .mockResolvedValueOnce({ ...status, status: "completed" });
+    try {
+      const polling = followAuthoringJob(scope, "job");
+      await vi.runAllTimersAsync();
+      await polling;
+      expect(read).toHaveBeenCalledTimes(6);
+      expect(read.mock.calls.every(([id]) => id === "job")).toBe(true);
+      expect(
+        useEvalGeneration.getState().suites[evalSuiteKey(scope)],
+      ).toMatchObject({ status: "ready", error: undefined });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it("stops after three retries and retains the resumable job ID", async () => {
+    vi.useFakeTimers();
+    vi.mocked(readAuthoringJob)
+      .mockReset()
+      .mockRejectedValue(new Error("Offline"));
+    try {
+      const polling = followAuthoringJob(scope, "failed-read");
+      await vi.runAllTimersAsync();
+      await polling;
+      expect(readAuthoringJob).toHaveBeenCalledTimes(4);
+      expect(
+        useEvalGeneration.getState().suites[evalSuiteKey(scope)],
+      ).toMatchObject({
+        status: "error",
+        error: "Offline",
+        authoringJobId: "failed-read",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
+import * as routeHelpers from "../../../services/evals/route-helpers.js";
 
 // Covers the v1 agent-turn surface: auth/guest gating, schema limits, the
 // deployment guard, engine failure → code mapping, the per-org concurrency
@@ -252,6 +253,60 @@ describe("POST /api/v1/projects/:projectId/agent", () => {
 
   afterEach(() => {
     vi.clearAllMocks();
+  });
+
+  it.each(["GET", "POST"])(
+    "guards %s job requests without a hosted deployment",
+    async (method) => {
+      const previous = process.env.CONVEX_URL;
+      delete process.env.CONVEX_URL;
+      try {
+        const response = await makeApp().request(
+          `/api/v1/projects/p1/agent/jobs/job${
+            method === "POST" ? "/cancel" : ""
+          }`,
+          { method, headers: { Authorization: "Bearer tok" } },
+        );
+        expect(await response.json()).toMatchObject({
+          code: "FEATURE_NOT_SUPPORTED",
+        });
+        expect(getConvexBearerMock).not.toHaveBeenCalled();
+      } finally {
+        if (previous === undefined) delete process.env.CONVEX_URL;
+        else process.env.CONVEX_URL = previous;
+      }
+    },
+  );
+
+  it.each([
+    { "x-mcpjam-agent-job": "job" },
+    { "x-mcpjam-agent-lease": "lease" },
+    { "x-mcpjam-agent-job": "job", "x-mcpjam-agent-lease": "lease" },
+  ])("rejects dispatch without owned lease proof: %j", async (headers) => {
+    const query = vi.fn().mockResolvedValue(null);
+    const client = vi.spyOn(routeHelpers, "createConvexClient").mockReturnValue({ query } as any);
+    try {
+      const response = await makeApp().request("/api/v1/projects/p1/agent", {
+        method: "POST",
+        headers: { Authorization: "Bearer tok", "Content-Type": "application/json", "x-inspector-service-token": "svc", ...headers } as Record<string, string>,
+        body: JSON.stringify(OK_BODY),
+      });
+      expect(response.status).toBe(403);
+      expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
+      if (headers["x-mcpjam-agent-job"] && headers["x-mcpjam-agent-lease"])
+        expect(query).toHaveBeenCalledWith("agentTurnState:resumeContext", { jobId: "job", token: "lease" });
+      else expect(query).not.toHaveBeenCalled();
+    } finally { client.mockRestore(); }
+  });
+
+  it("rejects durable headers from a non-service caller", async () => {
+    const response = await makeApp().request("/api/v1/projects/p1/agent", {
+      method: "POST",
+      headers: { Authorization: "Bearer tok", "Content-Type": "application/json", "x-mcpjam-agent-job": "job", "x-mcpjam-agent-lease": "lease" },
+      body: JSON.stringify(OK_BODY),
+    });
+    expect(response.status).toBe(403);
+    expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
   });
 
   it("requires a bearer token", async () => {

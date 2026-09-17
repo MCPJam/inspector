@@ -42,3 +42,36 @@ The personal development deployment is `dev:exuberant-albatross-496` (the user's
 The broad backend suite exposed two OAuth secret-storage test failures; emulator suites and the 1,000-trial findings suite passed when rerun with local networking allowed. Standalone inspector server typecheck reports existing repository errors, including test declarations and nullable legacy paths. The new authoring/worker modules have no reported server type errors. Backend/client/SDK typechecks and surface package checks are run separately.
 
 Both new contract copies and the full step-schema fixture are compared by content. The broader cross-repository mirror audit reports four differences in untouched main-branch pairs: public API internal-error mapping, benchmark claim payload, benchmark cleanup status, and decision-label remedies. Resolve those independent rollout differences before treating the complete cross-repository audit as clean.
+
+## Review follow-up (2026-09-16)
+
+Verified the supplied review findings against the current branch. Fixed bounded
+status-read retries (reset after success; permanent HTTP errors stop immediately),
+400 input errors and stable 502 upstream errors, owned durable-dispatch leases,
+hosted-only job routes, malformed job IDs, successful-only SDK commits, and Slack
+pending-turn/acknowledgement recovery. Tool argument records now remain open in
+both schema fixtures, generated from native Zod JSON Schema conversion. CI compares
+the authoring implementation and fixture against a pinned backend commit; updating
+the shared contract requires updating that pin. Fork and Dependabot PRs cannot run
+the private-backend comparison because they do not receive its checkout credential.
+
+Two requested changes were skipped after checking their premises:
+
+- Local `authFetch` uses the inspector's random, process-level session token
+  (`server/services/session-token.ts`), which has no user identity to compare.
+  The separate Convex token identifies the actor and Convex checks access. Adding
+  an actor comparison against the local token would reject legitimate local use.
+- Addition checkboxes mean acceptance, not a separate rejection decision. The
+  backend's revision-bound `acceptDraft` intentionally requires all proposed
+  additions to be accepted. Merely counting an unchecked addition as reviewed
+  would retain rejected content in the saved case or fail server validation.
+  A rejection workflow needs a defined edit/removal contract before changing this.
+
+Validation: focused inspector routes, client polling, SDK schema, Slack delivery,
+and backend review/checkpoint suites pass. Backend, client and SDK typechecks,
+Slack check/lint, use-node and mirror checks are run separately. Personal env.dev
+received the schema correction; authenticated browser QA remains outstanding.
+
+Standalone server typecheck still reports the existing declaration, legacy-route,
+and test typing errors; no new errors were reported in the authoring fixes. Backend
+lint passes with its existing warnings. No production deployment or merge was done.

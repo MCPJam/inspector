@@ -9233,7 +9233,16 @@ evals.post(
           signal: AbortSignal.timeout(30_000),
         },
       );
-      const job = await response.json();
+      let job;
+      try {
+        job = JSON.parse(await response.text());
+      } catch {
+        throw new WebRouteError(
+          502,
+          ErrorCode.SERVER_UNREACHABLE,
+          "The case authoring service returned an invalid response.",
+        );
+      }
       if (!response.ok)
         throw new WebRouteError(
           response.status as any,
@@ -9632,7 +9641,7 @@ evals.get(
   async (c) => {
     const convex = createConvexReadClient(await getConvexBearerForRequest(c));
     const job = await convex.query("evalAuthoringState:status" as any, {
-      jobId: c.req.param("jobId"),
+      jobId: evalIdParam(c, "jobId", "Authoring job"),
     });
     if (
       job.projectId !== c.req.param("projectId") ||
@@ -9653,7 +9662,7 @@ evals.post(
       await getConvexBearerForRequest(c),
     );
     const job = await convex.query("evalAuthoringState:status" as any, {
-      jobId: c.req.param("jobId"),
+      jobId: evalIdParam(c, "jobId", "Authoring job"),
     });
     const suiteId = c.req.param("suiteId");
     if (

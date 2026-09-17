@@ -632,8 +632,8 @@ export class PlatformApiClient {
     this.userAgent = isBrowserPage()
       ? options.userAgent
       : options.userAgent
-      ? `${options.userAgent} ${DEFAULT_PLATFORM_USER_AGENT}`
-      : DEFAULT_PLATFORM_USER_AGENT;
+        ? `${options.userAgent} ${DEFAULT_PLATFORM_USER_AGENT}`
+        : DEFAULT_PLATFORM_USER_AGENT;
     this.launchHeaders = buildLaunchHeaders(options);
     // Lower-cased at construction so `request` cannot end up with two spellings
     // of one header — HTTP names are case-insensitive, but a plain object's
@@ -773,8 +773,8 @@ export class PlatformApiClient {
             params.connectableOnly === undefined
               ? undefined
               : params.connectableOnly
-              ? "true"
-              : "false",
+                ? "true"
+                : "false",
           ...pageQuery({ cursor: params.cursor, limit: params.limit }),
         },
       },
@@ -3478,9 +3478,11 @@ export class PlatformApiClient {
         {},
         options
       );
-      if (status.status !== "pending") {
+      if (status.status === "completed") {
         return this.request("POST", `${jobPath}/commit`, { body: {} }, options);
       }
+      if (status.status !== "pending")
+        throw new Error(status.error ?? `Generation ${status.status}.`);
       await new Promise((resolve) => setTimeout(resolve, 2000));
     }
     throw new Error(
