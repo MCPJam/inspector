@@ -31854,7 +31854,6 @@
                 },
                 "stage": {
                   "type": "string",
-                  "description": "Which link of the user-value chain this row is a verdict on. The order is NORMATIVE: a run walks the six in sequence, and `notReached` is derived from position — every stage after the first failed one never ran. `connection` — the server was reachable and the session initialized. `discovery` — its tools and resources were listed and readable. `selection` — the model chose the right tool for the request. `call` — the call was made with usable arguments. `response` — the server returned data the model could use. `userValue` — the user's actual request was satisfied.",
                   "enum": [
                     "connection",
                     "discovery",
@@ -31862,7 +31861,8 @@
                     "call",
                     "response",
                     "userValue"
-                  ]
+                  ],
+                  "description": "Which link of the user-value chain this row is a verdict on. The order is NORMATIVE: a run walks the six in sequence, and `notReached` is derived from position — every stage after the first failed one never ran. `connection` — the server was reachable and the session initialized. `discovery` — its tools and resources were listed and readable. `selection` — the model chose the right tool for the request. `call` — the call was made with usable arguments. `response` — the server returned data the model could use. `userValue` — the user's actual request was satisfied."
                 },
                 "unit": {
                   "type": "string",
@@ -31946,7 +31946,6 @@
             "type": "array",
             "items": {
               "type": "string",
-              "description": "Why this verdict is what it is. Phrased as statements of what was measured, never as blame. `configuredTrialsNotAttempted` — some configured iteration never ran, so the run does not cover what it was asked to. `noGradeableTrials` — nothing in the run produced a gradeable verdict. `eligibleTrialsBelowMinimum` — fewer gradeable iterations than the suite's validity floor requires. `completionRateBelowMinimum` — too few attempted iterations completed to meet the suite's completion floor. `completionRateNotMeasured` — nothing was attempted, so the completion floor cannot be satisfied. `evaluatorErrorRateAboveMaximum` — the evaluator failed too often for this run to describe the server. `evaluatorErrorRateNotMeasured` — nothing was attempted, so the evaluator-error ceiling cannot be satisfied. `caseHasNoEligibleTrials` — a case graded nothing at all. `casePassRateMetThreshold` — the case met its pass threshold. `casePassRateBelowThreshold` — a case did not meet its pass threshold. `allMeasuredCasesMetThreshold` — every measured case met its threshold.",
               "enum": [
                 "configuredTrialsNotAttempted",
                 "noGradeableTrials",
@@ -31959,7 +31958,8 @@
                 "casePassRateMetThreshold",
                 "casePassRateBelowThreshold",
                 "allMeasuredCasesMetThreshold"
-              ]
+              ],
+              "description": "Why this verdict is what it is. Phrased as statements of what was measured, never as blame. `configuredTrialsNotAttempted` — some configured iteration never ran, so the run does not cover what it was asked to. `noGradeableTrials` — nothing in the run produced a gradeable verdict. `eligibleTrialsBelowMinimum` — fewer gradeable iterations than the suite's validity floor requires. `completionRateBelowMinimum` — too few attempted iterations completed to meet the suite's completion floor. `completionRateNotMeasured` — nothing was attempted, so the completion floor cannot be satisfied. `evaluatorErrorRateAboveMaximum` — the evaluator failed too often for this run to describe the server. `evaluatorErrorRateNotMeasured` — nothing was attempted, so the evaluator-error ceiling cannot be satisfied. `caseHasNoEligibleTrials` — a case graded nothing at all. `casePassRateMetThreshold` — the case met its pass threshold. `casePassRateBelowThreshold` — a case did not meet its pass threshold. `allMeasuredCasesMetThreshold` — every measured case met its threshold."
             }
           },
           "validity": {
@@ -32928,7 +32928,6 @@
                 },
                 "reason": {
                   "type": "string",
-                  "description": "Why this verdict is what it is. Phrased as statements of what was measured, never as blame. `configuredTrialsNotAttempted` — some configured iteration never ran, so the run does not cover what it was asked to. `noGradeableTrials` — nothing in the run produced a gradeable verdict. `eligibleTrialsBelowMinimum` — fewer gradeable iterations than the suite's validity floor requires. `completionRateBelowMinimum` — too few attempted iterations completed to meet the suite's completion floor. `completionRateNotMeasured` — nothing was attempted, so the completion floor cannot be satisfied. `evaluatorErrorRateAboveMaximum` — the evaluator failed too often for this run to describe the server. `evaluatorErrorRateNotMeasured` — nothing was attempted, so the evaluator-error ceiling cannot be satisfied. `caseHasNoEligibleTrials` — a case graded nothing at all. `casePassRateMetThreshold` — the case met its pass threshold. `casePassRateBelowThreshold` — a case did not meet its pass threshold. `allMeasuredCasesMetThreshold` — every measured case met its threshold.",
                   "enum": [
                     "configuredTrialsNotAttempted",
                     "noGradeableTrials",
@@ -32941,7 +32940,8 @@
                     "casePassRateMetThreshold",
                     "casePassRateBelowThreshold",
                     "allMeasuredCasesMetThreshold"
-                  ]
+                  ],
+                  "description": "Why this verdict is what it is. Phrased as statements of what was measured, never as blame. `configuredTrialsNotAttempted` — some configured iteration never ran, so the run does not cover what it was asked to. `noGradeableTrials` — nothing in the run produced a gradeable verdict. `eligibleTrialsBelowMinimum` — fewer gradeable iterations than the suite's validity floor requires. `completionRateBelowMinimum` — too few attempted iterations completed to meet the suite's completion floor. `completionRateNotMeasured` — nothing was attempted, so the completion floor cannot be satisfied. `evaluatorErrorRateAboveMaximum` — the evaluator failed too often for this run to describe the server. `evaluatorErrorRateNotMeasured` — nothing was attempted, so the evaluator-error ceiling cannot be satisfied. `caseHasNoEligibleTrials` — a case graded nothing at all. `casePassRateMetThreshold` — the case met its pass threshold. `casePassRateBelowThreshold` — a case did not meet its pass threshold. `allMeasuredCasesMetThreshold` — every measured case met its threshold."
                 }
               },
               "required": [
