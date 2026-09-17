@@ -829,6 +829,99 @@ describe("swarm fan-out runner — spend-cap abort reclassification (finding 5)"
 });
 
 describe("swarm single-host runner — heartbeat", () => {
+  it("does not execute a claim that resolves after the backend ends the run", async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveClaim!: (claim: { ok: true; applied: boolean }) => void;
+      reportAttemptMock.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveClaim = resolve;
+          }),
+      );
+      heartbeatJourneyRunMock.mockResolvedValue("failed");
+      const done = startJourneyRun(baseOpts({ sessionsPerTarget: 2 }));
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(reportAttemptMock).toHaveBeenCalledTimes(1);
+      resolveClaim({ ok: true, applied: true });
+      await done;
+
+      expect(runSyntheticHostSessionMock).not.toHaveBeenCalled();
+      expect(reportAttemptMock).toHaveBeenCalledTimes(1);
+      expect(finalizePendingAttemptsMock).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("ignores a delayed heartbeat response after local execution finishes", async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveHeartbeat!: (status: string) => void;
+      let resolveSession!: (result: { outcome: string }) => void;
+      let sessionSignal: AbortSignal | undefined;
+      heartbeatJourneyRunMock.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolveHeartbeat = resolve;
+          }),
+      );
+      runSyntheticHostSessionMock.mockImplementation((adapter: any) => {
+        sessionSignal = adapter.abortSignal;
+        return new Promise((resolve) => {
+          resolveSession = resolve;
+        });
+      });
+      const done = startJourneyRun(baseOpts({ sessionsPerTarget: 1 }));
+      await vi.advanceTimersByTimeAsync(30_000);
+      resolveSession({ outcome: "succeeded" });
+      await done;
+      resolveHeartbeat("completed");
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(sessionSignal?.aborted).toBe(false);
+      expect(
+        reportAttemptMock.mock.calls.map((call) => call[2].status),
+      ).toEqual(["running", "succeeded"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(["failed", "completed", "partial", "rate_limited", "missing"])(
+    "stops in-flight work and queued sessions when the backend reports %s",
+    async (status) => {
+      vi.useFakeTimers();
+      try {
+        heartbeatJourneyRunMock.mockResolvedValue(status);
+        let signal: AbortSignal | undefined;
+        runSyntheticHostSessionMock.mockImplementation(async (adapter: any) => {
+          signal = adapter.abortSignal;
+          await new Promise<void>((resolve) => {
+            signal!.addEventListener("abort", () => resolve(), { once: true });
+          });
+          return { outcome: "failed", errorMessage: "aborted" };
+        });
+        const done = startJourneyRun(baseOpts({ sessionsPerTarget: 2 }));
+        await vi.advanceTimersByTimeAsync(30_000);
+        await done;
+
+        expect(signal?.aborted).toBe(true);
+        expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(1);
+        // Preserve Convex's terminal cause rather than replacing it with the
+        // local cancellation artifact or claiming the next queued session.
+        expect(
+          reportAttemptMock.mock.calls.map((call) => call[2].status),
+        ).toEqual(["running"]);
+        expect(finalizePendingAttemptsMock).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(heartbeatJourneyRunMock).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it("fires the heartbeat on an independent 30s schedule (not gated on turn completion) and stops it on finally", async () => {
     vi.useFakeTimers();
     try {

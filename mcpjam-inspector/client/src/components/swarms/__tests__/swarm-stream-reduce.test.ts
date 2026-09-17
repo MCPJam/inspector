@@ -293,6 +293,14 @@ describe("resolveSwarmCellOutcome", () => {
 });
 
 describe("resolveSwarmCellOutcome — attempt row is canonical", () => {
+  it("shows a claimed attempt as running without an SSE connection or transcript", () => {
+    expect(resolveSwarmCellOutcome({
+      attempt: { status: "running" },
+      runStatus: "running",
+      liveStatus: "pending",
+    })).toBe("running");
+  });
+
   const stickyActiveSession = {
     id: "x",
     chatSessionId: "c",

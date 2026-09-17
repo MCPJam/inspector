@@ -10,12 +10,9 @@
  * `newMessages.length === 0` and reported "Backend step returned no content
  * (stream error or empty response)" with no cause attached.
  *
- * The cause was on the wire the whole time. `@ai-sdk/google` maps Google's
- * `MALFORMED_FUNCTION_CALL` to `finishReason: "error"` with no parts and NO
- * throw, and `SAFETY` / `RECITATION` to `"content-filter"` the same way — so
- * the finish chunk distinguishes "the provider rejected its own tool call"
- * from "a safety filter fired" from "the provider just returned nothing",
- * which are three different problems with three different remedies.
+ * A normalized finish reason is evidence, not a provider diagnostic. In
+ * particular, `error` alone cannot identify a malformed function call or
+ * attribute the failure to a particular model tier or schema size.
  *
  * These drive the real engine through its public entry point, because the
  * mis-stamping lived in the branch itself; a test mocking one layer up passes
@@ -155,7 +152,8 @@ describe("an empty model step fails instead of passing as an ok step", () => {
 
     expect(events).toHaveLength(1);
     expect(events[0].message).toContain("finishReason: error");
-    expect(events[0].message).toContain("MALFORMED_FUNCTION_CALL");
+    expect(events[0].message).toContain("underlying cause was not recorded");
+    expect(events[0].message).not.toMatch(/MALFORMED_FUNCTION_CALL|cheaper|schemas/);
     expect(events[0].code).toBe("provider_empty_response");
     // The stream responded in full; only its content was missing. `setup`
     // here would file our own preparation bug as the provider's.

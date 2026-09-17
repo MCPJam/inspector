@@ -335,7 +335,7 @@ function warnMissingRunAttemptStatusOnce(): void {
   console.warn(
     "[share-usage] Swarm sessions carry no runAttemptStatus. The backend " +
       "predates the promote gate, so every swarm session will report an " +
-      "unknown run outcome and promotion is off until it is deployed."
+      "unknown run outcome and promotion is off until it is deployed.",
   );
 }
 
@@ -345,7 +345,10 @@ export function ShareUsageThreadDetail({
   promote,
   fadeScrollEdges = false,
 }: ShareUsageThreadDetailProps) {
-  const { thread } = useSharedChatThread({ threadId });
+  const { thread } = useSharedChatThread({
+    threadId,
+    includeRecordedContext: true,
+  });
   const { snapshots } = useSharedChatWidgetSnapshots({ threadId });
   const { traces: turnTraces } = useSharedChatTurnTraces({ threadId });
   const { artifacts: browserArtifacts } = useSessionBrowserArtifacts({
@@ -507,6 +510,9 @@ export function ShareUsageThreadDetail({
   const traceEnvelope: TraceEnvelope | null = useMemo(() => {
     if (!messages) return null;
     return {
+      ...(thread?.recordedContext
+        ? { recordedContext: thread.recordedContext }
+        : {}),
       messages: messages as any,
       widgetSnapshots,
       spans: hydratedSpans,
@@ -520,6 +526,7 @@ export function ShareUsageThreadDetail({
     };
   }, [
     messages,
+    thread?.recordedContext,
     widgetSnapshots,
     hydratedSpans,
     replayUrl,
@@ -572,8 +579,8 @@ export function ShareUsageThreadDetail({
 
   const canPromoteThread = Boolean(
     promote?.canPromote &&
-    thread?.sourceType &&
-    PROMOTABLE_SOURCE_TYPES.has(thread.sourceType),
+      thread?.sourceType &&
+      PROMOTABLE_SOURCE_TYPES.has(thread.sourceType),
   );
 
   /**

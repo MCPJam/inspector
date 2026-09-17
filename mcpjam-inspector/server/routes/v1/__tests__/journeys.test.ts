@@ -40,7 +40,7 @@ vi.mock("convex/browser", () => ({
 
 vi.mock("../../../utils/v1-convex-token.js", () => ({
   getConvexBearerForRequest: async () => "convex-jwt",
-  getConvexBearerThunkForRequest: () => async () => "convex-jwt",
+  getBackgroundRunBearerForRequest: async () => async () => "convex-jwt",
 }));
 
 vi.mock("../../../services/xaa-mint.js", () => ({

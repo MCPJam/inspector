@@ -185,7 +185,7 @@ describe("NewSwarmRunningStep — XAA failure banner", () => {
 
     const banner = await screen.findByTestId("new-swarm-running-failure");
     expect(banner).toHaveTextContent(
-      "No sessions ran — this run's authorization needs re-running."
+      "This run's authorization needs re-running."
     );
     expect(banner).toHaveTextContent("Billing MCP");
     expect(banner).toHaveTextContent("sign in again");
@@ -202,9 +202,20 @@ describe("NewSwarmRunningStep — XAA failure banner", () => {
     renderStep();
 
     const banner = await screen.findByTestId("new-swarm-running-failure");
-    expect(banner).toHaveTextContent("No sessions ran.");
+    expect(banner).toHaveTextContent("No sessions completed successfully.");
     expect(banner).toHaveTextContent("Billing MCP");
     expect(banner.className).toContain("destructive");
+  });
+
+  it("does not claim a stale run never executed sessions", async () => {
+    attempt.errorCode = "stale_runner";
+    attempt.errorMessage = "Runner heartbeat went silent; run marked stale.";
+    renderStep();
+    const banner = await screen.findByTestId("new-swarm-running-failure");
+    expect(banner).toHaveTextContent("No sessions completed successfully.");
+    expect(banner).toHaveTextContent("Sessions may have run before the interruption");
+    expect(banner).toHaveTextContent("reason contact was lost was not recorded");
+    expect(banner).not.toHaveTextContent("No sessions ran");
   });
 
   it("stays quiet on a mixed run, where sessions did run", async () => {
