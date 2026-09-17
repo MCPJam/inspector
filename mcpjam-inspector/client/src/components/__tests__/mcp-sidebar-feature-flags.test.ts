@@ -540,3 +540,67 @@ describe("filterByFeatureFlags (Connect/Servers swap)", () => {
     expect(serversTitles(signedOut)).toEqual(["Servers"]);
   });
 });
+
+/**
+ * Swarms and User Testing roll out on `sandboxes-enabled` in PostHog. The flag
+ * decides whether the items exist; REEV-6's route gate then decides what a
+ * visitor gets — a guest the preview, a member the real tab.
+ *
+ * The flag is deliberately NOT combined with sign-in here. Before REEV-6 the
+ * sidebar resolved it as `flag && isAuthenticated`, which would hide the items
+ * from exactly the signed-out visitors the preview was built for.
+ */
+describe("Swarms and User Testing are flag-gated, not sign-in-gated (REEV-6)", () => {
+  const MEASURE_ITEMS = ["User Testing", "Swarms"];
+
+  it("gates both items on sandboxes-enabled", () => {
+    const items = navigationSections
+      .flatMap((section) => section.items)
+      .filter((item) => MEASURE_ITEMS.includes(item.title));
+
+    expect(items).toHaveLength(2);
+    for (const item of items) {
+      expect(item.featureFlag).toBe("sandboxes-enabled");
+    }
+  });
+
+  it("hides both when the flag is off", () => {
+    const titles = filterByFeatureFlags(navigationSections, {
+      "sandboxes-enabled": false,
+    })
+      .flatMap((section) => section.items)
+      .map((item) => item.title);
+
+    for (const title of MEASURE_ITEMS) {
+      expect(titles).not.toContain(title);
+    }
+  });
+
+  it("shows both when the flag is on", () => {
+    const titles = filterByFeatureFlags(navigationSections, {
+      "sandboxes-enabled": true,
+    })
+      .flatMap((section) => section.items)
+      .map((item) => item.title);
+
+    for (const title of MEASURE_ITEMS) {
+      expect(titles).toContain(title);
+    }
+  });
+
+  it("resolves the flag key before the nav renders", () => {
+    expect(SIDEBAR_RESOLVED_FLAG_KEYS).toContain("sandboxes-enabled");
+  });
+
+  // They stay CLICKABLE for a plan-locked org rather than disabled: the tab
+  // shows the upsell, which is a better answer than a greyed-out row.
+  it("keeps its billingFeature, so the upsell still knows what to sell", () => {
+    const items = navigationSections
+      .flatMap((section) => section.items)
+      .filter((item) => MEASURE_ITEMS.includes(item.title));
+
+    for (const item of items) {
+      expect(item.billingFeature).toBe("scenarios");
+    }
+  });
+});
