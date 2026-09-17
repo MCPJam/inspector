@@ -69,8 +69,27 @@ export const TURN_CANCELLATION_SOURCES = [
 ] as const;
 export type TurnCancellationSource = (typeof TURN_CANCELLATION_SOURCES)[number];
 
-/** Why a turn stopped short of a terminal state and expects to be resumed. */
-export const TURN_PAUSE_KINDS = ["tool_approval", "scope_step_up"] as const;
+/**
+ * Why a turn stopped short of a terminal state and expects to be resumed.
+ *
+ * FOUR RAILS, because the engine has four. The first two were the only ones
+ * this vocabulary named at first, and the loop's other two pauses fell through
+ * to `completed` — a resumable turn recorded as a finished one, which is the
+ * exact claim this contract exists to stop anything making.
+ *
+ *  - `tool_approval` — a human is being asked about a call.
+ *  - `scope_step_up` — the caller needs a wider grant before the call can run.
+ *  - `client_fulfilled` — a `ui_*` / `page_*` / app-alias call the BROWSER
+ *    executes; the server cannot run it and is waiting for the result.
+ *  - `tool_input_required` — a multi-round-trip (`input_required`) tool
+ *    suspended to a durable continuation and expects another leg.
+ */
+export const TURN_PAUSE_KINDS = [
+  "tool_approval",
+  "scope_step_up",
+  "client_fulfilled",
+  "tool_input_required",
+] as const;
 export type TurnPauseKind = (typeof TURN_PAUSE_KINDS)[number];
 
 /**

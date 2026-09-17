@@ -317,6 +317,7 @@ import type {
   TurnCancellationSource,
   TurnModelAccess,
   TurnOutcomeRecord,
+  TurnPauseKind,
 } from "@/shared/turn-outcome";
 import {
   closeUnresolvedToolCalls,
@@ -3033,7 +3034,21 @@ async function handlePendingApprovals(
  */
 async function processOneStep(
   ctx: StepContext,
-): Promise<{ shouldContinue: boolean; didEmitFinish: boolean }> {
+): Promise<{
+  shouldContinue: boolean;
+  didEmitFinish: boolean;
+  /**
+   * SET ONLY WHEN THIS STEP PAUSED, and then it names which rail.
+   *
+   * `shouldContinue: false` is three different endings wearing one flag: the
+   * turn finished, the turn failed, or the turn PAUSED for something to come
+   * back. The epilogue cannot tell them apart from the flag, so it used to
+   * call every one of them `completed` — including the approval pause, which
+   * is the most ordinary pause in the product. A resumable turn recorded as a
+   * finished one is the precise claim this contract exists to prevent.
+   */
+  pausedKind?: TurnPauseKind;
+}> {
   const {
     writer,
     outcome,
@@ -3648,7 +3663,11 @@ async function processOneStep(
       if (finishChunk) {
         writer.write(createClientFinishChunk(finishChunk, traceTurn, "stop"));
       }
-      return { shouldContinue: false, didEmitFinish: !!finishChunk };
+      return {
+        shouldContinue: false,
+        didEmitFinish: !!finishChunk,
+        pausedKind: "tool_approval",
+      };
     }
 
     // Emit inherited tool calls that need execution
@@ -3804,7 +3823,11 @@ async function processOneStep(
         if (finishChunk) {
           writer.write(createClientFinishChunk(finishChunk, traceTurn, "stop"));
         }
-        return { shouldContinue: false, didEmitFinish: !!finishChunk };
+        return {
+          shouldContinue: false,
+          didEmitFinish: !!finishChunk,
+          pausedKind: "client_fulfilled",
+        };
       }
     } catch (error) {
       // Aborts surface here when the signal fires mid-tool. Bubble up so
@@ -3830,7 +3853,17 @@ async function processOneStep(
         if (finishChunk) {
           writer.write(createClientFinishChunk(finishChunk, traceTurn, "stop"));
         }
-        return { shouldContinue: false, didEmitFinish: !!finishChunk };
+        // Read from the SIGNAL that was raised, not from this request's resume
+        // descriptor: `scopeStepUpResume` says what this request came back to
+        // continue, which is a different question from what it is pausing for
+        // now, and a scope step-up resume can re-suspend on the MRTR rail.
+        return {
+          shouldContinue: false,
+          didEmitFinish: !!finishChunk,
+          pausedKind: isScopeStepUpSuspendSignal(error)
+            ? "scope_step_up"
+            : "tool_input_required",
+        };
       }
       const failAbs = Date.now();
       pushBackendStepToolFailureSpans(
@@ -4616,6 +4649,9 @@ export async function runChatEngineLoop(
       // indeterminate outcome pauses. This is the SAME engine that produced the
       // suspension, re-entered on any replica.
       let mrtrPaused = false;
+      // Which rail the LOOP paused on, if it did. Distinct from `mrtrPaused`,
+      // which is the pre-phase's pause and is decided before the loop starts.
+      let loopPausedKind: TurnPauseKind | undefined;
       const operationResume = scopeStepUpResume ?? mrtrResume;
       // A pause is recorded when the loop below is skipped, not here: several
       // branches set `mrtrPaused` and one of them (the fall-through after a
@@ -4689,7 +4725,8 @@ export async function runChatEngineLoop(
       while (!mrtrPaused && effectiveSteps() < resolvedMaxSteps) {
         if (aborted) break;
         const engineErrorsBeforeStep = engineErrorCount;
-        const { shouldContinue, didEmitFinish } = await processOneStep({
+        const { shouldContinue, didEmitFinish, pausedKind } =
+          await processOneStep({
           writer: safeWriter,
           outcome: outcomeBuilder,
           messageHistory,
@@ -4786,6 +4823,8 @@ export async function runChatEngineLoop(
           });
         }
 
+        if (pausedKind) loopPausedKind = pausedKind;
+
         if (!shouldContinue) {
           break;
         }
@@ -4876,9 +4915,15 @@ export async function runChatEngineLoop(
       // its own terminal chunk and the next request resumes it. Its dangling
       // tool call IS the resume handle, which is why closure deliberately skips
       // a paused turn.
-      if (mrtrPaused) {
+      // The LOOP's own pause first — it names the rail it actually stopped on.
+      // `mrtrPaused` is the pre-phase's pause, set before the loop runs at all,
+      // and there `scopeStepUpResume` genuinely does identify the rail because
+      // the pre-phase only drives the resume this request named.
+      if (loopPausedKind) {
+        outcomeBuilder.markPaused(loopPausedKind);
+      } else if (mrtrPaused) {
         outcomeBuilder.markPaused(
-          scopeStepUpResume ? "scope_step_up" : "tool_approval",
+          scopeStepUpResume ? "scope_step_up" : "tool_input_required",
         );
       } else {
         outcomeBuilder.markCompleted(driver.finishReason);

@@ -271,6 +271,44 @@ describe("emulated engine outcome conformance", () => {
     expect(resolve).not.toHaveBeenCalled();
   });
 
+  it("PAUSED BY THE LOOP: an approval pause is not a completion", async () => {
+    // THE HOLE THIS CLOSES, and the reason it survived: every other pause test
+    // here drives the PRE-PHASE, which sets its own flag before the loop runs.
+    // The loop's own pauses — approval, client-fulfilled, and a suspend signal
+    // — all return the same `shouldContinue: false` the epilogue read as "the
+    // turn is over", so the most ordinary pause in the product was being
+    // recorded as `completed`. A resumable turn filed as a finished one is the
+    // exact claim this contract exists to stop anything making.
+    const messages = [
+      { role: "user", content: "charge it" },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "call-1",
+            toolName: "charge_card",
+            input: {},
+          },
+        ],
+      },
+    ];
+    const { outcome } = await runTurn({
+      messages: messages as never,
+      tools: {
+        charge_card: {
+          description: "charge_card",
+          inputSchema: { type: "object" } as never,
+          needsApproval: true,
+          execute: async () => ({ ok: true }),
+        },
+      } as never,
+      requireToolApproval: true,
+    } as never);
+    expect(outcome?.lifecycle).toBe("paused");
+    expect(outcome?.paused).toEqual({ kind: "tool_approval" });
+  });
+
   it("PAUSED turns leave their dangling call OPEN — it is the resume handle", async () => {
     const messages = [
       { role: "user", content: "hi" },

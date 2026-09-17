@@ -3607,16 +3607,26 @@ export async function runHarnessTurn(
           // half-built commit and free the lane so the next turn can claim.
           capturedHarnessCommit = undefined;
           await releaseHarnessLease?.();
-          // A PAUSE WHOSE COMMIT FAILED IS UNRESUMABLE, and the record must say
-          // so. The lease has just been released, so the continuation the
-          // client would resume no longer exists — leaving `paused` on the
-          // record would promise the user a resume that can never happen. This
-          // is the one transition the builder allows out of `paused`, and this
-          // is the site it exists for.
-          outcomeBuilder.markFailed({
-            errorSource: "setup",
-            errorCode: "harness_finalize_failed",
-          });
+          // AN APPROVAL PAUSE WHOSE COMMIT FAILED IS UNRESUMABLE, and the
+          // record must say so. Its continuation IS the sidecar commit plus
+          // the lease, and the lease has just been released — leaving `paused`
+          // would promise the user a resume that can never happen. This is the
+          // one transition the builder allows out of `paused`, and this is the
+          // site it exists for.
+          //
+          // SCOPE STEP-UP IS NOT THAT. Its continuation was created and
+          // registered back when the challenge was observed, long before this
+          // teardown, and the resume path claims that record on its own — it
+          // needs neither this harness session nor this lease. Calling it
+          // failed because `destroy()` threw would throw away a continuation
+          // that is still live for the rest of its TTL, and send the user to a
+          // dead end the product could actually have honoured.
+          if (pausedForApproval) {
+            outcomeBuilder.markFailed({
+              errorSource: "setup",
+              errorCode: "harness_finalize_failed",
+            });
+          }
         }
       }
     } catch (err) {

@@ -90,7 +90,12 @@ describe("turn-outcome vocabularies are closed and total", () => {
   });
 
   it("pause kinds, error sources, unresolved states, engines, access", () => {
-    expect([...TURN_PAUSE_KINDS]).toEqual(["tool_approval", "scope_step_up"]);
+    expect([...TURN_PAUSE_KINDS]).toEqual([
+      "tool_approval",
+      "scope_step_up",
+      "client_fulfilled",
+      "tool_input_required",
+    ]);
     expect([...TURN_ERROR_SOURCES]).toEqual(["model", "setup"]);
     expect([...UNRESOLVED_TOOL_CALL_STATES]).toEqual([
       "never_started",
