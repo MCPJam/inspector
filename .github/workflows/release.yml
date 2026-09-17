@@ -404,7 +404,13 @@ jobs:
   # action does not depend on either.
   evals-action-smoke:
     needs: preflight
-    if: needs.preflight.outputs.evals_action_changed == 'true'
+    # The repo variables are what make the live smoke possible. While they are
+    # unset, the smoke SKIPS instead of failing the whole release — and
+    # `publish-evals-action` skips with it, so the action is never tagged
+    # untested. Set both variables to turn the gate back on.
+    if: >-
+      needs.preflight.outputs.evals_action_changed == 'true' &&
+      vars.EVALS_SMOKE_PROJECT != '' && vars.EVALS_SMOKE_SUITE != ''
     uses: ./.github/workflows/evals-action-smoke.yml
     with:
       project: ${{ vars.EVALS_SMOKE_PROJECT }}

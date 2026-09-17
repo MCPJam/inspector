@@ -1,3 +1,7 @@
+import {
+  expandPersistedRequestPayloads,
+  type PersistedRequestPayloadEntry,
+} from "@/shared/live-chat-trace";
 import { evalTraceSpanZ, type EvalTraceSpan } from "@/shared/eval-trace";
 import { rebaseTraceSpans } from "@/shared/live-chat-trace";
 
@@ -205,4 +209,30 @@ export function expectedTurnTraceSpanCount(
         : 0),
     0,
   );
+}
+
+export async function hydrateTurnRequestPayloads(
+  turns: readonly {
+    promptIndex: number;
+    requestPayloadsBlobUrl?: string | null;
+  }[],
+) {
+  return (
+    await Promise.all(
+      [...turns]
+        .sort((a, b) => a.promptIndex - b.promptIndex)
+        .map(async (turn) => {
+          if (!turn.requestPayloadsBlobUrl) return [];
+          const response = await fetch(turn.requestPayloadsBlobUrl);
+          if (!response.ok)
+            throw new Error("Failed to load saved model requests");
+          const value: unknown = await response.json();
+          if (!Array.isArray(value))
+            throw new Error("Invalid saved model requests");
+          return expandPersistedRequestPayloads(
+            value as PersistedRequestPayloadEntry[],
+          );
+        }),
+    )
+  ).flat();
 }

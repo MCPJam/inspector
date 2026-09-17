@@ -4,7 +4,10 @@ import {
   executeToolCallsFromMessages,
   hasUnresolvedToolCalls,
 } from "@/shared/http-tool-calls";
-import { handleMCPJamFreeChatModel } from "../mcpjam-stream-handler";
+import {
+  handleMCPJamFreeChatModel,
+  runChatEngineLoop,
+} from "../mcpjam-stream-handler";
 import { buildPageTools } from "../chat-v2-orchestration";
 import { serializeToolsForConvex } from "../mcpjam-tool-helpers";
 import { createHostedRpcLogCollector } from "../../routes/web/hosted-rpc-logs.js";
@@ -3345,20 +3348,29 @@ describe("mcpjam-stream-handler", () => {
 
       const onStepFinish = vi.fn();
 
-      await handleMCPJamFreeChatModel({
-        messages: [{ role: "user", content: "Two steps" }] as any,
-        modelId: "openai/gpt-5-mini",
-        systemPrompt: "You are helpful",
-        tools: {
-          read_docs: { _serverId: "docs-server" },
-        } as any,
-        mcpClientManager: {
-          getAllToolsMetadata: vi.fn().mockReturnValue({ read_docs: {} }),
-        } as any,
-        onStepFinish,
-      });
+      const result = await runChatEngineLoop(
+        {
+          messages: [{ role: "user", content: "Two steps" }] as any,
+          modelId: "openai/gpt-5-mini",
+          systemPrompt: "You are helpful",
+          tools: {
+            read_docs: { _serverId: "docs-server" },
+          } as any,
+          mcpClientManager: {
+            getAllToolsMetadata: vi.fn().mockReturnValue({ read_docs: {} }),
+          } as any,
+          onStepFinish,
+        },
+        "none",
+      );
 
       await lastExecution;
+
+      expect(result.turnTrace?.requestPayloads).toHaveLength(2);
+      expect(result.turnTrace?.requestPayloads?.[0].payload.system).toBe(
+        "You are helpful",
+      );
+      expect(result.turnTrace?.requestPayloads?.[1].stepIndex).toBe(1);
 
       // Two steps completed: tool-call step + final text step.
       expect(onStepFinish).toHaveBeenCalledTimes(2);

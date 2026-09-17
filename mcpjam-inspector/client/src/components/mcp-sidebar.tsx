@@ -266,20 +266,16 @@ export const navigationSections: NavSection[] = [
         billingFeature: "scenarios",
       },
       {
-        title: "Evaluate",
+        title: "Evaluate (Legacy)",
         url: "/evals",
+        featureFlag: "evaluate-enabled",
         icon: FlaskConical,
         billingFeature: "evals",
       },
       {
-        // The redesigned Evaluate tab, shown ALONGSIDE the original while it
-        // is dogfooded — the point of a second tab is being able to compare
-        // them. When the redesign wins, this item takes the "Evaluate" name
-        // and the one above is deleted.
-        title: "Ding Dong",
+        title: "Evaluate",
         url: "/evaluate",
         icon: FlaskConical,
-        featureFlag: "evaluate-enabled",
         billingFeature: "evals",
       },
       {
