@@ -2,7 +2,10 @@ import { releaseBrowserForChat } from "@/lib/browser-shell/chat-handoff";
 import { withWebMcpTraffic } from "@/lib/webmcp-traffic";
 import { useBrowserReadinessStore } from "@/stores/browser-readiness-store";
 import { BROWSER_CONSENT_HEADER } from "@/lib/local-browser-consent";
-import { closeUnresolvedUiToolParts } from "@/shared/turn-outcome-closure";
+import {
+  closeUnresolvedUiToolParts,
+  diffInterruptedToolParts,
+} from "@/shared/turn-outcome-closure";
 /**
  * useChatSession
  *
@@ -4136,6 +4139,26 @@ export function useChatSession(
     }
 
     pendingSessionHydrationRef.current = null;
+
+    // THE SERVER COPY WINS, and a disagreement is reported rather than merged.
+    //
+    // Both sides close a stopped turn's open tool calls, and the design rests
+    // on them producing the same bytes. They do — that is a golden test — but
+    // the failure mode if they ever stopped would be silent: the hydration
+    // below replaces the local message wholesale, so a divergence would quietly
+    // rewrite what the user was told about a call that may have taken effect.
+    // Checked here because this is the one place the two copies are both in
+    // hand.
+    const closureDrift = diffInterruptedToolParts(
+      messagesRef.current ?? [],
+      pendingHydration.messages,
+    );
+    if (closureDrift.length > 0) {
+      console.warn(
+        "[chat] server and client disagree about an interrupted tool call; keeping the server's copy",
+        { chatSessionId, drift: closureDrift },
+      );
+    }
 
     baseSetMessages(pendingHydration.messages);
     syncResumedVersion(pendingHydration.resumedVersion);

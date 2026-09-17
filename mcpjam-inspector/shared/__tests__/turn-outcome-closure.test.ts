@@ -13,6 +13,7 @@ import { convertToModelMessages, type UIMessage } from "ai";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import {
   INTERRUPTED_TOOL_CALL_TEXT,
+  diffInterruptedToolParts,
   closeUnresolvedToolCalls,
   closeUnresolvedUiToolParts,
   isInterruptedToolResult,
@@ -418,5 +419,81 @@ describe("GOLDEN: client-side and server-side closure are byte-identical", () =>
     expect(
       JSON.stringify(closeUnresolvedToolCalls(converted, [])),
     ).toBe(JSON.stringify(converted));
+  });
+});
+
+describe("diffInterruptedToolParts", () => {
+  const closed = (toolCallId: string, errorText: string, state = "outcome_unknown") => ({
+    type: "tool-charge_card",
+    toolCallId,
+    state: "output-error",
+    errorText,
+    callProviderMetadata: { mcpjam: { interrupted: state } },
+  });
+
+  it("reports nothing when the two sides agree, which is the expected case", () => {
+    const parts = [closed("c1", INTERRUPTED_TOOL_CALL_TEXT.outcome_unknown)];
+    expect(
+      diffInterruptedToolParts(
+        [{ role: "assistant", parts }],
+        [{ role: "assistant", parts }],
+      ),
+    ).toEqual([]);
+  });
+
+  it("names a call whose text changed under the reader", () => {
+    // The server copy wins on rehydration, so a divergence would silently
+    // rewrite what the user was told about a call that may have taken effect.
+    expect(
+      diffInterruptedToolParts(
+        [{ role: "assistant", parts: [closed("c1", "Interrupted before this tool call started.")] }],
+        [{ role: "assistant", parts: [closed("c1", INTERRUPTED_TOOL_CALL_TEXT.outcome_unknown)] }],
+      ),
+    ).toEqual([
+      {
+        toolCallId: "c1",
+        local: "Interrupted before this tool call started.",
+        server: INTERRUPTED_TOOL_CALL_TEXT.outcome_unknown,
+      },
+    ]);
+  });
+
+  it("a call the local copy never closed is not a disagreement", () => {
+    expect(
+      diffInterruptedToolParts(
+        [{ role: "assistant", parts: [] }],
+        [{ role: "assistant", parts: [closed("c1", INTERRUPTED_TOOL_CALL_TEXT.outcome_unknown)] }],
+      ),
+    ).toEqual([]);
+  });
+
+  it("ignores a tool that genuinely errored — that is not a closure", () => {
+    expect(
+      diffInterruptedToolParts(
+        [
+          {
+            role: "assistant",
+            parts: [
+              {
+                type: "tool-charge_card",
+                toolCallId: "c1",
+                state: "output-error",
+                errorText: "the card was declined",
+              },
+            ],
+          },
+        ],
+        [{ role: "assistant", parts: [closed("c1", INTERRUPTED_TOOL_CALL_TEXT.outcome_unknown)] }],
+      ),
+    ).toEqual([]);
+  });
+
+  it("does no work at all when nothing local was closed", () => {
+    expect(
+      diffInterruptedToolParts(
+        [{ role: "assistant", parts: [{ type: "text", text: "hi" }] }],
+        [{ role: "assistant", parts: [closed("c1", "x")] }],
+      ),
+    ).toEqual([]);
   });
 });

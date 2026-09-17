@@ -335,3 +335,73 @@ export function closeUnresolvedUiToolParts<T extends UiMessageLike>(
   });
   return changed ? { ...message, parts: next } : message;
 }
+
+/**
+ * Closed tool calls whose text the client and the server disagree about.
+ *
+ * Both sides close the same turn — the client on Stop, the server at persist
+ * time — and the whole design rests on them producing the same bytes. This is
+ * the check that the assumption held in production rather than only in the
+ * golden test, and it exists BECAUSE the failure would otherwise be silent: the
+ * server copy wins on rehydration either way, so a divergence would quietly
+ * rewrite what the user was told about a call that may have taken effect.
+ *
+ * Read-only, and it reports rather than resolves. The caller keeps the server's
+ * copy; this only names what changed under the reader.
+ */
+export function diffInterruptedToolParts(
+  local: readonly UiMessageLike[],
+  server: readonly UiMessageLike[],
+): Array<{ toolCallId: string; local: string; server: string }> {
+  const localById = new Map<string, string>();
+  for (const message of local) {
+    for (const part of message?.parts ?? []) {
+      const closed = readClosedUiPart(part);
+      if (closed) localById.set(closed.toolCallId, closed.errorText);
+    }
+  }
+  if (localById.size === 0) return [];
+  const out: Array<{ toolCallId: string; local: string; server: string }> = [];
+  for (const message of server) {
+    for (const part of message?.parts ?? []) {
+      const closed = readClosedUiPart(part);
+      if (!closed) continue;
+      const localText = localById.get(closed.toolCallId);
+      // A call the local copy never closed is not a disagreement: the server
+      // closed something this surface never saw open.
+      if (localText === undefined || localText === closed.errorText) continue;
+      out.push({
+        toolCallId: closed.toolCallId,
+        local: localText,
+        server: closed.errorText,
+      });
+    }
+  }
+  return out;
+}
+
+function readClosedUiPart(
+  part: unknown,
+): { toolCallId: string; errorText: string } | undefined {
+  if (!part || typeof part !== "object") return undefined;
+  const candidate = part as UiToolPart;
+  if (candidate.state !== "output-error") return undefined;
+  if (typeof candidate.toolCallId !== "string" || !candidate.toolCallId) {
+    return undefined;
+  }
+  const metadata = candidate.callProviderMetadata;
+  if (!metadata || typeof metadata !== "object") return undefined;
+  const mcpjam = (metadata as Record<string, unknown>)[
+    INTERRUPTED_TOOL_CALL_PROVIDER_KEY
+  ];
+  if (!mcpjam || typeof mcpjam !== "object") return undefined;
+  const interrupted = (mcpjam as Record<string, unknown>).interrupted;
+  if (interrupted !== "never_started" && interrupted !== "outcome_unknown") {
+    return undefined;
+  }
+  return {
+    toolCallId: candidate.toolCallId,
+    errorText:
+      typeof candidate.errorText === "string" ? candidate.errorText : "",
+  };
+}
