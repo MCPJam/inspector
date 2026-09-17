@@ -26,6 +26,7 @@ import {
   AffectedIterationsList,
   type AffectedIterationRow,
 } from "./affected-iterations-list";
+import { FindingText } from "./finding-text";
 import {
   judgeCoverageLine,
   mechanismCaveat,
@@ -34,30 +35,6 @@ import {
   verificationLine,
   recurrenceLine,
 } from "./finding-provenance";
-
-/** Limited inline formatting; recorded/model text never becomes HTML or links. */
-function FindingText({ text }: { text: string }) {
-  return (
-    <>
-      {text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g).map((part, i) =>
-        part.startsWith("`") ? (
-          <code
-            key={i}
-            className="rounded bg-muted px-1 font-code text-[0.85em]"
-          >
-            {part.slice(1, -1)}
-          </code>
-        ) : part.startsWith("**") ? (
-          <strong key={i} className="font-semibold">
-            {part.slice(2, -2)}
-          </strong>
-        ) : (
-          part
-        ),
-      )}
-    </>
-  );
-}
 
 export function CopyFindingPrompt({
   finding,

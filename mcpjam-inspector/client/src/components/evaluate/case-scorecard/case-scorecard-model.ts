@@ -38,6 +38,9 @@ import { filterSuppressedSuiteAssertions } from "@mcpjam/sdk/contract";
 
 import {
   PREDICATE_STAGE,
+  STANDARD_CHECKS,
+  STANDARD_CHECK_NAME_BY_KIND,
+  type StandardCheckPredicateKind,
   USER_VALUE_STAGE_LABELS,
   USER_VALUE_STAGE_QUESTIONS,
   USER_VALUE_STAGES,
@@ -444,6 +447,14 @@ export function stageOfPredicate(predicate: Predicate): UserValueStage {
  * up to its own position, so `noToolErrors` as a step reads "No tool errors so
  * far" while the whole-run one reads "No tool errors". Same predicate,
  * different claim, and the label is the only place a reader learns that.
+ *
+ * A kind the standard-check catalog names is titled by WHAT it evaluates
+ * ("Tool errors (isError)"), not by the rule that implements it. The rule is
+ * not lost: it is this row's expectation (`expectationOf`), which the run page
+ * prints under the title and the editor renders as the control beside it. One
+ * name for the scorer a reader meets on a run and edits on the case page —
+ * the vocabulary split this module's docblock exists to close. Step rows keep
+ * their positional label, which makes a different claim.
  */
 export function scorerRowLabel(
   predicate: Predicate,
@@ -454,8 +465,21 @@ export function scorerRowLabel(
   if (provenance === "step" && INLINE_ASSERT_LABELS[kind]) {
     return INLINE_ASSERT_LABELS[kind] as string;
   }
+  const standardName =
+    STANDARD_CHECK_NAME_BY_KIND[kind as StandardCheckPredicateKind];
+  if (standardName) return standardName;
   return formatCriterion({ predicate });
 }
+
+/**
+ * The judge row's title, from the catalog entry it renders.
+ *
+ * "Judge · Goal completion" named the mechanism twice — the row already
+ * carries a Judge chip — and never said what it decides.
+ */
+const JUDGE_ROW_LABEL =
+  STANDARD_CHECKS.find((check) => check.id === "userValue.outcome")?.name ??
+  "Outcome achieved";
 
 export function scorerKindLabel(predicate: Predicate): string {
   const kind = predicate.type as PredicateKind;
@@ -767,7 +791,7 @@ export function buildCaseScorecard(input: CaseScorecardInput): CaseScorecard {
     key: "judge:goalCompletion",
     stage: "userValue",
     provenance: "judge",
-    label: "Judge · Goal completion",
+    label: JUDGE_ROW_LABEL,
     kindLabel: "Judge",
     role: judgeRole,
     roleLock: "judge",
@@ -957,11 +981,22 @@ export function removeCaseScorer(
   return { mode: current?.mode === "replace" ? "replace" : "extend", list };
 }
 
-/** The configured expectation, without running the evaluator again. */
+/**
+ * The configured expectation, without running the evaluator again.
+ *
+ * The judge's expectation is the case's own Expected Outcome, because that
+ * string IS what the judge was asked to decide. The generic sentence is the
+ * fallback for a case that configured no outcome and is graded by suite
+ * criteria alone — there, naming the rubric is the most a reader can be told
+ * without the suite in hand.
+ */
 export function expectationOf(row: ScorecardRow): string {
   if (row.predicate) return formatCriterion({ predicate: row.predicate });
   if (row.route) return routeLabel(row.route);
   if (row.widgetAssertion) return purposeOf(row.widgetAssertion);
-  if (row.provenance === "judge") return "Satisfy the task according to the configured judge rubric.";
+  if (row.provenance === "judge") {
+    const goal = row.judge?.goal.trim();
+    return goal || "Satisfy the task according to the configured judge rubric.";
+  }
   return row.kindLabel;
 }

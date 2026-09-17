@@ -334,7 +334,7 @@ function composeLines(
     return {
       lines: [
         "Nothing graded yet.",
-        "This run is still going — findings land as sessions are analyzed.",
+        "This run is still going. Findings land as sessions are analyzed.",
       ],
       kind: "ungraded",
     };
@@ -385,7 +385,7 @@ export function deriveHonestyFootnotes(args: {
   if (launch && launch.succeeded > 0) {
     if (launch.failed > 0) {
       notes.push(
-        `${launch.failed} of ${launch.total} sessions failed to launch — findings cover the sessions that ran`,
+        `${launch.failed} of ${launch.total} sessions failed to launch; findings cover the sessions that ran`,
       );
     }
     if (launch.rateLimited > 0) {
