@@ -313,7 +313,6 @@ async function redeemScenarioToken(
      */
     surface?: ScenarioSession["surface"];
     authenticatedUserId?: string;
-    resolvePolicy?: boolean;
     getAccountToken?: () => Promise<string | undefined>;
   },
 ): Promise<ScenarioSession> {
@@ -322,20 +321,9 @@ async function redeemScenarioToken(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ scenarioToken: token }),
   };
-  // Before guest materialization, ask the backend using only the link. A
-  // restricted scenario responds with no configuration and no grant writes.
-  if (options?.resolvePolicy) {
-    const policyResponse = await fetch("/api/web/scenarios/redeem", init);
-    if (!policyResponse.ok) {
-      const error = await readRouteError(policyResponse);
-      if (error.code !== "SCENARIO_UNAUTHENTICATED") throw error;
-    } else {
-      throw createScenarioRouteError(
-        502,
-        "Unexpected unauthenticated redemption",
-      );
-    }
-  }
+  // The backend requires a bearer before it evaluates scenario policy. Use
+  // the existing guest session for signed-out visitors; restricted scenarios
+  // return SCENARIO_SIGN_IN_REQUIRED without configuration or a grant.
   if (options?.getAccountToken) {
     let bearer: string | undefined;
     try {
@@ -477,10 +465,16 @@ export function ScenarioChatPage({
       ? null
       : cachedSession;
   const retainedTokenRef = useRef(cachedSession?.shareToken ?? null);
-  if (pathToken) retainedTokenRef.current = pathToken;
-  const accountRequiredRef = useRef(
-    cachedSession?.payload.requiresSignIn === true,
+  const retainedSurfaceRef = useRef(
+    cachedSession?.surface ??
+      readScenarioSurfaceFromUrl(window.location.search),
   );
+  if (pathToken && pathToken !== retainedTokenRef.current) {
+    retainedTokenRef.current = pathToken;
+    retainedSurfaceRef.current = readScenarioSurfaceFromUrl(
+      window.location.search,
+    );
+  }
   const [isBootstrapping, setIsBootstrapping] = useState(Boolean(pathToken));
   const [routeError, setRouteError] = useState<ScenarioRouteError | null>(null);
   const interactiveSignInEventKeyRef = useRef<string | null>(null);
@@ -715,7 +709,11 @@ export function ScenarioChatPage({
           clearCurrentSession(cachedSession.scenarioId);
         }
         setSession(null);
-        if (accountRequiredRef.current && !workOsUser) {
+        if (
+          cachedSession?.shareToken === tokenToRedeem &&
+          cachedSession.payload.requiresSignIn &&
+          !workOsUser
+        ) {
           setRouteError(
             createScenarioRouteError(
               401,
@@ -737,14 +735,12 @@ export function ScenarioChatPage({
         });
         try {
           const nextSession = await redeemScenarioToken(tokenToRedeem, {
+            surface: retainedSurfaceRef.current,
             authenticatedUserId: workOsUser?.id,
             getAccountToken: workOsUser ? getAccessToken : undefined,
-            resolvePolicy: !workOsUser,
           });
           if (cancelled) return;
 
-          accountRequiredRef.current =
-            nextSession.payload.requiresSignIn === true;
           validatedIdentityRef.current = workOsUser?.id ?? null;
           writeCurrentSession(nextSession);
           setSession(nextSession);
@@ -772,8 +768,6 @@ export function ScenarioChatPage({
                   ? error.message
                   : "Unable to open this scenario.",
               );
-          if (nextError.code === "SCENARIO_SIGN_IN_REQUIRED")
-            accountRequiredRef.current = true;
           const displayError = getScenarioDisplayError(nextError);
 
           if (displayError.kind === "unexpected") {
@@ -874,7 +868,6 @@ export function ScenarioChatPage({
           const nextSession = await redeemScenarioToken(token, {
             authenticatedUserId: workOsUser?.id,
             getAccountToken: workOsUser ? getAccessToken : undefined,
-            resolvePolicy: !workOsUser,
             surface: sessionRef.current?.surface,
           });
           // Guards before mutating shared session state: a navigation to a
@@ -916,6 +909,13 @@ export function ScenarioChatPage({
             routeError.status === 403 ||
             routeError.status === 404 ||
             routeError.status === 410;
+          if (
+            !isMountedRef.current ||
+            resolveShareToken() !== token ||
+            currentIdentityRef.current !== workOsUser?.id
+          ) {
+            return { ok: false, reason: "transient" };
+          }
           if (!isDefinitive) {
             console.warn(
               "[ScenarioChatPage] Scenario re-redeem failed transiently",
@@ -929,7 +929,10 @@ export function ScenarioChatPage({
           // Only clear the latch if we're still the active in-flight
           // refresh. A newer token's refresh may have already overwritten
           // it; don't stomp on that one.
-          if (refreshInFlightRef.current?.token === token) {
+          if (
+            refreshInFlightRef.current?.token === token &&
+            refreshInFlightRef.current.identity === workOsUser?.id
+          ) {
             refreshInFlightRef.current = null;
           }
         }
@@ -1093,9 +1096,7 @@ export function ScenarioChatPage({
       buildScenarioLink(token, "scenario"),
       window.location.origin,
     );
-    const surface =
-      sessionRef.current?.surface ??
-      readScenarioSurfaceFromUrl(window.location.search);
+    const surface = sessionRef.current?.surface ?? retainedSurfaceRef.current;
     target.search = surface === "preview" ? "?surface=preview" : "";
     writeScenarioSignInReturnPath(target.pathname + target.search);
     return target.toString();

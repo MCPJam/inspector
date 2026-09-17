@@ -55,6 +55,36 @@ describe("authFetch hosted 401 retry", () => {
     vi.restoreAllMocks();
   });
 
+  it("redeems guest-permitted links with the guest bearer in one request", async () => {
+    vi.mocked(getApiAuthorizationHeader).mockResolvedValue(
+      "Bearer guest-token",
+    );
+    vi.mocked(global.fetch).mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          scenarioId: "guest-scenario",
+          bootstrap: { requiresSignIn: false, allowGuestAccess: true },
+        }),
+      ),
+    );
+    const response = await authFetch("/api/web/scenarios/redeem", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scenarioToken: "guest-link" }),
+    });
+    expect(response.status).toBe(200);
+    expect(global.fetch).toHaveBeenCalledOnce();
+    expect(global.fetch).toHaveBeenCalledWith(
+      "/api/web/scenarios/redeem",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: "Bearer guest-token",
+        }),
+      }),
+    );
+    expect(forceRefreshGuestSession).not.toHaveBeenCalled();
+  });
+
   it("retries scenario bootstrap once with a refreshed guest token after a 401", async () => {
     vi.mocked(getApiAuthorizationHeader).mockResolvedValueOnce(
       "Bearer stale-token",

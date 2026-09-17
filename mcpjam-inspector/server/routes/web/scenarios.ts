@@ -1,8 +1,11 @@
+import { getSpendClientIp } from "../../utils/client-ip.js";
+import { hashGuestSpendIp } from "../../utils/guest-spend-ip.js";
 import { Hono } from "hono";
 import { z } from "zod";
 import {
   ErrorCode,
   WebRouteError,
+  assertBearerToken,
   handleRoute,
   parseWithSchema,
   readJsonBody,
@@ -56,7 +59,7 @@ scenarios.post("/redeem", async (c) =>
       );
     }
 
-    const bearerToken = c.req.header("authorization") ?? "";
+    const bearerToken = assertBearerToken(c);
     const body = parseWithSchema(
       scenarioRedeemSchema,
       await readJsonBody<unknown>(c),
@@ -66,7 +69,9 @@ scenarios.post("/redeem", async (c) =>
     const timeout = setTimeout(() => controller.abort(), 10_000);
     let result;
     try {
+      const ip = getSpendClientIp(c);
       result = await redeemScenarioToken({
+        guestIpHash: ip ? await hashGuestSpendIp(ip) : null,
         scenarioToken: body.scenarioToken,
         bearer: bearerToken,
         signal: controller.signal,

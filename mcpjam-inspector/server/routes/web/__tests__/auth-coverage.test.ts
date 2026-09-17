@@ -94,10 +94,6 @@ const PUBLIC_SUCCESS_ROUTES = new Map<string, string>([
  */
 const NON_AUTH_REFUSALS = new Map<string, string>([
   [
-    "POST /api/web/scenarios/redeem",
-    "policy-only signed-out probe delegates to Convex without minting a guest; 500 is the absent Convex here. scenarios.test.ts verifies the mounted route forwards no bearer and preserves SCENARIO_SIGN_IN_REQUIRED / 401; the backend owns grant admission",
-  ],
-  [
     "POST /api/web/guest-session",
     "public by design — minting a guest bearer is how an anonymous caller becomes an authenticated one; the 500 here is the absent Convex, not a refusal",
   ],

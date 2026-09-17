@@ -3012,7 +3012,11 @@ export default function App() {
       !!readPersistedCheckoutIntent() &&
       !!readBillingSignInReturnPath() &&
       !workOsUser;
-    if (isBillingReturnWaitingForWorkOs) return;
+    // Convex can still be authenticated as a guest while AuthKit settles.
+    // Preserve the scenario destination until the account sign-in completes.
+    const isScenarioReturnWaitingForWorkOs =
+      !!readScenarioSignInReturnPath() && (!workOsUser || isWorkOsLoading);
+    if (isBillingReturnWaitingForWorkOs || isScenarioReturnWaitingForWorkOs) return;
 
     // Select the return exactly once after AuthKit + Convex auth settle. A
     // project-scoped return stays on `/callback` until the database user and

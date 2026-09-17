@@ -1,3 +1,4 @@
+import { guestIpForwardHeaders } from "./guest-spend-ip.js";
 /**
  * Scenario token redemption.
  *
@@ -6,9 +7,10 @@
  * redeemed, the inspector forwards the `scenarioId` (NOT the token) on
  * every subsequent hot-path request.
  *
- * Successful redemption requires an account bearer, or a guest JWT when
- * the scenario permits guests. A request without a bearer only resolves
- * link policy: the backend returns 401 without configuration or grants.
+ * The bearer is required: WorkOS bearer for signed-in viewers, or a
+ * guest JWT obtained via `/guest/session` for anonymous viewers in
+ * `anyone_with_link` mode. Anonymous redemption is rejected by the
+ * backend with 401.
  */
 
 import { logger } from "./logger.js";
@@ -79,9 +81,7 @@ export type ScenarioRedeemFailure = {
   code?: string;
 };
 
-export type ScenarioRedeemResult =
-  | ScenarioRedeemSuccess
-  | ScenarioRedeemFailure;
+export type ScenarioRedeemResult = ScenarioRedeemSuccess | ScenarioRedeemFailure;
 
 function getConvexHttpUrl(): string {
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
@@ -99,6 +99,7 @@ function buildRedeemUrl(): string {
 }
 
 export async function redeemScenarioToken(args: {
+  guestIpHash?: string | null;
   scenarioToken: string;
   bearer: string;
   signal?: AbortSignal;
@@ -112,9 +113,11 @@ export async function redeemScenarioToken(args: {
   try {
     response = await fetch(url, {
       method: "POST",
+      redirect: "manual",
       headers: {
         "content-type": "application/json",
-        ...(args.bearer ? { authorization } : {}),
+        authorization,
+        ...guestIpForwardHeaders(args.guestIpHash),
       },
       body: JSON.stringify({ scenarioToken: args.scenarioToken }),
       signal: args.signal,
