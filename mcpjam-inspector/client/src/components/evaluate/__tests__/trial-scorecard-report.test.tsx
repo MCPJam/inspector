@@ -149,4 +149,39 @@ describe("Scorecard report", () => {
     ).toBeNull();
   });
 
+  it("gives the judge row the case's expected outcome as its expectation", () => {
+    // The sentence the judge was asked to decide, verbatim. A reader comparing
+    // EXPECTED with ACTUAL is comparing the case's own words with what ran.
+    const goal =
+      "Server diagnostics reveal connection status and the run completes.";
+    render(
+      <ul>
+        <TrialScorecardRow
+          row={{
+            ...check,
+            key: "judge:goalCompletion",
+            label: "Outcome achieved",
+            provenance: "judge",
+            judge: {
+              suiteMode: "expected_output",
+              model: "gpt-5",
+              threshold: 0.7,
+              suiteCriteriaCount: 0,
+              skippedForCase: false,
+              runsForCase: true,
+              rubricSource: "expected_output",
+              goal,
+            },
+          }}
+          layout="report"
+        />
+      </ul>,
+    );
+    expect(screen.getByText(goal)).toBeVisible();
+    expect(
+      screen.queryByText(
+        "Satisfy the task according to the configured judge rubric.",
+      ),
+    ).toBeNull();
+  });
 });
