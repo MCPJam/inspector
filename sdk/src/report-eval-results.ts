@@ -48,6 +48,13 @@ const CHUNK_SIZE_LIMIT = 200;
 const ONE_SHOT_RESULT_LIMIT = 200;
 const CHUNK_TARGET_BYTES = 1024 * 1024;
 
+/**
+ * Headroom left when weighing one result against {@link CHUNK_TARGET_BYTES}:
+ * the ids and framing a result picks up after the widget-offload decision, plus
+ * a margin so the decision is never a byte away from wrong.
+ */
+const RESULT_ENVELOPE_SLACK = 4096;
+
 export const DEFAULT_MCPJAM_BASE_URL = "https://app.mcpjam.com";
 
 /**
@@ -1017,22 +1024,45 @@ async function uploadWidgetSnapshots(
 
 /**
  * Send widget HTML to blob storage when leaving it inline would make a single
- * result too large to upload. Returns `results` untouched in the common case,
- * so a small widget still rides along in the one request it always did.
+ * result too large to upload. Only the results that do not fit are rewritten —
+ * every other snapshot stays inline, in the one request it always did.
+ *
+ * A result is weighed inside the request that will actually carry it: the
+ * reporting envelope around it, plus room for the per-result fields added after
+ * this point (`externalIterationId`), so a result that only just fits here does
+ * not become one that only just fails on the wire.
  */
 async function offloadOversizedWidgetSnapshots(
   config: RuntimeConfig,
+  input: ReportEvalResultsInput,
   results: EvalResultInput[]
 ): Promise<EvalResultInput[]> {
-  const hasOversizedResult = results.some(
-    (result) =>
+  const envelopeBytes = getByteLength(
+    JSON.stringify({ ...buildReportingBody(input), results: [] })
+  );
+  const budget = CHUNK_TARGET_BYTES - envelopeBytes - RESULT_ENVELOPE_SLACK;
+  const oversized = new Set<number>();
+  results.forEach((result, index) => {
+    if (
       Array.isArray(result.widgetSnapshots) &&
       result.widgetSnapshots.length > 0 &&
-      getByteLength(JSON.stringify({ results: [result] })) > CHUNK_TARGET_BYTES
+      getByteLength(JSON.stringify(result)) > budget
+    ) {
+      oversized.add(index);
+    }
+  });
+  if (oversized.size === 0) {
+    return results;
+  }
+  const rewritten = await uploadWidgetSnapshots(
+    config,
+    results.filter((_result, index) => oversized.has(index))
   );
-  return hasOversizedResult
-    ? await uploadWidgetSnapshots(config, results)
-    : results;
+  // Put each rewritten result back at its own index so order is unchanged.
+  const queue = [...rewritten];
+  return results.map((result, index) =>
+    oversized.has(index) ? (queue.shift() ?? result) : result
+  );
 }
 
 function shouldUseOneShotUpload(
@@ -1154,6 +1184,7 @@ async function reportEvalResultsInternal(
   // to blob storage instead, once, before the retry loop below.
   const uploadedResults = await offloadOversizedWidgetSnapshots(
     config,
+    input,
     input.results
   );
   const externalRunId = input.externalRunId ?? generateExternalRunId();
