@@ -190,6 +190,26 @@ describe("PartSwitch", () => {
     mockDetectUIType.mockReturnValue(null);
   });
 
+  it.each(["openai-apps", "mcp-apps", "both", null])(
+    "keeps recorded widgets static under placeholder policy (%s)",
+    (uiType) => {
+      mockDetectUIType.mockReturnValue(uiType);
+      const { container } = render(<PartSwitch {...defaultProps}
+        role="assistant" interactive={false} widgetPolicy="placeholder"
+        part={{ type: "dynamic-tool", toolName: "search", toolCallId: "call-123",
+          state: "output-available", input: {}, output: { answer: 42 } } as any}
+        toolRenderOverrides={{ "call-123": {
+          resourceUri: "ui://search", cachedWidgetHtmlUrl: "https://example.com/widget",
+          frozenScreenshotUrl: "https://example.com/screenshot",
+        } } as any}
+      />);
+      expect(container.querySelector('[data-widget-placeholder="true"]')).not.toBeNull();
+      expect(screen.getByTestId("tool-part")).toBeInTheDocument();
+      expect(mockWidgetReplay).not.toHaveBeenCalled();
+      expect(container.querySelector("iframe, img")).toBeNull();
+    },
+  );
+
   it.each([null, "browser_consent_required"])(
     "hides internal browser readiness (%s)",
     (reason) => {
