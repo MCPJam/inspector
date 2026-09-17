@@ -2661,7 +2661,7 @@ test("eval run appends a View link in human format", async () => {
       lines.at(-1),
       "View: http://127.0.0.1:" +
         new URL(fixture.baseUrl).port +
-        "/evals/suite/suite-1/runs/run-case?project=proj-alpha"
+        "/evaluate/suite/suite-1/runs/run-case?project=proj-alpha"
     );
   } finally {
     await fixture.close();
@@ -2695,7 +2695,7 @@ test("eval status appends a View link in human format", async () => {
       lines.at(-1),
       "View: http://127.0.0.1:" +
         new URL(fixture.baseUrl).port +
-        "/evals/suite/suite-1/runs/run-1?project=proj-alpha"
+        "/evaluate/suite/suite-1/runs/run-1?project=proj-alpha"
     );
   } finally {
     await fixture.close();
