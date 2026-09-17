@@ -5001,6 +5001,10 @@ export interface PlatformReadinessStageResult {
  *
  * `billing_limit_reached` is the value a client keys a top-up prompt on — it
  * is machine-readable precisely so nobody has to string-match `detail`.
+ *
+ * `platform_cap_reached` is its deliberate opposite: MCPJam's own daily budget
+ * for observations is spent. Observations are MCPJam-paid, so there is nothing
+ * for the customer to buy, and a client must NOT offer a top-up for it.
  */
 export interface PlatformReadinessObservationState {
   status:
@@ -5013,6 +5017,7 @@ export interface PlatformReadinessObservationState {
   reason?:
     | "not_requested"
     | "billing_limit_reached"
+    | "platform_cap_reached"
     | "provider_error"
     | "provider_timeout"
     | "schema_invalid"
