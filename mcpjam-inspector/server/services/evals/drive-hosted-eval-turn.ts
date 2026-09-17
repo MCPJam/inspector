@@ -1,5 +1,6 @@
 import { getHostedTurnFailure } from "../../utils/hosted-turn-failure.js";
 import type { TimeoutMetadata } from "../../utils/run-supervisor/deadline.js";
+import type { TurnOutcomeRecord } from "@/shared/turn-outcome";
 /**
  * drive-hosted-eval-turn.ts — the shared per-turn body of the two hosted eval
  * runners (`runIterationViaBackendWithBrowser` — batch — and
@@ -567,7 +568,21 @@ export async function driveHostedEvalTurn(
    * True once THIS turn's bound tripped — not the run's, not the user's, and
    * never before the clock is armed.
    */
-  const turnTimedOut = () => turnDeadline?.firedClock() === "turn";
+  /**
+   * THE RECORD FIRST, this driver's own clock second.
+   *
+   * `turnOutcome` is set from the engine result below, once the call returns.
+   * Reading it first matters because the engine is the only thing that sees
+   * WHICH clock actually fired inside it — this handle's `firedClock()` reports
+   * only the budget this driver armed, and an engine-level deadline (an
+   * iteration or session clock composed in from above) aborts the same signal
+   * while leaving `firedClock()` empty. Without the record that case fell
+   * through to the cancellation arm and a budget cut read as a user stop.
+   */
+  let turnOutcome: TurnOutcomeRecord | undefined;
+  const turnTimedOut = () =>
+    turnOutcome?.lifecycle === "timed_out" ||
+    turnDeadline?.firedClock() === "turn";
   /**
    * Was this turn cancelled — as opposed to having run out of its own clock?
    *
@@ -580,8 +595,13 @@ export async function driveHostedEvalTurn(
    * Only meaningful AFTER `turnTimedOut()` has been ruled out: the turn clock
    * aborts this same signal.
    */
-  const cancelledMidTurn = () =>
-    isAborted() || turnDeadline?.signal.aborted === true;
+  const cancelledMidTurn = () => {
+    // A record that says something OTHER than cancelled settles it: the engine
+    // watched the whole turn, and an aborted signal after a completed stream is
+    // the Stop-races-completion case the record already resolved.
+    if (turnOutcome) return turnOutcome.lifecycle === "cancelled";
+    return isAborted() || turnDeadline?.signal.aborted === true;
+  };
   const turnTimeoutFailure = (): HostedEvalTurnOutcome => {
     acc.capturedSpans.push(...traceCtx.recordedSpans);
     const failure = {
@@ -898,6 +918,12 @@ export async function driveHostedEvalTurn(
     turnDeadline?.dispose();
   }
 
+  // The engine's own account of how the turn ended, before any gate reads a
+  // signal. A throw took the branch above and never reaches here, so this is
+  // the first place a record can exist — and from here on `turnTimedOut()` and
+  // `cancelledMidTurn()` prefer it over their own signals.
+  turnOutcome = turnResult.outcome;
+
   // The engine's SILENT path: it catches AbortError, omits the `turnTrace` and
   // returns normally, so a blown turn budget arrives here looking exactly like
   // a cancel. Same discrimination as in `mapThrownTurnError`, and the same
@@ -1057,6 +1083,10 @@ export async function driveHostedEvalTurn(
   };
 
   const turnFailure = getHostedTurnFailure({
+    // The engine's own record when it produced one. Trace absence stays a
+    // fallback only, because a failed turn now keeps its trace — reading
+    // absence as failure would silently stop reporting them.
+    ...(turnResult.outcome ? { outcome: turnResult.outcome } : {}),
     turnTrace: turnResult.turnTrace,
     newMessageCount: newMessages.length,
   });

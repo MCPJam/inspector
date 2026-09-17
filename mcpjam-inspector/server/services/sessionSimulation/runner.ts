@@ -2078,10 +2078,31 @@ export async function drainAssistantTurn(
     onEngineError: captureEngineError,
   });
 
+  // CANCELLED FIRST, and explicitly, before the failure policy runs.
+  //
+  // `result.aborted` is now derived from the engine's own record rather than
+  // hardcoded `false` on the hosted path, so a stopped hosted turn is finally
+  // distinguishable here. It returns the INPUT history unchanged, matching the
+  // direct branch's abort contract above: a cancelled turn is not a reply the
+  // persona can react to, and it is not a failure either — somebody asked for
+  // it, and reporting it as one would record a verdict for a run the user
+  // ended. (Persisting the partial transcript is a separate decision; see the
+  // terminal-recording switch.)
+  if (result.aborted || result.outcome?.lifecycle === "cancelled") {
+    return {
+      history: args.messages,
+      turnTrace: undefined,
+      modelSource: rt.modelSource,
+    };
+  }
+
   // Share evals' failure policy: a hosted engine can return a trace after
   // a rejected request, or after a later model step failed. Neither is a
-  // successful reply for the persona to react to.
+  // successful reply for the persona to react to. The RECORD decides when the
+  // engine reported one; trace absence is only the fallback for callers
+  // without it, because a failed turn now keeps its trace.
   const turnFailure = getHostedTurnFailure({
+    ...(result.outcome ? { outcome: result.outcome } : {}),
     turnTrace: result.turnTrace,
     newMessageCount: result.newMessages.length,
   });
