@@ -464,12 +464,15 @@ export function describeAgentRefusalMessage(
   if (!message) return null;
   const codes = new Set<string>();
   collectCodes(message, codes);
-  if (codes.size === 0) {
-    // A body we could not parse: fall back to a substring read. These codes are
-    // distinctive enough that a false positive is not a real risk.
-    for (const code of [...AGENT_REFUSAL_CODES, ...AGENT_UNAVAILABLE_CODES]) {
-      if (message.includes(code)) codes.add(code);
-    }
+  // Unconditional, not a fallback for an unparseable body. `collectCodes` only
+  // records a `code` PROPERTY, so a refusal nested as plain text under some
+  // other envelope — `{"code":"RATE_LIMITED","details":"agent_turn_limit"}` —
+  // leaves a non-empty set that does not contain the code that actually
+  // matters, and gating the scan on `size === 0` would skip it and print the
+  // raw body. These codes are distinctive enough (none is an English word)
+  // that scanning always costs nothing.
+  for (const code of [...AGENT_REFUSAL_CODES, ...AGENT_UNAVAILABLE_CODES]) {
+    if (message.includes(code)) codes.add(code);
   }
   for (const code of AGENT_UNAVAILABLE_CODES) {
     if (codes.has(code)) return "Ask MCPJam is temporarily unavailable.";

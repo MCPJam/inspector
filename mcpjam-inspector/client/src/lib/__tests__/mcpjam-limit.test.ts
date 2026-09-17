@@ -564,6 +564,26 @@ describe("Ask MCPJam refusals", () => {
     },
   );
 
+  it("finds a refusal nested as plain text under another code", () => {
+    // `collectCodes` only records a `code` PROPERTY, so this payload yields
+    // {RATE_LIMITED} — non-empty, but without the code that decides the copy.
+    // Gating the substring scan on an empty set would skip it here and print
+    // the raw body at the user.
+    expect(
+      describeAgentRefusalMessage(
+        JSON.stringify({ code: "RATE_LIMITED", details: "agent_turn_limit" }),
+      ),
+    ).toBe("Ask MCPJam has reached today's limit. It resets at 00:00 UTC.");
+    expect(
+      describeAgentRefusalMessage(
+        JSON.stringify({
+          code: "UPSTREAM",
+          details: { note: "agent_billing_rejected" },
+        }),
+      ),
+    ).toBe("Ask MCPJam is temporarily unavailable.");
+  });
+
   it("reads the code out of a body that is not JSON at all", () => {
     // The AI SDK folds a pre-stream refusal into `new Error(await res.text())`,
     // and a proxy can mangle that text on the way. A distinctive code in a

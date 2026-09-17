@@ -86,13 +86,20 @@ export function buildExaWebSearchTool(
         return { error: "Web search is not configured." };
       }
       // Only ever sent with the claim below: the claim is meaningless without
-      // it, and Convex refuses a bare one. A missing token here degrades to a
-      // customer-paid search rather than failing the tool call — unlike the
-      // model turn, a search the model can retry is not worth breaking the
-      // answer over.
+      // it, and Convex refuses a bare one.
       const serviceToken = opts.billingFeature
         ? process.env.INSPECTOR_SERVICE_TOKEN?.trim()
         : undefined;
+      // FAIL CLOSED. Sending the search without the token would not "degrade
+      // gracefully" — it would go through as an ordinary CUSTOMER-PAID search
+      // and quietly bill a signed-in user's organization for a feature the
+      // product calls free. That is the single outcome this whole change
+      // exists to prevent, and it is what the backend refuses by design
+      // rather than demoting to the customer's wallet. A missing token is a
+      // misconfigured deployment; the honest answer is to say so.
+      if (opts.billingFeature && !serviceToken) {
+        return { error: "Web search is temporarily unavailable." };
+      }
       try {
         const res = await fetch(`${convexUrl}/tools/exa/search`, {
           method: "POST",

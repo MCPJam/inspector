@@ -103,6 +103,7 @@ import { runUnifiedAssistantTurn } from "../../utils/turn-execution.js";
 import { capForModel, toToolError } from "../../utils/built-in-tools/mcpjam.js";
 import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 import {
+  AGENT_MAX_STEPS,
   MCPJAM_AGENT_BILLING_FEATURE,
   MCPJAM_AGENT_MODEL_DEFINITION,
 } from "../../../shared/mcpjam-agent-model.js";
@@ -966,7 +967,6 @@ const MAX_MESSAGE_BYTES = 8_192;
  * smaller envelope since every byte is resent each turn and billed.
  */
 const MAX_TOTAL_MESSAGE_BYTES = 98_304; // 96 KB
-const MAX_STEPS = 16;
 const TURN_WALL_CLOCK_MS = 90_000;
 /** In-process per-org concurrent-turn cap (same shape as evals' run cap). */
 const MAX_CONCURRENT_TURNS_PER_ORG = 4;
@@ -1557,7 +1557,12 @@ agent.post("/projects/:projectId/agent", async (c) => {
       authContext: { kind: "user_bearer", token: authHeader },
       sourceType: "direct",
       origin: "mcpjam_agent",
-      maxSteps: MAX_STEPS,
+      // The SHARED ceiling, not a local 16. Now that this route sends the
+      // billing claim, the backend refuses any step at or past
+      // `AGENT_MAX_STEPS` — so a local copy that drifted upward would not buy
+      // a longer answer, it would earn `agent_billing_rejected` in the middle
+      // of one.
+      maxSteps: AGENT_MAX_STEPS,
       ...(durable
         ? {
             yieldAfterStep: true,
