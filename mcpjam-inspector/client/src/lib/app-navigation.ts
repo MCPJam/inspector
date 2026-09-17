@@ -542,7 +542,12 @@ export function buildEvaluatePath(route: EvalRoute): string {
 
 /** Old case bookmarks open Ding Dong without dropping subtab or project context. */
 export function legacyEvalCasePathToEvaluatePath(pathname: string, search = "", hash = ""): string {
-  return `${pathname.replace(/^\/evals(?:\/runs)?(?=\/suite\/[^/]+\/test\/[^/]+(?:\/edit)?$)/, routePaths.evaluate)}${search}${hash}`;
+  const rewritten = pathname.replace(
+    /^\/evals(?:\/runs)?\/suite\/([^/]+)\/test\/([^/]+)(\/edit)?\/*$/i,
+    (_, suiteId, testId, edit) =>
+      `${routePaths.evaluate}/suite/${suiteId}/test/${testId}${edit ? "/edit" : ""}`,
+  );
+  return `${rewritten}${search}${hash}`;
 }
 
 /**
