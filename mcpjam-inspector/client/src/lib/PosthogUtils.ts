@@ -82,6 +82,9 @@ export function scrubSensitiveUrl(value: string): string {
     const escaped = prefix.replace(/[/\-\\^$*+?.()|[\]{}]/g, "\\$&");
     out = out.replace(new RegExp(`(${escaped})[^/?#]+`, "g"), "$1[redacted]");
   }
+  // Organization ids are internal identifiers and organization routes are
+  // captured automatically by PostHog on otherwise privacy-safe events.
+  out = out.replace(/(\/organizations\/)[^/?#]+/g, "$1[redacted]");
   return out;
 }
 

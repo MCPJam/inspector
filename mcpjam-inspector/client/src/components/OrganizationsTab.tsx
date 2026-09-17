@@ -693,26 +693,26 @@ function OrganizationPage({
     section === "data-management"
       ? section
       : section === "models"
-      ? "models"
-      : section === "billing"
-      ? "billing"
-      : // Flag OFF collapses the Slack section back to the overview rather
-      // than rendering an empty page: a user who kept the URL from a
-      // flagged-in session should land somewhere real.
-      section === "slack" && slackAgentSettingsEnabled
-      ? "slack"
-      : // Same collapse for Discord, and it matters more here: the agent is
-      // dark, so nearly everyone hitting this URL is flagged OFF.
-      section === "discord" && discordAgentEnabled
-      ? "discord"
-      : // Same collapse again for Observability.
-      section === "observability" && traceDestinationsEnabled
-      ? "observability"
-      : section === "members" || section === "sharing"
-      ? "members"
-      : section === "audit-log"
-      ? section
-      : "overview";
+        ? "models"
+        : section === "billing"
+          ? "billing"
+          : // Flag OFF collapses the Slack section back to the overview rather
+            // than rendering an empty page: a user who kept the URL from a
+            // flagged-in session should land somewhere real.
+            section === "slack" && slackAgentSettingsEnabled
+            ? "slack"
+            : // Same collapse for Discord, and it matters more here: the agent is
+              // dark, so nearly everyone hitting this URL is flagged OFF.
+              section === "discord" && discordAgentEnabled
+              ? "discord"
+              : // Same collapse again for Observability.
+                section === "observability" && traceDestinationsEnabled
+                ? "observability"
+                : section === "members" || section === "sharing"
+                  ? "members"
+                  : section === "audit-log"
+                    ? section
+                    : "overview";
   const sharedBillingSource =
     activeSection === "plans" ? "plans_page" : "billing_page";
   // The sub-tab lives in `?tab=` — views of one settings section, not separate
@@ -744,8 +744,8 @@ function OrganizationPage({
       source: checkoutIntent
         ? "pricing_deep_link"
         : activeSection === "plans"
-        ? "plans_page"
-        : "billing_page",
+          ? "plans_page"
+          : "billing_page",
       current_plan: billingStatus.plan,
       effective_plan: billingStatus.effectivePlan ?? billingStatus.plan,
       can_manage_billing: billingStatus.canManageBilling,
@@ -1025,17 +1025,21 @@ function OrganizationPage({
           } added to the organization.`,
         );
       } else {
+        const canceled =
+          result?.status === "noop" &&
+          result.reason === "seat_payment_canceled";
         track("billing_flow_failed", {
           location: seatPaymentLocation(surface),
           flow: "seat_payment_retry",
           source: surface,
-          failure_kind:
-            result?.status === "noop" &&
-            result.reason === "seat_payment_canceled"
-              ? "canceled"
-              : "no_payment_pending",
+          failure_kind: canceled ? "canceled" : "no_payment_pending",
           current_plan: billingStatus?.plan ?? "unknown",
         });
+        toast.error(
+          canceled
+            ? "This seat payment was canceled. Add the member again to restart payment."
+            : "This seat payment can no longer be retried. Try adding the member again.",
+        );
       }
     } catch (error) {
       track("billing_flow_failed", {
@@ -1283,17 +1287,29 @@ function OrganizationPage({
   };
   const handleViewBilling = () => navigateToSection("billing");
 
+  const reserveBillingTab = useCallback((): Window | null => {
+    const reserved = window.open("", "_blank");
+    if (reserved) reserved.opener = null;
+    return reserved;
+  }, []);
+
   const openBillingUrl = useCallback(
-    (url: string, navigation: "new-tab" | "same-tab" = "new-tab") => {
+    (
+      url: string,
+      navigation: "new-tab" | "same-tab" = "new-tab",
+      reservedTab: Window | null = null,
+    ): boolean => {
       if (navigation === "same-tab") {
         (
           navigateBillingInSameTab ??
           ((nextUrl: string) => window.location.assign(nextUrl))
         )(url);
-        return;
+        return true;
       }
 
-      window.open(url, "_blank", "noopener,noreferrer");
+      if (!reservedTab) return false;
+      reservedTab.location.href = url;
+      return true;
     },
     [navigateBillingInSameTab],
   );
@@ -1308,6 +1324,7 @@ function OrganizationPage({
   );
 
   const handleManageBilling = async () => {
+    const reservedTab = reserveBillingTab();
     track("billing_flow_started", {
       location: "organization_billing",
       flow: "manage_billing",
@@ -1316,6 +1333,9 @@ function OrganizationPage({
     });
     try {
       const billingUrl = await openPortal(getBillingReturnUrl());
+      if (!openBillingUrl(billingUrl, "new-tab", reservedTab)) {
+        throw new Error("Billing portal popup was blocked");
+      }
       track("billing_flow_succeeded", {
         location: "organization_billing",
         flow: "manage_billing",
@@ -1323,8 +1343,8 @@ function OrganizationPage({
         outcome: "portal_handoff",
         current_plan: billingStatus?.plan ?? "unknown",
       });
-      openBillingUrl(billingUrl);
     } catch (error) {
+      reservedTab?.close();
       track("billing_flow_failed", {
         location: "organization_billing",
         flow: "manage_billing",
@@ -1343,6 +1363,7 @@ function OrganizationPage({
   const handleChangeBillingInterval = async (
     targetBillingInterval: BillingInterval,
   ) => {
+    const reservedTab = reserveBillingTab();
     track("billing_flow_started", {
       location: "organization_billing",
       flow: "change_interval",
@@ -1355,6 +1376,9 @@ function OrganizationPage({
         getBillingReturnUrl(),
         targetBillingInterval,
       );
+      if (!openBillingUrl(billingUrl, "new-tab", reservedTab)) {
+        throw new Error("Billing portal popup was blocked");
+      }
       track("billing_flow_succeeded", {
         location: "organization_billing",
         flow: "change_interval",
@@ -1363,8 +1387,8 @@ function OrganizationPage({
         current_plan: billingStatus?.plan ?? "unknown",
         target_interval: targetBillingInterval,
       });
-      openBillingUrl(billingUrl);
     } catch (error) {
+      reservedTab?.close();
       track("billing_flow_failed", {
         location: "organization_billing",
         flow: "change_interval",
@@ -1453,6 +1477,7 @@ function OrganizationPage({
 
   const handleConfirmDowngrade = async () => {
     if (!pendingDowngradeConfirmation) return;
+    const reservedTab = reserveBillingTab();
 
     track("billing_flow_started", {
       location: "organization_billing",
@@ -1465,6 +1490,9 @@ function OrganizationPage({
       // Only path is targetPlan === "free": send the user to the Stripe
       // cancellation portal. Paid-tier downgrades no longer exist.
       const billingUrl = await openCancellationPortal(getBillingReturnUrl());
+      if (!openBillingUrl(billingUrl, "new-tab", reservedTab)) {
+        throw new Error("Billing portal popup was blocked");
+      }
       track("billing_flow_succeeded", {
         location: "organization_billing",
         flow: "cancel_subscription",
@@ -1473,9 +1501,9 @@ function OrganizationPage({
         current_plan: billingStatus?.plan ?? "unknown",
         target_plan: "free",
       });
-      openBillingUrl(billingUrl);
       setPendingDowngradeConfirmation(null);
     } catch (error) {
+      reservedTab?.close();
       track("billing_flow_failed", {
         location: "organization_billing",
         flow: "cancel_subscription",
@@ -1496,6 +1524,8 @@ function OrganizationPage({
     options: CheckoutNavigationOptions = {},
   ) => {
     const source = options.source ?? "billing_page";
+    const navigation = options.navigation ?? "new-tab";
+    const reservedTab = navigation === "new-tab" ? reserveBillingTab() : null;
     track("billing_flow_started", {
       location: "organization_billing",
       flow: "plan_change",
@@ -1513,6 +1543,7 @@ function OrganizationPage({
       );
 
       if (result.kind === "updated") {
+        reservedTab?.close();
         track("billing_flow_succeeded", {
           location: "organization_billing",
           flow: "plan_change",
@@ -1531,6 +1562,7 @@ function OrganizationPage({
       }
 
       if (result.kind === "scheduled") {
+        reservedTab?.close();
         track("billing_flow_succeeded", {
           location: "organization_billing",
           flow: "plan_change",
@@ -1546,6 +1578,10 @@ function OrganizationPage({
 
       const billingUrl =
         result.kind === "checkout" ? result.checkoutUrl : result.portalUrl;
+      options.onBeforeNavigate?.();
+      if (!openBillingUrl(billingUrl, navigation, reservedTab)) {
+        throw new Error("Billing popup was blocked");
+      }
       track("billing_flow_succeeded", {
         location: "organization_billing",
         flow: "plan_change",
@@ -1556,9 +1592,8 @@ function OrganizationPage({
         target_plan: tier,
         target_interval: billingInterval,
       });
-      options.onBeforeNavigate?.();
-      openBillingUrl(billingUrl, options.navigation);
     } catch (error) {
+      reservedTab?.close();
       track("billing_flow_failed", {
         location: "organization_billing",
         flow: "plan_change",
@@ -1650,6 +1685,8 @@ function OrganizationPage({
 
         const billingUrl =
           result.kind === "checkout" ? result.checkoutUrl : result.portalUrl;
+        onCheckoutIntentNavigationStarted?.();
+        openBillingUrl(billingUrl, "same-tab");
         track("billing_flow_succeeded", {
           location: "organization_billing",
           flow: "plan_change",
@@ -1660,8 +1697,6 @@ function OrganizationPage({
           target_plan: tier,
           target_interval: billingInterval,
         });
-        onCheckoutIntentNavigationStarted?.();
-        openBillingUrl(billingUrl, "same-tab");
       } catch (error) {
         track("billing_flow_failed", {
           location: "organization_billing",
@@ -1676,12 +1711,10 @@ function OrganizationPage({
           target_plan: tier,
           target_interval: billingInterval,
         });
-        if (
-          !(
-            error instanceof Error &&
-            error.message === PAID_PLAN_CHANGE_CONFIRMATION_REQUIRED_MESSAGE
-          )
-        ) {
+        if (!(
+          error instanceof Error &&
+          error.message === PAID_PLAN_CHANGE_CONFIRMATION_REQUIRED_MESSAGE
+        )) {
           toast.error(
             error instanceof Error ? error.message : "Failed to change plan",
           );
@@ -2256,8 +2289,8 @@ function OrganizationPage({
               {isRemovingMember
                 ? "Removing…"
                 : memberToRemove?.pending
-                ? "Cancel invitation"
-                : "Remove member"}
+                  ? "Cancel invitation"
+                  : "Remove member"}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -2333,8 +2366,8 @@ function OrganizationPage({
             >
               {isCancelingScheduledBillingChange
                 ? "Saving..."
-                : scheduledBillingChangeCancellation?.confirmLabel ??
-                  "Keep current plan"}
+                : (scheduledBillingChangeCancellation?.confirmLabel ??
+                  "Keep current plan")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -2399,8 +2432,8 @@ function OrganizationPage({
               {isStartingPlanChange || isOpeningPortal
                 ? "Saving..."
                 : pendingDowngradeConfirmation?.targetPlan === "free"
-                ? "Open cancellation flow"
-                : "Schedule downgrade"}
+                  ? "Open cancellation flow"
+                  : "Schedule downgrade"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

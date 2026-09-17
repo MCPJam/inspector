@@ -14,6 +14,7 @@ const {
   startMock,
   upgradeState,
   billingState,
+  useOrganizationBillingMock,
   recipientsState,
   authState,
 } = vi.hoisted(() => ({
@@ -35,6 +36,7 @@ const {
     },
   },
   billingState: { plan: "free" as string, isLoading: false },
+  useOrganizationBillingMock: vi.fn(),
   authState: { userId: "user-1" as string | null },
 }));
 
@@ -52,9 +54,8 @@ vi.mock("@/lib/toast", () => ({
 vi.mock("@/lib/analytics", () => ({ track: trackMock }));
 
 vi.mock("@/hooks/use-upgrade-checkout", async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import("@/hooks/use-upgrade-checkout")
-  >();
+  const actual =
+    await importOriginal<typeof import("@/hooks/use-upgrade-checkout")>();
   return {
     ...actual,
     useUpgradeCheckout: () => ({
@@ -81,13 +82,8 @@ vi.mock("@/hooks/use-upgrade-checkout", async (importOriginal) => {
 });
 
 vi.mock("@/hooks/useOrganizationBilling", () => ({
-  useOrganizationBilling: () => ({
-    billingStatus: billingState.isLoading
-      ? undefined
-      : { plan: billingState.plan, billingInterval: "annual" },
-    planCatalog: { plans: { team: { displayName: "Team" } } },
-    isLoadingBilling: billingState.isLoading,
-  }),
+  useOrganizationBilling: (...args: unknown[]) =>
+    useOrganizationBillingMock(...args),
 }));
 
 vi.mock("@/hooks/use-upgrade-request-recipients", () => ({
@@ -125,6 +121,14 @@ beforeEach(() => {
   recipientsState.current = { recipients: [], isLoading: false };
   billingState.plan = "free";
   billingState.isLoading = false;
+  useOrganizationBillingMock.mockReset();
+  useOrganizationBillingMock.mockImplementation(() => ({
+    billingStatus: billingState.isLoading
+      ? undefined
+      : { plan: billingState.plan, billingInterval: "annual" },
+    planCatalog: { plans: { team: { displayName: "Team" } } },
+    isLoadingBilling: billingState.isLoading,
+  }));
   authState.userId = "user-1";
   window.history.replaceState(null, "", "/evals");
   window.sessionStorage.clear();
@@ -146,16 +150,22 @@ function arriveFromCheckout(
 }
 
 describe("PlanLimitDialog", () => {
-  it.each(["free", "pro", "team"])("suppresses the legacy wall for V2 %s", (plan) => {
-    upgradeState.pricingVersion = "v2";
-    upgradeState.effectivePlan = plan;
-    openEvalLimit();
-    render(<PlanLimitDialog />);
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(usePlanLimitDialogStore.getState().isOpen).toBe(false);
-    expect(trackMock).not.toHaveBeenCalledWith("plan_limit_dialog_shown", expect.anything());
-    expect(startMock).not.toHaveBeenCalled();
-  });
+  it.each(["free", "pro", "team"])(
+    "suppresses the legacy wall for V2 %s",
+    (plan) => {
+      upgradeState.pricingVersion = "v2";
+      upgradeState.effectivePlan = plan;
+      openEvalLimit();
+      render(<PlanLimitDialog />);
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(usePlanLimitDialogStore.getState().isOpen).toBe(false);
+      expect(trackMock).not.toHaveBeenCalledWith(
+        "plan_limit_dialog_shown",
+        expect.anything(),
+      );
+      expect(startMock).not.toHaveBeenCalled();
+    },
+  );
   it("does not flash the legacy upsell while V2 billing resolves", () => {
     upgradeState.isLoadingBilling = true;
     upgradeState.pricingVersion = undefined;
@@ -745,7 +755,7 @@ describe("PlanLimitDialog", () => {
       expect(window.location.search).toBe("");
     });
 
-    it("does not leak the ticket or URL organization into analytics", async () => {
+    it("uses the ticket organization and does not leak it into analytics", async () => {
       // A tampered or stale `upgrade_org` must not redirect the confirmation:
       // the ticket records the org THIS tab actually started checkout for, and
       // that is the only one we report on.
@@ -768,6 +778,8 @@ describe("PlanLimitDialog", () => {
         ([event]) => event === "plan_limit_upgrade_returned",
       );
       expect(returned?.[1]).not.toHaveProperty("organization_id");
+      expect(useOrganizationBillingMock).toHaveBeenCalledWith("org-1");
+      expect(useOrganizationBillingMock).not.toHaveBeenCalledWith("org-2");
     });
 
     it("uses credit wording when the user came from the credits wall", async () => {
