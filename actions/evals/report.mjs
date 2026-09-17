@@ -322,7 +322,9 @@ function renderBundle(bundle, full, outcome) {
   // The run names the client it executed: a saved MCPJam client, or the
   // synthetic "SDK harness" when the test code owned the model. `environment`
   // is a project environment, not a client, and is the weaker label of the two.
-  const client = bundle.run.client?.name ?? bundle.run.environment?.name;
+  // Truthiness, not nullish: an empty name is no name, and must not shadow the
+  // environment the run does carry.
+  const client = bundle.run.client?.name || bundle.run.environment?.name;
   const variantRows = variants.map((variant) => {
     const rows = cases.filter((row) => variantKey(row.provider, row.model) === variant.key);
     const passedCases = rows.filter((row) => row.verdict === "passed").length;
