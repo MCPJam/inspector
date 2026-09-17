@@ -228,11 +228,18 @@ describe("canonical swarm report", () => {
 });
 
 it("encodes target identity without collisions in the eval case-id alphabet", () => {
-  const ids = ["host:h1", "environment:e1:host:h1", "environment:e2:host:h1", "host:é"];
+  const ids = [
+    "host:h1",
+    "environment:e1:host:h1",
+    "environment:e2:host:h1",
+    "host:é",
+  ];
   const encoded = ids.map(swarmTargetCaseId);
   expect(new Set(encoded).size).toBe(ids.length);
   for (let i = 0; i < ids.length; i++) {
     expect(encoded[i]).toMatch(/^[A-Za-z0-9_-]{1,128}$/);
-    expect(Buffer.from(encoded[i].slice(7), "base64url").toString("utf8")).toBe(ids[i]);
+    expect(Buffer.from(encoded[i].slice(7), "base64url").toString("utf8")).toBe(
+      ids[i]
+    );
   }
 });

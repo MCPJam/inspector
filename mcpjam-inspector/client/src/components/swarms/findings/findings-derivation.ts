@@ -1,5 +1,3 @@
-import { observationLabel } from "../swarm-verdict-presentation";
-import type { ChatSessionStageFunnel } from "@/components/shared/user-value-chain/user-value-chain-types";
 /**
  * Pure derivation of the Findings tab model — personas → goals → 6-stage
  * tones + evidence — from data the swarm detail page ALREADY holds. No
@@ -11,6 +9,8 @@ import type { ChatSessionStageFunnel } from "@/components/shared/user-value-chai
  * evidence landed on it (all sessions launched, every graded session
  * passed). Silence renders as "none" — the legend says "do not infer pass".
  */
+import { observationLabel } from "../swarm-verdict-presentation";
+import type { ChatSessionStageFunnel } from "@/components/shared/user-value-chain/user-value-chain-types";
 
 import type {
   SwarmOverviewRun,
@@ -218,9 +218,7 @@ export function waveLaunchTotals(
 
 /** A settled run whose every session failed to launch — the goal never ran. */
 function runNeverLaunched(run: SwarmOverviewRun): boolean {
-  return (
-    runIsTerminal(run) && run.report?.execution.neverLaunched === true
-  );
+  return runIsTerminal(run) && run.report?.execution.neverLaunched === true;
 }
 
 /** The launch-outcome caveat every connection row carries, verbatim. */
@@ -265,7 +263,9 @@ function rubricEvidence(run: SwarmOverviewRun): StageEvidence[] {
 
 function judgeEvidence(run: SwarmOverviewRun): StageEvidence | null {
   const g = run.report?.goalGrading;
-  const rollup = g ? { gradedCount: g.passed + g.failed, passedCount: g.passed } : run.goalScoreSummary;
+  const rollup = g
+    ? { gradedCount: g.passed + g.failed, passedCount: g.passed }
+    : run.goalScoreSummary;
   // A zero graded count contributes NOTHING — absent is unknown, never ok.
   if (!rollup || rollup.gradedCount <= 0) return null;
   const { gradedCount, passedCount } = rollup;
@@ -534,15 +534,31 @@ export function deriveSwarmFindingsModel(args: {
         });
       }
     } else {
-      stages.value.push(...rubricEvidence(run).map((e) => ({ ...e, meta: `${e.meta} · Legacy evidence; chain unmeasured` })));
+      stages.value.push(
+        ...rubricEvidence(run).map((e) => ({
+          ...e,
+          meta: `${e.meta} · Legacy evidence; chain unmeasured`,
+        })),
+      );
       const judge = judgeEvidence(run);
-      if (judge) stages.value.push({ ...judge, meta: `${judge.meta} · Chain unmeasured` });
+      if (judge)
+        stages.value.push({
+          ...judge,
+          meta: `${judge.meta} · Chain unmeasured`,
+        });
     }
     for (const observation of run.report?.observations ?? []) {
       if (observation.role !== "advisory" || observation.failed === 0) continue;
       stages[JOURNEY_STAGE_BY_CHAIN[observation.stage]].push({
-        tone: "warn", observation: `${observationLabel(observation.predicateType)}: ${observation.failed} sessions with advisory friction`,
-        meta: `${observation.passed + observation.failed}/${observation.total} measured · ${observation.unavailable} unavailable; does not change the goal result`,
+        tone: "warn",
+        observation: `${observationLabel(observation.predicateType)}: ${
+          observation.failed
+        } sessions with advisory friction`,
+        meta: `${observation.passed + observation.failed}/${
+          observation.total
+        } measured · ${
+          observation.unavailable
+        } unavailable; does not change the goal result`,
       });
     }
   }
@@ -649,7 +665,9 @@ export function deriveSwarmFindingsModel(args: {
 
   return {
     personas: personaModels,
-    neverLaunched: runs.length > 0 && runs.every((r) => r.report?.execution.neverLaunched === true),
+    neverLaunched:
+      runs.length > 0 &&
+      runs.every((r) => r.report?.execution.neverLaunched === true),
     launch,
     sessionCount: signals?.sessionCount ?? launch.total,
     defaultPersonaIndex,

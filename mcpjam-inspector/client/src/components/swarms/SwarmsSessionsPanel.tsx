@@ -424,20 +424,20 @@ export function SwarmsSessionsPanel({
                     <SwarmSessionReport session={selectedRow} />
                   </div>
                   <div className="min-h-0 flex-1">
-                <ShareUsageThreadDetail
-                  threadId={selectedThreadId}
-                  sessionLink={sessionLink}
-                  promote={
-                    selectedRow?.projectId
-                      ? {
-                          projectId: selectedRow.projectId,
-                          // The Swarms route is gated at project member
-                          // (canViewSwarms), so being here is the check.
-                          canPromote: true,
-                        }
-                      : undefined
-                  }
-                />
+                    <ShareUsageThreadDetail
+                      threadId={selectedThreadId}
+                      sessionLink={sessionLink}
+                      promote={
+                        selectedRow?.projectId
+                          ? {
+                              projectId: selectedRow.projectId,
+                              // The Swarms route is gated at project member
+                              // (canViewSwarms), so being here is the check.
+                              canPromote: true,
+                            }
+                          : undefined
+                      }
+                    />
                   </div>
                 </div>
               ) : (

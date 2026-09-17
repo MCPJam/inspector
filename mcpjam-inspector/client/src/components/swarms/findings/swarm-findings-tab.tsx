@@ -1,8 +1,3 @@
-import { useQuery } from "convex/react";
-import { useEffect, useCallback } from "react";
-import { ErrorBoundary } from "@/components/ui/error-boundary";
-import type { ChatSessionStageFunnel } from "@/components/shared/user-value-chain/user-value-chain-types";
-import { SwarmReportPanel } from "../swarm-report-panel";
 /**
  * The Findings tab on `/swarms/:swarmId` — the persona-journey narrative over
  * the wave. The model derives from the `wave`, `waveSignals`, and `personas`
@@ -26,6 +21,11 @@ import { SwarmReportPanel } from "../swarm-report-panel";
  * suppressed entirely on a wave that failed to launch: there is no session for
  * a model to have read, and it will cheerfully report that nothing is wrong.
  */
+import { useQuery } from "convex/react";
+import { useEffect, useCallback } from "react";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
+import type { ChatSessionStageFunnel } from "@/components/shared/user-value-chain/user-value-chain-types";
+import { SwarmReportPanel } from "../swarm-report-panel";
 
 import { useMemo, useState } from "react";
 import type { SwarmWaveSignals } from "@/lib/swarm-api";
@@ -62,10 +62,17 @@ export function SwarmFindingsTab({
   /** Lane A's completed wave narration, else null. Never requested here. */
   generatedSummary?: string | null;
 }) {
-  const [funnels, setFunnels] = useState<Record<string, ChatSessionStageFunnel | null>>({});
-  const receiveFunnel = useCallback((id: string, funnel: ChatSessionStageFunnel | null) => {
-    setFunnels((old) => old[id] === funnel ? old : { ...old, [id]: funnel });
-  }, []);
+  const [funnels, setFunnels] = useState<
+    Record<string, ChatSessionStageFunnel | null>
+  >({});
+  const receiveFunnel = useCallback(
+    (id: string, funnel: ChatSessionStageFunnel | null) => {
+      setFunnels((old) =>
+        old[id] === funnel ? old : { ...old, [id]: funnel },
+      );
+    },
+    [],
+  );
   const model = useMemo(
     () =>
       deriveSwarmFindingsModel({
@@ -153,7 +160,6 @@ export function SwarmFindingsTab({
         className="flex h-full items-center justify-center text-sm text-muted-foreground"
         data-testid="findings-empty"
       >
-
         No sessions in this swarm run.
       </div>
     );
@@ -161,8 +167,24 @@ export function SwarmFindingsTab({
 
   return (
     <div className="w-full" data-testid="swarm-findings-tab">
-      <ErrorBoundary fallback={null}>{wave.runs.map((run) => <RunFunnelRead key={run.runId} runId={run.runId} onRead={receiveFunnel} />)}</ErrorBoundary>
-      <div className="space-y-2">{wave.runs.map((run) => <SwarmReportPanel key={run.runId} report={run.report} title={`${run.personaName} · ${run.journeyName ?? "Goal"}`} />)}</div>
+      <ErrorBoundary fallback={null}>
+        {wave.runs.map((run) => (
+          <RunFunnelRead
+            key={run.runId}
+            runId={run.runId}
+            onRead={receiveFunnel}
+          />
+        ))}
+      </ErrorBoundary>
+      <div className="space-y-2">
+        {wave.runs.map((run) => (
+          <SwarmReportPanel
+            key={run.runId}
+            report={run.report}
+            title={`${run.personaName} · ${run.journeyName ?? "Goal"}`}
+          />
+        ))}
+      </div>
       <FindingsSummaryCard
         sessionCount={model.sessionCount}
         summary={summary.lines}
@@ -205,8 +227,19 @@ export function SwarmFindingsTab({
   );
 }
 
-function RunFunnelRead({ runId, onRead }: { runId: string; onRead: (id: string, value: ChatSessionStageFunnel | null) => void }) {
-  const value = useQuery("chatSessionStageDerivation:getSwarmRunStageFunnel" as never, { journeyRunId: runId } as never) as ChatSessionStageFunnel | null | undefined;
-  useEffect(() => { if (value !== undefined) onRead(runId, value); }, [runId, value, onRead]);
+function RunFunnelRead({
+  runId,
+  onRead,
+}: {
+  runId: string;
+  onRead: (id: string, value: ChatSessionStageFunnel | null) => void;
+}) {
+  const value = useQuery(
+    "chatSessionStageDerivation:getSwarmRunStageFunnel" as never,
+    { journeyRunId: runId } as never,
+  ) as ChatSessionStageFunnel | null | undefined;
+  useEffect(() => {
+    if (value !== undefined) onRead(runId, value);
+  }, [runId, value, onRead]);
   return null;
 }

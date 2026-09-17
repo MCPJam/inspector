@@ -18,9 +18,7 @@ export function SwarmGoalResult({
 }) {
   const badge = verdictBadge(verdict);
   return (
-    <span className={`text-xs ${badge.tone}`}>
-      Goal result: {badge.label}
-    </span>
+    <span className={`text-xs ${badge.tone}`}>Goal result: {badge.label}</span>
   );
 }
 function SessionChainQuery({ sessionId }: { sessionId: string }) {
@@ -49,7 +47,13 @@ export function SwarmSessionChain({ sessionId }: { sessionId?: string }) {
     </ErrorBoundary>
   );
 }
-export function SwarmReportPanel({ report, title }: { report?: SwarmReport; title?: string }) {
+export function SwarmReportPanel({
+  report,
+  title,
+}: {
+  report?: SwarmReport;
+  title?: string;
+}) {
   if (!report)
     return (
       <p className="text-xs text-muted-foreground">
@@ -70,8 +74,8 @@ export function SwarmReportPanel({ report, title }: { report?: SwarmReport; titl
         {report.undecidedReason === "gradingPending"
           ? "Grading"
           : report.undecidedReason === "executionPending"
-          ? "Running"
-          : badge.label}
+            ? "Running"
+            : badge.label}
       </p>
       <p className="text-xs text-muted-foreground">
         Execution: {e.started}/{e.configured} sessions started · {e.completed}{" "}
@@ -83,9 +87,16 @@ export function SwarmReportPanel({ report, title }: { report?: SwarmReport; titl
         pending · {g.unavailable} unavailable · {g.notRequested} not requested
       </p>
       <p className="text-xs text-muted-foreground">
-        Each target requires all graded sessions to pass, with sufficient
-        execution and grading coverage. Interrupted executions remain excluded
-        even when their goal was met.
+        {report.decision
+          ? `Target pass thresholds: ${[
+              ...new Set(
+                report.decision.cases.map(
+                  (c) => `${Math.round(c.effectivePassThreshold * 100)}%`,
+                ),
+              ),
+            ].join(", ")}. `
+          : "Pass threshold unavailable. "}
+        Interrupted executions remain excluded even when their goal was met.
       </p>
       {report.observations.length > 0 && (
         <div className="space-y-1">
@@ -135,10 +146,10 @@ export function SwarmSessionReport({
           {o.status === "unavailable"
             ? "Not measured"
             : o.status === "failed"
-            ? "Finding"
-            : o.status === "pending"
-            ? "Checking"
-            : "Passed"}
+              ? "Finding"
+              : o.status === "pending"
+                ? "Checking"
+                : "Passed"}
         </p>
       ))}
       <details>

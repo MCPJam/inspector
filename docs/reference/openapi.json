@@ -25758,10 +25758,6 @@
           "updatedAt"
         ],
         "properties": {
-          "setupWrites": {
-            "type": "boolean",
-            "description": "Whether prerequisite setup may write to the target before measured sessions begin."
-          },
           "id": {
             "type": "string"
           },
@@ -25965,10 +25961,6 @@
           "updatedAt"
         ],
         "properties": {
-          "setupWrites": {
-            "type": "boolean",
-            "description": "Whether prerequisite setup may write to the target before measured sessions begin."
-          },
           "id": {
             "type": "string"
           },

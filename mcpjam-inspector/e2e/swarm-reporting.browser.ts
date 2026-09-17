@@ -17,7 +17,7 @@ test("execution, grading, observations and partial chains remain distinct in the
   for (const [button, result] of [
     ["Goal failed", "Failed"],
     ["Grading", "Grading"],
-    ["Could not grade", "Couldn't grade"],
+    ["Could not grade", "Inconclusive"],
     ["Not graded", "Not graded"],
     ["Recovered tool error", "Passed"],
   ]) {

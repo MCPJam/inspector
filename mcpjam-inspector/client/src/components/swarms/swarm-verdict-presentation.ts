@@ -1,4 +1,9 @@
 import {
+  swarmVerdictLabel,
+  swarmVerdictValueLabel,
+  swarmLifecycleLabel,
+} from "@mcpjam/sdk/contract";
+import {
   PREDICATE_KIND_LABELS,
   isKnownPredicateKind,
 } from "@/shared/predicate-kinds";
@@ -14,43 +19,24 @@ const tones = {
   warning: "text-warning-foreground",
 } as const;
 export function lifecycleChip(lifecycle: SwarmSessionLifecycle) {
-  return {
-    label: (
-      {
-        pending: "Pending",
-        running: "Running",
-        ran: "Ran",
-        broke: "Broke",
-        limited: "Limited",
-        withdrawn: "Withdrawn",
-      } as const
-    )[lifecycle],
-    tone: tones.neutral,
-  };
+  return { label: swarmLifecycleLabel(lifecycle), tone: tones.neutral };
 }
 export function verdictBadge(verdict?: SwarmSessionVerdict) {
-  if (!verdict) return { label: "Not graded", tone: tones.neutral };
-  if (verdict.verdict === "notEstablished") {
-    return {
-      label: ["queued", "running"].includes(verdict.grading.state)
-        ? "Grading"
-        : verdict.grading.state === "unavailable"
-        ? "Couldn't grade"
-        : "Not graded",
-      tone: tones.neutral,
-    };
-  }
-  if (verdict.verdict === "inconclusive")
-    return { label: "Couldn't grade", tone: tones.warning };
-  return runVerdictBadge(verdict.verdict);
+  return {
+    label: swarmVerdictLabel(verdict),
+    tone: verdict ? runVerdictBadge(verdict.verdict).tone : tones.neutral,
+  };
 }
 export function runVerdictBadge(verdict: SwarmSessionVerdictValue) {
   return {
-    passed: { label: "Passed", tone: tones.positive },
-    failed: { label: "Failed", tone: tones.negative },
-    inconclusive: { label: "Inconclusive", tone: tones.warning },
-    notEstablished: { label: "Not established", tone: tones.neutral },
-  }[verdict];
+    label: swarmVerdictValueLabel(verdict),
+    tone: {
+      passed: tones.positive,
+      failed: tones.negative,
+      inconclusive: tones.warning,
+      notEstablished: tones.neutral,
+    }[verdict],
+  };
 }
 
 export function observationLabel(kind: string) {

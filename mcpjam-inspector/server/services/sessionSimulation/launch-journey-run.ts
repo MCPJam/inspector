@@ -361,7 +361,9 @@ export async function launchJourneyRun(
       // the yes/no — the criteria themselves come back from the claim, so
       // the authoritative list is always the backend's pinned copy and
       // never a value that rode along in process memory.
-      hasRubric: ((snapshot.standardCheckProfile?.criteria ?? snapshot.rubric)?.length ?? 0) > 0,
+      hasRubric:
+        ((snapshot.standardCheckProfile?.criteria ?? snapshot.rubric)?.length ??
+          0) > 0,
       convexHttpUrl,
       getBearer: deps.getRunBearer,
       // Host-aware: each host connects ONLY its own pinned required servers

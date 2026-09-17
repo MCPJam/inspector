@@ -619,7 +619,10 @@ describe("SwarmFindingsTab", () => {
     // Lane A would be describing sessions that never existed. The template's
     // own answer is the only honest one here, so it wins.
     const deadRuns = [
-      run({ report: neverStartedReport(3), summary: { total: 3, succeeded: 0, failed: 3, rateLimited: 0 } }),
+      run({
+        report: neverStartedReport(3),
+        summary: { total: 3, succeeded: 0, failed: 3, rateLimited: 0 },
+      }),
     ];
     render(
       <SwarmFindingsTab

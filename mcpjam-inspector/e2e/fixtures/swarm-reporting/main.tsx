@@ -47,41 +47,41 @@ function App() {
       state: waiting
         ? "queued"
         : unavailable
-        ? "unavailable"
-        : ungraded
-        ? "notRequested"
-        : "settled",
+          ? "unavailable"
+          : ungraded
+            ? "notRequested"
+            : "settled",
     },
   });
   const summary = waiting
     ? { status: "pending" as const, pendingSessions: 1, updatedAt: 1 }
     : ungraded
-    ? {
-        status: "notEstablished" as const,
-        reason: "gradingNotConfigured" as const,
-        updatedAt: 1,
-      }
-    : {
-        status: "decided" as const,
-        updatedAt: 1,
-        decision: evalVerdictDecisionSchema.parse(
-          JSON.parse(
-            JSON.stringify(
-              evalFixtures.accept.find(
-                (row) =>
-                  row.__kind === "decision" &&
-                  row.__label ===
-                    (broke || unavailable
-                      ? "no gradeable trials at all — inconclusive, never failed"
-                      : failed
-                      ? "all fail at threshold 0.5 — failed, not inconclusive"
-                      : "repetitions 1 — the low boundary of the portable range, single passing trial"),
+      ? {
+          status: "notEstablished" as const,
+          reason: "gradingNotConfigured" as const,
+          updatedAt: 1,
+        }
+      : {
+          status: "decided" as const,
+          updatedAt: 1,
+          decision: evalVerdictDecisionSchema.parse(
+            JSON.parse(
+              JSON.stringify(
+                evalFixtures.accept.find(
+                  (row) =>
+                    row.__kind === "decision" &&
+                    row.__label ===
+                      (broke || unavailable
+                        ? "no gradeable trials at all — inconclusive, never failed"
+                        : failed
+                          ? "all fail at threshold 0.5 — failed, not inconclusive"
+                          : "repetitions 1 — the low boundary of the portable range, single passing trial"),
+                ),
+                (key, value) => (key.startsWith("__") ? undefined : value),
               ),
-              (key, value) => (key.startsWith("__") ? undefined : value),
             ),
           ),
-        ),
-      };
+        };
   const check = {
     evaluatorId: "standard:noToolErrors",
     predicateType: "noToolErrors" as const,

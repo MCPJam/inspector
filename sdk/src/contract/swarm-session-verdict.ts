@@ -7,6 +7,8 @@ import { z } from "zod";
 import type { IterationStatus } from "./chain.js";
 
 export const SWARM_SESSION_VERDICT_CONTRACT_VERSION = 1;
+/** Swarm stage evidence semantics; old stamps must not count as current. */
+export const SWARM_STAGE_EVIDENCE_VERSION = 2;
 export const SWARM_ATTEMPT_STATUSES = [
   "pending",
   "running",
@@ -304,7 +306,8 @@ export const swarmSessionVerdictSchema = z
 export type SwarmSessionVerdict = z.infer<typeof swarmSessionVerdictSchema>;
 
 export function swarmAttemptLifecycle(
-  attempt: SwarmSessionAttemptInput | null
+  attempt: SwarmSessionAttemptInput | null,
+  hasTranscript = false
 ): SwarmSessionLifecycle {
   if (!attempt || attempt.status === "pending") return "pending";
   if (attempt.status === "running") return "running";
@@ -314,7 +317,7 @@ export function swarmAttemptLifecycle(
     ).includes(attempt.errorCode)
   )
     return "withdrawn";
-  if (attempt.status === "rate_limited") return "limited";
+  if (attempt.status === "rate_limited" && !hasTranscript) return "limited";
   return attempt.status === "succeeded" ? "ran" : "broke";
 }
 
@@ -332,7 +335,7 @@ export function deriveSwarmSessionVerdict(
   raw: SwarmSessionVerdictInput
 ): SwarmSessionVerdict {
   const input = swarmSessionVerdictInputSchema.parse(raw);
-  const lifecycle = swarmAttemptLifecycle(input.attempt);
+  const lifecycle = swarmAttemptLifecycle(input.attempt, input.hasTranscript);
   const required = input.rubric.filter((entry) => entry.role === "required");
   const results = new Map(
     input.criteria?.status === "completed"
@@ -362,35 +365,29 @@ export function deriveSwarmSessionVerdict(
   const judgeOwed =
     decisive &&
     (input.judge.automatic || input.judge.requested === true || score !== null);
-  const graders: SwarmSessionVerdict["graders"] = {
-    criteria:
-      input.rubric.length === 0
-        ? "notConfigured"
-        : !input.criteria
-          ? "notClaimed"
-          : input.criteria.status === "pending"
-            ? "pending"
-            : input.criteria.status === "failed"
-              ? "errored"
-              : input.rubric.some(
-                    (entry) =>
-                      !results.has(entry.id) ||
-                      results.get(entry.id)?.status === "error"
-                  )
-                ? "errored"
-                : "scored",
-    judge: !decisive
-      ? "silent"
-      : score?.status === "completed"
-        ? "scored"
-        : score?.status === "failed"
-          ? "errored"
-          : score?.status === "running" || (judgeOwed && waiting)
-            ? "pending"
-            : judgeOwed && input.grading.state === "unavailable"
-              ? "errored"
-              : "notConfigured",
+  const criteriaReadiness = (): SwarmSessionVerdict["graders"]["criteria"] => {
+    if (!input.rubric.length) return "notConfigured";
+    if (!input.criteria) return "notClaimed";
+    if (input.criteria.status === "pending") return "pending";
+    if (input.criteria.status === "failed") return "errored";
+    const missing = input.rubric.some(
+      (entry) =>
+        (entry.role === "required" ||
+          !input.criteria?.criterionIds ||
+          input.criteria.criterionIds.includes(entry.id)) &&
+        (!results.has(entry.id) || results.get(entry.id)?.status === "error")
+    );
+    return missing ? "errored" : "scored";
   };
+  const judgeReadiness = (): SwarmSessionVerdict["graders"]["judge"] => {
+    if (!decisive) return "silent";
+    if (score?.status === "completed") return "scored";
+    if (score?.status === "failed") return "errored";
+    if (score?.status === "running" || (judgeOwed && waiting)) return "pending";
+    if (judgeOwed && input.grading.state === "unavailable") return "errored";
+    return "notConfigured";
+  };
+  const graders = { criteria: criteriaReadiness(), judge: judgeReadiness() };
   const finish = (
     reason: SwarmSessionVerdictReason,
     source: SwarmSessionVerdict["verdictSource"] = "none"
@@ -414,12 +411,11 @@ export function deriveSwarmSessionVerdict(
         trial = { status: "failed" };
         break;
       case "ran":
-        trial =
-          verdict === "passed" || verdict === "failed"
-            ? { status: "completed", taskVerdict: verdict }
-            : verdict === "inconclusive"
-              ? { status: "completed", evaluatorError: true }
-              : null;
+        if (verdict === "passed" || verdict === "failed")
+          trial = { status: "completed", taskVerdict: verdict };
+        else if (verdict === "inconclusive")
+          trial = { status: "completed", evaluatorError: true };
+        else trial = null;
     }
     return swarmSessionVerdictSchema.parse({
       contractVersion: SWARM_SESSION_VERDICT_CONTRACT_VERSION,
@@ -442,17 +438,15 @@ export function deriveSwarmSessionVerdict(
         ? "spendCapReached"
         : "notRun"
     );
-  if (!input.hasTranscript)
-    return finish(
-      lifecycle === "ran" && (required.length > 0 || judgeOwed)
-        ? "gradingUnavailable"
-        : "executionFailed"
-    );
   // Proven failures outrank missing/pending evidence, but never alter execution.
   if (counts.gatingFailed > 0)
     return finish("gatingCriterionFailed", "requiredAssertions");
   if (decisive && score?.status === "completed" && !score.passed)
     return finish("judgeFailed", "goalJudge");
+  if (!input.hasTranscript)
+    return finish(
+      lifecycle === "ran" ? "gradingUnavailable" : "executionFailed"
+    );
   if (required.length > 0 && input.criteria?.status === "failed")
     return finish("criteriaGradingErrored");
   if (
@@ -493,4 +487,35 @@ export function deriveSwarmSessionVerdict(
   if (required.length > 0)
     return finish("allGatingCriteriaPassed", "requiredAssertions");
   return finish("ungraded");
+}
+
+/** Shared human labels for UI and CLI. Missing historical evidence is unknown. */
+export function swarmVerdictLabel(verdict?: SwarmSessionVerdict): string {
+  if (!verdict) return "Unknown";
+  if (verdict.verdict === "notEstablished") {
+    if (["queued", "running"].includes(verdict.grading.state)) return "Grading";
+    if (verdict.reason === "ungraded") return "Not graded";
+    return "Not established";
+  }
+  return swarmVerdictValueLabel(verdict.verdict);
+}
+export function swarmVerdictValueLabel(
+  value: SwarmSessionVerdictValue
+): string {
+  return {
+    passed: "Passed",
+    failed: "Failed",
+    inconclusive: "Inconclusive",
+    notEstablished: "Not established",
+  }[value];
+}
+export function swarmLifecycleLabel(value: SwarmSessionLifecycle): string {
+  return {
+    pending: "Pending",
+    running: "Running",
+    ran: "Ran",
+    broke: "Broke",
+    limited: "Limited",
+    withdrawn: "Withdrawn",
+  }[value];
 }

@@ -58,3 +58,32 @@ it("required checks pending cannot borrow a passing judge", () => {
     deriveStageResults(input).stageResults.find((r) => r.stage === "userValue")
   ).toMatchObject({ state: "notMeasured", reason: "judgePending" });
 });
+
+it.each(["failed", "completed"] as const)(
+  "a required judge failure survives broken required checks (%s)",
+  (status) => {
+    const input = buildChatSessionStageInput({
+      source: "swarm",
+      hasUserAsk: true,
+      lifecycle: "settled",
+      swarmPolicy: { judgeDecisive: true, requiredCriteria: 1 },
+      criteria: {
+        status,
+        results: [
+          {
+            criterionId: "broken",
+            passed: false,
+            status: "error",
+            predicate: { type: "responseContains", role: "required" },
+          },
+        ],
+      },
+      goalJudge: { status: "completed", passed: false },
+    });
+    expect(
+      deriveStageResults(input).stageResults.find(
+        (r) => r.stage === "userValue"
+      )
+    ).toMatchObject({ state: "failed" });
+  }
+);

@@ -1,5 +1,3 @@
-import { SwarmReportPanel } from "./swarm-report-panel";
-import { SwarmRunStageFunnelPanels } from "@/components/shared/user-value-chain/StageFunnelPanels";
 /**
  * Dedicated Swarm Run (wave) detail at `/swarms/:swarmId`.
  *
@@ -9,6 +7,8 @@ import { SwarmRunStageFunnelPanels } from "@/components/shared/user-value-chain/
  * settled. The live strip under the header is only for work in flight
  * (progress + Stop).
  */
+import { SwarmReportPanel } from "./swarm-report-panel";
+import { SwarmRunStageFunnelPanels } from "@/components/shared/user-value-chain/StageFunnelPanels";
 import { useCallback, useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { Loader2 } from "lucide-react";
@@ -771,19 +771,27 @@ export function SwarmRunDetail({
         ) : null}
         {tab === "sessions" && projectId ? (
           <>
-          <div className="space-y-2">{wave.runs.map((run) => <SwarmReportPanel key={run.runId} report={run.report} title={`${run.personaName} · ${run.journeyName ?? "Goal"}`} />)}</div>
-          <SwarmRunStageFunnelPanels journeyRunIds={runIds} />
-          <SwarmsSessionsPanel
-            projectId={projectId}
-            personas={personas}
-            hosts={hosts}
-            personaRefId={sessionsPersonaFilter}
-            onPersonaRefIdChange={setSessionsPersonaFilter}
-            initialThreadId={sessionParam}
-            runLabels={runLabels}
-            goalLabels={goalLabels}
-            journeyRunIds={runIds}
-          />
+            <div className="space-y-2">
+              {wave.runs.map((run) => (
+                <SwarmReportPanel
+                  key={run.runId}
+                  report={run.report}
+                  title={`${run.personaName} · ${run.journeyName ?? "Goal"}`}
+                />
+              ))}
+            </div>
+            <SwarmRunStageFunnelPanels journeyRunIds={runIds} />
+            <SwarmsSessionsPanel
+              projectId={projectId}
+              personas={personas}
+              hosts={hosts}
+              personaRefId={sessionsPersonaFilter}
+              onPersonaRefIdChange={setSessionsPersonaFilter}
+              initialThreadId={sessionParam}
+              runLabels={runLabels}
+              goalLabels={goalLabels}
+              journeyRunIds={runIds}
+            />
           </>
         ) : null}
         {tab === "sessions" && !projectId ? (

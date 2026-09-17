@@ -70,7 +70,10 @@ describe("runSwarmChecks", () => {
   });
 
   it("never reports a pass from an empty or incomplete transcript", async () => {
-    for (const envelope of [{ messages: [] }, { messages: [{ role: "user", content: "help" }], traceComplete: false }]) {
+    for (const envelope of [
+      { messages: [] },
+      { messages: [{ role: "user", content: "help" }], traceComplete: false },
+    ]) {
       claimSwarmChecksMock.mockResolvedValue({ ...claimResult([]), envelope });
       expect(await runSwarmChecks(ARGS)).toMatchObject({ status: "failed" });
     }
@@ -357,7 +360,10 @@ describe("runSwarmChecks", () => {
 
   it("records unavailable grading for a session with no captured conversation", async () => {
     claimSwarmChecksMock.mockResolvedValue(claimResult([]));
-    expect(await runSwarmChecks(ARGS)).toMatchObject({ status: "failed", error: "transcript envelope unreadable" });
+    expect(await runSwarmChecks(ARGS)).toMatchObject({
+      status: "failed",
+      error: "transcript envelope unreadable",
+    });
     expect(completeSwarmChecksMock).not.toHaveBeenCalled();
     expect(failSwarmChecksMock).toHaveBeenCalledOnce();
   });

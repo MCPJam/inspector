@@ -761,12 +761,7 @@ export async function failSwarmChecks(
 }
 
 type JourneyHeartbeatStatus =
-  | "running"
-  | "completed"
-  | "partial"
-  | "failed"
-  | "rate_limited"
-  | "missing";
+  "running" | "completed" | "partial" | "failed" | "rate_limited" | "missing";
 
 export async function heartbeatJourneyRun(
   convexHttpUrl: string,

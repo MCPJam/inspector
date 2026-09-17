@@ -1,4 +1,8 @@
-import type { SwarmSessionVerdict, JourneyRunVerdictSummary, SwarmReport } from "../contract/index.js";
+import type {
+  SwarmSessionVerdict,
+  JourneyRunVerdictSummary,
+  SwarmReport,
+} from "../contract/index.js";
 import type { CaseJudgeSettings } from "../contract/judge-settings.js";
 import type {
   JudgeRubric,
@@ -3618,9 +3622,23 @@ export interface PlatformJourneyRun {
 }
 
 export interface PlatformJourneyRunSession {
-  criteria?: { status: "pending" | "completed" | "failed"; generation: number; criterionIds?: string[]; results?: { criterionId: string; passed: boolean; status?: "scored" | "error" }[] };
+  criteria?: {
+    status: "pending" | "completed" | "failed";
+    generation: number;
+    criterionIds?: string[];
+    results?: {
+      criterionId: string;
+      passed: boolean;
+      status?: "scored" | "error";
+    }[];
+  };
   verdict?: SwarmSessionVerdict;
-  observations?: Array<{ evaluatorId: string; predicateType: string; role: "advisory" | "required"; status: "passed" | "failed" | "pending" | "unavailable" }>;
+  observations?: Array<{
+    evaluatorId: string;
+    predicateType: string;
+    role: "advisory" | "required";
+    status: "passed" | "failed" | "pending" | "unavailable";
+  }>;
   /**
    * The session's document id — the same value `listChatSessions` returns as
    * `id`, so a session found here can be looked up there.
@@ -3640,7 +3658,7 @@ export interface PlatformJourneyRunSession {
   /**
    * ARCHIVAL state (`active` | `archived`) — a run session stays `active`
    * forever unless archived, so this says nothing about how it went. Read
-   * `outcome` for the verdict.
+   * `verdict` for goal grading and execution lifecycle. `outcome` is legacy execution only.
    */
   status: string | null;
   /**

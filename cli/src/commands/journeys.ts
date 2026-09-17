@@ -1,3 +1,4 @@
+import { swarmVerdictLabel } from "@mcpjam/sdk/contract";
 import type { Command } from "commander";
 import {
   launchJourneyRunOperation,
@@ -280,16 +281,12 @@ export function registerJourneysCommands(program: Command): Command {
             { client, signal }
           )
       );
-      if (globalOptions.format === "human") {
-        process.stdout.write("Session\tExecution\tGoal result\n");
-        for (const row of result.items) {
-          const verdict = row.verdict;
-          const label = verdict?.verdict === "notEstablished"
-            ? ["queued", "running"].includes(verdict.grading.state) ? "Grading" : "Not graded"
-            : verdict?.verdict === "inconclusive" ? "Couldn't grade" : verdict?.verdict === "passed" ? "Passed" : verdict?.verdict === "failed" ? "Failed" : "Not graded";
-          process.stdout.write(`${row.id}\t${verdict?.lifecycle ?? row.outcome ?? "unknown"}\t${label}\n`);
-        }
-      } else writeResult(result, globalOptions.format);
+      writeResult(
+        globalOptions.format === "human"
+          ? { ...result, items: result.items.map(row => ({ ...row, goalResult: swarmVerdictLabel(row.verdict) })) }
+          : result,
+        globalOptions.format
+      );
     }
   );
 

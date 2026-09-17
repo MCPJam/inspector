@@ -1,4 +1,3 @@
-import type { SwarmSessionVerdict, JourneyRunVerdictSummary, SwarmReport } from "@mcpjam/sdk/contract";
 /**
  * Public v1 journey surface — the API for what the product calls **Swarms**.
  *
@@ -48,6 +47,11 @@ import type { SwarmSessionVerdict, JourneyRunVerdictSummary, SwarmReport } from 
  * These routes are therefore absent from the public OpenAPI spec and excluded
  * from the MCP/agent/workspace catalogs until GA.
  */
+import type {
+  SwarmSessionVerdict,
+  JourneyRunVerdictSummary,
+  SwarmReport,
+} from "@mcpjam/sdk/contract";
 import { Hono } from "hono";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -189,9 +193,23 @@ type JourneyRunRow = {
 };
 
 type JourneySessionRow = {
-  criteria?: { status: "pending" | "completed" | "failed"; generation: number; criterionIds?: string[]; results?: { criterionId: string; passed: boolean; status?: "scored" | "error" }[] };
+  criteria?: {
+    status: "pending" | "completed" | "failed";
+    generation: number;
+    criterionIds?: string[];
+    results?: {
+      criterionId: string;
+      passed: boolean;
+      status?: "scored" | "error";
+    }[];
+  };
   verdict?: SwarmSessionVerdict;
-  observations?: Array<{ evaluatorId: string; predicateType: string; role: "advisory" | "required"; status: "passed" | "failed" | "pending" | "unavailable" }>;
+  observations?: Array<{
+    evaluatorId: string;
+    predicateType: string;
+    role: "advisory" | "required";
+    status: "passed" | "failed" | "pending" | "unavailable";
+  }>;
   id: string;
   chatSessionId: string;
   projectId: string;

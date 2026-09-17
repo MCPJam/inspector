@@ -1,3 +1,5 @@
+import { slotView } from "../new-swarm-running-step";
+import type { JourneySessionRow } from "@/lib/swarm-api";
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import {
@@ -67,7 +69,7 @@ describe("swarm reporting presentation", () => {
           grading: { state: "unavailable" },
         }),
       ).label,
-    ).toBe("Couldn't grade");
+    ).toBe("Inconclusive");
     expect(
       verdictBadge(
         deriveSwarmSessionVerdict({
@@ -78,4 +80,33 @@ describe("swarm reporting presentation", () => {
       ).label,
     ).toBe("Not graded");
   });
+});
+
+it("keeps completed ungraded and broken passed create-flow cells distinct", () => {
+  for (const v of [
+    verdict(true),
+    {
+      ...verdict(true),
+      lifecycle: "ran" as const,
+      verdict: "inconclusive" as const,
+    },
+    {
+      ...verdict(true),
+      lifecycle: "ran" as const,
+      verdict: "notEstablished" as const,
+    },
+  ]) {
+    const view = slotView({
+      session: {
+        verdict: v,
+        messageCount: 2,
+        outcome: "succeeded",
+      } as JourneySessionRow,
+      runStatus: "completed",
+      goal: "Find it",
+    });
+    expect(view.outcome).toBe(v.lifecycle === "broke" ? "failed" : "succeeded");
+    expect(view.verdict).toBe(v);
+  }
+  expect(verdictBadge().label).toBe("Unknown");
 });

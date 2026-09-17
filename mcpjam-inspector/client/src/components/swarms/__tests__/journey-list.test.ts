@@ -1,3 +1,8 @@
+import evalFixtures from "../../../../../../sdk/tests/fixtures/eval-verdict-policy-parity-fixtures.json";
+import {
+  evalVerdictDecisionSchema,
+  swarmTargetCaseId,
+} from "@mcpjam/sdk/contract";
 import { describe, expect, it } from "vitest";
 import type { JourneyRun } from "@/lib/swarm-api";
 import { journeyTargetColumns, journeyHostOutcome } from "../journey-list";
@@ -150,4 +155,45 @@ describe("journeyHostOutcome", () => {
     const r = run({ status: "running", hostSummaries: [hs("h1", 2, 2)] });
     expect(journeyHostOutcome(r, "h1")).toBe("running");
   });
+});
+
+it("joins canonical decisions by target even when two environments share a host", () => {
+  const strip = (value: any): any =>
+    Array.isArray(value)
+      ? value.map(strip)
+      : value && typeof value === "object"
+        ? Object.fromEntries(
+            Object.entries(value)
+              .filter(([k]) => !k.startsWith("__"))
+              .map(([k, v]) => [k, strip(v)]),
+          )
+        : value;
+  const decision = evalVerdictDecisionSchema.parse(
+    strip(evalFixtures.accept.find((row) => row.__kind === "decision")),
+  );
+  decision.cases = [
+    {
+      ...decision.cases[0],
+      caseId: swarmTargetCaseId("environment:one"),
+      verdict: "passed",
+    },
+    {
+      ...decision.cases[0],
+      caseId: swarmTargetCaseId("environment:two"),
+      verdict: "failed",
+    },
+  ];
+  const value = run({
+    hostSummaries: [hs("a", 2, 2)],
+    snapshot: {
+      hosts: [
+        { hostId: "a", targetId: "environment:one" },
+        { hostId: "a", targetId: "environment:two" },
+      ],
+    },
+    verdictSummary: { status: "decided", decision, updatedAt: 1 },
+  });
+  expect(journeyHostOutcome(value, "environment:one")).toBe("pass");
+  expect(journeyHostOutcome(value, "environment:two")).toBe("fail");
+  expect(journeyHostOutcome(value, "environment:missing")).toBe("none");
 });

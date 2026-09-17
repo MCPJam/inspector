@@ -1,5 +1,3 @@
-import { extractTranscriptEvidence } from "../evals/transcript-evidence.js";
-import { swarmCheckInventory } from "./swarm-check-evidence.js";
 /**
  * Deterministic rubric grading for one swarm (journey) session.
  *
@@ -26,7 +24,8 @@ import { swarmCheckInventory } from "./swarm-check-evidence.js";
  * The caller (`swarm-runner.ts`) awaits this inside a try/catch. Grading is
  * never allowed to affect the attempt it graded.
  */
-
+import { extractTranscriptEvidence } from "../evals/transcript-evidence.js";
+import { swarmCheckInventory } from "./swarm-check-evidence.js";
 import {
   buildIterationTranscript,
   evaluatePredicates,
@@ -169,7 +168,11 @@ export async function runSwarmChecks(
   const messages = Array.isArray(claim.envelope?.messages)
     ? (claim.envelope.messages as EnvelopeMessage[])
     : null;
-  if (messages === null || messages.length === 0 || claim.envelope?.traceComplete === false) {
+  if (
+    messages === null ||
+    messages.length === 0 ||
+    claim.envelope?.traceComplete === false
+  ) {
     return reportFailure("transcript envelope unreadable");
   }
 
@@ -215,7 +218,7 @@ export async function runSwarmChecks(
       passed: results[index]?.passed ?? false,
       // Older evaluators omit status on scored rows; only a missing result
       // or an explicit evaluator error is unmeasured.
-      status: results[index] ? results[index].status ?? "scored" : "error",
+      status: results[index] ? (results[index].status ?? "scored") : "error",
       reason: results[index]?.reason ?? "evaluator returned no verdict",
     }));
   } catch (error) {

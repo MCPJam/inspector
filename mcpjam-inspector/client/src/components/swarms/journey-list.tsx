@@ -1,3 +1,4 @@
+import { swarmVerdictValueLabel } from "@mcpjam/sdk/contract";
 import { swarmTargetCaseId } from "@mcpjam/sdk/contract";
 import type { GoalJudgePolicy } from "@/shared/judge-defaults";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
@@ -99,10 +100,18 @@ const CELL_STATUS_META: Record<
   Exclude<JourneyCellOutcome, "none">,
   { label: string; dot: string; text: string }
 > = {
-  pass: { label: "Pass", dot: "bg-success", text: "text-success" },
-  fail: { label: "Fail", dot: "bg-destructive", text: "text-destructive" },
+  pass: {
+    label: swarmVerdictValueLabel("passed"),
+    dot: "bg-success",
+    text: "text-success",
+  },
+  fail: {
+    label: swarmVerdictValueLabel("failed"),
+    dot: "bg-destructive",
+    text: "text-destructive",
+  },
   part: {
-    label: "Inconclusive",
+    label: swarmVerdictValueLabel("inconclusive"),
     dot: "bg-amber-500",
     text: "text-amber-600 dark:text-amber-400",
   },
@@ -169,10 +178,24 @@ export function journeyHostOutcome(
   run: JourneyRun,
   targetKey: string,
 ): JourneyCellOutcome {
-  if (run.status === "running" || run.verdictSummary?.status === "pending") return "running";
+  if (run.status === "running" || run.verdictSummary?.status === "pending")
+    return "running";
   if (run.verdictSummary?.status !== "decided") return "none";
-  const decision = run.verdictSummary.decision.cases.find((c) => c.caseId === swarmTargetCaseId(run.snapshot?.hosts?.find((h) => summaryTargetKey(h) === targetKey)?.targetId ?? targetKey));
-  return decision?.verdict === "passed" ? "pass" : decision?.verdict === "failed" ? "fail" : decision?.verdict === "inconclusive" ? "part" : "none";
+  const decision = run.verdictSummary.decision.cases.find(
+    (c) =>
+      c.caseId ===
+      swarmTargetCaseId(
+        run.snapshot?.hosts?.find((h) => summaryTargetKey(h) === targetKey)
+          ?.targetId ?? targetKey,
+      ),
+  );
+  return decision?.verdict === "passed"
+    ? "pass"
+    : decision?.verdict === "failed"
+      ? "fail"
+      : decision?.verdict === "inconclusive"
+        ? "part"
+        : "none";
 }
 
 function hostSummaryFor(run: JourneyRun, targetKey: string) {
@@ -310,8 +333,8 @@ function JourneyBlock({
     [journey, hosts, latestRun, environments, environmentsEnabled],
   );
   const serverGroupName = journey.serverAttachmentId
-    ? serverAttachments.find((a) => a._id === journey.serverAttachmentId)
-        ?.name ?? null
+    ? (serverAttachments.find((a) => a._id === journey.serverAttachmentId)
+        ?.name ?? null)
     : null;
   const configHint = `${journey.config.sessionsPerTarget}/host · ${journey.config.maxTurns} turns`;
   // Cost-relevant journey config, so an edit re-prices an already-open estimate
@@ -547,7 +570,7 @@ function JourneyBlock({
                   >
                     {summary
                       ? `${summary.succeeded}/${summary.total} ok`
-                      : meta?.label ?? "No data"}
+                      : (meta?.label ?? "No data")}
                   </span>
                 </span>
               </button>
@@ -865,8 +888,8 @@ function JourneyEnvironmentsEditor({
 
   const label =
     current.length === 1
-      ? environments.find((e) => e.environmentId === current[0])?.name ??
-        "1 environment"
+      ? (environments.find((e) => e.environmentId === current[0])?.name ??
+        "1 environment")
       : `${current.length} environments`;
 
   return (

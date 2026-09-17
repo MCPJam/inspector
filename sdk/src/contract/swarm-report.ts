@@ -351,33 +351,34 @@ export function assembleSwarmReport(raw: SwarmReportInput): SwarmReport {
   execution.neverLaunched =
     execution.configured > 0 && execution.notStarted === execution.configured;
   const summary = input.verdictSummary;
-  const undecidedReason = !input.executionComplete
-    ? "executionPending"
-    : goalGrading.waitingForDecisiveGrading > 0 || summary?.status === "pending"
-      ? "gradingPending"
-      : !summary
-        ? "verdictSummaryUnavailable"
-        : summary.status === "integrityFailed"
-          ? "integrityFailed"
-          : summary.status === "notEstablished"
-            ? "gradingNotConfigured"
-            : undefined;
+  let undecidedReason: SwarmReport["undecidedReason"];
+  if (!input.executionComplete) undecidedReason = "executionPending";
+  else if (
+    goalGrading.waitingForDecisiveGrading > 0 ||
+    summary?.status === "pending"
+  )
+    undecidedReason = "gradingPending";
+  else if (!summary) undecidedReason = "verdictSummaryUnavailable";
+  else if (summary.status === "integrityFailed")
+    undecidedReason = "integrityFailed";
+  else if (summary.status === "notEstablished")
+    undecidedReason = "gradingNotConfigured";
+  const decided = !undecidedReason && summary?.status === "decided";
+  const decisionFields = decided
+    ? {
+        verdict: summary.decision.verdict,
+        verdictSource: "policyV2",
+        decision: summary.decision,
+      }
+    : {
+        verdict: "notEstablished",
+        verdictSource: "none",
+        undecidedReason: undecidedReason ?? "verdictSummaryUnavailable",
+      };
   return swarmReportSchema.parse({
     contractVersion: SWARM_REPORT_CONTRACT_VERSION,
     runId: input.runId,
-    ...(undecidedReason
-      ? { verdict: "notEstablished", verdictSource: "none", undecidedReason }
-      : summary?.status === "decided"
-        ? {
-            verdict: summary.decision.verdict,
-            verdictSource: "policyV2",
-            decision: summary.decision,
-          }
-        : {
-            verdict: "notEstablished",
-            verdictSource: "none",
-            undecidedReason: "verdictSummaryUnavailable",
-          }),
+    ...decisionFields,
     execution,
     goalGrading,
     observations: [...observations.values()].sort((a, b) =>

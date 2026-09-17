@@ -10,6 +10,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // NewJourneyButton's Advanced → Judge section pulls the model catalog via
 // useAvailableModels (AppStateProvider-coupled); these tests render SwarmsTab
 // without providers, so stub it to an empty catalog.
+vi.mock("@/hooks/use-host-snapshot", () => ({
+  useHostSnapshotForHost: () => ({ status: "unavailable" }),
+  useHostSnapshotForSession: () => ({ status: "unavailable" }),
+}));
+
 vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({ availableModels: [] }),
 }));
@@ -574,5 +579,3 @@ describe("SwarmsTab — top-level Journeys view", () => {
     });
   });
 });
-
-vi.mock("@/hooks/use-host-snapshot", () => ({ useHostSnapshotForHost: () => ({ status: "unavailable" }), useHostSnapshotForSession: () => ({ status: "unavailable" }) }));

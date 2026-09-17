@@ -150,3 +150,17 @@ describe("verdict policy invariants", () => {
       ).toBe(false);
   });
 });
+
+it("an omitted advisory criterion is outside the completed claim scope", () => {
+  const input = swarmSessionVerdictInputSchema.parse(fixtures.accept[0].input);
+  input.rubric = [
+    { id: "observed", role: "advisory" },
+    { id: "not-claimed", role: "advisory" },
+  ];
+  input.criteria = {
+    status: "completed",
+    criterionIds: ["observed"],
+    results: [{ criterionId: "observed", passed: true }],
+  };
+  expect(deriveSwarmSessionVerdict(input).graders.criteria).toBe("scored");
+});
