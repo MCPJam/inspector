@@ -398,8 +398,8 @@ export async function collectRunRawData(
         client,
         queries,
         "swarm:topicMap",
-        "chatSessions:getSwarmTopicMapSnapshot",
-        { projectId: scope.projectId },
+        "chatSessions:getSessionMapNodes",
+        { projectId: scope.projectId, journeyRunIds: scope.runIds },
       ),
       captureQuery(
         client,
@@ -496,7 +496,7 @@ export async function collectRunRawData(
           client,
           queries,
           "scenario:topicMap",
-          "chatSessions:getTopicMapSnapshot",
+          "chatSessions:getSessionMapNodes",
           { scenarioId: scope.scenarioId },
         ),
         captureQuery(

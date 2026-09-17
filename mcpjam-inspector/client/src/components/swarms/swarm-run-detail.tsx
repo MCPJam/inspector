@@ -243,8 +243,8 @@ export function SwarmRunDetail({
         tab: liveProgress
           ? "run"
           : parsedTab === "run"
-            ? "findings"
-            : parsedTab,
+          ? "findings"
+          : parsedTab,
         sel: selParam ?? undefined,
       }),
     );
@@ -365,9 +365,9 @@ export function SwarmRunDetail({
    * to no banner rather than to a stale sentence.
    */
   const followedFinding: SwarmOverviewFinding | null = findingParam
-    ? (wave.runs
+    ? wave.runs
         .flatMap((run) => run.findings)
-        .find((finding) => finding.criterionId === findingParam) ?? null)
+        .find((finding) => finding.criterionId === findingParam) ?? null
     : null;
   // 0% until the fan-out is known — a live run with no session total yet is
   // starting, not complete.
@@ -615,7 +615,6 @@ export function SwarmRunDetail({
                 onOpenSessionsTab={() => handleTabChange("sessions")}
                 urlSelection={urlSelection}
                 onSelectionChange={handleSelectionChange}
-                autoBackfillTopicMap
                 bodyLayout="scroll"
                 emptyState={
                   <div className="flex h-full items-center justify-center text-sm text-muted-foreground">

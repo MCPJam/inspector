@@ -7,7 +7,6 @@ import type {
   UsageFilterChip,
 } from "@/hooks/scenario-usage-filters";
 import type { SharedChatThread } from "@/hooks/useSharedChatThreads";
-import type { ClusterTuning } from "@/lib/cluster-tuning";
 
 export type InsightsSourceType = "scenario";
 
@@ -50,10 +49,39 @@ export type BreakdownBucket = {
   count: number;
 };
 
+export type InsightsAnalysisSummary = {
+  total: number;
+  analyzed: number;
+  pending: number;
+  running: number;
+  failed: number;
+  skipped: number;
+  deferred: number;
+  awaitingTaxonomy: number;
+  unassigned: number;
+  staleAssignments: number;
+  projectionPending: number;
+  projectionFailed: number;
+  deferredUntil: number | null;
+  lastAnalyzedAt: number | null;
+  failures: Record<string, number>;
+  skips: Record<string, number>;
+  sampled: boolean;
+  taxonomies: Array<{
+    dimension: string;
+    version: number;
+    status: string;
+    assigned: number;
+    unassigned: number;
+    sampleSize: number;
+    errorCode?: string;
+  }>;
+};
+
 export type ClusterRunStatus = "queued" | "running" | "done" | "failed";
 
 export type RebuildResult = {
-  runId: string;
+  runId?: string;
   status: ClusterRunStatus;
   alreadyRunning: boolean;
   /**
@@ -67,7 +95,6 @@ export type RebuildResult = {
    *
    * Optional for backends predating the field.
    */
-  tuningMismatch?: boolean;
 };
 
 export type ClusterRunState = {
@@ -97,7 +124,7 @@ export type ClusterRunState = {
    * Optional only for backends predating the field; `resolveClusterTuning`
    * turns absence into the defaults, which is what those runs used.
    */
-  tuning?: ClusterTuning;
+
   isStale: boolean;
 };
 
@@ -217,6 +244,7 @@ export type CriterionFacet = {
 };
 
 export type UsageBreakdown = {
+  analysis?: InsightsAnalysisSummary;
   themes: Array<{ clusterId: string; label: string; count: number }>;
   userBreakdown: FeedbackBucketCount[];
   deviceBreakdown: BreakdownBucket[];
@@ -343,11 +371,13 @@ type InferredExperienceState = {
  * offering a knob that does nothing here.
  */
 export function adaptBenchmarkAnalysisState(
-  breakdown: UsageBreakdown | null | undefined
+  breakdown: UsageBreakdown | null | undefined,
 ): UsageBreakdown | null | undefined {
   if (!breakdown) return breakdown;
   const analysis = (
-    breakdown as unknown as { inferredExperience?: InferredExperienceState | null }
+    breakdown as unknown as {
+      inferredExperience?: InferredExperienceState | null;
+    }
   ).inferredExperience;
   // Only the benchmark scope carries this key at all.
   if (analysis === undefined) return breakdown;
@@ -358,15 +388,15 @@ export function adaptBenchmarkAnalysisState(
     analysis.status === "generating"
       ? "running"
       : analysis.status === "failed"
-        ? "failed"
-        : "done";
+      ? "failed"
+      : "done";
   return {
     ...breakdown,
     latestRun: {
       _id: `benchmark-flow-${analysis.generatedAt ?? 0}`,
       status,
       startedAt: analysis.generatedAt ?? 0,
-      finishedAt: status === "running" ? null : (analysis.generatedAt ?? null),
+      finishedAt: status === "running" ? null : analysis.generatedAt ?? null,
       sessionCount: analysis.traceCount ?? 0,
       clusterCount: 0,
       errorMessage: analysis.failureCode ?? null,
@@ -403,8 +433,7 @@ const BREAKDOWN_QUERIES: Record<InsightsScope["kind"], string> = {
  */
 function rebuildOptionsOnly(args?: {
   force?: boolean;
-  tuning?: ClusterTuning;
-}): { force?: boolean; tuning?: ClusterTuning } | undefined {
+}): { force?: boolean } | undefined {
   if (args == null || typeof args !== "object") return undefined;
   const candidate = args as Record<string, unknown>;
   // A React synthetic event carries these; an options object does not.
@@ -467,16 +496,17 @@ export function useUsageInsights({
         } as any)
       : "skip";
 
-  const threads = useQuery("chatSessions:listByScenario" as any, scenarioArgs) as
-    | SharedChatThread[]
-    | undefined;
+  const threads = useQuery(
+    "chatSessions:listByScenario" as any,
+    scenarioArgs,
+  ) as SharedChatThread[] | undefined;
 
   // `getUsageBreakdown` already carries `themes` + `latestRun`, so we don't
   // subscribe to `listClustersByScenario` — the themes chips, the freshness
   // chip, and the rebuild button all read what they need from `breakdown`.
   const rawBreakdown = useQuery(
     BREAKDOWN_QUERIES[effectiveScope?.kind ?? "scenario"] as any,
-    breakdownArgs
+    breakdownArgs,
   ) as UsageBreakdown | null | undefined;
 
   /**
@@ -492,23 +522,21 @@ export function useUsageInsights({
    */
   const breakdown = useMemo(
     () => adaptBenchmarkAnalysisState(rawBreakdown),
-    [rawBreakdown]
+    [rawBreakdown],
   );
 
   const rebuildScenario = useMutation(
-    "chatSessions:rebuildScenarioInsights" as any
+    "chatSessions:rebuildScenarioInsights" as any,
   ) as unknown as (args: {
     scenarioId: string;
     force?: boolean;
-    tuning?: ClusterTuning;
   }) => Promise<RebuildResult>;
   const rebuildSwarm = useMutation(
-    "chatSessions:rebuildSwarmInsights" as any
+    "chatSessions:rebuildSwarmInsights" as any,
   ) as unknown as (args: {
     projectId: string;
     force?: boolean;
     /** All three knobs — swarm rebuilds materialize a topic map. */
-    tuning?: ClusterTuning;
   }) => Promise<RebuildResult>;
   /**
    * An ACTION, not a mutation, and the only paid one here.
@@ -519,9 +547,15 @@ export function useUsageInsights({
    * below turns into an explicit failure rather than a silent no-op.
    */
   const generateBenchmarkFlow = useAction(
-    "scenarioClusters:generateBenchmarkFlowInsights" as any
-  ) as unknown as (args: { benchmarkRunId: string }) => Promise<
-    | { status: "ready" | "generating"; traceDigest: string; traceCount: number }
+    "scenarioClusters:generateBenchmarkFlowInsights" as any,
+  ) as unknown as (args: {
+    benchmarkRunId: string;
+  }) => Promise<
+    | {
+        status: "ready" | "generating";
+        traceDigest: string;
+        traceCount: number;
+      }
     | { status: "unavailable"; reason: string }
   >;
 
@@ -529,7 +563,7 @@ export function useUsageInsights({
   // caller restating it is exactly how a swarm surface would accidentally
   // trigger a scenario rebuild.
   const rebuild = useCallback(
-    async (args?: { force?: boolean; tuning?: ClusterTuning }) => {
+    async (args?: { force?: boolean }) => {
       if (!effectiveScope) {
         throw new Error("No insights scope to rebuild");
       }
@@ -560,10 +594,12 @@ export function useUsageInsights({
         return rebuildSwarm({
           projectId: effectiveScope.projectId,
           ...(opts?.force !== undefined ? { force: opts.force } : {}),
-          ...(opts?.tuning ? { tuning: opts.tuning } : {}),
         });
       }
-      return rebuildScenario({ scenarioId: effectiveScope.scenarioId, ...opts });
+      return rebuildScenario({
+        scenarioId: effectiveScope.scenarioId,
+        ...opts,
+      });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- scope identity is its key fields
     [
@@ -572,7 +608,7 @@ export function useUsageInsights({
       generateBenchmarkFlow,
       rebuildScenario,
       rebuildSwarm,
-    ]
+    ],
   );
 
   return {
@@ -642,7 +678,7 @@ export function useGoalOutcomeDrilldown({
     (scope?.kind === "swarm"
       ? "chatSessions:listSwarmSessionsBySelection"
       : "chatSessions:listSessionsByGoalOutcome") as any,
-    args
+    args,
   ) as GoalOutcomeDrilldown | undefined;
 
   return {
@@ -650,9 +686,6 @@ export function useGoalOutcomeDrilldown({
     // A skipped scope is never loading. Without the exclusion a benchmark
     // scope reports a permanent spinner over a query that was never issued.
     isLoading:
-      enabled &&
-      !!scope &&
-      scope.kind !== "benchmark" &&
-      result === undefined,
+      enabled && !!scope && scope.kind !== "benchmark" && result === undefined,
   };
 }

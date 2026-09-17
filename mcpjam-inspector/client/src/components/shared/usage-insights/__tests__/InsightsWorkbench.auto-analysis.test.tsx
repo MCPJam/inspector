@@ -113,61 +113,20 @@ beforeEach(() => {
     .mockReturnValue({ drilldown: undefined, isLoading: false });
 });
 
-describe("InsightsWorkbench automatic analysis", () => {
-  it("starts the first analysis of a User Testing scenario on open", async () => {
-    renderWorkbench({ kind: "scenario", scenarioId: "sc-1" });
-    await waitFor(() => expect(rebuild).toHaveBeenCalledTimes(1));
-    expect(screen.getByTestId("analysis-is-automatic")).toHaveTextContent(
-      "true",
-    );
-  });
-
-  it("says nothing about it — the user did not ask", async () => {
-    renderWorkbench({ kind: "scenario", scenarioId: "sc-1" });
-    await waitFor(() => expect(rebuild).toHaveBeenCalledTimes(1));
-    expect(toastMock.success).not.toHaveBeenCalled();
-    expect(toastMock.info).not.toHaveBeenCalled();
-  });
-
-  it("leaves a scenario that has already been analyzed alone", () => {
-    renderWorkbench(
-      { kind: "scenario", scenarioId: "sc-1" },
-      breakdown({
-        latestRun: { status: "done" } as UsageBreakdown["latestRun"],
-      }),
+describe("automatic session analysis", () => {
+  it("does not schedule paid work when a study opens", async () => {
+    const rebuild = vi.fn().mockResolvedValue({ alreadyRunning: false });
+    mockUseUsageInsights.mockReturnValue({
+      breakdown: { totalSessions: 10, latestRun: null },
+      rebuild,
+    });
+    render(
+      <InsightsWorkbench
+        scope={{ kind: "scenario", scenarioId: "study" }}
+        cohortKey="study"
+        testIdPrefix="study"
+      />,
     );
     expect(rebuild).not.toHaveBeenCalled();
-  });
-
-  it("does not analyze a swarm on open — a settling run already does", () => {
-    renderWorkbench({ kind: "swarm", projectId: "proj-1" });
-    expect(rebuild).not.toHaveBeenCalled();
-    expect(screen.getByTestId("analysis-is-automatic")).toHaveTextContent(
-      "false",
-    );
-  });
-
-  it("withdraws the promise when the start is refused", async () => {
-    // The refusal a signed-out guest gets: `rebuildScenarioInsights`
-    // authenticates. There will never be a run, so continuing to promise that
-    // this surface analyzes itself would leave the guest watching a spinner
-    // with the rebuild button hidden behind it.
-    rebuild.mockRejectedValue(new Error("Not authenticated"));
-    renderWorkbench({ kind: "scenario", scenarioId: "sc-1" });
-
-    await waitFor(() =>
-      expect(screen.getByTestId("analysis-is-automatic")).toHaveTextContent(
-        "false",
-      ),
-    );
-    expect(rebuild).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not buy a benchmark flow analysis on open", () => {
-    renderWorkbench({ kind: "benchmark", benchmarkRunId: "run-9" });
-    expect(rebuild).not.toHaveBeenCalled();
-    expect(screen.getByTestId("analysis-is-automatic")).toHaveTextContent(
-      "false",
-    );
   });
 });
