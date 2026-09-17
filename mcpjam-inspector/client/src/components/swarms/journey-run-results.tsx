@@ -466,6 +466,20 @@ export function SwarmLiveStreamPane({
         ? { browserInteractionSteps: finalized.browserInteractionSteps }
         : {}),
       ...(finalized.videoUrl ? { videoUrl: finalized.videoUrl } : {}),
+      // Saved model requests exist only on the persisted side — the live
+      // stream never carries them — so a finished session still held in the
+      // stream buffer would otherwise keep Raw on the fallback. Overlaid with
+      // their load state, so Raw can tell "still loading" and "failed to load"
+      // from "none were saved".
+      ...(finalized.requestPayloads
+        ? { requestPayloads: finalized.requestPayloads }
+        : {}),
+      ...(finalized.requestPayloadsError
+        ? { requestPayloadsError: finalized.requestPayloadsError }
+        : {}),
+      ...(finalized.requestPayloadsPending
+        ? { requestPayloadsPending: true }
+        : {}),
       // Spans and their clock, on the same terms as the artifacts above: the
       // live swarm stream emits no `trace_snapshot`, so `fallbackTrace` never
       // carries spans and the Trace tab stayed EMPTY for any session still held

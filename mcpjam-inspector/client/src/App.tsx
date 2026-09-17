@@ -287,7 +287,8 @@ import {
 } from "@/hooks/useClients";
 import { useSandboxesEnabledState } from "@/hooks/useSandboxesEnabled";
 import { useUnifiedSessionsEnabledState } from "@/hooks/useUnifiedSessionsEnabled";
-import { useEvaluateEnabledState } from "@/hooks/useEvaluateEnabled";
+import { useEvaluateEnabled } from "@/hooks/useEvaluateEnabled";
+import { LegacyEvalRedirect } from "./components/routing/legacy-eval-redirect";
 import {
   HOST_TEMPLATES,
   seedFromHostTemplate,
@@ -1437,6 +1438,8 @@ export function ToolsRoute() {
  * billing feature because they are one tab.
  */
 export function EvalsRoute({ mode }: { mode?: EvalsMode } = {}) {
+  const legacyEnabled = useEvaluateEnabled();
+  if (!legacyEnabled) return <LegacyEvalRedirect />;
   return (
     <PricingFeatureSignInGate feature="Evals">
       <EvalsRouteContent mode={mode} />
@@ -1483,14 +1486,7 @@ function EvalsRouteContent({ mode }: { mode?: EvalsMode } = {}) {
   );
 }
 
-/**
- * Evaluate (New) — the redesigned Evaluate tab, behind `evaluate-enabled`.
- *
- * A separate route rather than a branch inside `EvalsRoute` so the shipped tab
- * has no new conditional in it at all. Same `evals` billing feature: it is the
- * same product, only redrawn. No Runs lens — the commit-keyed CI review stays
- * on `/evals/runs`.
- */
+/** The public Evaluate experience; sign-in and billing still apply. */
 export function EvaluateRoute() {
   return (
     <PricingFeatureSignInGate feature="Evals">
@@ -1509,23 +1505,6 @@ function EvaluateRouteContent() {
     handleContinueEvalInChat,
     handleConnect,
   } = useAppRouteContext();
-  const evaluateEnabled = useEvaluateEnabledState();
-
-  // The sidebar hides the nav item, but a nav filter is not a gate: `/evaluate`
-  // is a plain route, and its `navSegments` entry feeds `KNOWN_APP_TAB_SEGMENTS`
-  // so `ui_navigate` reaches it too. Bounce to the shipped tab — same product,
-  // and the flagged-out user loses nothing by landing there.
-  //
-  // Only redirect on an explicit `false`. While PostHog hydrates the flag is
-  // `undefined`; bouncing then would strand a flagged-in user who cold-loads
-  // /evaluate directly. (Same tradeoff as SessionsRoute.)
-  if (evaluateEnabled === false) {
-    return <ScopedNavigate to={routePaths.evals} replace />;
-  }
-  if (evaluateEnabled === undefined) {
-    return null;
-  }
-
   if (billingUiEnabled && activeTabBillingLocked && activeTabBillingFeature) {
     return <ActiveBillingUpsellGate />;
   }

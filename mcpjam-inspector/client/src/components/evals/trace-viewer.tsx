@@ -1,3 +1,4 @@
+import { readTraceRequestPayloads } from "@/shared/live-chat-trace";
 import { TranscriptEmptyState } from "@/components/chat-v2/transcript-empty-state";
 import {
   lazy,
@@ -403,6 +404,10 @@ export function TraceViewer({
   hostSnapshot,
   mcpToolResultImageRendering,
 }: TraceViewerProps) {
+  const persistedRequestPayloads = useMemo(
+    () => readTraceRequestPayloads(trace),
+    [trace],
+  );
   // Only live chat shells should opt into the interactive widget path.
   const threadInteractive = interactive || sendFollowUpMessage !== NOOP;
 
@@ -859,7 +864,12 @@ export function TraceViewer({
           >
             <TraceRawView
               trace={trace}
-              requestPayloadHistory={rawRequestPayloadHistory}
+              requestPayloadHistory={
+                rawRequestPayloadHistory ??
+                (persistedRequestPayloads.length
+                  ? { entries: persistedRequestPayloads, hasUiMessages: false }
+                  : null)
+              }
               harnessBuiltinTools={harnessBuiltinTools}
               growWithContent={rawGrowWithContent}
               fadeScrollEdges={rawFadeScrollEdges}
