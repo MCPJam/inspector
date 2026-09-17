@@ -332,7 +332,7 @@
         "runtime": { "engine": "emulated", "modelAccess": "hosted" },
         "termination": {
           "errorSource": "model",
-          "timeout": { "clock": "turn", "budgetMs": 360000 }
+          "timeout": { "clock": "turn", "budgetMs": 360000, "elapsedMs": 360100 }
         },
         "recordedAt": 1750000000000
       }
@@ -344,7 +344,7 @@
         "lifecycle": "timed_out",
         "runtime": { "engine": "emulated", "modelAccess": "hosted" },
         "termination": {
-          "timeout": { "clock": "turn", "budgetMs": 360000 },
+          "timeout": { "clock": "turn", "budgetMs": 360000, "elapsedMs": 360100 },
           "cancellationSource": "caller"
         },
         "recordedAt": 1750000000000

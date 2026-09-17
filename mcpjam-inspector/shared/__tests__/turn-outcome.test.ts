@@ -180,13 +180,18 @@ describe("turn-outcome invariants", () => {
     // `failed` record carrying a timeout has one half saying the turn ran out
     // of time and the other saying it did not — and whoever reads it answers
     // with whichever half they happened to look at.
+    //
+    // The timeout here is COMPLETE (`elapsedMs` included, which the contract
+    // requires). A row missing a required field would be refused before the
+    // invariant was ever consulted, and this test would pass without pinning
+    // anything.
     expect(
       turnOutcomeRecordZ.safeParse(
         base({
           lifecycle: "failed",
           termination: {
             errorSource: "model",
-            timeout: { clock: "turn", budgetMs: 1000 },
+            timeout: { clock: "turn", budgetMs: 1000, elapsedMs: 1001 },
           },
         }),
       ).success,
@@ -199,7 +204,7 @@ describe("turn-outcome invariants", () => {
         base({
           lifecycle: "timed_out",
           termination: {
-            timeout: { clock: "turn", budgetMs: 1000 },
+            timeout: { clock: "turn", budgetMs: 1000, elapsedMs: 1001 },
             cancellationSource: "caller",
           },
         }),
@@ -217,6 +222,37 @@ describe("turn-outcome invariants", () => {
         }),
       ).success,
     ).toBe(false);
+  });
+
+  it("and the parity fixture's inverse rows reject ON THE INVARIANT, not on a typo", () => {
+    // A reject row is only worth what its REASON is. Each of these is valid in
+    // every other respect, so removing the one offending field must make it
+    // parse — otherwise the row would pass this suite while pinning nothing,
+    // and the backend mirror would be free to drift underneath it.
+    const rows = fixtures.reject.filter((row) =>
+      /did not call itself/.test(row.label),
+    );
+    expect(rows).toHaveLength(3);
+    for (const row of rows) {
+      expect(
+        turnOutcomeRecordZ.safeParse(row.value).success,
+        `${row.label} should be refused`,
+      ).toBe(false);
+      const stripped = JSON.parse(JSON.stringify(row.value)) as {
+        termination?: Record<string, unknown>;
+        paused?: unknown;
+      };
+      if (/timeout/.test(row.label)) delete stripped.termination?.timeout;
+      if (/cancellation source/.test(row.label)) {
+        delete stripped.termination?.cancellationSource;
+      }
+      if (/pause kind/.test(row.label)) delete stripped.paused;
+      expect(
+        turnOutcomeRecordZ.safeParse(stripped).success,
+        `${row.label} should be VALID once the offending field is gone — if it ` +
+          `is not, the row is rejected for some other reason and pins nothing`,
+      ).toBe(true);
+    }
   });
 
   it("but `superseded` stays valid under every lifecycle", () => {
