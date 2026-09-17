@@ -110,7 +110,7 @@ export function useStopSwarmRun(runningRunIds: readonly string[]) {
       toast.success(
         refused.length === 0
           ? "Run stopped"
-          : `Run stopped — ${refused.length} ${
+          : `Run stopped: ${refused.length} ${
               refused.length === 1 ? "goal" : "goals"
             } could not be stopped`,
       );
