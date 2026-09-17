@@ -61,6 +61,10 @@ function UnifiedFindingsBody({
     <section data-testid="unified-findings-section">
       <div>
         <UnifiedFindingsPanel
+          runPending={iterations.some(
+            (iteration) =>
+              iteration.status === "pending" || iteration.status === "running",
+          )}
           analysis={state.experiment?.analysis}
           snapshot={state.experiment?.snapshot ?? null}
           findings={state.findings}

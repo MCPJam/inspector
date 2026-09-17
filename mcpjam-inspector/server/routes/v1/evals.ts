@@ -5706,9 +5706,27 @@ evals.post("/projects/:projectId/eval-runs/:runId/cancel", async (c) => {
       runId,
     });
   } catch (error) {
-    // The WRITE translator: this is the one mutation in the file, and its
-    // refusals are coded ConvexErrors — a run that finished between the read
-    // above and here is a CONFLICT, not an outage.
+    // The one refusal the mutation raises as a BARE `Error`, with no code for
+    // the translator to read: the run was not in a cancellable state when the
+    // write landed. Uncaught it becomes a 500 ("Eval run write rejected by the
+    // platform"), which reports our own outage for a run that simply finished.
+    //
+    // Two ways to get here, and both are the caller's answer rather than ours:
+    // the run settled in the gap between the read above and this write, or it
+    // sits in a state the read's terminal set does not name (`setup_failed`,
+    // `skipped`). Same 409 the pre-check raises, so a caller sees one shape.
+    const message = error instanceof Error ? error.message : "";
+    const notCancellable = /Cannot cancel run with status: (\w+)/.exec(message);
+    if (notCancellable) {
+      throw new WebRouteError(
+        409,
+        ErrorCode.VALIDATION_ERROR,
+        `Cannot cancel a run that already ${notCancellable[1]}`,
+      );
+    }
+    // The WRITE translator: its other refusals are coded ConvexErrors — a run
+    // that finished between the read above and here is a CONFLICT, not an
+    // outage.
     throw translateConvexError(error, {
       resource: "Eval run",
       notFoundMessage: "Eval run not found",
