@@ -46,15 +46,25 @@ Try it yourself with the [Excalidraw MCP server](https://app.mcpjam.com/shared/e
 
 ## Usage limits
 
-The hosted app uses a daily credit system to power AI features like chat.
+The hosted app uses a credit system to power AI features like chat, Evals, and Swarm.
 
 - **Guests** get a free daily usage allowance and can use a subset of the free hosted models. The sidebar shows a progress bar with how much of your daily limit you've used and when it resets. When you reach the limit, you'll be prompted to sign in.
 - **Guest session limit**: The hosted app creates a guest session the first time you visit from a given network. If too many guest sessions have been created from your network in a single day, a banner appears: "Too many guest sessions from your network today. Sign in to continue." Signing in removes this restriction.
-- **Signed-in users** get **10×** the daily usage of a guest. Your daily usage and any paid credit balance are visible in the account menu at the bottom of the sidebar.
-- **Paid credits** can be topped up from the billing page and are shown alongside your daily limit in the account menu.
+- **Signed-in users** get **10×** the daily usage of a guest. Your credit balance is visible in the account menu at the bottom of the sidebar.
+- **New accounts** receive a one-time starter grant of **500 free eval iterations** to try Evals. This allowance does not renew; model usage during those runs consumes credits separately.
+- **Paid credits** can be topped up from the billing page and are shown alongside your allowance in the account menu.
 - **When credits run out**, only the free hosted models are locked. Models you access with your own API key (BYOK) remain available regardless of your credit balance.
 
 When your credit balance reaches zero, free models are grayed out in the model picker so you can see the limit before sending a message. Models from your own API keys remain available. If you have paid top-up credits, free models stay enabled even after your daily free allowance is exhausted.
+
+### Organization usage card
+
+The **Organization usage** card on the billing page shows your organization's shared credit balance. How it displays depends on your plan:
+
+- **Monthly plans** — Credits are shown as a draining balance: the meter fills from the right and empties as credits are consumed. The label shows credits remaining out of your monthly total (for example, `13,950 / 18,000 remaining`). The monthly allowance resets on your billing date; hover the row label to see the exact reset timing.
+- **Rollover credits** — If unused credits carried over from a previous billing period, a breakdown box appears below the meter explaining how many are monthly credits and how many are rollover. Rollover credits are included in the displayed remaining balance and do not cause the meter to read above 100%.
+- **Top-up credits** — Purchased credits are shown in a separate row labeled **Top-up credits**. These never expire and are spent only after your monthly allowance runs out.
+- **Free starter eval iterations** — If your account has a one-time starter eval grant, it appears below the credit meter as **Free starter eval iterations: X remaining · one-time allowance of 500**. This balance is separate from your monthly credits.
 
 ## Signing out
 
