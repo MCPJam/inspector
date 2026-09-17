@@ -276,6 +276,36 @@ export function isAccountLimit(
   message?: string | null,
   code?: string | null,
 ): boolean {
-  if (code && ACCOUNT_LIMIT_CODE.test(code)) return true;
-  return !!message && ACCOUNT_LIMIT_CODE.test(message);
+  if (accountLimitCode(message, code)) return true;
+  return !!message && MCPJAM_MODEL_LIMIT_SENTENCE.test(message);
+}
+
+/**
+ * The backend's own sentence for the free/credit model allowance
+ * (`user_rate_limit` in `convex/stream/routes.ts` and `lib/llmCallShell.ts`).
+ *
+ * Only for rows written before the runner kept the denial code: those stored
+ * this humanized sentence under the generic `rate_limited` code, so the
+ * sentence is the one signal left that MCPJam — not the user's provider —
+ * stopped the session.
+ */
+const MCPJAM_MODEL_LIMIT_SENTENCE =
+  /\b(?:Daily|Monthly) MCPJam model limit reached\b/i;
+
+/**
+ * The account-limit denial code carried by a code or a raw failure message, in
+ * its canonical lowercase spelling — or `undefined` when neither names one.
+ *
+ * The runner stores this as the attempt's `errorCode`. It has to be read off
+ * the RAW message: the humanized sentence it stores beside it has already lost
+ * the code.
+ */
+export function accountLimitCode(
+  message?: string | null,
+  code?: string | null,
+): string | undefined {
+  const match =
+    (code ? ACCOUNT_LIMIT_CODE.exec(code) : null) ??
+    (message ? ACCOUNT_LIMIT_CODE.exec(message) : null);
+  return match?.[0].toLowerCase();
 }

@@ -293,6 +293,28 @@ describe("swarm single-host runner — outcome mapping + isolation", () => {
     expect(terminal.chatSessionId).toBe("synth_run-1_host-1_0");
   });
 
+  it("keeps MCPJam's denial code on a rate_limited terminal instead of the generic one", async () => {
+    // A bare `rate_limited` tells the run screen the user's PROVIDER throttled
+    // their key; the humanized message has already lost the code that says
+    // otherwise, so only the producer can keep it.
+    runSyntheticHostSessionMock.mockResolvedValue({
+      outcome: "rate_limited",
+      errorMessage:
+        'swarm-agent https://example.convex.site/journey-execution/persona-next-turn failed (429): {"ok":false,"code":"user_rate_limit","error":"Daily MCPJam model limit reached. Use BYOK or try again tomorrow.","details":"Try again in 621 minutes."}',
+    });
+
+    await startJourneyRun(baseOpts({ sessionsPerTarget: 1 }));
+
+    const terminal = reportAttemptMock.mock.calls
+      .map((c) => c[2] as any)
+      .find((a) => a.status !== "running")!;
+    expect(terminal.status).toBe("rate_limited");
+    expect(terminal.errorCode).toBe("user_rate_limit");
+    expect(terminal.errorMessage).toBe(
+      "Daily MCPJam model limit reached. Use BYOK or try again tomorrow. Try again in 621 minutes."
+    );
+  });
+
   it("skips a session whose claim fails (can't run without the claim) and still claims the next", async () => {
     reportAttemptMock.mockImplementation(async (_url, _bearer, args: any) => {
       if (args.status === "running" && args.sessionIdx === 0) {

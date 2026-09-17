@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  accountLimitCode,
   humanizeSwarmAttemptError,
   humanizeSwarmAttemptErrorMessage,
   isAccountLimit,
@@ -221,6 +222,22 @@ describe("isAccountLimit", () => {
     expect(isAccountLimit(undefined, "spend_cap_exceeded")).toBe(true);
   });
 
+  it("recognizes MCPJam's model-limit sentence stored under the generic code", () => {
+    // Rows written before the runner kept the denial code: the humanized
+    // sentence is all that is left to say MCPJam, not a provider, stopped it.
+    expect(
+      isAccountLimit(
+        "Daily MCPJam model limit reached. Use BYOK or try again tomorrow. Try again in 621 minutes.",
+        "rate_limited"
+      )
+    ).toBe(true);
+    expect(
+      isAccountLimit(
+        "Monthly MCPJam model limit reached. Top up or use BYOK to keep chatting."
+      )
+    ).toBe(true);
+  });
+
   it.each([
     // MCPJam's own daily budget for the feature: every remaining target in a
     // fan-out meets the same wall.
@@ -248,6 +265,35 @@ describe("isAccountLimit", () => {
     expect(isAccountLimit("Anthropic returned Too Many Requests")).toBe(false);
     // The per-host sweep stamps this code with no message.
     expect(isAccountLimit(undefined, "rate_limited")).toBe(false);
+  });
+});
+
+describe("accountLimitCode", () => {
+  it("reads the code out of the raw agent envelope", () => {
+    expect(accountLimitCode(REAL_RATE_LIMIT_ERROR)).toBe("user_rate_limit");
+  });
+
+  it("reads the code out of the wire form the runner composes", () => {
+    expect(
+      accountLimitCode("Daily credit limit reached. (ORG_RATE_LIMIT, HTTP 429)")
+    ).toBe("org_rate_limit");
+  });
+
+  it("prefers the structured code over the message", () => {
+    expect(
+      accountLimitCode("(user_rate_limit, HTTP 429)", "wallet_locked")
+    ).toBe("wallet_locked");
+  });
+
+  it("returns nothing for a provider throttle or the humanized sentence", () => {
+    expect(accountLimitCode("429 Too Many Requests")).toBeUndefined();
+    expect(accountLimitCode(undefined, "rate_limited")).toBeUndefined();
+    // The sentence identifies the limit, but it names no code to store.
+    expect(
+      accountLimitCode(
+        humanizeSwarmAttemptErrorMessage(REAL_RATE_LIMIT_ERROR)
+      )
+    ).toBeUndefined();
   });
 });
 
