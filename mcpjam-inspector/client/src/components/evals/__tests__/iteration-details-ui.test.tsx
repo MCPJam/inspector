@@ -51,6 +51,7 @@ vi.mock("../trial-judge-review", () => ({
 
 vi.mock("../trace-viewer", () => ({
   TraceViewer: (props: {
+    hostSnapshot?: { hostStyle: string } | null;
     chromeDensity?: string;
     fillContent?: boolean;
     expectedToolCalls?: unknown[];
@@ -58,6 +59,7 @@ vi.mock("../trace-viewer", () => ({
   }) => (
     <div
       data-testid="mock-trace-viewer"
+      data-host-style={props.hostSnapshot?.hostStyle}
       data-chrome-density={props.chromeDensity ?? "default"}
       data-fill-content={String(props.fillContent ?? false)}
       data-expected-tool-count={String(props.expectedToolCalls?.length ?? 0)}
@@ -338,5 +340,43 @@ describe("IterationDetails judge review gate", () => {
     expect(
       screen.getByText(/The answer never named the file/),
     ).toBeInTheDocument();
+  });
+});
+
+describe("IterationDetails host presentation", () => {
+  beforeEach(() => {
+    mockGetBlob.mockResolvedValue({
+      messages: [{ role: "user", content: "hello" }],
+    });
+  });
+
+  it("passes the run host snapshot to the viewer", async () => {
+    render(
+      <IterationDetails
+        iteration={{ ...iteration, blob: "host-trace" }}
+        testCase={testCase}
+        layoutMode="full"
+        hostSnapshot={{ hostStyle: "chatgpt" }}
+      />,
+    );
+    expect(await screen.findByTestId("mock-trace-viewer")).toHaveAttribute(
+      "data-host-style",
+      "chatgpt",
+    );
+  });
+
+  it("does not substitute generic chat for an unavailable required run config", async () => {
+    render(
+      <IterationDetails
+        iteration={{ ...iteration, blob: "host-trace" }}
+        testCase={testCase}
+        layoutMode="full"
+        hostSnapshot={null}
+      />,
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Could not load this run's host configuration.",
+    );
+    expect(screen.queryByTestId("mock-trace-viewer")).not.toBeInTheDocument();
   });
 });

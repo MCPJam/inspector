@@ -100,6 +100,7 @@ const mutableRun = runFixture as unknown as {
 };
 
 vi.mock("convex/react", () => ({
+  useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
   useQuery: (name: string) => {
     switch (name) {
       case "journeyRuns:getJourneyRun":
@@ -255,3 +256,12 @@ describe("NewSwarmRunningStep — XAA failure banner", () => {
     expect(screen.queryByTestId("new-swarm-running-failure")).toBeNull();
   });
 });
+
+vi.mock("@/hooks/use-host-snapshot", () => ({
+  useHostSnapshotForSession: () => ({
+    status: "ready", snapshot: { hostStyle: "mcpjam" },
+  }),
+  useHostSnapshotForHost: () => ({
+    status: "ready", snapshot: { hostStyle: "mcpjam" },
+  }),
+}));

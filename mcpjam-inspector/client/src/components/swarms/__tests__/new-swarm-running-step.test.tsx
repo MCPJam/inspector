@@ -138,6 +138,7 @@ const failedSessionFixture = {
 const runQueryState = { run: runFixture as JourneyRun | null };
 
 vi.mock("convex/react", () => ({
+  useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
   useQuery: (name: string) => {
     switch (name) {
       case "journeyRuns:getJourneyRun":
@@ -887,3 +888,12 @@ describe("NewSwarmRunningStep — frame copy", () => {
     ).toBe("Run completed: Goal completion had mixed results");
   });
 });
+
+vi.mock("@/hooks/use-host-snapshot", () => ({
+  useHostSnapshotForSession: () => ({
+    status: "ready", snapshot: { hostStyle: "mcpjam" },
+  }),
+  useHostSnapshotForHost: () => ({
+    status: "ready", snapshot: { hostStyle: "mcpjam" },
+  }),
+}));
