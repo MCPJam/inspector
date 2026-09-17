@@ -147,7 +147,7 @@ describe("frozen arms", () => {
 describe("experimentFailureText", () => {
   it("says whose budget a platform refusal was, without pointing at credits", () => {
     expect(experimentFailureText("PLATFORM_CAP_EXCEEDED")).toBe(
-      "MCPJam's daily analysis budget is used up — try again after 00:00 UTC",
+      "MCPJam's daily analysis budget is used up. Try again after 00:00 UTC",
     );
     // A guard that failed closed promises no reset time.
     expect(experimentFailureText("PLATFORM_UNAVAILABLE")).not.toMatch(/UTC/);

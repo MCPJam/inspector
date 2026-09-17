@@ -132,9 +132,9 @@ export function maxTrialsCapOf(experiment: EvalDescriptionExperiment): number {
 export function experimentFailureText(errorCode: string | undefined): string {
   switch (errorCode) {
     case "PLATFORM_CAP_EXCEEDED":
-      return "MCPJam's daily analysis budget is used up — try again after 00:00 UTC";
+      return "MCPJam's daily analysis budget is used up. Try again after 00:00 UTC";
     case "PLATFORM_UNAVAILABLE":
-      return "MCPJam could not reserve capacity — try again later";
+      return "MCPJam could not reserve capacity. Try again later";
     default:
       return errorCode ?? "failed";
   }
