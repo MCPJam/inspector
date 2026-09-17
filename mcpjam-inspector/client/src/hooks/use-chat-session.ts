@@ -960,7 +960,16 @@ async function resolveHydratedTurnTraces(
   const results = await Promise.all(
     boundedRaw.map(async (trace) => {
       const requestPayloads = await hydrateTurnRequestPayloads([trace]).catch(
-        () => [],
+        (err) => {
+          // Same terms as the span blob below: the turn survives, and Raw
+          // falls back to the request it would send next. Warn so a failed
+          // read is not mistaken for a session that saved none.
+          console.warn(
+            `[useChatSession] Failed to fetch model requests for turn ${trace.turnId}:`,
+            err,
+          );
+          return [];
+        },
       );
       let spans: EvalTraceSpan[] = [];
       if (trace.spansBlobUrl) {

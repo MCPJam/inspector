@@ -1,4 +1,7 @@
-import { useRequestPayloads } from "@/hooks/use-request-payloads";
+import {
+  requestPayloadEnvelopeFields,
+  useRequestPayloads,
+} from "@/hooks/use-request-payloads";
 import { TranscriptEmptyState } from "@/components/chat-v2/transcript-empty-state";
 import {
   useCallback,
@@ -504,7 +507,7 @@ export function ShareUsageThreadDetail({
       messages: messages as any,
       widgetSnapshots,
       spans: hydratedSpans,
-      requestPayloads,
+      ...requestPayloadEnvelopeFields(requestPayloads),
       ...(renderObservations.length > 0
         ? { widgetRenderObservations: renderObservations }
         : {}),

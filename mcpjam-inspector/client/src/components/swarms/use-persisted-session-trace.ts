@@ -1,4 +1,7 @@
-import { useRequestPayloads } from "@/hooks/use-request-payloads";
+import {
+  requestPayloadEnvelopeFields,
+  useRequestPayloads,
+} from "@/hooks/use-request-payloads";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   useSessionBrowserArtifacts,
@@ -240,7 +243,7 @@ export function usePersistedSessionTrace(threadId: string | null): {
       ? null
       : {
           traceVersion: 1,
-          requestPayloads,
+          ...requestPayloadEnvelopeFields(requestPayloads),
           messages: messages as TraceEnvelope["messages"],
           ...(thread?.recordedContext
             ? { recordedContext: thread.recordedContext }

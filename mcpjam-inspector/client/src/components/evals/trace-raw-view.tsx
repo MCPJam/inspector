@@ -1,6 +1,16 @@
-/** Raw shows the last resolved model request when recorded, or saved session evidence. */
+/**
+ * Raw trace panel — single JsonEditor with bordered chrome around the tree.
+ *
+ * With `requestPayloadHistory` (live chat, a reopened session, or a saved
+ * session's persisted requests) Raw shows the resolved model request
+ * (`system`, `tools`, `messages`) from the last entry, with `messages` merged
+ * from the trace envelope when it is ahead of that request — so the reply to
+ * the last request is visible, exactly as in the Playground. Otherwise it
+ * shows the stored trace blob.
+ */
 
 import { Copy, Loader2, ScanSearch } from "lucide-react";
+import type { ModelMessage } from "ai";
 import { toast } from "@/lib/toast";
 import { track } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
@@ -12,12 +22,54 @@ import {
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
+import type { ResolvedModelRequestPayload } from "@/shared/model-request-payload";
 import type { HarnessBuiltinToolInfo } from "@/hooks/useHarnessBuiltinTools";
 import type { TraceEnvelope, TraceMessage } from "./trace-viewer-adapter";
 
 export interface TraceRawRequestPayloadHistory {
   entries: LiveChatTraceRequestPayloadEntry[];
   hasUiMessages: boolean;
+}
+
+function getTraceEnvelopeMessages(
+  trace: TraceEnvelope | TraceMessage | TraceMessage[] | null,
+): ModelMessage[] | null {
+  if (!trace || Array.isArray(trace)) {
+    return null;
+  }
+  if (
+    typeof trace === "object" &&
+    "messages" in trace &&
+    Array.isArray((trace as { messages: unknown }).messages)
+  ) {
+    return (trace as { messages: ModelMessage[] }).messages;
+  }
+  return null;
+}
+
+/**
+ * Last `request_payload` reflects the outgoing API call (no assistant text for the current turn yet).
+ * `trace_snapshot` appends the assistant to the live envelope — merge so Raw stays in sync with Chat/Trace.
+ * A saved session's envelope is its full transcript, so the same merge shows the final reply there too.
+ */
+function mergeLiveRequestPayloadWithTraceSnapshot(
+  payload: ResolvedModelRequestPayload,
+  trace: TraceEnvelope | TraceMessage | TraceMessage[] | null,
+): ResolvedModelRequestPayload {
+  const traceMessages = getTraceEnvelopeMessages(trace);
+  if (!traceMessages || traceMessages.length === 0) {
+    return payload;
+  }
+
+  if (traceMessages.length > payload.messages.length) {
+    return { ...payload, messages: traceMessages };
+  }
+  if (traceMessages.length < payload.messages.length) {
+    // New user turn: request line already has the new prompt; snapshot not updated yet.
+    return payload;
+  }
+
+  return { ...payload, messages: traceMessages };
 }
 
 /** Same centered spinner as the trace timeline `TraceViewer` Suspense fallback. */
@@ -124,16 +176,24 @@ export function TraceRawView({
     const hasLiveRequestLine = orderedEntries.length > 0 && latestEntry != null;
 
     if (hasLiveRequestLine && latestEntry) {
-      const { messages, ...requestConfig } = latestEntry.payload;
+      const merged = mergeLiveRequestPayloadWithTraceSnapshot(
+        latestEntry.payload,
+        trace,
+      );
+      // A capped saved request lost its own copy of `messages`. When the
+      // transcript stood in for it, the conversation shown is complete; when
+      // it did not, say how many there were rather than show an empty list.
+      const messagesDropped =
+        latestEntry.messageCount !== undefined &&
+        merged.messages === latestEntry.payload.messages;
+      const { messages, ...requestConfig } = merged;
       const displayPayload = {
         ...requestConfig,
-        ...(latestEntry.messageCount === undefined ? { messages } : {}),
+        ...(messagesDropped ? {} : { messages }),
         ...(orderedEntries.some((entry) => entry.truncated)
           ? { truncated: true }
           : {}),
-        ...(latestEntry.messageCount !== undefined
-          ? { messageCount: latestEntry.messageCount }
-          : {}),
+        ...(messagesDropped ? { messageCount: latestEntry.messageCount } : {}),
       };
 
       if (growWithContent) {
@@ -238,14 +298,28 @@ export function TraceRawView({
     </div>
   );
 
-  const recordedContextNote = (
+  // What this fallback can honestly say about the requests it is NOT showing.
+  // A failed read is not "none were saved", and a read still in flight is
+  // neither — so loading says nothing, and failure says it failed.
+  const envelope =
+    !Array.isArray(trace) && typeof trace === "object"
+      ? (trace as TraceEnvelope)
+      : null;
+  const recordedContextNote = envelope?.requestPayloadsError ? (
+    <p
+      className="px-3 py-2 text-xs text-warning-foreground"
+      data-testid="trace-raw-request-error"
+    >
+      {envelope.requestPayloadsError}; showing saved session evidence.
+    </p>
+  ) : envelope?.recordedContext && !envelope.requestPayloadsPending ? (
     <p
       className="px-3 py-2 text-xs text-muted-foreground"
       data-testid="trace-raw-recorded-context"
     >
       Saved session evidence; exact model requests are unavailable.
     </p>
-  );
+  ) : null;
 
   if (growWithContent) {
     return (

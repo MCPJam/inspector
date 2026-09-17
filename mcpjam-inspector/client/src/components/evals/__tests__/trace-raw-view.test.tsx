@@ -152,7 +152,7 @@ describe("TraceRawView", () => {
     expect(screen.getByTestId("json-editor")).toHaveTextContent("System 3");
   });
 
-  it("keeps the exact outgoing request when the transcript has advanced", () => {
+  it("merges live trace envelope messages so the latest assistant is visible before the next user message", () => {
     const outgoingPayload = {
       system: "You are a helpful assistant.",
       tools: {},
@@ -195,7 +195,7 @@ describe("TraceRawView", () => {
       />,
     );
 
-    expect(screen.getByTestId("json-editor")).not.toHaveTextContent(
+    expect(screen.getByTestId("json-editor")).toHaveTextContent(
       "Here is the reply to the follow up.",
     );
   });
@@ -254,33 +254,102 @@ describe("TraceRawView", () => {
   });
 });
 
-it("shows saved requests without UI messages, with explicit truncation and no envelope note", () => {
-  renderWithProviders(
-    <TraceRawView
-      trace={
-        {
-          messages: [{ role: "assistant", content: "later response" }],
-          recordedContext: {},
-        } as never
-      }
-      requestPayloadHistory={{
-        entries: [
+describe("TraceRawView — saved requests", () => {
+  /**
+   * A saved session's Raw reads like the Playground's: the request that was
+   * sent, with the conversation merged in from the transcript. A capped entry
+   * lost its own copy of `messages`; the transcript stands in for it.
+   */
+  const truncatedEntry = {
+    turnId: "turn-1",
+    promptIndex: 0,
+    stepIndex: 0,
+    payload: { system: "stored system", tools: {}, messages: [] },
+    truncated: true as const,
+    messageCount: 9,
+  };
+
+  it("merges the transcript into a capped request, as the Playground does", () => {
+    renderWithProviders(
+      <TraceRawView
+        trace={
           {
-            ...makeEntry(0, "stored system"),
-            truncated: true,
-            messageCount: 9,
-          },
-        ],
-        hasUiMessages: false,
-      }}
-    />,
-  );
-  const json = screen.getByTestId("json-editor");
-  expect(json).toHaveTextContent("stored system");
-  expect(json).toHaveTextContent('"truncated": true');
-  expect(json).toHaveTextContent('"messageCount": 9');
-  expect(json).not.toHaveTextContent("later response");
-  expect(
-    screen.queryByTestId("trace-raw-recorded-context"),
-  ).not.toBeInTheDocument();
+            messages: [
+              { role: "user", content: "question" },
+              { role: "assistant", content: "later response" },
+            ],
+            recordedContext: {},
+          } as never
+        }
+        requestPayloadHistory={{ entries: [truncatedEntry], hasUiMessages: false }}
+      />,
+    );
+    const json = screen.getByTestId("json-editor");
+    expect(json).toHaveTextContent("stored system");
+    expect(json).toHaveTextContent("later response");
+    expect(json).toHaveTextContent('"truncated": true');
+    expect(json).not.toHaveTextContent("messageCount");
+    expect(
+      screen.queryByTestId("trace-raw-recorded-context"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("says how many messages were dropped when there is no transcript to stand in", () => {
+    renderWithProviders(
+      <TraceRawView
+        trace={{ messages: [] } as never}
+        requestPayloadHistory={{ entries: [truncatedEntry], hasUiMessages: false }}
+      />,
+    );
+    const json = screen.getByTestId("json-editor");
+    expect(json).toHaveTextContent('"messageCount": 9');
+    expect(json).not.toHaveTextContent('"messages"');
+  });
+});
+
+describe("TraceRawView — fallback note", () => {
+  const evidence = {
+    messages: [{ role: "user", content: "stored" }],
+    recordedContext: {},
+  };
+
+  it("says requests are unavailable only once nothing is still loading", () => {
+    const { rerender } = renderWithProviders(
+      <TraceRawView
+        trace={{ ...evidence, requestPayloadsPending: true } as never}
+      />,
+    );
+    expect(
+      screen.queryByTestId("trace-raw-recorded-context"),
+    ).not.toBeInTheDocument();
+
+    rerender(<TraceRawView trace={evidence as never} />);
+    expect(screen.getByTestId("trace-raw-recorded-context")).toBeInTheDocument();
+  });
+
+  it("says a failed read failed, instead of claiming none were saved", () => {
+    renderWithProviders(
+      <TraceRawView
+        trace={
+          {
+            ...evidence,
+            requestPayloadsError: "Saved model requests could not be loaded",
+          } as never
+        }
+      />,
+    );
+    expect(screen.getByTestId("trace-raw-request-error")).toHaveTextContent(
+      "could not be loaded",
+    );
+    expect(
+      screen.queryByTestId("trace-raw-recorded-context"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("stays quiet for a trace with no recorded context", () => {
+    renderWithProviders(<TraceRawView trace={{ messages: [] } as never} />);
+    expect(
+      screen.queryByTestId("trace-raw-recorded-context"),
+    ).not.toBeInTheDocument();
+  });
 });

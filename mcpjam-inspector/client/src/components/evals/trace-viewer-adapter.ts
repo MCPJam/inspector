@@ -47,6 +47,10 @@ type ToolResultDisplay = "sibling-text" | "attached-to-tool" | "tool-card";
 export interface TraceEnvelope {
   requestPayloads?: PersistedRequestPayloadEntry[];
   requestPayloadsJson?: string;
+  /** Saved requests exist for this session but did not load. */
+  requestPayloadsError?: string;
+  /** Saved requests are still loading. */
+  requestPayloadsPending?: true;
   traceVersion?: 1;
   messages?: TraceSourceMessage[];
   widgetSnapshots?: TraceWidgetSnapshot[];
