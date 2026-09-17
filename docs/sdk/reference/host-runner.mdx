@@ -255,7 +255,7 @@ apiKey: process.env.ANTHROPIC_API_KEY;
 
 ### systemPrompt
 
-Optional system prompt to guide the LLM's behavior.
+Optional system prompt to guide the LLM's behavior. An empty string (`""`) is treated the same as omitting the field — both fall back to `"You are a helpful assistant."`. This matters for saved MCPJam clients, which store a missing prompt as `""`.
 
 ```typescript
 systemPrompt: "You are a task management assistant. Be concise.";
