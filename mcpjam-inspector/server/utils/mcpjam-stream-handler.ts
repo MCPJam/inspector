@@ -589,6 +589,8 @@ export function describeBackendStreamFailure(
   // matter which upstream status was mirrored onto it. The slug still comes
   // from the status so the user-facing copy stays accurate ("the provider
   // rejected the key" IS what happened — it was just our key).
+  if (code === "platform_free_budget_exhausted") return describeAsSlug("provider/mcpjam_platform_budget", detail);
+  if (code === "account_suspended") return describeAsSlug("account/suspended", detail);
   if (isMcpjamOwnedFailureCode(code)) {
     return { ...backendFailureSlug(status, detail), origin: "mcpjam" };
   }
@@ -635,6 +637,8 @@ export function describeStreamErrorChunkFailure(
     status !== undefined ? `HTTP ${status}: ${rawText}` : rawText,
   );
 
+  if (code === "platform_free_budget_exhausted") return describeAsSlug("provider/mcpjam_platform_budget", detail);
+  if (code === "account_suspended") return describeAsSlug("account/suspended", detail);
   if (isMcpjamOwnedFailureCode(code)) {
     return { ...backendFailureSlug(status, detail), origin: "mcpjam" };
   }
@@ -1780,6 +1784,10 @@ function safelyEmitLiveTextDelta(
  */
 export const USER_OWNED_DENIAL_CODES: ReadonlySet<string> = new Set<string>([
   // convex `stream/routes.ts` + `lib/llmCallShell.ts` spend precheck
+  "platform_free_budget_exhausted",
+  "account_suspended",
+  "guest_model_not_allowed",
+  "guest_input_too_large",
   "user_rate_limit",
   "wallet_locked",
   "org_rate_limit",
@@ -3047,6 +3055,9 @@ async function processOneStep(
   // runner's tests stub `{ok, status, body, text}` with no `headers`, and an
   // unguarded `.get` throws a TypeError that the outer catch converts into a
   // failed turn (7 evals-runner / runner-parity tests).
+  if (res.headers?.get("x-mcpjam-platform-paid-fallback") === "1") {
+    writer.write({ type: "data-platform-paid-fallback", data: { usingCredits: true }, transient: true });
+  }
   const isJsonDenial =
     res.ok &&
     !!res.body &&

@@ -833,3 +833,14 @@ it.each(["content", "messages"])(
     });
   }
 );
+
+
+describe("MCPJam containment refusals", () => {
+  it.each([
+    ["platform_free_budget_exhausted", "provider/mcpjam_platform_budget"],
+    ["account_suspended", "account/suspended"],
+  ])("preserves %s without reporting provider authentication failure", (code, slug) => {
+    expect(describeError({ code, message: "Forbidden" }).slug).toBe(slug);
+    expect(describeError({ data: { code }, message: "Forbidden" }).slug).toBe(slug);
+  });
+});

@@ -219,10 +219,16 @@ vi.mock(
   }),
 );
 
+// Stubs, not reimplementations of the real builders (those are covered in
+// lib/__tests__/eval-route-url.test.ts). The route TYPE is in the stub path
+// on purpose: without it a promote that asked for the wrong kind of eval
+// route would produce the same URL and pass unnoticed.
 vi.mock("@/lib/app-navigation", () => ({
   navigateApp: (...args: unknown[]) => mockNavigateApp(...args),
   buildEvalsPath: (route: Record<string, unknown>) =>
-    `/evals/${route.suiteId}/${route.testId}`,
+    `/evals/${route.type}/${route.suiteId}/${route.testId}`,
+  buildEvaluatePath: (route: Record<string, unknown>) =>
+    `/evaluate/${route.type}/${route.suiteId}/${route.testId}`,
 }));
 
 describe("ShareUsageThreadDetail", () => {
@@ -661,7 +667,7 @@ describe("ShareUsageThreadDetail — promote affordance", () => {
     // Default behavior lands the user on the artifact they just created.
     await user.click(screen.getByText("simulate import"));
     await waitFor(() =>
-      expect(mockNavigateApp).toHaveBeenCalledWith("/evals/suite-1/case-1"),
+      expect(mockNavigateApp).toHaveBeenCalledWith("/evaluate/test-edit/suite-1/case-1"),
     );
   });
 

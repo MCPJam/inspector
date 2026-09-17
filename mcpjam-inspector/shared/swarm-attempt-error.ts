@@ -252,7 +252,7 @@ export function humanizeSwarmAttemptErrorMessage(
  * not silently missed here.
  */
 const ACCOUNT_LIMIT_CODE =
-  /\b(?:user_rate_limit|org_rate_limit|mcpjam_rate_limit|billing_limit_reached|spend_budget_reached|wallet_locked|billing_feature_not_included|free_tier_model_restricted|spend_cap_exceeded)\b/i;
+  /\b(?:user_rate_limit|org_rate_limit|mcpjam_rate_limit|billing_limit_reached|spend_budget_reached|wallet_locked|billing_feature_not_included|free_tier_model_restricted|spend_cap_exceeded|platform_free_budget_exhausted|account_suspended|guest_model_not_allowed|guest_input_too_large)\b/i;
 
 /**
  * True when a rate-limited attempt was stopped by MCPJam's account-wide limit
