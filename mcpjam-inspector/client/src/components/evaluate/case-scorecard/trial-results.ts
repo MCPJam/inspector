@@ -249,6 +249,9 @@ function isTerminal(iteration: EvalIteration | null): boolean {
  *
  * Pure. Every branch either names a source or returns `notMeasured`.
  */
+/** Keyed once per key, so a re-render does not repeat the warning. */
+const warnedAmbiguousJoinKeys = new Set<string>();
+
 export function joinTrialResults(
   groups: readonly ScorecardGroup[],
   trial: TrialFacts,
@@ -304,6 +307,10 @@ export function joinTrialResults(
         terminal,
       });
       const join = row.join;
+      // A widget-assert step row mints no scorer id — the server never graded
+      // it as a named scorer — so it has no key and legitimately never
+      // receives a narrative. Undefined here means "nothing to match", NOT
+      // "match anything".
       const joinKey = !join
         ? undefined
         : join.kind === "predicate"
@@ -313,8 +320,18 @@ export function joinTrialResults(
           ? `predicate:${join.criterionId}`
           : undefined
         : join.scorerId;
-      const matches =
-        trial.report?.rows.filter((note) => note.joinKey === joinKey) ?? [];
+      const matches = joinKey
+        ? (trial.report?.rows.filter((note) => note.joinKey === joinKey) ?? [])
+        : [];
+      // Two notes for one key would make the narrative a coin flip, so the row
+      // keeps its recorded observation instead. The server de-dupes scorer
+      // definitions by id, so this is a bug in the producer if it ever fires.
+      if (matches.length > 1 && !warnedAmbiguousJoinKeys.has(joinKey!)) {
+        warnedAmbiguousJoinKeys.add(joinKey!);
+        console.warn(
+          `[scorecard] ${matches.length} trace narratives claim the scorer "${joinKey}"; showing the recorded observation instead.`,
+        );
+      }
       const note = matches.length === 1 ? matches[0] : undefined;
       return note
         ? {
