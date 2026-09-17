@@ -329,6 +329,86 @@ describe("ScenarioChatPage", () => {
     ).not.toContain("private-token");
   });
 
+  it("keeps account-required iframe previews free of authentication actions", async () => {
+    mockIsEmbeddedPreview.mockReturnValue(true);
+    mockConvexAuthState.isAuthenticated = false;
+    mockWorkOsAuthState.user = null;
+    vi.mocked(global.fetch).mockResolvedValue(
+      new Response(JSON.stringify({ code: "SCENARIO_SIGN_IN_REQUIRED" }), {
+        status: 401,
+      }),
+    );
+    render(<ScenarioChatPage pathToken="private-token" />);
+    expect(
+      await screen.findByRole("heading", {
+        name: "Sign in to preview this scenario",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Sign in" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Create an account" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Open in App" }),
+    ).toBeInTheDocument();
+    expect(mockSignIn).not.toHaveBeenCalled();
+    expect(mockSignUp).not.toHaveBeenCalled();
+    expect(mockAuthFetch).not.toHaveBeenCalled();
+    expect(mockChatTabV2).not.toHaveBeenCalled();
+  });
+
+  it.each(["", "?surface=preview"])(
+    "preserves the return surface through switching accounts and signing in: %s",
+    async (query) => {
+      window.history.replaceState(
+        {},
+        "",
+        `/user-testing/study/switch-token${query}`,
+      );
+      mockAuthFetch.mockResolvedValueOnce(
+        createFetchResponse(
+          {
+            code: "FORBIDDEN",
+            details: { code: "SCENARIO_INVITE_ONLY" },
+            message:
+              "This scenario is invite-only - ask the owner to invite you.",
+          },
+          { ok: false, status: 403 },
+        ),
+      );
+      const view = render(<ScenarioChatPage pathToken="switch-token" />);
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Switch accounts" }),
+      );
+      const returnTo = mockSignOut.mock.calls[0][0].returnTo;
+      const destination = new URL(returnTo);
+      expect(destination.pathname).toBe("/user-testing/scenario/switch-token");
+      expect(destination.search).toBe(query);
+      view.unmount();
+
+      // Follow the logout return as a signed-out visitor, then choose sign-in.
+      window.history.replaceState(
+        {},
+        "",
+        destination.pathname + destination.search,
+      );
+      mockConvexAuthState.isAuthenticated = false;
+      mockWorkOsAuthState.user = null;
+      vi.mocked(global.fetch).mockResolvedValue(
+        new Response(JSON.stringify({ code: "SCENARIO_SIGN_IN_REQUIRED" }), {
+          status: 401,
+        }),
+      );
+      render(<ScenarioChatPage pathToken="switch-token" />);
+      fireEvent.click(await screen.findByRole("button", { name: "Sign in" }));
+      expect(
+        localStorage.getItem(SCENARIO_SIGN_IN_RETURN_PATH_STORAGE_KEY),
+      ).toBe(`/user-testing/scenario/switch-token${query}`);
+    },
+  );
+
   it("clears protected preview data on logout and re-redeems after account changes", async () => {
     const base = await mockAuthFetch();
     const body = await base.json();

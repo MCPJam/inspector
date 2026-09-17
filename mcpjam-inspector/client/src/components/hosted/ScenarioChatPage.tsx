@@ -1096,9 +1096,9 @@ export function ScenarioChatPage({
     const surface =
       sessionRef.current?.surface ??
       readScenarioSurfaceFromUrl(window.location.search);
-    writeScenarioSignInReturnPath(
-      target.pathname + (surface === "preview" ? "?surface=preview" : ""),
-    );
+    target.search = surface === "preview" ? "?surface=preview" : "";
+    writeScenarioSignInReturnPath(target.pathname + target.search);
+    return target.toString();
   }, [resolveShareToken]);
   const handleSignIn = useCallback(() => {
     rememberReturnPath();
@@ -1109,16 +1109,11 @@ export function ScenarioChatPage({
     void signUp();
   }, [signUp, rememberReturnPath]);
   const handleSwitchAccount = useCallback(() => {
-    rememberReturnPath();
-    const token = resolveShareToken();
+    const returnTo = rememberReturnPath() ?? window.location.origin;
     clearCurrentSession(sessionRef.current?.scenarioId);
     setSession(null);
-    void signOut({
-      returnTo: token
-        ? buildScenarioLink(token, "scenario")
-        : window.location.origin,
-    });
-  }, [rememberReturnPath, resolveShareToken, clearCurrentSession, signOut]);
+    void signOut({ returnTo });
+  }, [rememberReturnPath, clearCurrentSession, signOut]);
 
   const handleOAuthRequired = useCallback(
     (details?: HostedOAuthRequiredDetails) => {
@@ -1200,7 +1195,11 @@ export function ScenarioChatPage({
       );
     }
 
-    if (landingState === "denied" && displayError.kind === "sign_in_required") {
+    if (
+      landingState === "denied" &&
+      displayError.kind === "sign_in_required" &&
+      !isEmbeddedPreview()
+    ) {
       return (
         <ScenarioSignInGate onSignIn={handleSignIn} onSignUp={handleSignUp} />
       );
