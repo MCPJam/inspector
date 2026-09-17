@@ -9,6 +9,16 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-09-17
+
+#### Changed
+
+- **Eval run errors now show distinct summaries with expandable diagnostics** — a timed-out run shows "Run timed out" instead of the raw worker message; a setup failure shows "Run setup failed"; a cancellation shows "Run cancelled" with informational severity. The underlying worker message and any structured diagnostic details remain available in a **Show details** disclosure with a **Copy** button. A failed grade is no longer presented as an execution error.
+
+- **Empty transcript states are consistent across evals, swarms, and session review** — the transcript area now says "No transcript recorded" when a run completed without saving a conversation. "May not have run." appears only when there is no execution evidence (no tokens used, no tool calls, no spans); when evidence exists the qualifier is omitted. Loading states use an accessible spinner with a screen-reader label ("Loading transcript" or "Waiting for transcript") rather than visible copy. A transcript fetch error is shown as a distinct error card, separate from an absent recording.
+
+- **Swarm session failures use structured error cards** — a failed swarm attempt now renders the same error card format used elsewhere in the app, with a title, one-line summary, and severity. Rerunnable authentication failures use informational (blue) severity and suggest running the session again. Provider rate-limit and account-limit distinctions are preserved.
+
 ### 2026-09-16
 
 #### Changed
