@@ -25796,6 +25796,10 @@
           "maxTurns": {
             "type": ["integer", "null"]
           },
+          "setupWrites": {
+            "type": "boolean",
+            "description": "Whether prerequisite setup may create or modify workspace data before sessions run. Defaults to false."
+          },
           "createdAt": {
             "type": "number",
             "description": "Epoch milliseconds."
@@ -25981,6 +25985,10 @@
           },
           "maxTurns": {
             "type": ["integer", "null"]
+          },
+          "setupWrites": {
+            "type": "boolean",
+            "description": "Whether prerequisite setup may create or modify workspace data before sessions run. Defaults to false."
           },
           "createdAt": {
             "type": "number",

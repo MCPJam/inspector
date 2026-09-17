@@ -252,7 +252,7 @@ const LEGACY_EM_DASH_COPY = new Map<string, number>([
   ["components/swarms/journey-run-results.tsx", 2],
   ["components/swarms/new-swarm-confirm-step.tsx", 2],
   ["components/swarms/new-swarm-create-flow.tsx", 6],
-  ["components/swarms/new-swarm-running-step.tsx", 3],
+  ["components/swarms/new-swarm-running-step.tsx", 2],
   ["components/swarms/run-scorecard.tsx", 1],
   ["components/swarms/swarm-run-detail.tsx", 4],
   ["components/swarms/swarm-target-composer.tsx", 4],
