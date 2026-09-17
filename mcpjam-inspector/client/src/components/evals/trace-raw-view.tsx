@@ -285,12 +285,26 @@ export function TraceRawView({
     </div>
   );
 
+  const recordedContextNote =
+    !Array.isArray(trace) &&
+    "recordedContext" in trace &&
+    trace.recordedContext ? (
+      <p
+        className="px-3 py-2 text-xs text-muted-foreground"
+        data-testid="trace-raw-recorded-context"
+      >
+        Saved session evidence: messages, timing, and captured tool catalogs.
+        This is not the exact per-step model request shown in live Playground.
+      </p>
+    ) : null;
+
   if (growWithContent) {
     return (
       <div
         className="relative min-h-0 w-full min-w-0 flex-1"
         data-testid="trace-raw-view"
       >
+        {recordedContextNote}
         {copyTraceBtn}
         <JsonEditor
           height={jsonHeight}
@@ -308,6 +322,7 @@ export function TraceRawView({
       className="flex min-h-0 flex-1 flex-col overflow-hidden w-full"
       data-testid="trace-raw-view"
     >
+      {recordedContextNote}
       <div className={scrollerClass}>
         <div className="relative min-h-0 rounded-lg border border-border bg-muted/20">
           {copyTraceBtn}

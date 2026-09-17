@@ -288,8 +288,7 @@ export function stageEmptyIsGap(stage: UserValueStage): boolean {
 }
 
 /** Inheritance is resolved by the backend, never by a frontend default. */
-export type JudgeMode =
-  "off" | "manual" | "automatic" | "gating" | "unknown" | "paused";
+export type JudgeMode = "off" | "manual" | "automatic" | "gating" | "unknown";
 
 export function judgeMode(
   judgeConfig: EvalJudgeConfig | undefined,
@@ -297,7 +296,6 @@ export function judgeMode(
 ): JudgeMode {
   const goal = judgeConfig?.goalCompletion;
   if ((goal?.enabled ?? policy?.effective.enabled) === false) return "off";
-  if (policy?.executionPaused) return "paused";
   if (isRequiredRole(goal?.role ?? policy?.effective.role)) return "gating";
   const automatic = goal?.autoRun ?? policy?.effective.autoRun;
   if (automatic === undefined) return "unknown";
@@ -313,8 +311,7 @@ export type StageConfigState = {
     | "judgeOnRequest"
     | "judgeAutomatic"
     | "judgeOff"
-    | "judgeUnknown"
-    | "judgePaused";
+    | "judgeUnknown";
   /** Deterministic required rows (match + predicate). The judge is excluded. */
   required: number;
   /**
@@ -348,14 +345,8 @@ export function stageConfigStates(
     if (judge === "automatic") {
       return { stage, state: "judgeAutomatic", required, advisory, judge };
     }
-    if (judge === "unknown" || judge === "paused") {
-      return {
-        stage,
-        state: judge === "unknown" ? "judgeUnknown" : "judgePaused",
-        required,
-        advisory,
-        judge,
-      };
+    if (judge === "unknown") {
+      return { stage, state: "judgeUnknown", required, advisory, judge };
     }
     if (judge === "manual") {
       return { stage, state: "judgeOnRequest", required, advisory, judge };

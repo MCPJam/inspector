@@ -20,6 +20,7 @@ import {
   SPEND_BUDGET_REACHED_MESSAGE,
 } from "@/lib/mcpjam-limit";
 import { cn } from "@/lib/utils";
+import { useModelPickerIntentStore } from "@/stores/model-picker-intent-store";
 
 interface ErrorBoxProps {
   message: string;
@@ -85,6 +86,24 @@ export function ErrorBox({
 }: ErrorBoxProps) {
   const [isErrorDetailsOpen, setIsErrorDetailsOpen] = useState(false);
   const errorDetailsJson = parseErrorDetails(errorDetails);
+
+  const refusalCode = code ?? errorDetailsJson?.code;
+  if (refusalCode === "account_suspended") {
+    return <div role="alert" className="rounded border border-warning bg-warning/20 p-4 text-warning-foreground">
+      Account suspended. <a className="underline" href="mailto:founders@mcpjam.com">Contact support</a> to request a review.
+    </div>;
+  }
+  if (refusalCode === "platform_free_budget_exhausted") {
+    const resetAt = errorDetailsJson?.resetAt;
+    return <div role="alert" className="flex flex-col gap-2 rounded border border-warning bg-warning/20 p-4 text-warning-foreground">
+      <p>MCPJam&apos;s shared free allowance is currently unavailable.</p>
+      {typeof resetAt === "number" && Number.isFinite(resetAt) && <p>Resets {new Date(resetAt).toLocaleString()}.</p>}
+      <div className="flex gap-2">
+        <Button variant="outline" onClick={() => useModelPickerIntentStore.getState().requestOpenProvidersTab()}>Use your own API key</Button>
+        {canTopUp && onTopUp && <Button variant="outline" onClick={onTopUp}>Add credits</Button>}
+      </div>
+    </div>;
+  }
 
   // Three priority states for the rate-limit-adjacent variants. Order
   // matters: walletLocked is the highest-priority terminal state (no

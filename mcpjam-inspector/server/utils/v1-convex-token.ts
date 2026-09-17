@@ -14,6 +14,11 @@
  * the API caller.
  */
 import type { Context } from "hono";
+import { ConvexHttpClient } from "convex/browser";
+import {
+  AuthKitVerificationError,
+  verifyAuthKitToken,
+} from "../services/authkit-jwt.js";
 import {
   ErrorCode,
   WebRouteError,
@@ -262,10 +267,12 @@ export async function getConvexBearerForRequest(c: Context): Promise<string> {
  * re-mints (or returns the cached token, which `getConvexBearerForDelegation`
  * already refreshes near expiry).
  *
- * For a session/guest JWT caller there is nothing to re-mint — the token's
- * lifetime is the browser session's and we cannot extend it — so the thunk is
- * constant. That is not a gap this can close; a run whose launching tab closed
- * is what the backend's stale-run sweep is for.
+ * For a session/guest JWT caller the thunk captures one access token. It does
+ * NOT receive the browser's refreshed tokens, and the access token can expire
+ * while the browser remains signed in. A longer background run can therefore
+ * lose authorization for heartbeats and persistence. Fixing that requires a
+ * renewable, scoped execution credential; the stale-run sweep only reports
+ * the resulting loss of contact, not its cause.
  */
 export function getConvexBearerThunkForRequest(
   c: Context
@@ -280,6 +287,60 @@ export function getConvexBearerThunkForRequest(
   }
   const bearer = assertBearerToken(c);
   return async () => bearer;
+}
+
+/** Authorize detached work while the browser token is still valid. */
+export async function getBackgroundRunBearerForRequest(
+  c: Context,
+  projectId: string,
+): Promise<() => Promise<string>> {
+  if (usesDelegatedToken(c) || c.get("guestId")) {
+    return getConvexBearerThunkForRequest(c);
+  }
+  const bearer = assertBearerToken(c);
+  // Never elevate an unverified claim to service-token delegation.
+  const session = await verifyAuthKitToken(bearer).catch((error: unknown) => {
+    if (error instanceof AuthKitVerificationError) {
+      throw new WebRouteError(
+        401,
+        ErrorCode.UNAUTHORIZED,
+        "Invalid or expired session token",
+      );
+    }
+    throw error;
+  });
+  const convexUrl = process.env.CONVEX_URL;
+  if (!convexUrl) {
+    throw new WebRouteError(
+      500,
+      ErrorCode.INTERNAL_ERROR,
+      "Server missing CONVEX_URL configuration",
+    );
+  }
+  const client = new ConvexHttpClient(convexUrl);
+  client.setAuth(bearer);
+  // Resolve the organization from the project authorized by the ORIGINAL
+  // credential, not from a client header or the browser's active organization.
+  const projects = (await client.query(
+    "projects:getMyProjects" as never,
+    {} as never,
+  )) as Array<{ _id: string; organizationId?: string }>;
+  const project = projects.find((row) => row._id === projectId);
+  if (!project?.organizationId) {
+    throw new WebRouteError(
+      403,
+      ErrorCode.FORBIDDEN,
+      "Cannot authorize background execution for this project",
+    );
+  }
+  const organizationId = project.organizationId;
+  const attribution = stableAgentAttribution(c);
+  const getBearer = () =>
+    getConvexBearerForDelegation(session.sub, organizationId, attribution);
+  // Fail before creating a durable run if delegation is unavailable. The
+  // backend rechecks membership on each mint; the token stays server-side.
+  await getBearer();
+  return getBearer;
 }
 
 /**

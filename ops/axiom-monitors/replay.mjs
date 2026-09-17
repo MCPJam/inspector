@@ -122,6 +122,27 @@ async function run(apl, at, lookbackDays = 14) {
   );
 }
 
+// Reuse the shipped monetary query, changing only its clock anchor. Coverage
+// must be nonzero so expired history cannot become a false passing SILENT.
+if (process.argv.includes("--spend")) {
+  let failed = 0;
+  for (const key of ["llm-spend-hourly-ladder-150", "llm-spend-hourly-ladder-400"]) {
+    const definition = loadMonitor(key);
+    for (const [at, expected] of [["2026-09-15T08:00:00Z", true], ["2026-09-08T08:00:00Z", false], ["2026-09-10T08:00:00Z", false]]) {
+      const anchor = `| where _sysTime >= datetime(${hourBefore(at)}) and _sysTime < datetime(${at})`;
+      const lines = definition.aplQuery.map(line => line === "| where _sysTime >= ago(60m)" ? anchor : line);
+      const coverage = await run([...lines.slice(0, -1), "| summarize Rows=count()"].join("\n"), at, 1);
+      const rows = await run(lines.join("\n"), at, 1);
+      const value = Number(rows[0]?.[definition.monitor.columnName]);
+      const fires = value > definition.monitor.threshold;
+      const ok = coverage[0]?.Rows > 0 && Number.isFinite(value) && fires === expected;
+      if (!ok) failed++;
+      console.log(`${ok ? "PASS" : "FAIL"} ${key} ${hourBefore(at)}: ${value}; expected ${expected ? "FIRE" : "SILENT"}; rows=${coverage[0]?.Rows ?? 0}`);
+    }
+  }
+  process.exit(failed ? 1 : 0);
+}
+
 const CASES = [
   {
     monitor: "spike",
