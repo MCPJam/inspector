@@ -1912,15 +1912,22 @@ export const checkHostCompatibilityOperation: PlatformOperation<
  * operations has to say so — a model told "start a run" and handed a receipt
  * will otherwise report the receipt as the answer.
  *
- * ## Why the starts declare `risk: "spend"` when the default is free
+ * ## Why the starts declare `risk: "none"`
  *
- * `includeLlmObservations` is the only field that costs anything and it
- * defaults off, so most runs are free. But `risk` is a static declaration read
- * by five surfaces to decide how much ceremony a call needs, and a field that
- * described the cheap case would be describing the case that does not need
- * describing. The worst case is what a spend guard has to be told; the
- * agent's `confirmSeverity` is a function precisely so the approval copy can
- * still say "this one is free" when the flag is off.
+ * `includeLlmObservations` is the only field that runs a model, and that model
+ * call is PLATFORM-PAID: it consumes no organization credits, so there is no
+ * money for a spend guard to warn about and no invoice to be surprised by.
+ * `risk` is a static declaration read by five surfaces to decide how much
+ * ceremony a call needs, and declaring `spend` for a call that cannot spend
+ * puts a money warning on every one of them.
+ *
+ * NOT free of consequence, though: the model pass draws on MCPJam's own daily
+ * budget for the feature, and a start dials somebody else's server and
+ * persists a project row either way. That is why the agent surface keeps these
+ * GATED rather than deriving `direct` from the risk — see `TIER_EXCEPTIONS` in
+ * the inspector's `agent-op-registry.test.ts`, where `start_conformance_run`
+ * already sits for exactly this reason at exactly this risk. A person approves
+ * the start; they are simply not told it costs money, because it does not.
  */
 
 const readinessRunScopedInput = z.object({
@@ -1940,7 +1947,7 @@ const startReadinessInput = serverScopedInput.extend({
     .boolean()
     .optional()
     .describe(
-      "Ask a model for optional experience observations. COSTS the organization's MCPJam credits. Defaults false; the deterministic grade is complete without it."
+      "Ask a model for optional experience observations. Included with MCPJam; no customer credits consumed; subject to MCPJam's daily analysis budget. Defaults false; the deterministic grade is complete without it."
     ),
   idempotencyKey: z
     .string()
@@ -1979,9 +1986,9 @@ export const startClaudeReadinessRunOperation: PlatformOperation<
   name: "start_claude_readiness_run",
   title: "Start a Claude directory readiness run",
   description:
-    "Grade a saved MCP server against Anthropic's connector-directory rules. Starts a durable run and returns its id — poll `get_readiness_run` for the verdict, which is NOT in this response. Deterministic grading is free; `includeLlmObservations` adds an optional model pass that consumes MCPJam credits.",
+    "Grade a saved MCP server against Anthropic's connector-directory rules. Starts a durable run and returns its id — poll `get_readiness_run` for the verdict, which is NOT in this response. `includeLlmObservations` adds an optional model pass: included with MCPJam, so no customer credits are consumed either way; it is subject to MCPJam's daily analysis budget.",
   readOnly: false,
-  risk: "spend",
+  risk: "none",
   permalink: noPermalink(
     "route-not-addressable",
     "No `conformance/readiness/:runId` route: the readiness section rediscovers the LATEST run for a server and has no run-selection UI, so `/conformance?readinessRun=` is read by nothing. A link carrying it would switch the reader's project and then show them a different run — the wrong-resource landing this contract exists to end."
@@ -2028,9 +2035,9 @@ export const startOpenAIReadinessRunOperation: PlatformOperation<
   name: "start_openai_readiness_run",
   title: "Start an OpenAI directory readiness run",
   description:
-    "Grade a saved MCP server against OpenAI's app-directory rules. Requires an explicit `submissionMode` — it is never inferred, because guessing turns a missing input into a clean bill of health. Starts a durable run and returns its id; poll `get_readiness_run` for the verdict. Deterministic grading is free; `includeLlmObservations` consumes MCPJam credits.",
+    "Grade a saved MCP server against OpenAI's app-directory rules. Requires an explicit `submissionMode` — it is never inferred, because guessing turns a missing input into a clean bill of health. Starts a durable run and returns its id; poll `get_readiness_run` for the verdict. `includeLlmObservations` adds an optional model pass: included with MCPJam, so no customer credits are consumed either way; it is subject to MCPJam's daily analysis budget.",
   readOnly: false,
-  risk: "spend",
+  risk: "none",
   permalink: noPermalink(
     "route-not-addressable",
     "No `conformance/readiness/:runId` route: the readiness section rediscovers the LATEST run for a server and has no run-selection UI, so `/conformance?readinessRun=` is read by nothing. A link carrying it would switch the reader's project and then show them a different run — the wrong-resource landing this contract exists to end."
@@ -6558,7 +6565,7 @@ const generateEvalCasesInput = z.object({
     .max(256)
     .optional()
     .describe(
-      "Retry-safety key: pass one, because generating spends model credits and a retry must not pay for a second generation. Repeating a call with the same key replays the first attempt's drafts and returns the cases it already created."
+      "Retry-safety key: pass one, because a retry must not take a second slice of the organization's daily generation quota. Repeating a call with the same key replays the first attempt's drafts and returns the cases it already created."
     ),
 });
 export type GenerateEvalCasesInput = z.infer<typeof generateEvalCasesInput>;
@@ -6568,10 +6575,10 @@ export const generateEvalCasesOperation: PlatformOperation<
   GenerateEvalCasesResult
 > = {
   name: "generate_eval_cases",
-  risk: "spend",
+  risk: "none",
   title: "Generate MCPJam eval cases",
   description:
-    "AI-generate test cases from the suite's server tools and persist them into the suite. Connects the servers to discover tools and spends the organization's credits. For a suite with attached project environments, tools are discovered from the environment's closed server set — pass environment to choose which one. The authoring model is platform-controlled; set caseModels to choose the generated cases' execution models. IDEMPOTENT on idempotencyKey: pass one, because generating spends model credits and a retry must not pay for a second generation.",
+    "AI-generate test cases from the suite's server tools and persist them into the suite. Connects the servers to discover tools. Included with MCPJam; no customer credits consumed; subject to usage limits: a per-minute burst limit and the organization's daily generation quota. A refusal is RATE_LIMITED with a retry time — wait until then; topping up credits does not lift it. For a suite with attached project environments, tools are discovered from the environment's closed server set — pass environment to choose which one. The authoring model is platform-controlled; set caseModels to choose the generated cases' execution models. IDEMPOTENT on idempotencyKey: pass one, because a retry must not take a second slice of that quota.",
   readOnly: false,
   permalink: derivePermalinks((result) =>
     result.created.flatMap((testCase) =>
@@ -7418,9 +7425,9 @@ export const proposeEvalDescriptionRewriteOperation: PlatformOperation<
   name: "propose_eval_description_rewrite",
   title: "Propose an eval description rewrite",
   description:
-    "Draft a rewritten tool description from a finished eval run's failed trials: the tool's current description and input schema, sibling tool names, the expected vs observed calls, and the failing prompts. SPENDS a small model budget (worst case about $0.10) and returns immediately with a proposing receipt — poll get_eval_description_experiment until status is proposed (or failed). Does not launch runs, write a verdict, or change a gate. Report-only throughout.",
+    "Draft a rewritten tool description from a finished eval run's failed trials: the tool's current description and input schema, sibling tool names, the expected vs observed calls, and the failing prompts. Included with MCPJam; no customer credits consumed; subject to MCPJam's daily analysis budget. Returns immediately with a proposing receipt — poll get_eval_description_experiment until status is proposed (or failed). Does not launch runs, write a verdict, or change a gate. Report-only throughout.",
   readOnly: false,
-  risk: "spend",
+  risk: "none",
   permalink: noPermalink("mutation-only"),
   inputSchema: proposeEvalDescriptionRewriteInput,
   async execute(input, { client, signal, onScopeResolved }) {
@@ -12423,7 +12430,7 @@ export const listJourneyRunSessionsOperation: PlatformOperation<
   name: "list_journey_run_sessions",
   title: "List the sessions a journey run produced",
   description:
-    "The chat sessions a journey run produced — one per persona attempt against each target — with readiness, goal scores and a first-message preview. Transcript bodies are not on this API yet; use the returned `id` in the app to open a session.",
+    "The chat sessions a journey run produced — one per persona attempt against each target — with graded verdicts, check observations, readiness, goal scores and a first-message preview. `verdict` is the graded goal result; `outcome` is execution lifecycle. A broken execution may have met its goal. Transcript bodies are not on this API yet; use the returned `id` in the app to open a session.",
   readOnly: true,
   permalink: derivePermalinks((result) =>
     result.items.map((session) => ({
@@ -12745,13 +12752,15 @@ function requireExactlyOneGrounding(input: {
 function requireConfigPair(input: {
   sessionsPerTarget?: number;
   maxTurns?: number;
+  setupWrites?: boolean;
 }): void {
   if (
     (input.sessionsPerTarget === undefined) !==
-    (input.maxTurns === undefined)
+      (input.maxTurns === undefined) ||
+    (input.setupWrites !== undefined && input.sessionsPerTarget === undefined)
   ) {
     throw operationInputError(
-      "sessionsPerTarget and maxTurns must be sent together — they are one execution config upstream."
+      "sessionsPerTarget and maxTurns must be sent together; setupWrites requires that pair."
     );
   }
 }
@@ -13818,6 +13827,12 @@ const createJourneyInput = z.object({
       "Sessions per target. TOTAL sessions = targets x this, and the total is what spends."
     ),
   maxTurns: z.number().int().min(1).max(200),
+  setupWrites: z
+    .boolean()
+    .optional()
+    .describe(
+      "Attempt prerequisite creation with creation-like tools annotated non-destructive; requests prefixed names and leaves created data. Off unless set. Use a test account."
+    ),
   idempotencyKey: z.string().trim().min(1).max(200).optional(),
 });
 
@@ -13854,6 +13869,9 @@ export const createJourneyOperation: PlatformOperation<
         personaId: input.persona,
         sessionsPerTarget: input.sessionsPerTarget,
         maxTurns: input.maxTurns,
+        ...(input.setupWrites !== undefined
+          ? { setupWrites: input.setupWrites }
+          : {}),
         ...(input.name !== undefined ? { name: input.name } : {}),
         ...(input.swarm !== undefined ? { swarmId: input.swarm } : {}),
         ...(input.environmentIds !== undefined
@@ -13880,6 +13898,12 @@ const updateJourneyInput = journeySelectorInput.extend({
     .describe("null clears the fan-out and returns the journey to its hosts."),
   sessionsPerTarget: z.number().int().min(1).max(100).optional(),
   maxTurns: z.number().int().min(1).max(200).optional(),
+  setupWrites: z
+    .boolean()
+    .optional()
+    .describe(
+      "Attempt prerequisite creation with creation-like tools annotated non-destructive; requests prefixed names and leaves created data. Off unless set. Replacing sessionsPerTarget/maxTurns without this field clears it; send its current value to preserve it. Use a test account."
+    ),
 });
 
 export type UpdateJourneyInput = z.infer<typeof updateJourneyInput>;
@@ -13892,7 +13916,7 @@ export const updateJourneyOperation: PlatformOperation<
   name: "update_journey",
   title: "Update an MCPJam journey",
   description:
-    "Edit a journey. sessionsPerTarget and maxTurns must be sent together — they are one execution config upstream. A run already in flight keeps the config it launched with.",
+    "Edit a journey. sessionsPerTarget and maxTurns must be sent together; setupWrites requires that pair. A run already in flight keeps the config it launched with.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink(
@@ -13919,6 +13943,9 @@ export const updateJourneyOperation: PlatformOperation<
           ? { sessionsPerTarget: input.sessionsPerTarget }
           : {}),
         ...(input.maxTurns !== undefined ? { maxTurns: input.maxTurns } : {}),
+        ...(input.setupWrites !== undefined
+          ? { setupWrites: input.setupWrites }
+          : {}),
       },
       { signal }
     );
@@ -14041,6 +14068,12 @@ const createSwarmInput = z.object({
   environmentIds: z.array(z.string().min(1)).min(1).optional(),
   sessionsPerTarget: z.number().int().min(1).max(100),
   maxTurns: z.number().int().min(1).max(200),
+  setupWrites: z
+    .boolean()
+    .optional()
+    .describe(
+      "Attempt prerequisite creation with creation-like tools annotated non-destructive; requests prefixed names and leaves created data. Off unless set. Use a test account."
+    ),
   idempotencyKey: z.string().trim().min(1).max(200).optional(),
 });
 
@@ -14076,6 +14109,9 @@ export const createSwarmOperation: PlatformOperation<
         name: input.name,
         sessionsPerTarget: input.sessionsPerTarget,
         maxTurns: input.maxTurns,
+        ...(input.setupWrites !== undefined
+          ? { setupWrites: input.setupWrites }
+          : {}),
         ...(input.description !== undefined
           ? { description: input.description }
           : {}),
@@ -14102,6 +14138,12 @@ const updateSwarmInput = swarmSelectorInput.extend({
     .optional(),
   sessionsPerTarget: z.number().int().min(1).max(100).optional(),
   maxTurns: z.number().int().min(1).max(200).optional(),
+  setupWrites: z
+    .boolean()
+    .optional()
+    .describe(
+      "Attempt prerequisite creation with creation-like tools annotated non-destructive; requests prefixed names and leaves created data. Off unless set. Replacing sessionsPerTarget/maxTurns without this field clears it; send its current value to preserve it. Use a test account."
+    ),
 });
 
 export type UpdateSwarmInput = z.infer<typeof updateSwarmInput>;
@@ -14143,6 +14185,9 @@ export const updateSwarmOperation: PlatformOperation<
           ? { sessionsPerTarget: input.sessionsPerTarget }
           : {}),
         ...(input.maxTurns !== undefined ? { maxTurns: input.maxTurns } : {}),
+        ...(input.setupWrites !== undefined
+          ? { setupWrites: input.setupWrites }
+          : {}),
       },
       { signal }
     );
@@ -14238,9 +14283,9 @@ export const generatePersonasOperation: PlatformOperation<
   name: "generate_personas",
   title: "Draft MCPJam personas with a model",
   description:
-    "Draft candidate personas grounded in what the project's servers actually do. NOTHING IS SAVED — pick what you want and pass it to create_persona. Runs a model on the organization's account, so it spends. Exactly one of environmentId or serverAttachmentId.",
+    "Draft candidate personas grounded in what the project's servers actually do. NOTHING IS SAVED — pick what you want and pass it to create_persona. Runs a model. Included with MCPJam; no customer credits consumed; subject to usage limits: a per-minute burst limit and the organization's daily generation quota. A refusal is RATE_LIMITED with a retry time — wait until then; topping up credits does not lift it. Exactly one of environmentId or serverAttachmentId.",
   readOnly: false,
-  risk: "spend",
+  risk: "none",
   permalink: noPermalink(
     "route-not-addressable",
     "No `swarms/personas/:personaId` route: personas are edited inside the Swarms surface as component state."
@@ -14301,9 +14346,9 @@ export const generateJourneysOperation: PlatformOperation<
   name: "generate_journeys",
   title: "Draft MCPJam journeys with a model",
   description:
-    "Draft candidate journeys for a persona, grounded in the project's servers. NOTHING IS SAVED — pass what you want to create_journey. Spends. Exactly one of environmentId or serverAttachmentId.",
+    "Draft candidate journeys for a persona, grounded in the project's servers. NOTHING IS SAVED — pass what you want to create_journey. Included with MCPJam; no customer credits consumed; subject to usage limits: a per-minute burst limit and the organization's daily generation quota. A refusal is RATE_LIMITED with a retry time — wait until then; topping up credits does not lift it. Exactly one of environmentId or serverAttachmentId.",
   readOnly: false,
-  risk: "spend",
+  risk: "none",
   permalink: noPermalink(
     "route-not-addressable",
     "No `swarms/journeys/:journeyId` route: journeys are edited inside the Swarms surface as component state."
@@ -14528,6 +14573,14 @@ export type GetWaveInsightsResult = {
   insights: PlatformWaveInsights;
 };
 
+/**
+ * What a FAILED included analysis means, for the insight getters. The codes
+ * are the backend's stored `errorCode`; an agent reading one needs to know
+ * which failures lift on their own and which are not the caller's to fix.
+ */
+const INCLUDED_ANALYSIS_FAILURE_NOTE =
+  "A failed analysis carries errorCode: `platform_cap_exceeded` means MCPJam's own daily budget for this analysis is used up — nothing was charged, it resets at 00:00 UTC, and neither re-requesting nor topping up credits helps before then; `platform_unavailable` means MCPJam could not reserve capacity — try again later, not in a loop.";
+
 export const getWaveInsightsOperation: PlatformOperation<
   GetWaveInsightsInput,
   GetWaveInsightsResult
@@ -14535,7 +14588,7 @@ export const getWaveInsightsOperation: PlatformOperation<
   name: "get_wave_insights",
   title: "Get an MCPJam wave's insights",
   description:
-    "The model's analysis of a whole wave, if one has been requested. Poll this after request_wave_insights — status goes pending → completed. Not-found means nobody has requested it, which is different from 'requested and still working'.",
+    "The model's analysis of a whole wave, if one has been requested. Poll this after request_wave_insights — status goes pending → completed. Not-found means nobody has requested it, which is different from 'requested and still working'. " + INCLUDED_ANALYSIS_FAILURE_NOTE,
   readOnly: true,
   permalink: derivePermalinks((result) => [
     // A wave IS a journey run on the Swarms surface: `/swarms/<waveId>`.
@@ -14564,7 +14617,7 @@ const requestWaveInsightsInput = waveSelectorInput.extend({
     .boolean()
     .optional()
     .describe(
-      "Regenerate over a wave that already has insights. SPENDS AGAIN — the usual reason a wave looks stuck is a caller that did not poll, so read get_wave_insights before reaching for this."
+      "Regenerate over a wave that already has insights. TAKES ANOTHER SLICE of the daily insight quota (no credits either way) — the usual reason a wave looks stuck is a caller that did not poll, so read get_wave_insights before reaching for this."
     ),
 });
 
@@ -14581,9 +14634,9 @@ export const requestWaveInsightsOperation: PlatformOperation<
   name: "request_wave_insights",
   title: "Request MCPJam wave insights",
   description:
-    "Ask a model to analyze a whole wave. Returns immediately with status pending; poll get_wave_insights. SPENDS against the organization's daily insights budget, which is SHARED with user-testing insights — burning it here takes it from there. Read the run scorecards first; they are free and usually explain the failure.",
+    "Ask a model to analyze a whole wave. Returns immediately with status pending; poll get_wave_insights. Included with MCPJam; no customer credits consumed; subject to usage limits: it COUNTS against the organization's daily insight quota, which is SHARED with user-testing insights, so a request here takes one from there. Read the run scorecards first; they cost no quota and usually explain the failure.",
   readOnly: false,
-  risk: "spend",
+  risk: "none",
   permalink: noPermalink("mutation-only"),
   inputSchema: requestWaveInsightsInput,
   async execute(input, { client, signal, onScopeResolved }) {
@@ -14616,7 +14669,7 @@ export const cancelWaveInsightsOperation: PlatformOperation<
   name: "cancel_wave_insights",
   title: "Cancel an MCPJam wave insights request",
   description:
-    "Stop an in-flight insights generation. This is the recovery path for a wave stuck in pending — without it the only way forward is force, which spends again.",
+    "Stop an in-flight insights generation. This is the recovery path for a wave stuck in pending — without it the only way forward is force, which takes another slice of the daily insight quota.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink("mutation-only"),
@@ -14709,7 +14762,7 @@ export const getUserTestingScenarioOperation: PlatformOperation<
   name: "get_user_testing_scenario",
   title: "Get a user-testing scenario",
   description:
-    "Scenario detail plus its actionable-insights envelope: findings AGGREGATED over the latest analyzed window of real visitor sessions, each with exemplar evidence. Only a finding with actionTarget mcp_server AND actionability ready authorizes proposing a server change; agent_configuration / eval_case / environment / investigate findings name other work and must not be 'fixed' in server code. Reads never trigger generation — request_user_testing_insights does, and spends.",
+    "Scenario detail plus its actionable-insights envelope: findings AGGREGATED over the latest analyzed window of real visitor sessions, each with exemplar evidence. Only a finding with actionTarget mcp_server AND actionability ready authorizes proposing a server change; agent_configuration / eval_case / environment / investigate findings name other work and must not be 'fixed' in server code. Reads never trigger generation — request_user_testing_insights does, and it takes a slice of the daily insight quota.",
   readOnly: true,
   permalink: derivePermalinks((result) => [
     {
@@ -15089,7 +15142,7 @@ export const getUserTestingInsightsOperation: PlatformOperation<
   name: "get_user_testing_insights",
   title: "Get a user-testing window's insights",
   description:
-    "The model's analysis of one analysis window, if one has been requested. Not-found means nobody has requested it, which is different from requested-and-still-working.",
+    "The model's analysis of one analysis window, if one has been requested. Not-found means nobody has requested it, which is different from requested-and-still-working. " + INCLUDED_ANALYSIS_FAILURE_NOTE,
   readOnly: true,
   permalink: noPermalink(
     "no-addressable-resource",
@@ -15119,7 +15172,7 @@ const requestUserTestingInsightsInput = userTestingScenarioSelectorInput.extend(
       .boolean()
       .optional()
       .describe(
-        "Regenerate over a window that already has insights. Spends again."
+        "Regenerate over a window that already has insights. Takes another slice of the daily insight quota; no credits are consumed."
       ),
   }
 );
@@ -15139,9 +15192,9 @@ export const requestUserTestingInsightsOperation: PlatformOperation<
   name: "request_user_testing_insights",
   title: "Request insights for a user-testing scenario",
   description:
-    "Ask a model to analyze the scenario's current window. Returns immediately with the windowId and status pending; poll get_user_testing_insights. SPENDS against the organization's daily insights budget, which is SHARED with swarm wave insights. A 409 means the window has not been mined yet — wait, do not retry in a loop.",
+    "Ask a model to analyze the scenario's current window. Returns immediately with the windowId and status pending; poll get_user_testing_insights. Included with MCPJam; no customer credits consumed; subject to usage limits: it COUNTS against the organization's daily insight quota, which is SHARED with swarm wave insights. A 409 means the window has not been mined yet — wait, do not retry in a loop.",
   readOnly: false,
-  risk: "spend",
+  risk: "none",
   permalink: noPermalink("mutation-only"),
   inputSchema: requestUserTestingInsightsInput,
   async execute(input, { client, signal, onScopeResolved }) {
@@ -15176,7 +15229,7 @@ export const cancelUserTestingInsightsOperation: PlatformOperation<
   name: "cancel_user_testing_insights",
   title: "Cancel a user-testing insights request",
   description:
-    "Stop an in-flight insights generation. The recovery path for a window stuck pending — without it the only way forward is force, which spends again.",
+    "Stop an in-flight insights generation. The recovery path for a window stuck pending — without it the only way forward is force, which takes another slice of the daily insight quota.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink("mutation-only"),

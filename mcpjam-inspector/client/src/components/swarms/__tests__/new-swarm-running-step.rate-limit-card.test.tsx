@@ -107,6 +107,8 @@ const runFixture = {
 } as unknown as JourneyRun;
 
 vi.mock("convex/react", () => ({
+  useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
+  useMutation: () => vi.fn(),
   useQuery: (name: string) => {
     switch (name) {
       case "journeyRuns:getJourneyRun":
@@ -445,3 +447,12 @@ describe("NewSwarmRunningStep — provider rate-limit card", () => {
     expect(card).toHaveTextContent("Anthropic rate-limited this key.");
   });
 });
+
+vi.mock("@/hooks/use-host-snapshot", () => ({
+  useHostSnapshotForSession: () => ({
+    status: "ready", snapshot: { hostStyle: "mcpjam" },
+  }),
+  useHostSnapshotForHost: () => ({
+    status: "ready", snapshot: { hostStyle: "mcpjam" },
+  }),
+}));

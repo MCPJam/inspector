@@ -37,9 +37,9 @@ Two things worth getting right the first time:
 
 ## Generating cases
 
-`generate_eval_cases` AI-generates cases from the suite's server tools and persists them. It **spends the organization's credits**, and it connects the servers to discover their tools, so it is not a dry run in any sense.
+`generate_eval_cases` AI-generates cases from the suite's server tools and persists them. The authoring model is **included with MCPJam — no customer credits are consumed** — but it counts against the organization's daily generation quota, and it connects the servers to discover their tools, so it is not a dry run in any sense.
 
-- Confirm before calling it, the same as `run_eval_suite`.
+- Confirm before calling it. Not because of money, but because it persists cases into the suite and takes a slice of a quota the whole organization shares.
 - Pass `idempotencyKey` if the call might be retried — a transport error is not proof nothing was generated.
 - `caseMix`, `caseModels`, and `varyUserStyles` shape the output. Generated cases are a starting point to review, not a suite to run and report on unread.
 

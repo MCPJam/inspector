@@ -4475,7 +4475,7 @@ export function registerEvalCommands(program: Command): void {
     descriptionExperiment
       .command("propose")
       .description(
-        "Draft a rewritten tool description from a finished run's failed trials. Spends a small model budget; poll `description-experiment get` rather than re-proposing."
+        "Draft a rewritten tool description from a finished run's failed trials. Included with MCPJam; no customer credits consumed; subject to MCPJam's daily analysis budget. Poll `description-experiment get` rather than re-proposing."
       )
       .requiredOption("--run <id>", "Source eval run ID")
       .requiredOption("--tool <name>", "Catalog tool name to rewrite")
@@ -6152,7 +6152,7 @@ export function registerEvalCommands(program: Command): void {
   cases
     .command("generate")
     .description(
-      "AI-generate test cases from the suite's tools (spends credits)"
+      "AI-generate test cases from the suite's tools (included with MCPJam; no customer credits consumed; counts against the organization's daily generation quota)"
     )
     .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
     .option("--project <id-or-name>", PROJECT_OPT)

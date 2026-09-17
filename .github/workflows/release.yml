@@ -404,7 +404,12 @@ jobs:
   # action does not depend on either.
   evals-action-smoke:
     needs: preflight
-    if: needs.preflight.outputs.evals_action_changed == 'true'
+    # The repo variables are what make the live smoke possible. While they are
+    # unset, the smoke SKIPS instead of failing the whole release. Set both
+    # variables to turn the gate back on.
+    if: >-
+      needs.preflight.outputs.evals_action_changed == 'true' &&
+      vars.EVALS_SMOKE_PROJECT != '' && vars.EVALS_SMOKE_SUITE != ''
     uses: ./.github/workflows/evals-action-smoke.yml
     with:
       project: ${{ vars.EVALS_SMOKE_PROJECT }}
@@ -413,7 +418,18 @@ jobs:
 
   publish-evals-action:
     needs: [preflight, evals-action-smoke]
-    if: needs.preflight.outputs.evals_action_changed == 'true'
+    # The smoke is a GATE, not a dependency: a SKIPPED smoke (its repo
+    # variables are unset) still lets the tag ship, while a FAILED smoke still
+    # holds it back. Without `!cancelled()` a skipped `needs` would skip this
+    # job along with it — but that also stops a FAILED `needs` from skipping
+    # it, so `preflight` is re-asserted by hand. It must be: the change
+    # detection runs before preflight's green-CI gate, so a preflight that
+    # fails later still reports `evals_action_changed: true`.
+    if: >-
+      !cancelled() &&
+      needs.preflight.result == 'success' &&
+      needs.preflight.outputs.evals_action_changed == 'true' &&
+      needs.evals-action-smoke.result != 'failure'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     concurrency:

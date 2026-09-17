@@ -10,7 +10,11 @@
  * `convex/journeyExecution/*` + `convex/{personas,journeys,journeyRuns}` by
  * hand (two-repo layout).
  */
-
+import type {
+  SwarmSessionVerdict,
+  JourneyRunVerdictSummary,
+  SwarmReport,
+} from "@mcpjam/sdk/contract";
 import { authFetch } from "@/lib/session-token";
 import { notifyMCPJamLimitError } from "@/lib/mcpjam-limit";
 import { WebApiError } from "@/lib/apis/web/base";
@@ -218,6 +222,8 @@ export interface JourneyRunAttempt {
 }
 
 export interface JourneyRun {
+  verdictSummary?: JourneyRunVerdictSummary;
+  report?: SwarmReport;
   _id: string;
   status: JourneyRunStatus | string;
   /**
@@ -256,6 +262,13 @@ export interface JourneyRun {
  * `goalScore` are the server-denormalized subsets the badges read.
  */
 export interface JourneySessionRow {
+  verdict?: SwarmSessionVerdict;
+  observations?: Array<{
+    evaluatorId: string;
+    predicateType: string;
+    role: "advisory" | "required";
+    status: "passed" | "failed" | "pending" | "unavailable";
+  }>;
   /** `s._id` — the id `ShareUsageThreadDetail` opens + the deep-link threadId. */
   id: string;
   chatSessionId: string;
@@ -360,6 +373,8 @@ export interface SwarmOverviewTarget {
 }
 
 export interface SwarmOverviewRun {
+  verdictSummary?: JourneyRunVerdictSummary;
+  report?: SwarmReport;
   runId: string;
   journeyRefId: string;
   journeyName: string;
@@ -440,12 +455,7 @@ export interface SwarmWaveSignalCandidate {
   /** Identity component (toolName / criterionId / environmentId / hostId /
    * personaRefId / journeyRefId) — stable across waves; never a label. */
   subjectKind:
-    | "tool"
-    | "criterion"
-    | "environment"
-    | "host"
-    | "persona"
-    | "journey";
+    "tool" | "criterion" | "environment" | "host" | "persona" | "journey";
   subjectId: string;
   /** Display-only. */
   subjectLabel: string;
@@ -860,6 +870,12 @@ export interface LaunchJourneyRunArgs {
    */
   launchKey: string;
   /**
+   * Iterations for THIS run, overriding the journey's stored
+   * `sessionsPerTarget` without rewriting it. Sent for a reused persona whose
+   * saved fan-out differs from what Confirm chose.
+   */
+  sessionsPerTarget?: number;
+  /**
    * Opaque id shared by every run of ONE co-launched wave, so the Overview can
    * group them without inferring a batch from `createdAt` proximity. A solo
    * "Run again" mints its own and is simply a wave of one. Omitted against a
@@ -919,6 +935,9 @@ export async function launchJourneyRun(
           : {}),
         ...(args.environmentIds?.length
           ? { environmentIds: args.environmentIds }
+          : {}),
+        ...(args.sessionsPerTarget !== undefined
+          ? { sessionsPerTarget: args.sessionsPerTarget }
           : {}),
       }),
     }
@@ -1147,6 +1166,7 @@ export async function generateSwarmPersonaBatch(
 export async function generateSwarmJourneys(
   args: {
     projectId: string;
+    swarmRefId?: string;
     journeyCount: number;
     persona: SwarmGeneratedPersona;
   } & SwarmGenerationGrounding

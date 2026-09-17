@@ -258,8 +258,7 @@ describe("SessionFlowSankey", () => {
     expect(other.getAttribute("aria-label")).toMatch(/not selectable/);
   });
 
-  it("offers a rebuild when the last run predates session signals", async () => {
-    const user = userEvent.setup();
+  it("offers a rebuild when the last run predates session signals", () => {
     const { onRebuild } = renderSankey({
       breakdown: breakdown({
         sankey: { nodes: [], links: [], foldedGoalCount: 0, foldedByStage: {} },
@@ -270,14 +269,17 @@ describe("SessionFlowSankey", () => {
     expect(
       screen.getByText(/before session signals existed/),
     ).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /Rebuild clusters/ }));
-    expect(onRebuild).toHaveBeenCalledTimes(1);
+    // Re-clustering is hidden for now; the empty state explains why, it
+    // does not start another run.
+    expect(
+      screen.queryByRole("button", { name: /Rebuild clusters/ }),
+    ).not.toBeInTheDocument();
+    expect(onRebuild).not.toHaveBeenCalled();
   });
 
-  it("draws what exists and prompts a rebuild when only goals were clustered", async () => {
+  it("draws what exists and prompts a rebuild when only goals were clustered", () => {
     // A version-2 run produced the goal column, so the honest thing is to draw
     // it and explain the empty ones — not replace the panel with a blank state.
-    const user = userEvent.setup();
     const { onRebuild } = renderSankey({
       breakdown: breakdown({ latestRun: run({ signalsVersion: 2 }) }),
     });
@@ -286,10 +288,10 @@ describe("SessionFlowSankey", () => {
     expect(
       screen.getByText(/before every column was clustered/),
     ).toBeInTheDocument();
-    await user.click(
-      screen.getByRole("button", { name: /Rebuild for themes/ }),
-    );
-    expect(onRebuild).toHaveBeenCalledTimes(1);
+    expect(
+      screen.queryByRole("button", { name: /Rebuild for themes/ }),
+    ).not.toBeInTheDocument();
+    expect(onRebuild).not.toHaveBeenCalled();
   });
 
   it("does not prompt once every column is clustered", () => {
@@ -372,8 +374,9 @@ describe("SessionFlowSankey", () => {
     expect(
       screen.queryByRole("button", { name: /Rebuild clusters/ }),
     ).not.toBeInTheDocument();
-    // The button goes; choosing HOW to cluster is still a thing to ask for.
-    expect(screen.getByTestId("cluster-tuning-trigger")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("cluster-tuning-trigger"),
+    ).not.toBeInTheDocument();
   });
 
   it("stops advertising a rebuild while one is already running", () => {
@@ -392,11 +395,9 @@ describe("SessionFlowSankey", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("still offers a rebuild on an empty flow a completed analysis produced", async () => {
-    // A finished run that clustered nothing IS a dead end a rebuild can move,
-    // so the affordance has to survive. Removing it as "required" must not
-    // remove it as available.
-    const user = userEvent.setup();
+  it("still offers a rebuild on an empty flow a completed analysis produced", () => {
+    // Re-clustering is hidden for now, so a finished run that clustered
+    // nothing is explained rather than given a rebuild button.
     const { onRebuild } = renderSankey({
       breakdown: breakdown({
         sankey: { nodes: [], links: [], foldedGoalCount: 0, foldedByStage: {} },
@@ -406,8 +407,10 @@ describe("SessionFlowSankey", () => {
     });
 
     expect(screen.getByText("No session flow yet")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /Rebuild clusters/ }));
-    expect(onRebuild).toHaveBeenCalledTimes(1);
+    expect(
+      screen.queryByRole("button", { name: /Rebuild clusters/ }),
+    ).not.toBeInTheDocument();
+    expect(onRebuild).not.toHaveBeenCalled();
   });
 
   it("draws each column header at its own column's x", () => {

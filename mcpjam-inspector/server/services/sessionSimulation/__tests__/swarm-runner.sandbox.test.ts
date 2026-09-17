@@ -98,6 +98,7 @@ vi.mock("../../swarm-agent.js", async () => {
   );
   return {
     ...actual,
+    reportTargetGrounding: vi.fn(async () => ({})),
     reportAttempt: (...args: unknown[]) => reportAttemptMock(...args),
     swarmPersonaNextTurn: (...args: unknown[]) =>
       swarmPersonaNextTurnMock(...args),
@@ -423,15 +424,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-/**
- * Make the persona drive exactly ONE turn per session, then stop.
- *
- * The default persona mock ends every session before the first turn, which is
- * fine for the provisioning assertions (they read the ctx `resolveHostTools`
- * was built with, which happens before any turn) — but the HARNESS binding
- * travels on the turn's handler options, so it only becomes observable once a
- * turn actually executes.
- */
+/** A successful fixture must send a message and exercise the assistant. */
 function personaDrivesOneTurn(): void {
   // Keyed on the transcript, not a counter: a counter would be shared across
   // the run's sessions and silently end the second one before its first turn.
@@ -511,6 +504,7 @@ describe("swarm runner — per-attempt ephemeral sandbox", () => {
   });
 
   it("retries a 2xx whose body is unusable instead of throwing", async () => {
+    personaDrivesOneTurn();
     // `postJson` swallows a body-parse failure and returns
     // `{ok: true, value: null}` on any 2xx — reachable when the request
     // deadline fires after the headers arrive. Dereferencing that would throw
@@ -910,6 +904,7 @@ describe("swarm runner — targets that want no sandbox", () => {
   });
 
   it("skips provisioning when no image is pinned, and surfaces the frozen reason", async () => {
+    personaDrivesOneTurn();
     await startJourneyRun(
       baseOpts({
         computerEnvironment: undefined,
@@ -925,6 +920,7 @@ describe("swarm runner — targets that want no sandbox", () => {
   });
 
   it("treats a PRE-B-isolation snapshot (both fields absent) as legacy, not as unavailable", async () => {
+    personaDrivesOneTurn();
     // Absence alone cannot distinguish an old backend from a new backend with
     // no image; the old backend must keep today's silent suppression.
     await startJourneyRun(
@@ -955,6 +951,7 @@ describe("swarm runner — targets that want no sandbox", () => {
   });
 
   it("an unconfigured data plane does NOT fail a target that wants no shell", async () => {
+    personaDrivesOneTurn();
     // Only targets that would have provisioned are affected; everything else
     // runs exactly as before.
     dataPlaneConfiguredMock.mockReturnValue(false);
@@ -1010,6 +1007,7 @@ describe("swarm runner — harness targets run on an ephemeral box (phase 6)", (
   });
 
   it("provisions for a harness target that advertises NO bash tool", async () => {
+    personaDrivesOneTurn();
     // A harness executes on a machine whether or not the host also exposes a
     // shell, so `bash` in the tool list is not what decides this.
     await startJourneyRun(
@@ -1273,6 +1271,7 @@ describe("swarm runner — harness preflight parity with interactive chat", () =
   });
 
   it("leaves NON-harness targets untouched by the preflight", async () => {
+    personaDrivesOneTurn();
     // The gate is scoped to harness targets; a plain bash target on a BYOK
     // model is none of its business.
     await startJourneyRun(baseOpts({ modelId: "acme/private-llm" }));

@@ -74,6 +74,25 @@ describe("TraceRawView scroll-edge fade", () => {
 });
 
 describe("TraceRawView", () => {
+  it("labels saved context and preserves the recorded evidence", () => {
+    renderWithProviders(
+      <TraceRawView trace={{ traceVersion: 1, messages: [], recordedContext: { modelId: "z-ai/glm-4.5" } } as never} />,
+    );
+    expect(screen.getByTestId("trace-raw-recorded-context")).toHaveTextContent("Saved session evidence");
+    expect(screen.getByTestId("json-editor")).toHaveTextContent("z-ai/glm-4.5");
+  });
+
+  it("does not label a live request payload as saved session evidence", () => {
+    renderWithProviders(
+      <TraceRawView
+        trace={{ traceVersion: 1, messages: [], recordedContext: { modelId: "z-ai/glm-4.5" } } as never}
+        requestPayloadHistory={{ entries: [makeEntry(0, "System")], hasUiMessages: true }}
+      />,
+    );
+    expect(screen.queryByTestId("trace-raw-recorded-context")).not.toBeInTheDocument();
+    expect(screen.getByTestId("json-editor")).toHaveTextContent("System");
+  });
+
   it("shows the latest request payload for live history (no turn/step header)", () => {
     const { rerender } = renderWithProviders(
       <TraceRawView
@@ -232,5 +251,105 @@ describe("TraceRawView", () => {
     );
 
     expect(screen.getByTestId("json-editor")).toHaveTextContent("stored");
+  });
+});
+
+describe("TraceRawView — saved requests", () => {
+  /**
+   * A saved session's Raw reads like the Playground's: the request that was
+   * sent, with the conversation merged in from the transcript. A capped entry
+   * lost its own copy of `messages`; the transcript stands in for it.
+   */
+  const truncatedEntry = {
+    turnId: "turn-1",
+    promptIndex: 0,
+    stepIndex: 0,
+    payload: { system: "stored system", tools: {}, messages: [] },
+    truncated: true as const,
+    messageCount: 9,
+  };
+
+  it("merges the transcript into a capped request, as the Playground does", () => {
+    renderWithProviders(
+      <TraceRawView
+        trace={
+          {
+            messages: [
+              { role: "user", content: "question" },
+              { role: "assistant", content: "later response" },
+            ],
+            recordedContext: {},
+          } as never
+        }
+        requestPayloadHistory={{ entries: [truncatedEntry], hasUiMessages: false }}
+      />,
+    );
+    const json = screen.getByTestId("json-editor");
+    expect(json).toHaveTextContent("stored system");
+    expect(json).toHaveTextContent("later response");
+    expect(json).toHaveTextContent('"truncated": true');
+    expect(json).not.toHaveTextContent("messageCount");
+    expect(
+      screen.queryByTestId("trace-raw-recorded-context"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("says how many messages were dropped when there is no transcript to stand in", () => {
+    renderWithProviders(
+      <TraceRawView
+        trace={{ messages: [] } as never}
+        requestPayloadHistory={{ entries: [truncatedEntry], hasUiMessages: false }}
+      />,
+    );
+    const json = screen.getByTestId("json-editor");
+    expect(json).toHaveTextContent('"messageCount": 9');
+    expect(json).not.toHaveTextContent('"messages"');
+  });
+});
+
+describe("TraceRawView — fallback note", () => {
+  const evidence = {
+    messages: [{ role: "user", content: "stored" }],
+    recordedContext: {},
+  };
+
+  it("says requests are unavailable only once nothing is still loading", () => {
+    const { rerender } = renderWithProviders(
+      <TraceRawView
+        trace={{ ...evidence, requestPayloadsPending: true } as never}
+      />,
+    );
+    expect(
+      screen.queryByTestId("trace-raw-recorded-context"),
+    ).not.toBeInTheDocument();
+
+    rerender(<TraceRawView trace={evidence as never} />);
+    expect(screen.getByTestId("trace-raw-recorded-context")).toBeInTheDocument();
+  });
+
+  it("says a failed read failed, instead of claiming none were saved", () => {
+    renderWithProviders(
+      <TraceRawView
+        trace={
+          {
+            ...evidence,
+            requestPayloadsError: "Saved model requests could not be loaded",
+          } as never
+        }
+      />,
+    );
+    expect(screen.getByTestId("trace-raw-request-error")).toHaveTextContent(
+      "could not be loaded",
+    );
+    expect(
+      screen.queryByTestId("trace-raw-recorded-context"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("stays quiet for a trace with no recorded context", () => {
+    renderWithProviders(<TraceRawView trace={{ messages: [] } as never} />);
+    expect(
+      screen.queryByTestId("trace-raw-recorded-context"),
+    ).not.toBeInTheDocument();
   });
 });

@@ -779,3 +779,43 @@ describe("persistEvalTraceFanout — browser artifact fanout (PR 6b)", () => {
     expect(turn1).toHaveProperty("browserInteractionSteps");
   });
 });
+
+test("persists requests in their own turn with reserved schema keys intact", async () => {
+  const { client, calls } = makeMockClient();
+  const requestPayloads = [0, 1].map((promptIndex) => ({
+    turnId: `turn-${promptIndex}`,
+    promptIndex,
+    stepIndex: 0,
+    payload: {
+      system: "original",
+      tools: {
+        search: { name: "search", inputSchema: { $ref: "#/$defs/query" } },
+      },
+      messages: [],
+    },
+  }));
+  await persistEvalTraceFanout({
+    convexClient: client,
+    iterationId: "iter",
+    messages: [
+      { role: "user", content: "one" },
+      { role: "user", content: "two" },
+    ],
+    spans: [0, 1].map((promptIndex) => ({
+      id: `s${promptIndex}`,
+      name: "step",
+      category: "step",
+      startMs: 0,
+      endMs: 1,
+      promptIndex,
+    })),
+    prompts: [],
+    requestPayloads,
+  });
+  expect(calls).toHaveLength(2);
+  calls.forEach((call, index) =>
+    expect(JSON.parse((call.args.turn as any).requestPayloadsJson)).toEqual([
+      requestPayloads[index],
+    ]),
+  );
+});

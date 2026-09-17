@@ -1,7 +1,9 @@
 import {
   DEFAULT_PLATFORM_API_BASE_URL,
+  describePlatformRefusal,
   isPlatformApiError,
   PlatformApiClient,
+  platformRefusalHint,
   RUN_LAUNCH_HEADERS,
 } from "@mcpjam/sdk/platform";
 import { detectCiMetadata } from "@mcpjam/sdk";
@@ -318,6 +320,19 @@ export function toCliError(error: unknown): CliError {
           "`suite.id` still matches the suite it created — a renamed id no longer owns it.",
         1,
         error.details,
+      );
+    }
+    // A usage-limit refusal keeps its exit code and wire code (it is not an
+    // auth or credit failure), but says when to come back and whether credits
+    // would help, and carries `retryAfterSeconds` into the JSON `details` so a
+    // script can wait instead of parsing prose.
+    const refusal = describePlatformRefusal(error);
+    if (refusal) {
+      return cliError(
+        error.code,
+        `${error.message} ${platformRefusalHint(refusal)}`,
+        1,
+        { ...(error.details ?? {}), refusal },
       );
     }
     const message =

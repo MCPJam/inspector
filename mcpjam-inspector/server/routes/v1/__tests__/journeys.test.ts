@@ -1,3 +1,4 @@
+import { deriveSwarmSessionVerdict } from "@mcpjam/sdk/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 
@@ -40,7 +41,7 @@ vi.mock("convex/browser", () => ({
 
 vi.mock("../../../utils/v1-convex-token.js", () => ({
   getConvexBearerForRequest: async () => "convex-jwt",
-  getConvexBearerThunkForRequest: () => async () => "convex-jwt",
+  getBackgroundRunBearerForRequest: async () => async () => "convex-jwt",
 }));
 
 vi.mock("../../../services/xaa-mint.js", () => ({
@@ -512,6 +513,28 @@ describe("session DTO outcome join", () => {
     // it never says how the attempt went. The verdict lives on the run's
     // attempts, keyed by chatSessionId, and the route must join it or every
     // consumer reads "active" as if it were a result.
+    const verdict = deriveSwarmSessionVerdict({
+      attempt: { status: "failed" },
+      hasTranscript: true,
+      rubric: [],
+      criteria: null,
+      goalScore: { status: "completed", passed: true },
+      judge: { automatic: true, role: "advisory" },
+      grading: { state: "settled" },
+    });
+    const criteria = {
+      status: "completed",
+      generation: 1,
+      results: [{ criterionId: "c", passed: false, status: "error" }],
+    };
+    const observations = [
+      {
+        evaluatorId: "c",
+        predicateType: "noToolErrors",
+        role: "advisory",
+        status: "unavailable",
+      },
+    ];
     queryMock
       .mockResolvedValueOnce(
         runRow({
@@ -524,10 +547,33 @@ describe("session DTO outcome join", () => {
       )
       .mockResolvedValueOnce({
         page: [
-          { id: "s1", chatSessionId: "cs_ok", projectId: PROJECT, status: "active" },
-          { id: "s2", chatSessionId: "cs_bad", projectId: PROJECT, status: "active" },
-          { id: "s3", chatSessionId: "cs_limited", projectId: PROJECT, status: "active" },
-          { id: "s4", chatSessionId: "cs_unknown", projectId: PROJECT, status: "active" },
+          {
+            id: "s1",
+            chatSessionId: "cs_ok",
+            projectId: PROJECT,
+            status: "active",
+          },
+          {
+            id: "s2",
+            chatSessionId: "cs_bad",
+            projectId: PROJECT,
+            status: "active",
+            verdict,
+            criteria,
+            observations,
+          },
+          {
+            id: "s3",
+            chatSessionId: "cs_limited",
+            projectId: PROJECT,
+            status: "active",
+          },
+          {
+            id: "s4",
+            chatSessionId: "cs_unknown",
+            projectId: PROJECT,
+            status: "active",
+          },
         ],
         isDone: true,
         continueCursor: "",
@@ -536,7 +582,14 @@ describe("session DTO outcome join", () => {
     const res = await get(`/projects/${PROJECT}/journey-runs/${RUN}/sessions`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      items: Array<{ id: string; status: string; outcome: string | null }>;
+      items: Array<{
+        id: string;
+        status: string;
+        outcome: string | null;
+        verdict?: unknown;
+        criteria?: unknown;
+        observations?: unknown;
+      }>;
     };
     expect(body.items.map((s) => s.outcome)).toEqual([
       "succeeded",
@@ -549,5 +602,58 @@ describe("session DTO outcome join", () => {
     ]);
     // The archival flag survives unchanged alongside the verdict.
     expect(body.items[0]?.status).toBe("active");
+    expect(body.items[1]).toMatchObject({
+      outcome: "failed",
+      verdict,
+      criteria,
+      observations,
+    });
+  });
+});
+
+describe("setupWrites config forwarding", () => {
+  it.each([true, false])(
+    "preserves explicit setupWrites=%s on creation",
+    async (setupWrites) => {
+      queryMock.mockResolvedValue([{ _id: "persona_1", projectId: PROJECT }]);
+      mutationMock.mockResolvedValue(
+        journeyRow({
+          config: { sessionsPerTarget: 1, maxTurns: 6, setupWrites },
+        }),
+      );
+      const response = await makeApp().request(
+        `/api/v1/projects/${PROJECT}/journeys`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            personaId: "persona_1",
+            goal: "Test",
+            sessionsPerTarget: 1,
+            maxTurns: 6,
+            setupWrites,
+          }),
+        },
+      );
+      expect(response.status).toBe(201);
+      expect(mutationMock.mock.calls[0][1].config).toEqual({
+        sessionsPerTarget: 1,
+        maxTurns: 6,
+        setupWrites,
+      });
+      expect(await response.json()).toMatchObject({ setupWrites });
+    },
+  );
+  it("rejects a setup-only PATCH without the required config pair", async () => {
+    const response = await makeApp().request(
+      `/api/v1/projects/${PROJECT}/journeys/${JOURNEY}`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ setupWrites: false }),
+      },
+    );
+    expect(response.status).toBe(400);
+    expect(mutationMock).not.toHaveBeenCalled();
   });
 });

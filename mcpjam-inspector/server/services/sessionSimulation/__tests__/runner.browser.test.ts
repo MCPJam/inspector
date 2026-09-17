@@ -106,7 +106,7 @@ vi.mock("../../browser-session-context.js", async () => {
 
 vi.mock("convex/browser", async () => {
   const actual = await vi.importActual<typeof import("convex/browser")>(
-    "convex/browser"
+    "convex/browser",
   );
   return {
     ...actual,
@@ -174,7 +174,7 @@ function buildFakeBrowserContext(opts: { computerUse: boolean }) {
     /** Test handle: queue artifacts the next drain returns. */
     _queueArtifacts(
       observations: Array<Record<string, unknown>>,
-      steps: Array<Record<string, unknown>>
+      steps: Array<Record<string, unknown>>,
     ) {
       artifacts.observations = observations;
       artifacts.steps = steps;
@@ -304,6 +304,147 @@ afterEach(() => {
 });
 
 describe("runSyntheticHostSession — browser pipeline wiring", () => {
+  it.each(["", "I have enough information already."])(
+    "fails a persona stop before the first user turn (%j)",
+    async (message) => {
+      createBrowserSessionContextMock.mockReturnValue(
+        buildFakeBrowserContext({ computerUse: true })
+      );
+      const args = baseAdapter();
+      args.nextPersonaTurn
+        .mockReset()
+        .mockResolvedValue({ message, endSession: true });
+      const emit = vi.fn();
+      const result = await runSyntheticHostSession({
+        ...args,
+        emit,
+        browserArtifacts: buildFakeOutbox(),
+      } as Parameters<typeof runSyntheticHostSession>[0]);
+      expect(result).toMatchObject({
+        outcome: "failed",
+        errorReason: "persona_ended_before_start",
+      });
+      expect(result.errorMessage).toContain("assistant was not tested");
+      expect(runAssistantTurnMock).not.toHaveBeenCalled();
+      expect(emit).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "session_complete", status: "failed" })
+      );
+      expect(emit).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "session_complete",
+          status: "succeeded",
+        })
+      );
+      expect(persistChatSessionToConvexMock).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionMessages: [] })
+      );
+    }
+  );
+
+  it("rejects an empty persona message without calling the assistant", async () => {
+    createBrowserSessionContextMock.mockReturnValue(
+      buildFakeBrowserContext({ computerUse: true })
+    );
+    const args = baseAdapter();
+    args.nextPersonaTurn
+      .mockReset()
+      .mockResolvedValue({ message: "  ", endSession: false });
+    const result = await runSyntheticHostSession(
+      args as Parameters<typeof runSyntheticHostSession>[0]
+    );
+    expect(result).toMatchObject({
+      outcome: "failed",
+      errorReason: "persona_empty_message",
+    });
+    expect(runAssistantTurnMock).not.toHaveBeenCalled();
+  });
+
+  it("does not report a zero-turn simulation as successful", async () => {
+    createBrowserSessionContextMock.mockReturnValue(
+      buildFakeBrowserContext({ computerUse: true })
+    );
+    const args = baseAdapter();
+    const result = await runSyntheticHostSession({
+      ...args,
+      maxTurns: 0,
+    } as Parameters<typeof runSyntheticHostSession>[0]);
+    expect(result).toMatchObject({
+      outcome: "failed",
+      errorReason: "simulation_no_conversation",
+    });
+    expect(args.nextPersonaTurn).not.toHaveBeenCalled();
+    expect(runAssistantTurnMock).not.toHaveBeenCalled();
+  });
+
+  it("feeds each assistant reply into both the next persona turn and model history", async () => {
+    createBrowserSessionContextMock.mockReturnValue(
+      buildFakeBrowserContext({ computerUse: true }),
+    );
+    const args = baseAdapter();
+    args.nextPersonaTurn
+      .mockReset()
+      .mockResolvedValueOnce({ message: "first request", endSession: false })
+      .mockResolvedValueOnce({ message: "follow-up", endSession: false })
+      .mockResolvedValue({ message: "", endSession: true });
+    const seen: unknown[] = [];
+    const persona = args.nextPersonaTurn;
+    const result = await runSyntheticHostSession({
+      ...args,
+      nextPersonaTurn: async (history) => {
+        seen.push(structuredClone(history));
+        return persona(history);
+      },
+    } as Parameters<typeof runSyntheticHostSession>[0]);
+    expect(result.outcome).toBe("succeeded");
+    expect(seen[1]).toEqual([
+      { role: "user", content: "first request" },
+      { role: "assistant", content: "drew a box" },
+    ]);
+    expect(runAssistantTurnMock.mock.calls[1][0].messages).toEqual([
+      { role: "user", content: "first request" },
+      { role: "assistant", content: "drew a box" },
+      { role: "user", content: "follow-up" },
+    ]);
+  });
+  it("persists a failed hosted turn and stops before asking the persona again", async () => {
+    createBrowserSessionContextMock.mockReturnValue(
+      buildFakeBrowserContext({ computerUse: true }),
+    );
+    const failedTrace = {
+      ...TURN_TRACE,
+      spans: [
+        {
+          id: "error",
+          category: "llm",
+          name: "Model refused request",
+          status: "error",
+          startMs: 0,
+          endMs: 1,
+        },
+      ],
+    };
+    runAssistantTurnMock.mockImplementation(async (opts: any) => {
+      opts.onEngineError?.({
+        message: "Invalid model configuration",
+        rawText: "{}",
+      });
+      return { messages: opts.messages, turnTrace: failedTrace };
+    });
+    const args = baseAdapter();
+    const result = await runSyntheticHostSession(args as never);
+    expect(result).toMatchObject({
+      outcome: "failed",
+      errorMessage: "Invalid model configuration",
+    });
+    expect(args.nextPersonaTurn).toHaveBeenCalledTimes(1);
+    expect(persistChatSessionToConvexMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        turnTrace: failedTrace,
+        sessionMessages: [{ role: "user", content: "draw me a box" }],
+      }),
+    );
+  });
+
   it("creates one context per session, runs per-turn hygiene before the engine, merges computer tools, threads hooks, and disposes", async () => {
     const fake = buildFakeBrowserContext({ computerUse: true });
     createBrowserSessionContextMock.mockReturnValue(fake);
@@ -354,7 +495,7 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
     createBrowserSessionContextMock.mockReturnValue(fake);
 
     await runSyntheticHostSession(
-      baseAdapter({ modelId: "openai/gpt-5-mini" }) as never
+      baseAdapter({ modelId: "openai/gpt-5-mini" }) as never,
     );
 
     const engineOpts = runAssistantTurnMock.mock.calls[0]![0] as any;
@@ -376,7 +517,7 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
         // A hosted-scenario surface: bash is still resolved there. Swarm
         // sessions are the ones that fail closed — see the test below.
         persist: { sourceType: "scenario", origin: "scenario" },
-      }) as never
+      }) as never,
     );
 
     const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
@@ -396,7 +537,7 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
           computer: { kind: "personal", workdir: "/workspace" },
         },
         emit: (payload) => emitted.push(payload),
-      }) as never
+      }) as never,
     );
 
     // Nothing advertised at all — the whole built-in set collapses to undefined
@@ -427,8 +568,8 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
     expect(prepareOpts.skillsSource.composeLiveServerSkills).toBe(true);
     expect(
       prepareOpts.skillsSource.capabilities.standaloneSkills.map(
-        (skill: any) => skill.ref
-      )
+        (skill: any) => skill.ref,
+      ),
     ).toEqual(["pdf-tools"]);
   });
 
@@ -440,7 +581,7 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
     // which writes skills into the sandbox itself; the emulated prompt catalog
     // + loadSkill tools must NOT also be advertised.
     await runSyntheticHostSession(
-      baseAdapter({ runtime: { harness: "claude-code" } }) as never
+      baseAdapter({ runtime: { harness: "claude-code" } }) as never,
     );
 
     const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
@@ -457,7 +598,7 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
     // when requireToolApproval is on (the skip stays correct even though
     // empty projects no longer advertise phantom tools).
     await runSyntheticHostSession(
-      baseAdapter({ runtime: { requireToolApproval: true } }) as never
+      baseAdapter({ runtime: { requireToolApproval: true } }) as never,
     );
 
     const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
@@ -469,12 +610,12 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
     const fake = buildFakeBrowserContext({ computerUse: false });
     createBrowserSessionContextMock.mockReturnValue(fake);
     listCloudRuntimeSkillsMock.mockRejectedValue(
-      new Error("CONVEX_URL is not configured")
+      new Error("CONVEX_URL is not configured"),
     );
     const emitted: any[] = [];
 
     await runSyntheticHostSession(
-      baseAdapter({ emit: (payload) => emitted.push(payload) }) as never
+      baseAdapter({ emit: (payload) => emitted.push(payload) }) as never,
     );
 
     const notice = emitted.find((p) => p.type === "session_notice");
@@ -512,7 +653,7 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
     // A spend-cap / rate-limit error from the turn must fold into the amber
     // `rate_limited` outcome via the shared `classifyTurnFailure`, not `failed`.
     runAssistantTurnMock.mockRejectedValue(
-      new Error("Daily spend cap reached for free models")
+      new Error("Daily spend cap reached for free models"),
     );
 
     const result = await runSyntheticHostSession(baseAdapter() as never);
@@ -583,7 +724,9 @@ describe("runSyntheticHostSession — durable browser-artifact capture", () => {
     const outbox = buildFakeOutbox();
     // A first-turn failure is the case you most want to watch back — and it
     // used to return with no `chatSessions` row at all.
-    runAssistantTurnMock.mockReset().mockRejectedValue(new Error("engine down"));
+    runAssistantTurnMock
+      .mockReset()
+      .mockRejectedValue(new Error("engine down"));
     resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
 
     const result = await runSyntheticHostSession({

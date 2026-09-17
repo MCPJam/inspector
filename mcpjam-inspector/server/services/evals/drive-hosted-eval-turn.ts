@@ -1,3 +1,6 @@
+import { expandPersistedRequestPayloads } from "@/shared/live-chat-trace";
+import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
+import { getHostedTurnFailure } from "../../utils/hosted-turn-failure.js";
 import type { TimeoutMetadata } from "../../utils/run-supervisor/deadline.js";
 /**
  * drive-hosted-eval-turn.ts — the shared per-turn body of the two hosted eval
@@ -357,6 +360,7 @@ export interface DriveHostedEvalTurnParams {
      */
     traceMessageHistory: ModelMessage[];
     capturedSpans: EvalTraceSpan[];
+    requestPayloads?: LiveChatTraceRequestPayloadEntry[];
     /**
      * Wire results, keyed by the `toolCallId` the GRADED call array uses:
      * a matched call under its narrated id, a wire-only call under
@@ -441,7 +445,6 @@ const truncateError = (message: string): string =>
  *  forever. Consumed by the executor (R3); this module only exports the value. */
 export const MAX_WIDGET_FOLLOWUP_TURNS = 3;
 
-
 /**
  * Which layer failed, from what the engine REPORTED rather than from where
  * this was called.
@@ -478,7 +481,7 @@ export function failedLayerForEngineError(
 }
 
 export async function driveHostedEvalTurn(
-  params: DriveHostedEvalTurnParams
+  params: DriveHostedEvalTurnParams,
 ): Promise<HostedEvalTurnOutcome> {
   const {
     promptIndex,
@@ -515,7 +518,7 @@ export async function driveHostedEvalTurn(
       ? params.toolPolicyGate.wrap(mergedTools)
       : mergedTools,
     traceCtx,
-    promptIndex
+    promptIndex,
   );
 
   // Push the user prompt into `messageHistory` BEFORE the engine call so a
@@ -543,8 +546,9 @@ export async function driveHostedEvalTurn(
   // parent's already-committed calls end so the post-turn reconcile below
   // replaces only THIS turn's live entries (the stream runner's `onToolCall`
   // populates the array live) without wiping the parent's.
-  const promptToolsCalled: ToolCall[] = (acc.toolsCalledByPrompt[promptIndex] ??=
-    []);
+  const promptToolsCalled: ToolCall[] = (acc.toolsCalledByPrompt[
+    promptIndex
+  ] ??= []);
   const promptToolsBaseline = promptToolsCalled.length;
 
   // Built inside the pre-turn try below; `{}` until then so the failure
@@ -590,11 +594,13 @@ export async function driveHostedEvalTurn(
         elapsedMs: turnDeadline?.elapsedMs() ?? turnTimeoutMs,
       },
       iterationError: truncateError(
-        `Turn exceeded its ${turnTimeoutMs}ms budget (elapsed ${turnDeadline?.elapsedMs() ?? turnTimeoutMs}ms)`
+        `Turn exceeded its ${turnTimeoutMs}ms budget (elapsed ${
+          turnDeadline?.elapsedMs() ?? turnTimeoutMs
+        }ms)`,
       ),
     };
     logger.error(
-      `[evals] backend iteration${logSuffix} turn exceeded its ${turnTimeoutMs}ms budget`
+      `[evals] backend iteration${logSuffix} turn exceeded its ${turnTimeoutMs}ms budget`,
     );
     sinks.onTurnFailure?.(failure);
     // `failed`, never `cancelled`. A turn that ran out of clock produced a
@@ -622,7 +628,7 @@ export async function driveHostedEvalTurn(
   // failure branches below (CodeRabbit, PR 2610).
   const mapThrownTurnError = (
     error: unknown,
-    failedStage: string
+    failedStage: string,
   ): HostedEvalTurnOutcome => {
     // Ahead of the cancellation arm, and that order is the whole point: a
     // turn-budget abort reaches here as an AbortError on the same composed
@@ -634,7 +640,7 @@ export async function driveHostedEvalTurn(
       (error instanceof Error && error.name === "AbortError")
     ) {
       logger.debug(
-        `[evals] backend iteration${logSuffix} aborted due to cancellation`
+        `[evals] backend iteration${logSuffix} aborted due to cancellation`,
       );
       return { kind: "cancelled" };
     }
@@ -751,7 +757,7 @@ export async function driveHostedEvalTurn(
       systemPrompt: EVAL_WIDGET_MODEL_CONTEXT
         ? withWidgetContextSystemPrompt(
             prepared.enhancedSystemPrompt,
-            browser.browserInteractionSteps
+            browser.browserInteractionSteps,
           )
         : prepared.enhancedSystemPrompt,
       ...(prepared.resolvedTemperature != null
@@ -839,8 +845,7 @@ export async function driveHostedEvalTurn(
             // opt-out and a truthy check would erase it.
             ...(params.modelVisibleMcpToolResults !== undefined
               ? {
-                  modelVisibleMcpToolResults:
-                    params.modelVisibleMcpToolResults,
+                  modelVisibleMcpToolResults: params.modelVisibleMcpToolResults,
                 }
               : {}),
             ...(params.respectToolVisibility !== undefined
@@ -896,7 +901,6 @@ export async function driveHostedEvalTurn(
     turnDeadline?.dispose();
   }
 
-
   // The engine's SILENT path: it catches AbortError, omits the `turnTrace` and
   // returns normally, so a blown turn budget arrives here looking exactly like
   // a cancel. Same discrimination as in `mapThrownTurnError`, and the same
@@ -910,7 +914,7 @@ export async function driveHostedEvalTurn(
   // aborted run as a verdict failure.
   if (cancelledMidTurn()) {
     logger.debug(
-      `[evals] backend iteration${logSuffix} aborted mid-turn; skipping record`
+      `[evals] backend iteration${logSuffix} aborted mid-turn; skipping record`,
     );
     return { kind: "cancelled" };
   }
@@ -940,9 +944,7 @@ export async function driveHostedEvalTurn(
   // disagree if the engine ever mutated the array between them.
   const newMessages = turnResult.messages.slice(messageCountBeforeTurn);
   const evidence = await reconcileTurnEvidence({
-    ...(params.evalIterationId
-      ? { iterationId: params.evalIterationId }
-      : {}),
+    ...(params.evalIterationId ? { iterationId: params.evalIterationId } : {}),
     ...(harnessEvidence?.turnId ? { turnId: harnessEvidence.turnId } : {}),
     captureEnabled: harnessEvidence?.captureEnabled === true,
     spans: turnSpans,
@@ -955,6 +957,11 @@ export async function driveHostedEvalTurn(
       : {}),
   });
   acc.capturedSpans.push(...evidence.spans);
+  (acc.requestPayloads ??= []).push(
+    ...expandPersistedRequestPayloads(
+      turnResult.turnTrace?.requestPayloads ?? [],
+    ).map((entry) => ({ ...entry, promptIndex: params.promptIndex })),
+  );
   collectEvidenceResults(acc, evidence);
   // Reconcile accumulated usage to the engine's canonical post-turn total
   // against the pre-turn baseline. The stream runner's `onStepFinish` sink
@@ -1018,7 +1025,7 @@ export async function driveHostedEvalTurn(
   // generic fallbacks.
   const failTurn = (
     fallbackError: string,
-    logLine: string
+    logLine: string,
   ): HostedEvalTurnOutcome => {
     const failure = lastEngineError
       ? {
@@ -1057,44 +1064,16 @@ export async function driveHostedEvalTurn(
     };
   };
 
-  if (!turnResult.turnTrace) {
+  const turnFailure = getHostedTurnFailure({
+    turnTrace: turnResult.turnTrace,
+    newMessageCount: newMessages.length,
+  });
+  if (turnFailure) {
     return failTurn(
-      "Backend stream failed during iteration (engine caught an error mid-turn)",
-      `[evals] runAssistantTurn${logSuffix} returned no turnTrace (engine runSucceeded=false); treating as cycle failure (messagesGrew=${
-        newMessages.length > 0
-      }, engineError=${
+      turnFailure,
+      `[evals] runAssistantTurn${logSuffix} failed: ${turnFailure} (engineError=${
         lastEngineError ? lastEngineError.code ?? "uncoded" : "none"
-      })`
-    );
-  }
-  if (newMessages.length === 0) {
-    return failTurn(
-      "Backend step returned no content (stream error or empty response)",
-      `[evals] runAssistantTurn${logSuffix} produced no new messages this turn; treating as cycle failure (engineError=${
-        lastEngineError ? lastEngineError.code ?? "uncoded" : "none"
-      })`
-    );
-  }
-  // Cursor / Codex review fix: filter to backend step / LLM failure spans
-  // only — exclude `category: "tool"` AND any span carrying a `toolCallId`
-  // (the child error span `wrapToolSetForEvalTrace` emits alongside a failed
-  // tool span). Tool-category error spans flow through the configured
-  // `failOnToolError` gate; treating them as cycle failures here would
-  // defeat that policy.
-  const stepErrorSpan = turnResult.turnTrace.spans.find(
-    (span) =>
-      span.status === "error" &&
-      span.category !== "tool" &&
-      !(span as { toolCallId?: string }).toolCallId
-  );
-  if (stepErrorSpan) {
-    return failTurn(
-      `Backend step failed mid-turn: ${stepErrorSpan.name}`,
-      `[evals] runAssistantTurn${logSuffix} turnTrace has non-tool error-status span; treating as cycle failure (span=${
-        stepErrorSpan.name
-      } category=${stepErrorSpan.category} engineError=${
-        lastEngineError ? lastEngineError.code ?? "uncoded" : "none"
-      })`
+      })`,
     );
   }
 

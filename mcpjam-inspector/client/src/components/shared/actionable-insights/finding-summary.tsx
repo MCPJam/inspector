@@ -26,36 +26,15 @@ import {
   AffectedIterationsList,
   type AffectedIterationRow,
 } from "./affected-iterations-list";
+import { FindingText } from "./finding-text";
 import {
   judgeCoverageLine,
   mechanismCaveat,
   proseSourceOf,
   type FindingView,
+  verificationLine,
+  recurrenceLine,
 } from "./finding-provenance";
-
-/** Limited inline formatting; recorded/model text never becomes HTML or links. */
-function FindingText({ text }: { text: string }) {
-  return (
-    <>
-      {text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g).map((part, i) =>
-        part.startsWith("`") ? (
-          <code
-            key={i}
-            className="rounded bg-muted px-1 font-code text-[0.85em]"
-          >
-            {part.slice(1, -1)}
-          </code>
-        ) : part.startsWith("**") ? (
-          <strong key={i} className="font-semibold">
-            {part.slice(2, -2)}
-          </strong>
-        ) : (
-          part
-        ),
-      )}
-    </>
-  );
-}
 
 export function CopyFindingPrompt({
   finding,
@@ -145,13 +124,21 @@ export function FindingDetailsContent({
   view,
   iterationRows = {},
   onOpenEvidence,
+  findingsById,
 }: {
   finding: ActionableFinding;
   provenance: InsightsFindingProvenance | null;
   view: FindingView;
   iterationRows?: Record<string, AffectedIterationRow>;
   onOpenEvidence?: (locator: FindingEvidenceLocator) => void;
+  /** Every finding in the envelope by id, so a consolidated finding can name
+   * the measured groups it was built from. */
+  findingsById?: ReadonlyMap<string, ActionableFinding>;
 }) {
+  const sourceIds = provenance?.sourceCandidateIds ?? [];
+  const sources = sourceIds
+    .map((id) => findingsById?.get(id))
+    .filter((source): source is ActionableFinding => source !== undefined);
   const affectedIds = [
     ...new Set(
       provenance?.affectedIterationIds ??
@@ -174,10 +161,17 @@ export function FindingDetailsContent({
   );
   const judgeCoverage = judgeCoverageLine(provenance);
   const caveat = mechanismCaveat(provenance);
+  const verification = verificationLine(provenance);
+  const recurrence = view === "ai" ? recurrenceLine(provenance) : null;
   const aiWording = provenance?.proseOrigin?.observed === "ai";
   const aiUnproven = view === "ai";
   const notes =
-    aiWording || aiUnproven || Boolean(caveat) || Boolean(judgeCoverage);
+    aiWording ||
+    aiUnproven ||
+    Boolean(caveat) ||
+    Boolean(judgeCoverage) ||
+    Boolean(verification) ||
+    Boolean(recurrence);
   const target = finding.target;
   const targetLabel = findingTargetLabel(finding);
   const discovered = view === "ai" && provenance?.groupKind === "ai_discovery";
@@ -235,6 +229,32 @@ export function FindingDetailsContent({
             : {})}
         />
       </section>
+      {sourceIds.length > 0 ? (
+        <section
+          className="border-t border-border/60 pt-5"
+          data-testid="unified-finding-sources"
+        >
+          <h5 className="font-semibold">
+            Consolidated from {sourceIds.length} error groups
+          </h5>
+          <p className="mt-1 text-xs text-muted-foreground">
+            These recorded groups were judged to share one cause; every trial
+            counted above was verified under the combined explanation.
+          </p>
+          <ul className="mt-2 list-disc space-y-1 pl-5">
+            {sources.map((source) => (
+              <li key={source.id}>
+                <FindingText text={source.observed} />
+              </li>
+            ))}
+            {sources.length < sourceIds.length ? (
+              <li className="text-muted-foreground">
+                {sourceIds.length - sources.length} not shown in this view
+              </li>
+            ) : null}
+          </ul>
+        </section>
+      ) : null}
       {finding.rootCause ? (
         <section className="border-t border-border/60 pt-5">
           <h5 className="font-semibold">Why this change?</h5>
@@ -295,6 +315,12 @@ export function FindingDetailsContent({
             </p>
           ) : null}
           {caveat ? <p data-testid="unified-finding-caveat">{caveat}</p> : null}
+          {recurrence ? (
+            <p data-testid="unified-finding-recurrence">{recurrence}</p>
+          ) : null}
+          {verification ? (
+            <p data-testid="unified-finding-verification">{verification}</p>
+          ) : null}
           {judgeCoverage ? (
             <p data-testid="unified-finding-judge-coverage">
               {judgeCoverage}. Ungraded iterations are not counted as passing
@@ -316,6 +342,7 @@ export function FindingSummary({
   context,
   onOpenEvidence,
   iterationRows = {},
+  findingsById,
 }: {
   finding: ActionableFinding;
   provenance: InsightsFindingProvenance | null;
@@ -327,6 +354,7 @@ export function FindingSummary({
   onOpenEvidence?: (locator: FindingEvidenceLocator) => void;
   /** Recorded iterations by id, for the affected list. */
   iterationRows?: Record<string, AffectedIterationRow>;
+  findingsById?: ReadonlyMap<string, ActionableFinding>;
 }) {
   const [drawer, setDrawer] = useState<"why" | null>(null);
   const drawerTrigger = useRef<HTMLButtonElement | null>(null);
@@ -438,6 +466,7 @@ export function FindingSummary({
             view={view}
             iterationRows={iterationRows}
             onOpenEvidence={openEvidence}
+            findingsById={findingsById}
           />
         </SheetContent>
       </Sheet>

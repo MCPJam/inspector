@@ -27,6 +27,7 @@ vi.mock("../../swarm-agent.js", async () => {
   );
   return {
     ...actual,
+    reportTargetGrounding: vi.fn(async () => ({})),
     reportAttempt: (...args: unknown[]) => reportAttemptMock(...args),
     swarmPersonaNextTurn: (...args: unknown[]) =>
       swarmPersonaNextTurnMock(...args),
@@ -138,7 +139,10 @@ describe("swarm runner — rubric grading hook", () => {
     expect(runSwarmChecksMock).toHaveBeenCalledTimes(1);
   });
 
-  it("does NOT grade a rate-limited attempt — no session, no transcript", async () => {
+  it("ALSO grades a rate-limited attempt — the limit can land mid-conversation", async () => {
+    // A rate limit used to skip grading on the assumption that it produced no
+    // transcript. It can land mid-conversation, so there is usually a real
+    // session worth grading; a genuinely empty one is refused by the claim.
     runSyntheticHostSessionMock.mockResolvedValue({
       outcome: "rate_limited",
       errorMessage: "429 from provider",
@@ -146,7 +150,7 @@ describe("swarm runner — rubric grading hook", () => {
 
     await startJourneyRun(baseOpts());
 
-    expect(runSwarmChecksMock).not.toHaveBeenCalled();
+    expect(runSwarmChecksMock).toHaveBeenCalledTimes(1);
   });
 
   it("does not call the grader at all when the run has no rubric", async () => {

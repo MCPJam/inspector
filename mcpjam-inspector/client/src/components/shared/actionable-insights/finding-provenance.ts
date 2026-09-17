@@ -20,6 +20,31 @@
  */
 import type { InsightsFindingProvenance } from "@/lib/insights-envelope-api";
 
+/** Absent on older results; a missing history is never described as a new issue. */
+export function recurrenceLine(
+  provenance: InsightsFindingProvenance | null,
+): string | null {
+  const history = provenance?.recurrence;
+  if (
+    !history ||
+    !Number.isInteger(history.occurrences) ||
+    !Number.isInteger(history.analyzedRuns) ||
+    history.occurrences < 1 ||
+    history.analyzedRuns < history.occurrences ||
+    !Number.isFinite(history.firstSeenAt)
+  )
+    return null;
+  const date = new Date(history.firstSeenAt);
+  if (Number.isNaN(date.getTime())) return null;
+  const first = date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+  return `Seen in ${history.occurrences} of this suite’s last ${history.analyzedRuns} analyzed runs, first on ${first}.`;
+}
+
 export type FindingView = "deterministic" | "ai";
 
 export type ProseSource = "deterministic" | "ai" | "unknown";
@@ -50,6 +75,38 @@ export function mechanismCaveat(
     provenance.populationCaveat ??
     "Tool identity came from inspected exemplars only; no run-wide rate is claimed."
   );
+}
+
+/**
+ * How much of an AI mechanism's count was verified trial by trial.
+ *
+ * Null when the backend sent no verification (older backend, or a
+ * deterministic group) or when every proposed trial was confirmed: the
+ * count then already says everything. Otherwise the reader learns that the
+ * count excludes the trials that could not be verified.
+ */
+export function verificationLine(
+  provenance: InsightsFindingProvenance | null,
+): string | null {
+  const verification = provenance?.verification;
+  if (!verification) return null;
+  const unresolved =
+    (verification.unsupported ?? 0) +
+    (verification.inconclusive ?? 0) +
+    (verification.unchecked ?? 0);
+  if (unresolved === 0) return null;
+  const parts = [
+    verification.unsupported > 0
+      ? `${verification.unsupported} did not show it`
+      : null,
+    verification.inconclusive > 0
+      ? `${verification.inconclusive} could not be verified`
+      : null,
+    verification.unchecked > 0 ? `${verification.unchecked} not checked` : null,
+  ].filter(Boolean);
+  return `Verified ${verification.confirmed} of ${
+    verification.proposed
+  } proposed trials (${parts.join(", ")}); only verified trials are counted.`;
 }
 
 /** A one-line rendering of recorded judge coverage. */

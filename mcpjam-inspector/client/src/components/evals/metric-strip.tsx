@@ -86,7 +86,7 @@ export function LatencyTrendMetric({
                   {bars && (
                     <span
                       aria-hidden
-                      className="size-1.5 shrink-0 rounded-[1px] bg-foreground/30"
+                      className="size-1.5 shrink-0 rounded-[1px] bg-primary/40"
                     />
                   )}
                   P50
@@ -100,7 +100,7 @@ export function LatencyTrendMetric({
                   {bars && (
                     <span
                       aria-hidden
-                      className="size-1.5 shrink-0 rounded-[1px] bg-foreground/65"
+                      className="size-1.5 shrink-0 rounded-[1px] bg-primary"
                     />
                   )}
                   P95

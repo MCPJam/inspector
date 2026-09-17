@@ -343,7 +343,15 @@ export function useRunInsights(
   const serverError = useMemo(() => {
     if (!dto || dto.status !== "failed") return null;
     if (dto.errorCode === "spend_cap_exceeded") {
-      return "Spending cap reached — insights were not generated.";
+      return "Spending cap reached, so insights were not generated.";
+    }
+    // MCPJam's OWN daily analysis budget, not the organization's. Kept
+    // separate from `spend_cap_exceeded` on purpose: that copy points at a cap
+    // the reader can raise, and pointing someone at their billing page for a
+    // platform budget sells them a fix that cannot work. This one lifts by
+    // itself, so the only useful thing to say is when.
+    if (dto.errorCode === "platform_cap_exceeded") {
+      return "MCPJam's daily analysis budget is used up. Try again after 00:00 UTC.";
     }
     if (dto.errorCode === "cancelled") return null;
     return dto.errorMessage || "Insights could not be generated.";

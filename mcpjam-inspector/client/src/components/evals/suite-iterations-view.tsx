@@ -384,7 +384,11 @@ export function SuiteIterationsView({
     },
   ) => void | Promise<unknown>;
   onReplayRun?: (suite: EvalSuite, run: EvalSuiteRun) => void;
-  onCancelRun: (runId: string) => void;
+  /**
+   * One id, or every in-progress id of a launch — the run page and the suite
+   * page cancel a whole client-model fan-out in one click.
+   */
+  onCancelRun: (runId: string | readonly string[]) => void;
   onDelete: (suite: EvalSuite) => void;
   onDeleteRun: (runId: string) => void;
   onDirectDeleteRun: (runId: string) => Promise<void>;
@@ -664,8 +668,8 @@ export function SuiteIterationsView({
     route.type === "run-detail"
       ? "run-detail"
       : route.type === "test-detail"
-        ? "test-detail"
-        : route.type === "test-edit" && !editingDisabled
+        ? evaluateCaseEditor ? "test-edit" : "test-detail"
+        : route.type === "test-edit" && (!editingDisabled || evaluateCaseEditor)
           ? "test-edit"
           : route.type === "test-edit"
             ? "test-detail"
@@ -1222,6 +1226,10 @@ export function SuiteIterationsView({
     if (route.type !== "run-detail" || !group.testCaseId) {
       return;
     }
+    if (evaluateCaseEditor) {
+      navigation.toTestEdit(route.suiteId, group.testCaseId);
+      return;
+    }
     navigation.toRunDetail(route.suiteId, route.runId, undefined, {
       testCaseId: group.testCaseId,
     });
@@ -1253,7 +1261,7 @@ export function SuiteIterationsView({
       return;
     }
     const iter = caseGroupsForSelectedRun.find((i) => i._id === iterationId);
-    if (editingDisabled) {
+    if (editingDisabled && !evaluateCaseEditor) {
       navigation.toRunDetail(route.suiteId, route.runId, iterationId, {
         testCaseId: selectedRunTestCaseId ?? iter?.testCaseId ?? undefined,
       });
@@ -1851,6 +1859,7 @@ export function SuiteIterationsView({
                 <TestTemplateEditor
                   suiteId={suite._id}
                   selectedTestCaseId={selectedTestId}
+                  readOnly={editingDisabled}
                   onDeleteCase={
                     onDeleteTestCasesBatch
                       ? async (testCaseId) => {
@@ -1878,10 +1887,11 @@ export function SuiteIterationsView({
                   projectServers={projectServers}
                   onExportDraft={handleOpenDraftExport}
                   openCompareFromRoute={
-                    route.type === "test-edit" && Boolean(route.openCompare)
+                    (route.type === "test-edit" && Boolean(route.openCompare)) ||
+                    (route.type === "test-detail" && Boolean(route.iteration))
                   }
                   openCompareIterationId={
-                    route.type === "test-edit"
+                    route.type === "test-edit" || route.type === "test-detail"
                       ? (route.iteration ?? null)
                       : null
                   }
@@ -1898,7 +1908,7 @@ export function SuiteIterationsView({
                     })
                   }
                   checksPage={
-                    route.type === "test-edit" && Boolean(route.checks)
+                    !editingDisabled && route.type === "test-edit" && Boolean(route.checks)
                   }
                   onOpenCaseChecks={() =>
                     navigation.toTestEdit(suite._id, selectedTestId, {
@@ -2018,6 +2028,8 @@ export function SuiteIterationsView({
                       (rerunningSuiteId ? "A run is already starting." : null),
                   }}
                   run={selectedRunDetails}
+                  onCancelRun={onCancelRun}
+                  cancellingRunId={cancellingRunId}
                   hostNamesById={hostNamesById}
                   iterations={allIterations}
                   otherRuns={runs.filter(
@@ -2124,6 +2136,8 @@ export function SuiteIterationsView({
                   onTestCaseClick={(testCaseId) =>
                     navigation.toTestEdit(suite._id, testCaseId)
                   }
+                  onCancelRun={onCancelRun}
+                  cancellingRunId={cancellingRunId}
                   rerunningSuiteId={rerunningSuiteId}
                   replayingRunId={replayingRunId}
                   runningTestCaseId={runningTestCaseId}

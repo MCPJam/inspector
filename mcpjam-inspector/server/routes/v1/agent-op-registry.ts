@@ -1452,14 +1452,13 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
         } against Anthropic's connector directory`,
       buttonLabel: "Run it",
       kind: "start",
-      // A FUNCTION because the hazard is in the input. The deterministic grade
-      // is free; only the opt-in model pass spends. Static `"spend"` would
-      // warn about money on every free run, and `"none"` would stay silent on
-      // the one run that costs something.
-      confirmSeverity: (input) =>
-        (input as { includeLlmObservations?: boolean }).includeLlmObservations
-          ? "spend"
-          : "none",
+      // Flat `"none"`, and it used to be a function of
+      // `includeLlmObservations` because that flag was the one thing here that
+      // spent. It is platform-paid now, so neither shape of this call touches
+      // the organization's credits and a money warning on either would be
+      // false. Still GATED: the start dials somebody else's server and
+      // persists a project row, which is what a person is approving.
+      confirmSeverity: () => "none",
       target: (input) => {
         const server = named(input, "server");
         return server ? { type: "server", selector: server } : undefined;
@@ -1467,7 +1466,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     },
     promptNotes: [
       "- `start_claude_readiness_run` and `start_openai_readiness_run` return a RECEIPT, not a verdict. The run dials the target and takes minutes; poll `get_readiness_run` and report what it says, never the receipt.",
-      "- A readiness run answers three separate questions and they do not collapse. `status` is whether the run finished; `overallStatus` is the grade (a `completed` run can be `not-ready`, which is a finished run that failed the grade); `llmObservations` is whether the optional paid pass ran. A run whose observations were `billing-blocked` is still a complete, valid grade — say the observations were skipped for credit, never that the server has a problem.",
+      "- A readiness run answers three separate questions and they do not collapse. `status` is whether the run finished; `overallStatus` is the grade (a `completed` run can be `not-ready`, which is a finished run that failed the grade); `llmObservations` is whether the optional model pass ran. That pass is platform-paid, so a run whose observations were `billing-blocked` was not refused for the organization's money — it is still a complete, valid grade, and the honest report is that the observations were skipped, never that the server has a problem.",
       "- A run that FAILED produced no grade at all. Report it as a run that could not finish, and never as a verdict about the server.",
       '- When a readiness run reports `authMode: "headless"` and a lane\'s `missingInputs` names `authorizationRequests`, the server is auth-walled and the run carried no token. That is not a defect — challenging correctly earns the server green marks. Tell the user to connect the server with OAuth in the app (server menu), then start a NEW run: the platform uses the saved token automatically, and the not-evaluated checks will grade.',
     ],
@@ -1482,10 +1481,9 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
         } against OpenAI's app directory`,
       buttonLabel: "Run it",
       kind: "start",
-      confirmSeverity: (input) =>
-        (input as { includeLlmObservations?: boolean }).includeLlmObservations
-          ? "spend"
-          : "none",
+      // See `start_claude_readiness_run` above: platform-paid either way, so
+      // there is no money to warn about.
+      confirmSeverity: () => "none",
       target: (input) => {
         const server = named(input, "server");
         return server ? { type: "server", selector: server } : undefined;
@@ -1797,11 +1795,12 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
         `Generate eval cases for ${named(input, "suite") ?? "(unnamed)"}`,
       buttonLabel: "Generate them",
       kind: "generate",
-      // Generation calls the authoring model, so it spends credits exactly
-      // like the two run operations above. Without this the Slack and Discord
-      // approval cards omit the spend warning for the one operation whose
-      // cost is least obvious from its name.
-      confirmSeverity: "spend",
+      // The authoring model is platform-paid: no credits are consumed, so a
+      // money warning on the Slack and Discord approval cards would be false.
+      // Kept GATED rather than direct because it PERSISTS cases into the
+      // suite and takes a slice of a bounded daily quota — see
+      // TIER_EXCEPTIONS in `__tests__/agent-op-registry.test.ts`.
+      confirmSeverity: "none",
     },
   },
   {
@@ -1902,10 +1901,11 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
         } from run ${named(input, "runId") ?? "(unnamed)"}`,
       buttonLabel: "Propose the rewrite",
       kind: "generate",
-      confirmSeverity: "spend",
+      // Platform-paid; see `generate_eval_cases` above.
+      confirmSeverity: "none",
     },
     promptNotes: [
-      "- `propose_eval_description_rewrite` returns a proposing receipt, not a finished rewrite. Poll `get_eval_description_experiment` until status is proposed (or failed). Requesting again spends again.",
+      "- `propose_eval_description_rewrite` returns a proposing receipt, not a finished rewrite. Poll `get_eval_description_experiment` until status is proposed (or failed). Requesting again runs another analysis against MCPJam's daily analysis budget.",
     ],
   },
   {
@@ -2202,7 +2202,9 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       describe: () => "Draft personas with a model",
       buttonLabel: "Draft them",
       kind: "generate",
-      confirmSeverity: "spend",
+      // Platform-paid drafting: no credits, so no money warning. Gated
+      // because it is still a model pass against a bounded daily quota.
+      confirmSeverity: "none",
     },
   },
   {
@@ -2221,7 +2223,8 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       },
       buttonLabel: "Draft them",
       kind: "generate",
-      confirmSeverity: "spend",
+      // Platform-paid; see `generate_personas` above.
+      confirmSeverity: "none",
     },
   },
   {
@@ -2232,10 +2235,15 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
         `Analyze wave ${named(input, "wave") ?? "(unnamed)"} with a model`,
       buttonLabel: "Analyze it",
       kind: "generate",
-      confirmSeverity: "spend",
+      // The insight model call is on MCPJam, so there is no money to warn
+      // about. Gated because the daily insight quota it consumes is SHARED
+      // across the organization: one agent turn can take the slice a person
+      // was going to use.
+      confirmSeverity: "none",
     },
     promptNotes: [
-      "- `request_wave_insights` spends against a daily budget SHARED with user-testing insights — burning it here takes it from there. Read the run scorecards first; they are free and usually explain the failure without a model pass.",
+      "- `request_wave_insights` consumes no credits, but it counts against a daily insight QUOTA shared with user-testing insights — a request here takes one from there. Read the run scorecards first; they cost no quota and usually explain the failure without a model pass.",
+      "- Included operations (generation and insights) can be refused with `RATE_LIMITED`. `canTopUp` is false on those refusals: tell the user when it lifts (`retryAfterSeconds`, or 00:00 UTC for a daily budget), and do not retry sooner, suggest topping up credits, or switch identities to get around it.",
     ],
   },
 
@@ -2277,7 +2285,9 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
         } with a model`,
       buttonLabel: "Analyze it",
       kind: "generate",
-      confirmSeverity: "spend",
+      // Platform-paid; see `request_wave_insights` above for why it stays
+      // gated on a shared quota rather than on money.
+      confirmSeverity: "none",
     },
   },
   {

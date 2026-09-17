@@ -47,6 +47,11 @@
  * These routes are therefore absent from the public OpenAPI spec and excluded
  * from the MCP/agent/workspace catalogs until GA.
  */
+import type {
+  SwarmSessionVerdict,
+  JourneyRunVerdictSummary,
+  SwarmReport,
+} from "@mcpjam/sdk/contract";
 import { Hono } from "hono";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -59,7 +64,7 @@ import { v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexWriteError } from "./convex-errors.js";
 import { translateConvexReadError } from "./convex-read-errors.js";
 import { launchJourneyRun } from "../../services/sessionSimulation/launch-journey-run.js";
-import { getConvexBearerThunkForRequest } from "../../utils/v1-convex-token.js";
+import { getBackgroundRunBearerForRequest } from "../../utils/v1-convex-token.js";
 import { resolveXaaIssuer } from "../../services/xaa-mint.js";
 import { callerContextFromHono } from "../web/auth.js";
 import { HOSTED_MODE } from "../../config.js";
@@ -128,7 +133,9 @@ type JourneyRow = {
   hostIds?: string[];
   serverAttachmentId: string | null;
   environmentIds: string[] | null;
-  config: { sessionsPerTarget?: number; maxTurns?: number } | undefined;
+  config:
+    | { sessionsPerTarget?: number; maxTurns?: number; setupWrites?: boolean }
+    | undefined;
   judgeConfig?: unknown;
   rubric?: unknown;
   createdAt: number;
@@ -136,6 +143,8 @@ type JourneyRow = {
 };
 
 type JourneyRunRow = {
+  verdictSummary?: JourneyRunVerdictSummary;
+  report?: SwarmReport;
   _id: string;
   projectId: string;
   journeyRefId: string;
@@ -168,6 +177,7 @@ type JourneyRunRow = {
     personaSnapshot?: { personaId?: string; name?: string; role?: string };
     sessionsPerTarget?: number;
     maxTurns?: number;
+    setupWrites?: boolean;
   };
   attempts?: Array<{
     chatSessionId: string | null;
@@ -183,6 +193,23 @@ type JourneyRunRow = {
 };
 
 type JourneySessionRow = {
+  criteria?: {
+    status: "pending" | "completed" | "failed";
+    generation: number;
+    criterionIds?: string[];
+    results?: {
+      criterionId: string;
+      passed: boolean;
+      status?: "scored" | "error";
+    }[];
+  };
+  verdict?: SwarmSessionVerdict;
+  observations?: Array<{
+    evaluatorId: string;
+    predicateType: string;
+    role: "advisory" | "required";
+    status: "passed" | "failed" | "pending" | "unavailable";
+  }>;
   id: string;
   chatSessionId: string;
   projectId: string;
@@ -221,6 +248,7 @@ function toJourneyDto(row: JourneyRow) {
       : {}),
     sessionsPerTarget: row.config?.sessionsPerTarget ?? null,
     maxTurns: row.config?.maxTurns ?? null,
+    setupWrites: row.config?.setupWrites ?? false,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -231,6 +259,8 @@ function toJourneyRunDto(row: JourneyRunRow) {
     id: row._id,
     projectId: row.projectId,
     journeyId: row.journeyRefId,
+    ...(row.verdictSummary ? { verdictSummary: row.verdictSummary } : {}),
+    ...(row.report ? { report: row.report } : {}),
     // `swarmRunGroupId` upstream. Renamed because the public meaning is "the
     // batch this run was launched with", and every run of a solo relaunch is
     // a wave of one.
@@ -296,6 +326,9 @@ function toJourneySessionDto(row: JourneySessionRow, outcome?: string | null) {
      * A caller that listed a run's sessions could not then look one of them up.
      */
     id: row.id,
+    ...(row.verdict ? { verdict: row.verdict } : {}),
+    ...(row.observations ? { observations: row.observations } : {}),
+    ...(row.criteria ? { criteria: row.criteria } : {}),
     /**
      * The runtime key, kept but named for what it is. It is what the chat
      * transport and the app's own deep links use, so dropping it would strand
@@ -364,6 +397,7 @@ const journeyConfigFields = {
   sessionsPerTarget: z.number().int().min(1).max(100),
   /** Cap on assistant turns per session. */
   maxTurns: z.number().int().min(1).max(200),
+  setupWrites: z.boolean().optional(),
 };
 
 const createJourneySchema = z.strictObject({
@@ -407,6 +441,7 @@ const updateJourneySchema = z
     hostIds: z.array(z.string().min(1)).optional(),
     sessionsPerTarget: journeyConfigFields.sessionsPerTarget.optional(),
     maxTurns: journeyConfigFields.maxTurns.optional(),
+    setupWrites: journeyConfigFields.setupWrites,
   })
   .refine((value) => Object.keys(value).length > 0, {
     message: "Provide at least one journey field to update.",
@@ -414,14 +449,16 @@ const updateJourneySchema = z
   .refine(
     (value) =>
       (value.sessionsPerTarget === undefined) ===
-      (value.maxTurns === undefined),
+        (value.maxTurns === undefined) &&
+      (value.setupWrites === undefined ||
+        value.sessionsPerTarget !== undefined),
     {
       // Convex takes `config` as one object, so a partial update would have to
       // read-modify-write it — and a concurrent edit between the read and the
       // write would be silently clobbered. Requiring both is a 400 the caller
       // can fix, rather than a lost update they never see.
       message:
-        "sessionsPerTarget and maxTurns must be updated together — they are one execution config upstream.",
+        "sessionsPerTarget and maxTurns must be updated together; setupWrites requires that pair.",
     },
   );
 
@@ -653,6 +690,9 @@ journeys.post("/projects/:projectId/journeys", async (c) => {
         config: {
           sessionsPerTarget: body.sessionsPerTarget,
           maxTurns: body.maxTurns,
+          ...(body.setupWrites !== undefined
+            ? { setupWrites: body.setupWrites }
+            : {}),
         },
         ...(idempotencyKey ? { idempotencyKey } : {}),
       } as never,
@@ -700,6 +740,9 @@ journeys.patch("/projects/:projectId/journeys/:journeyId", async (c) => {
               config: {
                 sessionsPerTarget: body.sessionsPerTarget,
                 maxTurns: body.maxTurns,
+                ...(body.setupWrites !== undefined
+                  ? { setupWrites: body.setupWrites }
+                  : {}),
               },
             }
           : {}),
@@ -945,7 +988,7 @@ journeys.post("/projects/:projectId/journeys/:journeyId/runs", async (c) => {
         bearerToken: await getConvexBearerForRequest(c),
         // A THUNK for the detached runner. The launch outlives the delegated
         // JWT that authorized it; see `launch-journey-run.ts`.
-        getRunBearer: getConvexBearerThunkForRequest(c),
+        getRunBearer: await getBackgroundRunBearerForRequest(c, projectId),
         // Both read the LIVE request and must be resolved before the 202.
         xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
         callerContext: callerContextFromHono(c),

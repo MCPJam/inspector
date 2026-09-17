@@ -76,6 +76,8 @@ export interface LaunchJourneyRunInput {
   waveId?: string;
   /** Per-run environment fan-out; the backend does the real validation. */
   environmentIds?: string[];
+  /** Iterations for THIS run; leaves the journey's own config untouched. */
+  sessionsPerTarget?: number;
 }
 
 export interface LaunchJourneyRunResult {
@@ -249,6 +251,9 @@ export async function launchJourneyRun(
       launchKey: input.launchKey,
       kind: input.waveId ? "swarm" : "user_testing",
       ...(input.waveId ? { swarmRunGroupId: input.waveId } : {}),
+      ...(input.sessionsPerTarget !== undefined
+        ? { sessionsPerTarget: input.sessionsPerTarget }
+        : {}),
       ...(input.environmentIds?.length
         ? { environmentIds: input.environmentIds }
         : {}),
@@ -355,11 +360,15 @@ export async function launchJourneyRun(
       personaSnapshot: snapshot.personaSnapshot,
       sessionsPerTarget: snapshot.sessionsPerTarget,
       maxTurns: snapshot.maxTurns,
+      setupWrites: snapshot.setupWrites,
+      goal: snapshot.goal,
       // Whether this run is rubric-graded at all. The runner only needs
       // the yes/no — the criteria themselves come back from the claim, so
       // the authoritative list is always the backend's pinned copy and
       // never a value that rode along in process memory.
-      hasRubric: (snapshot.rubric?.length ?? 0) > 0,
+      hasRubric:
+        ((snapshot.standardCheckProfile?.criteria ?? snapshot.rubric)?.length ??
+          0) > 0,
       convexHttpUrl,
       getBearer: deps.getRunBearer,
       // Host-aware: each host connects ONLY its own pinned required servers

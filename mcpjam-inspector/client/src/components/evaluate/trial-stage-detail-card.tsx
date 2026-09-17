@@ -62,7 +62,13 @@ export function TrialStageDetailCard({
   // failure the label maps exist to prevent, and this build genuinely does not
   // know what a state it has no label for means.
   const stateLabel = STAGE_STATE_LABELS[row.state] ?? UNRECOGNIZED_STATE_LABEL;
-  const reasonLabel = row.reason ? STAGE_REASON_LABELS[row.reason] : null;
+  // `observed` says only "we looked, and it held" — which the PASSED state
+  // right above already says. It lands on every passing stage, so the line
+  // is noise on five of six cards and is dropped rather than repeated.
+  const reasonLabel =
+    row.reason && row.reason !== "observed"
+      ? STAGE_REASON_LABELS[row.reason]
+      : null;
   const evidence = describeStageRowEvidence(row);
   const predicateReasons = row.evidence?.predicateReasons ?? [];
 

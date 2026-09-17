@@ -4,7 +4,10 @@ import {
   executeToolCallsFromMessages,
   hasUnresolvedToolCalls,
 } from "@/shared/http-tool-calls";
-import { handleMCPJamFreeChatModel } from "../mcpjam-stream-handler";
+import {
+  handleMCPJamFreeChatModel,
+  runChatEngineLoop,
+} from "../mcpjam-stream-handler";
 import { buildPageTools } from "../chat-v2-orchestration";
 import { serializeToolsForConvex } from "../mcpjam-tool-helpers";
 import { createHostedRpcLogCollector } from "../../routes/web/hosted-rpc-logs.js";
@@ -2662,6 +2665,31 @@ describe("mcpjam-stream-handler", () => {
   });
 
   describe("guest IP-hash header", () => {
+    it("authenticates scenario inference even without a client IP", async () => {
+      vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "study-service-token");
+      try {
+        await handleMCPJamFreeChatModel({
+          messages: [{ role: "user", content: "hi" }] as any,
+          modelId: "gpt-4.1-mini",
+          systemPrompt: "You are helpful",
+          tools: {},
+          mcpClientManager: {
+            getAllToolsMetadata: vi.fn().mockReturnValue({}),
+          } as any,
+          scenarioId: "scenario-1",
+          clientIp: null,
+        });
+        await lastExecution;
+        const init = (global.fetch as any).mock.calls[0]?.[1];
+        expect(init.headers["x-inspector-service-token"]).toBe(
+          "study-service-token",
+        );
+        expect(JSON.parse(init.body).scenarioId).toBe("scenario-1");
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
+
     it("forwards a hashed IP for the per-IP daily spend cap when clientIp is provided", async () => {
       process.env.GUEST_SESSION_HASH_PEPPER = "test-pepper-for-ip-hash";
       // The hash only goes out with the service token that proves it.
@@ -2691,7 +2719,7 @@ describe("mcpjam-stream-handler", () => {
       delete process.env.GUEST_SESSION_HASH_PEPPER;
     });
 
-    it("omits the guest IP hash header when clientIp is null", async () => {
+    it("forwards the shared unattested key when clientIp is null", async () => {
       process.env.GUEST_SESSION_HASH_PEPPER = "test-pepper-for-ip-hash";
 
       await handleMCPJamFreeChatModel({
@@ -3345,20 +3373,29 @@ describe("mcpjam-stream-handler", () => {
 
       const onStepFinish = vi.fn();
 
-      await handleMCPJamFreeChatModel({
-        messages: [{ role: "user", content: "Two steps" }] as any,
-        modelId: "openai/gpt-5-mini",
-        systemPrompt: "You are helpful",
-        tools: {
-          read_docs: { _serverId: "docs-server" },
-        } as any,
-        mcpClientManager: {
-          getAllToolsMetadata: vi.fn().mockReturnValue({ read_docs: {} }),
-        } as any,
-        onStepFinish,
-      });
+      const result = await runChatEngineLoop(
+        {
+          messages: [{ role: "user", content: "Two steps" }] as any,
+          modelId: "openai/gpt-5-mini",
+          systemPrompt: "You are helpful",
+          tools: {
+            read_docs: { _serverId: "docs-server" },
+          } as any,
+          mcpClientManager: {
+            getAllToolsMetadata: vi.fn().mockReturnValue({ read_docs: {} }),
+          } as any,
+          onStepFinish,
+        },
+        "none",
+      );
 
       await lastExecution;
+
+      expect(result.turnTrace?.requestPayloads).toHaveLength(2);
+      expect(result.turnTrace?.requestPayloads?.[0].payload.system).toBe(
+        "You are helpful",
+      );
+      expect(result.turnTrace?.requestPayloads?.[1].stepIndex).toBe(1);
 
       // Two steps completed: tool-call step + final text step.
       expect(onStepFinish).toHaveBeenCalledTimes(2);
