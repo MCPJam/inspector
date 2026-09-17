@@ -53,6 +53,7 @@ import {
   waveSessionTotals,
 } from "@/components/swarms/swarm-overview-panel";
 import { SwarmFindingsTab } from "@/components/swarms/findings/swarm-findings-tab";
+import { narratedWaveSummary } from "@/components/swarms/findings/findings-headline";
 import { NewSwarmRunningStep } from "@/components/swarms/new-swarm-running-step";
 import {
   DETAIL_TAB_OPTIONS,
@@ -171,11 +172,10 @@ export function SwarmRunDetail({
       : null,
     { autoRequest: false },
   );
-  const generatedWaveSummary =
-    waveInsights.status === "completed" &&
-    waveInsights.insights?.summary?.trim()
-      ? waveInsights.insights.summary.trim()
-      : null;
+  const generatedWaveSummary = narratedWaveSummary(
+    waveInsights.status,
+    waveInsights.insights,
+  );
 
   const handleTabChange = useCallback(
     (next: SwarmDetailTab) => {

@@ -45,6 +45,7 @@ import { readXaaEnterprisePolicy } from "@mcpjam/sdk";
 import { resolvePinnedSkillCached } from "./pinned-skill-cache.js";
 import { swarmAttemptChatSessionId } from "../../../shared/swarm-session-id.js";
 import {
+  accountLimitCode,
   humanizeSwarmAttemptErrorMessage,
   isAccountLimit,
   MAX_ATTEMPT_ERROR_CHARS,
@@ -349,7 +350,11 @@ function terminalForOutcome(
   if (outcome === "rate_limited") {
     return {
       status: "rate_limited",
-      errorCode: "rate_limited",
+      // Keep MCPJam's own denial code (`user_rate_limit`, …) when the raw
+      // message carries one. The humanized sentence has dropped it, and a bare
+      // `rate_limited` reads to the run screen as the user's PROVIDER
+      // throttling their key — naming Anthropic for MCPJam's daily limit.
+      errorCode: accountLimitCode(errorMessage) ?? "rate_limited",
       ...(safeMessage ? { errorMessage: safeMessage } : {}),
     };
   }
