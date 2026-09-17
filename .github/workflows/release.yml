@@ -405,9 +405,8 @@ jobs:
   evals-action-smoke:
     needs: preflight
     # The repo variables are what make the live smoke possible. While they are
-    # unset, the smoke SKIPS instead of failing the whole release — and
-    # `publish-evals-action` skips with it, so the action is never tagged
-    # untested. Set both variables to turn the gate back on.
+    # unset, the smoke SKIPS instead of failing the whole release. Set both
+    # variables to turn the gate back on.
     if: >-
       needs.preflight.outputs.evals_action_changed == 'true' &&
       vars.EVALS_SMOKE_PROJECT != '' && vars.EVALS_SMOKE_SUITE != ''
@@ -419,7 +418,14 @@ jobs:
 
   publish-evals-action:
     needs: [preflight, evals-action-smoke]
-    if: needs.preflight.outputs.evals_action_changed == 'true'
+    # The smoke is a GATE, not a dependency: a SKIPPED smoke (its repo
+    # variables are unset) still lets the tag ship, while a FAILED smoke still
+    # holds it back. Without `!cancelled()` a skipped `needs` would skip this
+    # job along with it.
+    if: >-
+      !cancelled() &&
+      needs.preflight.outputs.evals_action_changed == 'true' &&
+      needs.evals-action-smoke.result != 'failure'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     concurrency:
