@@ -149,8 +149,11 @@ const percentile = (values, p) => {
   return sorted[lower] + (sorted[upper] - sorted[lower]) * (index - lower);
 };
 const variantKey = (provider, model) => `${provider ?? ""}\0${model ?? ""}`;
-const variantLabel = (client, model, provider) =>
-  [client || provider, model].filter(Boolean).join(" / ") || "Default";
+// The column is "Client / Model" and holds nothing else. The provider and the
+// test framework are neither, and a reader comparing rows takes whatever sits
+// in that cell for a client.
+const variantLabel = (client, model) =>
+  [client, model].filter(Boolean).join(" / ") || "Default";
 const RESULT_LABELS = {
   passed: "Passed",
   failed: "Failed",
@@ -316,7 +319,12 @@ function renderBundle(bundle, full, outcome) {
       ]),
     ).values(),
   ];
-  const client = bundle.run.environment?.name ?? bundle.receipt.framework;
+  // The run names the client it executed: a saved MCPJam client, or the
+  // synthetic "SDK harness" when the test code owned the model. `environment`
+  // is a project environment, not a client, and is the weaker label of the two.
+  // Truthiness, not nullish: an empty name is no name, and must not shadow the
+  // environment the run does carry.
+  const client = bundle.run.client?.name || bundle.run.environment?.name;
   const variantRows = variants.map((variant) => {
     const rows = cases.filter((row) => variantKey(row.provider, row.model) === variant.key);
     const passedCases = rows.filter((row) => row.verdict === "passed").length;
@@ -329,7 +337,7 @@ function renderBundle(bundle, full, outcome) {
         ? "inconclusive"
         : "passed";
     return [
-      variantLabel(client, variant.model, variant.provider),
+      variantLabel(client, variant.model),
       `${statusIcon(verdict)} ${verdict[0].toUpperCase()}${verdict.slice(1)}`,
       `${passedCases}/${rows.length}`,
       pct(passed, eligible),
@@ -391,7 +399,7 @@ function renderBundle(bundle, full, outcome) {
           "Each cell shows the recorded pass rate over eligible iterations.",
           "",
           table(
-            ["Case", ...variants.map((row) => variantLabel(client, row.model, row.provider))],
+            ["Case", ...variants.map((row) => variantLabel(client, row.model))],
             failedRows,
           ),
         ]
@@ -415,7 +423,7 @@ function renderBundle(bundle, full, outcome) {
     const costs = items.map((item) => item.usage?.estimatedCostUsd).filter(Number.isFinite);
     const tools = items.reduce((sum, item) => sum + (item.actualToolCalls?.length ?? 0), 0);
     return [
-      variantLabel(client, variant.model, variant.provider),
+      variantLabel(client, variant.model),
       duration(percentile(times, 0.5)),
       duration(percentile(times, 0.95)),
       tokens || "—",
@@ -445,7 +453,7 @@ function renderBundle(bundle, full, outcome) {
             ["Case", "Client / Model", "Pass rate"],
             passing.map((row) => [
               row.title,
-              variantLabel(client, row.model, row.provider),
+              variantLabel(client, row.model),
               pct(row.passed, row.eligible),
             ]),
           ),
