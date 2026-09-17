@@ -26,5 +26,3 @@ wt-*/
 .playwright-mcp/
 evaluators/dist/
 
-# Dashboard backups written by ops/axiom-monitors/dashboard-platform-lanes.mjs before a PUT
-ops/axiom-monitors/.infra-overview-backup-*.json
