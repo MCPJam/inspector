@@ -2542,7 +2542,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     expect(String(payload.error)).toMatch(/backend (stream|step)/i);
   });
 
-  it("does not record an iteration when abortSignal fires mid-turn (PR 3 review fix)", async () => {
+  it("records a cancelled iteration, not a cycle failure, when abortSignal fires mid-turn (PR 3 review fix)", async () => {
     // Cursor review on PR #2457: the engine swallows AbortError
     // internally (sets its `aborted` flag, returns with no `turnTrace`,
     // doesn't throw). `RunAssistantTurnResult` doesn't expose the
@@ -2617,17 +2617,28 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
 
       expect(runAssistantTurnSpy).toHaveBeenCalledTimes(1);
 
-      // The aborted iteration must NOT be finalized via the action
-      // pipeline — no updateTestIteration, no appendEvalTurnTrace, no
-      // lockEvalSession.
+      // The aborted iteration must NOT be finalized as a completed or failed
+      // trial — no appendEvalTurnTrace, no lockEvalSession, and nothing that
+      // dresses a cancellation up as a cycle failure.
       const finalizeCall = convexClient.action.mock.calls.find((c) =>
         [
-          "testSuites:updateTestIteration",
           "testSuites:appendEvalTurnTrace",
           "testSuites:lockEvalSession",
         ].includes(c[0] as string)
       );
       expect(finalizeCall).toBeUndefined();
+
+      // It IS recorded as cancelled, though. Writing nothing used to leave the
+      // claimed row `running` forever, so the case history showed a trial that
+      // never ended and nothing said a person had stopped it.
+      const iterationWrites = convexClient.action.mock.calls.filter(
+        (c) => c[0] === "testSuites:updateTestIteration"
+      );
+      expect(iterationWrites).toHaveLength(1);
+      expect(iterationWrites[0]?.[1]).toMatchObject({
+        status: "cancelled",
+        result: "cancelled",
+      });
     } finally {
       runAssistantTurnSpy.mockRestore();
     }
@@ -3849,6 +3860,70 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         return payload?.systemPrompt === "Stream-runner suite default";
       });
       expect(persistedCarriesIt).toBe(true);
+    });
+
+    it("persists a stopped quick run as a cancelled iteration", async () => {
+      // The editor's Stop aborts the stream. The iteration row was claimed
+      // before the first turn, so writing nothing here leaves it `running`
+      // forever and the case history shows a trial that never ends.
+      const controller = new AbortController();
+      streamTextMock.mockReset();
+      streamTextMock.mockImplementationOnce((_options: any) => ({
+        fullStream: (async function* () {
+          controller.abort(new Error("Eval stream aborted by the client"));
+        })(),
+        steps: Promise.resolve([]),
+        response: Promise.resolve({ messages: [] }),
+      }));
+
+      // However the call settles — a cooperative return or the abort reason
+      // rethrown — the row must not be left mid-flight.
+      await streamTestCase({
+        budgets: defaultEvalExecutionBudgets(),
+        test: {
+          title: "Case",
+          query: "Hello",
+          runs: 1,
+          model: "gpt-4-turbo",
+          provider: "openai",
+          expectedToolCalls: [],
+          promptTurns: [
+            { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+          ],
+          testCaseId: "case-stopped",
+        },
+        tools: {},
+        selectedServers: [],
+        mcpClientManager: mcpClientManager as any,
+        recorder: null,
+        modelApiKeys: { openai: "sk-test" },
+        convexClient: convexClient as any,
+        convexHttpUrl: "https://example.convex.site",
+        convexAuthToken: "token",
+        testCaseId: "case-stopped",
+        suiteId: "suite-1",
+        runId: null,
+        abortSignal: controller.signal,
+        emit: () => {},
+      } as any).catch(() => {});
+
+      const cancelWrite = convexClient.action.mock.calls.find(
+        (call) =>
+          call[0] === "testSuites:updateTestIteration" &&
+          (call[1] as Record<string, unknown> | undefined)?.status ===
+            "cancelled",
+      );
+      expect(cancelWrite).toBeDefined();
+      expect(cancelWrite?.[1]).toMatchObject({
+        iterationId: "iter-1",
+        status: "cancelled",
+        result: "cancelled",
+        metadata: { stopReason: "user_cancelled" },
+      });
+      // The reason the person will read, carried from the abort itself.
+      expect((cancelWrite?.[1] as any).error).toBe(
+        "Eval stream aborted by the client",
+      );
     });
   });
 

@@ -96,7 +96,10 @@ describe("claim", () => {
     await claimNextStageDerivation("worker-9");
     expect(calls[0].path).toBe("/internal/v1/chat-stage-derivations/claim");
     expect(calls[0].headers["x-inspector-service-token"]).toBe("service-token");
-    expect(calls[0].body).toEqual({ claimedBy: "worker-9" });
+    expect(calls[0].body).toEqual({
+      claimedBy: "worker-9",
+      evidenceVersion: 2,
+    });
   });
 
   it("returns the claim, carrying the stamp verbatim", async () => {

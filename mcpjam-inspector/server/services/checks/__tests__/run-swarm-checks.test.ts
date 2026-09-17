@@ -69,6 +69,17 @@ describe("runSwarmChecks", () => {
     failSwarmChecksMock.mockReset().mockResolvedValue(undefined);
   });
 
+  it("never reports a pass from an empty or incomplete transcript", async () => {
+    for (const envelope of [
+      { messages: [] },
+      { messages: [{ role: "user", content: "help" }], traceComplete: false },
+    ]) {
+      claimSwarmChecksMock.mockResolvedValue({ ...claimResult([]), envelope });
+      expect(await runSwarmChecks(ARGS)).toMatchObject({ status: "failed" });
+    }
+    expect(completeSwarmChecksMock).not.toHaveBeenCalled();
+  });
+
   it("evaluates the pinned criteria and correlates verdicts back by criterionId", async () => {
     claimSwarmChecksMock.mockResolvedValue(
       claimResult([
@@ -88,7 +99,11 @@ describe("runSwarmChecks", () => {
     expect(outcome.status).toBe("completed");
     const [, , payload] = completeSwarmChecksMock.mock.calls[0];
     expect(payload.criterionResults).toEqual([
-      expect.objectContaining({ criterionId: "crit-search", passed: true }),
+      expect.objectContaining({
+        criterionId: "crit-search",
+        passed: true,
+        status: "scored",
+      }),
       // One user turn, budget 3 ⇒ passes strictly under.
       expect.objectContaining({ criterionId: "crit-quick", passed: true }),
     ]);
@@ -118,6 +133,10 @@ describe("runSwarmChecks", () => {
       false,
       false,
     ]);
+    expect(payload.criterionResults.map((r: any) => r.status)).toEqual([
+      "scored",
+      "scored",
+    ]);
     // Reasons carry the evidence; the compact session stamp will not.
     expect(payload.criterionResults[1].reason).toContain("3");
   });
@@ -135,6 +154,26 @@ describe("runSwarmChecks", () => {
     await runSwarmChecks(ARGS);
 
     expect(order).toEqual(["claim", "complete"]);
+  });
+
+  it("preserves evaluator errors when a check cannot read the tool inventory", async () => {
+    claimSwarmChecksMock.mockResolvedValue(
+      claimResult(
+        [{ role: "user", content: "help" }],
+        [{ id: "schema", predicate: { type: "argumentsMatchToolSchema" } }],
+      ),
+    );
+    const outcome = await runSwarmChecks(ARGS);
+    expect(outcome.status).toBe("completed");
+    expect(failSwarmChecksMock).not.toHaveBeenCalled();
+    const [, , payload] = completeSwarmChecksMock.mock.calls[0];
+    expect(payload.criterionResults).toEqual([
+      expect.objectContaining({
+        criterionId: "schema",
+        passed: false,
+        status: "error",
+      }),
+    ]);
   });
 
   it("skips entirely when the run carries no rubric — nothing is stamped", async () => {
@@ -319,19 +358,13 @@ describe("runSwarmChecks", () => {
     await expect(runSwarmChecks(ARGS)).rejects.toThrow(/completeSwarmChecks/);
   });
 
-  it("grades an EMPTY-transcript session rather than skipping it", async () => {
-    // A failed attempt that never produced a turn is still a graded session:
-    // "no tool errors" holds trivially and "called search" does not, and both
-    // are facts worth having.
+  it("records unavailable grading for a session with no captured conversation", async () => {
     claimSwarmChecksMock.mockResolvedValue(claimResult([]));
-
-    const outcome = await runSwarmChecks(ARGS);
-
-    expect(outcome.status).toBe("completed");
-    const [, , payload] = completeSwarmChecksMock.mock.calls[0];
-    expect(payload.criterionResults).toHaveLength(2);
-    expect(payload.criterionResults[0].passed).toBe(false);
-    // Zero user turns is a real reading, not absence, so `< 3` passes.
-    expect(payload.criterionResults[1].passed).toBe(true);
+    expect(await runSwarmChecks(ARGS)).toMatchObject({
+      status: "failed",
+      error: "transcript envelope unreadable",
+    });
+    expect(completeSwarmChecksMock).not.toHaveBeenCalled();
+    expect(failSwarmChecksMock).toHaveBeenCalledOnce();
   });
 });

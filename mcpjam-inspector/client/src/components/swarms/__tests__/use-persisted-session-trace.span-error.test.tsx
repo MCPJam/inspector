@@ -187,3 +187,44 @@ describe("usePersistedSessionTrace — wall-clock anchor", () => {
     expect(last?.trace).not.toHaveProperty("traceEndedAtMs");
   });
 });
+
+it("hydrates saved per-step requests into the swarm envelope", async () => {
+  const requestPayloads = [
+    {
+      turnId: "t1",
+      promptIndex: 0,
+      stepIndex: 0,
+      payload: {
+        system: "original swarm system",
+        tools: { search: { name: "search" } },
+        messages: [],
+      },
+    },
+  ];
+  mockTraces.traces = [
+    {
+      promptIndex: 0,
+      spanCount: 0,
+      startedAt: 0,
+      endedAt: 1,
+      requestPayloadsBlobUrl: "https://storage.example.com/requests.json",
+    },
+  ];
+  mockHydrate.mockResolvedValue([]);
+  global.fetch = vi.fn(async (url) => ({
+    ok: true,
+    json: async () =>
+      String(url).includes("requests.json")
+        ? requestPayloads
+        : [{ role: "user", content: "hi" }],
+  })) as any;
+  render(<Probe threadId="t1" />);
+  await waitFor(() =>
+    expect(last?.trace?.requestPayloads?.[0]?.payload.system).toBe(
+      "original swarm system",
+    ),
+  );
+  expect(last?.trace?.requestPayloads?.[0]?.payload.tools).toEqual({
+    search: { name: "search" },
+  });
+});

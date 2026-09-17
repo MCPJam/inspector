@@ -246,18 +246,18 @@ export const PLATFORM_PERMALINK_ROUTES = {
   },
   eval_suite: {
     label: "Open suite",
-    segments: ["evals", "suite", ":id"],
+    segments: ["evaluate", "suite", ":id"],
   },
   /** One test case inside its suite. */
   eval_case: {
     label: "Open test case",
-    segments: ["evals", "suite", ":parent", "test", ":id"],
+    segments: ["evaluate", "suite", ":parent", "test", ":id"],
     parent: "eval_suite",
   },
   /** One finished or in-flight run of a suite. */
   eval_run: {
     label: "View run",
-    segments: ["evals", "suite", ":parent", "runs", ":id"],
+    segments: ["evaluate", "suite", ":parent", "runs", ":id"],
     parent: "eval_suite",
   },
   /**
@@ -270,7 +270,7 @@ export const PLATFORM_PERMALINK_ROUTES = {
    */
   eval_iteration: {
     label: "View iteration",
-    segments: ["evals", "suite", ":grandparent", "runs", ":parent"],
+    segments: ["evaluate", "suite", ":grandparent", "runs", ":parent"],
     idParam: "iteration",
     parent: "eval_run",
   },
@@ -283,7 +283,7 @@ export const PLATFORM_PERMALINK_ROUTES = {
    */
   eval_run_group: {
     label: "View runs",
-    segments: ["evals", "suite", ":parent"],
+    segments: ["evaluate", "suite", ":parent"],
     query: { view: "runs" },
     parent: "eval_suite",
   },
