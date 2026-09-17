@@ -31,24 +31,23 @@
  * error, whichever level raised it.
  */
 import { composeAbortSignals } from "@mcpjam/sdk";
+import {
+  isDeadlineClock,
+  type DeadlineClock,
+  type TimeoutMetadata,
+} from "@/shared/turn-outcome";
 
 /**
- * Which budget a deadline belongs to. These strings are what reaches persisted
- * outcomes (`metadata.timeout.clock`, the swarm attempt `errorCode` stems), so
- * they are a closed set, not free text.
+ * Which budget a deadline belongs to, and the attribution a fired one persists.
+ *
+ * BOTH now live in `shared/turn-outcome.ts` and are re-exported here. They moved
+ * because a persisted turn-outcome record carries them, and that record is read
+ * by the client and hand-mirrored by the backend — neither of which can import a
+ * `server/utils/run-supervisor` module. This file keeps the names so every
+ * existing importer is unaffected.
  */
-export type DeadlineClock =
-  | "run"
-  | "iteration"
-  | "session"
-  | "turn"
-  | "toolCall"
-  | "sandboxCapacity"
-  | "setup"
-  | "discovery";
-
-/** Persisted attribution for a budget that expired. */
-export type TimeoutMetadata = { clock: DeadlineClock; budgetMs: number; elapsedMs: number };
+export { DEADLINE_CLOCKS } from "@/shared/turn-outcome";
+export type { DeadlineClock, TimeoutMetadata };
 
 /** The abort reason a fired deadline raises. */
 export interface DeadlineAbortError extends Error {
@@ -114,20 +113,7 @@ export function deadlineClockOf(error: unknown): DeadlineClock | undefined {
   return undefined;
 }
 
-const DEADLINE_CLOCKS: readonly DeadlineClock[] = [
-  "run",
-  "iteration",
-  "session",
-  "turn",
-  "toolCall",
-  "sandboxCapacity",
-  "setup",
-  "discovery",
-];
 
-function isDeadlineClock(value: string): value is DeadlineClock {
-  return (DEADLINE_CLOCKS as readonly string[]).includes(value);
-}
 
 /**
  * `setTimeout`'s 32-bit ceiling (~24.8 days). Past it Node truncates to 1ms and

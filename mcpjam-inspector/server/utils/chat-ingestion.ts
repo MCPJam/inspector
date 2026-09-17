@@ -1,5 +1,6 @@
 import type { ResumeExecutionTarget } from "@/shared/execution-target";
 import type { MintedPageToolRecord } from "@/shared/declared-tools";
+import type { TurnOutcomeRecord } from "@/shared/turn-outcome";
 import type { Context } from "hono";
 import type { ChatRewind } from "@/shared/chat-v2";
 import type {
@@ -288,6 +289,20 @@ export interface PersistedTurnTrace {
    * saying so.
    */
   pageToolsAtTurn?: MintedPageToolRecord[];
+  /**
+   * HOW THIS TURN ENDED (`shared/turn-outcome.ts`).
+   *
+   * Carried INSIDE the trace for the third time and the same reason as
+   * `skillsAtTurn` and `pageToolsAtTurn`: the fact is per-TURN and
+   * `buildIngestBody` serializes `turnTrace` whole, so it reaches the wire with
+   * no change to the body builder. Do not "fix" that by adding it to the spread.
+   *
+   * Absent means UNRECORDED, which is every historical row and every producer
+   * that has not been taught to mark its endings. A reader must never render an
+   * absent record as success — that is the exact mistake this field exists to
+   * stop.
+   */
+  outcomeAtTurn?: TurnOutcomeRecord;
 }
 
 // Mirrors mcpjam-backend `chatOriginValidator`. Required at every writer

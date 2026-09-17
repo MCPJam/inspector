@@ -1,0 +1,249 @@
+import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+import {
+  CURRENT_TURN_OUTCOME_CONTRACT_VERSION,
+  DEADLINE_CLOCKS,
+  TURN_CANCELLATION_SOURCES,
+  TURN_ERROR_SOURCES,
+  TURN_LIFECYCLES,
+  TURN_MODEL_ACCESS,
+  TURN_PAUSE_KINDS,
+  TURN_RUNTIME_ENGINES,
+  UNRESOLVED_TOOL_CALL_STATES,
+  didTurnComplete,
+  didTurnFail,
+  isTurnUnfinished,
+  needsToolCallClosure,
+  parseTurnOutcomeRecord,
+  turnOutcomeRecordZ,
+  type TurnLifecycle,
+  type TurnOutcomeRecord,
+} from "../turn-outcome";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+type FixtureRow = { label: string; value: Record<string, unknown> };
+type Fixtures = { __readme: string; accept: FixtureRow[]; reject: FixtureRow[] };
+const fixtures: Fixtures = JSON.parse(
+  readFileSync(
+    join(__dirname, "fixtures/turn-outcome-parity-fixtures.json"),
+    "utf8",
+  ),
+);
+
+const base = (
+  overrides: Partial<TurnOutcomeRecord> = {},
+): Record<string, unknown> => ({
+  contractVersion: CURRENT_TURN_OUTCOME_CONTRACT_VERSION,
+  lifecycle: "completed",
+  runtime: { engine: "emulated", modelAccess: "hosted" },
+  recordedAt: 1_750_000_000_000,
+  ...overrides,
+});
+
+describe("turn-outcome parity fixtures", () => {
+  it("has rows on both sides", () => {
+    expect(fixtures.accept.length).toBeGreaterThan(0);
+    expect(fixtures.reject.length).toBeGreaterThan(0);
+  });
+
+  it.each(fixtures.accept.map((row) => [row.label, row.value] as const))(
+    "accepts %s",
+    (_label, value) => {
+      const parsed = turnOutcomeRecordZ.safeParse(value);
+      expect(parsed.success).toBe(true);
+    },
+  );
+
+  it.each(fixtures.reject.map((row) => [row.label, row.value] as const))(
+    "rejects %s",
+    (_label, value) => {
+      expect(turnOutcomeRecordZ.safeParse(value).success).toBe(false);
+    },
+  );
+});
+
+describe("turn-outcome vocabularies are closed and total", () => {
+  // Totality, not a snapshot of today's spelling: adding a value to a
+  // vocabulary without deciding what it means for the readers below is exactly
+  // the drift these assertions exist to stop.
+  it("lifecycle covers every value", () => {
+    expect([...TURN_LIFECYCLES]).toEqual([
+      "completed",
+      "failed",
+      "timed_out",
+      "cancelled",
+      "paused",
+      "interrupted",
+    ]);
+  });
+
+  it("cancellation sources name all four harness causes plus the caller", () => {
+    expect([...TURN_CANCELLATION_SOURCES]).toEqual([
+      "caller",
+      "client_disconnect",
+      "lease_lost",
+      "liveness_lost",
+      "reservation_lost",
+    ]);
+  });
+
+  it("pause kinds, error sources, unresolved states, engines, access", () => {
+    expect([...TURN_PAUSE_KINDS]).toEqual(["tool_approval", "scope_step_up"]);
+    expect([...TURN_ERROR_SOURCES]).toEqual(["model", "setup"]);
+    expect([...UNRESOLVED_TOOL_CALL_STATES]).toEqual([
+      "never_started",
+      "outcome_unknown",
+    ]);
+    expect([...TURN_RUNTIME_ENGINES]).toEqual(["emulated", "harness"]);
+    expect([...TURN_MODEL_ACCESS]).toEqual(["hosted", "direct"]);
+  });
+
+  it("deadline clocks match the run-supervisor's closed set", () => {
+    expect([...DEADLINE_CLOCKS]).toEqual([
+      "run",
+      "iteration",
+      "session",
+      "turn",
+      "toolCall",
+      "sandboxCapacity",
+      "setup",
+      "discovery",
+    ]);
+  });
+
+  it("every lifecycle is classified by the readers — none falls through", () => {
+    for (const lifecycle of TURN_LIFECYCLES) {
+      const outcome = { lifecycle } as Pick<TurnOutcomeRecord, "lifecycle">;
+      const classified =
+        didTurnComplete(outcome) ||
+        isTurnUnfinished(outcome) ||
+        lifecycle === "paused";
+      expect({ lifecycle, classified }).toEqual({ lifecycle, classified: true });
+    }
+  });
+});
+
+describe("turn-outcome invariants", () => {
+  it("timed_out requires termination.timeout", () => {
+    expect(
+      turnOutcomeRecordZ.safeParse(base({ lifecycle: "timed_out" })).success,
+    ).toBe(false);
+    expect(
+      turnOutcomeRecordZ.safeParse(
+        base({
+          lifecycle: "timed_out",
+          termination: {
+            timeout: { clock: "turn", budgetMs: 1000, elapsedMs: 1001 },
+          },
+        }),
+      ).success,
+    ).toBe(true);
+  });
+
+  it("cancelled requires a cancellation source", () => {
+    expect(
+      turnOutcomeRecordZ.safeParse(base({ lifecycle: "cancelled" })).success,
+    ).toBe(false);
+    expect(
+      turnOutcomeRecordZ.safeParse(
+        base({
+          lifecycle: "cancelled",
+          termination: { cancellationSource: "lease_lost" },
+        }),
+      ).success,
+    ).toBe(true);
+  });
+
+  it("paused requires a pause kind", () => {
+    expect(
+      turnOutcomeRecordZ.safeParse(base({ lifecycle: "paused" })).success,
+    ).toBe(false);
+    expect(
+      turnOutcomeRecordZ.safeParse(
+        base({ lifecycle: "paused", paused: { kind: "tool_approval" } }),
+      ).success,
+    ).toBe(true);
+  });
+
+  it("completed forbids a termination block", () => {
+    expect(
+      turnOutcomeRecordZ.safeParse(
+        base({ lifecycle: "completed", termination: { errorCode: "x" } }),
+      ).success,
+    ).toBe(false);
+  });
+
+  it("a paused turn may still name its harness while running emulated", () => {
+    // The scope step-up continuation runs on the emulated engine by design.
+    // Dropping the host id would make it indistinguishable from a plain turn.
+    const parsed = parseTurnOutcomeRecord(
+      base({
+        lifecycle: "paused",
+        paused: { kind: "scope_step_up" },
+        runtime: {
+          engine: "emulated",
+          harness: "claude-code",
+          modelAccess: "hosted",
+        },
+      }),
+    );
+    expect(parsed?.runtime).toEqual({
+      engine: "emulated",
+      harness: "claude-code",
+      modelAccess: "hosted",
+    });
+  });
+});
+
+describe("turn-outcome readers", () => {
+  const of = (lifecycle: TurnLifecycle) => ({ lifecycle });
+
+  it("cancelled is not a failure — somebody asked for it", () => {
+    expect(didTurnFail(of("cancelled"))).toBe(false);
+    expect(didTurnFail(of("failed"))).toBe(true);
+    expect(didTurnFail(of("timed_out"))).toBe(true);
+    expect(didTurnFail(of("paused"))).toBe(false);
+    expect(didTurnFail(of("completed"))).toBe(false);
+  });
+
+  it("an ABSENT record is never success and never failure", () => {
+    expect(didTurnComplete(undefined)).toBe(false);
+    expect(didTurnFail(undefined)).toBe(false);
+    expect(isTurnUnfinished(undefined)).toBe(false);
+    expect(needsToolCallClosure(undefined)).toBe(false);
+  });
+
+  it("closure skips paused turns — their dangling call is the resume handle", () => {
+    expect(needsToolCallClosure(of("paused"))).toBe(false);
+    expect(needsToolCallClosure(of("cancelled"))).toBe(true);
+    expect(needsToolCallClosure(of("failed"))).toBe(true);
+    expect(needsToolCallClosure(of("timed_out"))).toBe(true);
+    expect(needsToolCallClosure(of("completed"))).toBe(false);
+  });
+
+  it("parse returns undefined rather than throwing on junk", () => {
+    expect(parseTurnOutcomeRecord(null)).toBeUndefined();
+    expect(parseTurnOutcomeRecord({ lifecycle: "completed" })).toBeUndefined();
+    expect(parseTurnOutcomeRecord(base())?.lifecycle).toBe("completed");
+  });
+});
+
+describe("interrupted has no producer", () => {
+  /**
+   * The slot exists so a later producer (durable checkpoints, S7) does not have
+   * to re-version the contract. Until then, nothing in the tree emits it — and
+   * this test is the record of that decision, not a coverage gap.
+   */
+  it("is in the vocabulary and parses, but is not written by any mark", () => {
+    expect(TURN_LIFECYCLES).toContain("interrupted");
+    expect(
+      turnOutcomeRecordZ.safeParse(base({ lifecycle: "interrupted" })).success,
+    ).toBe(true);
+    expect(isTurnUnfinished({ lifecycle: "interrupted" })).toBe(true);
+    // Closure does NOT apply: nothing observed the turn, so the dispatch states
+    // a closure needs were never collected.
+    expect(needsToolCallClosure({ lifecycle: "interrupted" })).toBe(false);
+  });
+});
