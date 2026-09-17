@@ -1,3 +1,6 @@
+import { describeEvalIterationError } from "@/lib/eval-iteration-error";
+import { ErrorCard } from "@/components/ui/error-card";
+import { TranscriptEmptyState } from "@/components/chat-v2/transcript-empty-state";
 import { useAction, useQuery } from "convex/react";
 import { useActorCanQuery } from "@/hooks/use-actor-can-query";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -44,7 +47,6 @@ import {
   ChevronRight,
   WifiOff,
   AlertCircle,
-  Loader2,
 } from "lucide-react";
 import {
   ToolServerMap,
@@ -223,6 +225,12 @@ function TraceBlobLoadErrorPanel({
 export type ScorecardTabContext = {
   /** The resolved trace envelope, for per-step evidence. Null until loaded. */
   envelope: StepReplayEnvelope | null;
+  /**
+   * The whole downloaded trace, for the scorecard's recorded stage floor. The
+   * same object `envelope` narrows — handed over unnarrowed because the floor
+   * reads messages and spans, which the step assembler has no use for.
+   */
+  trace: { messages?: unknown; spans?: unknown } | null;
   envelopeLoading: boolean;
   reviewActive: boolean;
   judgeHidden: boolean;
@@ -686,18 +694,7 @@ export function IterationDetails({
     );
   };
 
-  const parseErrorDetails = (details: string | undefined) => {
-    if (!details) return null;
-    try {
-      const parsed = JSON.parse(details);
-      return parsed;
-    } catch {
-      return null;
-    }
-  };
-
-  const errorDetailsJson = parseErrorDetails(iteration.errorDetails);
-  const [isErrorDetailsOpen, setIsErrorDetailsOpen] = useState(false);
+  const iterationError = describeEvalIterationError(iteration);
 
   const hasToolCalls =
     expectedToolCalls.length > 0 || actualToolCalls.length > 0;
@@ -1059,7 +1056,7 @@ export function IterationDetails({
       </div>
       {loading ? (
         <div className="flex items-center justify-center py-8">
-          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          <TranscriptEmptyState kind="loading" />
         </div>
       ) : error ? (
         <TraceBlobLoadErrorPanel
@@ -1106,7 +1103,7 @@ export function IterationDetails({
       >
         {loading ? (
           <div className="flex items-center justify-center py-8">
-            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            <TranscriptEmptyState kind="loading" />
           </div>
         ) : error ? (
           <TraceBlobLoadErrorPanel
@@ -1135,6 +1132,7 @@ export function IterationDetails({
               traceInsight={caseInsightSlot}
               chromeDensity={layoutMode === "full" ? "compact" : "default"}
               fillContent={layoutMode === "full"}
+              frame={layoutMode === "full" ? "none" : "inset"}
               hideToolbar={layoutMode === "full"}
               forcedViewMode={
                 layoutMode === "full" && previewTraceMode !== "scorecard"
@@ -1205,49 +1203,13 @@ export function IterationDetails({
           )}
         </div>
       ) : null}
-      {/* Error Display */}
-      {iteration.error && (
-        <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 space-y-2">
-          <div className="text-xs font-semibold text-destructive uppercase tracking-wide">
-            Error
-          </div>
-          <div className="text-xs text-destructive whitespace-pre-wrap font-mono">
-            {iteration.error}
-          </div>
-          {iteration.errorDetails && (
-            <Collapsible
-              open={isErrorDetailsOpen}
-              onOpenChange={setIsErrorDetailsOpen}
-            >
-              <CollapsibleTrigger className="flex items-center gap-1.5 text-xs text-destructive hover:text-destructive/80 transition-colors">
-                <span>More details</span>
-                {isErrorDetailsOpen ? (
-                  <ChevronDown className="h-3 w-3" />
-                ) : (
-                  <ChevronRight className="h-3 w-3" />
-                )}
-              </CollapsibleTrigger>
-              <CollapsibleContent className="mt-2">
-                <div className="rounded border border-destructive/30 bg-background/50 p-2">
-                  {errorDetailsJson ? (
-                    <JsonEditor
-                      height="100%"
-                      value={errorDetailsJson}
-                      readOnly
-                      showToolbar={false}
-                    />
-                  ) : (
-                    <pre className="text-xs font-mono text-destructive whitespace-pre-wrap overflow-x-auto">
-                      {iteration.errorDetails}
-                    </pre>
-                  )}
-                </div>
-              </CollapsibleContent>
-            </Collapsible>
-          )}
-        </div>
-      )}
+      {iterationError && <ErrorCard key={iteration._id} error={iterationError} variant="inline" />}
 
+      {!hasTrace && !scorecard && !isProbe && (
+        <TranscriptEmptyState {...(iteration.status === "running" || iteration.status === "pending"
+          ? { kind: "streaming" as const }
+          : { kind: "unrecorded" as const, execution: iteration.tokensUsed > 0 || iteration.actualToolCalls.length > 0 ? "observed" as const : "unknown" as const })} />
+      )}
       {caseInsightFallback}
 
       {isProbe && !scorecard ? (
@@ -1260,6 +1222,7 @@ export function IterationDetails({
         previewTraceMode === "scorecard" ? (
           scorecard.render({
             envelope: blobEnvelope,
+            trace: blob ?? null,
             envelopeLoading: loading,
             reviewActive: Boolean(enableJudgeReview && iteration.suiteRunId),
             judgeHidden,
@@ -1270,11 +1233,9 @@ export function IterationDetails({
           !hasTrace && previewTraceMode === "tools" ? (
             <div className="space-y-3" data-testid="iteration-tools-without-trace">{toolCallsGrids}</div>
           ) : !hasTrace && previewTraceMode !== "steps" ? (
-            <p className="p-4 text-sm text-muted-foreground" role="status">
-              {iteration.status === "running" || iteration.status === "pending"
-                ? "This run has not recorded a trace yet."
-                : "No trace was recorded for this run."}
-            </p>
+            <TranscriptEmptyState {...(iteration.status === "running" || iteration.status === "pending"
+              ? { kind: "streaming" as const }
+              : { kind: "unrecorded" as const, execution: iteration.tokensUsed > 0 || iteration.actualToolCalls.length > 0 ? "observed" as const : "unknown" as const })} />
           ) : traceSection
         )
       ) : traceFirst ? (

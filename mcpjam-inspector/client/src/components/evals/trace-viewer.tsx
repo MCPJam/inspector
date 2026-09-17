@@ -1,3 +1,4 @@
+import { TranscriptEmptyState } from "@/components/chat-v2/transcript-empty-state";
 import {
   lazy,
   Suspense,
@@ -5,6 +6,7 @@ import {
   useState,
   useEffect,
   type ReactNode,
+  type ComponentProps,
 } from "react";
 import type { ContentBlock } from "@modelcontextprotocol/client";
 import { Loader2, Minus, Plus, Code2, Columns2 } from "lucide-react";
@@ -21,7 +23,7 @@ import type {
 import { evalTraceVideoMetaZ } from "@/shared/eval-trace";
 import type { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { JsonEditor } from "@/components/ui/json-editor";
-import { Thread } from "@/components/chat-v2/thread";
+import { Thread, TRANSCRIPT_COLUMN_CLASS } from "@/components/chat-v2/thread";
 import { HostStyledShell } from "@/components/chat-v2/host-styled-shell";
 import type { HostSnapshot } from "@/lib/host-snapshot";
 import type { RecorderProps } from "@/components/chat-v2/thread/recorder-types";
@@ -29,6 +31,7 @@ import type { DisplayMode } from "@/stores/ui-playground-store";
 import {
   adaptTraceToUiMessages,
   type TraceEnvelope,
+  type AdaptedTraceResult,
   type TraceMessage,
 } from "./trace-viewer-adapter";
 import {
@@ -83,6 +86,12 @@ export type TraceViewerEvalToolCall = {
 interface TraceViewerProps {
   trace: TraceEnvelope | TraceMessage | TraceMessage[] | null;
   model?: ModelDefinition;
+  /** Prepared from the same trace; lets session ratings share the exact rendered IDs. */
+  adaptedTrace?: AdaptedTraceResult;
+  renderAssistantTurnFooter?: ComponentProps<typeof Thread>["renderAssistantTurnFooter"];
+  reasoningDisplayMode?: ComponentProps<typeof Thread>["reasoningDisplayMode"];
+  widgetPolicy?: ComponentProps<typeof Thread>["widgetPolicy"];
+  frame?: "inset" | "none";
   /**
    * Chat: forwarded to the transcript `Thread`. Tools (Results): shows a spinner
    * beside "Actual" while the run is still in progress.
@@ -341,6 +350,11 @@ function getBrowserVideoMeta(
 
 export function TraceViewer({
   trace,
+  adaptedTrace: preparedTrace,
+  renderAssistantTurnFooter,
+  reasoningDisplayMode = "collapsed",
+  widgetPolicy = "live",
+  frame = "inset",
   model,
   isLoading = false,
   toolsMetadata = {},
@@ -509,14 +523,14 @@ export function TraceViewer({
 
   const adaptedTrace = useMemo(
     () =>
-      adaptTraceToUiMessages({
+      preparedTrace ?? adaptTraceToUiMessages({
         trace,
         toolsMetadata,
         toolServerMap,
         connectedServerIds,
         toolResultDisplay: "tool-card",
       }),
-    [trace, toolsMetadata, toolServerMap, connectedServerIds]
+    [preparedTrace, trace, toolsMetadata, toolServerMap, connectedServerIds]
   );
 
   // Frozen replay: when simply VIEWING a completed run, show each widget's
@@ -962,13 +976,14 @@ export function TraceViewer({
 
         {effectiveViewMode === "chat" &&
           (traceMessages.length === 0 ? (
-            <div className="text-xs text-muted-foreground">
-              No messages in trace
-            </div>
+            <TranscriptEmptyState {...(isLoading
+              ? { kind: "streaming" as const }
+              : { kind: "unrecorded" as const, execution: hasRecordedSpans ? "observed" as const : "unknown" as const })} />
           ) : (
             <div
               className={cn(
-                "min-w-0 rounded-md border border-border/30 bg-background/50 flex flex-col",
+                "min-w-0 flex flex-col",
+                frame === "inset" && "rounded-md border border-border/30 bg-background/50",
                 fillContent ? "min-h-0 flex-1 overflow-hidden" : "min-h-0"
               )}
               data-testid="trace-viewer-chat"
@@ -1002,13 +1017,15 @@ export function TraceViewer({
                     minimalMode={false}
                     interactive={threadInteractive}
                     recorder={recorder}
-                    reasoningDisplayMode="collapsed"
+                    reasoningDisplayMode={reasoningDisplayMode}
+                    widgetPolicy={widgetPolicy}
+                    renderAssistantTurnFooter={renderAssistantTurnFooter}
                     focusMessageId={transcriptNavigation.focusMessageId}
                     highlightedMessageIds={
                       transcriptNavigation.highlightedMessageIds
                     }
                     navigationKey={transcriptNavigation.navigationKey}
-                    contentClassName="min-w-0 mx-auto w-full max-w-4xl space-y-8 px-4 pt-2"
+                    contentClassName={cn(TRANSCRIPT_COLUMN_CLASS, "pt-8 pb-8 space-y-8")}
                     getMessageWrapperProps={({ message }) => {
                       const sourceRange =
                         adaptedTrace.uiMessageSourceRanges[message.id];

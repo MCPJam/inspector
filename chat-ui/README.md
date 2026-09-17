@@ -112,13 +112,12 @@ surface that has them:
   seam (`interactive={threadInteractive}`) for sending a follow-up from it.
   Being read-only is not on its own a reason to move a surface across.
 
-Use `@mcpjam/chat-ui` where that graph is absent or unwanted — a transcript that
-must render with no Convex, no stores, no analytics and no side effects:
+- `mcpjam-inspector/client/src/components/connection/share-usage/ShareUsageThreadDetail.tsx`
+  and `session-scored-transcript.tsx` use `TraceViewer` for Sessions, User Testing,
+  Swarms and Scenarios. They preserve ratings and use static widget placeholders.
 
-- `mcpjam-inspector/client/src/components/connection/share-usage/ShareUsageThreadDetail.tsx`,
-  which is what Sessions (User Testing and Swarm) and Scenarios all render
-- `mcpjam-inspector/client/src/components/connection/share-usage/session-scored-transcript.tsx`
-- any embedder outside this repo
+Use `@mcpjam/chat-ui` where that graph is absent or unwanted, such as an external
+embedder that needs no Convex, stores, analytics or widget runtime.
 
 Before forking a third renderer, note that `renderTool`, `renderWidget`,
 `renderTurnFooter` and `renderAvatar` exist so a host can change one piece
@@ -128,11 +127,8 @@ Where the two must agree visually, **the agreement lives in shared code rather
 than in matching CSS**, because matching CSS is what drifted. In order of
 preference:
 
-- **Hand the host's own component through a seam.** `renderJson` is the model:
-  the inspector passes the collapsible JSON tree its Playground uses, so a
-  session's tool payloads are not a lookalike of the Playground's, they are the
-  same component. Reach for this when the thing to share is a whole widget and
-  the host is the one that owns it.
+- **Hand the host's own component through a seam.** `renderJson` lets an
+  embedder supply its own JSON tree without forking the transcript.
 - **Share the primitive underneath.** One tokenizer,
   `chat-ui/src/internal/json-tokens.ts`, published as
   `@mcpjam/chat-ui/json-tokens` and re-exported by the inspector's

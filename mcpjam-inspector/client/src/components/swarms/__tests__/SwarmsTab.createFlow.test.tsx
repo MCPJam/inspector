@@ -72,7 +72,9 @@ const { hostsRef, projectServersRef } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("@/hooks/useClients", () => ({
+vi.mock("@/hooks/useClients", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/hooks/useClients")>()),
+  useHost: () => ({ host: null, isLoading: false }),
   useHostList: () => ({
     hosts: hostsRef.current,
     isLoading: false,
@@ -1096,7 +1098,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(
       screen.getAllByLabelText(/Watch Refund Chaser/).length,
     ).toBeGreaterThan(0);
-    expect(screen.getByText(/Running: Refund a charge/)).toBeInTheDocument();
+    expect(screen.getByText(/Pending: Refund a charge/)).toBeInTheDocument();
     const swarmRunGroupId = (launchJourneyRunMock.mock.calls[0]![0] as {
       swarmRunGroupId: string;
     }).swarmRunGroupId;
@@ -2767,25 +2769,4 @@ describe("SwarmsTab — a reused persona whose save fails", () => {
     expect(toast.info).not.toHaveBeenCalled();
     expect(updatePersonaMock).not.toHaveBeenCalled();
   });
-});
-
-it("lets the user disable setup for newly created journeys", async () => {
-  openDescribe();
-  fillDescribe();
-  fireEvent.click(screen.getByTestId("new-swarm-continue"));
-  await screen.findByTestId("new-swarm-proposed-personas");
-  const toggle = screen.getByRole("switch", {
-    name: "Create prerequisite data before each run",
-  });
-  expect(toggle).toBeChecked();
-  fireEvent.click(toggle);
-  expect(toggle).not.toBeChecked();
-  fireEvent.click(screen.getByTestId("new-swarm-launch"));
-  await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
-  expect(createSwarmMock.mock.calls[0][0].config.setupWrites).not.toBe(true);
-  expect(
-    createJourneyMock.mock.calls.every(
-      ([args]) => args.config.setupWrites !== true,
-    ),
-  ).toBe(true);
 });

@@ -297,6 +297,7 @@ import { parseStepStatusById } from "@/shared/eval-step-replay";
 import { chainForQuickRunIteration } from "../evaluate/simple-case/quick-run-chain";
 import { TrialJudgeReviewPanel } from "./trial-judge-review";
 import { TrialScorecard } from "../evaluate/case-scorecard/trial-scorecard";
+import { IterationReportScorecard } from "../evaluate/case-scorecard/iteration-report-subscriber";
 import { authoredForTrial } from "../evaluate/case-scorecard/trial-authored";
 
 interface TestTemplate {
@@ -5121,7 +5122,7 @@ export function TestTemplateEditor({
                         }
                         scorecard={{
                           render: (ctx) => (
-                            <TrialScorecard
+                            <IterationReportScorecard
                               authored={
                                 authoredForTrial({
                                   trial: workspaceSelectedTrial,
@@ -5147,6 +5148,7 @@ export function TestTemplateEditor({
                                 workspacePersistedIteration,
                               )}
                               envelope={ctx.envelope}
+                              trace={ctx.trace}
                               judgeHidden={ctx.reviewActive && ctx.judgeHidden}
                               judgeSlot={
                                 // The tab owns launch-triggered judging; this

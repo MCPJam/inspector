@@ -369,6 +369,34 @@ describe("NewSwarmRunningStep — session stream pane", () => {
     expect(screen.queryByText(/Clients:/)).toBeNull();
   });
 
+  it("keeps the matrix at the top of the page column", async () => {
+    render(
+      <div className="h-[40rem]">
+        <NewSwarmRunningStep
+          projectId="proj-1"
+          chrome="page"
+          runs={Array.from({ length: 10 }, (_, i) => ({
+            runId: `run-${i + 1}`,
+            journeyId: `j-${i}`,
+            personaId: "p-1",
+            personaName: "Tester",
+            personaRole: "Tester",
+            label: `Goal ${i}`,
+          }))}
+          fallbackColumns={[{ key: "environment:env-1", label: "Host" }]}
+          hosts={[{ hostId: "host-1", name: "MCPJam" }]}
+          onLeave={vi.fn()}
+          onOpenSession={vi.fn()}
+        />
+      </div>,
+    );
+
+    await screen.findAllByTestId("new-swarm-running-session");
+    const matrix = screen.getByTestId("new-swarm-running-matrix");
+    expect(matrix.parentElement?.firstElementChild).toBe(matrix);
+    expect(screen.getByRole("columnheader")).toHaveTextContent("MCPJam");
+  });
+
   it("opens the live stream pane when a session chip is clicked", async () => {
     render(
       <div className="h-[40rem]">
@@ -472,7 +500,7 @@ describe("NewSwarmRunningStep — session stream pane", () => {
       />,
     );
     expect(screen.getByTestId("swarm-live-pane-failure")).toHaveTextContent("runner stopped reporting progress");
-    expect(screen.getByTestId("swarm-live-pane")).toHaveTextContent("recording may have failed");
+    expect(screen.getByTestId("swarm-live-pane")).toHaveTextContent("May not have run.");
   });
 
   it("does not reassure with Done when a completed attempt saved an empty transcript", () => {
@@ -501,8 +529,8 @@ describe("NewSwarmRunningStep — session stream pane", () => {
       />
     );
     expect(
-      screen.getByTestId("swarm-live-pane-empty-completed")
-    ).toHaveTextContent("does not confirm the assistant was tested");
+      screen.getByTestId("swarm-live-pane")
+    ).toHaveTextContent("No transcript recorded");
     expect(screen.getByTestId("swarm-live-pane")).toHaveTextContent(
       "No conversation"
     );

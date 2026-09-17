@@ -1,4 +1,3 @@
-import type { SetupRecord } from "./swarm-grounding";
 import type { EvalTraceBlobV1 } from "./eval-trace";
 import {
   isLiveBrowserFrame,
@@ -42,15 +41,6 @@ export type SwarmStreamEnvelope = {
 
 /** Eval-shaped per-turn / per-step payloads (no authored step_status). */
 export type SwarmStreamTurnPayload =
-  | { type: "setup_start" }
-  | {
-      type: "setup_complete";
-      status: SetupRecord["status"];
-      readiness: SetupRecord["readiness"];
-      createdCount: number;
-      reason?: string;
-      createdEntitiesTruncated?: boolean;
-    }
   | { type: "turn_start"; turnIndex: number; prompt: string }
   | { type: "text_delta"; content: string }
   | {
@@ -193,8 +183,6 @@ export function swarmEventToEvalPayload(
         message: event.message,
         details: event.details,
       };
-    case "setup_start":
-    case "setup_complete":
     case "session_start":
     case "session_notice":
     case "session_complete":

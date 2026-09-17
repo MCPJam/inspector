@@ -10,6 +10,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TraceViewer } from "../trace-viewer";
+import { adaptTraceToUiMessages } from "../trace-viewer-adapter";
 import {
   ScenarioHostStyleProvider,
   useScenarioHostStyle,
@@ -548,6 +549,17 @@ describe("TraceViewer", () => {
     expect(await screen.findByText("Estimated total only")).toBeInTheDocument();
   });
 
+  it.each(["inset", "none"] as const)("keeps static replay unclipped with frame %s", (frame) => {
+    render(<TraceViewer trace={simpleTextTrace} forcedViewMode="chat"
+      hostSnapshot={{ hostStyle: "claude" }} frame={frame} hideToolbar />);
+    const chat = screen.getByTestId("trace-viewer-chat");
+    expect(chat.classList.contains("border")).toBe(frame === "inset");
+    expect(chat).not.toHaveClass("overflow-hidden");
+    expect(chat.closest(".scenario-host-shell")).not.toHaveClass("overflow-hidden");
+    expect(screen.queryByTestId("stick-to-bottom")).not.toBeInTheDocument();
+    expect(chat.querySelector(".max-w-4xl")).toHaveClass("px-4", "pt-8", "pb-8");
+  });
+
   it("uses the shared stick-to-bottom shell in chat mode", () => {
     render(
       <TraceViewer trace={simpleTextTrace} forcedViewMode="chat" fillContent />,
@@ -566,7 +578,7 @@ describe("TraceViewer", () => {
     );
 
     fireEvent.click(
-      within(screen.getByTestId("stick-to-bottom")).getByRole("button"),
+      within(screen.getByTestId("stick-to-bottom")).getByRole("button", { name: "Scroll to bottom" }),
     );
 
     expect(mockScrollToBottom).toHaveBeenCalledWith({
@@ -1164,11 +1176,25 @@ describe("TraceViewer", () => {
       await screen.findByRole("button", { name: /Filter timeline rows: All/ }),
     ).toBeInTheDocument();
     openChatTab();
-    expect(screen.getByText("No messages in trace")).toBeInTheDocument();
+    expect(screen.getByText("No transcript recorded")).toBeInTheDocument();
     fireEvent.click(screen.getByTitle("Raw JSON"));
     expect(screen.getByTestId("json-editor").textContent ?? "").toContain(
       "spans",
     );
+  });
+
+  it("passes prepared session messages and review policy through the real Thread", () => {
+    const adaptedTrace = adaptTraceToUiMessages({ trace: widgetSnapshotTrace, toolResultDisplay: "attached-to-tool" });
+    const footer = vi.fn(() => null);
+    render(<TraceViewer trace={widgetSnapshotTrace} adaptedTrace={adaptedTrace}
+      hostSnapshot={{ hostStyle: "claude" }} forcedViewMode="chat" hideToolbar
+      frame="none" interactive={false} widgetPolicy="placeholder"
+      reasoningDisplayMode="collapsible" renderAssistantTurnFooter={footer} />);
+    expect(mockMessageView).toHaveBeenCalledWith(expect.objectContaining({
+      message: adaptedTrace.messages.find(message => message.role === "assistant"),
+      widgetPolicy: "placeholder", interactive: false,
+      reasoningDisplayMode: "collapsible", renderAssistantTurnFooter: footer,
+    }));
   });
 
   // --- Widget snapshot replay ---

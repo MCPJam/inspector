@@ -4,7 +4,6 @@ import {
   mayRunAfterSetup,
   type SetupRecord,
 } from "../../../shared/swarm-grounding";
-import type { SwarmStreamTurnPayload } from "../../../shared/swarm-stream-events";
 import {
   reportTargetGrounding,
   type PersonaSnapshot,
@@ -27,7 +26,6 @@ export async function prepareTargetGrounding(args: {
   convexHttpUrl: string;
   bearer: string;
   signal: AbortSignal;
-  emit: (event: SwarmStreamTurnPayload) => void;
 }) {
   if (!args.target.targetId || args.signal.aborted) return;
   const identity = {
@@ -54,7 +52,6 @@ export async function prepareTargetGrounding(args: {
     }
   };
   if (args.setupWrites) {
-    args.emit({ type: "setup_start" });
     const setupArgs = { ...args, authHeader: `Bearer ${args.bearer}` };
     try {
       setup = await runSwarmSetupTurn(setupArgs);
@@ -71,14 +68,6 @@ export async function prepareTargetGrounding(args: {
       }
     }
     await report({ ...identity, setup });
-    args.emit({
-      type: "setup_complete",
-      status: setup.status,
-      readiness: setup.readiness,
-      createdCount: setup.observedCreatedEntityCount,
-      reason: setup.reason,
-      createdEntitiesTruncated: setup.createdEntitiesTruncated,
-    });
     if (args.signal.aborted) return;
     if (!mayRunAfterSetup(setup)) throw new SwarmSetupError(setup);
   }

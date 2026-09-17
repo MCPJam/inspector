@@ -127,19 +127,39 @@ export function parseJsonReport(text: string): unknown {
     return undefined;
   }
 }
+const PERSON_KINDS = new Set([
+  'account',
+  'author',
+  'member',
+  'owner',
+  'person',
+  'user',
+]);
+/** An account or human record. Personas must never learn a real person's name
+ * or id as a workspace fact, so discovery drops these. Setup evidence keeps them:
+ * a setup that creates a member must still be able to prove it did. */
+export function isPersonRecord(obj: Record<string, unknown>): boolean {
+  if (typeof obj.email === 'string') return true;
+  const kind = exactIdentity(obj.kind) ?? exactIdentity(obj.type);
+  return kind !== undefined && PERSON_KINDS.has(kind.toLowerCase());
+}
 /** Only entity objects and explicit result/list containers; never arbitrary prose or echoed inputs. */
 export function extractEntityObjects(
   value: unknown,
   path = '$',
-  depth = 0
+  depth = 0,
+  options: { excludePeople?: boolean } = {}
 ): Array<EntityIdentity & { objectPath: string }> {
   if (depth > 8) return [];
   if (Array.isArray(value))
     return value
       .slice(0, 500)
-      .flatMap((v, i) => extractEntityObjects(v, `${path}[${i}]`, depth + 1));
+      .flatMap((v, i) =>
+        extractEntityObjects(v, `${path}[${i}]`, depth + 1, options)
+      );
   const obj = record(value);
   if (!obj || obj.isError === true || obj.error !== undefined) return [];
+  if (options.excludePeople && isPersonRecord(obj)) return [];
   const id = exactIdentity(obj.id);
   const name = exactIdentity(obj.name);
   if (id || name)
@@ -178,7 +198,7 @@ export function extractEntityObjects(
   ];
   return containers.flatMap((key) =>
     key in obj
-      ? extractEntityObjects(obj[key], `${path}.${key}`, depth + 1)
+      ? extractEntityObjects(obj[key], `${path}.${key}`, depth + 1, options)
       : []
   );
 }
@@ -272,8 +292,12 @@ export function extractGroundingEvidence(
   probes.forEach((probe, probeIndex) => {
     const entries =
       probe.structuredContent !== undefined
-        ? extractEntityObjects(probe.structuredContent)
-        : extractEntityObjects(parseJsonReport(probe.text));
+        ? extractEntityObjects(probe.structuredContent, '$', 0, {
+            excludePeople: true,
+          })
+        : extractEntityObjects(parseJsonReport(probe.text), '$', 0, {
+            excludePeople: true,
+          });
     entries.forEach(({ objectPath, ...entity }, i) =>
       candidates.push({
         ...entity,
@@ -328,8 +352,13 @@ export function selectGroundingEvidence(
       unsupportedFacts++;
       continue;
     }
-    if (!seen.has(candidate.recordRef)) selected.push(candidate);
-    seen.add(candidate.recordRef);
+    // Two tools often return the same entity (a project from both a list and an
+    // overview). Identity is the id when present, otherwise kind + name.
+    const identity = candidate.id
+      ? `id:${candidate.id}`
+      : `name:${candidate.kind}:${candidate.name ?? ''}`;
+    if (!seen.has(identity)) selected.push(candidate);
+    seen.add(identity);
   }
   return { ...normalizeGroundingFacts(selected), unsupportedFacts };
 }
