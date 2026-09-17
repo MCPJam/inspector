@@ -21,6 +21,13 @@ export type ClusterTuning = {
 
 export type ResolvedClusterTuning = Required<ClusterTuning>;
 
+/**
+ * Temporary: hide the Balanced / Rebuild clusters affordances. Automatic
+ * first analysis and failed-run retry stay. Flip this when the control
+ * ships again — the components and wiring are still there.
+ */
+export const SHOW_RECLUSTERING_UI = false;
+
 /** Mirror of `CLUSTER_TUNING_DEFAULTS`. Also exactly the Balanced preset. */
 export const CLUSTER_TUNING_DEFAULTS: ResolvedClusterTuning = {
   maxClusters: 8,

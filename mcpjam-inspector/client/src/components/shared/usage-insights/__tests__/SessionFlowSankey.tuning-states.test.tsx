@@ -1,10 +1,7 @@
 /**
- * The tuning control has to survive the sankey's two early returns.
- *
- * A swarm that has never clustered is the state where choosing HOW it should
- * cluster matters most, and it is also the state that renders no flow — so
- * gating the settings on "there is a flow to look at" hid them exactly when
- * they were needed. These pin all three states.
+ * Re-clustering is hidden for now (`SHOW_RECLUSTERING_UI`), including on the
+ * sankey's two early returns. These pin that the Balanced control stays off
+ * in every state, not only when a flow is already on screen.
  */
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
@@ -31,15 +28,19 @@ function renderSankey(breakdown: UsageBreakdown | null | undefined) {
 }
 
 describe("SessionFlowSankey tuning control placement", () => {
-  it("offers the settings before anything has been clustered", () => {
+  it("hides the settings before anything has been clustered", () => {
     renderSankey(EMPTY_BREAKDOWN);
     expect(screen.getByText("No session flow yet")).toBeInTheDocument();
-    expect(screen.getByTestId("cluster-tuning-trigger")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("cluster-tuning-trigger"),
+    ).not.toBeInTheDocument();
   });
 
-  it("offers the settings while the breakdown is still loading", () => {
+  it("hides the settings while the breakdown is still loading", () => {
     renderSankey(undefined);
-    expect(screen.getByTestId("cluster-tuning-trigger")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("cluster-tuning-trigger"),
+    ).not.toBeInTheDocument();
   });
 
   it("omits the control entirely when the surface passes no handler", () => {
