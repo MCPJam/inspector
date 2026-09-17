@@ -88,7 +88,11 @@ describe("runSwarmChecks", () => {
     expect(outcome.status).toBe("completed");
     const [, , payload] = completeSwarmChecksMock.mock.calls[0];
     expect(payload.criterionResults).toEqual([
-      expect.objectContaining({ criterionId: "crit-search", passed: true }),
+      expect.objectContaining({
+        criterionId: "crit-search",
+        passed: true,
+        status: "scored",
+      }),
       // One user turn, budget 3 ⇒ passes strictly under.
       expect.objectContaining({ criterionId: "crit-quick", passed: true }),
     ]);
@@ -118,6 +122,10 @@ describe("runSwarmChecks", () => {
       false,
       false,
     ]);
+    expect(payload.criterionResults.map((r: any) => r.status)).toEqual([
+      "scored",
+      "scored",
+    ]);
     // Reasons carry the evidence; the compact session stamp will not.
     expect(payload.criterionResults[1].reason).toContain("3");
   });
@@ -135,6 +143,26 @@ describe("runSwarmChecks", () => {
     await runSwarmChecks(ARGS);
 
     expect(order).toEqual(["claim", "complete"]);
+  });
+
+  it("preserves evaluator errors when a check cannot read the tool inventory", async () => {
+    claimSwarmChecksMock.mockResolvedValue(
+      claimResult(
+        [{ role: "user", content: "help" }],
+        [{ id: "schema", predicate: { type: "argumentsMatchToolSchema" } }],
+      ),
+    );
+    const outcome = await runSwarmChecks(ARGS);
+    expect(outcome.status).toBe("completed");
+    expect(failSwarmChecksMock).not.toHaveBeenCalled();
+    const [, , payload] = completeSwarmChecksMock.mock.calls[0];
+    expect(payload.criterionResults).toEqual([
+      expect.objectContaining({
+        criterionId: "schema",
+        passed: false,
+        status: "error",
+      }),
+    ]);
   });
 
   it("skips entirely when the run carries no rubric — nothing is stamped", async () => {
