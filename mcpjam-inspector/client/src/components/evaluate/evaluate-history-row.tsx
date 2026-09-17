@@ -176,6 +176,9 @@ export function EvaluateHistoryRow({
   const rollup = projectRunRollup(rows, details);
   const result = historyResult(rows);
   const cancellableIds = cancellableRunIds(rows);
+  // Spinner only. The DISABLED state is the wider `cancellingRunId !== null`:
+  // the shared handler refuses a second cancel while one is in flight, so a
+  // sibling row left enabled is a button that quietly does nothing.
   const isCancelling = cancellableIds.some((id) => id === cancellingRunId);
   // Parsed once per row and carried: the dedup key and the chips below read
   // the same value rather than re-parsing the CI metadata.
@@ -275,7 +278,7 @@ export function EvaluateHistoryRow({
               className="h-6 px-2 text-[11px]"
               data-testid="suite-run-row-cancel"
               aria-label={`Cancel run #${representative.runNumber}`}
-              disabled={isCancelling}
+              disabled={cancellingRunId !== null}
               onClick={(event) => {
                 // The row itself opens the run; a cancel click must not.
                 event.preventDefault();

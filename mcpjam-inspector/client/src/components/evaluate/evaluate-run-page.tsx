@@ -23,6 +23,7 @@ import {
   Copy,
   Loader2,
   Play,
+  Square,
   Download,
   MoreHorizontal,
   TrendingUp,
@@ -143,6 +144,10 @@ export function EvaluateRunPage({
   const targets = launchRuns(run, relatedRuns ?? otherRuns);
   const scope = runScopeSummary(targets, iterations);
   const cancellableIds = cancellableRunIds(targets);
+  const canCancel = Boolean(onCancelRun) && cancellableIds.length > 0;
+  // Spinner only. The DISABLED state is the wider `cancellingRunId !== null`:
+  // the shared handler refuses a second cancel while one is in flight, so a
+  // sibling row left enabled is a button that quietly does nothing.
   const isCancelling = cancellableIds.some((id) => id === cancellingRunId);
   const [headerActions, setHeaderActions] =
     useState<EvaluateRunPageHeaderActions | null>(null);
@@ -184,22 +189,6 @@ export function EvaluateRunPage({
               ) : null}
             </div>
             <div className="flex min-w-0 flex-wrap items-center gap-1">
-              {onCancelRun && cancellableIds.length > 0 ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  data-testid="evaluate-run-page-cancel"
-                  aria-label="Cancel run"
-                  disabled={isCancelling}
-                  onClick={() => onCancelRun(cancellableIds)}
-                >
-                  {isCancelling ? (
-                    <Loader2 className="size-3.5 animate-spin" aria-hidden />
-                  ) : null}
-                  Cancel run
-                </Button>
-              ) : null}
               {SHOW_EXPORT_REPORT && onExport && (
                 <Button
                   type="button"
@@ -209,19 +198,6 @@ export function EvaluateRunPage({
                 >
                   <Download className="size-3.5" aria-hidden />
                   Export report
-                </Button>
-              )}
-              {launchReview && (
-                <Button
-                  type="button"
-                  variant="default"
-                  size="sm"
-                  disabled={Boolean(launchReview.disabledReason)}
-                  title={launchReview.disabledReason ?? undefined}
-                  onClick={() => setReviewing(true)}
-                >
-                  <Play className="size-3.5" aria-hidden />
-                  Run again
                 </Button>
               )}
               <Button
@@ -240,6 +216,40 @@ export function EvaluateRunPage({
                 <TrendingUp className="size-3.5" aria-hidden />
                 Compare runs
               </Button>
+              {canCancel ? (
+                // The primary slot, not a button beside it: while the run is
+                // going, stopping it is the only action of that weight — and
+                // "Run again" next to a run that is still going reads as an
+                // invitation to launch a second one.
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  data-testid="evaluate-run-page-cancel"
+                  aria-label="Cancel run"
+                  disabled={cancellingRunId !== null}
+                  onClick={() => onCancelRun!(cancellableIds)}
+                >
+                  {isCancelling ? (
+                    <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                  ) : (
+                    <Square className="size-3.5" aria-hidden />
+                  )}
+                  Cancel run
+                </Button>
+              ) : launchReview ? (
+                <Button
+                  type="button"
+                  variant="default"
+                  size="sm"
+                  disabled={Boolean(launchReview.disabledReason)}
+                  title={launchReview.disabledReason ?? undefined}
+                  onClick={() => setReviewing(true)}
+                >
+                  <Play className="size-3.5" aria-hidden />
+                  Run again
+                </Button>
+              ) : null}
               {(headerActions?.onImprove ||
                 headerActions?.onOpenFailingTrace) && (
                 <DropdownMenu>

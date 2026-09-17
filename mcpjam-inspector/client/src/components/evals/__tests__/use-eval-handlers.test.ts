@@ -2444,6 +2444,17 @@ describe("useEvalHandlers", () => {
   });
 
   describe("handleCancelRun", () => {
+    /** The cancel path the platform route serves, for one run id. */
+    const cancelPath = (id: string) =>
+      `/api/v1/projects/project-1/eval-runs/${id}/cancel`;
+
+    // Paths only: this suite runs under a jsdom origin, so the client's
+    // absolute URL would pin the test to localhost.
+    const cancelCalls = () =>
+      mockAuthFetch.mock.calls
+        .map(([target]) => new URL(String(target), "https://app.test").pathname)
+        .filter((path) => path.endsWith("/cancel"));
+
     it("cancels every id it is given, not just the first", async () => {
       const { result } = renderHook(() => useEvalHandlers(defaultProps));
 
@@ -2451,24 +2462,35 @@ describe("useEvalHandlers", () => {
         await result.current.handleCancelRun(["run-1", "run-2"]);
       });
 
-      expect(mockMutations.cancelRunMutation).toHaveBeenCalledTimes(2);
-      expect(mockMutations.cancelRunMutation).toHaveBeenCalledWith({
-        runId: "run-1",
-      });
-      expect(mockMutations.cancelRunMutation).toHaveBeenCalledWith({
-        runId: "run-2",
-      });
+      expect(cancelCalls()).toEqual([cancelPath("run-1"), cancelPath("run-2")]);
       expect(toast.success).toHaveBeenCalledWith("Run cancelled successfully");
+    });
+
+    it("takes a bare id, the shape the suite cards still pass", async () => {
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+
+      await act(async () => {
+        await result.current.handleCancelRun("run-1");
+      });
+
+      expect(cancelCalls()).toEqual([cancelPath("run-1")]);
     });
 
     it("still reports success when a sibling had already settled", async () => {
       // The launch's other pairing finished between render and click, so the
-      // backend rejects it. The run the person meant to stop did stop.
-      mockMutations.cancelRunMutation
-        .mockResolvedValueOnce(undefined)
-        .mockRejectedValueOnce(
-          new Error("Cannot cancel run with status: completed"),
-        );
+      // route refuses it. The run the person meant to stop did stop.
+      mockAuthFetch.mockResolvedValueOnce(
+        createFetchResponse({ id: "run-1", status: "cancelled" }),
+      );
+      mockAuthFetch.mockResolvedValueOnce(
+        createFetchResponse(
+          {
+            code: "VALIDATION_ERROR",
+            message: "Cannot cancel a run that already completed",
+          },
+          400,
+        ),
+      );
       const { result } = renderHook(() => useEvalHandlers(defaultProps));
 
       await act(async () => {
@@ -2480,7 +2502,9 @@ describe("useEvalHandlers", () => {
     });
 
     it("reports the failure when nothing could be cancelled", async () => {
-      mockMutations.cancelRunMutation.mockRejectedValue(new Error("nope"));
+      mockAuthFetch.mockResolvedValue(
+        createFetchResponse({ code: "INTERNAL", message: "boom" }, 500),
+      );
       const { result } = renderHook(() => useEvalHandlers(defaultProps));
 
       await act(async () => {
@@ -2491,7 +2515,42 @@ describe("useEvalHandlers", () => {
       expect(toast.error).toHaveBeenCalled();
     });
 
-    it("takes a bare id, the shape the suite cards still pass", async () => {
+    it("keeps the Convex mutation for a guest, who the route refuses outright", async () => {
+      // The v1 guest allowlist rejects this path at the boundary, so going
+      // through it would turn "sign in to use this" into a bare 401.
+      const { result } = renderHook(() =>
+        useEvalHandlers({ ...defaultProps, isDirectGuest: true }),
+      );
+
+      await act(async () => {
+        await result.current.handleCancelRun("run-1");
+      });
+
+      expect(mockMutations.cancelRunMutation).toHaveBeenCalledWith({
+        runId: "run-1",
+      });
+      expect(cancelCalls()).toEqual([]);
+    });
+
+    it("keeps the Convex mutation when the surface has no project", async () => {
+      const { result } = renderHook(() =>
+        useEvalHandlers({ ...defaultProps, projectId: null }),
+      );
+
+      await act(async () => {
+        await result.current.handleCancelRun("run-1");
+      });
+
+      expect(mockMutations.cancelRunMutation).toHaveBeenCalledWith({
+        runId: "run-1",
+      });
+      expect(cancelCalls()).toEqual([]);
+    });
+
+    it("falls back to Convex on a deployment that has no cancel route", async () => {
+      // A BARE 404 — no envelope — is a router that never heard of the path.
+      // An older build must keep cancelling, not report a dead end.
+      mockAuthFetch.mockResolvedValue(new Response("nope", { status: 404 }));
       const { result } = renderHook(() => useEvalHandlers(defaultProps));
 
       await act(async () => {
@@ -2501,6 +2560,7 @@ describe("useEvalHandlers", () => {
       expect(mockMutations.cancelRunMutation).toHaveBeenCalledWith({
         runId: "run-1",
       });
+      expect(toast.success).toHaveBeenCalledWith("Run cancelled successfully");
     });
   });
 });

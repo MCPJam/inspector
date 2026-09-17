@@ -539,8 +539,30 @@ describe("EvaluateRunPage cancel", () => {
       </EvaluateRunPage>,
     );
 
+    // Cancel takes the primary slot, so "Run again" is not offered beside a
+    // run that is still going.
+    expect(screen.queryByRole("button", { name: "Run again" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Cancel run" }));
     expect(onCancelRun).toHaveBeenCalledWith(["run-a", "run-b"]);
+  });
+
+  it("gives the primary slot back to Run again once the run settles", () => {
+    render(
+      <EvaluateRunPage
+        run={makeRun({ _id: "run-a" })}
+        hostNamesById={hostNamesById}
+        otherRuns={[]}
+        defaultCompareRunId={null}
+        onCompareWithRun={vi.fn()}
+        onCancelRun={vi.fn()}
+        launchReview={{ onStart: vi.fn() } as never}
+      >
+        <div>run body</div>
+      </EvaluateRunPage>,
+    );
+
+    expect(screen.getByRole("button", { name: "Run again" })).toBeTruthy();
+    expect(screen.queryByTestId("evaluate-run-page-cancel")).toBeNull();
   });
 
   it("offers no cancel once the run has finished", () => {

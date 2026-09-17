@@ -23,6 +23,10 @@ import {
   getEnvironmentConflictMessage,
   getSelectedSuiteHostRunPlan,
 } from "./helpers";
+import {
+  cancelEvalRun,
+  isCancelEvalRunError,
+} from "@/lib/apis/eval-cancel-api";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 import { useEnvironmentLabelContext } from "@/components/project-environments/use-environment-label-context";
 import { disambiguateLabels, environmentLabel } from "@/lib/environment-label";
@@ -1549,6 +1553,33 @@ export function useEvalHandlers({
   // `Promise.all`: a sibling that settled between render and click throws
   // `Cannot cancel run with status: …`, and that must not hide the cancels
   // that did land.
+  /**
+   * Stop ONE run, preferring the platform route over the raw Convex mutation.
+   *
+   * The route checks the run belongs to this project and is idempotent on a run
+   * already cancelled, neither of which the mutation can do. Two cases still
+   * belong to the mutation: a direct guest, who the v1 guest allowlist refuses
+   * at the boundary — calling the route would turn a "sign in to use this"
+   * message into a bare 401 — and a surface with no project id. A deployment
+   * that predates the route falls back the same way, so an older build keeps
+   * cancelling instead of reporting a failure the user cannot act on.
+   */
+  const cancelOneRun = useCallback(
+    async (id: string) => {
+      const viaMutation = () => mutations.cancelRunMutation({ runId: id });
+      if (isDirectGuest || !projectId) return await viaMutation();
+      try {
+        return await cancelEvalRun({ projectId, runId: id });
+      } catch (error) {
+        if (isCancelEvalRunError(error) && error.kind === "routeUnavailable") {
+          return await viaMutation();
+        }
+        throw error;
+      }
+    },
+    [isDirectGuest, projectId, mutations.cancelRunMutation],
+  );
+
   const handleCancelRun = useCallback(
     async (runId: string | readonly string[]) => {
       if (cancellingRunId) return;
@@ -1560,7 +1591,7 @@ export function useEvalHandlers({
 
       try {
         const outcomes = await Promise.allSettled(
-          runIds.map((id) => mutations.cancelRunMutation({ runId: id })),
+          runIds.map((id) => cancelOneRun(id)),
         );
         const firstRejection = outcomes.find(
           (outcome): outcome is PromiseRejectedResult =>
@@ -1586,7 +1617,7 @@ export function useEvalHandlers({
         setCancellingRunId(null);
       }
     },
-    [cancellingRunId, mutations.cancelRunMutation],
+    [cancellingRunId, cancelOneRun],
   );
 
   // Delete run handler - opens confirmation modal (for single run from detail view)

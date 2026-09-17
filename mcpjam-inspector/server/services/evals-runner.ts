@@ -2449,19 +2449,32 @@ async function markIterationTimedOut(args: {
 }
 
 /**
- * Record a stopped iteration as `cancelled` instead of leaving the row behind.
+ * Record a stopped iteration in its own terminal word instead of leaving the
+ * row behind.
  *
  * The pre-created `testIteration` row is claimed before the first turn, so an
  * abort that writes nothing leaves it `running` forever: the test case history
- * shows a trial that never ends, and nothing says a person stopped it. Mirrors
- * {@link markIterationTimedOut} — same action, same shape, different terminal
- * word. Never throws: the caller is already unwinding a cancelled run.
+ * shows a trial that never ends, and nothing says why it stopped. Mirrors
+ * {@link markIterationTimedOut} — same action, same shape. Never throws: the
+ * caller is already unwinding a stopped run.
+ *
+ * WHICH word comes off the abort reason, not from the call site. `abortRun`
+ * aborts with the `EvalRunStoppedError` precisely so this can be told apart —
+ * a run that blew its own clock reaches the same `isCancelUnwind` path as a
+ * person pressing stop, and hardcoding `cancelled` / `user_cancelled` filed
+ * every run timeout as a user cancellation. That is the one distinction the
+ * row is there to record: "we stopped it" and "you stopped it" are different
+ * stories, and only one of them is a bug worth chasing.
+ *
+ * The iteration clock never arrives here — `isCancelUnwind` sends it to
+ * `markIterationTimedOut`, which owns the `iteration_timeout` reason and its
+ * `timeout.clock` detail.
  *
  * Idempotent against `cancelTestSuiteRun`, which may have flipped the same row
  * a moment earlier: `internalUpdateTestIteration` ignores writes to a row that
  * is already `cancelled` or `timed_out`.
  */
-async function markIterationCancelled(args: {
+async function markIterationStopped(args: {
   convexClient: ConvexHttpClient;
   iterationId: string | undefined;
   abortSignal?: AbortSignal;
@@ -2469,6 +2482,9 @@ async function markIterationCancelled(args: {
   if (!args.iterationId) return;
 
   const reason = args.abortSignal?.reason;
+  const stop = isEvalRunStoppedError(reason) ? reason : undefined;
+  const terminal = stop?.terminalStatus ?? "cancelled";
+  const stopReason = stop?.stopReason ?? "user_cancelled";
   const message =
     reason instanceof Error && reason.message
       ? reason.message
@@ -2476,18 +2492,26 @@ async function markIterationCancelled(args: {
   try {
     await args.convexClient.action("testSuites:updateTestIteration" as any, {
       iterationId: args.iterationId,
-      status: "cancelled",
-      result: "cancelled",
+      status: terminal,
+      result: terminal,
       actualToolCalls: [],
       tokensUsed: 0,
       usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
       messages: [{ role: "assistant", content: message }],
       error: message,
       resultSource: "derived",
-      metadata: { stopReason: "user_cancelled" },
+      metadata: {
+        stopReason,
+        // Same `timeout.clock` contract `markIterationTimedOut` writes, so a
+        // reader does not have to know which function recorded the row to
+        // learn which clock ended it.
+        ...(stopReason === "run_timeout"
+          ? { timeout: { clock: "run" as const } }
+          : {}),
+      },
     });
   } catch (error) {
-    logger.warn("[evals] Failed to mark cancelled iteration", {
+    logger.warn("[evals] Failed to mark stopped iteration", {
       iterationId: args.iterationId,
       error: error instanceof Error ? error.message : String(error),
     });
@@ -2744,7 +2768,7 @@ const executeTestCase = async (params: {
     };
     /** Persist the stop, once, on the way out. */
     const recordCancelledIteration = async () =>
-      await markIterationCancelled({
+      await markIterationStopped({
         convexClient,
         iterationId: startedIterationId,
         abortSignal,
@@ -4426,7 +4450,7 @@ const runLocalIteration = async ({
     // is handed back so the stream route can resolve the terminal row.
     const localIsAborted = () => abortSignal?.aborted === true;
     const returnLocalCancelled = async () => {
-      await markIterationCancelled({ convexClient, iterationId, abortSignal });
+      await markIterationStopped({ convexClient, iterationId, abortSignal });
       return {
         // Aborted mid-iteration — never score as passed (a pinned-only case would
         // otherwise short-circuit to passed:true).
@@ -4923,7 +4947,7 @@ const runLocalIteration = async ({
       (error instanceof Error && error.name === "AbortError")
     ) {
       logger.debug("[evals] streaming iteration aborted due to cancellation");
-      await markIterationCancelled({ convexClient, iterationId, abortSignal });
+      await markIterationStopped({ convexClient, iterationId, abortSignal });
       // Force passed:false (see the non-stream runner) so an all-pinned case
       // can't score a pass on abort.
       return {
@@ -5913,14 +5937,21 @@ const runHostedIterationWithBrowser = async (
   // iteration AND after every per-turn call (success or catch).
   const isAborted = () => abortSignal?.aborted === true;
   const returnCancelled = async () => {
-    await markIterationCancelled({ convexClient, iterationId, abortSignal });
+    await markIterationStopped({ convexClient, iterationId, abortSignal });
     return {
-      evaluation: evaluateMultiTurnResults(
-        promptTurns,
-        toolsCalledByPrompt,
-        test.isNegativeTest,
-        test.matchOptions,
-      ),
+      // Aborted mid-iteration — never score as passed (a pinned-only case would
+      // otherwise short-circuit to passed:true). Same guard the local driver
+      // applies in `returnLocalCancelled`: a stopped trial has not met its
+      // assertions, it simply stopped being observed.
+      evaluation: {
+        ...evaluateMultiTurnResults(
+          promptTurns,
+          toolsCalledByPrompt,
+          test.isNegativeTest,
+          test.matchOptions,
+        ),
+        passed: false,
+      },
       iterationId,
     };
   };

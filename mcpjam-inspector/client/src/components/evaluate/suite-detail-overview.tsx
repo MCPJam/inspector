@@ -422,6 +422,9 @@ export function SuiteDetailOverview({
   }, [generating, exitGeneration, onGeneratingChange]);
 
   const cancellableIds = cancellableRunIds(runs);
+  // Spinner only. The DISABLED state is the wider `cancellingRunId !== null`:
+  // the shared handler refuses a second cancel while one is in flight, so a
+  // sibling row left enabled is a button that quietly does nothing.
   const isCancelling = cancellableIds.some((id) => id === cancellingRunId);
   const cancelButton =
     onCancelRun && cancellableIds.length > 0 ? (
@@ -432,7 +435,7 @@ export function SuiteDetailOverview({
         className="h-8"
         data-testid="suite-detail-cancel"
         aria-label="Cancel run"
-        disabled={isCancelling}
+        disabled={cancellingRunId !== null}
         onClick={() => onCancelRun(cancellableIds)}
       >
         {isCancelling ? (
