@@ -19,7 +19,7 @@
 import { isComputersDataPlaneConfigured } from "../computers/control-plane-client.js";
 import { getCanonicalModelId } from "@/shared/types";
 import { isRuntimeChosenModelSentinel } from "@/shared/model-provider";
-import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
+import { isHostedModelDefinition } from "../../services/hosted-model-catalog.js";
 import { harnessBrokerDeliveryEnabled } from "./harness-flags.js";
 import {
   getHarnessAdapter,
@@ -76,6 +76,8 @@ export function harnessModelEligibleForRuntime(args: {
   modelId: string;
   /** REQUIRED for a bare id to canonicalize; see the note on the preflight. */
   provider?: string;
+  /** The picker's own-provider stamp; see `isHostedModelDefinition`. */
+  hosted?: boolean;
 }): boolean {
   if (args.adapter.modelAccess === "external-account") {
     return (
@@ -85,7 +87,15 @@ export function harnessModelEligibleForRuntime(args: {
       }) === undefined
     );
   }
-  if (!isHostedCatalogModel(args.modelId, args.provider)) return false;
+  if (
+    !isHostedModelDefinition({
+      id: args.modelId,
+      provider: args.provider,
+      hosted: args.hosted,
+    })
+  ) {
+    return false;
+  }
   return args.adapter.supportsModel(
     getCanonicalModelId(args.modelId, args.provider),
   );
@@ -229,7 +239,7 @@ export function checkHarnessRuntimeAvailable(args: {
    * admitted and then silently runs emulated). Deriving both from the resolved
    * definition makes the two answers consistent by construction.
    */
-  model: { id: string; provider?: string };
+  model: { id: string; provider?: string; hosted?: boolean };
   /**
    * The host's CONFIGURED model id, before any body or per-case override.
    *
@@ -395,7 +405,7 @@ export function checkHarnessRuntimeAvailable(args: {
     };
   }
 
-  if (brokered && !isHostedCatalogModel(args.model.id, args.model.provider)) {
+  if (brokered && !isHostedModelDefinition(args.model)) {
     return {
       ok: false,
       kind: "model-not-hosted",

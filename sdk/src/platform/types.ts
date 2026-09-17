@@ -1701,7 +1701,6 @@ export interface PlatformEvalSuiteSettingsBase {
    */
   judge: PlatformEvalSuiteGoalCompletionJudge & {
     contractVersion?: 4;
-    executionPaused?: boolean;
     automatic?: boolean;
     /**
      * Stored groundedness, when the suite has a reserved slot. Read-only
@@ -2613,6 +2612,9 @@ export interface PlatformClient {
 
 /** Full client detail, including the resolved config DTO and its read-backs. */
 export interface PlatformClientDetail {
+  /** Saved configuration revision, read atomically with config. */
+  versionId?: string;
+  versionNumber?: number;
   id: string;
   name: string;
   /** The concurrency token — see {@link PlatformClient.configId}. */
@@ -3540,6 +3542,7 @@ export interface PlatformJourney {
   /** Sessions run against EACH target. Total sessions = targets x this. */
   sessionsPerTarget: number | null;
   maxTurns: number | null;
+  setupWrites?: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -4022,6 +4025,7 @@ export interface PlatformSwarm {
   environmentIds: string[];
   sessionsPerTarget: number | null;
   maxTurns: number | null;
+  setupWrites?: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -4310,6 +4314,27 @@ export interface PlatformInsightsFindingProvenance {
    * run-wide mechanism rate is claimed. */
   mechanismBasis: "complete" | "sampled" | "none";
   affectedIterationIds: string[];
+  /** For a mechanism consolidated across error groups: the deterministic
+   * candidates it was merged from. */
+  sourceCandidateIds?: string[];
+  /**
+   * Per-member verification of an AI mechanism. Every trial the mechanism
+   * proposed was checked against its own recorded evidence; `confirmed` is
+   * the published count, and the others are disclosed, never counted.
+   * Absent on deterministic groups and on older backends.
+   */
+  verification?: {
+    proposed: number;
+    confirmed: number;
+    unsupported: number;
+    inconclusive: number;
+    unchecked: number;
+    members?: Array<{
+      iterationId: string;
+      verdict: "supported" | "unsupported" | "inconclusive" | "unchecked";
+      reason?: string;
+    }>;
+  };
   /** Per-prose-field origin for the view this provenance accompanies.
    * Producer-owned: a deterministic fallback sentence and a model that wrote
    * the same sentence are indistinguishable to a consumer. */

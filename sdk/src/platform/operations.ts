@@ -12752,13 +12752,15 @@ function requireExactlyOneGrounding(input: {
 function requireConfigPair(input: {
   sessionsPerTarget?: number;
   maxTurns?: number;
+  setupWrites?: boolean;
 }): void {
   if (
     (input.sessionsPerTarget === undefined) !==
-    (input.maxTurns === undefined)
+      (input.maxTurns === undefined) ||
+    (input.setupWrites !== undefined && input.sessionsPerTarget === undefined)
   ) {
     throw operationInputError(
-      "sessionsPerTarget and maxTurns must be sent together — they are one execution config upstream."
+      "sessionsPerTarget and maxTurns must be sent together; setupWrites requires that pair."
     );
   }
 }
@@ -13825,6 +13827,12 @@ const createJourneyInput = z.object({
       "Sessions per target. TOTAL sessions = targets x this, and the total is what spends."
     ),
   maxTurns: z.number().int().min(1).max(200),
+  setupWrites: z
+    .boolean()
+    .optional()
+    .describe(
+      "Attempt prerequisite creation with creation-like tools annotated non-destructive; requests prefixed names and leaves created data. Off unless set. Use a test account."
+    ),
   idempotencyKey: z.string().trim().min(1).max(200).optional(),
 });
 
@@ -13861,6 +13869,9 @@ export const createJourneyOperation: PlatformOperation<
         personaId: input.persona,
         sessionsPerTarget: input.sessionsPerTarget,
         maxTurns: input.maxTurns,
+        ...(input.setupWrites !== undefined
+          ? { setupWrites: input.setupWrites }
+          : {}),
         ...(input.name !== undefined ? { name: input.name } : {}),
         ...(input.swarm !== undefined ? { swarmId: input.swarm } : {}),
         ...(input.environmentIds !== undefined
@@ -13887,6 +13898,12 @@ const updateJourneyInput = journeySelectorInput.extend({
     .describe("null clears the fan-out and returns the journey to its hosts."),
   sessionsPerTarget: z.number().int().min(1).max(100).optional(),
   maxTurns: z.number().int().min(1).max(200).optional(),
+  setupWrites: z
+    .boolean()
+    .optional()
+    .describe(
+      "Attempt prerequisite creation with creation-like tools annotated non-destructive; requests prefixed names and leaves created data. Off unless set. Replacing sessionsPerTarget/maxTurns without this field clears it; send its current value to preserve it. Use a test account."
+    ),
 });
 
 export type UpdateJourneyInput = z.infer<typeof updateJourneyInput>;
@@ -13899,7 +13916,7 @@ export const updateJourneyOperation: PlatformOperation<
   name: "update_journey",
   title: "Update an MCPJam journey",
   description:
-    "Edit a journey. sessionsPerTarget and maxTurns must be sent together — they are one execution config upstream. A run already in flight keeps the config it launched with.",
+    "Edit a journey. sessionsPerTarget and maxTurns must be sent together; setupWrites requires that pair. A run already in flight keeps the config it launched with.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink(
@@ -13926,6 +13943,9 @@ export const updateJourneyOperation: PlatformOperation<
           ? { sessionsPerTarget: input.sessionsPerTarget }
           : {}),
         ...(input.maxTurns !== undefined ? { maxTurns: input.maxTurns } : {}),
+        ...(input.setupWrites !== undefined
+          ? { setupWrites: input.setupWrites }
+          : {}),
       },
       { signal }
     );
@@ -14048,6 +14068,12 @@ const createSwarmInput = z.object({
   environmentIds: z.array(z.string().min(1)).min(1).optional(),
   sessionsPerTarget: z.number().int().min(1).max(100),
   maxTurns: z.number().int().min(1).max(200),
+  setupWrites: z
+    .boolean()
+    .optional()
+    .describe(
+      "Attempt prerequisite creation with creation-like tools annotated non-destructive; requests prefixed names and leaves created data. Off unless set. Use a test account."
+    ),
   idempotencyKey: z.string().trim().min(1).max(200).optional(),
 });
 
@@ -14083,6 +14109,9 @@ export const createSwarmOperation: PlatformOperation<
         name: input.name,
         sessionsPerTarget: input.sessionsPerTarget,
         maxTurns: input.maxTurns,
+        ...(input.setupWrites !== undefined
+          ? { setupWrites: input.setupWrites }
+          : {}),
         ...(input.description !== undefined
           ? { description: input.description }
           : {}),
@@ -14109,6 +14138,12 @@ const updateSwarmInput = swarmSelectorInput.extend({
     .optional(),
   sessionsPerTarget: z.number().int().min(1).max(100).optional(),
   maxTurns: z.number().int().min(1).max(200).optional(),
+  setupWrites: z
+    .boolean()
+    .optional()
+    .describe(
+      "Attempt prerequisite creation with creation-like tools annotated non-destructive; requests prefixed names and leaves created data. Off unless set. Replacing sessionsPerTarget/maxTurns without this field clears it; send its current value to preserve it. Use a test account."
+    ),
 });
 
 export type UpdateSwarmInput = z.infer<typeof updateSwarmInput>;
@@ -14150,6 +14185,9 @@ export const updateSwarmOperation: PlatformOperation<
           ? { sessionsPerTarget: input.sessionsPerTarget }
           : {}),
         ...(input.maxTurns !== undefined ? { maxTurns: input.maxTurns } : {}),
+        ...(input.setupWrites !== undefined
+          ? { setupWrites: input.setupWrites }
+          : {}),
       },
       { signal }
     );

@@ -135,7 +135,7 @@ describe("IterationDetails — the scorecard layout", () => {
   it("keeps tabs usable for runs with no saved trace", () => {
     render(<IterationDetails iteration={{ ...iteration, blob: undefined }} testCase={testCase} layoutMode="full" scorecard={scorecard} />);
     fireEvent.click(screen.getByRole("button", { name: "Chat", exact: true }));
-    expect(screen.getByRole("status")).toHaveTextContent("No trace was recorded for this run.");
+    expect(screen.getByRole("status")).toHaveTextContent("No transcript recorded");
     fireEvent.click(screen.getByRole("button", { name: "Tool Calls", exact: true }));
     expect(screen.getByTestId("iteration-tools-without-trace")).toBeInTheDocument();
     fireEvent.click(screen.getByTestId("trace-viewer-steps-tab"));

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ERROR_CATALOG } from "@mcpjam/sdk/browser";
 import {
   describeProviderRateLimit,
+  describeSwarmAttemptFailure,
   providerLabelForModelId,
 } from "../session-rate-limit";
 
@@ -70,5 +71,19 @@ describe("describeProviderRateLimit", () => {
     // Upgrading that provider's own plan is fair advice and stays.
     const steps = describeProviderRateLimit("Anthropic").nextSteps.join(" ");
     expect(steps).not.toMatch(/credit|top up|byok|mcpjam/i);
+  });
+});
+
+describe("describeSwarmAttemptFailure", () => {
+  it("uses calm copy for rerunnable authentication and preserves diagnostics", () => {
+    expect(describeSwarmAttemptFailure("Sign in again.", "xaa_reauth_required", "Anthropic")).toMatchObject({
+      severity: "info", oneLine: "Sign in again.", rawMessage: "Sign in again.", rawCode: "xaa_reauth_required",
+    });
+  });
+  it("retains a failure's humanized meaning and machine code", () => {
+    const error = describeSwarmAttemptFailure("Runner stopped.", "execution_failed", "Your provider");
+    expect(error.title).toBe("Session failed");
+    expect(error.oneLine).toBe("Runner stopped.");
+    expect(error.rawCode).toBe("execution_failed");
   });
 });

@@ -589,6 +589,8 @@ export function describeBackendStreamFailure(
   // matter which upstream status was mirrored onto it. The slug still comes
   // from the status so the user-facing copy stays accurate ("the provider
   // rejected the key" IS what happened — it was just our key).
+  if (code === "platform_free_budget_exhausted") return describeAsSlug("provider/mcpjam_platform_budget", detail);
+  if (code === "account_suspended") return describeAsSlug("account/suspended", detail);
   if (isMcpjamOwnedFailureCode(code)) {
     return { ...backendFailureSlug(status, detail), origin: "mcpjam" };
   }
@@ -635,6 +637,8 @@ export function describeStreamErrorChunkFailure(
     status !== undefined ? `HTTP ${status}: ${rawText}` : rawText,
   );
 
+  if (code === "platform_free_budget_exhausted") return describeAsSlug("provider/mcpjam_platform_budget", detail);
+  if (code === "account_suspended") return describeAsSlug("account/suspended", detail);
   if (isMcpjamOwnedFailureCode(code)) {
     return { ...backendFailureSlug(status, detail), origin: "mcpjam" };
   }
@@ -1451,6 +1455,62 @@ function getPromptAssistantStepBaseIndex(
   return assistantCount;
 }
 
+/**
+ * Did THIS prompt already land a tool call that actually came back with a
+ * result?
+ *
+ * Scoped to the current prompt by `promptMessageStartIndex` — a tool call from
+ * an earlier turn says nothing about whether this one acted, and the whole
+ * point of the caller's check is "this turn already did the work". Reading the
+ * MESSAGES rather than `traceTurn.turnSpans` is what makes that hold on a
+ * RESUMED turn: spans start empty in a fresh process, while the history is
+ * seeded from the caller and carries the earlier steps. It is the same reason
+ * {@link getPromptAssistantStepBaseIndex} recovers the step count from here.
+ *
+ * Reads the same id pairing as {@link hasUnresolvedToolCalls}, in the opposite
+ * direction: that one asks whether any call is still outstanding, this one
+ * whether any call is genuinely DONE. A call with no result is a turn still
+ * mid-flight, which must not excuse an empty step.
+ *
+ * An `error-` output does NOT count. A tool that threw, or one auto-denied by
+ * policy, is the model TRYING to act and being refused — the opposite of
+ * having acted — so "every tool failed, then the model said nothing" stays a
+ * failure. A domain error from a server that did reply travels the ordinary
+ * `content` shape and counts as the completed round-trip it is.
+ */
+function hasSettledToolCallThisPrompt(
+  messageHistory: ModelMessage[],
+  promptMessageStartIndex: number,
+): boolean {
+  const toolCallIds = new Set<string>();
+  for (
+    let index = Math.max(0, promptMessageStartIndex);
+    index < messageHistory.length;
+    index += 1
+  ) {
+    const message = messageHistory[index];
+    if (!message || !Array.isArray((message as any).content)) continue;
+    if (message.role === "assistant") {
+      for (const part of (message as any).content) {
+        if (part?.type === "tool-call" && part.toolCallId) {
+          toolCallIds.add(part.toolCallId);
+        }
+      }
+    } else if (message.role === "tool") {
+      for (const part of (message as any).content) {
+        if (part?.type !== "tool-result") continue;
+        if (!toolCallIds.has(part.toolCallId)) continue;
+        const outputType = part.output?.type;
+        if (typeof outputType === "string" && outputType.startsWith("error-")) {
+          continue;
+        }
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 function readUsageFromFinishChunk(
   finishChunk: UIMessageChunk | null,
 ): LiveChatTraceUsage | undefined {
@@ -1538,7 +1598,10 @@ export const EMPTY_STEP_SENTINEL =
  *  - `content-filter` — a safety filter blocked the response.
  *  - `length` — the output-token ceiling was reached before any content.
  *  - `stop` / `tool-calls` — the provider claims a clean finish and still sent
- *    nothing, which is the shape a routed-provider hiccup takes.
+ *    nothing, which is the shape a routed-provider hiccup takes. A `stop`
+ *    only reaches here when the turn settled NO tool call: the caller treats a
+ *    quiet `stop` after real tool work as a deliberate finish, not a failure,
+ *    so the "retry" advice below stays true for everything that still arrives.
  *
  * `toolInputErrors` is the OTHER road here, and the only one with a direct
  * remedy: the model emitted a tool call, the SDK rejected its input against
@@ -1559,7 +1622,7 @@ export function describeEmptyStepFailure(options: {
   switch (finishReason) {
     case "error":
       cause =
-        "The provider rejected its own tool call before returning it — Google calls this MALFORMED_FUNCTION_CALL — which the cheaper model tiers hit on larger tool schemas.";
+        "The provider reported an error without returning a diagnostic. The underlying cause was not recorded.";
       break;
     case "content-filter":
       cause = "The provider's safety filter blocked the response.";
@@ -1571,7 +1634,7 @@ export function describeEmptyStepFailure(options: {
     case "stop":
     case "tool-calls":
       cause =
-        "The provider reported a clean finish and still returned nothing — usually a routed-provider hiccup, so a retry is the first move.";
+        "The provider reported a clean finish and still returned nothing. The underlying cause was not recorded.";
       break;
     default:
       cause = "The provider ended the stream without a usable finish reason.";
@@ -1780,6 +1843,10 @@ function safelyEmitLiveTextDelta(
  */
 export const USER_OWNED_DENIAL_CODES: ReadonlySet<string> = new Set<string>([
   // convex `stream/routes.ts` + `lib/llmCallShell.ts` spend precheck
+  "platform_free_budget_exhausted",
+  "account_suspended",
+  "guest_model_not_allowed",
+  "guest_input_too_large",
   "user_rate_limit",
   "wallet_locked",
   "org_rate_limit",
@@ -3047,6 +3114,9 @@ async function processOneStep(
   // runner's tests stub `{ok, status, body, text}` with no `headers`, and an
   // unguarded `.get` throws a TypeError that the outer catch converts into a
   // failed turn (7 evals-runner / runner-parity tests).
+  if (res.headers?.get("x-mcpjam-platform-paid-fallback") === "1") {
+    writer.write({ type: "data-platform-paid-fallback", data: { usingCredits: true }, transient: true });
+  }
   const isJsonDenial =
     res.ok &&
     !!res.body &&
@@ -3688,15 +3758,48 @@ async function processOneStep(
     return { shouldContinue: true, didEmitFinish: false };
   }
 
-  // AN EMPTY STEP IS A FAILURE, and the finish chunk has been holding the
-  // reason all along.
+  // AN EMPTY STEP IS A FAILURE — UNLESS THE TURN ALREADY ACTED.
   //
   // This point is reached only when nothing is left to execute — every path
   // through the `hasUnresolvedToolCalls` branch above returns on its own — so
   // zero content parts here means the step contributed NOTHING: no assistant
   // message was pushed above, and none will be.
   //
-  // Recording that as `status: "ok"` is what let a provider failure read as a
+  // THE CARVE-OUT. A model that already ran a tool THIS TURN and then closes
+  // with a clean `stop` has not failed — it has decided the tool's own output
+  // is the answer. That is ordinary behaviour for an MCP App host: the model
+  // calls `create_view`, the widget renders, and there is nothing left worth
+  // narrating. Measured on staging, `gpt-5.6-luna` on the ChatGPT profile did
+  // exactly this on 22 of 215 trials (widget rendered, 0 console errors) while
+  // haiku, sonnet, grok, glm and terra did it on none of ~600 — so it is a
+  // per-model habit, not an outage, and failing the trial hid a scorecard whose
+  // tool stages had all passed behind a red box about a "provider hiccup".
+  //
+  // The distinction that matters is ACTED vs NEVER ACTED, not which model:
+  // a turn that emitted nothing at all still has no answer in it from any
+  // source, and stays a failure below. Scoped per PROMPT, so a tool call from
+  // an earlier turn cannot excuse this one; gated on `stop` alone, because
+  // `tool-calls` with zero tool calls is a provider contradicting itself; and
+  // gated on no `toolInputErrors`, because a rejected tool input means the
+  // model tried to act and could not — the opposite of having acted.
+  //
+  // Falls through to the ordinary terminal path below, so the quiet finish is
+  // recorded as the success it is: `status: "ok"` spans, a trace snapshot and
+  // one finish chunk, with no error chunk, no trace error event, no
+  // `failureReporter` and no `onEngineError`.
+  const quietFinishAfterToolCall =
+    contentParts.length === 0 &&
+    toolInputErrors.length === 0 &&
+    harnessSpanMeta.finishReason === "stop" &&
+    hasSettledToolCallThisPrompt(
+      messageHistory,
+      traceTurn.promptMessageStartIndex,
+    );
+
+  // Everything the carve-out does not cover is still a failure, and the finish
+  // chunk has been holding the reason all along.
+  //
+  // Recording one as `status: "ok"` is what let a provider failure read as a
   // clean turn to every consumer at once: the trace, the step-finish
   // telemetry, and the eval runner, which was left to infer the failure from
   // `newMessages.length === 0` and report a sentence naming no cause. Chat
@@ -3708,7 +3811,7 @@ async function processOneStep(
   // trace error event, and one error chunk on the wire. Deliberately no finish
   // chunk: `didEmitFinish: false` with `shouldContinue: false` is the pair the
   // agentic loop reads as `settledWithError`.
-  if (contentParts.length === 0) {
+  if (contentParts.length === 0 && !quietFinishAfterToolCall) {
     const emptyStepMessage = describeEmptyStepFailure({
       finishReason: harnessSpanMeta.finishReason,
       toolInputErrors,

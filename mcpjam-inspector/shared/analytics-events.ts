@@ -147,6 +147,7 @@ export const ANALYTICS_EVENTS = {
   // text), location: chat_tab | playground_single | playground_compare.
   chat_starter_prompt_clicked: { source: "client" },
   chat_tab_viewed: { source: "client" },
+  platform_paid_fallback_notice: { source: "client" },
   chat_voice_input_recording_canceled: { source: "client" },
   chat_voice_input_recording_started: { source: "client" },
   chat_voice_input_recording_stopped: { source: "client" },

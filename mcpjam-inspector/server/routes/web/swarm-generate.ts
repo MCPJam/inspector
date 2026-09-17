@@ -101,6 +101,7 @@ const generatePersonaSchema = generateBaseSchema
 
 const generateJourneysSchema = generateBaseSchema
   .extend({
+    swarmRefId: z.string().trim().min(1).optional(),
     persona: z.object({
       name: z.string().min(1),
       role: z.string().min(1),
@@ -246,6 +247,7 @@ swarmGenerate.post("/generate/journeys", async (c) =>
     try {
       return await generateSwarmJourneys(convexHttpUrl, bearerToken, {
         projectId: body.projectId,
+        ...(body.swarmRefId ? { swarmRefId: body.swarmRefId } : {}),
         ...(body.serverAttachmentId
           ? { serverAttachmentId: body.serverAttachmentId }
           : {}),
