@@ -121,11 +121,11 @@ describe("filterByFeatureFlags", () => {
     // sidebar carries no eval sub-items and no eval flag.
     const evalsItems = navigationSections
       .flatMap((section) => section.items)
-      .filter((item) => item.url.startsWith("/evals"));
+      .filter((item) => item.url.startsWith("/evaluate"));
     expect(evalsItems).toHaveLength(1);
     expect(evalsItems[0]).toMatchObject({
       title: "Evaluate",
-      url: "/evals",
+      url: "/evaluate",
       billingFeature: "evals",
     });
     expect(evalsItems[0].featureFlag).toBeUndefined();
@@ -277,33 +277,25 @@ describe("declared nav flags are actually resolved", () => {
     expect(on).toContain("Sessions");
   });
 
-  it("Ding Dong is gated by evaluate-enabled and sits beside Evaluate", () => {
-    // The redesigned tab ships ALONGSIDE the shipped one so the two can be
-    // compared, so a flag-off user must see exactly the nav they see today —
-    // this is the assertion that a mis-wired flag would break.
-    const evaluateItem = navigationSections
-      .flatMap((section) => section.items)
-      .find((item) => item.url === "/evaluate");
-
-    expect(evaluateItem).toMatchObject({
-      title: "Ding Dong",
-      featureFlag: "evaluate-enabled",
-      billingFeature: "evals",
+  it("shows Evaluate publicly and gates only Evaluate (Legacy)", () => {
+    const items = navigationSections.flatMap((section) => section.items);
+    expect(items.find((item) => item.url === "/evaluate")).toMatchObject({
+      title: "Evaluate", billingFeature: "evals",
     });
-
-    const off = filterByFeatureFlags(navigationSections, {})
-      .flatMap((section) => section.items)
-      .map((item) => item.title);
-    expect(off).not.toContain("Ding Dong");
-    expect(off).toContain("Evaluate");
-
-    const measure = filterByFeatureFlags(navigationSections, {
-      "evaluate-enabled": true,
-    }).find((section) => section.id === "measure");
-    const titles = measure?.items.map((item) => item.title) ?? [];
-    expect(titles).toContain("Ding Dong");
-    const evaluateIndex = titles.indexOf("Evaluate");
-    expect(titles.indexOf("Ding Dong")).toBe(evaluateIndex + 1);
+    expect(items.find((item) => item.url === "/evaluate")?.featureFlag).toBeUndefined();
+    expect(items.find((item) => item.url === "/evals")).toMatchObject({
+      title: "Evaluate (Legacy)", featureFlag: "evaluate-enabled",
+    });
+    for (const enabled of [undefined, false, true]) {
+      const titles = filterByFeatureFlags(
+        navigationSections,
+        enabled === undefined ? {} : { "evaluate-enabled": enabled },
+      )
+        .flatMap((section) => section.items).map((item) => item.title);
+      expect(titles).toContain("Evaluate");
+      expect(titles.includes("Evaluate (Legacy)")).toBe(enabled === true);
+      expect(titles).not.toContain("Ding Dong");
+    }
   });
 });
 
