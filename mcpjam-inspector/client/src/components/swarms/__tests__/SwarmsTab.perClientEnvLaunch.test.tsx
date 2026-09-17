@@ -16,6 +16,11 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("@/hooks/use-host-snapshot", () => ({
+  useHostSnapshotForHost: () => ({ status: "unavailable" }),
+  useHostSnapshotForSession: () => ({ status: "unavailable" }),
+}));
+
 vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({ availableModels: [] }),
 }));

@@ -1,3 +1,4 @@
+import { deriveSwarmSessionVerdict } from "@mcpjam/sdk/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 
@@ -512,6 +513,28 @@ describe("session DTO outcome join", () => {
     // it never says how the attempt went. The verdict lives on the run's
     // attempts, keyed by chatSessionId, and the route must join it or every
     // consumer reads "active" as if it were a result.
+    const verdict = deriveSwarmSessionVerdict({
+      attempt: { status: "failed" },
+      hasTranscript: true,
+      rubric: [],
+      criteria: null,
+      goalScore: { status: "completed", passed: true },
+      judge: { automatic: true, role: "advisory" },
+      grading: { state: "settled" },
+    });
+    const criteria = {
+      status: "completed",
+      generation: 1,
+      results: [{ criterionId: "c", passed: false, status: "error" }],
+    };
+    const observations = [
+      {
+        evaluatorId: "c",
+        predicateType: "noToolErrors",
+        role: "advisory",
+        status: "unavailable",
+      },
+    ];
     queryMock
       .mockResolvedValueOnce(
         runRow({
@@ -524,10 +547,33 @@ describe("session DTO outcome join", () => {
       )
       .mockResolvedValueOnce({
         page: [
-          { id: "s1", chatSessionId: "cs_ok", projectId: PROJECT, status: "active" },
-          { id: "s2", chatSessionId: "cs_bad", projectId: PROJECT, status: "active" },
-          { id: "s3", chatSessionId: "cs_limited", projectId: PROJECT, status: "active" },
-          { id: "s4", chatSessionId: "cs_unknown", projectId: PROJECT, status: "active" },
+          {
+            id: "s1",
+            chatSessionId: "cs_ok",
+            projectId: PROJECT,
+            status: "active",
+          },
+          {
+            id: "s2",
+            chatSessionId: "cs_bad",
+            projectId: PROJECT,
+            status: "active",
+            verdict,
+            criteria,
+            observations,
+          },
+          {
+            id: "s3",
+            chatSessionId: "cs_limited",
+            projectId: PROJECT,
+            status: "active",
+          },
+          {
+            id: "s4",
+            chatSessionId: "cs_unknown",
+            projectId: PROJECT,
+            status: "active",
+          },
         ],
         isDone: true,
         continueCursor: "",
@@ -536,7 +582,14 @@ describe("session DTO outcome join", () => {
     const res = await get(`/projects/${PROJECT}/journey-runs/${RUN}/sessions`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      items: Array<{ id: string; status: string; outcome: string | null }>;
+      items: Array<{
+        id: string;
+        status: string;
+        outcome: string | null;
+        verdict?: unknown;
+        criteria?: unknown;
+        observations?: unknown;
+      }>;
     };
     expect(body.items.map((s) => s.outcome)).toEqual([
       "succeeded",
@@ -549,6 +602,12 @@ describe("session DTO outcome join", () => {
     ]);
     // The archival flag survives unchanged alongside the verdict.
     expect(body.items[0]?.status).toBe("active");
+    expect(body.items[1]).toMatchObject({
+      outcome: "failed",
+      verdict,
+      criteria,
+      observations,
+    });
   });
 });
 

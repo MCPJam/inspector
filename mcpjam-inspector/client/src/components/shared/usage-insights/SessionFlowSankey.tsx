@@ -35,10 +35,7 @@ interface SessionFlowSankeyProps {
    * control at all — the header is shared with surfaces that only ever want
    * the plain rebuild affordance.
    */
-  onApplyTuning?: (
-    tuning: ClusterTuning,
-    opts?: { force?: boolean },
-  ) => void;
+  onApplyTuning?: (tuning: ClusterTuning, opts?: { force?: boolean }) => void;
   /**
    * This surface starts its own analysis, so a MISSING run means one is being
    * arranged rather than waiting to be asked for (BB-196) — a working state,
@@ -50,6 +47,7 @@ interface SessionFlowSankeyProps {
   analysisIsAutomatic?: boolean;
   /** False for scopes with no topic map, where link distance means nothing. */
   showLinkThreshold?: boolean;
+  goalGroupsByJourney?: boolean;
   /**
    * Per-stage header overrides. Defaults come from `STAGE_TITLES`; callers
    * can rename a column without forking the chart.
@@ -128,6 +126,7 @@ export function SessionFlowSankey({
   onApplyTuning,
   analysisIsAutomatic = false,
   showLinkThreshold,
+  goalGroupsByJourney,
   stageTitles,
   headerActions,
   fillHeight = false,
@@ -172,6 +171,7 @@ export function SessionFlowSankey({
       onApply={onApplyTuning}
       busy={rebuildBusy}
       showLinkThreshold={showLinkThreshold}
+      goalGroupsByJourney={goalGroupsByJourney}
       sessionCount={latestRun?.sessionCount}
     />
   ) : null;
@@ -184,8 +184,8 @@ export function SessionFlowSankey({
           fillHeight
             ? "h-full px-0 py-6"
             : scrollLayout
-              ? "px-0 py-10"
-              : "px-5 py-10",
+            ? "px-0 py-10"
+            : "px-5 py-10",
         )}
       >
         <span className="flex-1 text-center">Loading session flow…</span>
@@ -205,8 +205,8 @@ export function SessionFlowSankey({
           fillHeight
             ? "h-full justify-center px-0 py-6"
             : scrollLayout
-              ? "px-0 py-10"
-              : "px-5 py-10",
+            ? "px-0 py-10"
+            : "px-5 py-10",
         )}
       >
         {analysisInFlight ? (
@@ -221,8 +221,8 @@ export function SessionFlowSankey({
           {analysisInFlight
             ? `Grouping ${goalNoun}s, behaviors, outcomes, and sentiment. This can take a few minutes.`
             : signalsVersion === null
-              ? "The last rebuild ran before session signals existed. Rebuild clusters to extract and group goals, behaviors, outcomes, and sentiment."
-              : "Rebuild clusters once there are enough sessions to cluster."}
+            ? "The last rebuild ran before session signals existed. Rebuild clusters to extract and group goals, behaviors, outcomes, and sentiment."
+            : "Rebuild clusters once there are enough sessions to cluster."}
         </p>
         <div className="flex items-center gap-2">
           {headerActions}
@@ -258,13 +258,13 @@ export function SessionFlowSankey({
         fillHeight
           ? "h-full min-h-0 overflow-hidden px-0 py-1"
           : scrollLayout
-            ? // Scroll layout: the diagram bleeds to its already-padded owning
-              // container (no extra px-5) and drops the card border-b, which
-              // belonged to the old locked-viewport chrome.
-              "px-0 py-1"
-            : // Embedded in a document/opt-in card (BenchReport, the
-              // explanatory opt-in): keep the padded, divided card chrome.
-              "border-b px-5 py-4",
+          ? // Scroll layout: the diagram bleeds to its already-padded owning
+            // container (no extra px-5) and drops the card border-b, which
+            // belonged to the old locked-viewport chrome.
+            "px-0 py-1"
+          : // Embedded in a document/opt-in card (BenchReport, the
+            // explanatory opt-in): keep the padded, divided card chrome.
+            "border-b px-5 py-4",
       )}
       data-testid="scenario-insights-sankey"
       data-fill-height={fillHeight ? "true" : undefined}
