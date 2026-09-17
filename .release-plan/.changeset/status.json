@@ -3,20 +3,50 @@
     {
       "releases": [
         {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
+          "name": "@mcpjam/inspector",
+          "type": "patch"
+        }
+      ],
+      "summary": "Every finding on a stage can now reach the sessions it is about, in Findings on a Swarm run and in Findings on a User Testing scenario.\n\nA stage that failed two rubric checks over the same session showed the first one with its session list underneath and the second as plain text with nothing to click. That is what \"none of the sessions link to anything\" looked like on the report that opened this: `Rubric check \"Final message non-empty\" failed` had a session under it, and `Rubric check \"Calls create_view\" failed`, directly below, had none.\n\nThe cause was a rule written for the empty-stage footer — one session is a link rather than something to expand — reused for the evidence rows, where it collapses to \"only row 0 renders the list\". With several findings over one session, every row after the first lost its only way in.\n\nSeveral findings now earn the toggle even over a single session. A lone finding over a lone session still shows its session directly, with no toggle, and the empty-stage footer is untouched: it only renders when a stage has no evidence at all.\n\nOne visible change where the list used to be permanent. With several findings over one session, the first row's session list was rendered with no control to collapse it. It is now a toggle that starts open, so the first paint is unchanged, and because the panel opens one finding at a time, opening the second finding closes the first.",
+      "id": "findings-every-row-reaches-its-sessions"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "patch"
+        }
+      ],
+      "summary": "Drop the \"AI explanation · cited trace evidence\" disclosure from evaluation scorecards. It only showed raw internal ids like `m:0 · tc:toolu_…`, which mean nothing to a reader.",
+      "id": "hide-trace-citation-ids"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "patch"
         },
         {
           "name": "@mcpjam/cli",
           "type": "patch"
         },
         {
+          "name": "@mcpjam/sdk",
+          "type": "patch"
+        }
+      ],
+      "summary": "Keep a miscited Markdown case from failing the whole import, and give imported drafts their own review surface instead of listing them beside cases already in the suite. A blocked draft now names the missing field in a badge on its title, and importing clears a stale generation error that pointed at a setting import does not offer.",
+      "id": "imported-draft-review-surface"
+    },
+    {
+      "releases": [
+        {
           "name": "@mcpjam/inspector",
           "type": "patch"
         }
       ],
-      "summary": "Tell agents and scripts when an included operation's usage limit lifts. The SDK adds `describePlatformRefusal` and `platformRefusalHint`, which read a `RATE_LIMITED` refusal's backend code, limit, retry time and whether credits would help. MCP tool errors, CLI errors and in-app agent tool errors now carry that and say when to retry, without suggesting a top-up. Generation copy now says the quota belongs to the organization, not the project, and description proposals no longer claim a generation quota. The insight getters explain `platform_cap_exceeded` and `platform_unavailable`.",
-      "id": "platform-refusal-guidance"
+      "summary": "A reused persona's iterations can be set for the run you are about to launch.\n\nConfirm showed reused goals as read-only text — \"5 goals at the iterations already saved = 25 conversations\" — so bringing a persona in meant taking whatever its owner had saved. One in the recording arrives at 25 conversations with no way to bring it down, which is the opposite of what someone reusing a persona for a quick run wants, and it spends model quota that is already rate-limited.\n\nReused cards now carry the same iterations stepper the authored ones do. The control starts at what the persona's goals already hold, so leaving it alone launches the size it always did; goals that disagree, or carry nothing saved, start at the default instead, because there is no single saved value to show and picking one would misreport the others.\n\nThe number is sent as a per-run override and the shared journey is not rewritten, which was the reason the control was withheld in the first place. A persona reused across swarms keeps its own saved size for everyone else.\n\nThe launch quote follows the same number, so what Confirm promises and what the run fans out to cannot disagree.",
+      "id": "reused-persona-iterations"
     },
     {
       "releases": [
@@ -25,92 +55,41 @@
           "type": "patch"
         }
       ],
-      "summary": "Stop an empty system prompt from failing every generation. A saved MCPJam client with no system prompt reads as `\"\"`, and `runWithClient` passed it straight to the provider; Anthropic refuses an empty system block with `system: text content blocks must be non-empty`, so every case in the suite failed with a bare \"Bad Request\". `HostRunner` now treats an empty configured prompt as \"none given\" and uses its default, the same as it already did for a host snapshot.",
-      "id": "sdk-empty-system-prompt"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Swarm screens use the evaluator vocabulary evals already use, and drop the advisory tier swarms no longer have. The goal grading editor, session chips, run scorecard, report panel, running step and Findings now say \"evaluator\" instead of \"check\" or \"rubric check\". The editor says every evaluator must pass for a session to pass, and the judge blurb says its verdict decides the session. Findings no longer renders \"advisory friction\" rows.",
-      "id": "swarm-evaluator-terms"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Cap swarm persona turns at 10 tool steps instead of inheriting the Playground's 30. Every step of a turn resends every tool result the turn has produced, so the cap bounds turn time and tokens together; on dev, uncapped persona turns against the MCPJam server reached 677k to 881k tokens and tripped the 6-minute turn budget. Scenario (User Testing) sessions keep the engine default.",
-      "id": "swarm-persona-turn-step-cap"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/cli",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Report swarm execution, goal grading, and advisory standard checks separately across the UI and platform API. Show shared run decisions, grading coverage, and session user-value chains while retaining persona-specific findings.",
-      "id": "swarm-reporting-e2e"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Show a muted explanation when automatic findings analysis fails, while keeping recorded findings visible.",
-      "id": "wise-judge-findings"
+      "summary": "Widget evidence too large to send inline now goes to storage, so an MCP Apps server can report its evals.\n\nReporting a run embedded each widget snapshot's HTML in the request. A snapshot is a whole built app — a single-file bundle is commonly over half a megabyte — so one test case whose tool ran twice put more than 1MB on the wire and the upload failed with \"Request body exceeds 1MB limit\". Chunking could not save it: it splits between results, never inside one.\n\nSmall widgets still ride along inline, in the one request they always did, because that is what lets a retry resend identical bytes. Only a result that would not fit offloads its HTML to blob storage first and sends the id instead. The offload happens once, before the retry loop, so retries stay byte-identical either way.\n\nThe upload URL this path follows must now be https, or loopback — `npx convex dev` and a self-hosted deployment hand out `http://127.0.0.1`, and those still work. Anything else is refused rather than putting a built app on a cleartext wire.",
+      "id": "widget-snapshot-offload"
     }
   ],
   "releases": [
     {
-      "name": "@mcpjam/sdk",
-      "type": "minor",
-      "oldVersion": "8.9.0",
+      "name": "@mcpjam/inspector",
+      "type": "patch",
+      "oldVersion": "3.7.1",
       "changesets": [
-        "platform-refusal-guidance",
-        "sdk-empty-system-prompt",
-        "swarm-reporting-e2e"
+        "findings-every-row-reaches-its-sessions",
+        "hide-trace-citation-ids",
+        "imported-draft-review-surface",
+        "reused-persona-iterations"
       ],
-      "newVersion": "8.10.0"
+      "newVersion": "3.7.2"
     },
     {
       "name": "@mcpjam/cli",
-      "type": "minor",
-      "oldVersion": "5.9.0",
+      "type": "patch",
+      "oldVersion": "5.10.0",
       "changesets": [
-        "platform-refusal-guidance",
-        "swarm-reporting-e2e"
+        "imported-draft-review-surface"
       ],
-      "newVersion": "5.10.0"
+      "newVersion": "5.10.1"
     },
     {
-      "name": "@mcpjam/inspector",
+      "name": "@mcpjam/sdk",
       "type": "patch",
-      "oldVersion": "3.7.0",
+      "oldVersion": "8.10.0",
       "changesets": [
-        "platform-refusal-guidance",
-        "swarm-evaluator-terms",
-        "swarm-persona-turn-step-cap",
-        "swarm-reporting-e2e",
-        "wise-judge-findings"
+        "imported-draft-review-surface",
+        "widget-snapshot-offload"
       ],
-      "newVersion": "3.7.1"
+      "newVersion": "8.10.1"
     },
     {
       "name": "@mcpjam/mcp",
