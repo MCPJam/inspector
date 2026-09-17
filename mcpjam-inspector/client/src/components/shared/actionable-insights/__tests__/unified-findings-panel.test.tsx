@@ -517,11 +517,51 @@ describe("analysis states and provenance", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Analyzing…");
     expect(screen.getByTestId("unified-finding-observed")).toBeVisible();
   });
+  it.each(["run", "analysis", "build"])(
+    "shows a skeleton while %s is pending, then shows settled incomplete evidence",
+    (pendingSource) => {
+      const { unmount } = renderPanel({
+        findings: [],
+        observationState: "partial",
+        runPending: pendingSource === "run",
+        ...(pendingSource === "analysis"
+          ? {
+              analyze: {
+                available: true,
+                pending: true,
+                error: null,
+                onRun: vi.fn(),
+              },
+            }
+          : {}),
+        ...(pendingSource === "build"
+          ? {
+              build: {
+                available: true,
+                pending: true,
+                error: null,
+                onRun: vi.fn(),
+              },
+            }
+          : {}),
+      });
+      expect(screen.getByLabelText("Loading findings")).toBeVisible();
+      expect(
+        screen.queryByTestId("unified-findings-empty"),
+      ).not.toBeInTheDocument();
+      unmount();
+      renderPanel({ findings: [], observationState: "partial" });
+      expect(
+        screen.queryByLabelText("Loading findings"),
+      ).not.toBeInTheDocument();
+      expect(screen.getByTestId("unified-findings-empty")).toBeVisible();
+    },
+  );
   it("distinguishes not analyzed, incomplete, and known-empty results", () => {
     const { unmount } = renderPanel({ snapshot: null, findings: [] });
     expect(
-      screen.getByTestId("unified-findings-no-snapshot"),
-    ).toHaveTextContent("Analyze this run");
+      screen.queryByTestId("unified-findings-no-snapshot"),
+    ).not.toBeInTheDocument();
     unmount();
     renderPanel({ findings: [], observationState: "partial" });
     expect(screen.getByTestId("unified-findings-empty")).toHaveTextContent(

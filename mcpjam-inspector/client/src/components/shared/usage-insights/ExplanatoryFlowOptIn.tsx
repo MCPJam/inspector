@@ -49,7 +49,7 @@ export function ExplanatoryFlowOptIn({
    * daily quota, so a panel that subscribed on mount would consume somebody
    * else's quota for a tab they merely opened.
    */
-  costLabel = "Included with MCPJam — no credits are consumed.",
+  costLabel = "Included with MCPJam: no credits are consumed.",
   className,
 }: {
   /**
@@ -92,7 +92,7 @@ export function ExplanatoryFlowOptIn({
         <div className="space-y-2 px-4 py-3">
           <p className="text-[11px] text-muted-foreground">
             The chain above is measured from verdicts we already have. This
-            diagram is a model&apos;s reading of the same traces — what was
+            diagram is a model&apos;s reading of the same traces: what was
             attempted, how it turned out, how it read. {costLabel} Nothing it
             produces feeds a score.
           </p>

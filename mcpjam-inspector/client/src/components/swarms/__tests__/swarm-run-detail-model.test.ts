@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { SwarmOverviewRun } from "@/lib/swarm-api";
 import {
+  DETAIL_TAB_OPTIONS,
   fallbackColumnsFromWave,
   launchedRunsFromWave,
   resolveSwarmRunDetailTab,
@@ -24,6 +25,23 @@ const run = (overrides: Partial<SwarmOverviewRun> = {}): SwarmOverviewRun => ({
     },
   ],
   ...overrides,
+});
+
+describe("DETAIL_TAB_OPTIONS", () => {
+  /**
+   * Findings leads because it is what a reader wants from a settled wave;
+   * Run trails because it is the watch surface, reached while a wave is in
+   * flight through resolveSwarmRunDetailTab rather than by clicking. Pinned
+   * because the order is a product decision, not an implementation detail.
+   */
+  it("puts Run last, after Findings, Insights and Sessions", () => {
+    expect(DETAIL_TAB_OPTIONS.map((tab) => tab.value)).toEqual([
+      "findings",
+      "insights",
+      "sessions",
+      "run",
+    ]);
+  });
 });
 
 describe("resolveSwarmRunDetailTab", () => {

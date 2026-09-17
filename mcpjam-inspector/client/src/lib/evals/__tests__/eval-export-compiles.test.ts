@@ -296,7 +296,11 @@ describe("exported SDK test files compile against the real SDK", () => {
       (line) => line.includes(INJECTION_MARKER) && !line.trim().startsWith("//")
     );
     expect(offending).toEqual([]);
-  });
+    // Two `typecheck()` passes against the real SDK, same cost as the case
+    // above — which is why that one carries this budget too. Left on the 30s
+    // default, this passes on a quiet machine and times out on a loaded CI
+    // shard, so the failure reads as a flake rather than a missing budget.
+  }, 120_000);
 
   it("pins the executor surface the generator depends on", () => {
     // A rename on either of these is what broke the export before; name them

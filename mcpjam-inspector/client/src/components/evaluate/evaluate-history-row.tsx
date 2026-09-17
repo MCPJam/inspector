@@ -6,7 +6,9 @@ import {
 } from "@mcpjam/design-system/table";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
 import { cn } from "@/lib/utils";
-import { runClientIdentity } from "../evals/helpers";
+import { Button } from "@mcpjam/design-system/button";
+import { Loader2 } from "lucide-react";
+import { cancellableRunIds, runClientIdentity } from "../evals/helpers";
 import {
   resolveRunOrigin,
   resolveRunOriginDetail,
@@ -146,6 +148,8 @@ export function EvaluateHistoryRow({
   hostNamesById,
   showSuite = false,
   onOpen,
+  onCancelRun,
+  cancellingRunId = null,
   testId,
   highlighted = false,
 }: {
@@ -156,6 +160,12 @@ export function EvaluateHistoryRow({
   hostNamesById?: ReadonlyMap<string, string | null>;
   showSuite?: boolean;
   onOpen?: () => void;
+  /**
+   * Stops the launch this row stands for — every one of its cancellable
+   * pairings, since the row is the launch rather than any single run.
+   */
+  onCancelRun?: (runIds: readonly string[]) => void;
+  cancellingRunId?: string | null;
   testId?: string;
   highlighted?: boolean;
 }) {
@@ -165,6 +175,11 @@ export function EvaluateHistoryRow({
   if (!representative) return null;
   const rollup = projectRunRollup(rows, details);
   const result = historyResult(rows);
+  const cancellableIds = cancellableRunIds(rows);
+  // Spinner only. The DISABLED state is the wider `cancellingRunId !== null`:
+  // the shared handler refuses a second cancel while one is in flight, so a
+  // sibling row left enabled is a button that quietly does nothing.
+  const isCancelling = cancellableIds.some((id) => id === cancellingRunId);
   // Parsed once per row and carried: the dedup key and the chips below read
   // the same value rather than re-parsing the CI metadata.
   const commits: { row: ProjectRunRow; git: RunGitMetadataValue | null }[] = [
@@ -242,18 +257,42 @@ export function EvaluateHistoryRow({
         <RunClientsCell rows={clientRows} column="model" />
       </TableCell>
       <TableCell>
-        <span
-          className={cn(
-            "whitespace-nowrap rounded px-1.5 py-1 text-[10px] font-semibold uppercase",
-            result === "Passed"
-              ? "bg-success/15 text-foreground"
-              : result === "Failed"
-                ? "bg-destructive/10 text-destructive"
-                : "bg-muted text-muted-foreground",
-          )}
-        >
-          {result}
-        </span>
+        <div className="flex items-center gap-1.5">
+          <span
+            className={cn(
+              "whitespace-nowrap rounded px-1.5 py-1 text-[10px] font-semibold uppercase",
+              result === "Passed"
+                ? "bg-success/15 text-foreground"
+                : result === "Failed"
+                  ? "bg-destructive/10 text-destructive"
+                  : "bg-muted text-muted-foreground",
+            )}
+          >
+            {result}
+          </span>
+          {onCancelRun && cancellableIds.length > 0 ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-6 px-2 text-[11px]"
+              data-testid="suite-run-row-cancel"
+              aria-label={`Cancel run #${representative.runNumber}`}
+              disabled={cancellingRunId !== null}
+              onClick={(event) => {
+                // The row itself opens the run; a cancel click must not.
+                event.preventDefault();
+                event.stopPropagation();
+                onCancelRun(cancellableIds);
+              }}
+            >
+              {isCancelling ? (
+                <Loader2 className="mr-1 h-3 w-3 animate-spin" aria-hidden />
+              ) : null}
+              Cancel
+            </Button>
+          ) : null}
+        </div>
       </TableCell>
       <TableCell
         className="whitespace-nowrap tabular-nums"
