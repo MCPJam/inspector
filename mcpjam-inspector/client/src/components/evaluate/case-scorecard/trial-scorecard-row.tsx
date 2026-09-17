@@ -225,12 +225,6 @@ export function TrialScorecardRow({
                   Narrative predates the latest grade.
                 </p>
               )}
-              {row.narrative && !row.narrative.stale && (
-                <details className="mt-1 text-muted-foreground">
-                  <summary>AI explanation · cited trace evidence</summary>
-                  <p>{row.narrative.citations.join(" · ")}</p>
-                </details>
-              )}
             </dd>
             <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
               {whyLabel}
