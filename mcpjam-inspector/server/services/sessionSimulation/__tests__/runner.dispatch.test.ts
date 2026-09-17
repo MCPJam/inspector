@@ -794,3 +794,16 @@ describe("drainAssistantTurn — engine error surfacing", () => {
     expect(opts.traceEvents?.onToolResultChunk).toBe(onToolResultChunk);
   });
 });
+
+it.each([6, undefined])(
+  "forwards an explicit hosted maxSteps=%s without changing the default",
+  async (maxSteps) => {
+    const calls: unknown[] = [];
+    runAssistantTurnMock.mockImplementation(buildHostedEngineStub(calls));
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+    await drainAssistantTurn(
+      baseArgs({ maxSteps }) as Parameters<typeof drainAssistantTurn>[0],
+    );
+    expect((calls[0] as { maxSteps?: number }).maxSteps).toBe(maxSteps);
+  },
+);

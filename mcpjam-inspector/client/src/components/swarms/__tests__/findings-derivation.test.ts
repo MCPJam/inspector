@@ -646,3 +646,14 @@ describe("persona rollup", () => {
     expect(derive({ signals: null }).sessionCount).toBe(4);
   });
 });
+
+it("never consumes setup or grounding as findings evidence", () => {
+  const withGrounding = run();
+  Object.defineProperty(withGrounding, "grounding", {
+    enumerable: true,
+    get() {
+      throw new Error("Setup must not be graded or mined");
+    },
+  });
+  expect(derive({ runs: [withGrounding] })).toEqual(derive({ runs: [run()] }));
+});
