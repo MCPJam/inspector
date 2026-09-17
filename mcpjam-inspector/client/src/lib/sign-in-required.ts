@@ -25,6 +25,15 @@ export const SIGN_IN_REQUIRED_CODE = "sign_in_required";
 /** Last-resort copy when the refusal reached us without its own message. */
 const FALLBACK_MESSAGE = "Sign in to use this.";
 
+/** Does this parsed payload claim a code at all? See `signInRequiredMessage`. */
+function hasCode(value: unknown): boolean {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    typeof (value as { code?: unknown }).code === "string"
+  );
+}
+
 function messageFromRecord(value: unknown): string | null {
   if (!value || typeof value !== "object") return null;
   const record = value as { code?: unknown; message?: unknown };
@@ -78,11 +87,18 @@ export function signInRequiredMessage(error: unknown): string | null {
   if (start !== -1 && end > start) {
     try {
       const parsed: unknown = JSON.parse(raw.slice(start, end + 1));
-      const fromText = messageFromRecord(parsed);
-      if (fromText) return fromText;
+      // A payload that parsed AND carries a `code` is AUTHORITATIVE: its code
+      // is the refusal's code, and the text around it is not evidence of
+      // anything. Falling through to the scan below would re-read that same
+      // payload as prose, so
+      //   {"code":"provider_error","message":"upstream returned code: sign_in_required"}
+      // would classify as a sign-in refusal on the strength of a sentence
+      // quoting somebody else's error.
+      if (hasCode(parsed)) return messageFromRecord(parsed);
+      // Parsed, but not a refusal envelope — it says nothing either way, so
+      // the code-position scan below still gets its turn.
     } catch {
-      // Not JSON after all — fall through to the code-position check, which
-      // is the only other thing that counts.
+      // Not JSON after all — same.
     }
   }
   return CODE_IN_CODE_POSITION.test(raw) ? FALLBACK_MESSAGE : null;

@@ -175,6 +175,18 @@ export function useInsight<TResult extends { summary?: string }>(
   // the hook's lifetime, so we keep `unavailable` sticky across run switches
   // rather than re-attempting (and flashing the panel) on every navigation.
   const featureMissingRef = useRef(false);
+  /**
+   * Sticky across runs: the backend refused because the viewer is anonymous.
+   *
+   * `hasAutoAttemptedRef` is per-RUN and the run-change effect clears it, so
+   * without this a guest opening run after run fires one doomed auto-request
+   * each time. Who is asking does not change by navigating — the sibling hook
+   * `hooks/use-run-insights.ts` latches the same way, for the same reason.
+   *
+   * Cleared only by an EXPLICIT request: a press is the one event that can
+   * mean the viewer signed in since.
+   */
+  const signInRefusedRef = useRef(false);
   // The result `generatedAt` captured at request time. Lets us clear the
   // optimistic `requested` flag the instant a NEW result lands — even when a
   // reactive update skips an observable `pending` frame — so the controls
@@ -207,6 +219,9 @@ export function useInsight<TResult extends { summary?: string }>(
       if (!run || unavailable) {
         return;
       }
+      // An explicit press asserts a (possibly new) identity; the auto-request
+      // below carries no such assertion and leaves the latch alone.
+      if (!autoClaimedRunId) signInRefusedRef.current = false;
       setError(null);
       setSignInRequired(false);
       requestedAtStampRef.current = latestResultStampRef.current;
@@ -224,6 +239,7 @@ export function useInsight<TResult extends { summary?: string }>(
             }
             setUnavailable(true);
           } else {
+            if (classified.signInRequired) signInRefusedRef.current = true;
             setSignInRequired(classified.signInRequired === true);
             setError(classified.message);
           }
@@ -287,6 +303,11 @@ export function useInsight<TResult extends { summary?: string }>(
       return;
     }
     if (!run || unavailable || hasAutoAttemptedRef.current) {
+      return;
+    }
+    // Refused for WHO is asking, on some earlier run. Navigating does not
+    // change that, so do not spend another doomed request per run opened.
+    if (signInRefusedRef.current) {
       return;
     }
     if (run.status !== "completed") {

@@ -46,6 +46,17 @@ describe("signInRequiredMessage", () => {
     expect(signInRequiredMessage(err)).toBe("Sign in to use this.");
   });
 
+  it("treats a parsed payload's own code as authoritative", () => {
+    // The payload parsed and said `provider_error`. The sentence inside it
+    // quotes somebody else's failure, and a scan of the raw text would read
+    // that quote as a code position. A refusal envelope answers for itself.
+    const err = new Error(
+      '[CONVEX A(swarms:generate)] Server Error ' +
+        '{"code":"provider_error","message":"upstream returned code: sign_in_required"}',
+    );
+    expect(signInRequiredMessage(err)).toBeNull();
+  });
+
   it("does not classify prose that merely mentions the code", () => {
     // The over-match this guards against: the bare presence of the string is
     // not a refusal. Treating it as one would draw a sign-in call to action

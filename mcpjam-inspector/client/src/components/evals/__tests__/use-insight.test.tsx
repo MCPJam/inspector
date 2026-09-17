@@ -276,6 +276,51 @@ describe("useInsight sign-in refusals", () => {
     expect(result.current.errorMessage).toBe("Sign in to keep going.");
   });
 
+  it("stops auto-requesting on later runs once a guest has been refused", async () => {
+    // `hasAutoAttemptedRef` is per-run and the run-change effect clears it, so
+    // without a sticky latch a guest opening run after run fires one doomed
+    // request each time. Who is asking does not change by navigating.
+    requestMutationMock.mockRejectedValue(
+      new Error(
+        'Server Error {"code":"sign_in_required","message":"Sign in to keep going."}',
+      ),
+    );
+
+    const { rerender } = renderHook(
+      ({ run }: { run: GoalRun }) => useInsight(run, config),
+      { initialProps: { run: makeRun({ _id: "run-a" }) } },
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(requestMutationMock).toHaveBeenCalledTimes(1);
+
+    rerender({ run: makeRun({ _id: "run-b" }) });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(requestMutationMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("an explicit press asks again — the viewer may have signed in since", async () => {
+    requestMutationMock.mockRejectedValue(
+      new Error('Server Error {"code":"sign_in_required","message":"Sign in."}'),
+    );
+    const { result } = renderHook(() =>
+      useInsight(makeRun({ _id: "run-press" }), config),
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(requestMutationMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      result.current.requestInsight(true);
+      await Promise.resolve();
+    });
+    expect(requestMutationMock).toHaveBeenCalledTimes(2);
+  });
+
   it("leaves an undeployed backend classified as unavailable", async () => {
     // The negative half: `sign_in_required` must not swallow the case the
     // `unavailable` latch exists for. A missing function is permanent for the
