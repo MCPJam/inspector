@@ -873,6 +873,12 @@ describe("analysis states and provenance", () => {
 });
 
 describe("automatic analysis failure note", () => {
+  it("explains analyzer version changes", () => {
+    renderPanel({ analysisFailure: { errorCode: "superseded" } });
+    expect(screen.getByTestId("unified-findings-analysis-failed")).toHaveTextContent(
+      "AI analysis did not complete. The analyzer was updated during analysis.",
+    );
+  });
   it.each(["evidence_changed", "unknown_failure", undefined])(
     "keeps findings visible for %s",
     (errorCode) => {

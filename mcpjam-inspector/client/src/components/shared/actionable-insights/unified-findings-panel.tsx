@@ -109,7 +109,7 @@ function humanExclusion(reason: string): string {
 
 const ANALYSIS_FAILURE_DETAIL: Record<string, string> = {
   evidence_changed: "The recorded evidence changed during analysis.",
-  superseded: "A newer request replaced this analysis.",
+  superseded: "The analyzer was updated during analysis.",
   iteration_limit: "This run exceeded the analysis size limit.",
   no_verified_reports: "No trace reports could be verified.",
   lease_expired: "The analysis worker stopped responding.",
