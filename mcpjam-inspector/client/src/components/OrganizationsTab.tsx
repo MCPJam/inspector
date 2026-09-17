@@ -713,6 +713,8 @@ function OrganizationPage({
       : section === "audit-log"
       ? section
       : "overview";
+  const sharedBillingSource =
+    activeSection === "plans" ? "plans_page" : "billing_page";
   // The sub-tab lives in `?tab=` — views of one settings section, not separate
   // org routes. Read from the URL rather than component state so a link to a
   // specific tab works, and through the router's location context so switching
@@ -729,6 +731,7 @@ function OrganizationPage({
     const viewKey = `${organization._id}:${activeSection}`;
     if (
       billingViewTrackedKeyRef.current === viewKey ||
+      !billingUiEnabled ||
       isLoadingBilling ||
       isLoadingPlanCatalog ||
       !billingStatus
@@ -753,6 +756,7 @@ function OrganizationPage({
   }, [
     activeSection,
     billingStatus,
+    billingUiEnabled,
     checkoutIntent,
     isLoadingBilling,
     isLoadingPlanCatalog,
@@ -951,14 +955,14 @@ function OrganizationPage({
     });
     try {
       const result = await finishSeatPayment(seatPaymentIntentId);
-      track("billing_flow_succeeded", {
-        location: seatPaymentLocation(surface),
-        flow: "seat_payment",
-        source: surface,
-        outcome: result.status,
-        current_plan: billingStatus?.plan ?? "unknown",
-      });
       if (result.status === "paid") {
+        track("billing_flow_succeeded", {
+          location: seatPaymentLocation(surface),
+          flow: "seat_payment",
+          source: surface,
+          outcome: "paid",
+          current_plan: billingStatus?.plan ?? "unknown",
+        });
         toast.success(
           `${
             email ?? activeSeatPaymentIntent?.email ?? "Member"
@@ -1284,7 +1288,7 @@ function OrganizationPage({
     track("billing_flow_started", {
       location: "organization_billing",
       flow: "manage_billing",
-      source: "billing_page",
+      source: sharedBillingSource,
       current_plan: billingStatus?.plan ?? "unknown",
     });
     try {
@@ -1292,7 +1296,7 @@ function OrganizationPage({
       track("billing_flow_succeeded", {
         location: "organization_billing",
         flow: "manage_billing",
-        source: "billing_page",
+        source: sharedBillingSource,
         outcome: "portal_handoff",
         current_plan: billingStatus?.plan ?? "unknown",
       });
@@ -1301,7 +1305,7 @@ function OrganizationPage({
       track("billing_flow_failed", {
         location: "organization_billing",
         flow: "manage_billing",
-        source: "billing_page",
+        source: sharedBillingSource,
         failure_kind: "request_failed",
         current_plan: billingStatus?.plan ?? "unknown",
       });
@@ -1319,7 +1323,7 @@ function OrganizationPage({
     track("billing_flow_started", {
       location: "organization_billing",
       flow: "change_interval",
-      source: "billing_page",
+      source: sharedBillingSource,
       current_plan: billingStatus?.plan ?? "unknown",
       target_interval: targetBillingInterval,
     });
@@ -1331,7 +1335,7 @@ function OrganizationPage({
       track("billing_flow_succeeded", {
         location: "organization_billing",
         flow: "change_interval",
-        source: "billing_page",
+        source: sharedBillingSource,
         outcome: "portal_handoff",
         current_plan: billingStatus?.plan ?? "unknown",
         target_interval: targetBillingInterval,
@@ -1341,7 +1345,7 @@ function OrganizationPage({
       track("billing_flow_failed", {
         location: "organization_billing",
         flow: "change_interval",
-        source: "billing_page",
+        source: sharedBillingSource,
         failure_kind: "request_failed",
         current_plan: billingStatus?.plan ?? "unknown",
         target_interval: targetBillingInterval,
@@ -1375,7 +1379,9 @@ function OrganizationPage({
     }
 
     if (targetPlan === "pro" || targetPlan === "team") {
-      await handlePlanChange(targetPlan, _targetBillingInterval);
+      await handlePlanChange(targetPlan, _targetBillingInterval, {
+        source: sharedBillingSource,
+      });
       return;
     }
     await handleManageBilling();
@@ -1392,7 +1398,7 @@ function OrganizationPage({
     track("billing_flow_started", {
       location: "organization_billing",
       flow: "cancel_scheduled_change",
-      source: "billing_page",
+      source: sharedBillingSource,
       current_plan: billingStatus?.plan ?? "unknown",
     });
     try {
@@ -1400,7 +1406,7 @@ function OrganizationPage({
       track("billing_flow_succeeded", {
         location: "organization_billing",
         flow: "cancel_scheduled_change",
-        source: "billing_page",
+        source: sharedBillingSource,
         outcome: "cancelled",
         current_plan: billingStatus?.plan ?? "unknown",
       });
@@ -1410,7 +1416,7 @@ function OrganizationPage({
       track("billing_flow_failed", {
         location: "organization_billing",
         flow: "cancel_scheduled_change",
-        source: "billing_page",
+        source: sharedBillingSource,
         failure_kind: "request_failed",
         current_plan: billingStatus?.plan ?? "unknown",
       });
@@ -1428,7 +1434,7 @@ function OrganizationPage({
     track("billing_flow_started", {
       location: "organization_billing",
       flow: "cancel_subscription",
-      source: "billing_page",
+      source: sharedBillingSource,
       current_plan: billingStatus?.plan ?? "unknown",
       target_plan: "free",
     });
@@ -1439,7 +1445,7 @@ function OrganizationPage({
       track("billing_flow_succeeded", {
         location: "organization_billing",
         flow: "cancel_subscription",
-        source: "billing_page",
+        source: sharedBillingSource,
         outcome: "portal_handoff",
         current_plan: billingStatus?.plan ?? "unknown",
         target_plan: "free",
@@ -1450,7 +1456,7 @@ function OrganizationPage({
       track("billing_flow_failed", {
         location: "organization_billing",
         flow: "cancel_subscription",
-        source: "billing_page",
+        source: sharedBillingSource,
         failure_kind: "request_failed",
         current_plan: billingStatus?.plan ?? "unknown",
         target_plan: "free",
@@ -1774,8 +1780,7 @@ function OrganizationPage({
               onDowngradePlan={handleDowngradePlan}
               onStartPlanChange={(tier, billingInterval) =>
                 handlePlanChange(tier, billingInterval, {
-                  source:
-                    activeSection === "plans" ? "plans_page" : "billing_page",
+                  source: sharedBillingSource,
                 })
               }
               onStartAutoPlanChange={handleAutoPlanChange}
