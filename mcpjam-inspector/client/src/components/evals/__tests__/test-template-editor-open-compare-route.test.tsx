@@ -973,6 +973,18 @@ describe("TestTemplateEditor run view from route", () => {
       />,
     );
 
+  it("shows code-owned cases in the workspace without authoring controls", async () => {
+    activeCaseDoc = { ...goldenCaseDoc, lastMessageRun: undefined } as any;
+    renderGoldenCase({readOnly: true});
+    expect(await screen.findByText("Who am I signed in as?")).toBeVisible();
+    expect(screen.queryByRole("button", {name: /Setup Run/i})).toBeNull();
+    expect(screen.queryByRole("button", {name: /Configure test case evaluators/i})).toBeNull();
+    for (const input of screen.getAllByRole("textbox")) {
+      expect(input).toHaveAttribute("readonly");
+    }
+    expect(updateTestCaseMutationMock).not.toHaveBeenCalled();
+  });
+
   it("keeps unsaved case edits while iteration evidence opens in the drawer", async () => {
     activeCaseDoc = { ...goldenCaseDoc, lastMessageRun: undefined } as any;
     const trial = {

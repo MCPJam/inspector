@@ -491,7 +491,7 @@ compare runs, waive a gate, read every setting.
 
 ### CI-synced test cases
 
-Test cases written by a CI report carry a **CI** chip next to their name in the cases list. Opening such a case in the editor shows a notice: "Synced from CI — the next CI report may overwrite manual edits." Manual edits to these cases are preserved until the next CI ingest, which may overwrite them.
+Test cases written by a CI report carry a **CI** chip next to their name in the cases list. Opening such a case opens the case workspace in **read-only mode**: the saved definition and iteration history are fully inspectable, but authoring controls are hidden and saves are blocked. A notice below the case title reads "Managed in code. Update this test in your repository." To change the case, edit the test file in your repository and run it again.
 
 ### Suite deletion
 

@@ -314,9 +314,14 @@ describe("provisionEvalSandbox — capacity", () => {
     // saturated recorded genuine failures, and a capacity blip read as a
     // quality regression on the run's chart.
     //
-    // Asserted through a budget too small for the first wait to fit, so the
+    // Asserted through a budget too small for the first WAIT to fit, so the
     // loop reaches its terminal in real time rather than the test waiting out
-    // a real backoff.
+    // a real backoff. A second is the right size: far under the 7.5s floor on
+    // that first wait, and far over what one mocked attempt costs. A budget of
+    // a millisecond also stops in real time, but it can expire before the
+    // first attempt is even made on a loaded runner — and then there is no
+    // control-plane result to relay, so the assertion below fails on a
+    // fallback this test is not about.
     respond = () =>
       new Response(
         JSON.stringify({
@@ -326,7 +331,7 @@ describe("provisionEvalSandbox — capacity", () => {
         }),
         { status: 503, headers: { "content-type": "application/json" } },
       );
-    const result = await provisionEvalSandbox({ ...args, timeoutMs: 1 });
+    const result = await provisionEvalSandbox({ ...args, timeoutMs: 1_000 });
     // The control plane's OWN refusal is relayed — its status, its code, its
     // `resource` — rather than a message this layer invented about a failure
     // it only passed along.
@@ -336,11 +341,11 @@ describe("provisionEvalSandbox — capacity", () => {
       code: "at_capacity",
       resource: "desktops",
     });
-    // It really did try, and really did stop.
-    expect(requests).toBeGreaterThanOrEqual(1);
-    expect(requests).toBeLessThanOrEqual(
-      EVAL_SANDBOX_CAPACITY_POLICY.maxAttempts,
-    );
+    // It really did try, and really did stop — and with this budget the count
+    // is EXACT, not a range: one attempt fits, and the 7.5s floor on the wait
+    // that would precede a second one does not. A range here would pass just
+    // as happily if the budget stopped being enforced before the retry.
+    expect(requests).toBe(1);
   });
 });
 

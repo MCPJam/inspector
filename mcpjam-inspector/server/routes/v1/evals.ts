@@ -2552,7 +2552,6 @@ function toSuiteDetailDto(
         ...(goal?.autoRun !== undefined ? { autoRun: goal.autoRun } : {}),
         ...(suite.judgePolicy
           ? {
-              executionPaused: suite.judgePolicy.executionPaused,
               automatic: suite.judgePolicy.automatic,
               contractVersion: suite.judgePolicy.contractVersion,
             }

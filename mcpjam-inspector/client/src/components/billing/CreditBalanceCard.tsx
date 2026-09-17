@@ -164,6 +164,12 @@ export function CreditBalanceCard({
           </ErrorBoundary>
         ) : null}
 
+        {balance?.platformPaidFallback && (
+          <p className="text-xs text-muted-foreground" role="status">
+            MCPJam’s shared free allowance is unavailable. New requests use your purchased credits.
+          </p>
+        )}
+
         {showMonthly ? (
           <UsageRow
             label="Monthly credits"
@@ -192,7 +198,7 @@ export function CreditBalanceCard({
           />
         ) : (
           <UsageRow
-            label="Free daily credits"
+            label={balance?.platformFreeBudgetExhausted ? "Free allowance temporarily unavailable" : "Free daily credits"}
             rightText={
               isLoading || !balance
                 ? null

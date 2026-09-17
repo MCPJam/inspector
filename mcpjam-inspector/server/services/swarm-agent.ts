@@ -57,6 +57,8 @@ export interface PinnedHostExecutionSpec {
   hostName: string;
   hostConfigId: string;
   modelId: string;
+  /** Optional routing provenance from the immutable host snapshot. Omitted keeps legacy lookup. */
+  hosted?: boolean;
   systemPrompt: string;
   temperature?: number;
   requireToolApproval: boolean;

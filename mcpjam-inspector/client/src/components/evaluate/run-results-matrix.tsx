@@ -42,6 +42,7 @@ import { runHistoryFilterClass } from "../evals/run-history-table";
 import {
   buildRunResultsMatrix,
   resultCounts,
+  cellResult,
   type RunResultsMatrixData,
 } from "./run-results-matrix-model";
 import { IterationDetails } from "../evals/iteration-details";
@@ -85,20 +86,16 @@ type MatrixView = "results" | "metrics";
 
 function CellResults({ items }: { items: EvalIteration[] }) {
   const counts = resultCounts(items);
-  const status = counts.pending
-    ? "Running"
-    : counts.failed
-      ? "Fail"
-      : counts.cancelled
-        ? "Cancelled"
-        : "Pass";
-  const statusTone = counts.pending
-    ? "text-pending"
-    : counts.failed
-      ? "text-destructive"
-      : counts.cancelled
-        ? "text-muted-foreground"
-        : "text-success";
+  const result = cellResult(items);
+  const status =
+    result === "pending"
+      ? "Running"
+      : result === "failed"
+        ? "Fail"
+        : result === "cancelled"
+          ? "Cancelled"
+          : "Pass";
+  const statusTone = outcomeTextTone(result ?? "passed");
   const breakdown = `${counts.passed} passed, ${counts.failed} failed, ${counts.pending} in progress, ${counts.cancelled} cancelled`;
   return (
     <span className="w-full space-y-2">
@@ -288,23 +285,21 @@ export function RunResultsMatrix({
           ? counts.cancelled > 0
           : true,
     )
-    .filter(
-      (value) =>
-        value === status ||
-        data.rows.some(
-          (row) =>
-            row.title.toLowerCase().includes(query) &&
-            data.targets.some(
-              (target) =>
-                resultCounts(target.cells.get(row.key) ?? [])[value] > 0,
-            ),
-        ),
+    .filter((value) =>
+      data.rows.some(
+        (row) =>
+          row.title.toLowerCase().includes(query) &&
+          data.targets.some(
+            (target) => cellResult(target.cells.get(row.key) ?? []) === value,
+          ),
+      ),
     );
+  const activeStatus = statusOptions.includes(status as StatusFilter)
+    ? status
+    : ALL_EVAL_FILTER_VALUES;
   useEffect(() => {
-    if (status === "pending" && !showPending) setStatus(ALL_EVAL_FILTER_VALUES);
-    if (status === "cancelled" && counts.cancelled === 0)
-      setStatus(ALL_EVAL_FILTER_VALUES);
-  }, [showPending, status, counts.cancelled]);
+    if (status !== activeStatus) setStatus(activeStatus);
+  }, [status, activeStatus]);
   const [selection, setSelection] = useState<{
     caseKey: string;
     targetKey: string;
@@ -312,12 +307,6 @@ export function RunResultsMatrix({
   const [selectedIterationId, setSelectedIterationId] = useState<string | null>(
     null,
   );
-  const activeStatus =
-    status === "pending" && !showPending
-      ? ALL_EVAL_FILTER_VALUES
-      : status === "cancelled" && counts.cancelled === 0
-        ? ALL_EVAL_FILTER_VALUES
-        : status;
   useEffect(() => {
     onFilterChange?.({ search: query, status: activeStatus });
   }, [query, activeStatus, onFilterChange]);
@@ -327,9 +316,7 @@ export function RunResultsMatrix({
       (activeStatus === ALL_EVAL_FILTER_VALUES ||
         data.targets.some(
           (target) =>
-            resultCounts(target.cells.get(row.key) ?? [])[
-              activeStatus as StatusFilter
-            ] > 0,
+            cellResult(target.cells.get(row.key) ?? []) === activeStatus,
         )),
   );
   const hasActiveFilters =
