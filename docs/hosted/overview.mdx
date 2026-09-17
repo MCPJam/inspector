@@ -56,6 +56,8 @@ The hosted app uses a daily credit system to power AI features like chat.
 
 When your credit balance reaches zero, free models are grayed out in the model picker so you can see the limit before sending a message. Models from your own API keys remain available. If you have paid top-up credits, free models stay enabled even after your daily free allowance is exhausted.
 
+**Shared free allowance temporarily unavailable** — MCPJam maintains a platform-wide shared free budget. If that budget is exhausted or paused, the credit balance card shows "Free allowance temporarily unavailable" and the model picker tab is relabeled "MCPJam models". A notice also appears above the chat input and as a toast. During this time, new requests automatically draw from your organization's purchased credits if you have any. Adding your own API key under **Settings → LLM Providers** lets you continue chatting without using the shared allowance or your credits.
+
 ## Signing out
 
 Open the **account menu** at the bottom of the sidebar (click your avatar or email) and choose **Sign out**. You'll be returned to the public app as a guest, and any signed-in usage allowance is replaced by the guest allowance until you sign back in.
