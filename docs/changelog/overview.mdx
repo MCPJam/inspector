@@ -9,6 +9,12 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-09-17
+
+#### Changed
+
+- **Swarm and Evaluate transcripts now render with the run's host style** — swarm session panes and Evaluate trial drawers previously fell back to generic MCPJam styling even when the run had a known host. They now render with the same bubble treatment, avatars, and background as the Playground for that host — Claude, ChatGPT, Codex, and other catalog hosts each show their own presentation. The model name recorded for the session is shown in the transcript header. If the host configuration for a session cannot be loaded, the transcript pane shows an error rather than silently substituting generic styling.
+
 ### 2026-09-16
 
 #### Changed
