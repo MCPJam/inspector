@@ -1,11 +1,8 @@
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { routePaths } from "../lib/app-navigation";
 
-// Controls the tri-state PostHog flag the route guard reads. `undefined`
-// models the pre-hydration window; the guard must NOT redirect during it
-// (only on an explicit `false`). Mirror of ComputerRoute.flag-hydration.
+// Exercise public access and legacy routing for every flag state.
 let flagState: boolean | undefined = undefined;
 
 const { mockRouteContext } = vi.hoisted(() => ({
@@ -73,7 +70,7 @@ vi.mock("@codemirror/lint", () => ({
   lintGutter: () => ({}),
 }));
 
-import { EvaluateRoute } from "../App";
+import { EvaluateRoute, EvalsRoute } from "../App";
 
 afterEach(() => {
   flagState = undefined;
@@ -93,58 +90,32 @@ function renderRoute(element: React.ReactElement, initialPath = "/evaluate") {
   );
 }
 
-describe("EvaluateRoute — evaluate-enabled guard", () => {
-  it("does not redirect while the flag is still loading (undefined)", () => {
-    flagState = undefined;
+vi.mock("../components/EvalsTab", () => ({
+  EvalsTab: () => <div data-testid="legacy-tab" />,
+}));
+
+describe("public Evaluate and legacy access", () => {
+  it.each([undefined, false, true])("renders Evaluate with flag %s", (flag) => {
+    flagState = flag;
     renderRoute(<EvaluateRoute />);
-    expect(screen.queryByTestId("navigate")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("evaluate-tab")).not.toBeInTheDocument();
-  });
-
-  it("renders the redesigned tab once the flag resolves true", () => {
-    flagState = undefined;
-    const { rerender } = renderRoute(<EvaluateRoute />);
-    expect(screen.queryByTestId("navigate")).not.toBeInTheDocument();
-
-    flagState = true;
-    // Re-rendered inside the same router: dropping the wrapper here would
-    // remount the route without a location, which is not what a flag
-    // resolving mid-session does.
-    rerender(
-      <MemoryRouter>
-        <EvaluateRoute />
-      </MemoryRouter>
-    );
-
-    expect(screen.queryByTestId("navigate")).not.toBeInTheDocument();
     expect(screen.getByTestId("evaluate-tab")).toBeInTheDocument();
+    expect(screen.queryByTestId("navigate")).not.toBeInTheDocument();
   });
 
-  it("bounces to the shipped Evaluate tab on an explicit false", () => {
-    // The sidebar hides the nav item, but `/evaluate` is a plain route and
-    // `ui_navigate` knows the segment — the flag has to gate the route too.
-    flagState = false;
-    renderRoute(<EvaluateRoute />);
-    const nav = screen.getByTestId("navigate");
-    expect(nav).toHaveAttribute("data-to", routePaths.evals);
-    expect(screen.queryByTestId("evaluate-tab")).not.toBeInTheDocument();
-  });
-
-  it("keeps the project in the URL when the flag bounces a scoped visit", () => {
-    // A flagged-out user who lands on a teammate's `/p/<id>/evaluate` link must
-    // arrive at THAT project's Evals tab. Dropping the prefix here would send
-    // them to whichever project the shell resolves from storage — the exact
-    // cross-project leak the canonical URLs exist to prevent.
-    //
-    // The id has to be Convex-shaped ([a-z0-9]{16,64}); `parseProjectPath`
-    // rejects anything else, so a placeholder like "project-1" would silently
-    // make this assertion pass for the wrong reason.
-    const projectId = "k5700000000000000000000000a";
-    flagState = false;
-    renderRoute(<EvaluateRoute />, `/p/${projectId}/evaluate`);
+  it.each([undefined, false])("redirects legacy runs with flag %s without mounting legacy content", (flag) => {
+    flagState = flag;
+    const project = "k5700000000000000000000000a";
+    renderRoute(<EvalsRoute />, `/p/${project}/evals/suite/S/runs/R?iteration=I&case=C#trace`);
     expect(screen.getByTestId("navigate")).toHaveAttribute(
-      "data-to",
-      `/p/${projectId}${routePaths.evals}`
+      "data-to", `/p/${project}/evaluate/suite/S/runs/R?iteration=I&case=C#trace`,
     );
+    expect(screen.queryByTestId("legacy-tab")).not.toBeInTheDocument();
+  });
+
+  it("keeps legacy Evaluate accessible when the flag is on", () => {
+    flagState = true;
+    renderRoute(<EvalsRoute />, "/evals");
+    expect(screen.getByTestId("legacy-tab")).toBeInTheDocument();
+    expect(screen.queryByTestId("navigate")).not.toBeInTheDocument();
   });
 });

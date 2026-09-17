@@ -58,6 +58,11 @@ import {
   type RunDirectChatTurnHandle,
 } from "./direct-chat-turn.js";
 import { buildDirectChatTraceCallbacks } from "./direct-chat-sse-callbacks.js";
+import {
+  createEmptyTurnWatcher,
+  hasSettledToolCallThisPrompt,
+} from "./empty-step-failure.js";
+import { emitError } from "./chat-stream-chunks.js";
 import { appendDedupedModelMessages } from "@/shared/eval-trace";
 import {
   formatProviderOverloadError,
@@ -573,6 +578,14 @@ export function handleLocalOrgChatModel(
         },
       });
 
+      // `streamText` finishes an empty last step as if it were a reply, which
+      // left a blank bubble and no record. Same verdict as the hosted engine.
+      const emptyTurn = createEmptyTurnWatcher({
+        settledToolBeforeStream: hasSettledToolCallThisPrompt(
+          messages,
+          handle.traceTurn.promptMessageStartIndex,
+        ),
+      });
       try {
         for await (const chunk of handle.result.toUIMessageStream({
           messageMetadata: ({ part }) => {
@@ -606,6 +619,26 @@ export function handleLocalOrgChatModel(
               options.suspendedToolCallId?.()
             )
           ) {
+            continue;
+          }
+          emptyTurn.observe(chunk);
+          const emptyTurnMessage =
+            chunk.type === "finish" && !handle.isAborted()
+              ? emptyTurn.failureFor(chunk)
+              : undefined;
+          if (emptyTurnMessage) {
+            // The error REPLACES the finish chunk, as on the hosted engine,
+            // and is written before the report so a reporter throw cannot
+            // swallow it.
+            emitError(writer, emptyTurnMessage);
+            failureReporter({
+              message: "[org/local] direct step returned no content",
+              error: new Error(emptyTurnMessage),
+              source: "web.chat-v2.org-local-direct-empty-step",
+              hop: "user_server_hop",
+              transport: "http_stream",
+              context: { providerKey: provider.providerKey, modelId },
+            });
             continue;
           }
           writer.write(withMcpToolOriginChunkMetadata(chunk, options.tools));

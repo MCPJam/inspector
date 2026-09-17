@@ -62,7 +62,7 @@ import { useStageFindings } from "@/components/evaluate/use-stage-findings";
 import { ExplanatoryFlowOptIn } from "@/components/shared/usage-insights/ExplanatoryFlowOptIn";
 import type { InsightsScope } from "@/hooks/useUsageInsights";
 import { useAvailableModels } from "@/hooks/use-available-models";
-import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
+import { buildEvaluatePath, navigateApp } from "@/lib/app-navigation";
 import { ArrowUpDown, Download, Share2 } from "lucide-react";
 import { getSidebarRunInsightsPassRateLabel } from "./run-header-compact-stats";
 import { RunInsightsSidebarSummary } from "./run-insights-sidebar";
@@ -481,7 +481,7 @@ export function RunDetailView({
     onEditTestCaseProp ??
     ((testCaseId: string) =>
       navigateApp(
-        buildEvalsPath({
+        buildEvaluatePath({
           type: "test-edit",
           suiteId: selectedRunDetails.suiteId,
           testId: testCaseId,
@@ -824,7 +824,7 @@ export function RunDetailView({
           return;
         }
         navigateApp(
-          buildEvalsPath({
+          buildEvaluatePath({
             type: "run-detail",
             suiteId: selectedRunDetails.suiteId,
             runId,
