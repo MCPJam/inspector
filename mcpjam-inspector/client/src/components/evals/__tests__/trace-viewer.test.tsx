@@ -1176,7 +1176,7 @@ describe("TraceViewer", () => {
       await screen.findByRole("button", { name: /Filter timeline rows: All/ }),
     ).toBeInTheDocument();
     openChatTab();
-    expect(screen.getByText("No messages in trace")).toBeInTheDocument();
+    expect(screen.getByText("No transcript recorded")).toBeInTheDocument();
     fireEvent.click(screen.getByTitle("Raw JSON"));
     expect(screen.getByTestId("json-editor").textContent ?? "").toContain(
       "spans",

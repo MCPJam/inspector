@@ -4,7 +4,8 @@ import { SwarmLiveStreamPane } from "../journey-run-results";
 import type { JourneySessionRow } from "@/lib/swarm-api";
 import type { JourneyRunStreamState } from "../use-journey-run-stream";
 
-const { sessionHost, targetHost, viewer } = vi.hoisted(() => ({
+const { sessionHost, targetHost, viewer, persisted } = vi.hoisted(() => ({
+  persisted: { error: null as string | null },
   sessionHost: vi.fn(),
   targetHost: vi.fn(),
   viewer: vi.fn(),
@@ -20,7 +21,7 @@ vi.mock("../use-persisted-session-trace", () => ({
   usePersistedSessionTrace: () => ({
     trace: null,
     loading: false,
-    error: null,
+    error: persisted.error,
     spanError: null,
     pluginVersions: [],
   }),
@@ -82,6 +83,7 @@ describe("swarm transcript host resolution", () => {
       .mockReset()
       .mockReturnValue({ status: "ready", snapshot: { hostStyle: "chatgpt" } });
     viewer.mockClear();
+    persisted.error = null;
   });
 
   it.each([false, true])("keeps one transcript frame in fillHeight=%s", (fillHeight) => {
@@ -91,6 +93,14 @@ describe("swarm transcript host resolution", () => {
     expect(pane.classList.contains("p-3")).toBe(!fillHeight);
     expect(screen.getByTestId("transcript").parentElement).toHaveClass("border", "flex-1");
     expect(viewer).toHaveBeenCalledWith(expect.objectContaining({ frame: "none", fillContent: true }));
+  });
+
+  it("keeps transcript fetch failure distinct from streaming or an absent recording", () => {
+    persisted.error = "Transcript download failed";
+    render(<SwarmLiveStreamPane {...props} fallbackTrace={null} />);
+    expect(screen.getByRole("alert")).toHaveTextContent("Transcript download failed");
+    expect(screen.queryByText("No transcript recorded")).not.toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "Waiting for transcript" })).not.toBeInTheDocument();
   });
 
   it("uses the pinned session and its recorded model, querying by Convex id", () => {
@@ -130,7 +140,7 @@ describe("swarm transcript host resolution", () => {
     rerender(<SwarmLiveStreamPane {...next} />);
     expect(sessionHost).toHaveBeenLastCalledWith("next-convex-session");
     expect(screen.queryByTestId("transcript")).not.toBeInTheDocument();
-    expect(screen.getByText("Loading host configuration…")).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "Loading transcript" })).toBeInTheDocument();
     sessionHost.mockReturnValue({
       status: "ready",
       snapshot: { hostStyle: "codex" },

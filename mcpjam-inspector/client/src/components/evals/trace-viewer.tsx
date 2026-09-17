@@ -1,3 +1,4 @@
+import { TranscriptEmptyState } from "@/components/chat-v2/transcript-empty-state";
 import {
   lazy,
   Suspense,
@@ -975,9 +976,9 @@ export function TraceViewer({
 
         {effectiveViewMode === "chat" &&
           (traceMessages.length === 0 ? (
-            <div className="text-xs text-muted-foreground">
-              No messages in trace
-            </div>
+            <TranscriptEmptyState {...(isLoading
+              ? { kind: "streaming" as const }
+              : { kind: "unrecorded" as const, execution: hasRecordedSpans ? "observed" as const : "unknown" as const })} />
           ) : (
             <div
               className={cn(
