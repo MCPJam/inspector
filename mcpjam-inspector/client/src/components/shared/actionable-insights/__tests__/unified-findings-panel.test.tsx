@@ -591,7 +591,7 @@ describe("analysis states and provenance", () => {
       screen.getByTestId("unified-findings-unavailable"),
     ).toHaveTextContent("isn’t enough recorded evidence");
   });
-  it("explains excluded trials when findings are empty", () => {
+  it("does not print an exclusion tally when findings are empty", () => {
     renderPanel({
       findings: [],
       observationCoverage: {
@@ -602,11 +602,12 @@ describe("analysis states and provenance", () => {
       } as never,
     });
     expect(screen.getByTestId("unified-findings-empty")).toBeVisible();
-    const summary = screen.getByTestId("unified-findings-exclusion-summary");
-    expect(summary).toHaveTextContent(
-      "9 iterations without a verified stage chain",
+    expect(
+      screen.queryByTestId("unified-findings-exclusion-summary"),
+    ).toBeNull();
+    expect(screen.getByTestId("unified-findings-panel")).not.toHaveTextContent(
+      "Not analyzed",
     );
-    expect(summary).toHaveTextContent(/\b1 iteration\b/);
   });
   it("reports backend availability and stale analysis without showing mode tabs", () => {
     renderPanel({
@@ -813,8 +814,11 @@ describe("analysis states and provenance", () => {
       "Evidence covers",
     );
     expect(
-      screen.getByTestId("unified-findings-exclusion-summary"),
-    ).toHaveTextContent("6 iterations without a verified stage chain");
+      screen.queryByTestId("unified-findings-exclusion-summary"),
+    ).toBeNull();
+    expect(screen.getByTestId("unified-findings-panel")).not.toHaveTextContent(
+      "Not analyzed",
+    );
   });
   it("shows AI-discovered issues with honest coverage even without stage-chain findings", () => {
     renderPanel({
