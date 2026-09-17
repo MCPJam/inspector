@@ -44,6 +44,24 @@ describe("track()", () => {
     expect(props.location).toBe("skills_tab");
   });
 
+  it("redacts the registered organization id from billing events", () => {
+    track("billing_flow_started", {
+      location: "billing_page",
+      organization_id: "org_raw",
+    });
+
+    expect(captureMock).toHaveBeenCalledWith(
+      "billing_flow_started",
+      expect.objectContaining({ organization_id: null }),
+    );
+  });
+
+  it("does not change organization context for unrelated events", () => {
+    track("skill_viewed", { location: "skills_tab", skill_name: "x" });
+
+    expect(captureMock.mock.calls[0][1]).not.toHaveProperty("organization_id");
+  });
+
   it("never lets a capture failure break the product action", () => {
     const error = new Error("analytics unavailable");
     const warnMock = vi.spyOn(console, "warn").mockImplementation(() => {});

@@ -2,6 +2,21 @@ import posthog from "posthog-js";
 import type { ClientAnalyticsEventName } from "@/shared/analytics-events";
 import { standardEventProps } from "./PosthogUtils";
 
+const PRIVATE_ORGANIZATION_EVENT_PREFIXES = [
+  "billing_",
+  "credit_topup_",
+  "plan_limit_",
+  "pricing_",
+] as const;
+
+function mustRedactOrganizationContext(
+  event: ClientAnalyticsEventName,
+): boolean {
+  return PRIVATE_ORGANIZATION_EVENT_PREFIXES.some((prefix) =>
+    event.startsWith(prefix),
+  );
+}
+
 /**
  * The single client-side capture entrypoint. Only client-authoritative event
  * names registered in shared/analytics-events.ts are accepted (server twins
@@ -41,7 +56,16 @@ export function track(
     ...rest
   } = props;
   try {
-    posthog.capture(event, { ...rest, ...standardEventProps(location) });
+    posthog.capture(event, {
+      ...rest,
+      ...standardEventProps(location),
+      // Billing identifiers must stay opaque. An explicit null overrides the
+      // raw organization_id registered as a PostHog super-property without
+      // changing organization context for unrelated product events.
+      ...(mustRedactOrganizationContext(event)
+        ? { organization_id: null }
+        : {}),
+    });
   } catch (error) {
     // Product analytics is best-effort. Ad blockers, initialization races, or
     // an SDK failure must never stop the user action that emitted the event.
