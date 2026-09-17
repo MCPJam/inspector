@@ -729,6 +729,196 @@ describe("variantFromExecutor", () => {
   });
 });
 
+describe("stepResults on reported iterations", () => {
+  const EXPECTED = [{ toolName: "show-squad", arguments: { team: "PSG" } }];
+  const noMatch = {
+    missing: [],
+    extra: [],
+    outOfOrder: [],
+    argumentMismatches: [],
+  };
+  const stepsOf = (result: { metadata?: Record<string, unknown> }) =>
+    result.metadata?.stepResults;
+  const run = (overrides: Partial<IterationResult>, expected = EXPECTED) =>
+    iterationsToEvalResultInputs("case", [makeIteration(overrides)], expected);
+
+  it("passes the prompt and every expectation when the match passed", () => {
+    const results = run({
+      prompts: [makePrompt({ toolCalls: EXPECTED })],
+      toolMatch: { ...noMatch, passed: true },
+    });
+
+    expect(stepsOf(results[0])).toEqual([
+      { stepId: "step-1", stepIndex: 0, kind: "prompt", status: "ok" },
+      { stepId: "step-expect-0", stepIndex: 1, kind: "assert", status: "ok" },
+    ]);
+  });
+
+  it("blames the expectation the matcher reported missing", () => {
+    const results = run({
+      passed: false,
+      prompts: [makePrompt({})],
+      toolMatch: { ...noMatch, missing: [...EXPECTED], passed: false },
+    });
+
+    expect(stepsOf(results[0])).toContainEqual({
+      stepId: "step-expect-0",
+      stepIndex: 1,
+      kind: "assert",
+      status: "fail",
+      reason: "not called",
+    });
+  });
+
+  it("names both sides when only the arguments differed", () => {
+    const results = run({
+      passed: false,
+      prompts: [makePrompt({})],
+      toolMatch: {
+        ...noMatch,
+        argumentMismatches: [
+          {
+            toolName: "show-squad",
+            expectedArgs: { team: "PSG" },
+            actualArgs: { team: "Paris Saint-Germain" },
+          },
+        ],
+        passed: false,
+      },
+    });
+
+    const [, assertion] = stepsOf(results[0]) as Record<string, unknown>[];
+    expect(assertion.status).toBe("fail");
+    expect(assertion.reason).toContain("arguments differed");
+    expect(assertion.reason).toContain("Paris Saint-Germain");
+  });
+
+  it("fails every expectation when the failure implicates none of them", () => {
+    // An extra call means the iteration did not match, but no single
+    // expectation is at fault — the header must not read "1 of 1 passed".
+    const results = run({
+      passed: false,
+      prompts: [makePrompt({})],
+      toolMatch: {
+        ...noMatch,
+        extra: [{ toolName: "list-players", arguments: {} }],
+        passed: false,
+      },
+    });
+
+    const [, assertion] = stepsOf(results[0]) as Record<string, unknown>[];
+    expect(assertion.status).toBe("fail");
+    expect(assertion.reason).toBe("unexpected tool call: list-players");
+  });
+
+  it("fails a negative case whose tool was called after all", () => {
+    const results = iterationsToEvalResultInputs(
+      "case",
+      [
+        makeIteration({
+          passed: false,
+          prompts: [makePrompt({})],
+          toolMatch: {
+            ...noMatch,
+            extra: [{ toolName: "show-squad", arguments: {} }],
+            passed: false,
+          },
+        }),
+      ],
+      EXPECTED,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { isNegativeTest: true }
+    );
+
+    expect(stepsOf(results[0])).toContainEqual({
+      stepId: "step-expect-0",
+      stepIndex: 1,
+      kind: "assert",
+      status: "fail",
+      reason: "tool was called: show-squad",
+    });
+  });
+
+  it("reports pending, not passed, when the matcher never ran", () => {
+    const results = run({ prompts: [makePrompt({})] });
+
+    expect(stepsOf(results[0])).toContainEqual({
+      stepId: "step-expect-0",
+      stepIndex: 1,
+      kind: "assert",
+      status: "pending",
+    });
+  });
+
+  it("uses the SDK's own step ids when the case has predicates", () => {
+    const predicates = [
+      { type: "containsText", text: "psg" },
+      { type: "containsText", text: "squad" },
+    ] as unknown as Parameters<typeof iterationsToEvalResultInputs>[5];
+
+    const results = iterationsToEvalResultInputs(
+      "case",
+      [
+        makeIteration({
+          passed: false,
+          prompts: [makePrompt({})],
+          // Only the first predicate was reached; the second never evaluated.
+          predicateResults: [
+            { passed: false, reason: "no psg in the answer" },
+          ] as unknown as IterationResult["predicateResults"],
+        }),
+      ],
+      EXPECTED,
+      undefined,
+      undefined,
+      predicates
+    );
+
+    expect(stepsOf(results[0])).toEqual([
+      { stepId: "sdk-prompt-0", stepIndex: 0, kind: "prompt", status: "ok" },
+      {
+        stepId: "sdk-assert-0",
+        stepIndex: 1,
+        kind: "assert",
+        status: "fail",
+        reason: "no psg in the answer",
+      },
+      {
+        stepId: "sdk-assert-1",
+        stepIndex: 2,
+        kind: "assert",
+        status: "pending",
+      },
+    ]);
+  });
+
+  it("omits the key entirely when there is nothing to report", () => {
+    const results = iterationsToEvalResultInputs("case", [makeIteration({})]);
+
+    expect(results[0].metadata).not.toHaveProperty("stepResults");
+  });
+
+  it("reports the same rows through the suite mapper", () => {
+    const iteration = makeIteration({
+      prompts: [makePrompt({ toolCalls: EXPECTED })],
+      toolMatch: { ...noMatch, passed: true },
+    });
+
+    const viaSuite = suiteTestResultsToEvalResultInputs(
+      new Map([["case", makeRunResult([iteration])]]),
+      { case: EXPECTED }
+    );
+
+    expect(stepsOf(viaSuite[0])).toEqual(
+      stepsOf(iterationsToEvalResultInputs("case", [iteration], EXPECTED)[0])
+    );
+  });
+});
+
 describe("runToEvalResults", () => {
   it("maps N iterations with correct case titles", () => {
     const run = makeRunResult([
@@ -930,13 +1120,31 @@ describe("iterationsToEvalResultInputs", () => {
     // those keys off rather than loosening this to `toMatchObject`: the exact
     // shape of the rest of the metadata is what this test exists to pin.
     const split = (index: number) => {
-      const { stageResults, stageAnalyzerVersion, stageMeasurements, ...rest } =
-        results[index].metadata as Record<string, unknown>;
-      return { stageResults, stageAnalyzerVersion, stageMeasurements, rest };
+      const {
+        stageResults,
+        stageAnalyzerVersion,
+        stageMeasurements,
+        stepResults,
+        ...rest
+      } = results[index].metadata as Record<string, unknown>;
+      return {
+        stageResults,
+        stageAnalyzerVersion,
+        stageMeasurements,
+        stepResults,
+        rest,
+      };
     };
 
     expect(split(0).rest).toEqual({ retryCount: 0, iterationNumber: 1 });
     expect(split(1).rest).toEqual({ retryCount: 2, iterationNumber: 2 });
+
+    // One prompt, no expectations: the prompt step alone.
+    for (const index of [0, 1]) {
+      expect(split(index).stepResults).toEqual([
+        { stepId: "step-1", stepIndex: 0, kind: "prompt", status: "ok" },
+      ]);
+    }
 
     for (const index of [0, 1]) {
       const { stageResults, stageAnalyzerVersion, stageMeasurements } =
