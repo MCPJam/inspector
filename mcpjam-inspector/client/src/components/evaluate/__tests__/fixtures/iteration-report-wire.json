@@ -2,7 +2,7 @@
   "ready": {
     "builtAt": 0,
     "iterationId": "<iterationId>",
-    "modelUsed": "google/gemini-3.1-flash-lite-preview",
+    "modelUsed": "openai/gpt-5.6-luna",
     "rows": [
       {
         "actual": "The assistant answered without saving anything.",
@@ -26,7 +26,7 @@
   "failed": {
     "builtAt": 0,
     "iterationId": "<iterationId>",
-    "modelUsed": "google/gemini-3.1-flash-lite-preview",
+    "modelUsed": "openai/gpt-5.6-luna",
     "reason": "context_too_large",
     "rows": [],
     "runRevision": "<revision>",
