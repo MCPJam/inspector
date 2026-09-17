@@ -139,7 +139,15 @@ describe("swarm runner — rubric grading hook", () => {
     expect(runSwarmChecksMock).toHaveBeenCalledTimes(1);
   });
 
-  it("does NOT grade a rate-limited attempt — no session, no transcript", async () => {
+  it("DOES grade a rate-limited attempt — the claim refuses empty transcripts", async () => {
+    // This pins the opposite of what it used to. The guard was
+    // `hasRubric && terminal.status !== "rate_limited"`, on the reasoning that
+    // a rate-limited attempt never produced a session; #5248 dropped the
+    // status half deliberately, because a 429 can land MID-CONVERSATION and
+    // that transcript is worth grading. What stops an empty one being scored
+    // is now the claim itself, which refuses a transcript with nothing in it —
+    // one guard in the layer that can actually see the transcript, rather than
+    // a proxy for it up here.
     runSyntheticHostSessionMock.mockResolvedValue({
       outcome: "rate_limited",
       errorMessage: "429 from provider",
@@ -147,7 +155,7 @@ describe("swarm runner — rubric grading hook", () => {
 
     await startJourneyRun(baseOpts());
 
-    expect(runSwarmChecksMock).not.toHaveBeenCalled();
+    expect(runSwarmChecksMock).toHaveBeenCalledTimes(1);
   });
 
   it("does not call the grader at all when the run has no rubric", async () => {
