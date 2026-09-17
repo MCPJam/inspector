@@ -3,12 +3,15 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { IterationDetails } from "../iteration-details";
 import type { EvalCase, EvalIteration } from "../types";
 
-const { mockGetBlob, mockJsonEditor } = vi.hoisted(() => ({
+const { mockGetBlob, mockJsonEditor, mockCopy } = vi.hoisted(() => ({
+  mockCopy: vi.fn().mockResolvedValue(true),
   mockGetBlob: vi.fn(),
   mockJsonEditor: vi.fn((props: any) => (
     <div data-testid="json-editor">{JSON.stringify(props.value)}</div>
   )),
 }));
+
+vi.mock("@/lib/clipboard", () => ({ copyToClipboard: (...args: unknown[]) => mockCopy(...args) }));
 
 const expectedToolCalls = [
   {
@@ -51,15 +54,19 @@ vi.mock("../trial-judge-review", () => ({
 
 vi.mock("../trace-viewer", () => ({
   TraceViewer: (props: {
+    hostSnapshot?: { hostStyle: string } | null;
     chromeDensity?: string;
     fillContent?: boolean;
+    frame?: string;
     expectedToolCalls?: unknown[];
     actualToolCalls?: unknown[];
   }) => (
     <div
       data-testid="mock-trace-viewer"
+      data-host-style={props.hostSnapshot?.hostStyle}
       data-chrome-density={props.chromeDensity ?? "default"}
       data-fill-content={String(props.fillContent ?? false)}
+      data-frame={props.frame}
       data-expected-tool-count={String(props.expectedToolCalls?.length ?? 0)}
       data-actual-tool-count={String(props.actualToolCalls?.length ?? 0)}
     />
@@ -187,6 +194,7 @@ describe("IterationDetails full layout (trace-first)", () => {
 
     expect(viewer).toHaveAttribute("data-chrome-density", "compact");
     expect(viewer).toHaveAttribute("data-fill-content", "true");
+    expect(viewer).toHaveAttribute("data-frame", "none");
     expect(viewer).toHaveAttribute("data-expected-tool-count", "1");
     expect(viewer).toHaveAttribute("data-actual-tool-count", "1");
 
@@ -339,4 +347,53 @@ describe("IterationDetails judge review gate", () => {
       screen.getByText(/The answer never named the file/),
     ).toBeInTheDocument();
   });
+});
+
+describe("IterationDetails host presentation", () => {
+  beforeEach(() => {
+    mockGetBlob.mockResolvedValue({
+      messages: [{ role: "user", content: "hello" }],
+    });
+  });
+
+  it("passes the run host snapshot to the viewer", async () => {
+    render(
+      <IterationDetails
+        iteration={{ ...iteration, blob: "host-trace" }}
+        testCase={testCase}
+        layoutMode="full"
+        hostSnapshot={{ hostStyle: "chatgpt" }}
+      />,
+    );
+    expect(await screen.findByTestId("mock-trace-viewer")).toHaveAttribute(
+      "data-host-style",
+      "chatgpt",
+    );
+  });
+
+  it("does not substitute generic chat for an unavailable required run config", async () => {
+    render(
+      <IterationDetails
+        iteration={{ ...iteration, blob: "host-trace" }}
+        testCase={testCase}
+        layoutMode="full"
+        hostSnapshot={null}
+      />,
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Could not load this run's host configuration.",
+    );
+    expect(screen.queryByTestId("mock-trace-viewer")).not.toBeInTheDocument();
+  });
+});
+
+it("shows a timeout summary and retains worker diagnostics in the disclosure", async () => {
+  render(<IterationDetails iteration={{ ...iteration, status: "timed_out", result: "timed_out",
+    error: "Worker heartbeat lost.", errorDetails: '{"worker":"stopped"}' }} testCase={testCase} />);
+  expect(screen.getByText("Run timed out")).toBeInTheDocument();
+  expect(screen.queryByText(/Worker heartbeat lost/)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Show details" }));
+  expect(screen.getByText(/Worker heartbeat lost/)).toHaveTextContent('"worker": "stopped"');
+  fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+  await waitFor(() => expect(mockCopy).toHaveBeenCalledWith(expect.stringContaining("Worker heartbeat lost.")));
 });

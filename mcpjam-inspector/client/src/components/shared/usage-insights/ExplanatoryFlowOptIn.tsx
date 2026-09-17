@@ -40,8 +40,16 @@ import {
 export function ExplanatoryFlowOptIn({
   scope,
   stageTitles,
-  /** What the reader is being asked to spend on, in their own terms. */
-  costLabel = "Reading these traces costs credits.",
+  /**
+   * What the reader is agreeing to, in their own terms.
+   *
+   * The default no longer names a price, because there is not one: reading
+   * these traces is platform-paid. It still asks first — the analysis is a
+   * model pass over the reader's session traces, and it draws on a bounded
+   * daily quota, so a panel that subscribed on mount would consume somebody
+   * else's quota for a tab they merely opened.
+   */
+  costLabel = "Included with MCPJam — no credits are consumed.",
   className,
 }: {
   /**

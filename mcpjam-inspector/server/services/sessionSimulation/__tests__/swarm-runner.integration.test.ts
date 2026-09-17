@@ -102,6 +102,7 @@ vi.mock("../../swarm-agent.js", async () => {
   );
   return {
     ...actual,
+    reportTargetGrounding: vi.fn(async () => ({})),
     reportAttempt: (...args: unknown[]) => {
       callOrder.push(`attempt:${(args[2] as any).status}`);
       return reportAttemptMock(...args);

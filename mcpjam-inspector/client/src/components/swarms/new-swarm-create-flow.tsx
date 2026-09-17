@@ -208,7 +208,11 @@ export type CreateSwarmDraft = {
   name: string;
   description?: string;
   environmentIds?: string[];
-  config: { sessionsPerTarget: number; maxTurns: number };
+  config: {
+    sessionsPerTarget: number;
+    maxTurns: number;
+    setupWrites?: boolean;
+  };
   judgeConfig?: GoalJudgeConfig;
   rubric?: ReturnType<typeof serializeRubricForWire>;
   /** The launch wave this swarm names — see `swarmRunGroupId` on the runs. */
@@ -230,7 +234,11 @@ export type CreateJourneyDraft = {
   goal: string;
   hostIds: string[];
   environmentIds: string[];
-  config: { sessionsPerTarget: number; maxTurns: number };
+  config: {
+    sessionsPerTarget: number;
+    maxTurns: number;
+    setupWrites?: boolean;
+  };
   judgeConfig?: GoalJudgeConfig;
   rubric?: ReturnType<typeof serializeRubricForWire>;
   /** Authoring provenance — the swarm this journey is created in. */
@@ -1226,6 +1234,7 @@ export function NewSwarmCreateFlow({
               config: {
                 sessionsPerTarget: DEFAULT_SWARM_ITERATIONS,
                 maxTurns: preset.maxTurns,
+                setupWrites: true,
               },
               ...(payload.judgeConfig
                 ? { judgeConfig: payload.judgeConfig }
@@ -1367,6 +1376,7 @@ export function NewSwarmCreateFlow({
                       iterationsByPersona[persona.key] ??
                       DEFAULT_SWARM_ITERATIONS,
                     maxTurns: preset.maxTurns,
+                    setupWrites: true,
                   },
                   ...(payload.judgeConfig
                     ? { judgeConfig: payload.judgeConfig }

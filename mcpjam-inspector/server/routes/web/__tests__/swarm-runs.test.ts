@@ -3,12 +3,19 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createWebTestApp, postJson, expectJson } from "./helpers/test-app.js";
 import { SwarmAgentError } from "../../../services/swarm-agent.js";
+import { ErrorCode, WebRouteError } from "../errors.js";
 
 const ORIGINAL_CONVEX_HTTP_URL = process.env.CONVEX_HTTP_URL;
 
 const createJourneyRunMock = vi.fn();
 const startJourneyRunMock = vi.fn();
 const createAuthorizedManagerMock = vi.fn();
+const backgroundBearerMock = vi.fn();
+
+vi.mock("../../../utils/v1-convex-token.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../../../utils/v1-convex-token.js")>(),
+  getBackgroundRunBearerForRequest: (...args: unknown[]) => backgroundBearerMock(...args),
+}));
 
 vi.mock("../../../services/swarm-agent.js", async () => {
   const actual =
@@ -87,6 +94,7 @@ describe("web routes — swarm single-host launch", () => {
   beforeEach(() => {
     process.env.CONVEX_HTTP_URL = "https://test-deployment.convex.site";
     createJourneyRunMock.mockReset();
+    backgroundBearerMock.mockReset().mockResolvedValue(async () => token);
     startJourneyRunMock.mockReset().mockResolvedValue(undefined);
     createAuthorizedManagerMock.mockReset().mockResolvedValue({
       // `listTools` is the readiness barrier the journey launcher awaits
@@ -155,6 +163,15 @@ describe("web routes — swarm single-host launch", () => {
       "host-1",
       "host-2",
     ]);
+  });
+
+  it("does not create an orphaned run if background authorization fails", async () => {
+    backgroundBearerMock.mockRejectedValueOnce(new WebRouteError(403, ErrorCode.FORBIDDEN, "Delegation refused"));
+    const response = await postJson(app, "/api/web/swarm/journeys/journey-1/runs", { projectId: "proj-1", launchKey: "lk-auth-failure" }, token);
+    expect(response.status).toBe(403);
+    expect(backgroundBearerMock).toHaveBeenCalledWith(expect.anything(), "proj-1");
+    expect(createJourneyRunMock).not.toHaveBeenCalled();
+    expect(startJourneyRunMock).not.toHaveBeenCalled();
   });
 
   it("acknowledges a DEDUPED launch (launchKey replay) without starting a second runner", async () => {

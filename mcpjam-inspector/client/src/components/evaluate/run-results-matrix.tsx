@@ -19,6 +19,7 @@ import {
   SheetTitle,
 } from "@mcpjam/design-system/sheet";
 import { cn } from "@mcpjam/design-system/cn";
+import { hostSnapshotFromStyle } from "@/lib/host-snapshot";
 import { resolveHostLogoByName } from "@/lib/host-logo";
 import {
   average,
@@ -29,6 +30,7 @@ import {
   iterationLatencyP50,
   iterationLatencyP95,
   runClientLogo,
+  runClientIdentity,
 } from "../evals/helpers";
 import { usePreferencesStoreWithDefaults } from "@/stores/preferences/preferences-provider";
 import { formatRunCaseLatencyMs } from "../evals/run-case-groups";
@@ -907,6 +909,9 @@ function IterationDrawer({
       </SheetHeader>
       <div className="min-h-0 flex-1 overflow-y-auto p-6">
         <IterationDetails
+          hostSnapshot={hostSnapshotFromStyle(
+            runClientIdentity(target.run).hostStyle,
+          )}
           iteration={iteration}
           testCase={null}
           layoutMode="full"
@@ -920,6 +925,7 @@ function IterationDrawer({
                   steps={authored.steps}
                   chain={decisionChain}
                   envelope={context.envelope}
+                  trace={context.trace}
                   scoresSection={context.scoresSection}
                   judgeHidden={context.judgeHidden}
                 />

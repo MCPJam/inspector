@@ -1045,6 +1045,11 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
     await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
+    expect(createSwarmMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({ setupWrites: true }),
+      }),
+    );
     expect(createPersonaMock).toHaveBeenCalledTimes(2);
     expect(createPersonaMock.mock.calls[0][0]).toMatchObject({
       projectId: "proj-1",
@@ -1060,7 +1065,7 @@ describe("SwarmsTab — New swarm create flow", () => {
       name: "Refund a charge",
       goal: "Refund the charge",
       environmentIds: ["env-1"],
-      config: { sessionsPerTarget: 1, maxTurns: 6 },
+      config: { sessionsPerTarget: 1, maxTurns: 6, setupWrites: true },
     });
     // Grading is opt-in: an untouched launch stamps no rubric and no judge.
     expect(

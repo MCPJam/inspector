@@ -1,3 +1,4 @@
+import type { GroundingReport } from "../../shared/swarm-grounding";
 import type { Harness } from "@mcpjam/sdk";
 import type {
   HostConfigMcpProfileV1,
@@ -195,6 +196,7 @@ export interface JourneyCriterion {
 }
 
 export interface JourneySnapshot {
+  setupWrites?: boolean;
   hosts: PinnedHostExecutionSpec[];
   personaSnapshot: PersonaSnapshot;
   goal?: string;
@@ -752,12 +754,24 @@ export async function failSwarmChecks(
   }
 }
 
+type JourneyHeartbeatStatus =
+  | "running"
+  | "completed"
+  | "partial"
+  | "failed"
+  | "rate_limited"
+  | "missing";
+
 export async function heartbeatJourneyRun(
   convexHttpUrl: string,
   bearer: string,
   args: { projectId: string; runId: string },
-): Promise<void> {
-  const data = await postJson<{ ok?: boolean; error?: string }>(
+): Promise<JourneyHeartbeatStatus | undefined> {
+  const data = await postJson<{
+    ok?: boolean;
+    error?: string;
+    status?: JourneyHeartbeatStatus;
+  }>(
     `${convexHttpUrl}/journey-execution/runs/heartbeat`,
     bearer,
     { projectId: args.projectId, runId: args.runId },
@@ -770,6 +784,22 @@ export async function heartbeatJourneyRun(
       }`,
     );
   }
+  // Older backends only acknowledge the heartbeat. Missing status must not
+  // cancel a healthy run during a rolling upgrade.
+  if (
+    data.status !== undefined &&
+    ![
+      "running",
+      "completed",
+      "partial",
+      "failed",
+      "rate_limited",
+      "missing",
+    ].includes(data.status)
+  ) {
+    throw new Error("Invalid run status in backend heartbeat response");
+  }
+  return data.status;
 }
 
 /**
@@ -875,4 +905,26 @@ export async function swarmPersonaNextTurn(
     message: data.message,
     endSession: data.endSession === true,
   };
+}
+
+/** Old backends have no grounding route; discovery remains optional. */
+export async function reportTargetGrounding(
+  baseUrl: string,
+  bearer: string,
+  body: GroundingReport,
+  signal?: AbortSignal,
+): Promise<{ unavailable?: boolean }> {
+  try {
+    return await postJson(
+      `${baseUrl}/journey-execution/runs/grounding`,
+      bearer,
+      body,
+      LLM_TIMEOUT_MS,
+      signal,
+    );
+  } catch (error) {
+    if (error instanceof SwarmAgentError && error.status === 404)
+      return { unavailable: true };
+    throw error;
+  }
 }

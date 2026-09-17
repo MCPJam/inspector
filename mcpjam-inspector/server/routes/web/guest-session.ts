@@ -9,7 +9,7 @@ import {
   type GuestSessionFetchContext,
   type GuestSessionRequestBody,
 } from "../../utils/guest-session-source.js";
-import { getClientIp } from "../../utils/client-ip.js";
+import { getSpendClientIp } from "../../utils/client-ip.js";
 import { hashGuestSpendIp } from "../../utils/guest-spend-ip.js";
 import {
   GUEST_SESSION_COOKIE_NAME,
@@ -66,7 +66,7 @@ function parseRequestBody(raw: unknown): GuestSessionRequestBody {
  * Rate limited to 10 requests per minute per IP.
  */
 guestSession.post("/", async (c) => {
-  const ip = getClientIp(c);
+  const ip = getSpendClientIp(c);
   if (!ip && process.env.NODE_ENV === "production") {
     return c.json(
       {
@@ -102,7 +102,7 @@ guestSession.post("/", async (c) => {
   // guest's session row. Lets the credit-balance display reflect the
   // per-IP cap on the very first load after a cookie clear, before any
   // /stream call has run.
-  const clientIp = getClientIp(c);
+  const clientIp = getSpendClientIp(c);
   const ipHash = clientIp ? await hashGuestSpendIp(clientIp) : null;
 
   const context: GuestSessionFetchContext = {
@@ -252,7 +252,7 @@ guestSession.post("/revoke", async (c) => {
  * route so a stolen secret cannot be used to flood the upstream.
  */
 guestSession.post("/promotion-proof", async (c) => {
-  const ip = getClientIp(c);
+  const ip = getSpendClientIp(c);
   if (!ip && process.env.NODE_ENV === "production") {
     return c.json(
       {

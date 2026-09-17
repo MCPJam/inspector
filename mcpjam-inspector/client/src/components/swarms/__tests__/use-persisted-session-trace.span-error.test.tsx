@@ -19,7 +19,22 @@ const { mockHydrate, mockTraces, STABLE_THREAD } = vi.hoisted(() => ({
   // OBJECT. The real Convex hook holds a reference across renders; a fresh
   // literal per render would re-run the effect forever and the loop would be
   // the mock's, not the hook's.
-  STABLE_THREAD: { messagesBlobUrl: "https://storage.example.com/t.json" },
+  STABLE_THREAD: {
+    messagesBlobUrl: "https://storage.example.com/t.json",
+    recordedContext: {
+      modelId: "model-at-run-time",
+      toolSnapshots: [
+        {
+          hash: "frozen",
+          snapshot: {
+            servers: [
+              { serverId: "recorded-server", tools: [{ name: "search" }] },
+            ],
+          },
+        },
+      ],
+    },
+  },
 }));
 
 vi.mock("@/hooks/useSharedChatThreads", () => ({
@@ -67,6 +82,12 @@ beforeEach(() => {
 });
 
 describe("usePersistedSessionTrace — span load failures", () => {
+  it("includes the archived context in Raw without reconstructing it from messages", async () => {
+    mockHydrate.mockResolvedValue([]);
+    render(<Probe threadId="t1" />);
+    await waitFor(() => expect(last?.trace).not.toBeNull());
+    expect(last?.trace?.recordedContext).toEqual(STABLE_THREAD.recordedContext);
+  });
   it("reports a total span failure even though the transcript loaded", async () => {
     // The case a single `error` slot swallowed: `trace` is non-null because
     // the messages arrived, so a caller that only renders `error` in its
@@ -124,7 +145,7 @@ describe("usePersistedSessionTrace — span load failures", () => {
     render(<Probe threadId="t1" />);
 
     await waitFor(() =>
-      expect(last?.spanError).toMatch(/could not load the recorded trace/i)
+      expect(last?.spanError).toMatch(/could not load the recorded trace/i),
     );
   });
 });

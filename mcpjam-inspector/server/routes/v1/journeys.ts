@@ -59,7 +59,7 @@ import { v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexWriteError } from "./convex-errors.js";
 import { translateConvexReadError } from "./convex-read-errors.js";
 import { launchJourneyRun } from "../../services/sessionSimulation/launch-journey-run.js";
-import { getConvexBearerThunkForRequest } from "../../utils/v1-convex-token.js";
+import { getBackgroundRunBearerForRequest } from "../../utils/v1-convex-token.js";
 import { resolveXaaIssuer } from "../../services/xaa-mint.js";
 import { callerContextFromHono } from "../web/auth.js";
 import { HOSTED_MODE } from "../../config.js";
@@ -128,7 +128,9 @@ type JourneyRow = {
   hostIds?: string[];
   serverAttachmentId: string | null;
   environmentIds: string[] | null;
-  config: { sessionsPerTarget?: number; maxTurns?: number } | undefined;
+  config:
+    | { sessionsPerTarget?: number; maxTurns?: number; setupWrites?: boolean }
+    | undefined;
   judgeConfig?: unknown;
   rubric?: unknown;
   createdAt: number;
@@ -168,6 +170,7 @@ type JourneyRunRow = {
     personaSnapshot?: { personaId?: string; name?: string; role?: string };
     sessionsPerTarget?: number;
     maxTurns?: number;
+    setupWrites?: boolean;
   };
   attempts?: Array<{
     chatSessionId: string | null;
@@ -221,6 +224,7 @@ function toJourneyDto(row: JourneyRow) {
       : {}),
     sessionsPerTarget: row.config?.sessionsPerTarget ?? null,
     maxTurns: row.config?.maxTurns ?? null,
+    setupWrites: row.config?.setupWrites ?? false,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -364,6 +368,7 @@ const journeyConfigFields = {
   sessionsPerTarget: z.number().int().min(1).max(100),
   /** Cap on assistant turns per session. */
   maxTurns: z.number().int().min(1).max(200),
+  setupWrites: z.boolean().optional(),
 };
 
 const createJourneySchema = z.strictObject({
@@ -407,6 +412,7 @@ const updateJourneySchema = z
     hostIds: z.array(z.string().min(1)).optional(),
     sessionsPerTarget: journeyConfigFields.sessionsPerTarget.optional(),
     maxTurns: journeyConfigFields.maxTurns.optional(),
+    setupWrites: journeyConfigFields.setupWrites,
   })
   .refine((value) => Object.keys(value).length > 0, {
     message: "Provide at least one journey field to update.",
@@ -414,14 +420,16 @@ const updateJourneySchema = z
   .refine(
     (value) =>
       (value.sessionsPerTarget === undefined) ===
-      (value.maxTurns === undefined),
+        (value.maxTurns === undefined) &&
+      (value.setupWrites === undefined ||
+        value.sessionsPerTarget !== undefined),
     {
       // Convex takes `config` as one object, so a partial update would have to
       // read-modify-write it — and a concurrent edit between the read and the
       // write would be silently clobbered. Requiring both is a 400 the caller
       // can fix, rather than a lost update they never see.
       message:
-        "sessionsPerTarget and maxTurns must be updated together — they are one execution config upstream.",
+        "sessionsPerTarget and maxTurns must be updated together; setupWrites requires that pair.",
     },
   );
 
@@ -653,6 +661,9 @@ journeys.post("/projects/:projectId/journeys", async (c) => {
         config: {
           sessionsPerTarget: body.sessionsPerTarget,
           maxTurns: body.maxTurns,
+          ...(body.setupWrites !== undefined
+            ? { setupWrites: body.setupWrites }
+            : {}),
         },
         ...(idempotencyKey ? { idempotencyKey } : {}),
       } as never,
@@ -700,6 +711,9 @@ journeys.patch("/projects/:projectId/journeys/:journeyId", async (c) => {
               config: {
                 sessionsPerTarget: body.sessionsPerTarget,
                 maxTurns: body.maxTurns,
+                ...(body.setupWrites !== undefined
+                  ? { setupWrites: body.setupWrites }
+                  : {}),
               },
             }
           : {}),
@@ -945,7 +959,7 @@ journeys.post("/projects/:projectId/journeys/:journeyId/runs", async (c) => {
         bearerToken: await getConvexBearerForRequest(c),
         // A THUNK for the detached runner. The launch outlives the delegated
         // JWT that authorized it; see `launch-journey-run.ts`.
-        getRunBearer: getConvexBearerThunkForRequest(c),
+        getRunBearer: await getBackgroundRunBearerForRequest(c, projectId),
         // Both read the LIVE request and must be resolved before the 202.
         xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
         callerContext: callerContextFromHono(c),

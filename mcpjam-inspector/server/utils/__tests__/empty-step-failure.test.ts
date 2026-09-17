@@ -10,16 +10,21 @@
  * `newMessages.length === 0` and reported "Backend step returned no content
  * (stream error or empty response)" with no cause attached.
  *
- * The cause was on the wire the whole time. `@ai-sdk/google` maps Google's
- * `MALFORMED_FUNCTION_CALL` to `finishReason: "error"` with no parts and NO
- * throw, and `SAFETY` / `RECITATION` to `"content-filter"` the same way — so
- * the finish chunk distinguishes "the provider rejected its own tool call"
- * from "a safety filter fired" from "the provider just returned nothing",
- * which are three different problems with three different remedies.
+ * A normalized finish reason is evidence, not a provider diagnostic. In
+ * particular, `error` alone cannot identify a malformed function call or
+ * attribute the failure to a particular model tier or schema size.
  *
  * These drive the real engine through its public entry point, because the
  * mis-stamping lived in the branch itself; a test mocking one layer up passes
  * with the bug fully present.
+ *
+ * ONE CASE IS NOT A FAILURE, and the second describe block pins it: a model
+ * that already settled a tool call THIS TURN and then closes with a clean
+ * `stop` has chosen to let the tool's output be the answer, which is ordinary
+ * for an MCP App host whose widget already rendered. The rule the whole file
+ * defends is therefore "an empty step that never ACTED is a failure" — the
+ * carve-out is scoped by finish reason, by prompt, and by whether the tool
+ * actually came back, so none of the cases above lose their error.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -99,7 +104,10 @@ const sseOf = (events: unknown[]) =>
     { status: 200, headers: { "Content-Type": "text/plain; charset=utf-8" } },
   );
 
-async function runTurn(chunks: unknown[]): Promise<{
+async function runTurn(
+  chunks: unknown[],
+  messages: unknown[] = [{ role: "user", content: "Hi." }],
+): Promise<{
   events: EngineErrorEvent[];
   spans: EvalTraceSpan[];
   settledWithError: boolean[];
@@ -109,7 +117,7 @@ async function runTurn(chunks: unknown[]): Promise<{
   let spans: EvalTraceSpan[] = [];
   global.fetch = vi.fn().mockResolvedValue(sseOf(chunks));
   await handleMCPJamFreeChatModel({
-    messages: [{ role: "user", content: "Hi." }] as any,
+    messages: messages as any,
     modelId: "google/gemini-2.5-flash-lite",
     systemPrompt: "You are helpful",
     tools: {},
@@ -155,7 +163,8 @@ describe("an empty model step fails instead of passing as an ok step", () => {
 
     expect(events).toHaveLength(1);
     expect(events[0].message).toContain("finishReason: error");
-    expect(events[0].message).toContain("MALFORMED_FUNCTION_CALL");
+    expect(events[0].message).toContain("underlying cause was not recorded");
+    expect(events[0].message).not.toMatch(/MALFORMED_FUNCTION_CALL|cheaper|schemas/);
     expect(events[0].code).toBe("provider_empty_response");
     // The stream responded in full; only its content was missing. `setup`
     // here would file our own preparation bug as the provider's.
@@ -226,6 +235,125 @@ describe("an empty model step fails instead of passing as an ok step", () => {
     expect(events).toHaveLength(0);
     expect(settledWithError).toEqual([false]);
     expect(spans.find((span) => span.category === "step")?.status).toBe("ok");
+  });
+});
+
+/**
+ * ...but a model that already ACTED this turn is allowed to stop talking.
+ *
+ * Measured on staging: `gpt-5.6-luna` on the ChatGPT host profile called
+ * `create_view`, the widget rendered (0 console errors), and the next step
+ * closed with `stop` and nothing in it — 22 of 215 trials, while haiku,
+ * sonnet, grok, glm and terra did it on none of ~600. The tool output IS the
+ * answer for an MCP App host, so failing the trial hid a scorecard whose tool
+ * stages had all passed behind a red box blaming a "provider hiccup".
+ *
+ * The seeded history is also the RESUMED-turn shape: `promptMessageStartIndex`
+ * sits just after the last user message, so these steps start at a non-zero
+ * `stepIndex`. That is exactly why the carve-out reads the messages rather
+ * than `stepIndex > 0` (non-zero on a resume before anything ran this process)
+ * or `traceTurn.turnSpans` (empty on a resume).
+ */
+describe("a quiet finish after settled tool work ends the turn normally", () => {
+  const originalFetch = global.fetch;
+
+  /** user → assistant tool-call → tool result. `output` shape per
+   *  `buildMcpToolResultMessage`: a real reply is `content`, never `error-`. */
+  const historyWithToolResult = (
+    output: Record<string, unknown> = { type: "content", value: [] },
+  ) => [
+    { role: "user", content: "Draw three boxes." },
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "tool-call",
+          toolCallId: "call_1",
+          toolName: "create_view",
+          input: {},
+        },
+      ],
+    },
+    {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: "call_1",
+          toolName: "create_view",
+          output,
+        },
+      ],
+    },
+  ];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    lastExecution = null;
+    process.env.CONVEX_HTTP_URL = "https://test-convex.example.com";
+    vi.mocked(hasUnresolvedToolCalls).mockReturnValue(false);
+    vi.mocked(executeToolCallsFromMessages).mockResolvedValue([]);
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    delete process.env.CONVEX_HTTP_URL;
+  });
+
+  it("passes a `stop` with no content when a tool already settled", async () => {
+    const { events, spans, settledWithError } = await runTurn(
+      [finishChunk("stop")],
+      historyWithToolResult(),
+    );
+
+    expect(events).toHaveLength(0);
+    expect(settledWithError).toEqual([false]);
+    expect(spans.find((span) => span.category === "step")?.status).toBe("ok");
+    expect(spans.some((span) => span.category === "error")).toBe(false);
+  });
+
+  it("still fails `error`, so the carve-out keys on the finish reason and not on having run a tool", async () => {
+    const { events, settledWithError } = await runTurn(
+      [finishChunk("error")],
+      historyWithToolResult(),
+    );
+
+    expect(events).toHaveLength(1);
+    expect(events[0].code).toBe("provider_empty_response");
+    expect(settledWithError).toEqual([true]);
+  });
+
+  it("still fails `tool-calls`, which is the provider contradicting itself rather than choosing silence", async () => {
+    const { events, settledWithError } = await runTurn(
+      [finishChunk("tool-calls")],
+      historyWithToolResult(),
+    );
+
+    expect(events).toHaveLength(1);
+    expect(settledWithError).toEqual([true]);
+  });
+
+  it("still fails when the only tool ERRORED — trying to act and being refused is not acting", async () => {
+    // Same shape an auto-denied tool produces, so "every tool was denied, then
+    // the model said nothing" keeps its error instead of reading as a finish.
+    const { events, settledWithError } = await runTurn(
+      [finishChunk("stop")],
+      historyWithToolResult({ type: "error-text", value: "boom" }),
+    );
+
+    expect(events).toHaveLength(1);
+    expect(events[0].code).toBe("provider_empty_response");
+    expect(settledWithError).toEqual([true]);
+  });
+
+  it("still fails a `stop` in a turn that never called a tool", async () => {
+    // The floor of the guard, and the case most at risk of over-reach: no
+    // widget, no tool result, nothing standing in for an answer.
+    const { events, settledWithError } = await runTurn([finishChunk("stop")]);
+
+    expect(events).toHaveLength(1);
+    expect(events[0].message).toContain("finishReason: stop");
+    expect(settledWithError).toEqual([true]);
   });
 });
 
