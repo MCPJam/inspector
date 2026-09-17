@@ -189,7 +189,7 @@ interface TopicMapPanelProps {
   filter: UsageFilterState;
   onToggleChip: (chip: UsageFilterChip) => void;
   onClearChip: (key: string) => void;
-  onRebuild: () => void;
+  onRebuild: (args?: { force?: boolean }) => void;
   rebuildBusy?: boolean;
   /** Open the clicked node's session in the Sessions tab. */
   onOpenSession?: (sessionId: string) => void;
@@ -1382,7 +1382,7 @@ export function TopicMapPanel({
             type="button"
             variant="outline"
             disabled={rebuildBusy}
-            onClick={() => onRebuild()}
+            onClick={() => onRebuild({ force: true })}
           >
             <RefreshCw className="mr-2 h-3.5 w-3.5" />
             Re-analyze
@@ -1521,7 +1521,7 @@ export function TopicMapPanel({
                   size="icon"
                   aria-label="Re-analyze"
                   disabled={rebuildBusy}
-                  onClick={() => onRebuild()}
+                  onClick={() => onRebuild({ force: true })}
                 >
                   <RefreshCw
                     className={cn("h-3.5 w-3.5", analyzing && "animate-spin")}

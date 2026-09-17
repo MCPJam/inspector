@@ -471,7 +471,7 @@ describe("TopicMapPanel", () => {
   // There are two rebuild buttons and they need a test each: this one renders
   // with `snapshot: null`, and the map-header button lives inside a branch that
   // dereferences `snapshot.stats`, so it cannot appear here.
-  it("rebuilds from the empty state with no arguments", async () => {
+  it("rebuilds from the empty state with an explicit cached refresh", async () => {
     const user = userEvent.setup();
     const onRebuild = vi.fn();
     mockUseScenarioTopicMap.mockReturnValue({
@@ -493,12 +493,12 @@ describe("TopicMapPanel", () => {
 
     await user.click(screen.getByRole("button", { name: /Re-analyze/ }));
     expect(onRebuild).toHaveBeenCalledTimes(1);
-    expect(onRebuild.mock.calls[0]).toEqual([]);
+    expect(onRebuild.mock.calls[0]).toEqual([{ force: true }]);
   });
 
   // The second call site: the rebuild control in the map header, which only
   // renders once a snapshot exists.
-  it("rebuilds from the map header with no arguments", async () => {
+  it("rebuilds from the map header with an explicit cached refresh", async () => {
     const user = userEvent.setup();
     const onRebuild = vi.fn();
     mockUseScenarioTopicMap.mockReturnValue(
@@ -517,7 +517,7 @@ describe("TopicMapPanel", () => {
 
     await user.click(screen.getByRole("button", { name: /Re-analyze/ }));
     expect(onRebuild).toHaveBeenCalledTimes(1);
-    expect(onRebuild.mock.calls[0]).toEqual([]);
+    expect(onRebuild.mock.calls[0]).toEqual([{ force: true }]);
   });
 
   it("renders cluster list with summaries in the sidebar", () => {
