@@ -4,6 +4,7 @@ import {
   fetchPinnedSkill,
   PinnedSkillIntegrityError,
   reportAttempt,
+  heartbeatJourneyRun,
 } from "../swarm-agent.js";
 import { runnerCapabilities } from "../evals/runner-capabilities.js";
 
@@ -19,6 +20,47 @@ import { runnerCapabilities } from "../evals/runner-capabilities.js";
  */
 
 const CONVEX_HTTP_URL = "https://test-deployment.convex.site";
+
+describe("swarm-agent heartbeat — backend lifecycle response", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it.each([
+    "running",
+    "failed",
+    "completed",
+    "partial",
+    "rate_limited",
+    "missing",
+    undefined,
+  ])(
+    "preserves status %s so the runner can stop when Convex ends the run",
+    async (status) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(Response.json({ ok: true, status })),
+      );
+      expect(
+        await heartbeatJourneyRun(CONVEX_HTTP_URL, "token", {
+          projectId: "proj-1",
+          runId: "run-1",
+        }),
+      ).toBe(status);
+    },
+  );
+
+  it("rejects an unrecognized status instead of stopping a healthy run", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(Response.json({ ok: true, status: "unexpected" })),
+    );
+    await expect(
+      heartbeatJourneyRun(CONVEX_HTTP_URL, "token", {
+        projectId: "proj-1",
+        runId: "run-1",
+      }),
+    ).rejects.toThrow("Invalid run status");
+  });
+});
 
 function okCreateResponse() {
   return {

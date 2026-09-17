@@ -25,6 +25,13 @@
     "| summarize Paths = dcount(tostring(['data.function.path']))"
   ],
   "description": [
+    "PAGE — owner: marcelo. More than 25 DISTINCT Convex function paths failed with EMPTY arguments in 15 minutes: someone is walking the API surface, not an app bug.",
+    "",
+    "TRIAGE: ['mcpjam-backend-prod'] | where tostring(['data.topic']) == 'function_execution' and tostring(['data.status']) == 'failure' | extend ab = todouble(['data.usage.function_args_bytes']) | summarize N = count(), Paths = dcount(tostring(['data.function.path'])), Empty = countif(ab <= 8) by bin(_time, 5m) | sort by _time desc — Paths ≈ N and Empty ≈ N confirms enumeration.",
+    "",
+    "Attribute via Sentry `user` / `user.ip`, contain by the caller's session (Cloudflare never sees *.convex.cloud), then run the authz audit. Playbook: `convex-api-scan-response` skill."
+  ],
+  "rationale": [
     "PAGE — owner: marcelo. More than 25 DISTINCT Convex function paths failed with EMPTY arguments in 15 minutes. That is somebody walking the API surface, not an application bug.",
     "",
     "WHY EMPTY ARGS IS THE PREDICATE, not the error text. An enumerator calls every name it has with `{}` to learn which exist and what they take, so its calls carry ~4 argument bytes and touch each path exactly once. Real breakage is the opposite shape: a handful of paths, many times, with real arguments. Counting distinct paths alone is NOT enough — on 2026-09-10T09:00Z a Convex concurrency saturation event ('limited to 256 concurrent querys') failed 47 distinct paths in one bin and would have paged this rule. Only 31% of that bin's calls had empty args, against 91-98% for the scan, so the empty-args filter separates the two cleanly and leaves capacity incidents to the monitors that own them.",
