@@ -14,18 +14,15 @@
  * Findings is the DEFAULT landing tab and landing on a tab must never start a
  * billed generation.
  *
- * It renders BESIDE the template, never instead of it. Lane A is prompted for
- * the Insights tab's recommendations rail, so it writes in the voice of a fix
- * ("The main fix is to…") and names no goal, persona or stage — promoting it
- * to the headline deletes the four answers this card owes the reader. It is
- * suppressed entirely on a wave that failed to launch: there is no session for
- * a model to have read, and it will cheerfully report that nothing is wrong.
+ * When present it is the summary headline — Lane A is already prompted as a
+ * suggested fix. It is suppressed entirely on a wave that failed to launch:
+ * there is no session for a model to have read, and it will cheerfully report
+ * that nothing is wrong.
  */
 import { useQuery } from "convex/react";
 import { useEffect, useCallback } from "react";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import type { ChatSessionStageFunnel } from "@/components/shared/user-value-chain/user-value-chain-types";
-import { SwarmReportPanel } from "../swarm-report-panel";
 
 import { useMemo, useState } from "react";
 import type { SwarmWaveSignals } from "@/lib/swarm-api";
@@ -113,9 +110,8 @@ export function SwarmFindingsTab({
         signals: waveSignals,
         hasGroupId: Boolean(wave.runs[0]?.swarmRunGroupId),
         launch: model.launch,
-        generatedSummary: recommendation !== null,
       }),
-    [waveSignals, wave.runs, model.launch, recommendation],
+    [waveSignals, wave.runs, model.launch],
   );
 
   // Keyed by name, not index: `deriveSwarmFindingsModel` sorts personas
@@ -176,15 +172,6 @@ export function SwarmFindingsTab({
           />
         ))}
       </ErrorBoundary>
-      <div className="space-y-2">
-        {wave.runs.map((run) => (
-          <SwarmReportPanel
-            key={run.runId}
-            report={run.report}
-            title={`${run.personaName} · ${run.journeyName ?? "Goal"}`}
-          />
-        ))}
-      </div>
       <FindingsSummaryCard
         sessionCount={model.sessionCount}
         summary={summary.lines}

@@ -355,10 +355,8 @@ export function deriveHonestyFootnotes(args: {
   hasGroupId: boolean;
   /** Wave launch outcomes. Absent on callers that predate the launch chips. */
   launch?: LaunchTotals;
-  /** The card is showing a model-written summary rather than the template. */
-  generatedSummary?: boolean;
 }): string[] {
-  const { signals, hasGroupId, launch, generatedSummary } = args;
+  const { signals, hasGroupId, launch } = args;
   const notes: string[] = [];
   if (!signals || !hasGroupId) {
     // Legacy wave (or a backend that has not answered): the deterministic
@@ -377,25 +375,11 @@ export function deriveHonestyFootnotes(args: {
       notes.push("Most sessions are unanalyzed — treat counts as partial");
     }
   }
-  // Partial launch. A wave where NOTHING launched says so in the summary
-  // itself, so a chip there would only repeat it; this is the mixed case,
-  // where the findings below silently cover fewer sessions than the header
-  // counts.
-  if (launch && launch.succeeded > 0) {
-    if (launch.failed > 0) {
-      notes.push(
-        `${launch.failed} of ${launch.total} sessions failed to launch; findings cover the sessions that ran`,
-      );
-    }
-    if (launch.rateLimited > 0) {
-      notes.push(`${plural(launch.rateLimited, "session")} rate limited`);
-    }
-  }
-  // The recommendation line is the only model-written text on this tab. Say
-  // so: the summary above it and every stage row below it are deterministic
-  // templates over counts.
-  if (generatedSummary) {
-    notes.push("Suggested fix is model-written — the findings are not");
+  // Partial launch. Failed-to-launch counts used to chip here; they repeated
+  // the header tally and are gone. Rate-limits stay — those do not already
+  // have a sentence on the card.
+  if (launch && launch.succeeded > 0 && launch.rateLimited > 0) {
+    notes.push(`${plural(launch.rateLimited, "session")} rate limited`);
   }
   return notes;
 }

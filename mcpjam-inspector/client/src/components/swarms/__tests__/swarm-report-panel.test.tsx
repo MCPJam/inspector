@@ -19,6 +19,11 @@ const verdict = (passed: boolean) =>
     grading: { state: "settled" },
   });
 describe("swarm reporting presentation", () => {
+  it("stays quiet when a run has no decision yet", () => {
+    const { container } = render(<SwarmReportPanel />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
   it("renders a passed goal independently from interrupted execution", () => {
     const v = verdict(true);
     expect(lifecycleChip(v.lifecycle).label).toBe("Broke");

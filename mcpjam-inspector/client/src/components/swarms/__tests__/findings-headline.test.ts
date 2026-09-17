@@ -471,16 +471,13 @@ describe("deriveHonestyFootnotes", () => {
     ).toEqual([]);
   });
 
-  it("chips a PARTIAL launch, where the findings quietly cover fewer sessions", () => {
+  it("chips rate limits on a partial launch, not the failed-to-launch tally", () => {
     const notes = deriveHonestyFootnotes({
       signals: signals(),
       hasGroupId: true,
       launch: { total: 9, succeeded: 6, failed: 3, rateLimited: 2 },
     });
-    expect(notes).toContain(
-      "3 of 9 sessions failed to launch; findings cover the sessions that ran",
-    );
-    expect(notes).toContain("2 sessions rate limited");
+    expect(notes).toEqual(["2 sessions rate limited"]);
   });
 
   it("does not chip a launch nothing survived — the summary already says it", () => {
@@ -491,16 +488,5 @@ describe("deriveHonestyFootnotes", () => {
         launch: { total: 9, succeeded: 0, failed: 9, rateLimited: 0 },
       }),
     ).toEqual([]);
-  });
-
-  it("marks the model-written line so the findings are not tarred with it", () => {
-    const notes = deriveHonestyFootnotes({
-      signals: signals(),
-      hasGroupId: true,
-      generatedSummary: true,
-    });
-    expect(notes).toEqual([
-      "Suggested fix is model-written — the findings are not",
-    ]);
   });
 });

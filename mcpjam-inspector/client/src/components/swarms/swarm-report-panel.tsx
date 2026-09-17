@@ -54,12 +54,7 @@ export function SwarmReportPanel({
   report?: SwarmReport;
   title?: string;
 }) {
-  if (!report)
-    return (
-      <p className="text-xs text-muted-foreground">
-        Run decision not available.
-      </p>
-    );
+  if (!report) return null;
   const badge = runVerdictBadge(report.verdict);
   const e = report.execution,
     g = report.goalGrading;
