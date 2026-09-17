@@ -244,7 +244,6 @@ export const JUDGE_MODE_WORD: Record<JudgeMode, string> = {
   automatic: "automatic",
   gating: "gating",
   unknown: "state unavailable",
-  paused: "paused",
 };
 
 export type ScorecardRow = {
@@ -558,7 +557,7 @@ export function judgeFacts(input: {
     suiteCriteriaCount,
     skippedForCase,
     runsForCase:
-      !["off", "unknown", "paused"].includes(suiteMode) && !skippedForCase,
+      !["off", "unknown"].includes(suiteMode) && !skippedForCase,
     rubricSource: deriveRubricSource({
       expectedOutput: input.expectedOutput,
       route: input.route,

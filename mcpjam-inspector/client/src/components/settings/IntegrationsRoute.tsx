@@ -15,6 +15,7 @@ import { useOrganizationQueries } from "@/hooks/useOrganizations";
 import { useOrgSlackSettings } from "@/hooks/useOrgSlackSettings";
 import { SettingsPageShell } from "./SettingsPageShell";
 import { useGithubChecksSettings } from "@/hooks/useGithubChecksSettings";
+import { useIntegrationsTabFlag } from "@/hooks/useIntegrationsTabEnabled";
 import { useDiscordAgentEnabled } from "@/hooks/useDiscordAgentEnabled";
 import { useTraceDestinationsEnabled } from "@/hooks/useTraceDestinationsEnabled";
 import {
@@ -33,10 +34,13 @@ import {
  * sentence about what the service does and its current state, and the
  * configuration itself lives on the service's own page.
  *
- * The TAB is unconditional — Slack exists for every org, so there is always at
- * least one card. The GITHUB CARD carries its own availability gate. That split
- * matters: gating the tab on GitHub would hide Slack from anyone without the
- * GitHub beta, which is the reachability bug in the other direction.
+ * The whole TAB sits behind `integrations-tab`, a beta gate on the container
+ * and nothing else. Inside it, each card still decides for itself: the GITHUB
+ * CARD carries its own availability gate, Discord and Observability their own
+ * flags, and Slack is unconditional — it exists for every org, so a flagged-in
+ * reader always sees at least one card. That split matters: gating the tab on
+ * GitHub would hide Slack from anyone without the GitHub beta, which is the
+ * reachability bug in the other direction.
  *
  * Slack is org-scoped, not per-project: notifications go to channels bound
  * from `organizations/:orgId/slack` (the Connections tab), which is also
@@ -341,6 +345,19 @@ export function IntegrationsRoute({
   const { isLoading: organizationsLoading } = useOrganizationQueries({
     isAuthenticated,
   });
+  // The tab is a beta gate over the whole page, not a card. The rail already
+  // hides the entry; this is the same decision applied to the URL, so a link
+  // kept from a flagged-out session lands on Settings rather than on a page
+  // that is supposed to be dark.
+  //
+  // The FLAG'S OWN loading state, not the rail's `=== true` reading of it. A
+  // redirect cannot be taken back, and every direct hit on this URL arrives
+  // before PostHog has answered — so `undefined` waits here, exactly like the
+  // auth and organization reads below, and only an answered `false` navigates.
+  const integrationsTabFlag = useIntegrationsTabFlag();
+
+  if (integrationsTabFlag === undefined) return null;
+  if (!integrationsTabFlag) return <Navigate to="/settings" replace />;
 
   if (!activeOrganizationId) {
     if (authLoading || organizationsLoading) return null;

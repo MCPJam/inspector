@@ -455,6 +455,21 @@ function turnOptions(index = 0): Record<string, unknown> {
 }
 
 describe("swarm runner — per-attempt ephemeral sandbox", () => {
+  it.each([undefined, false, true])(
+    "carries pinned hosted=%s into assistant turns",
+    async (hosted) => {
+      personaDrivesOneTurn();
+      await startJourneyRun(baseOpts({ modelId: "gpt-5-nano", hosted }));
+      expect(turnOptions().modelDefinition).toMatchObject({
+        id: "gpt-5-nano",
+        provider: "openai",
+      });
+      expect((turnOptions().modelDefinition as { hosted?: boolean }).hosted).toBe(
+        hosted,
+      );
+    },
+  );
+
   it("provisions after the claim, binds the box, and releases it", async () => {
     await startJourneyRun(baseOpts());
 
@@ -1095,6 +1110,18 @@ describe("swarm runner — harness targets run on an ephemeral box (phase 6)", (
  * to the chat preflight later applies here without a second edit.
  */
 describe("swarm runner — harness preflight parity with interactive chat", () => {
+  it("refuses an explicitly BYOK hosted alias before provisioning a brokered harness", async () => {
+    await startJourneyRun(
+      baseOpts({ harness: "claude-code", modelId: "gpt-5-nano", hosted: false }),
+    );
+    expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
+    expect(runAssistantTurnMock).not.toHaveBeenCalled();
+    expect(terminalReports()[0]).toMatchObject({
+      status: "failed",
+      errorMessage: expect.stringMatching(/MCPJam-provided/i),
+    });
+  });
+
   it("refuses a BYOK / non-catalog model before booting anything", async () => {
     // `resolveTurnRuntime` sends a non-MCPJam model on a local-runtime BYOK
     // provider to the DIRECT engine, whose branch never forwards `harness` or

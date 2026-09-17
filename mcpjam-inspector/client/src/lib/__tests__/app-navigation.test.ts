@@ -2,6 +2,9 @@ import { renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   buildConformanceRunPath,
+  buildEvalsPath,
+  buildEvalsRunsPath,
+  legacyEvalCasePathToEvaluatePath,
   buildConformanceSharePath,
   buildEvalSharePath,
   buildOrganizationPath,
@@ -680,5 +683,17 @@ describe("scoped paths survive return-target normalization", () => {
 
   it("keeps a scoped path with an unusable project id out of the canonical position", () => {
     expect(normalizeReturnTargetPath("/p/none/servers")).toBe("/servers");
+  });
+});
+
+
+describe("Ding Dong case destinations", () => {
+  it.each([buildEvalsPath, buildEvalsRunsPath])("routes cases and their subtabs to Ding Dong", build => {
+    expect(build({type: "test-detail", suiteId: "s1", testId: "c1", iteration: "i1"})).toBe("/evaluate/suite/s1/test/c1?iteration=i1");
+    expect(build({type: "test-edit", suiteId: "s1", testId: "c1", checks: true})).toBe("/evaluate/suite/s1/test/c1/edit?checks=1");
+    expect(build({type: "test-edit", suiteId: "s1", testId: "c1", openCompare: true, iteration: "i1"})).toBe("/evaluate/suite/s1/test/c1/edit?compare=1&iteration=i1");
+  });
+  it.each(["/evals", "/evals/runs"])("redirects old %s case bookmarks and preserves query state", prefix => {
+    expect(legacyEvalCasePathToEvaluatePath(`${prefix}/suite/s%201/test/c%202/edit`, "?checks=1&project=p1", "#trace")).toBe("/evaluate/suite/s%201/test/c%202/edit?checks=1&project=p1#trace");
   });
 });

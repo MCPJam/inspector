@@ -1387,6 +1387,14 @@ function OrganizationPage({
                 ? "Compare plans and manage your subscription."
                 : "Review usage, manage credits, and update your billing details."}
             </SettingsPageDescription>
+            {activeSection === "billing" && (
+              <a
+                href={`/organizations/${organization._id}/billing/byok`}
+                className="inline-block text-sm text-primary underline-offset-4 hover:underline"
+              >
+                BYOK and credits
+              </a>
+            )}
           </header>
         )}
 

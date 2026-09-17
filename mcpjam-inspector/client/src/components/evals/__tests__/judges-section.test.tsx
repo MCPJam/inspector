@@ -112,7 +112,11 @@ describe("pruneEmpty keeps a config that still means something", () => {
   });
 });
 
-it("uses the backend's inherited automatic setting and reports a deployment pause", () => {
+it("uses the backend's inherited automatic setting", () => {
+  // A suite that has never touched its judge settings reads the resolved
+  // policy off the backend rather than assuming anything. There is no
+  // deployment pause to report any more: grading stops through these
+  // settings, so the switch IS the whole story.
   render(
     <JudgesSection
       chrome="panel"
@@ -128,14 +132,13 @@ it("uses the backend's inherited automatic setting and reports a deployment paus
           threshold: 0.7,
           role: "advisory",
         },
-        executionPaused: true,
-        automatic: false,
+        automatic: true,
       }}
     />,
   );
   expect(screen.getAllByRole("switch")).toHaveLength(1);
   expect(screen.getByRole("switch")).toHaveAttribute("data-state", "checked");
-  expect(screen.getByRole("status")).toHaveTextContent("Grading is paused");
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
 });
 
 
@@ -147,6 +150,6 @@ it("does not call unknown inheritance off", () => {
 });
 
 it("shows the backend automatic default for an untouched suite", () => {
-  render(<JudgesSection value={undefined} availableModels={[]} onChange={vi.fn()} policy={{ contractVersion: 4, automatic: true, executionPaused: false, effective: { enabled: true, autoRun: true, judgeModel: "openai/gpt-5.4-mini", threshold: 0.7, role: "advisory" } }} />);
+  render(<JudgesSection value={undefined} availableModels={[]} onChange={vi.fn()} policy={{ contractVersion: 4, automatic: true, effective: { enabled: true, autoRun: true, judgeModel: "openai/gpt-5.4-mini", threshold: 0.7, role: "advisory" } }} />);
   expect(screen.getByRole("switch")).toHaveAttribute("data-state", "checked");
 });

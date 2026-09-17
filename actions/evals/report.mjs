@@ -55,20 +55,51 @@ export async function readActionReceipts(directory, allowedOrigin) {
   ];
 }
 
-async function apiJson(baseUrl, path, apiKey, fetchImpl) {
+/**
+ * Service-token headers for a deployment behind an identity proxy.
+ *
+ * A staging or self-hosted MCPJam can sit behind Cloudflare Access, which
+ * answers the API with its own login page long before the bearer token is
+ * read. These ride ONLY on the MCPJam requests below, never on the GitHub
+ * ones, and a value carrying a newline is dropped rather than split into
+ * extra headers.
+ */
+export function accessHeadersFromEnv(env = process.env) {
+  const clean = (value) => {
+    const trimmed = (value ?? "").trim();
+    return trimmed && !/[\r\n]/.test(trimmed) ? trimmed : "";
+  };
+  const id = clean(env.CF_ACCESS_CLIENT_ID);
+  const secret = clean(env.CF_ACCESS_CLIENT_SECRET);
+  if (!id || !secret) return {};
+  return { "cf-access-client-id": id, "cf-access-client-secret": secret };
+}
+
+async function apiJson(baseUrl, path, apiKey, fetchImpl, accessHeaders = {}) {
   const url = new URL(path, `${baseUrl.replace(/\/$/, "")}/`);
   const response = await fetchImpl(url, {
-    headers: { authorization: `Bearer ${apiKey}` },
+    headers: { ...accessHeaders, authorization: `Bearer ${apiKey}` },
     signal: AbortSignal.timeout(REPORT_REQUEST_TIMEOUT_MS),
   });
   if (!response.ok) throw new Error(`MCPJam API returned ${response.status}.`);
   return response.json();
 }
 
-export async function fetchRunBundle(receipt, apiKey, fetchImpl = fetch) {
+export async function fetchRunBundle(
+  receipt,
+  apiKey,
+  fetchImpl = fetch,
+  accessHeaders = {},
+) {
   const root = `/api/v1/projects/${encodeURIComponent(receipt.projectId)}`;
   const runPath = `${root}/eval-runs/${encodeURIComponent(receipt.runId)}`;
-  let run = await apiJson(receipt.baseUrl, runPath, apiKey, fetchImpl);
+  let run = await apiJson(
+    receipt.baseUrl,
+    runPath,
+    apiKey,
+    fetchImpl,
+    accessHeaders,
+  );
   if (!TERMINAL.has(run.status)) {
     throw new Error(`Eval run ${receipt.runId} is still ${run.status}.`);
   }
@@ -82,6 +113,7 @@ export async function fetchRunBundle(receipt, apiKey, fetchImpl = fetch) {
       `${runPath}/iterations?${query}`,
       apiKey,
       fetchImpl,
+      accessHeaders,
     );
     if (!Array.isArray(result.items)) throw new Error("Invalid iteration page.");
     iterations.push(...result.items);
