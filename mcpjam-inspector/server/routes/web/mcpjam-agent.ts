@@ -516,12 +516,19 @@ mcpjamAgent.post("/", async (c) => {
           clientIp: getSpendClientIp(c),
           abortSignal: c.req.raw.signal as AbortSignal | undefined,
           rpcCollector,
-          // Sent on every per-step Convex request, alongside the service token
-          // that makes it credible. Absent for guests, whose steps stay on the
-          // customer rail exactly as before.
-          ...(billingFeature
-            ? { billingFeature, maxSteps: AGENT_MAX_STEPS }
-            : {}),
+          // The step ceiling is a product property of Ask MCPJam, not a
+          // billing decision — the same reasoning that pins the model for
+          // guests too. Gating it on the claim would hand a guest on the
+          // customer rail a LONGER agent loop (30, the chat default) than a
+          // signed-in user gets on MCPJam's, and would make the same agent
+          // behave differently here than on the v1 Slack/Discord route, which
+          // sends it unconditionally.
+          maxSteps: AGENT_MAX_STEPS,
+          // The claim itself IS a billing decision. Sent on every per-step
+          // Convex request, alongside the service token that makes it
+          // credible. Absent for guests, whose steps stay on the customer rail
+          // exactly as before.
+          ...(billingFeature ? { billingFeature } : {}),
           c,
         },
       });

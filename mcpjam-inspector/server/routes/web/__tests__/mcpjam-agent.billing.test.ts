@@ -116,7 +116,14 @@ describe("web routes — Ask MCPJam billing claim", () => {
   it("sends NO claim for a guest, who keeps the customer rail", async () => {
     const args = await postTurn({ guestId: "guest-abc" });
     expect(args.runtime.billingFeature).toBeUndefined();
-    expect(args.runtime.maxSteps).toBeUndefined();
+  });
+
+  it("still sends the step ceiling for a guest", async () => {
+    // Not a billing decision either. Without this the guest would inherit the
+    // chat default of 30 and get a LONGER agent loop than a signed-in user,
+    // on the rail MCPJam is NOT paying for.
+    const args = await postTurn({ guestId: "guest-abc" });
+    expect(args.runtime.maxSteps).toBe(AGENT_MAX_STEPS);
   });
 
   it("still pins the model for a guest", async () => {
