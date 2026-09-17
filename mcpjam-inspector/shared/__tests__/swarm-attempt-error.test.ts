@@ -230,3 +230,28 @@ describe("isAccountLimit", () => {
     expect(isAccountLimit(undefined, "rate_limited")).toBe(false);
   });
 });
+
+describe("spending reservation contention", () => {
+  it("explains a truncated historical database conflict", () => {
+    const info = humanizeSwarmAttemptError(
+      'Backend stream error: 500 {"code":"Server Error: Documents read from or written to the \\"streamSpendingReservations\\" table changed while this mutation was being run and on every subsequent retry.'
+    );
+    expect(info.code).toBe("spending_reservation_busy");
+    expect(info.message).toContain("internal execution failure");
+    expect(info.message).not.toContain("streamSpendingReservations");
+  });
+
+  it("reads the structured busy response from the shared stream engine", () => {
+    const info = humanizeSwarmAttemptError(
+      'Backend stream error: 503 {"code":"spending_reservation_busy","error":"MCPJam is temporarily busy. Please retry.","isRetryable":true}'
+    );
+    expect(info).toMatchObject({code: "spending_reservation_busy", httpStatus: 503, message: "MCPJam is temporarily busy. Please retry."});
+  });
+
+  it("does not classify other database errors as spending contention", () => {
+    const info = humanizeSwarmAttemptError(
+      'Documents read from or written to the "chatSessions" table changed while this mutation was being run'
+    );
+    expect(info.code).toBeUndefined();
+  });
+});

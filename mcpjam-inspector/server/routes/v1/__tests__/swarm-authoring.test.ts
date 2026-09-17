@@ -42,7 +42,7 @@ vi.mock("convex/browser", () => ({
 
 vi.mock("../../../utils/v1-convex-token.js", () => ({
   getConvexBearerForRequest: async () => "convex-jwt",
-  getConvexBearerThunkForRequest: () => async () => "convex-jwt",
+  getBackgroundRunBearerForRequest: async () => async () => "convex-jwt",
 }));
 
 import journeys from "../journeys.js";

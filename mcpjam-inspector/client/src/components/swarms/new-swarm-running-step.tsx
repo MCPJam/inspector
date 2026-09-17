@@ -162,11 +162,10 @@ export function swarmCellHeadline(args: {
   goal: string;
 }): string {
   const goal = args.goal.trim() || "session";
-  if (
-    args.outcome === "running" ||
-    args.outcome === "queued" ||
-    args.outcome === "pending"
-  ) {
+  if (args.outcome === "queued" || args.outcome === "pending") {
+    return `Pending: ${goal}`;
+  }
+  if (args.outcome === "running") {
     return `Running: ${goal}`;
   }
   if (args.outcome === "succeeded") {
@@ -317,10 +316,12 @@ function streamMatchesColumn(
 
 function RunLiveBridge({
   runId,
+  streamEnabled,
   hostName,
   onSnapshot,
 }: {
   runId: string;
+  streamEnabled: boolean;
   hostName: (hostId: string) => string | undefined;
   onSnapshot: (runId: string, snapshot: RunLiveSnapshot | null) => void;
 }) {
@@ -336,7 +337,13 @@ function RunLiveBridge({
     { initialNumItems: Math.max(DEFAULT_PAGE_SIZE, 32) },
   );
   const runStatus = run?.status ?? "running";
-  const stream = useJourneyRunStream(runId, runStatus === "running");
+  // Convex supplies the whole matrix's progress over its shared connection.
+  // Only the selected trace needs SSE: one stream per row exhausts the
+  // browser's HTTP/1.1 connection pool and queues later rows indefinitely.
+  const stream = useJourneyRunStream(
+    runId,
+    streamEnabled && runStatus === "running",
+  );
 
   useEffect(() => {
     if (run === undefined) return;
@@ -987,6 +994,7 @@ export function NewSwarmRunningStep({
         <RunLiveBridge
           key={run.runId}
           runId={run.runId}
+          streamEnabled={selection?.runId === run.runId}
           hostName={hostName}
           onSnapshot={onSnapshot}
         />
@@ -1277,7 +1285,10 @@ export function NewSwarmRunningStep({
       >
         <SwarmLiveStreamPane
           selection={selection}
-          stream={snapshots[selection.runId]?.stream ?? mergedStream}
+          stream={
+            (selection ? snapshots[selection.runId]?.stream : undefined) ??
+            mergedStream
+          }
           convexSession={selectedConvex}
           attempt={selectedAttempt}
           fallbackTrace={fallbackTrace}

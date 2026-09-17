@@ -238,10 +238,10 @@ export function usePersistedSessionTrace(threadId: string | null): {
       ? null
       : {
           traceVersion: 1,
+          messages: messages as TraceEnvelope["messages"],
           ...(thread?.recordedContext
             ? { recordedContext: thread.recordedContext }
             : {}),
-          messages: messages as TraceEnvelope["messages"],
           ...(spans.length > 0 ? { spans } : {}),
           ...(wallClock.startedAtMs !== null
             ? { traceStartedAtMs: wallClock.startedAtMs }

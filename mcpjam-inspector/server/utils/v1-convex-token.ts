@@ -14,6 +14,11 @@
  * the API caller.
  */
 import type { Context } from "hono";
+import { ConvexHttpClient } from "convex/browser";
+import {
+  AuthKitVerificationError,
+  verifyAuthKitToken,
+} from "../services/authkit-jwt.js";
 import {
   ErrorCode,
   WebRouteError,
@@ -282,6 +287,60 @@ export function getConvexBearerThunkForRequest(
   }
   const bearer = assertBearerToken(c);
   return async () => bearer;
+}
+
+/** Authorize detached work while the browser token is still valid. */
+export async function getBackgroundRunBearerForRequest(
+  c: Context,
+  projectId: string,
+): Promise<() => Promise<string>> {
+  if (usesDelegatedToken(c) || c.get("guestId")) {
+    return getConvexBearerThunkForRequest(c);
+  }
+  const bearer = assertBearerToken(c);
+  // Never elevate an unverified claim to service-token delegation.
+  const session = await verifyAuthKitToken(bearer).catch((error: unknown) => {
+    if (error instanceof AuthKitVerificationError) {
+      throw new WebRouteError(
+        401,
+        ErrorCode.UNAUTHORIZED,
+        "Invalid or expired session token",
+      );
+    }
+    throw error;
+  });
+  const convexUrl = process.env.CONVEX_URL;
+  if (!convexUrl) {
+    throw new WebRouteError(
+      500,
+      ErrorCode.INTERNAL_ERROR,
+      "Server missing CONVEX_URL configuration",
+    );
+  }
+  const client = new ConvexHttpClient(convexUrl);
+  client.setAuth(bearer);
+  // Resolve the organization from the project authorized by the ORIGINAL
+  // credential, not from a client header or the browser's active organization.
+  const projects = (await client.query(
+    "projects:getMyProjects" as never,
+    {} as never,
+  )) as Array<{ _id: string; organizationId?: string }>;
+  const project = projects.find((row) => row._id === projectId);
+  if (!project?.organizationId) {
+    throw new WebRouteError(
+      403,
+      ErrorCode.FORBIDDEN,
+      "Cannot authorize background execution for this project",
+    );
+  }
+  const organizationId = project.organizationId;
+  const attribution = stableAgentAttribution(c);
+  const getBearer = () =>
+    getConvexBearerForDelegation(session.sub, organizationId, attribution);
+  // Fail before creating a durable run if delegation is unavailable. The
+  // backend rechecks membership on each mint; the token stays server-side.
+  await getBearer();
+  return getBearer;
 }
 
 /**

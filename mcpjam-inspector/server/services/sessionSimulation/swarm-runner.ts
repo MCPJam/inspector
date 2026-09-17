@@ -200,9 +200,9 @@ export interface StartJourneyRunOptions {
    * the run left looking half-finished. `getConvexBearerForDelegation`
    * caches and re-mints near expiry, so calling this repeatedly is cheap.
    *
-   * Session-JWT callers pass a constant thunk: the captured access token can
-   * expire even while the browser stays signed in. Browser refreshes do not
-   * reach this runner; the stale-run sweep cannot identify that auth failure.
+   * Browser launches also exchange their verified identity for renewable,
+   * organization-scoped delegation before creating the run. The browser
+   * access token must not be captured for detached work.
    *
    * RESOLVED PER UNIT OF WORK — once per target, once per session attempt,
    * once per finalizer — not per outbound call. That bounds a run's staleness
@@ -500,8 +500,8 @@ async function runJourneyFanOut(
     if (abortSignal?.aborted || stoppedByBackend) return;
     if (heartbeatInFlight) return;
     heartbeatInFlight = true;
-    // Re-resolved on every beat. Delegated credentials refresh through this
-    // callback; browser-session callers currently return their captured JWT.
+    // Re-resolved on every beat, including browser-launched runs, so
+    // heartbeat authorization survives expiration of the launch credential.
     getBearer()
       .then((bearer) =>
         heartbeatJourneyRun(convexHttpUrl, bearer, { projectId, runId }),

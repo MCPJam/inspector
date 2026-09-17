@@ -304,6 +304,78 @@ afterEach(() => {
 });
 
 describe("runSyntheticHostSession — browser pipeline wiring", () => {
+  it.each(["", "I have enough information already."])(
+    "fails a persona stop before the first user turn (%j)",
+    async (message) => {
+      createBrowserSessionContextMock.mockReturnValue(
+        buildFakeBrowserContext({ computerUse: true })
+      );
+      const args = baseAdapter();
+      args.nextPersonaTurn
+        .mockReset()
+        .mockResolvedValue({ message, endSession: true });
+      const emit = vi.fn();
+      const result = await runSyntheticHostSession({
+        ...args,
+        emit,
+        browserArtifacts: buildFakeOutbox(),
+      } as Parameters<typeof runSyntheticHostSession>[0]);
+      expect(result).toMatchObject({
+        outcome: "failed",
+        errorReason: "persona_ended_before_start",
+      });
+      expect(result.errorMessage).toContain("assistant was not tested");
+      expect(runAssistantTurnMock).not.toHaveBeenCalled();
+      expect(emit).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "session_complete", status: "failed" })
+      );
+      expect(emit).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "session_complete",
+          status: "succeeded",
+        })
+      );
+      expect(persistChatSessionToConvexMock).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionMessages: [] })
+      );
+    }
+  );
+
+  it("rejects an empty persona message without calling the assistant", async () => {
+    createBrowserSessionContextMock.mockReturnValue(
+      buildFakeBrowserContext({ computerUse: true })
+    );
+    const args = baseAdapter();
+    args.nextPersonaTurn
+      .mockReset()
+      .mockResolvedValue({ message: "  ", endSession: false });
+    const result = await runSyntheticHostSession(
+      args as Parameters<typeof runSyntheticHostSession>[0]
+    );
+    expect(result).toMatchObject({
+      outcome: "failed",
+      errorReason: "persona_empty_message",
+    });
+    expect(runAssistantTurnMock).not.toHaveBeenCalled();
+  });
+
+  it("does not report a zero-turn simulation as successful", async () => {
+    createBrowserSessionContextMock.mockReturnValue(
+      buildFakeBrowserContext({ computerUse: true })
+    );
+    const args = baseAdapter();
+    const result = await runSyntheticHostSession({
+      ...args,
+      maxTurns: 0,
+    } as Parameters<typeof runSyntheticHostSession>[0]);
+    expect(result).toMatchObject({
+      outcome: "failed",
+      errorReason: "simulation_no_conversation",
+    });
+    expect(args.nextPersonaTurn).not.toHaveBeenCalled();
+    expect(runAssistantTurnMock).not.toHaveBeenCalled();
+  });
+
   it("feeds each assistant reply into both the next persona turn and model history", async () => {
     createBrowserSessionContextMock.mockReturnValue(
       buildFakeBrowserContext({ computerUse: true }),

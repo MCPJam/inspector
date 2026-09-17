@@ -106,6 +106,11 @@ export function resolveSwarmCellOutcome(args: {
   if (liveStatus && liveStatus !== "pending") {
     return liveStatus;
   }
+  // A claimed attempt is running even before its stream connects or a first
+  // transcript is saved. Most rows deliberately have no live subscription.
+  if (attempt?.status === "running" && runStatus === "running") {
+    return "running";
+  }
   if (!session) {
     // Unpersisted attempt: pending while the run is live; otherwise treat as
     // failed-shaped empty (host summary failures show as Fail via liveStatus
@@ -528,6 +533,11 @@ export function SwarmLiveStreamPane({
         )
       : null;
   const showLoading = !displayTrace && (isStreaming || persisted.loading);
+  const emptyCompletedTrace =
+    outcome === "succeeded" &&
+    persisted.trace !== null &&
+    !persisted.loading &&
+    (displayTrace?.messages?.length ?? 0) === 0;
   const failureInfo =
     outcome === "failed" || outcome === "rate_limited"
       ? humanizeSwarmAttemptError(
@@ -563,10 +573,20 @@ export function SwarmLiveStreamPane({
           {isStreaming || persisted.loading ? (
             <Loader2 className="size-3 animate-spin text-muted-foreground" />
           ) : (
-            <span className={cn("size-1.5 rounded-full", meta.dot)} />
+            <span
+              className={cn(
+                "size-1.5 rounded-full",
+                emptyCompletedTrace ? "bg-warning" : meta.dot
+              )}
+            />
           )}
-          <span className={cn("text-[11px] font-semibold", meta.text)}>
-            {meta.label}
+          <span
+            className={cn(
+              "text-[11px] font-semibold",
+              emptyCompletedTrace ? "text-warning-foreground" : meta.text
+            )}
+          >
+            {emptyCompletedTrace ? "No conversation" : meta.label}
           </span>
         </span>
       </div>
@@ -576,8 +596,21 @@ export function SwarmLiveStreamPane({
           <ErrorCard error={providerRateLimit} variant="inline" />
         </div>
       ) : failureInfo || live?.errorMessage ? (
-        <p className="text-[11px] text-destructive" data-testid="swarm-live-pane-failure">
+        <p
+          className="text-[11px] text-destructive"
+          data-testid="swarm-live-pane-failure"
+        >
           {failureInfo?.message ?? live?.errorMessage}
+        </p>
+      ) : null}
+
+      {emptyCompletedTrace ? (
+        <p
+          className="text-[11px] text-warning-foreground"
+          data-testid="swarm-live-pane-empty-completed"
+        >
+          This attempt was marked completed, but no conversation was recorded.
+          This does not confirm the assistant was tested.
         </p>
       ) : null}
 
