@@ -161,3 +161,9 @@ silently dropped would turn a day-long incident into repeated notifications.
 `node ops/axiom-monitors/replay.mjs --spend` replays the two monetary ladders against the 2026-09-15 07:00–08:00Z incident hour and the same ordinary hour on September 8 and 10. It fails if history has expired. This requires the existing read-only Axiom credentials.
 
 Apply changed definitions individually with `--only <key>`, after replay. New definitions cover free-budget refusal, 80% utilization, settlement backlog, daily accounting drift, and a switch left disabled for 24 hours. Move the existing `llm-safety` notifier to the dedicated spending channel and verify a disposable monitor delivery as a rollout step; these files do not send messages or change a live notifier.
+
+### Platform lanes (MCPJam-paid included AI)
+
+Seven `platform-lane-*` definitions watch included generation and analyses: attempt spend, budget refusals, guard failures, stale holds, the snapshot heartbeat, and any customer debit for an included feature. Their events ship with mcpjam-backend #1463 and #1470, so do not apply them before that is in production. `platform-lanes.md` has the triage, the drill-down queries (`platform-lane-queries.mjs`) and the per-monitor activation commands.
+
+`node --test ops/axiom-monitors/platform-lanes.test.mjs` checks each query's event match, deduplication, and number parsing, including tiny exponent-form, negative, corrected and duplicated amounts. `node ops/axiom-monitors/replay.mjs --platform-lanes` prints what each monitor reads now; a monitor with no source events in 24 hours is `INSUFFICIENT EVIDENCE` and the command exits 2, never a pass.
