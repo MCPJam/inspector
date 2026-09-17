@@ -475,6 +475,27 @@ export function translateConvexWriteError(
     );
   }
 
+  // An anonymous guest tried to author something that needs an account
+  // (mcpjam-backend lib/sandboxesGate.ts, REEV-6).
+  //
+  // Here for the same reason as `FEATURE_UNAVAILABLE` directly above — the
+  // generic FORBIDDEN branch would collapse this to a 404 and tell the caller
+  // their own project does not exist — but mapped to **401, not 403**. The
+  // distinction is the whole point of the backend emitting a separate code:
+  // 403 says "you may not do this", which for a guest is wrong and unhelpful,
+  // while 401 says "authenticate", which is exactly the remedy and is what a
+  // client library will already be wired to act on.
+  //
+  // Message forwarded verbatim: it names the surface ("Sign in to use
+  // Swarms"), and rewriting it here would put that copy in two places.
+  if (code === "SIGN_IN_REQUIRED") {
+    return new WebRouteError(
+      401,
+      ErrorCode.UNAUTHORIZED,
+      structuredMessage ?? "Sign in to use this feature."
+    );
+  }
+
   // ── Baseline selection refusals (mcpjam-backend convex/testSuites.ts) ────
   //
   // `compareTestSuiteRuns` refuses two malformed baseline selections with

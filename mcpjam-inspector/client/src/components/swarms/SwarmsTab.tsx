@@ -1072,6 +1072,10 @@ export function SwarmsTab({
         viewOptions={SWARM_VIEW_OPTIONS}
         onViewModeChange={setViewMode}
         creatingSwarm={creatingPersona}
+        // Same condition the body uses to choose the empty hero, so the header
+        // and the body can never disagree about whether this project has
+        // anything in it.
+        showCreate={personas !== undefined && personas.length > 0}
         onNewSwarm={() => navigate(swarmsCreatePath)}
       />
       <div className="flex min-h-0 flex-1">
