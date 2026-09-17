@@ -650,6 +650,19 @@ export async function runAssistantTurn(
   // Captured from the engine's `onTurnOutcome`, which fires on BOTH sinks —
   // including the paths that persist nothing and therefore produce no trace.
   let capturedOutcome: TurnOutcomeRecord | undefined;
+  // WRITE-THROUGH for the `"ui"` sink.
+  //
+  // On `"none"` the engine has fully run by the time the result is assembled,
+  // so the spread below carries the record. On `"ui"` the engine returns a
+  // Response and `onTurnOutcome` does not fire until Hono drains the body —
+  // long after this function returned. Assigning only to `capturedOutcome`
+  // would leave `result.outcome` permanently absent on that sink, which is
+  // indistinguishable from "this turn produced no record" and would put the
+  // facade straight back to guessing.
+  //
+  // So a `"ui"` caller gets it either way: through the callback it passed, or
+  // by re-reading `result.outcome` once the body has drained.
+  let resultRef: RunAssistantTurnResult | undefined;
 
   const handlerOptions = buildHandlerOptions(
     opts,
@@ -660,6 +673,7 @@ export async function runAssistantTurn(
     },
     (outcome) => {
       capturedOutcome = outcome;
+      if (resultRef) resultRef.outcome = outcome;
     },
   );
 
@@ -817,6 +831,7 @@ export async function runAssistantTurn(
     result.response = engineResult.response;
   }
 
+  resultRef = result;
   return result;
 }
 

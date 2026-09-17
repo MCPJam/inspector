@@ -175,6 +175,72 @@ describe("turn-outcome invariants", () => {
     ).toBe(false);
   });
 
+  it("A TIMEOUT ONLY BELONGS TO A timed_out TURN", () => {
+    // Not a harmless extra field. Every reader keys off `lifecycle`, so a
+    // `failed` record carrying a timeout has one half saying the turn ran out
+    // of time and the other saying it did not — and whoever reads it answers
+    // with whichever half they happened to look at.
+    expect(
+      turnOutcomeRecordZ.safeParse(
+        base({
+          lifecycle: "failed",
+          termination: {
+            errorSource: "model",
+            timeout: { clock: "turn", budgetMs: 1000 },
+          },
+        }),
+      ).success,
+    ).toBe(false);
+  });
+
+  it("a cancellation source only belongs to a cancelled turn", () => {
+    expect(
+      turnOutcomeRecordZ.safeParse(
+        base({
+          lifecycle: "timed_out",
+          termination: {
+            timeout: { clock: "turn", budgetMs: 1000 },
+            cancellationSource: "caller",
+          },
+        }),
+      ).success,
+    ).toBe(false);
+  });
+
+  it("a pause kind only belongs to a paused turn", () => {
+    expect(
+      turnOutcomeRecordZ.safeParse(
+        base({
+          lifecycle: "cancelled",
+          termination: { cancellationSource: "caller" },
+          paused: { kind: "tool_approval" },
+        }),
+      ).success,
+    ).toBe(false);
+  });
+
+  it("but `superseded` stays valid under every lifecycle", () => {
+    // A late mark arriving after the turn settled is diagnosis ABOUT the race,
+    // not a second claim about the ending. Restricting it the same way would
+    // throw away the only evidence that two marks contended.
+    for (const lifecycle of ["completed", "failed", "cancelled"] as const) {
+      const record = base({
+        lifecycle,
+        ...(lifecycle === "completed"
+          ? {}
+          : {
+              termination: {
+                superseded: [{ mark: "paused" as const, at: 1750000000000 }],
+                ...(lifecycle === "cancelled"
+                  ? { cancellationSource: "caller" as const }
+                  : { errorSource: "model" as const }),
+              },
+            }),
+      });
+      expect(turnOutcomeRecordZ.safeParse(record).success).toBe(true);
+    }
+  });
+
   it("a paused turn may still name its harness while running emulated", () => {
     // The scope step-up continuation runs on the emulated engine by design.
     // Dropping the host id would make it indistinguishable from a plain turn.

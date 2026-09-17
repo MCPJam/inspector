@@ -43,15 +43,24 @@ export function getHostedTurnFailure(args: {
     // its own now, but historical and mocked callers still need the check.
   }
 
-  if (!args.turnTrace) {
-    // Kept for callers with no record: a hosted turn that produced no trace
-    // caught something mid-flight. With a record in hand this branch is dead —
-    // and deliberately so, because a persisted failed turn HAS a trace.
+  if (!args.outcome && !args.turnTrace) {
+    // Kept for callers with NO record: a hosted turn that produced no trace
+    // caught something mid-flight.
+    //
+    // Guarded on the record's absence, not merely dead beside it. A turn can
+    // be recorded and still write no trace — a `paused` one persists through
+    // the resume path, and a terminal one writes nothing at all while
+    // `TERMINAL_TURN_RECORDING_ENABLED` is off. Reading either absence as an
+    // engine failure would invent one out of a switch position, which is the
+    // same trace-absence inference this function exists to stop making.
     return "Backend stream failed during iteration (engine caught an error mid-turn)";
   }
   if (args.newMessageCount === 0) {
     return "Backend step returned no content (stream error or empty response)";
   }
+  // No trace to walk, and the record did not call it a failure: nothing
+  // detected here.
+  if (!args.turnTrace) return null;
   // Tool failures belong to the caller's tool-error policy. Child error spans
   // carrying a toolCallId are tool evidence too, even with another category.
   const failedStep = args.turnTrace.spans.find(

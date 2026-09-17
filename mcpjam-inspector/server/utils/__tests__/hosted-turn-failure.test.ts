@@ -143,6 +143,46 @@ describe("getHostedTurnFailure keys on the record's lifecycle", () => {
       }),
     ).toBeNull();
   });
+
+  it("A COMPLETED TURN WITH NO TRACE is not an engine failure", () => {
+    // The trace-absence branch is guarded on the RECORD's absence, not merely
+    // unreachable beside one. A turn can be recorded and still write no trace:
+    // the terminal-recording switch being off produces exactly this pair, and
+    // reading it as a caught engine error would manufacture a failure out of a
+    // switch position.
+    expect(
+      getHostedTurnFailure({
+        outcome: record({ lifecycle: "completed" }),
+        turnTrace: undefined,
+        newMessageCount: 2,
+      }),
+    ).toBeNull();
+  });
+
+  it("a paused turn with no trace is not an engine failure either", () => {
+    expect(
+      getHostedTurnFailure({
+        outcome: record({
+          lifecycle: "paused",
+          paused: { kind: "tool_approval" },
+        }),
+        turnTrace: undefined,
+        newMessageCount: 1,
+      }),
+    ).toBeNull();
+  });
+
+  it("but a recorded turn with no trace AND no content still fails that check", () => {
+    // The content check runs before the trace is walked, so losing the
+    // trace-absence branch does not lose the empty-reply one with it.
+    expect(
+      getHostedTurnFailure({
+        outcome: record({ lifecycle: "completed" }),
+        turnTrace: undefined,
+        newMessageCount: 0,
+      }),
+    ).toBe("Backend step returned no content (stream error or empty response)");
+  });
 });
 
 describe("without a record, the old heuristics still apply", () => {

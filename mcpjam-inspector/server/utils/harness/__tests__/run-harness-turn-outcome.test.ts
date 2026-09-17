@@ -293,17 +293,24 @@ describe("harness engine outcome conformance", () => {
   });
 
   it("FAILED: a turn that never reached the model is attributed to setup", async () => {
-    // `harness` is required; the throw happens long before any handover.
-    const { outcome } = await runOutcome({ harness: undefined }).catch(
-      async () => {
-        // The turn REJECTS on this path (a wiring error every caller already
-        // treats as a failed turn), so there is no record to read — which is
-        // itself the contract: a throw out of `runHarnessTurn` is the caller's
-        // failure to classify, and the record covers the endings that return.
-        return { outcome: undefined, viaCallback: undefined };
-      },
-    );
-    expect(outcome).toBeUndefined();
+    // A missing `projectId` throws INSIDE the turn's own try, so the function
+    // returns normally and the record is the account of what happened. The
+    // flag it reads is set at the model handover, which this never reached —
+    // so the failure is ours, not the provider's. Getting that backwards is
+    // how a wiring bug gets filed against the model vendor.
+    const { outcome, viaCallback } = await runOutcome({ projectId: undefined });
+    expect(outcome?.lifecycle).toBe("failed");
+    expect(outcome?.termination?.errorSource).toBe("setup");
+    expect(viaCallback).toEqual(outcome);
+  });
+
+  it("a wiring error BEFORE the turn's own try still rejects, and records nothing", async () => {
+    // `harness` is read to pick the adapter, before anything the builder
+    // watches. This asserts the REJECTION rather than swallowing it: the
+    // contract is that a throw out of `runHarnessTurn` is the caller's to
+    // classify, and a test that caught it either way would pass just as
+    // happily if the turn silently started recording `completed` instead.
+    await expect(runOutcome({ harness: undefined })).rejects.toThrow();
   });
 
   it("every record this engine produces satisfies the contract", async () => {

@@ -1082,6 +1082,7 @@ export async function runSyntheticHostSession(
         turnTrace,
         modelSource: turnModelSource,
         harnessSessionCommit,
+        cancelled: turnCancelled,
       } = await drainAssistantTurn({
         messages: messageHistory,
         modelId: String(modelDefinition.id),
@@ -1262,6 +1263,27 @@ export async function runSyntheticHostSession(
       }
 
       messageHistory = updatedHistory;
+
+      // A CANCELLED TURN ENDS THE SESSION, before anything reads its history.
+      //
+      // `updatedHistory` is the input history unchanged, so
+      // `extractAssistantText` below would return the PREVIOUS turn's reply
+      // and push it as this one's — the persona would then be handed its own
+      // last answer twice and react to a conversation that never happened.
+      //
+      // Ending here rather than continuing is the same asymmetry the turn
+      // timeout takes a few lines up, for the same reason: a swarm session is
+      // one conversation, and turn N+1 is the persona reacting to a turn N
+      // reply that does not exist.
+      if (turnCancelled) {
+        emit?.({
+          type: "session_complete",
+          status: "failed",
+          errorMessage: "aborted",
+        });
+        return { outcome: "failed", errorMessage: "aborted" };
+      }
+
       const assistantText = extractAssistantText(updatedHistory);
       lastTranscript.push({ role: "assistant", content: assistantText });
 
@@ -1835,6 +1857,19 @@ export async function drainAssistantTurn(
    * transcript. Undefined for the emulated engine and non-continuity turns.
    */
   harnessSessionCommit?: HarnessSessionCommitPayload;
+  /**
+   * THIS TURN WAS CANCELLED — said out loud, because `history` cannot say it.
+   *
+   * A cancelled turn returns the INPUT history unchanged, which is
+   * indistinguishable from a turn that ran and added nothing. The caller used
+   * to read that history with `extractAssistantText` and push the result as
+   * this turn's reply: on a cancel that is the PREVIOUS turn's reply, appended
+   * a second time, and the persona then answers a message it already answered.
+   *
+   * Absent on every other path, so a caller that ignores it behaves exactly as
+   * before.
+   */
+  cancelled?: true;
 }> {
   const {
     modelDefinition,
@@ -1964,6 +1999,7 @@ export async function drainAssistantTurn(
         history: args.messages,
         turnTrace: undefined,
         modelSource: rt.modelSource,
+        cancelled: true,
       };
     }
 
@@ -2093,6 +2129,7 @@ export async function drainAssistantTurn(
       history: args.messages,
       turnTrace: undefined,
       modelSource: rt.modelSource,
+      cancelled: true,
     };
   }
 

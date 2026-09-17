@@ -607,20 +607,31 @@ export async function driveHostedEvalTurn(
   };
   const turnTimeoutFailure = (): HostedEvalTurnOutcome => {
     acc.capturedSpans.push(...traceCtx.recordedSpans);
+    // WHICH CLOCK, in the record's words when it has them.
+    //
+    // `turnTimedOut()` is true for a record that says `timed_out` OR for this
+    // driver's own turn deadline having fired, and those are not the same
+    // clock: an iteration or session budget composed in from above aborts the
+    // engine, which records the clock that actually fired. Naming "turn" and
+    // this driver's `turnTimeoutMs` unconditionally would report the wrong
+    // budget for exactly the case the record was added to distinguish, and
+    // whoever read the failure would go tuning a limit that was never hit.
+    const timeout = turnOutcome?.termination?.timeout ?? {
+      clock: "turn" as const,
+      budgetMs: turnTimeoutMs,
+      elapsedMs: turnDeadline?.elapsedMs() ?? turnTimeoutMs,
+    };
+    const elapsedMs = timeout.elapsedMs ?? timeout.budgetMs;
     const failure = {
-      timeout: {
-        clock: "turn" as const,
-        budgetMs: turnTimeoutMs,
-        elapsedMs: turnDeadline?.elapsedMs() ?? turnTimeoutMs,
-      },
+      timeout,
       iterationError: truncateError(
-        `Turn exceeded its ${turnTimeoutMs}ms budget (elapsed ${
-          turnDeadline?.elapsedMs() ?? turnTimeoutMs
-        }ms)`,
+        `Turn exceeded its ${timeout.budgetMs}ms ${timeout.clock} budget ` +
+          `(elapsed ${elapsedMs}ms)`,
       ),
     };
     logger.error(
-      `[evals] backend iteration${logSuffix} turn exceeded its ${turnTimeoutMs}ms budget`,
+      `[evals] backend iteration${logSuffix} turn exceeded its ` +
+        `${timeout.budgetMs}ms ${timeout.clock} budget`,
     );
     sinks.onTurnFailure?.(failure);
     // `failed`, never `cancelled`. A turn that ran out of clock produced a

@@ -272,6 +272,43 @@ export const turnOutcomeRecordZ = z
         message: "completed forbids termination",
       });
     }
+    // AND THE INVERSE, for each of the three fields that NAME a lifecycle.
+    //
+    // A `timeout` on a `failed` record, or a `cancellationSource` on a
+    // `completed` one, is not a harmless extra: every reader here keys off
+    // `lifecycle`, so a record carrying both would have one half answering
+    // "the turn ran out of time" and the other "it did not". The producer
+    // that emits one is asserting two different endings for the same turn,
+    // and the parse is the only place that can refuse the claim.
+    //
+    // `termination.superseded` is deliberately NOT restricted this way — a
+    // late mark arriving after the turn already settled is diagnosis about
+    // the race, valid under every lifecycle.
+    if (record.termination?.timeout && record.lifecycle !== "timed_out") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["termination", "timeout"],
+        message: "termination.timeout is only valid on a timed_out turn",
+      });
+    }
+    if (
+      record.termination?.cancellationSource &&
+      record.lifecycle !== "cancelled"
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["termination", "cancellationSource"],
+        message:
+          "termination.cancellationSource is only valid on a cancelled turn",
+      });
+    }
+    if (record.paused && record.lifecycle !== "paused") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["paused"],
+        message: "paused is only valid on a paused turn",
+      });
+    }
   });
 
 // ---------------------------------------------------------------------------

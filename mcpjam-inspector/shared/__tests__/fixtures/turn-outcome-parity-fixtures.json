@@ -86,7 +86,7 @@
       }
     },
     {
-      "label": "timed out on the iteration clock during setup",
+      "label": "timed out on the sandbox-capacity clock during setup",
       "value": {
         "contractVersion": 1,
         "lifecycle": "timed_out",
@@ -322,6 +322,43 @@
         "contractVersion": 1,
         "lifecycle": "completed",
         "runtime": { "engine": "emulated", "modelAccess": "hosted" }
+      }
+    },
+    {
+      "label": "a timeout on a turn that did not call itself timed_out",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "failed",
+        "runtime": { "engine": "emulated", "modelAccess": "hosted" },
+        "termination": {
+          "errorSource": "model",
+          "timeout": { "clock": "turn", "budgetMs": 360000 }
+        },
+        "recordedAt": 1750000000000
+      }
+    },
+    {
+      "label": "a cancellation source on a turn that did not call itself cancelled",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "timed_out",
+        "runtime": { "engine": "emulated", "modelAccess": "hosted" },
+        "termination": {
+          "timeout": { "clock": "turn", "budgetMs": 360000 },
+          "cancellationSource": "caller"
+        },
+        "recordedAt": 1750000000000
+      }
+    },
+    {
+      "label": "a pause kind on a turn that did not call itself paused",
+      "value": {
+        "contractVersion": 1,
+        "lifecycle": "cancelled",
+        "runtime": { "engine": "emulated", "modelAccess": "hosted" },
+        "termination": { "cancellationSource": "caller" },
+        "paused": { "kind": "tool_approval" },
+        "recordedAt": 1750000000000
       }
     }
   ]
