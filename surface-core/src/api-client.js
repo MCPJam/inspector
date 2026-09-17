@@ -13,6 +13,8 @@ const EXECUTE_ACTION_TIMEOUT_MS = 150_000;
  * @property {string} [idempotencyKey]
  * @property {string} [conversationId]
  * @property {string} [channelId]
+ * @property {{channel:string,ts:string}} [replyHandle]
+ * @property {string} [threadId]
  * @property {number} [limit]
  * @property {string} [projectId]
  * @property {string} [apiKey]
@@ -247,12 +249,14 @@ export function createApiClient(options = {}) {
 	 */
 	async function runAgentTurn(messages, ctx, opts = {}) {
 		const config = getConfig(ctx, opts);
-		const payload = await requestJson(
+		let payload = await requestJson(
 			`${config.baseUrl}/api/v1/projects/${encodeURIComponent(config.projectId)}${routePrefix}`,
 			{
 				method: "POST",
 				body: {
 					messages,
+					...(opts.replyHandle ? { replyHandle: opts.replyHandle } : {}),
+					...(opts.threadId ? { threadId: opts.threadId } : {}),
 					...(opts.idempotencyKey
 						? { idempotencyKey: opts.idempotencyKey }
 						: {}),
@@ -266,7 +270,47 @@ export function createApiClient(options = {}) {
 				fetchImpl: opts.fetchImpl,
 			},
 		);
+		let completedJobId = payload?.jobId;
+		if (typeof payload?.jobId === "string" && payload.status === "pending") {
+			const jobId = payload.jobId;
+			const deadline = Date.now() + 35 * 60 * 1000;
+			while (Date.now() < deadline) {
+				await new Promise((resolve) => setTimeout(resolve, 2000));
+				const job = await requestJson(
+					`${config.baseUrl}/api/v1/projects/${encodeURIComponent(config.projectId)}/agent/jobs/${encodeURIComponent(jobId)}`,
+					{
+						method: "GET",
+						apiKey: config.apiKey,
+						headers: config.headers,
+						timeoutMs: TURN_TIMEOUT_MS,
+						fetchImpl: opts.fetchImpl,
+					},
+				);
+				if (job.status === "completed") {
+					completedJobId = job.jobId ?? jobId;
+					payload = job.result;
+					break;
+				}
+				if (job.status === "failed" || job.status === "cancelled")
+					throw new McpjamApiError(job.error || "Agent turn stopped.", {
+						code: "AGENT_JOB_FAILED",
+						details: {
+							jobId,
+							createdResources: job.createdResources,
+							proposedActions: job.proposedActions,
+						},
+					});
+			}
+			if (payload?.status === "pending")
+				throw new McpjamApiError(
+					"Agent turn is still pending. Reconnect with the same event key.",
+					{ code: "AGENT_JOB_PENDING", details: { jobId } },
+				);
+		}
 		return {
+			...(payload?.replyHandle
+				? { replyHandle: payload.replyHandle, jobId: completedJobId }
+				: {}),
 			reply: typeof payload?.reply === "string" ? payload.reply : "",
 			toolCalls: Array.isArray(payload?.toolCalls) ? payload.toolCalls : [],
 			createdResources: Array.isArray(payload?.createdResources)

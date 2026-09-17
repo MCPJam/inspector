@@ -1545,7 +1545,8 @@
                             },
                             {
                               "type": "object",
-                              "properties": { "kind": { "not": {} } }
+                              "properties": { "kind": { "not": {} } },
+                              "additionalProperties": {}
                             }
                           ]
                         }

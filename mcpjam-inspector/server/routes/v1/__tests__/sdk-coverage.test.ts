@@ -64,6 +64,11 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "post /browser-sessions/artifact": "browserSession",
   "post /browser-sessions/close": "browserSession",
 
+  "get /projects/{projectId}/eval-suites/{suiteId}/authoring/{jobId}":
+    "generateEvalCases",
+  "post /projects/{projectId}/eval-suites/{suiteId}/authoring/{jobId}/commit":
+    "generateEvalCases",
+
   // Identity and catalogs
   // Spend budget — the organization's ceiling on MCPJam-billed spend.
   "get /organizations/{organizationId}/spend-budget": "getSpendBudget",
@@ -417,6 +422,10 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
  * and it belongs in the map above with a method written for it.
  */
 const EXCLUDED_FROM_SDK: Readonly<Record<string, string>> = {
+  "get /projects/{projectId}/agent/jobs/{jobId}":
+    "Durable headless-agent transport used by surface-core for Slack/Discord; the SDK does not expose the service-credential-only agent entry point.",
+  "post /projects/{projectId}/agent/jobs/{jobId}/cancel":
+    "Durable headless-agent cancellation companion to the service-credential-only agent endpoint; surface clients own its job lifecycle.",
   // The DEPRECATED `/hosts` aliases. Their canonical `/clients` twins are in
   // the map above and are what the SDK's contract covers. The SDK does still
   // reach these paths — `listHosts`…`duplicateHost` remain as executable
@@ -565,4 +574,45 @@ describe("/api/v1 -> SDK coverage", () => {
     const reasons = Object.values(EXCLUDED_FROM_SDK);
     expect(new Set(reasons).size).toBeGreaterThan(reasons.length / 2);
   });
+});
+
+describe("authoring SDK requests", () => {
+  it.each(["completed", "failed", "cancelled"])(
+    "handles %s without committing unsuccessful jobs",
+    async (status) => {
+      const requests: Array<{ url: string; method: string }> = [];
+      const client = new PlatformApiClient({
+        baseUrl: "https://example.test/api/v1",
+        getAuth: async () => "test-token",
+        fetch: async (url, init) => {
+          requests.push({ url: String(url), method: init?.method ?? "GET" });
+          const data =
+            requests.length === 1
+              ? { jobId: "job" }
+              : requests.length === 2
+              ? { status, error: "Declared job error" }
+              : { created: [] };
+          return Response.json(data);
+        },
+      });
+      const result = client.generateEvalCases({
+        projectId: "p",
+        suiteId: "s",
+        body: {},
+      });
+      if (status === "completed")
+        await expect(result).resolves.toEqual({ created: [] });
+      else await expect(result).rejects.toThrow("Declared job error");
+      expect(requests[1]).toEqual({
+        method: "GET",
+        url: "https://example.test/api/v1/projects/p/eval-suites/s/authoring/job",
+      });
+      if (status === "completed")
+        expect(requests[2]).toEqual({
+          method: "POST",
+          url: "https://example.test/api/v1/projects/p/eval-suites/s/authoring/job/commit",
+        });
+      else expect(requests).toHaveLength(2);
+    },
+  );
 });

@@ -1,4 +1,7 @@
 import { useEffect, useRef, useState } from "react";
+import { useFeatureFlagEnabled } from "posthog-js/react";
+import { authoringRequest } from "@/lib/apis/eval-authoring-api";
+import { followAuthoringJob } from "@/lib/mcpjam-agent/eval-workspace";
 import { describeMCPJamLimitMessage } from "@/lib/mcpjam-limit";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -25,6 +28,8 @@ export function ImportDatasetDialog({
   projectId,
   suiteId,
 }: ImportDatasetDialogProps) {
+  const sharedAuthoring =
+    useFeatureFlagEnabled("eval-authoring-import-v1") === true;
   const [file, setFile] = useState<File | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -33,9 +38,10 @@ export function ImportDatasetDialog({
   // to say why the import stopped. The wire sentence ("… Use BYOK or try
   // again tomorrow.") is authored by a Convex backend outside this repo, so
   // matching the other two case-creation surfaces has to happen here.
-  const errorText = error ? (describeMCPJamLimitMessage(error) ?? error) : null;
+  const errorText = error ? describeMCPJamLimitMessage(error) ?? error : null;
   const controller = useRef<AbortController | null>(null);
   const generation = useRef(0);
+  const startIdentity = useRef({ file: null as File | null, key: "" });
   const busy = useRef(false);
   const input = useRef<HTMLInputElement>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
@@ -97,6 +103,32 @@ export function ImportDatasetDialog({
       );
       if (!markdown.trim()) throw new Error("The file is empty.");
       if (current !== generation.current) return;
+      if (sharedAuthoring) {
+        const result = await authoringRequest(
+          {
+            operation: "start",
+            input: {
+              source: "markdown",
+              markdown,
+              fileName: file.name,
+              projectId,
+              suiteId,
+              requestKey: (() => {
+                if (startIdentity.current.file !== file)
+                  startIdentity.current = { file, key: crypto.randomUUID() };
+                return startIdentity.current.key;
+              })(),
+            },
+          },
+          abort.signal,
+        );
+        // The job is started either way, but a response that lost its race
+        // must not close a dialog the user already reopened on another suite.
+        if (current !== generation.current) return;
+        void followAuthoringJob({ projectId, suiteId }, result.jobId);
+        onOpenChange(false);
+        return;
+      }
       const response = await extractMarkdownCases(
         { markdown, fileName: file.name, projectId, suiteId },
         abort.signal,
