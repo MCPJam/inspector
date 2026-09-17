@@ -710,10 +710,21 @@ This environment's server group is gone.
 `provider/empty_response`
 
 The model request ended without usable content, so the turn could not complete.
-The recorded error names the provider's finish reason where one was reported.
+The error message names the provider's finish reason and, where available, explains what happened.
 
-Rerun the affected cases. If the error recurs on an MCPJam model, report it with
-those run details. For BYOK, check the recorded provider error and account configuration.
+**Finish reasons and what they mean**
+
+| Finish reason | What happened | What to try |
+| --- | --- | --- |
+| `length` | The output-token limit was reached before any content was produced. The error quotes the token count. If nothing visible was emitted, the budget most likely went to reasoning the provider does not stream back. | Shorten the conversation context, reduce the number of attached tools, or switch to a model with a higher output-token limit. |
+| `length` (cut-off tool call) | The model started writing a tool call but ran out of tokens before the input was complete. The error names the tool. | Same as above. The named tool was never executed. |
+| `error` | The provider rejected its own tool call (for example, Google's `MALFORMED_FUNCTION_CALL`). | Simplify the tool's input schema, or switch to a model that handles complex schemas more reliably. |
+| `content-filter` | A safety filter blocked the response. | Rephrase the prompt or adjust the system prompt. |
+| `stop` / `tool-calls` | The provider reported a clean finish but returned nothing. | Retry the request. If it recurs, report it with the session details. |
+
+**BYOK chat** — an empty last step now surfaces this error instead of showing a blank assistant bubble. The error message and finish reason are the same as for MCPJam-hosted models.
+
+If the error recurs on an MCPJam model, report it with those run details. For BYOK, check the recorded provider error and your account configuration.
 
 ## Unknown error
 
