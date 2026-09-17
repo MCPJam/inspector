@@ -508,7 +508,7 @@ describe("SwarmFindingsTab", () => {
     expect(screen.getByTestId("swarm-findings-tab")).toBeInTheDocument();
     expect(screen.getByTestId("findings-summary-card")).toBeInTheDocument();
     expect(screen.getByTestId("findings-footnotes").textContent).toContain(
-      "Rubric findings only",
+      "Evaluator findings only",
     );
   });
 

@@ -434,11 +434,11 @@ describe("deriveHonestyFootnotes", () => {
     expect(
       deriveHonestyFootnotes({ signals: null, hasGroupId: false }),
     ).toEqual([
-      "Rubric findings only — deterministic signals unavailable for this wave",
+      "Evaluator findings only — deterministic signals unavailable for this wave",
     ]);
     expect(
       deriveHonestyFootnotes({ signals: signals(), hasGroupId: false })[0],
-    ).toContain("Rubric findings only");
+    ).toContain("Evaluator findings only");
   });
 
   it("flags truncation, low confidence, and a live wave", () => {

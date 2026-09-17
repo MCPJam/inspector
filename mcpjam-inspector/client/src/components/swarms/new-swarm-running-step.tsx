@@ -180,7 +180,7 @@ export function swarmCellHeadline(args: {
   if (args.outcome === "succeeded") {
     const checks = args.primary.match(/^(\d+)\/(\d+) pass$/);
     return checks && Number(checks[1]) > 0 && checks[1] === checks[2]
-      ? "Run completed: All checks passed"
+      ? "Run completed: All evaluators passed"
       : `Run completed: ${goal}`;
   }
   if (args.outcome === "rate_limited") {
