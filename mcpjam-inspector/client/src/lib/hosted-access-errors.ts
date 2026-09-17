@@ -15,5 +15,8 @@ export function isStaleHostedAccessError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   const data = (error as { data?: unknown }).data;
   if (!data || typeof data !== "object") return false;
-  return (data as { code?: unknown }).code === "scenario_access_stale";
+  const code = (data as { code?: unknown }).code;
+  return (
+    code === "scenario_access_stale" || code === "SCENARIO_SIGN_IN_REQUIRED"
+  );
 }

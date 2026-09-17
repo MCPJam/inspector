@@ -67,6 +67,7 @@ import {
 import { z } from "zod";
 import {
   hasUnresolvedToolCalls,
+  hasUnresolvedApprovalResponses,
   executeToolCallsFromMessages,
 } from "@/shared/http-tool-calls";
 import { isMrtrSuspendSignalShape } from "@/shared/mrtr-continuation";
@@ -613,8 +614,10 @@ export function describeBackendStreamFailure(
   // matter which upstream status was mirrored onto it. The slug still comes
   // from the status so the user-facing copy stays accurate ("the provider
   // rejected the key" IS what happened — it was just our key).
-  if (code === "platform_free_budget_exhausted") return describeAsSlug("provider/mcpjam_platform_budget", detail);
-  if (code === "account_suspended") return describeAsSlug("account/suspended", detail);
+  if (code === "platform_free_budget_exhausted")
+    return describeAsSlug("provider/mcpjam_platform_budget", detail);
+  if (code === "account_suspended")
+    return describeAsSlug("account/suspended", detail);
   if (isMcpjamOwnedFailureCode(code)) {
     return { ...backendFailureSlug(status, detail), origin: "mcpjam" };
   }
@@ -661,8 +664,10 @@ export function describeStreamErrorChunkFailure(
     status !== undefined ? `HTTP ${status}: ${rawText}` : rawText,
   );
 
-  if (code === "platform_free_budget_exhausted") return describeAsSlug("provider/mcpjam_platform_budget", detail);
-  if (code === "account_suspended") return describeAsSlug("account/suspended", detail);
+  if (code === "platform_free_budget_exhausted")
+    return describeAsSlug("provider/mcpjam_platform_budget", detail);
+  if (code === "account_suspended")
+    return describeAsSlug("account/suspended", detail);
   if (isMcpjamOwnedFailureCode(code)) {
     return { ...backendFailureSlug(status, detail), origin: "mcpjam" };
   }
@@ -756,6 +761,13 @@ function applyToolRefresh(
 }
 
 export interface MCPJamHandlerOptions {
+  /** Durable callers must finish this write before the next external effect. */
+  durableCheckpoint?: (state: {
+    phase: "model" | "tools" | "ready" | "complete";
+    messages: ModelMessage[];
+    step: number;
+  }) => Promise<void>;
+  yieldAfterStep?: boolean;
   messages: ModelMessage[];
   modelId: string;
   /**
@@ -1261,6 +1273,7 @@ export interface MCPJamHandlerOptions {
 }
 
 interface StepContext {
+  durableCheckpoint?: MCPJamHandlerOptions["durableCheckpoint"];
   writer: {
     write: (chunk: UIMessageChunk) => void;
   };
@@ -1528,9 +1541,9 @@ async function closeInheritedToolCallsWithoutResume(args: {
       // runs them (`skipNonExecutableTools`), and the loop's pause for them IS
       // the rail that gets them fulfilled — closing one would break WebMCP
       // rather than protect anything.
-      const entry = (tools as Record<string, { execute?: unknown } | undefined>)[
-        call.toolName
-      ];
+      const entry = (
+        tools as Record<string, { execute?: unknown } | undefined>
+      )[call.toolName];
       return !(
         isClientFulfilledToolName(call.toolName) &&
         !!entry &&
@@ -3032,9 +3045,7 @@ async function handlePendingApprovals(
  * Process a single step of the agentic loop.
  * Calls Convex, streams the response, and executes tools if needed.
  */
-async function processOneStep(
-  ctx: StepContext,
-): Promise<{
+async function processOneStep(ctx: StepContext): Promise<{
   shouldContinue: boolean;
   didEmitFinish: boolean;
   /**
@@ -3228,6 +3239,13 @@ async function processOneStep(
     }
   }
   Object.assign(convexHeaders, guestIpForwardHeaders(ipHash));
+  // Sponsored study inference must come through the trusted execution path
+  // that resolves the study's model and tools. This proof is required even
+  // when there is no client IP to forward. The viewer bearer remains intact.
+  const scenarioServiceToken = process.env.INSPECTOR_SERVICE_TOKEN?.trim();
+  if (scenarioId && scenarioServiceToken) {
+    convexHeaders["x-inspector-service-token"] = scenarioServiceToken;
+  }
   let res: Response;
   // Everything above this line is ours; everything at or below it is the
   // model's turn. Marked HERE, at the handover, not once a response comes
@@ -3283,7 +3301,11 @@ async function processOneStep(
   // unguarded `.get` throws a TypeError that the outer catch converts into a
   // failed turn (7 evals-runner / runner-parity tests).
   if (res.headers?.get("x-mcpjam-platform-paid-fallback") === "1") {
-    writer.write({ type: "data-platform-paid-fallback", data: { usingCredits: true }, transient: true });
+    writer.write({
+      type: "data-platform-paid-fallback",
+      data: { usingCredits: true },
+      transient: true,
+    });
   }
   const isJsonDenial =
     res.ok &&
@@ -3449,6 +3471,12 @@ async function processOneStep(
       content: contentParts,
     } as ModelMessage);
   }
+  if (contentParts.length > 0)
+    await ctx.durableCheckpoint?.({
+      phase: "tools",
+      messages: messageHistory,
+      step: stepIndex,
+    });
 
   const stepMessageEndIndex =
     messageHistory.length > traceTurn.promptMessageStartIndex
@@ -4315,7 +4343,9 @@ export async function runChatEngineLoop(
     engine: "emulated",
     ...(options.harness ? { harness: options.harness } : {}),
     modelAccess: modelAccess ?? "hosted",
-    ...(cancellationSource ? { defaultCancellationSource: cancellationSource } : {}),
+    ...(cancellationSource
+      ? { defaultCancellationSource: cancellationSource }
+      : {}),
   });
   const driver = new StreamTurnDriver({
     turnId: traceTurn.turnId,
@@ -4346,7 +4376,8 @@ export async function runChatEngineLoop(
    * through to the success epilogue. Before this, every one of those turns
    * recorded `completed`.
    */
-  let lastEngineError: { code?: string; phase?: "setup" | "stream" } | undefined;
+  let lastEngineError:
+    { code?: string; phase?: "setup" | "stream" } | undefined;
   // Counted, not just stored: the question at the loop boundary is "did THIS
   // step report an error", and a stale error from an earlier step would
   // otherwise mark a turn failed that recovered.
@@ -4626,6 +4657,16 @@ export async function runChatEngineLoop(
       // Runs AFTER the guard: it executes every unresolved call in the history
       // it is handed, so what reaches it has to be the approved step and its
       // siblings — nothing inherited from a turn that ended.
+      if (
+        options.durableCheckpoint &&
+        hasUnresolvedApprovalResponses(messageHistory)
+      ) {
+        await options.durableCheckpoint({
+          phase: "tools",
+          messages: messageHistory,
+          step: effectiveSteps(),
+        });
+      }
       await handlePendingApprovals(
         safeWriter,
         messageHistory,
@@ -4725,60 +4766,75 @@ export async function runChatEngineLoop(
       while (!mrtrPaused && effectiveSteps() < resolvedMaxSteps) {
         if (aborted) break;
         const engineErrorsBeforeStep = engineErrorCount;
+        await options.durableCheckpoint?.({
+          phase: "model",
+          messages: messageHistory,
+          step: effectiveSteps(),
+        });
         const { shouldContinue, didEmitFinish, pausedKind } =
           await processOneStep({
-          writer: safeWriter,
-          outcome: outcomeBuilder,
-          messageHistory,
-          toolDefs,
-          toolDefsByName,
-          tools,
-          progressivePlan,
-          discoveryState,
-          authHeader,
-          scenarioId,
-          accessVersion,
-          projectId,
-          chatSessionId,
-          sourceType,
-          modelId,
-          provider,
-          systemPrompt,
-          temperature,
-          mcpClientManager,
-          selectedServers,
-          approvalDecisions,
-          modelVisibleMcpToolResults,
-          approvalMode,
-          stepIndex: effectiveSteps(),
-          usedToolCallIds,
-          traceTurn,
-          endpointPath: resolvedEndpointPath,
-          extraHeaders,
-          extraBodyFields,
-          clientIp,
-          onLiveTextDelta,
-          // PR 5b-pre: chunk-level callbacks. Passed through to the
-          // step processor where the chunk-switch (onToolCall) +
-          // tool-result emission (onToolResult) sites fire them.
-          onToolCall,
-          onToolResult,
-          // PR 5b-followup-2: structured-error callback. Fires from
-          // the two `processOneStep` error sites (non-OK Convex
-          // response + processStream/tool catch). Wrapped so the engine also
-          // sees what failed — a step can settle with an error WITHOUT
-          // throwing, and the record has to say so.
-          onEngineError: captureEngineError,
-          onModelHandover: () => {
-            modelInvoked = true;
-          },
-          failureReporter,
-          // Browser-rendered MCP App eval PR 2: advertised-tool narrowing.
-          prepareAdvertisedTools,
-          abortSignal,
-        });
+            durableCheckpoint: options.durableCheckpoint,
+            writer: safeWriter,
+            outcome: outcomeBuilder,
+            messageHistory,
+            toolDefs,
+            toolDefsByName,
+            tools,
+            progressivePlan,
+            discoveryState,
+            authHeader,
+            scenarioId,
+            accessVersion,
+            projectId,
+            chatSessionId,
+            sourceType,
+            modelId,
+            provider,
+            systemPrompt,
+            temperature,
+            mcpClientManager,
+            selectedServers,
+            approvalDecisions,
+            modelVisibleMcpToolResults,
+            approvalMode,
+            stepIndex: effectiveSteps(),
+            usedToolCallIds,
+            traceTurn,
+            endpointPath: resolvedEndpointPath,
+            extraHeaders,
+            extraBodyFields,
+            clientIp,
+            onLiveTextDelta,
+            // PR 5b-pre: chunk-level callbacks. Passed through to the
+            // step processor where the chunk-switch (onToolCall) +
+            // tool-result emission (onToolResult) sites fire them.
+            onToolCall,
+            onToolResult,
+            // PR 5b-followup-2: structured-error callback. Fires from
+            // the two `processOneStep` error sites (non-OK Convex
+            // response + processStream/tool catch). Wrapped so the engine also
+            // sees what failed — a step can settle with an error WITHOUT
+            // throwing, and the record has to say so.
+            onEngineError: captureEngineError,
+            onModelHandover: () => {
+              modelInvoked = true;
+            },
+            failureReporter,
+            // Browser-rendered MCP App eval PR 2: advertised-tool narrowing.
+            prepareAdvertisedTools,
+            abortSignal,
+          });
 
         steps++;
+        await options.durableCheckpoint?.({
+          phase: shouldContinue
+            ? "ready"
+            : didEmitFinish
+              ? "complete"
+              : "model",
+          messages: messageHistory,
+          step: effectiveSteps(),
+        });
         if (didEmitFinish) {
           finishEmitted = true;
         }
@@ -4828,6 +4884,7 @@ export async function runChatEngineLoop(
         if (!shouldContinue) {
           break;
         }
+        if (options.yieldAfterStep) break;
 
         // BETWEEN STEPS, and only on a step that continues: a turn that is
         // finishing has nothing to advertise to. Placed after

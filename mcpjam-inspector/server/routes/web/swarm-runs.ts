@@ -158,6 +158,12 @@ const startRunSchema = z.object({
    * transaction, since only it can see the project's environments.
    */
   environmentIds: z.array(z.string().min(1)).optional(),
+  /**
+   * Per-run iterations. Shape-checked here; the backend enforces the real
+   * bounds inside the launch transaction, against the same constants a
+   * journey definition write is checked with.
+   */
+  sessionsPerTarget: z.number().int().optional(),
 });
 
 /**
@@ -216,6 +222,9 @@ swarmRuns.post("/journeys/:journeyId/runs", async (c) =>
           ...(body.swarmRunGroupId ? { waveId: body.swarmRunGroupId } : {}),
           ...(body.environmentIds?.length
             ? { environmentIds: body.environmentIds }
+            : {}),
+          ...(body.sessionsPerTarget !== undefined
+            ? { sessionsPerTarget: body.sessionsPerTarget }
             : {}),
         }
       );

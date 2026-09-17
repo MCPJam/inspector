@@ -21,6 +21,7 @@ import { useUpgradeCheckout } from "@/hooks/use-upgrade-checkout";
 import { useUpgradeRequestRecipients } from "@/hooks/use-upgrade-request-recipients";
 import { CreditsLimitDialogView } from "@/components/billing/CreditsLimitDialogView";
 import { AllowanceLimitDialogView } from "@/components/billing/AllowanceLimitDialogView";
+import { ScenarioOwnerLimitDialogView } from "@/components/billing/ScenarioOwnerLimitDialogView";
 import { track } from "@/lib/analytics";
 import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
 
@@ -228,11 +229,19 @@ export function MCPJamLimitDialog() {
   const appNavigate = useAppNavigate();
   const creditsImpressionTrackedRef = useRef(false);
 
+  // A User Testing link is billed to the scenario owner, so a tester (guest or
+  // signed in) has nothing to buy or sign in to. They get a notice instead, and
+  // none of the billing hooks below run for an org they may not belong to.
+  const isScenarioWall = limitSurface === "scenario";
+  const showScenarioWall =
+    isOpen && intent !== null && isScenarioWall && !frontierOpen;
   // Decide whether either variant is active before wiring billing hooks. This
   // component is mounted app-wide, so a closed dialog must not keep billing
   // and owner-member Convex subscriptions alive for the whole session.
-  const showGuestDialog = !user && intent === "guest" && isOpen;
-  const showTopupDialog = !!user && intent === "topup" && isOpen;
+  const showGuestDialog =
+    !user && intent === "guest" && isOpen && !isScenarioWall;
+  const showTopupDialog =
+    !!user && intent === "topup" && isOpen && !isScenarioWall;
   // A swarm gets its own variant of the wall, not just different words: both
   // the upgrade picker and the BYOK link dead-end there, so neither renders.
   const isSwarmWall = limitSurface === "swarm";
@@ -248,14 +257,29 @@ export function MCPJamLimitDialog() {
 
   // Resolve which org's billing page to redirect to. Prefer the org that
   // actually hit the limit; fall back to local active org / recent org.
+  // Every candidate must be an org the user can open: the stored id is raw
+  // localStorage and can outlive a membership, and a billing query for an org
+  // the user isn't in throws into the app error boundary. `seatPending` orgs
+  // are listed but unlinked, so they are excluded the same way App does.
   // Declared above the `isLoading` guard so the upgrade hook below keeps a
   // stable call order.
   const resolveBillingOrgId = (): string | null => {
     if (!user) return null;
-    if (limitOrganizationId) return limitOrganizationId;
-    const stored = readStoredActiveOrganizationId(user.id);
-    if (stored) return stored;
-    return sortedOrganizations[0]?._id ?? null;
+    const selectableOrganizations = sortedOrganizations.filter(
+      (org) => !org.seatPending,
+    );
+    const candidates = [
+      limitOrganizationId,
+      readStoredActiveOrganizationId(user.id),
+      selectableOrganizations[0]?._id,
+    ];
+    return (
+      candidates.find(
+        (candidate) =>
+          !!candidate &&
+          selectableOrganizations.some((org) => org._id === candidate),
+      ) ?? null
+    );
   };
 
   const billingOrgId = resolveBillingOrgId();
@@ -493,6 +517,7 @@ export function MCPJamLimitDialog() {
           }}
         />
       )}
+      {showScenarioWall && <ScenarioOwnerLimitDialogView onDismiss={close} />}
       {showGuestDialog && !frontierOpen && <GuestCreditWall />}
       {showCreditWall && isSwarmWall && (
         <AllowanceLimitDialogView

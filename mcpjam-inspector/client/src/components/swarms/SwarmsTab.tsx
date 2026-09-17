@@ -587,7 +587,12 @@ export function SwarmsTab({
        * id — each of those launches exactly one journey, so a wave of one is
        * the correct grouping, and it retires the time heuristic for them too.
        */
-      opts?: { swarmRunGroupId?: string; environmentIds?: string[] },
+      opts?: {
+        swarmRunGroupId?: string;
+        environmentIds?: string[];
+        /** Iterations for THIS run; leaves the journey's own config alone. */
+        sessionsPerTarget?: number;
+      },
     ): Promise<
       | { status: "launched"; runId?: string; swarmRunGroupId?: string }
       | { status: "already_launching" }
@@ -620,6 +625,9 @@ export function SwarmsTab({
           // a replayed launchKey returns the existing run and ignores it.
           ...(opts?.environmentIds?.length
             ? { environmentIds: opts.environmentIds }
+            : {}),
+          ...(opts?.sessionsPerTarget !== undefined
+            ? { sessionsPerTarget: opts.sessionsPerTarget }
             : {}),
         });
         launchKeysRef.current.delete(journeyId); // confirmed 2xx
@@ -1072,6 +1080,10 @@ export function SwarmsTab({
         viewOptions={SWARM_VIEW_OPTIONS}
         onViewModeChange={setViewMode}
         creatingSwarm={creatingPersona}
+        // Same condition the body uses to choose the empty hero, so the header
+        // and the body can never disagree about whether this project has
+        // anything in it.
+        showCreate={personas !== undefined && personas.length > 0}
         onNewSwarm={() => navigate(swarmsCreatePath)}
       />
       <div className="flex min-h-0 flex-1">

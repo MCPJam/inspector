@@ -39,6 +39,7 @@ export type UnifiedFindingsPanelProps = {
   observationCoverage: InsightsObservationCoverage | null;
   mode: UnifiedFindingsMode;
   analyze: FindingsAnalysisAction;
+  analysisFailure?: { errorCode?: string } | null;
   /**
    * The FREE deterministic build.
    *
@@ -106,6 +107,16 @@ function humanExclusion(reason: string): string {
   return EXCLUSION_WORDS[reason] ?? reason;
 }
 
+const ANALYSIS_FAILURE_DETAIL: Record<string, string> = {
+  evidence_changed: "The recorded evidence changed during analysis.",
+  superseded: "The analyzer was updated during analysis.",
+  iteration_limit: "This run exceeded the analysis size limit.",
+  no_verified_reports: "No trace reports could be verified.",
+  lease_expired: "The analysis worker stopped responding.",
+  spend_cap_exceeded: "The analysis spend limit was reached.",
+  spend_budget_reached: "The analysis spend limit was reached.",
+};
+
 export function UnifiedFindingsPanel({
   runPending = false,
   analysis,
@@ -116,6 +127,7 @@ export function UnifiedFindingsPanel({
   observationCoverage,
   mode,
   analyze,
+  analysisFailure,
   build,
   backendUnavailableNote,
   scopeControl,
@@ -215,6 +227,20 @@ export function UnifiedFindingsPanel({
             : ""}
         </p>
       )}
+      {analysisFailure ? (
+        <p
+          className="mb-4 text-xs text-muted-foreground"
+          data-testid="unified-findings-analysis-failed"
+          title={analysisFailure.errorCode}
+        >
+          AI analysis did not complete.
+          {analysisFailure.errorCode &&
+          ANALYSIS_FAILURE_DETAIL[analysisFailure.errorCode]
+            ? ` ${ANALYSIS_FAILURE_DETAIL[analysisFailure.errorCode]}`
+            : null}
+        </p>
+      ) : null}
+
       {backendUnavailableNote || analyze.error ? (
         <div className="mb-5 space-y-3">
           {backendUnavailableNote ? (
@@ -236,7 +262,7 @@ export function UnifiedFindingsPanel({
       {enrichment?.status === "stale" ? (
         <div className="mb-5">
           <StateNote tone="warning" testId="unified-findings-stale-enrichment">
-            The evidence changed. Analyze again to update the suggested fixes.
+            The evidence changed after this analysis ran.
           </StateNote>
         </div>
       ) : null}

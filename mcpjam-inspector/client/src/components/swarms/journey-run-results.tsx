@@ -1,6 +1,6 @@
 import { swarmLifecycleLabel } from "@mcpjam/sdk/contract";
 import { TranscriptEmptyState } from "@/components/chat-v2/transcript-empty-state";
-import { SwarmGoalResult, SwarmSessionReport } from "./swarm-report-panel";
+import { SwarmGoalResult } from "./swarm-report-panel";
 import type { SwarmSessionVerdict } from "@mcpjam/sdk/contract";
 import { useEffect, useMemo, useState } from "react";
 import { useConvexAuth } from "convex/react";
@@ -209,8 +209,8 @@ export function SwarmHostCell({
       <SwarmGoalResult verdict={verdict} />
       {verdict ? (
         <span className="text-[10px] text-muted-foreground">
-          {verdict.counts.gatingPassed}/{verdict.counts.gating} required ·{" "}
-          {verdict.counts.advisoryFailed} advisory findings
+          {verdict.counts.gatingPassed}/{verdict.counts.gating} evaluators
+          passed
         </span>
       ) : (
         <SessionCriteriaChip criteria={criteria} />
@@ -238,7 +238,7 @@ function SessionCriteriaChip({ criteria }: { criteria?: SessionCriteria }) {
     const allPassed = passed === results.length;
     return (
       <span
-        title={`${passed} of ${results.length} checks passed`}
+        title={`${passed} of ${results.length} evaluators passed`}
         className={cn(
           "rounded px-1 font-mono text-[10px] tabular-nums",
           allPassed
@@ -258,7 +258,9 @@ function SessionCriteriaChip({ criteria }: { criteria?: SessionCriteria }) {
   return (
     <span
       title={
-        pending ? "Checks still being graded" : "Checks could not be graded"
+        pending
+          ? "Evaluators still being graded"
+          : "Evaluators could not be graded"
       }
       className="rounded px-1 font-mono text-[10px] text-muted-foreground"
     >
@@ -644,8 +646,6 @@ export function SwarmLiveStreamPane({
           )}
         </span>
       </div>
-
-      <SwarmSessionReport session={convexSession} />
 
       {providerRateLimit ? (
         <div data-testid="swarm-live-pane-rate-limit">

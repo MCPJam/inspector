@@ -94,6 +94,27 @@ export function shortenGoalTitle(
   return `${words.slice(0, maxWords).join(" ")}…`;
 }
 
+/**
+ * Lane A's wave summary, only when a model actually narrated something.
+ *
+ * A wave with no mined candidates completes WITHOUT calling a model: the
+ * backend stores fixed prose ("No anomalies concentrated along any dimension
+ * of this wave.") with `candidates: []`. Promoted to the headline, that prose
+ * replaced a deterministic summary saying every graded session failed. Gate on
+ * `candidates`, never on the sentence, which will be reworded.
+ */
+export function narratedWaveSummary(
+  status: string | null | undefined,
+  insights:
+    | { summary?: string | null; candidates?: readonly unknown[] | null }
+    | null
+    | undefined,
+): string | null {
+  if (status !== "completed" || !insights) return null;
+  if ((insights.candidates?.length ?? 0) === 0) return null;
+  return insights.summary?.trim() || null;
+}
+
 function firstSentence(text: string): string {
   const trimmed = text.trim();
   const end = trimmed.search(/[.!?](\s|$)/);
@@ -362,7 +383,7 @@ export function deriveHonestyFootnotes(args: {
     // Legacy wave (or a backend that has not answered): the deterministic
     // detector lane never ran, so the tab is rubric findings only.
     notes.push(
-      "Rubric findings only — deterministic signals unavailable for this wave",
+      "Evaluator findings only — deterministic signals unavailable for this wave",
     );
   } else {
     if (!signals.terminal) {

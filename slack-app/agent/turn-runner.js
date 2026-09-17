@@ -57,6 +57,7 @@ export function replayQueueKey(ctx, args) {
  *   isThread: boolean,
  *   botUserId?: string,
  *   fallbackText: string,
+ *   replyHandle?: () => {channel:string,ts:string} | undefined,
  *   onStart?: () => Promise<void>,
  *   onResult: (result: import('./mcpjam-client.js').AgentTurnResult) => Promise<void>,
  *   onReplay?: (envelope: import('./mcpjam-client.js').AgentTurnResult) => Promise<void>,
@@ -99,6 +100,8 @@ export function runTurnForEvent(args) {
         runAgentTurn(history, args.ctx, {
           idempotencyKey: opts.idempotencyKey,
           channelId: args.channelId,
+          ...(args.isThread ? { threadId: args.threadTs } : {}),
+          ...(args.replyHandle?.() ? { replyHandle: args.replyHandle() } : {}),
         }),
     },
     eventClaims: { hasClaimBackend, claimEvent, completeEvent, releaseEvent },

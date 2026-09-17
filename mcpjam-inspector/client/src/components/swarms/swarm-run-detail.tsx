@@ -7,8 +7,6 @@
  * settled. The live strip under the header is only for work in flight
  * (progress + Stop).
  */
-import { SwarmReportPanel } from "./swarm-report-panel";
-import { SwarmRunStageFunnelPanels } from "@/components/shared/user-value-chain/StageFunnelPanels";
 import { useCallback, useMemo, useState } from "react";
 import { useQuery } from "convex/react";
 import { Loader2 } from "lucide-react";
@@ -55,6 +53,7 @@ import {
   waveSessionTotals,
 } from "@/components/swarms/swarm-overview-panel";
 import { SwarmFindingsTab } from "@/components/swarms/findings/swarm-findings-tab";
+import { narratedWaveSummary } from "@/components/swarms/findings/findings-headline";
 import { NewSwarmRunningStep } from "@/components/swarms/new-swarm-running-step";
 import {
   DETAIL_TAB_OPTIONS,
@@ -173,11 +172,10 @@ export function SwarmRunDetail({
       : null,
     { autoRequest: false },
   );
-  const generatedWaveSummary =
-    waveInsights.status === "completed" &&
-    waveInsights.insights?.summary?.trim()
-      ? waveInsights.insights.summary.trim()
-      : null;
+  const generatedWaveSummary = narratedWaveSummary(
+    waveInsights.status,
+    waveInsights.insights,
+  );
 
   const handleTabChange = useCallback(
     (next: SwarmDetailTab) => {
@@ -630,29 +628,17 @@ export function SwarmRunDetail({
           </div>
         ) : null}
         {tab === "sessions" && projectId ? (
-          <>
-            <div className="space-y-2">
-              {wave.runs.map((run) => (
-                <SwarmReportPanel
-                  key={run.runId}
-                  report={run.report}
-                  title={`${run.personaName} · ${run.journeyName ?? "Goal"}`}
-                />
-              ))}
-            </div>
-            <SwarmRunStageFunnelPanels journeyRunIds={runIds} />
-            <SwarmsSessionsPanel
-              projectId={projectId}
-              personas={personas}
-              hosts={hosts}
-              personaRefId={sessionsPersonaFilter}
-              onPersonaRefIdChange={setSessionsPersonaFilter}
-              initialThreadId={sessionParam}
-              runLabels={runLabels}
-              goalLabels={goalLabels}
-              journeyRunIds={runIds}
-            />
-          </>
+          <SwarmsSessionsPanel
+            projectId={projectId}
+            personas={personas}
+            hosts={hosts}
+            personaRefId={sessionsPersonaFilter}
+            onPersonaRefIdChange={setSessionsPersonaFilter}
+            initialThreadId={sessionParam}
+            runLabels={runLabels}
+            goalLabels={goalLabels}
+            journeyRunIds={runIds}
+          />
         ) : null}
         {tab === "sessions" && !projectId ? (
           <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">

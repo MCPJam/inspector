@@ -21,6 +21,7 @@ import { TopicMapPanel } from "@/components/shared/usage-insights/TopicMapPanel"
 import { InsightsViewToggle } from "@/components/shared/usage-insights/InsightsViewToggle";
 import { InsightsFreshnessChip } from "@/components/shared/usage-insights/InsightsFreshnessChip";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
+import { SHOW_RECLUSTERING_UI } from "@/lib/cluster-tuning";
 import { cn } from "@/lib/utils";
 import { X } from "lucide-react";
 
@@ -425,7 +426,9 @@ export function InsightsWorkbench({
           onSelectLink={flow.handleSelectFlow}
           onRebuild={handleRebuild}
           rebuildBusy={rebuildBusy}
-          onApplyTuning={handleApplyTuning}
+          {...(SHOW_RECLUSTERING_UI
+            ? { onApplyTuning: handleApplyTuning }
+            : {})}
           analysisIsAutomatic={analysisIsAutomatic}
           showLinkThreshold
           fillHeight={fillBody}

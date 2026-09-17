@@ -58,14 +58,16 @@ vi.mock("ai", async () => {
   };
 });
 
-vi.mock("@/shared/http-tool-calls", () => ({
+vi.mock("@/shared/http-tool-calls", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
   hasUnresolvedToolCalls: vi.fn().mockReturnValue(false),
   executeToolCallsFromMessages: vi.fn(),
 }));
 
 vi.mock("../chat-helpers", async () => {
-  const actual =
-    await vi.importActual<typeof import("../chat-helpers")>("../chat-helpers");
+  const actual = await vi.importActual<typeof import("../chat-helpers")>(
+    "../chat-helpers",
+  );
   return {
     ...actual,
     scrubMcpAppsToolResultsForBackend: vi.fn((messages) => messages),
@@ -141,6 +143,64 @@ describe("mcpjam-stream-handler", () => {
   afterEach(() => {
     global.fetch = originalFetch;
     delete process.env.CONVEX_HTTP_URL;
+  });
+
+  it("awaits durable intent before allowing a provider invocation", async () => {
+    await handleMCPJamFreeChatModel({
+      messages: [{ role: "user", content: "Make a case" }],
+      modelId: "gpt-4.1-mini",
+      systemPrompt: "Use tools",
+      tools: {},
+      mcpClientManager: {
+        getAllToolsMetadata: vi.fn().mockReturnValue({}),
+      } as any,
+      durableCheckpoint: async () => {
+        throw new Error("lease lost");
+      },
+    });
+    await lastExecution;
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(executeToolCallsFromMessages).not.toHaveBeenCalled();
+  });
+
+  it("does not execute a tool when persisting the model result fails", async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      createSseResponse([
+        {
+          type: "tool-input-start",
+          toolCallId: "durable-1",
+          toolName: "create_case",
+        },
+        {
+          type: "tool-input-available",
+          toolCallId: "durable-1",
+          toolName: "create_case",
+          input: {},
+        },
+        {
+          type: "finish",
+          finishReason: "tool-calls",
+          totalUsage: { inputTokens: 1, outputTokens: 1 },
+        },
+      ]),
+    );
+    const phases: string[] = [];
+    await handleMCPJamFreeChatModel({
+      messages: [{ role: "user", content: "Make a case" }],
+      modelId: "gpt-4.1-mini",
+      systemPrompt: "Use tools",
+      tools: {},
+      mcpClientManager: {
+        getAllToolsMetadata: vi.fn().mockReturnValue({}),
+      } as any,
+      durableCheckpoint: async ({ phase }) => {
+        phases.push(phase);
+        if (phase === "tools") throw new Error("checkpoint unavailable");
+      },
+    });
+    await lastExecution;
+    expect(phases).toEqual(["model", "tools"]);
+    expect(executeToolCallsFromMessages).not.toHaveBeenCalled();
   });
 
   it("request_payload trace reflects prepareAdvertisedTools narrowing (non-progressive) and matches the Convex request", async () => {
@@ -391,6 +451,7 @@ describe("mcpjam-stream-handler", () => {
 
   it("preserves spliced denial tool results in the completed conversation history", async () => {
     const onConversationComplete = vi.fn();
+    const durableCheckpoint = vi.fn();
 
     await handleMCPJamFreeChatModel({
       messages: [
@@ -429,10 +490,13 @@ describe("mcpjam-stream-handler", () => {
       } as any,
       requireToolApproval: true,
       onConversationComplete,
+      durableCheckpoint,
     });
 
     await lastExecution;
 
+    expect(durableCheckpoint.mock.calls[0][0].phase).toBe("tools");
+    expect(durableCheckpoint.mock.calls.some(([value]) => value.phase === "model")).toBe(true);
     const fullHistory = onConversationComplete.mock.calls[0]?.[0];
     expect(fullHistory).toHaveLength(3);
     expect(fullHistory[1]).toMatchObject({
@@ -1191,7 +1255,17 @@ describe("mcpjam-stream-handler", () => {
       },
     });
 
-    resolveFetch?.(
+    // WAIT FOR THE ENGINE TO REACH `fetch` BEFORE RESOLVING IT.
+    //
+    // `resolveFetch` is assigned inside the fetch mock, so it only exists once
+    // the engine has actually called fetch. Firing `resolveFetch?.()` blind
+    // made this test depend on the engine getting there within a specific
+    // number of microtask ticks: one extra `await` anywhere before the first
+    // model call and the optional-call silently no-ops, the fetch promise is
+    // never resolved, and the failure surfaces 30 seconds later as a timeout
+    // on `await lastExecution` — nowhere near the cause.
+    while (!resolveFetch) await new Promise((r) => setTimeout(r, 0));
+    resolveFetch(
       createSseResponse([
         {
           type: "finish",
@@ -2673,6 +2747,31 @@ describe("mcpjam-stream-handler", () => {
   });
 
   describe("guest IP-hash header", () => {
+    it("authenticates scenario inference even without a client IP", async () => {
+      vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "study-service-token");
+      try {
+        await handleMCPJamFreeChatModel({
+          messages: [{ role: "user", content: "hi" }] as any,
+          modelId: "gpt-4.1-mini",
+          systemPrompt: "You are helpful",
+          tools: {},
+          mcpClientManager: {
+            getAllToolsMetadata: vi.fn().mockReturnValue({}),
+          } as any,
+          scenarioId: "scenario-1",
+          clientIp: null,
+        });
+        await lastExecution;
+        const init = (global.fetch as any).mock.calls[0]?.[1];
+        expect(init.headers["x-inspector-service-token"]).toBe(
+          "study-service-token",
+        );
+        expect(JSON.parse(init.body).scenarioId).toBe("scenario-1");
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
+
     it("forwards a hashed IP for the per-IP daily spend cap when clientIp is provided", async () => {
       process.env.GUEST_SESSION_HASH_PEPPER = "test-pepper-for-ip-hash";
       // The hash only goes out with the service token that proves it.
@@ -3784,9 +3883,11 @@ describe("mcpjam-stream-handler", () => {
         },
       ];
 
+      const checkpoints = vi.fn();
       vi.mocked(hasUnresolvedToolCalls).mockReturnValue(false);
       vi.mocked(executeToolCallsFromMessages).mockImplementation(
         async (messages: any[]) => {
+          expect(checkpoints.mock.calls[0][0].phase).toBe("tools");
           const toolResultMessage = {
             role: "tool",
             content: [
@@ -3821,6 +3922,7 @@ describe("mcpjam-stream-handler", () => {
         requireToolApproval: true,
         onToolCall,
         onToolResult,
+        durableCheckpoint: checkpoints,
       });
 
       await lastExecution;

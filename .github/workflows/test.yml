@@ -37,6 +37,33 @@ env:
   ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
 
 jobs:
+  authoring-mirror:
+    name: Compare authoring contracts with backend
+    if: github.event_name == 'push' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Checkout pinned backend contract
+        uses: actions/checkout@v4
+        with:
+          repository: MCPJam/mcpjam-backend
+          ref: fa65e60d241941e3e176ceeec77067ef1c0f6864
+          token: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
+          path: .authoring-backend
+          persist-credentials: false
+          sparse-checkout: convex/lib
+      - name: Install contract checker dependencies
+        run: npm ci --ignore-scripts --legacy-peer-deps
+      - name: Compare authoring implementation and step fixtures
+        run: |
+          node --test scripts/authoring-contract-normalization.test.mjs
+          node scripts/check-authoring-mirror.mjs --backend .authoring-backend
+
   test:
     runs-on: ubuntu-latest
     name: Run Tests

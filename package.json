@@ -49,7 +49,8 @@
     "openai-policy:check": "node scripts/sync-openai-policy-manifest.mjs --check",
     "release:status": "changeset status",
     "release:version": "changeset version",
-    "release:publish": "changeset publish"
+    "release:publish": "changeset publish",
+    "check:mirrors": "node scripts/check-authoring-mirror.mjs"
   },
   "devDependencies": {
     "@changesets/cli": "^2.29.7",

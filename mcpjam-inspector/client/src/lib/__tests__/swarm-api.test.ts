@@ -58,6 +58,41 @@ describe("launchJourneyRun", () => {
     });
   });
 
+  it("puts the per-run iterations override on the wire", async () => {
+    // The whole chain — confirm step, launchJourney, this function, the REST
+    // route, the backend validator — is spread across two repos and four
+    // hops, and a field dropped at any of them fails silently: the run just
+    // uses the journey's own fan-out. Assert the body, not the call.
+    authFetchMock.mockResolvedValue(jsonResponse(202, { runId: "run-3" }));
+
+    await launchJourneyRun({
+      journeyId: "journey-1",
+      projectId: "proj-1",
+      launchKey: "lk-iter",
+      sessionsPerTarget: 2,
+    });
+
+    expect(JSON.parse(authFetchMock.mock.calls[0]![1].body)).toEqual({
+      projectId: "proj-1",
+      launchKey: "lk-iter",
+      sessionsPerTarget: 2,
+    });
+  });
+
+  it("omits the override when the caller did not choose one", async () => {
+    authFetchMock.mockResolvedValue(jsonResponse(202, { runId: "run-4" }));
+
+    await launchJourneyRun({
+      journeyId: "journey-1",
+      projectId: "proj-1",
+      launchKey: "lk-plain",
+    });
+
+    expect(
+      JSON.parse(authFetchMock.mock.calls[0]![1].body)
+    ).not.toHaveProperty("sessionsPerTarget");
+  });
+
   it("url-encodes the journeyId path segment", async () => {
     authFetchMock.mockResolvedValue(jsonResponse(202, { runId: "run-2" }));
     await launchJourneyRun({

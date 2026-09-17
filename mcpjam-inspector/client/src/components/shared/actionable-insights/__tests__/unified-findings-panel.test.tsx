@@ -639,7 +639,7 @@ describe("analysis states and provenance", () => {
     ).toBeVisible();
     expect(
       screen.getByTestId("unified-findings-stale-enrichment"),
-    ).toHaveTextContent("Analyze again");
+    ).toHaveTextContent("The evidence changed after this analysis ran.");
     expect(screen.queryByRole("tablist")).toBeNull();
   });
   it("does not label the fix as standard guidance or AI explanation", () => {
@@ -870,4 +870,27 @@ describe("analysis states and provenance", () => {
     ).toBeNull();
     expect(screen.queryByText("AI explanation")).toBeNull();
   });
+});
+
+describe("automatic analysis failure note", () => {
+  it("explains analyzer version changes", () => {
+    renderPanel({ analysisFailure: { errorCode: "superseded" } });
+    expect(screen.getByTestId("unified-findings-analysis-failed")).toHaveTextContent(
+      "AI analysis did not complete. The analyzer was updated during analysis.",
+    );
+  });
+  it.each(["evidence_changed", "unknown_failure", undefined])(
+    "keeps findings visible for %s",
+    (errorCode) => {
+      renderPanel({ analysisFailure: { errorCode } });
+      const note = screen.getByTestId("unified-findings-analysis-failed");
+      expect(note).toHaveTextContent("AI analysis did not complete.");
+      expect(note).not.toHaveAttribute("role", "alert");
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.getByTestId("unified-findings-list")).toBeVisible();
+      if (errorCode === "unknown_failure") {
+        expect(note.textContent).toBe("AI analysis did not complete.");
+      }
+    },
+  );
 });

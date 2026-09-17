@@ -439,11 +439,15 @@ describe("SwarmsTab — New swarm create flow", () => {
     // A linkable route rather than in-page state, so the browser back button
     // exits the flow and a reload doesn't drop the user back on the list.
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    // The empty state's own button, not the header's. This project has no
+    // personas, and since REEV-6 the header offers creation only once the list
+    // has something in it, so this is the button an empty project actually
+    // shows. The assertion is unchanged: whichever button you press, creation
+    // is a route, not an in-page state flip.
     fireEvent.click(
-      within(screen.getByTestId("swarms-tab-header-chrome")).getByRole(
-        "button",
-        { name: /^create new swarm$/i },
-      ),
+      within(screen.getByTestId("swarms-empty-hero")).getByRole("button", {
+        name: /^create new swarm$/i,
+      }),
     );
     expect(navigateMock).toHaveBeenCalledWith("/swarms/new");
     // Still on the list: navigation is what swaps the view, not a state flip.
@@ -1616,11 +1620,13 @@ describe("SwarmsTab — New swarm create flow", () => {
     ).toHaveTextContent(/1 conversation/i);
   });
 
-  it("prices a reused persona at its saved sessions, with no counter", async () => {
-    // SUTB-26: a counter sizes the goals this swarm creates, never one the
-    // user already saved. Launch does not rewrite a shared journey's config,
-    // so the card quotes what that journey will really run and offers no
-    // control that would imply otherwise.
+  it("seeds a reused persona's counter from its saved sessions", async () => {
+    // Supersedes SUTB-26, which had no counter here at all: launch does not
+    // rewrite a shared journey's config, so the card offered no control.
+    // It now sets the size for THIS run through an override, which leaves
+    // the shared definition alone — and the counter starts at what the
+    // goals already carry, so leaving it alone launches the size it
+    // always did.
     existingPersonas = [
       { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
     ];
@@ -1640,11 +1646,9 @@ describe("SwarmsTab — New swarm create flow", () => {
       screen.getByTestId("new-swarm-launch-session-estimate"),
     ).toHaveTextContent(/3 conversations/i);
     expect(screen.getByTestId("new-swarm-persona-subtotal")).toHaveTextContent(
-      /1 goal at the iterations already saved = 3 conversations/i,
+      /1 goal × 3 iterations = 3 conversations/i,
     );
-    expect(
-      screen.queryByTestId("new-swarm-persona-iterations"),
-    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("new-swarm-persona-iterations")).toHaveValue(3);
 
     fireEvent.click(
       screen.getByRole("button", { name: /^back to describe$/i }),

@@ -1,4 +1,5 @@
 import { handleMarkdownImport } from "../shared/markdown-case-import.js";
+import { handleEvalAuthoring } from "../shared/eval-authoring.js";
 import { Hono } from "hono";
 import { z } from "zod";
 import { detachPreparedEvalRun } from "../../services/evals/detached-run.js";
@@ -19,7 +20,10 @@ import {
   runEvalTestCaseWithManager,
   streamEvalTestCaseWithManager,
 } from "../shared/evals.js";
-import { reportRouteFailure, readRequestJson } from "../../utils/route-error-report.js";
+import {
+  reportRouteFailure,
+  readRequestJson,
+} from "../../utils/route-error-report.js";
 
 const evals = new Hono();
 
@@ -84,8 +88,11 @@ const TraceRepairStopSchema = z.object({
   convexAuthToken: z.string(),
 });
 
-evals.post("/extract-markdown", (c) => handleMarkdownImport(c, "extract", true));
+evals.post("/extract-markdown", (c) =>
+  handleMarkdownImport(c, "extract", true),
+);
 evals.post("/import-markdown", (c) => handleMarkdownImport(c, "save", true));
+evals.post("/authoring-v1", (c) => handleEvalAuthoring(c, true));
 
 evals.post("/run", async (c) => {
   try {
