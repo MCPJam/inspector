@@ -189,19 +189,19 @@ export function CreditBalanceCard({
         {showMonthly ? (
           <UsageRow
             label={hasRollover ? "Available plan credits" : "Monthly credits"}
-            tooltip={
+            tooltip={`${
               balance?.rolloverCapCredits != null
                 ? `Unused credits can roll over up to ${balance.rolloverCapCredits.toLocaleString()} credits under your plan.`
                 : "Your organization’s available monthly credit allowance."
-            }
+            } Monthly allowance ${formatMonthlyResetText(
+              balance?.monthlyResetAt,
+            )}.`}
             rightText={
               isLoading || !balance
                 ? null
                 : hasRollover
                 ? `${monthlyRemaining.toLocaleString()} credits remaining`
-                : `${monthlyRemaining.toLocaleString()} / ${monthlyTotal.toLocaleString()} remaining · ${formatMonthlyResetText(
-                    balance.monthlyResetAt,
-                  )}`
+                : `${monthlyRemaining.toLocaleString()} / ${monthlyTotal.toLocaleString()} remaining`
             }
             fillPercent={
               isLoading || meterCapacity <= 0

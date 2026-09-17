@@ -591,8 +591,21 @@ describe("CreditBalanceCard", () => {
       const row = screen.getByTestId("usage-monthly");
       expect(within(row).getByText(/Monthly credits/)).toBeInTheDocument();
       expect(within(row).getByText(/13,950 \/ 18,000/)).toBeInTheDocument();
-      expect(within(row).getByText(/resets in 12 days/)).toBeInTheDocument();
+      expect(
+        within(row).queryByText(/resets in 12 days/),
+      ).not.toBeInTheDocument();
       expect(screen.queryByTestId("usage-daily")).not.toBeInTheDocument();
+    });
+
+    it("keeps reset timing in the monthly credit tooltip", async () => {
+      render(<CreditBalanceCard pricingVersion="v1" />);
+      expect(screen.queryByText(/resets in 12 days/)).not.toBeInTheDocument();
+      await userEvent.hover(
+        screen.getByRole("button", { name: "About Monthly credits" }),
+      );
+      expect(await screen.findByRole("tooltip")).toHaveTextContent(
+        "resets in 12 days",
+      );
     });
 
     it("keeps V1 Team monthly eval iterations alongside the draining shared credit pool", () => {
