@@ -1,10 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  type ReactNode,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
 import {
   chipKey,
   isSameSelection,
@@ -20,16 +14,14 @@ import {
   useInsightsRebuild,
   type InsightsView,
 } from "@/hooks/useInsightsFlowController";
-import {
-  useUsageInsights,
-  type InsightsScope,
-} from "@/hooks/useUsageInsights";
+import { useUsageInsights, type InsightsScope } from "@/hooks/useUsageInsights";
 import { SessionFlowSankey } from "@/components/shared/usage-insights/SessionFlowSankey";
 import { GoalOutcomeDrilldown } from "@/components/shared/usage-insights/GoalOutcomeDrilldown";
 import { TopicMapPanel } from "@/components/shared/usage-insights/TopicMapPanel";
 import { InsightsViewToggle } from "@/components/shared/usage-insights/InsightsViewToggle";
 import { InsightsFreshnessChip } from "@/components/shared/usage-insights/InsightsFreshnessChip";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
+import { SHOW_RECLUSTERING_UI } from "@/lib/cluster-tuning";
 import { cn } from "@/lib/utils";
 import { X } from "lucide-react";
 
@@ -41,7 +33,9 @@ interface InsightsWorkbenchProps {
   /** Force-applied filter transform (e.g. User Testing's hide-synthetic). */
   augmentFilter?: (filter: UsageFilterState) => UsageFilterState;
   /** Selection restored from the `sel` URL parameter. */
-  urlSelection?: ReadonlyArray<Pick<ThemeRef, "dimension" | "clusterId">> | null;
+  urlSelection?: ReadonlyArray<
+    Pick<ThemeRef, "dimension" | "clusterId">
+  > | null;
   /** Persist flow selection changes in the owning route. */
   onSelectionChange?: (
     themes: ReadonlyArray<Pick<ThemeRef, "dimension" | "clusterId">> | null,
@@ -399,8 +393,8 @@ export function InsightsWorkbench({
           const key = chipKey(chip);
           const label =
             chip.kind === "cluster"
-              ? (chip.label ?? "Cluster")
-              : (chip.label ?? `${chip.key}: ${chip.value}`);
+              ? chip.label ?? "Cluster"
+              : chip.label ?? `${chip.key}: ${chip.value}`;
           return (
             <button
               key={key}
@@ -425,13 +419,16 @@ export function InsightsWorkbench({
     >
       <div className={fillBody ? "min-h-0 flex-1 overflow-hidden" : undefined}>
         <SessionFlowSankey
+          goalGroupsByJourney={scope.kind === "swarm"}
           breakdown={breakdown}
           selection={flow.flowSelection}
           onSelectNode={flow.handleSelectFlow}
           onSelectLink={flow.handleSelectFlow}
           onRebuild={handleRebuild}
           rebuildBusy={rebuildBusy}
-          onApplyTuning={handleApplyTuning}
+          {...(SHOW_RECLUSTERING_UI
+            ? { onApplyTuning: handleApplyTuning }
+            : {})}
           analysisIsAutomatic={analysisIsAutomatic}
           showLinkThreshold
           fillHeight={fillBody}
@@ -512,7 +509,10 @@ export function InsightsWorkbench({
         </div>
       ) : null}
       {hasFindings ? (
-        <InsightsFindings testId={`${testIdPrefix}-findings`} fillBody={fillBody}>
+        <InsightsFindings
+          testId={`${testIdPrefix}-findings`}
+          fillBody={fillBody}
+        >
           {recommendationsSlot}
         </InsightsFindings>
       ) : null}

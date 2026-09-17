@@ -10,6 +10,7 @@ import { buildRunVerdictHero } from "../run-verdict-hero-model";
 import type { EvalSuiteRun, EvalIteration } from "../../evals/types";
 import type { ProjectRunHistoryDetail } from "../../evals/use-project-run-history";
 import type { UnifiedFindingsSectionProps } from "../unified-findings-section";
+import { UnifiedFindingsPanel } from "../../shared/actionable-insights/unified-findings-panel";
 
 const mocks = vi.hoisted(() => ({
   history: {
@@ -43,6 +44,7 @@ vi.mock("../unified-findings-section", () => ({
     generation,
     onOpenIteration,
     scopeControl,
+    fallback,
   }: UnifiedFindingsSectionProps) => (
     <section
       data-testid="findings-section"
@@ -50,6 +52,29 @@ vi.mock("../unified-findings-section", () => ({
       data-iteration-ids={iterations.map((row) => row._id).join(",")}
     >
       {scopeControl}
+      <UnifiedFindingsPanel
+        snapshot={{
+          builtAt: 1,
+          sourceRevision: "r1",
+          minerVersion: 1,
+          omittedGroups: 0,
+          deterministicFindings: [],
+          provenance: [],
+          enrichment: null,
+        }}
+        findings={[]}
+        provenance={[]}
+        observationState="partial"
+        observationCoverage={null}
+        mode="deterministic"
+        analyze={{
+          available: false,
+          pending: false,
+          error: null,
+          onRun: vi.fn(),
+        }}
+        fallback={fallback}
+      />
       <button onClick={() => onOpenIteration?.("a")}>Open evidence A</button>
       <button onClick={() => onOpenIteration?.("c")}>Open evidence C</button>
       <button
@@ -66,8 +91,13 @@ vi.mock("../../evals/use-project-run-history", () => ({
 vi.mock("@/hooks/use-eval-run-decision-summary", () => ({
   // Fresh empty arrays reproduce the loading/absent response from the real hook.
   useEvalRunDecisionDetail: (args: unknown) => {
-    mocks.decision(args);
-    return { status: "ready", summary: null, diagnostics: [] };
+    return (
+      mocks.decision(args) ?? {
+        status: "ready",
+        summary: null,
+        diagnostics: [],
+      }
+    );
   },
 }));
 vi.mock("@/hooks/use-eval-run-iteration-chains", () => ({
@@ -151,7 +181,7 @@ beforeEach(() => {
   );
   mocks.history.loading = false;
   mocks.history.errorCount = 0;
-  mocks.decision.mockClear();
+  mocks.decision.mockReset();
   mocks.generation.mockClear();
   mocks.requestInsight.mockClear();
 });
@@ -160,18 +190,34 @@ describe("combined run report", () => {
   it("narrows client and model choices by the selected case status", async () => {
     const user = userEvent.setup();
     render(<CombinedRunContent {...props} />);
-    await user.click(await screen.findByRole("combobox", { name: "Filter by status" }));
-    await user.click(screen.getByRole("option", { name: "Passed", exact: true }));
-    await user.click(screen.getByRole("combobox", { name: "Filter by client" }));
-    expect(screen.getByRole("option", { name: "Cursor", exact: true })).toBeVisible();
-    expect(screen.queryByRole("option", { name: "ChatGPT", exact: true })).toBeNull();
+    await user.click(
+      await screen.findByRole("combobox", { name: "Filter by status" }),
+    );
+    await user.click(
+      screen.getByRole("option", { name: "Passed", exact: true }),
+    );
+    await user.click(
+      screen.getByRole("combobox", { name: "Filter by client" }),
+    );
+    expect(
+      screen.getByRole("option", { name: "Cursor", exact: true }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("option", { name: "ChatGPT", exact: true }),
+    ).toBeNull();
     await user.keyboard("{Escape}");
     await user.click(screen.getByRole("combobox", { name: "Filter by model" }));
-    expect(screen.queryByRole("option", { name: "gpt-5.1", exact: true })).toBeNull();
+    expect(
+      screen.queryByRole("option", { name: "gpt-5.1", exact: true }),
+    ).toBeNull();
     await user.keyboard("{Escape}");
     await user.click(screen.getByRole("button", { name: "Clear filters" }));
-    await user.click(screen.getByRole("combobox", { name: "Filter by client" }));
-    expect(screen.getByRole("option", { name: "ChatGPT", exact: true })).toBeVisible();
+    await user.click(
+      screen.getByRole("combobox", { name: "Filter by client" }),
+    );
+    expect(
+      screen.getByRole("option", { name: "ChatGPT", exact: true }),
+    ).toBeVisible();
   });
 
   it("shows findings by default without requesting AI", () => {
@@ -182,6 +228,88 @@ describe("combined run report", () => {
       "c",
     );
     expect(mocks.generation).toHaveBeenCalledWith("3", { autoRequest: false });
+    expect(mocks.requestInsight).not.toHaveBeenCalled();
+  });
+
+  it("automatically restores the recorded problem and fix, scoped to the selected run", async () => {
+    mocks.decision.mockImplementation(({ runId }: { runId: string }) => ({
+      status: "ready",
+      summary:
+        runId === "2"
+          ? {
+              schemaVersion: 1,
+              runId,
+              runStatus: "completed",
+              verdict: "failed",
+              verdictSource: "legacy",
+              counts: {
+                measurementUnit: "trial",
+                total: 1,
+                passed: 0,
+                failed: 1,
+              },
+              diagnostics: { items: [], complete: true, scannedIterations: 1 },
+            }
+          : null,
+      diagnostics:
+        runId === "2"
+          ? [
+              {
+                iterationId: "b",
+                iterationNumber: 1,
+                testCaseId: "case",
+                title: "Read a record",
+                status: "completed",
+                result: "failed",
+                chain: {
+                  status: "verified",
+                  analyzerVersion: 8,
+                  firstFailedStage: "selection",
+                  failureCategory: "selection",
+                  stages: [
+                    { stage: "connection", state: "passed" },
+                    { stage: "discovery", state: "passed" },
+                    {
+                      stage: "selection",
+                      state: "failed",
+                      reason: "missingToolCall",
+                    },
+                    { stage: "call", state: "notReached" },
+                    { stage: "response", state: "notReached" },
+                    { stage: "userValue", state: "notMeasured" },
+                  ],
+                },
+                expected: { toolNames: ["read_record"] },
+                observed: { toolNames: [] },
+                evidence: {
+                  runId: "2",
+                  iterationId: "b",
+                  stage: "selection",
+                  tracePath: "/trace",
+                },
+                nextAction: "review tool selection and the tool catalog",
+              },
+            ]
+          : [],
+    }));
+    const user = userEvent.setup();
+    render(<CombinedRunContent {...props} run={runs[1]} />);
+    expect(screen.getByRole("heading", { name: "What broke" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "How to fix" })).toBeVisible();
+    expect(screen.getByTestId("run-verdict-sentence")).toHaveTextContent(
+      "an expected tool call was never made",
+    );
+    expect(screen.getAllByTestId("run-verdict-insights")).toHaveLength(1);
+    expect(mocks.requestInsight).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("combobox", { name: "Findings for" }));
+    await user.click(screen.getByRole("option", { name: "ChatGPT · gpt-5.1" }));
+    expect(screen.queryByRole("heading", { name: "What broke" })).toBeNull();
+    expect(
+      screen.getByText(
+        "No supported finding yet. Evidence is incomplete; this does not mean the run passed.",
+      ),
+    ).toBeVisible();
     expect(mocks.requestInsight).not.toHaveBeenCalled();
   });
 

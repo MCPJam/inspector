@@ -125,6 +125,22 @@ export function maxTrialsCapOf(experiment: EvalDescriptionExperiment): number {
 }
 
 /**
+ * A failed experiment's code, in words where the code alone misleads. The
+ * platform codes are MCPJam's own budget, not the customer's: the proposal is
+ * included, so the copy never points at credits.
+ */
+export function experimentFailureText(errorCode: string | undefined): string {
+  switch (errorCode) {
+    case "PLATFORM_CAP_EXCEEDED":
+      return "MCPJam's daily analysis budget is used up. Try again after 00:00 UTC";
+    case "PLATFORM_UNAVAILABLE":
+      return "MCPJam could not reserve capacity. Try again later";
+    default:
+      return errorCode ?? "failed";
+  }
+}
+
+/**
  * Collapsed header. Examples:
  * - "Description experiment · `get_user` · rewrite passed 8 of 10, original 3 of 10 · at least +12 points · Reproducible · report-only"
  * - "… · not enough trials to say"
@@ -158,7 +174,7 @@ export function descriptionExperimentHeader(
       parts.push("running");
       break;
     case "failed":
-      parts.push(experiment.errorCode ?? "failed");
+      parts.push(experimentFailureText(experiment.errorCode));
       break;
     case "cancelled":
       parts.push("cancelled");

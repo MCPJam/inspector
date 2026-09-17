@@ -9,6 +9,7 @@
  * evidence landed on it (all sessions launched, every graded session
  * passed). Silence renders as "none" — the legend says "do not infer pass".
  */
+import type { ChatSessionStageFunnel } from "@/components/shared/user-value-chain/user-value-chain-types";
 
 import type {
   SwarmOverviewRun,
@@ -24,6 +25,7 @@ import {
 } from "@/components/swarms/swarm-overview-panel";
 import {
   JOURNEY_STAGES,
+  JOURNEY_STAGE_BY_CHAIN,
   journeyStageIndex,
   journeyStageTitle,
   type JourneyStageId,
@@ -105,6 +107,7 @@ export interface SwarmFindingsModel {
   personas: PersonaFindingsModel[];
   /** Wave-wide launch outcomes, for the summary and the honesty chips. */
   launch: LaunchTotals;
+  neverLaunched?: boolean;
   /** Headline denominator — `waveSignals.sessionCount`, else wave totals. */
   sessionCount: number;
   /** First persona with a failing goal, else 0 — the default selected tab. */
@@ -214,9 +217,7 @@ export function waveLaunchTotals(
 
 /** A settled run whose every session failed to launch — the goal never ran. */
 function runNeverLaunched(run: SwarmOverviewRun): boolean {
-  return (
-    runIsTerminal(run) && run.summary.total > 0 && run.summary.succeeded === 0
-  );
+  return runIsTerminal(run) && run.report?.execution.neverLaunched === true;
 }
 
 /** The launch-outcome caveat every connection row carries, verbatim. */
@@ -254,13 +255,16 @@ function connectionEvidence(run: SwarmOverviewRun): StageEvidence | null {
 function rubricEvidence(run: SwarmOverviewRun): StageEvidence[] {
   return run.findings.map((finding) => ({
     tone: findingSeverity(finding) === "blocking" ? "fail" : ("warn" as const),
-    observation: `Rubric check "${findingName(finding)}" failed`,
+    observation: `Evaluator "${findingName(finding)}" failed`,
     meta: findingSessionLabel(finding),
   }));
 }
 
 function judgeEvidence(run: SwarmOverviewRun): StageEvidence | null {
-  const rollup = run.goalScoreSummary;
+  const g = run.report?.goalGrading;
+  const rollup = g
+    ? { gradedCount: g.passed + g.failed, passedCount: g.passed }
+    : run.goalScoreSummary;
   // A zero graded count contributes NOTHING — absent is unknown, never ok.
   if (!rollup || rollup.gradedCount <= 0) return null;
   const { gradedCount, passedCount } = rollup;
@@ -495,6 +499,7 @@ export function deriveSwarmFindingsModel(args: {
   personas: ReadonlyArray<FindingsPersonaDoc>;
   /** Presentation-only variety for demos; never changes severity or evidence. */
   demoVariant?: boolean;
+  funnels?: Readonly<Record<string, ChatSessionStageFunnel | null>>;
 }): SwarmFindingsModel {
   const { runs, signals, personas, demoVariant = false } = args;
 
@@ -517,9 +522,30 @@ export function deriveSwarmFindingsModel(args: {
     const stages = forRun(run.runId);
     const connection = connectionEvidence(run);
     if (connection) stages.connection.push(connection);
-    stages.value.push(...rubricEvidence(run));
-    const judge = judgeEvidence(run);
-    if (judge) stages.value.push(judge);
+    const funnel = args.funnels?.[run.runId];
+    if (funnel && funnel.counted > 0) {
+      for (const row of funnel.stages) {
+        if (row.stage === "connection" || row.eligible === 0) continue;
+        stages[JOURNEY_STAGE_BY_CHAIN[row.stage]].push({
+          tone: row.failed > 0 ? "fail" : "ok",
+          observation: `${row.failed} failed, ${row.passed} passed among ${row.eligible} measured sessions`,
+          meta: `Chain coverage: ${funnel.counted}/${funnel.total} sessions · ${funnel.exclusions.absent} absent · ${funnel.exclusions.deriving} deriving · ${funnel.exclusions.stale} stale · ${funnel.exclusions.failed} unavailable`,
+        });
+      }
+    } else {
+      stages.value.push(
+        ...rubricEvidence(run).map((e) => ({
+          ...e,
+          meta: `${e.meta} · Legacy evidence; chain unmeasured`,
+        })),
+      );
+      const judge = judgeEvidence(run);
+      if (judge)
+        stages.value.push({
+          ...judge,
+          meta: `${judge.meta} · Chain unmeasured`,
+        });
+    }
   }
 
   // Detector candidates: journey subjects land on their goal, persona
@@ -624,6 +650,9 @@ export function deriveSwarmFindingsModel(args: {
 
   return {
     personas: personaModels,
+    neverLaunched:
+      runs.length > 0 &&
+      runs.every((r) => r.report?.execution.neverLaunched === true),
     launch,
     sessionCount: signals?.sessionCount ?? launch.total,
     defaultPersonaIndex,

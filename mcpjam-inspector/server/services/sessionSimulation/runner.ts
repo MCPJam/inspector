@@ -287,6 +287,13 @@ export interface SyntheticHostRuntime {
   modelDefinition: ModelDefinition;
   systemPrompt: string;
   temperature?: number;
+  /**
+   * Tool-step cap for ONE assistant turn. Absent ⇒ the engine's own default
+   * (the Playground's 30). A synthetic persona turn resends every tool result
+   * of the turn on every step, so the cap bounds both wall clock and tokens;
+   * the swarm runner pins its own, the scenario runner keeps the default.
+   */
+  maxSteps?: number;
   requireToolApproval: boolean;
   respectToolVisibility?: boolean;
   progressiveToolDiscovery?: boolean;
@@ -489,6 +496,7 @@ export async function runSyntheticHostSession(
     modelDefinition,
     systemPrompt,
     temperature,
+    maxSteps,
     requireToolApproval,
     respectToolVisibility,
     progressiveToolDiscovery,
@@ -1095,6 +1103,7 @@ export async function runSyntheticHostSession(
         sourceType: persist.sourceType,
         systemPrompt: prepared.enhancedSystemPrompt,
         temperature: prepared.resolvedTemperature,
+        ...(maxSteps !== undefined ? { maxSteps } : {}),
         // `computer` / `finish_widget` merge into the advertised set; the
         // prepareAdvertisedTools hook hides them until a widget is mounted.
         tools: { ...prepared.allTools, ...browser.computerWidgetTools },

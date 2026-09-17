@@ -2665,6 +2665,31 @@ describe("mcpjam-stream-handler", () => {
   });
 
   describe("guest IP-hash header", () => {
+    it("authenticates scenario inference even without a client IP", async () => {
+      vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "study-service-token");
+      try {
+        await handleMCPJamFreeChatModel({
+          messages: [{ role: "user", content: "hi" }] as any,
+          modelId: "gpt-4.1-mini",
+          systemPrompt: "You are helpful",
+          tools: {},
+          mcpClientManager: {
+            getAllToolsMetadata: vi.fn().mockReturnValue({}),
+          } as any,
+          scenarioId: "scenario-1",
+          clientIp: null,
+        });
+        await lastExecution;
+        const init = (global.fetch as any).mock.calls[0]?.[1];
+        expect(init.headers["x-inspector-service-token"]).toBe(
+          "study-service-token",
+        );
+        expect(JSON.parse(init.body).scenarioId).toBe("scenario-1");
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
+
     it("forwards a hashed IP for the per-IP daily spend cap when clientIp is provided", async () => {
       process.env.GUEST_SESSION_HASH_PEPPER = "test-pepper-for-ip-hash";
       // The hash only goes out with the service token that proves it.

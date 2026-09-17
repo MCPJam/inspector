@@ -43,6 +43,7 @@ export type ScenarioRedeemBootstrap = {
   hostStyle: "claude" | "chatgpt" | string;
   mode: "project_members" | "invited_only" | "anyone_with_link";
   allowGuestAccess: boolean;
+  requiresSignIn?: boolean;
   viewerIsProjectMember: boolean;
   systemPrompt: string;
   modelId: string;
