@@ -550,31 +550,44 @@ describe("filterByFeatureFlags (Connect/Servers swap)", () => {
 });
 
 /**
- * REEV-6 removed `sandboxes-enabled` from the sidebar entirely. The two items
- * are now in the nav for every visitor, and what they can DO is decided when
- * they arrive — a guest gets the preview, a plan-locked member the upsell.
+ * Swarms and User Testing roll out on `sandboxes-enabled` in PostHog. The flag
+ * decides whether the items exist; REEV-6's route gate then decides what a
+ * visitor gets — a guest the preview, a member the real tab.
  *
- * The regression this guards against is a quiet one: re-adding a `featureFlag`
- * to either item would make them vanish for everyone the flag excludes, and
- * the preview built for those exact people would never be reached.
+ * The flag is deliberately NOT combined with sign-in here. Before REEV-6 the
+ * sidebar resolved it as `flag && isAuthenticated`, which would hide the items
+ * from exactly the signed-out visitors the preview was built for.
  */
-describe("Swarms and User Testing are unflagged (REEV-6)", () => {
+describe("Swarms and User Testing are flag-gated, not sign-in-gated (REEV-6)", () => {
   const MEASURE_ITEMS = ["User Testing", "Swarms"];
 
-  it("declares no featureFlag on either item", () => {
+  it("gates both items on sandboxes-enabled", () => {
     const items = navigationSections
       .flatMap((section) => section.items)
       .filter((item) => MEASURE_ITEMS.includes(item.title));
 
     expect(items).toHaveLength(2);
     for (const item of items) {
-      expect(item.featureFlag).toBeUndefined();
-      expect(item.hiddenByFlag).toBeUndefined();
+      expect(item.featureFlag).toBe("sandboxes-enabled");
     }
   });
 
-  it("survives an empty flag map — every flag off, both still shown", () => {
-    const titles = filterByFeatureFlags(navigationSections, {})
+  it("hides both when the flag is off", () => {
+    const titles = filterByFeatureFlags(navigationSections, {
+      "sandboxes-enabled": false,
+    })
+      .flatMap((section) => section.items)
+      .map((item) => item.title);
+
+    for (const title of MEASURE_ITEMS) {
+      expect(titles).not.toContain(title);
+    }
+  });
+
+  it("shows both when the flag is on", () => {
+    const titles = filterByFeatureFlags(navigationSections, {
+      "sandboxes-enabled": true,
+    })
       .flatMap((section) => section.items)
       .map((item) => item.title);
 
@@ -583,8 +596,8 @@ describe("Swarms and User Testing are unflagged (REEV-6)", () => {
     }
   });
 
-  it("no longer resolves the retired flag key", () => {
-    expect(SIDEBAR_RESOLVED_FLAG_KEYS).not.toContain("sandboxes-enabled");
+  it("resolves the flag key before the nav renders", () => {
+    expect(SIDEBAR_RESOLVED_FLAG_KEYS).toContain("sandboxes-enabled");
   });
 
   // They stay CLICKABLE for a plan-locked org rather than disabled: the tab

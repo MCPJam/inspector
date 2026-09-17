@@ -285,6 +285,7 @@ import {
   useHostList,
   useHostMutations,
 } from "@/hooks/useClients";
+import { useSandboxesEnabledState } from "@/hooks/useSandboxesEnabled";
 import { GuestFeaturePreview } from "@/components/guest-preview/GatedFeaturePreview";
 import { GuestPreviewCta } from "@/components/guest-preview/GuestPreviewCta";
 import type { GatedFeatureId } from "@/components/guest-preview/feature-highlights";
@@ -1681,10 +1682,10 @@ function useGatedFeatureGate(feature: GatedFeatureId): ReactElement | null {
 }
 
 // The User Testing surface: `/user-testing` (the project's scenarios) and
-// `/user-testing/:scenarioId` (one scenario). Same billing feature and the
-// same gated-preview decision as Swarms below. Neither reads a feature flag
-// any more: REEV-6 took `sandboxes-enabled` out of the client, so what a
-// visitor gets is decided on arrival from identity and entitlement.
+// `/user-testing/:scenarioId` (one scenario). Same billing feature,
+// `sandboxes-enabled` flag and gated-preview decision as Swarms below. The
+// flag decides whether the surface exists for a visitor; identity then
+// decides whether they get the preview or the real tab.
 export function ScenariosRoute() {
   // NO `PricingFeatureSignInGate` HERE, deliberately, and it is not an
   // oversight from the merge that brought it in.
@@ -1707,15 +1708,28 @@ export function ScenariosRoute() {
 
 function ScenariosRouteContent() {
   const { convexProjectId, isAuthenticated } = useAppRouteContext();
+  // The sidebar filters this item on the flag, but a filtered nav item is not
+  // a gate — `/user-testing` is a plain route, so without this a direct URL
+  // mounts the whole surface for users the flag excludes.
+  const sandboxesEnabled = useSandboxesEnabledState();
   // Hooks first: every gate below early-returns, and a hook after one of them
   // would crash React the moment a gate settles between renders.
   const gate = useGatedFeatureGate("user-testing");
   const params = useParams<{ scenarioId?: string }>();
 
-  // No `sandboxes-enabled` check any more (REEV-6). The route used to bounce
-  // an unflagged visitor to Connect, and hold on `undefined` while PostHog
-  // hydrated — a blank frame on every cold load. Both are gone: the surface
-  // is reachable by everyone and the gate below decides what they get.
+  // The flag is the rollout control and runs before the preview: a visitor the
+  // flag excludes gets no surface at all, not a sign-up pitch for one.
+  //
+  // Only redirect on an explicit `false`. While PostHog hydrates the flag is
+  // `undefined`, and bouncing then would strand a flagged-in user who cold-
+  // loads the URL. (Same tradeoff SwarmsRoute makes.)
+  if (sandboxesEnabled === false) {
+    return <ScopedNavigate to={routePaths.servers} replace />;
+  }
+  if (sandboxesEnabled === undefined) {
+    return null;
+  }
+
   if (gate) {
     return gate;
   }
@@ -1811,6 +1825,10 @@ function SwarmsRouteContent() {
   // via userId. Do NOT treat "no WorkOS email" as "not a member".
   const { user, isLoading: isWorkOsLoading } = useAuth();
   const isWorkOsSignedIn = !!user;
+  // The sidebar filters the Swarms nav item on this flag, but a filtered nav
+  // item is not a gate — `/swarms` is a plain route, so a direct URL mounted
+  // the whole surface for users the flag excludes.
+  const sandboxesEnabled = useSandboxesEnabledState();
   // The backend made Swarm member-only vs project *invitee guests* (role
   // `guest`): personas/journeys/runs reject that tier. Mirror that for
   // WorkOS-signed-in viewers by resolving role from the members list.
@@ -1843,9 +1861,16 @@ function SwarmsRouteContent() {
   const gate = useGatedFeatureGate("swarms");
   const params = useParams<{ swarmId?: string }>();
 
-  // No `sandboxes-enabled` check any more (REEV-6) — see ScenariosRoute.
-  //
-  // Guests and plan-locked users stop here. `null` means neither applies.
+  // Flag before preview, for the reason given on ScenariosRoute. Only redirect
+  // on an explicit `false`; `undefined` means PostHog is still hydrating.
+  if (sandboxesEnabled === false) {
+    return <ScopedNavigate to={routePaths.servers} replace />;
+  }
+  if (sandboxesEnabled === undefined) {
+    return null;
+  }
+
+  // Guests stop here. `null` means the viewer is a signed-in member.
   //
   // This is ABOVE the invitee-guest notice below on purpose: the two "guests"
   // are different populations. This one has no account at all; that one is a

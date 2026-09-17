@@ -37,6 +37,12 @@ vi.mock("react-router", async (importOriginal) => {
 vi.mock("@/hooks/use-is-member-actor", () => ({
   useIsMemberActor: () => true,
 }));
+// Flag on: this suite is about billing. The flag gate is covered in
+// `GatedFeatureRoutes.preview.test.tsx` and `SwarmsRoute.guest-gate.test.tsx`.
+vi.mock("@/hooks/useSandboxesEnabled", () => ({
+  useSandboxesEnabled: () => true,
+  useSandboxesEnabledState: () => true,
+}));
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({ user: { email: "member@example.com" }, isLoading: false }),
 }));

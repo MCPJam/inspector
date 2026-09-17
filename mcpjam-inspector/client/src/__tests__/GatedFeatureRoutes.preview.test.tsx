@@ -13,6 +13,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  */
 
 const {
+  mockFlags,
   mockSwarmsTab,
   mockUserTestingTab,
   mockRouteContext,
@@ -20,6 +21,9 @@ const {
   mockUseIsMemberActor,
   mockUseViewerProjectRole,
 } = vi.hoisted(() => ({
+    // `sandboxes-enabled`, tri-state like PostHog. ON by default: the preview
+    // only exists for visitors the flag lets in.
+    mockFlags: { sandboxesEnabled: true as boolean | undefined },
     mockSwarmsTab: vi.fn(() => <div>Swarms Tab</div>),
     mockUserTestingTab: vi.fn(() => <div>User Testing Tab</div>),
     mockUseAuth: vi.fn(() => ({
@@ -63,6 +67,11 @@ vi.mock("react-router", async (importOriginal) => {
 vi.mock("@workos-inc/authkit-react", () => ({ useAuth: () => mockUseAuth() }));
 vi.mock("@/hooks/use-is-member-actor", () => ({
   useIsMemberActor: () => mockUseIsMemberActor(),
+}));
+
+vi.mock("@/hooks/useSandboxesEnabled", () => ({
+  useSandboxesEnabled: () => mockFlags.sandboxesEnabled === true,
+  useSandboxesEnabledState: () => mockFlags.sandboxesEnabled,
 }));
 
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
@@ -187,11 +196,43 @@ describe("gated feature routes — hosted", () => {
     mockRouteContext.convexProjectId = "project-1";
     mockRouteContext.isAuthenticated = true;
     mockUseViewerProjectRole.mockClear();
+    mockFlags.sandboxesEnabled = true;
     signedIn();
   });
 
   describe.each(SURFACES)("$name", ({ Route, feature, tabText, tabMock }) => {
     const copy = GATED_FEATURE_COPY[feature];
+
+    // `sandboxes-enabled` is the rollout control and runs BEFORE the preview.
+    // A visitor the flag excludes gets no surface — neither the tab nor a
+    // sign-up pitch for a feature they cannot have yet.
+    it.each([
+      ["guest", guest],
+      ["member", signedIn],
+    ])("shows a flagged-out %s neither preview nor tab", (_who, as) => {
+      mockFlags.sandboxesEnabled = false;
+      as();
+
+      renderRoute(<Route />);
+
+      expect(
+        screen.queryByTestId(`gated-feature-${feature}`),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByText(tabText)).not.toBeInTheDocument();
+      expect(tabMock).not.toHaveBeenCalled();
+    });
+
+    it("holds while the flag is hydrating, even for a guest", () => {
+      mockFlags.sandboxesEnabled = undefined;
+      guest();
+
+      renderRoute(<Route />);
+
+      expect(
+        screen.queryByTestId(`gated-feature-${feature}`),
+      ).not.toBeInTheDocument();
+      expect(tabMock).not.toHaveBeenCalled();
+    });
 
     it("shows a guest the preview instead of the real tab", () => {
       guest();

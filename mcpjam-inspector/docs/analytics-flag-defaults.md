@@ -35,7 +35,7 @@ Every gate resolves `undefined` → **hidden/off**. Two shapes:
 | `registry-enabled`                                | `mcp-sidebar.tsx`                                                        | Registry nav hidden                                                                                                                               | ✅           |
 | `mcpjam-conformance` / `mcpjam-compatibility`     | `mcp-sidebar.tsx`                                                        | Nav hidden                                                                                                                                        | ✅           |
 | `xaa` / `xaa-registration`                        | `mcp-sidebar.tsx`, XAA components                                        | XAA surfaces hidden                                                                                                                               | ✅           |
-| `learn-more-enabled`                              | `mcp-sidebar.tsx`                                                        | Nav hidden                                                                                                                                        | ✅           |
+| `sandboxes-enabled` / `learn-more-enabled`        | `mcp-sidebar.tsx`                                                        | Nav hidden                                                                                                                                        | ✅           |
 | `skills-enabled`                                  | `useSkillsEnabled(State)`                                                | Skills hidden; route guard waits on tri-state                                                                                                     | ✅           |
 | `computers-enabled`                               | `useComputersEnabled(State)`                                             | Computers hidden; route guard waits on tri-state                                                                                                  | ✅           |
 | `webmcp-inspector-enabled`                        | `useWebmcpInspectorEnabled(State)`                                       | WebMCP tab and Playground page-tools section hidden; route guard waits on tri-state. Local-only surface — hosted drops it before the flag is read | ✅           |
@@ -45,49 +45,26 @@ Every gate resolves `undefined` → **hidden/off**. Two shapes:
 | `stateless-mcp-enabled`                           | per-server protocol toggle                                               | Opt-in stays off                                                                                                                                  | ✅           |
 | `mcp-inspector-multi-host/model-enabled`          | playground                                                               | Feature off                                                                                                                                       | ✅           |
 
-### Retired: `sandboxes-enabled`
+### `sandboxes-enabled` and the REEV-6 preview
 
-Gone from the client entirely (REEV-6). It gated the Swarms and User Testing
-nav items and both route guards, which meant the fail-closed default hid the
-tabs from the signed-out visitors the feature exists to convert, and hid them
-for a frame on every cold load while PostHog answered.
+Swarms and User Testing still roll out on `sandboxes-enabled`. The flag gates
+both nav items (`mcp-sidebar.tsx`) and both route guards
+(`useSandboxesEnabledState`, which redirects on `false` and holds on
+`undefined`). It runs BEFORE the REEV-6 guest preview, so a visitor the flag
+excludes gets no surface at all rather than a sign-up pitch for one.
 
-Both surfaces are unconditional in the nav now, and access is decided on
-arrival from WorkOS identity and billing entitlement. Neither is a PostHog
-flag, so the ad-block and relay failure modes in this document do not apply to
-them.
+Unlike before REEV-6, the sidebar resolves it as the flag alone, not
+`flag && isAuthenticated`. When the flag is on, a signed-out visitor sees both
+items, and the route decides what they get: the preview for a guest, the real
+tab for a member. That identity check is `useIsMemberActor()`, a tri-state that
+holds on `undefined` for the same reason the flag hooks above do.
 
-**They are not stateless, though, and the replacement has its own unresolved
-window.** `useIsHostedGuest()` returns a tri-state and answers `undefined`
-while WorkOS is still hydrating, deliberately: `user` is null during hydrate
-for signed-in people too, so resolving early would flash a sign-up wall at
-paying customers on every cold load. The routes hold on `undefined` rather
-than guessing, which trades a brief spinner for never showing the wrong
-screen. That is the same shape of decision as the tri-state flag hooks above,
-reached for the same reason, and it fails SAFE rather than fails closed: an
-unresolved identity shows nothing, not a gate.
-
-The server-side gate of the same name still exists in
-`mcpjam-backend/convex/lib/sandboxesGate.ts` and is unaffected by this row.
-
-**Why removing the client flag does not strand a member the server flag has
-not reached.** The obvious hazard is a signed-in member in a non-flagged
-organization: newly visible tab, then `FEATURE_UNAVAILABLE` on their first
-write. It does not happen, because `SANDBOXES_GATE_MODE` is unset on the
-production deployment and `resolveSandboxesGateMode` defaults to `dark`, which
-emits a `sandboxes_gate_would_block` warning and returns rather than throwing.
-That member's write goes through.
-
-Two things follow, and both are load-bearing. Dark mode is an escape hatch for
-a PostHog outage that happens to cover this case, so **setting
-`SANDBOXES_GATE_MODE=enforce` after REEV-6 ships re-opens the hazard** — the
-flag would then have to be at 100% first. And `sandboxes_gate_would_block`
-volume is now the rollout signal: a rise after launch is exactly this
-population, arriving as telemetry instead of as a support ticket.
-
-None of this reaches the anonymous refusal, which `requireSandboxesEnabled`
-runs before the flag and outside the mode switch. Identity is deliberately not
-the flag.
+The server-side gate of the same name lives in
+`mcpjam-backend/convex/lib/sandboxesGate.ts`. Since backend #1381 it refuses
+anonymous guests before it reads the flag and regardless of
+`SANDBOXES_GATE_MODE`, so the preview is never the only thing between a guest
+and a write. That backend change must be in production before this flag is
+widened to signed-out visitors.
 
 For every beta/nav/opt-in feature, fail-closed is **correct**: a not-yet-GA
 surface briefly not showing is strictly better than flickering it on for a
