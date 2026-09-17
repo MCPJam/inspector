@@ -328,15 +328,14 @@ describe("InsightsWorkbench flow selection", () => {
     expect(breakdownKeys).not.toContain("cluster:sentiment:s-1");
   });
 
-  it("closes the selection when the open node is clicked again", async () => {
+  it("closes the selection when the sheet is dismissed", async () => {
     const user = userEvent.setup();
     renderInsightsPanel();
 
-    const node = screen.getByRole("button", { name: "pick sentiment theme" });
-    await user.click(node);
+    await user.click(screen.getByRole("button", { name: "pick sentiment theme" }));
     expect(lastDrilldownArgs().enabled).toBe(true);
 
-    await user.click(node);
+    await user.keyboard("{Escape}");
     expect(lastDrilldownArgs().enabled).toBe(false);
     expect(lastBreakdownChipKeys()).not.toContain("cluster:sentiment:s-1");
   });
@@ -380,6 +379,7 @@ describe("InsightsWorkbench flow selection", () => {
     // The flow owns nothing, so the diagram is still narrowed by the map.
     expect(lastBreakdownChipKeys()).toContain("cluster:goal:cluster-b");
 
+    await user.keyboard("{Escape}");
     await user.click(
       screen.getByRole("button", { name: "pick same theme as map" })
     );
@@ -393,6 +393,7 @@ describe("InsightsWorkbench flow selection", () => {
     // Both chips are on the SAME axis, which is exactly the case that used to
     // break: clearing by axis took the map's community with it.
     await user.click(screen.getByRole("button", { name: "pick goal theme" }));
+    await user.keyboard("{Escape}");
     await user.click(screen.getByRole("button", { name: "Clusters" }));
     await user.click(
       screen.getByRole("button", { name: "pick map community" })

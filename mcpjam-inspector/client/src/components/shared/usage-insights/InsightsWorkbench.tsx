@@ -21,6 +21,7 @@ import { TopicMapPanel } from "@/components/shared/usage-insights/TopicMapPanel"
 import { InsightsViewToggle } from "@/components/shared/usage-insights/InsightsViewToggle";
 import { InsightsFreshnessChip } from "@/components/shared/usage-insights/InsightsFreshnessChip";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
+import { Button } from "@mcpjam/design-system/button";
 import { SHOW_RECLUSTERING_UI } from "@/lib/cluster-tuning";
 import { cn } from "@/lib/utils";
 import { X } from "lucide-react";
@@ -154,10 +155,11 @@ function InsightsFindings({
  * shell against the same hooks. Where the two disagreed, the reconciliations
  * are deliberate:
  *
- *  - The drill-down is ALWAYS MOUNTED and hidden when closed (the User Testing
- *    contract, pinned by its flow-selection suite): closing toggles the
- *    query's `enabled` rather than unmounting the component, so reopening does
- *    not refetch from scratch. Swarm adopts it.
+ *  - The drill-down is ALWAYS MOUNTED (the User Testing contract, pinned by
+ *    its flow-selection suite): closing toggles the query's `enabled` rather
+ *    than unmounting the component, so reopening does not refetch from
+ *    scratch. It is a right-side sheet, not an in-flow panel, so the Sankey
+ *    keeps its width.
  *  - The drill-down receives `flow.effectiveFilter`, not `flow.filter`, so a
  *    force-applied chip (hide-synthetic) narrows the drill-down too. Swarm's
  *    version passed the raw filter, which on a surface with an augment would
@@ -532,46 +534,28 @@ export function InsightsWorkbench({
         </div>
         {flow.view === "flow" ? (
           <div
-            className={cn(
-              selectionOpen
-                ? "z-10 bg-background sm:w-[22rem] lg:w-[24rem] sm:shrink-0 sm:border-l sm:border-border/40"
-                : "hidden",
-              // Fill layout: an overlay on mobile, an in-flow static panel
-              // beside the chart on sm+.
-              selectionOpen && fillBody && "absolute inset-0 sm:static",
-              // Scroll layout: the chart row is as tall as the whole diagram, so
-              // a stretched drill-down would run that full height. On mobile,
-              // anchor the panel to the viewport (fixed) so selecting a low node
-              // never opens it off-screen; on sm+ it is a bounded, sticky side
-              // panel that scrolls its own session list while the diagram
-              // scrolls past beside it. `sm:static` is deliberately absent so
-              // `sm:sticky` wins by intent, not by Tailwind emit order.
-              selectionOpen &&
-                !fillBody &&
-                "fixed inset-0 z-20 sm:sticky sm:inset-auto sm:top-4 sm:self-start sm:h-[min(70vh,40rem)]",
-            )}
             data-testid={`${testIdPrefix}-drill-panel`}
             aria-hidden={!selectionOpen}
           >
-            {/* Always mounted (hidden when closed) so close toggles
-                `enabled: false` instead of unmounting — the flow-selection
-                tests pin that contract. */}
+            {/* Always mounted so close toggles `enabled: false` instead of
+                unmounting — the flow-selection tests pin that contract. */}
             <GoalOutcomeDrilldown
               scope={scope}
               selection={flow.flowSelection}
               filter={flow.effectiveFilter}
-              variant="panel"
+              variant="sheet"
               onClose={flow.handleCloseFlow}
               onOpenSession={(sessionId) => onOpenSession?.(sessionId)}
               footer={
                 onOpenSessionsTab ? (
-                  <button
+                  <Button
                     type="button"
-                    className="self-start text-xs font-medium text-primary hover:underline"
+                    variant="outline"
+                    size="sm"
                     onClick={onOpenSessionsTab}
                   >
                     Open in Sessions tab →
-                  </button>
+                  </Button>
                 ) : null
               }
             />

@@ -28,8 +28,8 @@ import { SCENARIO_INSIGHTS_QUERIES } from "@/lib/scenario-insights-api";
  * are surfaced separately, because they ask for different things: one wants a
  * rebuild, the other wants a retry.
  *
- * Specifics live behind the expand, per the minimal-UI norm: the chip is a
- * timestamp, the popover is the run detail plus Rebuild.
+ * Specifics live behind the expand when the chip is a timestamp. Failed or
+ * stuck analysis skips the popover: Retry is the chip.
  */
 /**
  * What this chip calls the thing it is reporting on.
@@ -80,25 +80,47 @@ export function InsightsFreshnessChip({
   // A lease-expired IN-FLIGHT job is a stuck job, not old data.
   const jobStuck = running && latestRun.isStale;
 
-  const label = jobStuck
-    ? "Analysis stuck"
-    : running
-      ? "Analyzing…"
-      : failed
-        ? "Analysis failed"
-        : builtAt
-          ? // `addSuffix` rather than a literal "ago": a backend clock slightly
-            // ahead of the viewer's would otherwise render a future timestamp
-            // as "Built 5 minutes ago".
-            `Built ${formatDistanceToNow(builtAt, { addSuffix: true })}`
-          : "Not analyzed";
+  const needsRetry = failed || jobStuck;
+  const label = running
+    ? "Analyzing…"
+    : builtAt
+      ? // `addSuffix` rather than a literal "ago": a backend clock slightly
+        // ahead of the viewer's would otherwise render a future timestamp
+        // as "Built 5 minutes ago".
+        `Built ${formatDistanceToNow(builtAt, { addSuffix: true })}`
+      : "Not analyzed";
+
+  const chipClassName =
+    "inline-flex min-w-0 items-center gap-1 rounded-md border border-border/50 bg-muted/25 px-2 py-0.5 text-xs font-medium tabular-nums text-muted-foreground transition-colors hover:bg-muted/50 disabled:opacity-50";
+
+  // Failed / stuck: Retry is the chip. Opening a popover to reach the only
+  // useful action hid it behind "Analysis failed".
+  if (needsRetry) {
+    return (
+      <button
+        type="button"
+        className={chipClassName}
+        disabled={rebuildBusy}
+        onClick={() => void onRebuild()}
+        title="Retry analysis"
+        data-testid={testId}
+      >
+        {rebuildBusy ? (
+          <Loader2 className="size-3 animate-spin" />
+        ) : (
+          <RefreshCw className="size-3" />
+        )}
+        <span className="truncate">Retry</span>
+      </button>
+    );
+  }
 
   return (
     <Popover>
       <PopoverTrigger asChild>
         <button
           type="button"
-          className="inline-flex min-w-0 items-center gap-1 rounded-md border border-border/50 bg-muted/25 px-2 py-0.5 text-xs font-medium tabular-nums text-muted-foreground transition-colors hover:bg-muted/50"
+          className={chipClassName}
           data-testid={testId}
         >
           {running ? <Loader2 className="size-3 animate-spin" /> : null}
@@ -117,9 +139,7 @@ export function InsightsFreshnessChip({
           <div className="font-medium">
             {builtAt
               ? `Last analyzed ${formatDistanceToNow(builtAt, { addSuffix: true })}`
-              : failed
-                ? "The last analysis failed"
-                : `This ${scopeNoun(scope)} has not been analyzed yet`}
+              : `This ${scopeNoun(scope)} has not been analyzed yet`}
           </div>
           {builtAt ? (
             <div className="text-muted-foreground">
@@ -134,22 +154,12 @@ export function InsightsFreshnessChip({
                 : "New sessions have arrived since this analysis."}
             </div>
           ) : null}
-          {jobStuck ? (
-            <div className="text-muted-foreground">
-              The last analysis stopped responding. Retry it.
-            </div>
-          ) : null}
-          {latestRun.errorMessage ? (
-            <div className="text-destructive">{latestRun.errorMessage}</div>
-          ) : null}
         </div>
-        {/* Recovery (failed / stuck) stays. Voluntary Rebuild is the
-            re-clustering path and is gated off for now. */}
-        {SHOW_RECLUSTERING_UI || jobStuck || failed ? (
+        {SHOW_RECLUSTERING_UI ? (
           <button
             type="button"
             className="inline-flex items-center gap-1.5 rounded-md border px-2 py-1 font-medium transition-colors hover:bg-muted disabled:opacity-50"
-            disabled={rebuildBusy || (running && !jobStuck)}
+            disabled={rebuildBusy || running}
             onClick={() => void onRebuild()}
             data-testid={testId ? `${testId}-rebuild` : undefined}
           >
@@ -158,7 +168,7 @@ export function InsightsFreshnessChip({
             ) : (
               <RefreshCw className="size-3" />
             )}
-            {jobStuck ? "Retry analysis" : failed ? "Retry" : "Rebuild"}
+            Rebuild
           </button>
         ) : null}
       </PopoverContent>

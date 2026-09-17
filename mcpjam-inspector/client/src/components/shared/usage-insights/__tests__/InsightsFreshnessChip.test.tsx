@@ -85,12 +85,26 @@ describe("InsightsFreshnessChip", () => {
     expect(screen.getByTestId("chip")).toHaveTextContent(/^Built /);
   });
 
-  it("does not call a failed run built", () => {
+  it("does not call a failed run built", async () => {
     // `finishedAt` is set on failure too — reading it as freshness would
-    // report an analysis that was never produced.
-    renderChip(run({ status: "failed", errorMessage: "provider timeout" }));
-    expect(screen.getByTestId("chip")).toHaveTextContent("Analysis failed");
-    expect(screen.getByTestId("chip")).not.toHaveTextContent("Built");
+    // report an analysis that was never produced. Retry is the chip so the
+    // only useful action is one click, not a popover.
+    const onRebuild = vi.fn();
+    render(
+      <InsightsFreshnessChip
+        scope={SCOPE}
+        latestRun={run({ status: "failed", errorMessage: "provider timeout" })}
+        onRebuild={onRebuild}
+        rebuildBusy={false}
+        testId="chip"
+      />,
+    );
+    const chip = screen.getByTestId("chip");
+    expect(chip).toHaveTextContent("Retry");
+    expect(chip).not.toHaveTextContent("Built");
+    expect(chip).not.toHaveTextContent("Analysis failed");
+    await chip.click();
+    expect(onRebuild).toHaveBeenCalledTimes(1);
   });
 
   it("names the thing it is reporting on, per surface", async () => {
@@ -134,14 +148,26 @@ describe("InsightsFreshnessChip", () => {
 
   it("keeps retry available on a stuck run", async () => {
     // A blown 15-minute lease is the one in-flight state a human should be
-    // able to act on.
-    renderChip(
-      run({ status: "running", finishedAt: null, isStale: true } as never),
+    // able to act on. Same as failed: Retry is the chip, not a popover.
+    const onRebuild = vi.fn();
+    render(
+      <InsightsFreshnessChip
+        scope={SCOPE}
+        latestRun={run({
+          status: "running",
+          finishedAt: null,
+          isStale: true,
+        } as never)}
+        onRebuild={onRebuild}
+        rebuildBusy={false}
+        testId="chip"
+      />,
     );
-    await screen.getByTestId("chip").click();
-    expect(screen.getByTestId("chip-rebuild")).toBeEnabled();
-    expect(screen.getByTestId("chip-rebuild")).toHaveTextContent(
-      "Retry analysis",
-    );
+    const chip = screen.getByTestId("chip");
+    expect(chip).toBeEnabled();
+    expect(chip).toHaveTextContent("Retry");
+    expect(screen.queryByTestId("chip-rebuild")).not.toBeInTheDocument();
+    await chip.click();
+    expect(onRebuild).toHaveBeenCalledTimes(1);
   });
 });
