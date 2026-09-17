@@ -265,6 +265,18 @@ Judge results are also accessible outside the app. `mcpjam cloud eval status` re
 
 The same judge config and defaults are shared with **Swarm journeys**. When creating a new journey, expand **Advanced → Judge** to set the judge model and enable auto-grade for that journey. Session score badges (showing the verdict and score) appear in the Sessions list and run matrix cells whenever a session has been graded. Sessions with no transcript still expose the on-demand judge entry point so failed or empty sessions can be graded against the journey goal.
 
+### Prerequisite setup for swarm journeys
+
+New journeys created in the UI default to **Create prerequisite data before each run** enabled. The confirm step has a switch to disable it. Journeys created through the API or SDK have setup off unless you pass `setupWrites: true`.
+
+When setup is on, each target attempts to create prerequisite state before its first session. The run and detail views show a **grounding disclosure** — what the personas knew, which entities were created, readiness status, and any residue — separately from the graded session matrix. Setup events do not create session cells and are not included in Findings.
+
+<Warning>
+  Setup can invoke real write tools against your connected servers. Created data is **not cleaned up**. Use a test account.
+</Warning>
+
+**API and SDK:** pass `setupWrites` on create or update. On `PATCH`, `setupWrites` must be sent together with `sessionsPerTarget` and `maxTurns` — they are one execution config object. Replacing the pair without `setupWrites` clears it; send its current value to preserve it.
+
 ### MCP App widgets in swarm sessions
 
 When a swarm session uses MCP App tools that return widgets, the session viewer replays those widgets as full interactive components — the same rendering you see in the Playground. Widgets are captured per turn as the run executes and are available once the run completes.
