@@ -102,6 +102,9 @@ describe("rebuilding a benchmark flow is a paid action", () => {
       }),
     );
 
+    expect(mockUseAction).toHaveBeenCalledWith(
+      "scenarioClusters:generateBenchmarkFlowInsights",
+    );
     const outcome = await result.current.rebuild();
     expect(generate).toHaveBeenCalledWith({ benchmarkRunId: "run_1" });
     expect(outcome).toMatchObject({ status: "running", alreadyRunning: false });

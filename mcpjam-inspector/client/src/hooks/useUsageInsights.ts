@@ -493,7 +493,7 @@ export function useUsageInsights({
    * below turns into an explicit failure rather than a silent no-op.
    */
   const generateBenchmarkFlow = useAction(
-    "benchmarkSessionFlow:generateBenchmarkFlowInsights" as any,
+    "scenarioClusters:generateBenchmarkFlowInsights" as any,
   ) as unknown as (args: { benchmarkRunId: string }) => Promise<
     | {
         status: "ready" | "generating";
