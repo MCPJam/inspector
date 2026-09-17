@@ -1,4 +1,3 @@
-import { Switch } from "@mcpjam/design-system/switch";
 /**
  * Confirm step of the New swarm create flow.
  *
@@ -86,7 +85,6 @@ export type LaunchTarget = {
 };
 
 export type ConfirmLaunchPayload = {
-  setupWrites: boolean;
   rubric: JourneyCriterion[];
   judgeConfig?: GoalJudgeConfig;
   /** Existing journeys to launch. When the Describe step carries an explicit
@@ -873,7 +871,6 @@ export function NewSwarmConfirmStep({
   /** Persist an edit to an existing journey's goal text. */
   onSaveReusedGoal: (journeyRefId: string, goal: string) => Promise<void>;
 }) {
-  const [setupWrites, setSetupWrites] = useState(true);
   const [selected, setSelected] = useState<SelectedPersona | null>(null);
   const [reusedResolved, setReusedResolved] = useState<
     Record<string, ReusedResolved>
@@ -1451,29 +1448,6 @@ export function NewSwarmConfirmStep({
           </p>
         ) : null}
 
-        <div className="flex items-start justify-between gap-4 rounded-lg border border-border p-4">
-          <div className="space-y-1">
-            <label htmlFor="swarm-setup-writes" className="text-sm font-medium">
-              Create prerequisite data before each run
-            </label>
-            <p
-              id="swarm-setup-writes-help"
-              className="text-sm text-muted-foreground"
-            >
-              Attempts to create prerequisite data using your servers’ tools and
-              requests names beginning
-              <code> swarm-&lt;run&gt;-…</code>. Created data is not cleaned up.
-              Applies to journeys created here. Use a test account.
-            </p>
-          </div>
-          <Switch
-            id="swarm-setup-writes"
-            aria-describedby="swarm-setup-writes-help"
-            checked={setupWrites}
-            onCheckedChange={setSetupWrites}
-            disabled={launching}
-          />
-        </div>
         <div className="flex items-center justify-end gap-5 pt-2">
           <Button
             type="button"
@@ -1489,7 +1463,6 @@ export function NewSwarmConfirmStep({
             data-testid="new-swarm-launch"
             onClick={() =>
               onLaunch({
-                setupWrites,
                 rubric: [],
                 reusedTargets: activeReusedTargets,
                 reusedGrading: [],

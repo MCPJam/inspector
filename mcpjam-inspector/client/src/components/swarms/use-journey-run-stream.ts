@@ -46,10 +46,6 @@ export type SwarmSessionNotice = {
 };
 
 export type JourneyRunStreamState = {
-  setupByTarget?: Record<
-    string,
-    Extract<SwarmStreamEvent, { type: "setup_start" | "setup_complete" }>
-  >;
   sessions: Record<string, SwarmLiveSessionState>;
   /** Coarse matrix key: `${targetKey}:${sessionIndex}` → status, where
    * targetKey is the canonical `targetId ?? hostId` (D2). */
@@ -81,7 +77,6 @@ function emptyRunStreamState(): JourneyRunStreamState {
   return {
     sessions: {},
     cellStatus: {},
-    setupByTarget: {},
     runComplete: false,
     connected: false,
     error: null,
@@ -113,15 +108,6 @@ export function reduceSwarmStreamEvent(
   state: JourneyRunStreamState,
   event: SwarmStreamEvent,
 ): JourneyRunStreamState {
-  if (event.type === "setup_start" || event.type === "setup_complete") {
-    return {
-      ...state,
-      setupByTarget: {
-        ...state.setupByTarget,
-        [swarmEventTargetKey(event)]: event,
-      },
-    };
-  }
   if (event.type === "run_complete") {
     return { ...state, runComplete: true };
   }

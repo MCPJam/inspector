@@ -1,5 +1,5 @@
 import { prepareTargetGrounding } from "./target-grounding";
-import { SwarmSetupError, swarmSetupChatSessionId } from "./swarm-setup-turn";
+import { SwarmSetupError } from "./swarm-setup-turn";
 import { composeAbortSignals } from "@mcpjam/sdk";
 import { logger } from "../../utils/logger.js";
 import { withDeadline } from "../../utils/run-supervisor/deadline.js";
@@ -800,15 +800,6 @@ async function runJourneyFanOut(
           convexHttpUrl,
           bearer,
           signal: sessionSignal,
-          emit: (event) =>
-            hub.emit({
-              ...event,
-              runId,
-              hostId,
-              targetId,
-              chatSessionId: swarmSetupChatSessionId(runId, target),
-              sessionIndex: -1,
-            }),
         });
       }
 
