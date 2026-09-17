@@ -97,7 +97,28 @@ Re-baseline a threshold:
 | summarize max(Usd), percentile(Usd, 95)
 ```
 
-## Activation (not done by the PR that added these)
+## Dashboard
+
+Infra Overview (`infra-overview`) carries an "included AI" row directly under
+the E2B row: spend, refusals, guard failures, customer-billed rows, stale holds,
+snapshot age, spend by feature, top orgs, and refusals by reason. The tiles
+mirror the monitors above. Infra Overview is edited through the API, so the row
+is owned by `dashboard-platform-lanes.mjs`, which touches only charts whose id
+starts with `platform-lane-`:
+
+```bash
+node ops/axiom-monitors/dashboard-platform-lanes.mjs          # plan: validates every query
+node ops/axiom-monitors/dashboard-platform-lanes.mjs --apply  # write (backs up first)
+```
+
+## Activation
+
+**Status (2026-09-17):** the dashboard row and six monitors are live —
+`customer-billed`, `guard-failures`, `spend-hourly-page`, `spend-hourly-warn`,
+`budget-refusals-hourly`, `stale-holds`. With no source events they read 0 and
+stay quiet. `platform-lane-snapshot-deadman` is NOT applied: it would alert
+until backend #1470 is in production. Apply it (step 3's last line) once the
+"Minutes since last lane snapshot" tile shows a number.
 
 The events ship with mcpjam-backend #1463 and #1470. Until both are in
 **production**, every query returns no rows: the Above monitors stay silent and
