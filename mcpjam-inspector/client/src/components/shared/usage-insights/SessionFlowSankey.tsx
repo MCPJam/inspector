@@ -272,6 +272,7 @@ export function SessionFlowSankey({
       )}
       data-testid="scenario-insights-sankey"
       data-fill-height={fillHeight ? "true" : undefined}
+      data-fill-remaining={scrollLayout ? "true" : undefined}
     >
       <div
         className={cn(
@@ -399,6 +400,7 @@ export function SessionFlowSankey({
         }
         ariaLabel="Session flow from goal through behavior and outcome to sentiment"
         fillHeight={fillHeight}
+        fillRemainingViewport={scrollLayout}
       />
     </div>
   );

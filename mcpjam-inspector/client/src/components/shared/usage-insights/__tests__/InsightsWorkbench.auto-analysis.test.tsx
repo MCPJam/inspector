@@ -42,6 +42,10 @@ vi.mock("convex/react", async (importOriginal) => {
   };
 });
 
+vi.mock("@/components/connection/share-usage/ShareUsageThreadDetail", () => ({
+  ShareUsageThreadDetail: () => null,
+}));
+
 vi.mock("@/hooks/useUsageInsights", async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
   return {
