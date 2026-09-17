@@ -1,3 +1,4 @@
+import type { SwarmSessionVerdict, JourneyRunVerdictSummary, SwarmReport } from "@mcpjam/sdk/contract";
 /**
  * Swarm (journey-execution) client contract — the ONE place the Swarms surface
  * reaches the backend.
@@ -218,6 +219,8 @@ export interface JourneyRunAttempt {
 }
 
 export interface JourneyRun {
+  verdictSummary?: JourneyRunVerdictSummary;
+  report?: SwarmReport;
   _id: string;
   status: JourneyRunStatus | string;
   /**
@@ -256,6 +259,8 @@ export interface JourneyRun {
  * `goalScore` are the server-denormalized subsets the badges read.
  */
 export interface JourneySessionRow {
+  verdict?: SwarmSessionVerdict;
+  observations?: Array<{ evaluatorId: string; predicateType: string; role: "advisory" | "required"; status: "passed" | "failed" | "pending" | "unavailable" }>;
   /** `s._id` — the id `ShareUsageThreadDetail` opens + the deep-link threadId. */
   id: string;
   chatSessionId: string;
@@ -360,6 +365,8 @@ export interface SwarmOverviewTarget {
 }
 
 export interface SwarmOverviewRun {
+  verdictSummary?: JourneyRunVerdictSummary;
+  report?: SwarmReport;
   runId: string;
   journeyRefId: string;
   journeyName: string;

@@ -280,7 +280,16 @@ export function registerJourneysCommands(program: Command): Command {
             { client, signal }
           )
       );
-      writeResult(result, globalOptions.format);
+      if (globalOptions.format === "human") {
+        process.stdout.write("Session\tExecution\tGoal result\n");
+        for (const row of result.items) {
+          const verdict = row.verdict;
+          const label = verdict?.verdict === "notEstablished"
+            ? ["queued", "running"].includes(verdict.grading.state) ? "Grading" : "Not graded"
+            : verdict?.verdict ?? "Not graded";
+          process.stdout.write(`${row.id}\t${row.outcome ?? row.status ?? "unknown"}\t${label}\n`);
+        }
+      } else writeResult(result, globalOptions.format);
     }
   );
 

@@ -1,3 +1,5 @@
+import { SwarmReportPanel } from "./swarm-report-panel";
+import { SwarmRunStageFunnelPanels } from "@/components/shared/user-value-chain/StageFunnelPanels";
 /**
  * Dedicated Swarm Run (wave) detail at `/swarms/:swarmId`.
  *
@@ -768,6 +770,9 @@ export function SwarmRunDetail({
           </div>
         ) : null}
         {tab === "sessions" && projectId ? (
+          <>
+          <div className="space-y-2">{wave.runs.map((run) => <SwarmReportPanel key={run.runId} report={run.report} />)}</div>
+          <SwarmRunStageFunnelPanels journeyRunIds={runIds} />
           <SwarmsSessionsPanel
             projectId={projectId}
             personas={personas}
@@ -779,6 +784,7 @@ export function SwarmRunDetail({
             goalLabels={goalLabels}
             journeyRunIds={runIds}
           />
+          </>
         ) : null}
         {tab === "sessions" && !projectId ? (
           <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">

@@ -1,4 +1,6 @@
 import { TranscriptEmptyState } from "@/components/chat-v2/transcript-empty-state";
+import { SwarmGoalResult, SwarmSessionReport } from "./swarm-report-panel";
+import type { SwarmSessionVerdict } from "@mcpjam/sdk/contract";
 import { useEffect, useMemo, useState } from "react";
 import { useConvexAuth } from "convex/react";
 import {
@@ -14,7 +16,6 @@ import {
   type SessionCriteria,
   type SessionGoalScore,
 } from "@/lib/swarm-api";
-import { SessionGoalScoreBadge } from "@/components/shared/session-quality/session-goal-score-badge";
 import { TraceViewer } from "@/components/evals/trace-viewer";
 import {
   TraceViewModeTabs,
@@ -64,12 +65,12 @@ const CELL_META: Record<
     text: "text-muted-foreground",
   },
   succeeded: {
-    label: "Done",
+    label: "Ran",
     dot: "bg-success",
     text: "text-success",
   },
   failed: {
-    label: "Fail",
+    label: "Broke",
     dot: "bg-destructive",
     text: "text-destructive",
   },
@@ -155,7 +156,7 @@ export function SwarmHostCell({
   hostLabel,
   sessionIndex,
   outcome,
-  goalScore,
+  verdict,
   criteria,
   selected,
   onSelect,
@@ -164,6 +165,7 @@ export function SwarmHostCell({
   sessionIndex: number;
   outcome: SwarmMatrixCellOutcome;
   goalScore?: SessionGoalScore;
+  verdict?: SwarmSessionVerdict;
   criteria?: SessionCriteria;
   selected: boolean;
   onSelect: () => void;
@@ -192,8 +194,8 @@ export function SwarmHostCell({
       </span>
       <span className={cn("size-1.5 rounded-full", meta.dot)} />
       <span className={cn("font-semibold", meta.text)}>{meta.label}</span>
-      <SessionGoalScoreBadge goalScore={goalScore} />
-      <SessionCriteriaChip criteria={criteria} />
+      <SwarmGoalResult verdict={verdict} />
+      {verdict ? <span className="text-[10px] text-muted-foreground">{verdict.counts.gatingPassed}/{verdict.counts.gating} required · {verdict.counts.advisoryFailed} advisory findings</span> : <SessionCriteriaChip criteria={criteria} />}
     </button>
   );
 }
@@ -355,6 +357,7 @@ export function SwarmSessionsMatrix({
                 sessionIndex={sessionIndex}
                 outcome={outcome}
                 goalScore={convexSession?.goalScore}
+                verdict={convexSession?.verdict}
                 criteria={convexSession?.criteria}
                 selected={selected}
                 onSelect={() =>
@@ -601,10 +604,12 @@ export function SwarmLiveStreamPane({
               emptyCompletedTrace ? "text-warning-foreground" : meta.text,
             )}
           >
-            {emptyCompletedTrace ? "No conversation" : meta.label}
+            {emptyCompletedTrace ? "No conversation" : convexSession?.verdict?.lifecycle === "withdrawn" ? "Withdrawn" : meta.label}
           </span>
         </span>
       </div>
+
+      <SwarmSessionReport session={convexSession} />
 
       {providerRateLimit ? (
         <div data-testid="swarm-live-pane-rate-limit">

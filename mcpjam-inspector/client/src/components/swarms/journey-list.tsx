@@ -1,3 +1,4 @@
+import { swarmTargetCaseId } from "@mcpjam/sdk/contract";
 import type { GoalJudgePolicy } from "@/shared/judge-defaults";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { SharedSettingsGate } from "@/components/billing/SharedSettingsGate";
@@ -101,7 +102,7 @@ const CELL_STATUS_META: Record<
   pass: { label: "Pass", dot: "bg-success", text: "text-success" },
   fail: { label: "Fail", dot: "bg-destructive", text: "text-destructive" },
   part: {
-    label: "Partial",
+    label: "Inconclusive",
     dot: "bg-amber-500",
     text: "text-amber-600 dark:text-amber-400",
   },
@@ -113,7 +114,8 @@ const CELL_STATUS_META: Record<
 };
 
 /** Trend-segment fills — same palette as the evals RunTrendStrip. */
-const SEGMENT_CLASS: Record<Exclude<JourneyCellOutcome, "none">, string> = {
+const SEGMENT_CLASS: Record<JourneyCellOutcome, string> = {
+  none: "bg-muted",
   pass: "bg-success/70",
   fail: "bg-destructive/70",
   part: "bg-amber-500/70 dark:bg-amber-400/70",
@@ -167,17 +169,10 @@ export function journeyHostOutcome(
   run: JourneyRun,
   targetKey: string,
 ): JourneyCellOutcome {
-  const entry = run.hostSummaries.find(
-    (h) => summaryTargetKey(h) === targetKey,
-  );
-  if (!entry || entry.total === 0) {
-    return run.status === "running" ? "running" : "none";
-  }
-  const done = entry.succeeded + entry.failed + entry.rateLimited;
-  if (run.status === "running" && done < entry.total) return "running";
-  if (entry.succeeded === entry.total) return "pass";
-  if (entry.succeeded === 0) return "fail";
-  return "part";
+  if (run.status === "running" || run.verdictSummary?.status === "pending") return "running";
+  if (run.verdictSummary?.status !== "decided") return "none";
+  const decision = run.verdictSummary.decision.cases.find((c) => c.caseId === swarmTargetCaseId(run.snapshot?.hosts?.find((h) => summaryTargetKey(h) === targetKey)?.targetId ?? targetKey));
+  return decision?.verdict === "passed" ? "pass" : decision?.verdict === "failed" ? "fail" : decision?.verdict === "inconclusive" ? "part" : "none";
 }
 
 function hostSummaryFor(run: JourneyRun, targetKey: string) {
@@ -506,14 +501,6 @@ function JourneyBlock({
               run: r,
               outcome: journeyHostOutcome(r, col.key),
             }))
-            .filter(
-              (
-                p,
-              ): p is {
-                run: JourneyRun;
-                outcome: Exclude<JourneyCellOutcome, "none">;
-              } => p.outcome !== "none",
-            )
             .slice(-MAX_TREND_SEGMENTS);
           const cellSelected =
             selection?.targetKey === col.key &&

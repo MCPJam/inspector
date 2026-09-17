@@ -1,3 +1,4 @@
+import { verdictBadge } from "./swarm-verdict-presentation";
 /**
  * Running step of the New swarm create flow.
  *
@@ -177,10 +178,10 @@ export function swarmCellHeadline(args: {
   if (args.outcome === "rate_limited") {
     return /\d+\/\d+ pass/.test(args.primary)
       ? "Run completed: Goal completion had mixed results"
-      : "Run limited: not run";
+      : "Execution limited";
   }
   if (args.outcome === "failed") {
-    return `Run failed: ${goal}`;
+    return `Broke: ${goal}`;
   }
   return goal;
 }
@@ -441,11 +442,7 @@ function slotView(args: {
     };
   }
 
-  // A non-success terminal is reported BEFORE the rubric, and never dressed up
-  // as one. A rate-limited attempt never ran, so it has no rubric result to
-  // show — and reusing the `rate_limited` tone for a partial rubric pass (as
-  // the block below still does for its own middle case) must not leak into a
-  // cell that was genuinely refused by the provider.
+  // Execution refusal remains distinct from a measured goal result.
   if (outcome === "rate_limited") {
     return {
       outcome: "rate_limited",
@@ -467,24 +464,9 @@ function slotView(args: {
     };
   }
 
-  const criteria = session?.criteria;
-  if (criteria?.status === "completed" && criteria.results?.length) {
-    const checks = criteria.results.length;
-    const passed = criteria.results.filter((result) => result.passed).length;
-    const scored: CellView["outcome"] =
-      passed === checks
-        ? "succeeded"
-        : passed === 0
-        ? "failed"
-        : "rate_limited";
-    return {
-      outcome: scored,
-      headline: swarmCellHeadline({
-        outcome: scored,
-        primary: `${passed}/${checks} pass`,
-        goal,
-      }),
-    };
+  if (session?.verdict) {
+    const badge = verdictBadge(session.verdict);
+    return { outcome: session.verdict.verdict === "failed" ? "failed" : session.verdict.verdict === "passed" ? "succeeded" : "pending", headline: `${badge.label}: ${goal}` };
   }
 
   if (outcome === "failed") {
@@ -750,6 +732,8 @@ export function NewSwarmRunningStep({
                 snapshot.sessions[index]?.chatSessionId &&
               session.status === snapshot.sessions[index]?.status &&
               session.messageCount === snapshot.sessions[index]?.messageCount &&
+              JSON.stringify(session.verdict) === JSON.stringify(snapshot.sessions[index]?.verdict) &&
+              JSON.stringify(session.observations) === JSON.stringify(snapshot.sessions[index]?.observations) &&
               session.criteria?.status ===
                 snapshot.sessions[index]?.criteria?.status,
           )

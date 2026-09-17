@@ -69,6 +69,14 @@ describe("runSwarmChecks", () => {
     failSwarmChecksMock.mockReset().mockResolvedValue(undefined);
   });
 
+  it("never reports a pass from an empty or incomplete transcript", async () => {
+    for (const envelope of [{ messages: [] }, { messages: [{ role: "user", content: "help" }], traceComplete: false }]) {
+      claimSwarmChecksMock.mockResolvedValue({ ...claimResult([]), envelope });
+      expect(await runSwarmChecks(ARGS)).toMatchObject({ status: "failed" });
+    }
+    expect(completeSwarmChecksMock).not.toHaveBeenCalled();
+  });
+
   it("evaluates the pinned criteria and correlates verdicts back by criterionId", async () => {
     claimSwarmChecksMock.mockResolvedValue(
       claimResult([

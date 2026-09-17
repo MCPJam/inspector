@@ -19,6 +19,7 @@ function run(
     hostSummaries: partial.hostSummaries,
     snapshot: partial.snapshot,
     goalScoreSummary: partial.goalScoreSummary,
+    verdictSummary: partial.verdictSummary,
     createdAt: partial.createdAt ?? 1,
   };
 }
@@ -98,8 +99,8 @@ describe("journeyTargetColumns", () => {
     ]);
     expect(cols.map((c) => c.label)).toEqual(["Same Name #1", "Same Name #2"]);
     // Per-target outcomes stay distinct even though the host is shared.
-    expect(journeyHostOutcome(latestRun, "environment:env1")).toBe("pass");
-    expect(journeyHostOutcome(latestRun, "environment:env2")).toBe("fail");
+    expect(journeyHostOutcome(latestRun, "environment:env1")).toBe("none");
+    expect(journeyHostOutcome(latestRun, "environment:env2")).toBe("none");
   });
 
   it("fresh legacy run: host-shaped targetIds collapse to bare hostId keys (pre-3A parity)", () => {
@@ -118,19 +119,19 @@ describe("journeyTargetColumns", () => {
     });
     const cols = journeyTargetColumns(journey, hosts, latestRun);
     expect(cols.map((c) => c.key)).toEqual(["a"]);
-    expect(journeyHostOutcome(latestRun, "a")).toBe("pass");
+    expect(journeyHostOutcome(latestRun, "a")).toBe("none");
   });
 });
 
 describe("journeyHostOutcome", () => {
-  it("classifies pass / fail / partial for a terminal run", () => {
+  it("does not infer grades from terminal execution counts", () => {
     const r = run({
       status: "partial",
       hostSummaries: [hs("h1", 2, 2), hs("h2", 2, 0, 2), hs("h3", 3, 1, 2)],
     });
-    expect(journeyHostOutcome(r, "h1")).toBe("pass");
-    expect(journeyHostOutcome(r, "h2")).toBe("fail");
-    expect(journeyHostOutcome(r, "h3")).toBe("part");
+    expect(journeyHostOutcome(r, "h1")).toBe("none");
+    expect(journeyHostOutcome(r, "h2")).toBe("none");
+    expect(journeyHostOutcome(r, "h3")).toBe("none");
   });
 
   it("returns none for a host absent from the run's summaries", () => {
@@ -145,8 +146,8 @@ describe("journeyHostOutcome", () => {
     expect(journeyHostOutcome(r, "h2")).toBe("running");
   });
 
-  it("resolves a running run's host once all attempts are accounted for", () => {
+  it("keeps a running run pending even when one target finished", () => {
     const r = run({ status: "running", hostSummaries: [hs("h1", 2, 2)] });
-    expect(journeyHostOutcome(r, "h1")).toBe("pass");
+    expect(journeyHostOutcome(r, "h1")).toBe("running");
   });
 });

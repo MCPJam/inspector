@@ -1,3 +1,5 @@
+import { foldSwarmRunVerdicts } from "@mcpjam/sdk/contract";
+import { runVerdictBadge } from "./swarm-verdict-presentation";
 /**
  * Swarms Overview — the default landing view.
  *
@@ -849,6 +851,7 @@ function SwarmWaveRow({
   const personaCount = new Set(wave.runs.map((r) => r.personaName)).size;
   const targets = waveTargets(wave.runs);
   const runState = waveRunState(wave.runs);
+  const decision = runVerdictBadge(foldSwarmRunVerdicts(wave.runs.map((r) => r.report?.verdict ?? "notEstablished")));
   const environmentLabel = formatWaveEnvironmentLabel(targets);
   const clientLabel = formatWaveClientLabel(targets);
   const modelLabel = formatWaveModelLabel(targets);
@@ -900,7 +903,7 @@ function SwarmWaveRow({
             </span>
           </div>
           <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
-            {sessions.succeeded}/{sessions.total} sessions
+            {sessions.succeeded}/{sessions.total} executions completed · Run decision: {decision.label}
             {wave.runs.length === 1
               ? ` · ${wave.runs[0]!.journeyName} · ${wave.runs[0]!.personaName}`
               : ` · ${wave.runs.length} goals · ${personaCount} persona${

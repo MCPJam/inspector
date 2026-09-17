@@ -354,30 +354,30 @@ export function assembleSwarmReport(raw: SwarmReportInput): SwarmReport {
   const undecidedReason = !input.executionComplete
     ? "executionPending"
     : goalGrading.waitingForDecisiveGrading > 0 || summary?.status === "pending"
-      ? "gradingPending"
-      : !summary
-        ? "verdictSummaryUnavailable"
-        : summary.status === "integrityFailed"
-          ? "integrityFailed"
-          : summary.status === "notEstablished"
-            ? "gradingNotConfigured"
-            : undefined;
+    ? "gradingPending"
+    : !summary
+    ? "verdictSummaryUnavailable"
+    : summary.status === "integrityFailed"
+    ? "integrityFailed"
+    : summary.status === "notEstablished"
+    ? "gradingNotConfigured"
+    : undefined;
   return swarmReportSchema.parse({
     contractVersion: SWARM_REPORT_CONTRACT_VERSION,
     runId: input.runId,
     ...(undecidedReason
       ? { verdict: "notEstablished", verdictSource: "none", undecidedReason }
       : summary?.status === "decided"
-        ? {
-            verdict: summary.decision.verdict,
-            verdictSource: "policyV2",
-            decision: summary.decision,
-          }
-        : {
-            verdict: "notEstablished",
-            verdictSource: "none",
-            undecidedReason: "verdictSummaryUnavailable",
-          }),
+      ? {
+          verdict: summary.decision.verdict,
+          verdictSource: "policyV2",
+          decision: summary.decision,
+        }
+      : {
+          verdict: "notEstablished",
+          verdictSource: "none",
+          undecidedReason: "verdictSummaryUnavailable",
+        }),
     execution,
     goalGrading,
     observations: [...observations.values()].sort((a, b) =>
@@ -396,4 +396,21 @@ export function foldSwarmRunVerdicts(
   return values.length > 0 && values.every((value) => value === "passed")
     ? "passed"
     : "notEstablished";
+}
+
+/** Lossless target identity in eval's restricted case-id alphabet. Target IDs
+ * contain ':' (host:/environment:), which the shared eval validator refuses. */
+export function swarmTargetCaseId(targetId: string): string {
+  const bytes = new TextEncoder().encode(targetId);
+  const alphabet =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+  let encoded = "target_";
+  for (let i = 0; i < bytes.length; i += 3) {
+    const n =
+      (bytes[i] << 16) | ((bytes[i + 1] ?? 0) << 8) | (bytes[i + 2] ?? 0);
+    encoded += alphabet[(n >>> 18) & 63] + alphabet[(n >>> 12) & 63];
+    if (i + 1 < bytes.length) encoded += alphabet[(n >>> 6) & 63];
+    if (i + 2 < bytes.length) encoded += alphabet[n & 63];
+  }
+  return encoded;
 }

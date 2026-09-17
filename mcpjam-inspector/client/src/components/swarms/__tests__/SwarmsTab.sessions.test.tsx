@@ -404,7 +404,7 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
       .getAllByTestId("swarm-host-cell")
       .filter((el) => el.getAttribute("data-outcome") === "succeeded");
     expect(done.length).toBeGreaterThan(0);
-    expect(within(done[0]!).getByText("Done")).toBeInTheDocument();
+    expect(within(done[0]!).getByText("Ran")).toBeInTheDocument();
   });
 
   it("shows playground-style Trace / Chat / Raw tabs in the live pane", async () => {

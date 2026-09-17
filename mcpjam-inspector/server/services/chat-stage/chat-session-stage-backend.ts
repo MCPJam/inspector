@@ -87,6 +87,8 @@ export type ClaimedStageEvidence = {
   lifecycle?: unknown;
   readiness?: unknown;
   criteria?: unknown;
+  criterionDefinitions?: unknown;
+  swarmPolicy?: unknown;
   goalScore?: unknown;
 };
 
@@ -115,6 +117,7 @@ export async function claimNextStageDerivation(
 ): Promise<StageClaimOutcome> {
   const { status, body } = await postServiceRoute(`${BASE_PATH}/claim`, {
     claimedBy,
+    evidenceVersion: 2,
   });
   if (status === 404) return { kind: "disabled" };
   if (status !== 200 || !body?.ok) {

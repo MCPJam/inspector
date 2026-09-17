@@ -1,3 +1,4 @@
+import { neverStartedReport } from "./swarm-report-fixtures";
 import { describe, expect, it } from "vitest";
 
 import type { SwarmOverviewRun, SwarmWaveSignals } from "@/lib/swarm-api";
@@ -107,6 +108,7 @@ describe("composeFindingsSummary: a wave that never launched", () => {
     run({
       runId,
       journeyRefId,
+      report: neverStartedReport(3),
       summary: { total: 3, succeeded: 0, failed: 3, rateLimited: 0 },
     });
 
@@ -129,7 +131,7 @@ describe("composeFindingsSummary: a wave that never launched", () => {
 
   it("names rate limiting separately from refusal", () => {
     const lines = summaryFor([
-      run({ summary: { total: 4, succeeded: 0, failed: 3, rateLimited: 1 } }),
+      run({ report: neverStartedReport(4), summary: { total: 4, succeeded: 0, failed: 3, rateLimited: 1 } }),
     ]);
     expect(lines[0]).toBe("3 of 4 sessions failed to launch.");
     expect(lines).toContain("1 session were rate limited.");
