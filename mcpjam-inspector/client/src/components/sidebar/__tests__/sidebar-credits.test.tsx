@@ -21,6 +21,7 @@ let balanceState:
 let isLoadingState = false;
 let evalQuotaState:
   | {
+      starterRemaining?: number;
       used: number;
       allowed: number | null;
       resetsAt: number;
@@ -43,8 +44,8 @@ vi.mock("@/hooks/useCreditBalance", () => ({
 }));
 
 vi.mock("@/hooks/use-eval-iteration-quota", () => ({
-  useEvalIterationQuota: () => ({
-    quota: evalQuotaState,
+  useEvalIterationQuota: ({ enabled = true }: { enabled?: boolean }) => ({
+    quota: enabled ? evalQuotaState : undefined,
     isLoading: false,
     isAtLimit: false,
   }),
@@ -240,7 +241,7 @@ describe("SidebarCredits", () => {
     expect(evalRow).toHaveTextContent("38 / 50 remaining");
   });
 
-  it("hides legacy eval allowances for V2 in the sidebar too", () => {
+  it("keeps the V2 starter allowance while hiding recurring eval allowances", () => {
     billingStatusState = { effectivePlan: "team", pricingVersion: "v2" };
     balanceState = {
       ...balanceState!,
@@ -249,6 +250,7 @@ describe("SidebarCredits", () => {
       monthlyAllowanceRemaining: 30000,
     };
     evalQuotaState = {
+      starterRemaining: 420,
       used: 12,
       allowed: 500,
       resetsAt: 0,
@@ -261,6 +263,9 @@ describe("SidebarCredits", () => {
     expect(screen.queryByText("Free daily credits")).not.toBeInTheDocument();
     expect(screen.getByTestId("sidebar-usage-monthly")).toHaveTextContent(
       "30,000 / 50,000",
+    );
+    expect(screen.getByText(/Free starter eval iterations:/)).toHaveTextContent(
+      "420 remaining · one-time allowance of 500",
     );
   });
 

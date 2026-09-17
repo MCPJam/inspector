@@ -64,7 +64,7 @@ export function SidebarCredits({
     billingStatus?.pricingVersion === "v2" ||
     balance?.billingModel === "monthly_flat";
   const { quota: evalIterationQuota, isLoading: isEvalIterationQuotaLoading } =
-    useEvalIterationQuota({ organizationId, enabled: !isV2 });
+    useEvalIterationQuota({ organizationId });
 
   // Settled with nothing to show. Rendering the row anyway leaves a permanent
   // "See credits" whose card is a blank number over an empty bar, which reads
@@ -155,11 +155,11 @@ export function SidebarCredits({
                 </div>
               ) : null}
 
-              {!isV2 && evalIterationQuota?.starterRemaining != null && (
+              {evalIterationQuota?.starterRemaining != null && (
                 <p className="text-xs">
-                  Starter eval iterations:{" "}
+                  Free starter eval iterations:{" "}
                   {evalIterationQuota.starterRemaining.toLocaleString()}{" "}
-                  remaining · one-time allowance
+                  remaining · one-time allowance of 500
                 </p>
               )}
               <SidebarUsageRow

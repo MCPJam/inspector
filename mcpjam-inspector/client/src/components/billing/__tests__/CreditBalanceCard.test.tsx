@@ -25,7 +25,7 @@ let balanceState:
 let isLoadingState = false;
 let evalQuotaState:
   | {
-      starterRemaining?: number;
+      starterRemaining?: number | null;
       used: number;
       allowed: number | null;
       resetsAt: number;
@@ -64,8 +64,8 @@ vi.mock("@/hooks/useAutoTopup", () => ({
 }));
 
 vi.mock("@/hooks/use-eval-iteration-quota", () => ({
-  useEvalIterationQuota: () => ({
-    quota: evalQuotaState,
+  useEvalIterationQuota: ({ enabled = true }: { enabled?: boolean }) => ({
+    quota: enabled ? evalQuotaState : undefined,
     isLoading: evalQuotaLoadingState,
     isAtLimit: Boolean(
       evalQuotaState &&
@@ -113,8 +113,36 @@ describe("CreditBalanceCard", () => {
     window.location.hash = "";
   });
 
+  it.each([500, 0, null])(
+    "shows the V2 Free starter balance only when granted (%s)",
+    (remaining) => {
+      evalQuotaState = {
+        starterRemaining: remaining,
+        used: 0,
+        allowed: null,
+        resetsAt: 0,
+        windowKind: "day",
+      };
+      render(<CreditBalanceCard pricingVersion="v2" />);
+      expect(
+        screen.queryByTestId("usage-eval-iterations"),
+      ).not.toBeInTheDocument();
+      if (remaining === null) {
+        expect(
+          screen.queryByText(/Free starter eval iterations:/),
+        ).not.toBeInTheDocument();
+      } else {
+        expect(
+          screen.getByText(/Free starter eval iterations:/),
+        ).toHaveTextContent(
+          `${remaining} remaining · one-time allowance of 500`,
+        );
+      }
+    },
+  );
+
   it.each([5000, 50000])(
-    "drains the V2 %i-credit tank without legacy allowances",
+    "drains the V2 %i-credit tank while keeping the one-time starter allowance",
     (total) => {
       balanceState = {
         ...balanceState!,
@@ -130,7 +158,12 @@ describe("CreditBalanceCard", () => {
         windowKind: "month",
       };
       const { rerender } = render(<CreditBalanceCard pricingVersion="v2" />);
-      expect(screen.queryByText(/eval iterations/i)).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId("usage-eval-iterations"),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByText(/Free starter eval iterations:/),
+      ).toHaveTextContent("5 remaining · one-time allowance of 500");
       expect(screen.queryByTestId("usage-daily")).not.toBeInTheDocument();
       expect(screen.getAllByRole("progressbar")).toHaveLength(1);
       expect(screen.getByRole("progressbar")).toHaveAttribute(

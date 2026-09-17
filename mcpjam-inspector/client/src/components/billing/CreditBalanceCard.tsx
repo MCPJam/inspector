@@ -59,7 +59,6 @@ export function CreditBalanceCard({
   const { quota: evalIterationQuota, isLoading: isEvalIterationQuotaLoading } =
     useEvalIterationQuota({
       organizationId,
-      enabled: !isV2,
     });
   const topUpEligible = balance?.topUpEligible !== false;
   const [isTopupOpen, setIsTopupOpen] = useState(false);
@@ -269,14 +268,14 @@ export function CreditBalanceCard({
           </div>
         )}
 
-        {!isV2 && evalIterationQuota?.starterRemaining != null && (
+        {evalIterationQuota?.starterRemaining != null && (
           <p className="text-sm">
-            Starter eval iterations:{" "}
+            Free starter eval iterations:{" "}
             {evalIterationQuota.starterRemaining.toLocaleString()} remaining ·
-            one-time allowance.{" "}
+            one-time allowance of 500.{" "}
             {evalIterationQuota.starterRemaining === 0
               ? "Further runs use your plan’s metered credits."
-              : "This allowance does not renew."}
+              : "This allowance does not renew. Model usage consumes credits separately."}
           </p>
         )}
         {monthlyExhausted ? (

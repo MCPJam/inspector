@@ -237,6 +237,18 @@ describe("MCPJamLimitDialog", () => {
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
   });
 
+  it.each(["control", "treatment"])(
+    "shows the starter offer for %s",
+    (variant) => {
+      guestVariantMock.mockReturnValue(variant);
+      useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "guest" });
+      render(<MCPJamLimitDialog />);
+      expect(screen.getByText(/500 free eval iterations/)).toHaveTextContent(
+        "500 free eval iterations!",
+      );
+    },
+  );
+
   it("renders the treatment copy and both CTAs when the flag is on", () => {
     guestVariantMock.mockReturnValue("treatment");
     useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "guest" });

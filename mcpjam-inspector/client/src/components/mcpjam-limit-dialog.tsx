@@ -239,9 +239,9 @@ function GuestCreditWall() {
             <DialogHeader>
               <DialogTitle>There's so much more to jam on.</DialogTitle>
               <DialogDescription>
-                You're out of guest credits. Create a free account to keep
-                inspecting your traces, evaluating tool calls, and comparing
-                clients.
+                You're out of guest credits. Create a free account to test
+                frontier models in Playground, and try Swarm, User Testing,
+                Evals with 500 free eval iterations!
               </DialogDescription>
             </DialogHeader>
             {/* Primary is first in the DOM so Radix's focus scope lands on it —
@@ -268,7 +268,7 @@ function GuestCreditWall() {
               <DialogDescription>
                 Sign in to get{" "}
                 <strong className="text-foreground font-medium">10×</strong> the
-                free credits.
+                free credits. + 500 free eval iterations!
               </DialogDescription>
             </DialogHeader>
             <Button onClick={handleSignIn} className="w-full">
