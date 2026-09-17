@@ -1563,7 +1563,7 @@ export function describeEmptyStepFailure(options: {
   switch (finishReason) {
     case "error":
       cause =
-        "The provider rejected its own tool call before returning it — Google calls this MALFORMED_FUNCTION_CALL — which the cheaper model tiers hit on larger tool schemas.";
+        "The provider reported an error without returning a diagnostic. The underlying cause was not recorded.";
       break;
     case "content-filter":
       cause = "The provider's safety filter blocked the response.";
@@ -1575,7 +1575,7 @@ export function describeEmptyStepFailure(options: {
     case "stop":
     case "tool-calls":
       cause =
-        "The provider reported a clean finish and still returned nothing — usually a routed-provider hiccup, so a retry is the first move.";
+        "The provider reported a clean finish and still returned nothing. The underlying cause was not recorded.";
       break;
     default:
       cause = "The provider ended the stream without a usable finish reason.";
