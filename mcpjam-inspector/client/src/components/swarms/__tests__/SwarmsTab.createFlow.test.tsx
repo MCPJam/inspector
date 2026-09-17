@@ -79,15 +79,6 @@ vi.mock("@/hooks/useClients", async (importOriginal) => ({
     hosts: hostsRef.current,
     isLoading: false,
   }),
-  // Target grounding reads the selected host's detail before it can launch.
-  // Resolved from the same ref the list serves, so the two cannot drift.
-  useHost: ({ hostId }: { hostId: string | null }) => ({
-    host:
-      hostsRef.current.find(
-        (candidate: { _id: string }) => candidate._id === hostId,
-      ) ?? null,
-    isLoading: false,
-  }),
 }));
 
 vi.mock("@/hooks/use-previewed-client-id", () => ({

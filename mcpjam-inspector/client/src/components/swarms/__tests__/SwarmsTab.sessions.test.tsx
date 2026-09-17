@@ -101,7 +101,6 @@ let personaSessionsStatus: "CanLoadMore" | "LoadingMore" | "Exhausted" =
 const personaSessionsLoadMore = vi.fn();
 
 vi.mock("convex/react", () => ({
-  // Target grounding gates its reads on the session being authenticated.
   useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
   useQuery: (name: string, args: unknown) => {
     if (args === "skip") return undefined;
