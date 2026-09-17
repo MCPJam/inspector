@@ -472,7 +472,7 @@ describe("NewSwarmRunningStep — session stream pane", () => {
       />,
     );
     expect(screen.getByTestId("swarm-live-pane-failure")).toHaveTextContent("runner stopped reporting progress");
-    expect(screen.getByTestId("swarm-live-pane")).toHaveTextContent("recording may have failed");
+    expect(screen.getByTestId("swarm-live-pane")).toHaveTextContent("May not have run.");
   });
 
   it("does not reassure with Done when a completed attempt saved an empty transcript", () => {
@@ -501,8 +501,8 @@ describe("NewSwarmRunningStep — session stream pane", () => {
       />
     );
     expect(
-      screen.getByTestId("swarm-live-pane-empty-completed")
-    ).toHaveTextContent("does not confirm the assistant was tested");
+      screen.getByTestId("swarm-live-pane")
+    ).toHaveTextContent("No transcript recorded");
     expect(screen.getByTestId("swarm-live-pane")).toHaveTextContent(
       "No conversation"
     );

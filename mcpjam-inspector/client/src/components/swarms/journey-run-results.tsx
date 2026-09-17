@@ -1,3 +1,4 @@
+import { TranscriptEmptyState } from "@/components/chat-v2/transcript-empty-state";
 import { useEffect, useMemo, useState } from "react";
 import { useConvexAuth } from "convex/react";
 import {
@@ -37,6 +38,7 @@ import {
 } from "@/shared/swarm-attempt-error";
 import {
   describeProviderRateLimit,
+  describeSwarmAttemptFailure,
   providerLabelForModelId,
 } from "./session-rate-limit";
 
@@ -562,8 +564,8 @@ export function SwarmLiveStreamPane({
   return (
     <div
       className={cn(
-        "flex min-h-0 flex-col gap-2 rounded-lg border border-border/60 bg-background/80 p-3",
-        fillHeight && "h-full flex-1",
+        "flex min-h-0 flex-col gap-2 bg-background/80",
+        fillHeight ? "h-full flex-1" : "rounded-lg border border-border/60 p-3",
       )}
       data-testid="swarm-live-pane"
     >
@@ -609,22 +611,13 @@ export function SwarmLiveStreamPane({
           <ErrorCard error={providerRateLimit} variant="inline" />
         </div>
       ) : failureInfo || live?.errorMessage ? (
-        <p
-          className="text-[11px] text-destructive"
-          data-testid="swarm-live-pane-failure"
-        >
-          {failureInfo?.message ?? live?.errorMessage}
-        </p>
-      ) : null}
-
-      {emptyCompletedTrace ? (
-        <p
-          className="text-[11px] text-warning-foreground"
-          data-testid="swarm-live-pane-empty-completed"
-        >
-          This attempt was marked completed, but no conversation was recorded.
-          This does not confirm the assistant was tested.
-        </p>
+        <div data-testid="swarm-live-pane-failure">
+          <ErrorCard variant="inline" error={describeSwarmAttemptFailure(
+            attempt?.errorMessage ?? live?.errorMessage,
+            attempt?.errorCode,
+            providerLabelForModelId(convexSession?.modelId),
+          )} />
+        </div>
       ) : null}
 
       {/* Setup notes for this session — e.g. a host built-in that was
@@ -722,7 +715,7 @@ export function SwarmLiveStreamPane({
           !fillHeight && "max-h-[min(70vh,36rem)]",
         )}
       >
-        {displayTrace && resolvedHost.status === "ready" ? (
+        {displayTrace && resolvedHost.status === "ready" && (!emptyCompletedTrace || displayTrace.spans?.length || showReplay || viewMode !== "chat") ? (
           <TraceViewer
             trace={displayTrace}
             hostSnapshot={resolvedHost.snapshot}
@@ -735,6 +728,7 @@ export function SwarmLiveStreamPane({
             forcedViewMode={showReplay ? "browser" : viewMode}
             isLoading={isStreaming && !fallbackTrace}
             fillContent
+            frame="none"
             // Read off the trace being DISPLAYED, not off `persisted`, so the
             // clock always describes the spans actually on screen. The merge
             // above carries the persisted anchor in with the persisted spans,
@@ -750,22 +744,15 @@ export function SwarmLiveStreamPane({
               <span role="alert">
                 Could not load this session's host configuration.
               </span>
+            ) : persisted.error ?? persisted.spanError ? (
+              <ErrorCard error={persisted.error ?? persisted.spanError} variant="inline" />
             ) : showLoading ||
               (displayTrace && resolvedHost.status === "loading") ? (
-              <span role="status" className="inline-flex items-center gap-2">
-                <Loader2 className="size-3.5 animate-spin" aria-hidden />
-                {displayTrace && resolvedHost.status === "loading"
-                  ? "Loading host configuration…"
-                  : isStreaming
-                  ? "Stream will appear as the agent runs…"
-                  : "Loading transcript…"}
-              </span>
-            ) : persisted.error ?? persisted.spanError ? (
-              persisted.error ?? persisted.spanError
-            ) : !convexSession ? (
-              "No saved transcript is available for this attempt. This does not establish whether the model ran; recording may have failed."
+              <TranscriptEmptyState kind={displayTrace || persisted.loading ? "loading" : "streaming"} />
             ) : (
-              "No transcript for this attempt."
+              <TranscriptEmptyState kind="unrecorded" execution={
+                (convexSession?.messageCount ?? 0) > 0 || (displayTrace?.spans?.length ?? 0) > 0 ? "observed" : "unknown"
+              } />
             )}
           </div>
         )}
