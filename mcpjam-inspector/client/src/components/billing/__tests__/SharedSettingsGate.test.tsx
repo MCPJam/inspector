@@ -7,6 +7,7 @@ const state = vi.hoisted(() => ({
   user: "viewer",
   fail: false,
   projectsMissing: false,
+  canManageBilling: true,
 }));
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
@@ -18,7 +19,11 @@ vi.mock("convex/react", () => ({
       ? state.projectsMissing
         ? []
         : [{ _id: "project", organizationId: "org" }]
-      : { effectivePlan: state.plan, pricingVersion: state.pricingVersion };
+      : {
+          effectivePlan: state.plan,
+          pricingVersion: state.pricingVersion,
+          canManageBilling: state.canManageBilling,
+        };
   },
 }));
 vi.mock("@/contexts/db-user-ready-context", () => ({
@@ -34,6 +39,7 @@ beforeEach(() => {
   state.plan = "free";
   state.pricingVersion = "v2";
   state.user = "viewer";
+  state.canManageBilling = true;
 });
 vi.mock("@/lib/error-reporting", () => ({ reportBoundaryError: vi.fn() }));
 describe("shared settings access", () => {
@@ -125,6 +131,33 @@ describe("shared settings access", () => {
       screen.getByRole("button", { name: "Save settings" }),
     ).toBeDisabled();
   });
+  it.each(["free", "pro"])(
+    "points a plain member at their admin instead of the plans page on %s",
+    (plan) => {
+      state.plan = plan;
+      state.canManageBilling = false;
+      render(
+        <SharedSettingsGate
+          projectId="project"
+          creatorId="creator"
+          resource="eval suite"
+        >
+          <button>Save settings</button>
+        </SharedSettingsGate>,
+      );
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "requires Team or Enterprise",
+      );
+      expect(
+        screen.queryByRole("link", { name: "View Team plans" }),
+      ).not.toBeInTheDocument();
+      expect(screen.getByText("Ask your admin to upgrade")).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Save settings" }),
+      ).toBeDisabled();
+    },
+  );
+
   it.each(["team", "enterprise"])(
     "retains existing editing UI on %s",
     (plan) => {

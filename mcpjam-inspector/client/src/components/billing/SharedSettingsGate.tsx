@@ -92,15 +92,24 @@ function SharedSettingsAccess({
             <p className="text-xs text-muted-foreground">
               Your project role still determines what you can edit.
             </p>
-            <Button asChild variant="outline" size="sm">
-              <a
-                href={`/organizations/${encodeURIComponent(
-                  organizationId,
-                )}/plans`}
-              >
-                View Team plans
-              </a>
-            </Button>
+            {/* A plain member cannot act on this link — the plans page will
+                refuse them. Point them at someone who can, the way
+                BillingUpsellGate already does. */}
+            {billing?.canManageBilling ? (
+              <Button asChild variant="outline" size="sm">
+                <a
+                  href={`/organizations/${encodeURIComponent(
+                    organizationId,
+                  )}/plans`}
+                >
+                  View Team plans
+                </a>
+              </Button>
+            ) : (
+              <p className="text-sm font-medium text-foreground">
+                Ask your admin to upgrade
+              </p>
+            )}
           </>
         )}
       </section>
