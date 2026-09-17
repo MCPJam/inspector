@@ -161,6 +161,9 @@ const findMCPJamRateLimitCode = (
  * dialog, selling credits to an organization that set its own ceiling and
  * cannot spend its way past it.
  */
+const isInlineAccountRefusal = (code: unknown): boolean =>
+  code === "platform_free_budget_exhausted" || code === "account_suspended" || isSpendBudgetReachedCode(typeof code === "string" ? code : undefined);
+
 const hasNestedSpendBudgetCode = (
   value: unknown,
   seen = new WeakSet<object>(),
@@ -169,7 +172,7 @@ const hasNestedSpendBudgetCode = (
   if (seen.has(value)) return false;
   seen.add(value);
 
-  if (isSpendBudgetReachedCode(getStringProperty(value, "code"))) return true;
+  if (isInlineAccountRefusal(getStringProperty(value, "code"))) return true;
 
   const values = Array.isArray(value) ? value : Object.values(value);
   for (const item of values) {
@@ -178,7 +181,7 @@ const hasNestedSpendBudgetCode = (
     // how the budget code hides from this walk — leaving the deep scan below
     // to read the same payload's rate-limit text and open the top-up dialog.
     if (typeof item === "string") {
-      if (isSpendBudgetReachedCode(item)) return true;
+      if (isInlineAccountRefusal(item)) return true;
       for (const parsed of collectJsonCandidates(item)) {
         if (hasNestedSpendBudgetCode(parsed, seen)) return true;
       }
@@ -286,10 +289,10 @@ export function isMCPJamModelLimitError(args: MCPJamLimitErrorInput): boolean {
   // happens to embed a rate-limit string still classifies as a budget —
   // and checked at EVERY nesting level, because the code arrives inside
   // `details` or a JSON-encoded `message` as readily as at the top.
-  if (isSpendBudgetReachedCode(args.code)) return false;
+  if (isInlineAccountRefusal(args.code)) return false;
   for (const value of [args.message, args.details]) {
     if (typeof value === "string") {
-      if (isSpendBudgetReachedCode(value)) return false;
+      if (isInlineAccountRefusal(value)) return false;
       for (const parsed of collectJsonCandidates(value)) {
         if (hasNestedSpendBudgetCode(parsed)) return false;
       }

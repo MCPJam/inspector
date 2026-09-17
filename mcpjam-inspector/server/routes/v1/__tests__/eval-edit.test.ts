@@ -613,7 +613,7 @@ describe("v1 eval-edit routes", () => {
 
   it("GET reports the backend automatic policy for an untouched suite", async () => {
     convexQueryMock.mockImplementation((name: string) => name === "testSuites:getTestSuite"
-      ? Promise.resolve({ ...SUITE_DOC, judgeConfig: undefined, judgePolicy: { contractVersion: 4, executionPaused: false, automatic: true, effective: { enabled: true, autoRun: true, judgeModel: "openai/gpt-5.4-mini", threshold: 0.7, role: "advisory" } } })
+      ? Promise.resolve({ ...SUITE_DOC, judgeConfig: undefined, judgePolicy: { contractVersion: 4, automatic: true, effective: { enabled: true, autoRun: true, judgeModel: "openai/gpt-5.4-mini", threshold: 0.7, role: "advisory" } } })
       : defaultQueryImpl(name));
     const res = await request("GET", "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx");
     expect(res.status).toBe(200);

@@ -452,6 +452,10 @@ function resolveSlug(error: unknown): {
   rawCode?: number | string;
 } {
   const message = getErrorMessage(error);
+  const record = error && typeof error === "object" ? error as { code?: unknown; data?: { code?: unknown } } : null;
+  const platformCode = record?.data?.code ?? record?.code;
+  if (platformCode === "platform_free_budget_exhausted") return { slug: "provider/mcpjam_platform_budget", rawCode: platformCode };
+  if (platformCode === "account_suspended") return { slug: "account/suspended", rawCode: platformCode };
 
   // (a) Inspector sentinel sniff first — these are SDK-thrown Errors whose
   // class identity is lost across realm boundaries; match on stable text.

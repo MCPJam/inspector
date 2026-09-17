@@ -393,9 +393,15 @@ describe("describeMCPJamLimitMessage", () => {
 describe("frontier sign-in wall", () => {
   it.each([
     { details: { error: { code: "guest_model_not_allowed" } } },
-    { message: '{"code":"guest_model_not_allowed","message":"Login required"}' },
+    {
+      message: '{"code":"guest_model_not_allowed","message":"Login required"}',
+    },
     { message: 'Agent failed: {"error":{"code":"guest_model_not_allowed"}}' },
-    { details: { errors: ['Request failed: {"code":"guest_model_not_allowed"}'] } },
+    {
+      details: {
+        errors: ['Request failed: {"code":"guest_model_not_allowed"}'],
+      },
+    },
   ])("recognizes wrapped frontier codes: %j", (args) => {
     expect(notifyMCPJamLimitError(args)).toBe(true);
     expect(useFrontierSignInDialogStore.getState().isOpen).toBe(true);
@@ -414,7 +420,9 @@ describe("frontier sign-in wall", () => {
   });
 
   it("recognizes the backend code even if the copy changes", () => {
-    expect(notifyMCPJamLimitError({ code: "guest_model_not_allowed" })).toBe(true);
+    expect(notifyMCPJamLimitError({ code: "guest_model_not_allowed" })).toBe(
+      true,
+    );
     expect(useFrontierSignInDialogStore.getState().isOpen).toBe(true);
     expect(useMCPJamLimitDialogStore.getState().outOfCreditsHit).toBe(false);
   });
@@ -447,3 +455,17 @@ describe("frontier sign-in wall", () => {
     expect(useFrontierSignInDialogStore.getState().isOpen).toBe(false);
   });
 });
+
+it.each(["platform_free_budget_exhausted", "account_suspended"])(
+  "keeps %s out of the daily-credit modal",
+  (code) => {
+    expect(isMCPJamModelLimitError({ code, message: "user_rate_limit" })).toBe(
+      false,
+    );
+    expect(
+      isMCPJamModelLimitError({
+        details: JSON.stringify({ code, message: "user_rate_limit" }),
+      }),
+    ).toBe(false);
+  },
+);

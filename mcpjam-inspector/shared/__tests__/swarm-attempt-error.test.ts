@@ -230,3 +230,9 @@ describe("isAccountLimit", () => {
     expect(isAccountLimit(undefined, "rate_limited")).toBe(false);
   });
 });
+
+
+it.each(["platform_free_budget_exhausted", "account_suspended", "guest_model_not_allowed", "guest_input_too_large"])("treats %s as an account refusal", (code) => {
+  const info = humanizeSwarmAttemptError(JSON.stringify({ code, error: "Admission refused" }));
+  expect(isAccountLimit(info.message, info.code)).toBe(true);
+});
