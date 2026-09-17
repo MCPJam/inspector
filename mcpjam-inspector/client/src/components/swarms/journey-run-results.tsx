@@ -1,6 +1,6 @@
 import { swarmLifecycleLabel } from "@mcpjam/sdk/contract";
 import { TranscriptEmptyState } from "@/components/chat-v2/transcript-empty-state";
-import { SwarmGoalResult, SwarmSessionReport } from "./swarm-report-panel";
+import { SwarmGoalResult } from "./swarm-report-panel";
 import type { SwarmSessionVerdict } from "@mcpjam/sdk/contract";
 import { useEffect, useMemo, useState } from "react";
 import { useConvexAuth } from "convex/react";
@@ -644,8 +644,6 @@ export function SwarmLiveStreamPane({
           )}
         </span>
       </div>
-
-      <SwarmSessionReport session={convexSession} />
 
       {providerRateLimit ? (
         <div data-testid="swarm-live-pane-rate-limit">
