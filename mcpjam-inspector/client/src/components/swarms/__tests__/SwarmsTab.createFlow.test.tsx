@@ -72,7 +72,9 @@ const { hostsRef, projectServersRef } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("@/hooks/useClients", () => ({
+vi.mock("@/hooks/useClients", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/hooks/useClients")>()),
+  useHost: () => ({ host: null, isLoading: false }),
   useHostList: () => ({
     hosts: hostsRef.current,
     isLoading: false,
@@ -1087,7 +1089,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(
       screen.getAllByLabelText(/Watch Refund Chaser/).length,
     ).toBeGreaterThan(0);
-    expect(screen.getByText(/Running: Refund a charge/)).toBeInTheDocument();
+    expect(screen.getByText(/Pending: Refund a charge/)).toBeInTheDocument();
     const swarmRunGroupId = (launchJourneyRunMock.mock.calls[0]![0] as {
       swarmRunGroupId: string;
     }).swarmRunGroupId;
