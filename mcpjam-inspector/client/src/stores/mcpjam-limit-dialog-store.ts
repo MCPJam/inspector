@@ -13,9 +13,10 @@ export type MCPJamLimitIntent = "guest" | "topup";
  * the credits wall. The split exists because the swarm wall's two dropped
  * actions dead-end there — no swarm screen mounts the model picker the BYOK
  * link drives, and an own key can't lift the limit anyway, since generation
- * and persona turns are always MCPJam-billed.
+ * and persona turns are always MCPJam-billed. `"scenario"` is a User Testing
+ * link: the owner pays, so the tester gets a notice with no billing actions.
  */
-export type MCPJamLimitSurface = "chat" | "swarm";
+export type MCPJamLimitSurface = "chat" | "swarm" | "scenario";
 
 export interface MCPJamLimitNotifyInput {
   limitKind?: MCPJamLimitKind;

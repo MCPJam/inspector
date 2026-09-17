@@ -1,3 +1,4 @@
+import { startDurableDeliveryRecovery } from './agent/durable-delivery.js';
 import 'dotenv/config';
 
 import { App, LogLevel } from '@slack/bolt';
@@ -110,6 +111,7 @@ const app = oauthConfigured
     });
 
 registerListeners(app);
+startDurableDeliveryRecovery(app.logger);
 
 (async () => {
   if (oauthConfigured) {

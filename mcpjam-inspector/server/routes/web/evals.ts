@@ -1,4 +1,5 @@
 import { handleMarkdownImport } from "../shared/markdown-case-import.js";
+import { handleEvalAuthoring } from "../shared/eval-authoring.js";
 import { Hono } from "hono";
 import { captureServerEvent } from "../../utils/analytics.js";
 import { z } from "zod";
@@ -149,8 +150,11 @@ const hostedTraceRepairStopSchema = z.object({
   jobId: z.string().min(1),
 });
 
-evals.post("/extract-markdown", (c) => handleMarkdownImport(c, "extract", false));
+evals.post("/extract-markdown", (c) =>
+  handleMarkdownImport(c, "extract", false),
+);
 evals.post("/import-markdown", (c) => handleMarkdownImport(c, "save", false));
+evals.post("/authoring-v1", (c) => handleEvalAuthoring(c, false));
 
 evals.post("/run", async (c) =>
   handleRoute(

@@ -66,6 +66,7 @@ import {
 import { z } from "zod";
 import {
   hasUnresolvedToolCalls,
+  hasUnresolvedApprovalResponses,
   executeToolCallsFromMessages,
 } from "@/shared/http-tool-calls";
 import { isMrtrSuspendSignalShape } from "@/shared/mrtr-continuation";
@@ -596,8 +597,10 @@ export function describeBackendStreamFailure(
   // matter which upstream status was mirrored onto it. The slug still comes
   // from the status so the user-facing copy stays accurate ("the provider
   // rejected the key" IS what happened — it was just our key).
-  if (code === "platform_free_budget_exhausted") return describeAsSlug("provider/mcpjam_platform_budget", detail);
-  if (code === "account_suspended") return describeAsSlug("account/suspended", detail);
+  if (code === "platform_free_budget_exhausted")
+    return describeAsSlug("provider/mcpjam_platform_budget", detail);
+  if (code === "account_suspended")
+    return describeAsSlug("account/suspended", detail);
   if (isMcpjamOwnedFailureCode(code)) {
     return { ...backendFailureSlug(status, detail), origin: "mcpjam" };
   }
@@ -644,8 +647,10 @@ export function describeStreamErrorChunkFailure(
     status !== undefined ? `HTTP ${status}: ${rawText}` : rawText,
   );
 
-  if (code === "platform_free_budget_exhausted") return describeAsSlug("provider/mcpjam_platform_budget", detail);
-  if (code === "account_suspended") return describeAsSlug("account/suspended", detail);
+  if (code === "platform_free_budget_exhausted")
+    return describeAsSlug("provider/mcpjam_platform_budget", detail);
+  if (code === "account_suspended")
+    return describeAsSlug("account/suspended", detail);
   if (isMcpjamOwnedFailureCode(code)) {
     return { ...backendFailureSlug(status, detail), origin: "mcpjam" };
   }
@@ -739,6 +744,13 @@ function applyToolRefresh(
 }
 
 export interface MCPJamHandlerOptions {
+  /** Durable callers must finish this write before the next external effect. */
+  durableCheckpoint?: (state: {
+    phase: "model" | "tools" | "ready" | "complete";
+    messages: ModelMessage[];
+    step: number;
+  }) => Promise<void>;
+  yieldAfterStep?: boolean;
   messages: ModelMessage[];
   modelId: string;
   /**
@@ -1216,6 +1228,7 @@ export interface MCPJamHandlerOptions {
 }
 
 interface StepContext {
+  durableCheckpoint?: MCPJamHandlerOptions["durableCheckpoint"];
   writer: {
     write: (chunk: UIMessageChunk) => void;
   };
@@ -1547,7 +1560,7 @@ function createClientFinishChunk(
     !Array.isArray(metadata) &&
     usage
       ? { ...metadata, ...usage }
-      : (metadata ?? usage);
+      : metadata ?? usage;
 
   return buildFinishChunk({
     finishReason: source?.finishReason ?? fallbackReason,
@@ -2004,9 +2017,9 @@ async function processStream(
           ? parseErr
           : new Error(
               typeof parseErr === "object" &&
-                parseErr !== null &&
-                "message" in parseErr &&
-                typeof (parseErr as { message?: unknown }).message === "string"
+              parseErr !== null &&
+              "message" in parseErr &&
+              typeof (parseErr as { message?: unknown }).message === "string"
                 ? (parseErr as { message: string }).message
                 : "stream parse failed",
             );
@@ -2340,7 +2353,7 @@ async function emitToolResults(
             ("structuredContent" in rawResult ||
               isModelVisibleImageOutput(part.output))
               ? rawResult
-              : (part.output ?? rawResult);
+              : part.output ?? rawResult;
 
           let outputForUi: unknown = rawOutput;
           if (rawOutput && typeof rawOutput === "object") {
@@ -2353,8 +2366,7 @@ async function emitToolResults(
                 : {};
             const toolMeta =
               serverId && toolName
-                ? (mcpClientManager.getAllToolsMetadata(serverId)[toolName] ??
-                  {})
+                ? mcpClientManager.getAllToolsMetadata(serverId)[toolName] ?? {}
                 : {};
 
             // Include descriptor metadata in streamed output so shared/minimal chat
@@ -3015,7 +3027,11 @@ async function processOneStep(
   // unguarded `.get` throws a TypeError that the outer catch converts into a
   // failed turn (7 evals-runner / runner-parity tests).
   if (res.headers?.get("x-mcpjam-platform-paid-fallback") === "1") {
-    writer.write({ type: "data-platform-paid-fallback", data: { usingCredits: true }, transient: true });
+    writer.write({
+      type: "data-platform-paid-fallback",
+      data: { usingCredits: true },
+      transient: true,
+    });
   }
   const isJsonDenial =
     res.ok &&
@@ -3181,6 +3197,12 @@ async function processOneStep(
       content: contentParts,
     } as ModelMessage);
   }
+  if (contentParts.length > 0)
+    await ctx.durableCheckpoint?.({
+      phase: "tools",
+      messages: messageHistory,
+      step: stepIndex,
+    });
 
   const stepMessageEndIndex =
     messageHistory.length > traceTurn.promptMessageStartIndex
@@ -4091,28 +4113,25 @@ export async function runChatEngineLoop(
     // surface as user-visible failures.
     const startHeartbeat = () => {
       if (resolvedHeartbeatMs <= 0) return;
-      heartbeatTimer = setInterval(
-        () => {
-          if (streamClosed || aborted) return;
-          const sinceLastWrite = Date.now() - lastWriteAt;
-          if (sinceLastWrite < resolvedHeartbeatMs) return;
-          try {
-            writeTraceEvent(safeWriter, {
-              type: "heartbeat",
-              turnId: traceTurn.turnId,
-              promptIndex: traceTurn.promptIndex,
-            });
-          } catch (error) {
-            // Should not happen — safeWriter swallows write errors —
-            // but a final guard here keeps a misbehaving writeTraceEvent
-            // from killing the loop.
-            logger.warn("[mcpjam-stream-handler] heartbeat emit failed", {
-              error: error instanceof Error ? error.message : String(error),
-            });
-          }
-        },
-        Math.max(250, Math.floor(resolvedHeartbeatMs / 2)),
-      );
+      heartbeatTimer = setInterval(() => {
+        if (streamClosed || aborted) return;
+        const sinceLastWrite = Date.now() - lastWriteAt;
+        if (sinceLastWrite < resolvedHeartbeatMs) return;
+        try {
+          writeTraceEvent(safeWriter, {
+            type: "heartbeat",
+            turnId: traceTurn.turnId,
+            promptIndex: traceTurn.promptIndex,
+          });
+        } catch (error) {
+          // Should not happen — safeWriter swallows write errors —
+          // but a final guard here keeps a misbehaving writeTraceEvent
+          // from killing the loop.
+          logger.warn("[mcpjam-stream-handler] heartbeat emit failed", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }, Math.max(250, Math.floor(resolvedHeartbeatMs / 2)));
     };
 
     // External abort listener: marks `aborted` so downstream catch
@@ -4171,6 +4190,13 @@ export async function runChatEngineLoop(
       // approve path ships a tool-result instead), and the turn hung forever.
       // A history that carries an approval request is the only fact that
       // matters, and it is a fact this function can read for itself.
+      if (options.durableCheckpoint && hasUnresolvedApprovalResponses(messageHistory)) {
+        await options.durableCheckpoint({
+          phase: "tools",
+          messages: messageHistory,
+          step: effectiveSteps(),
+        });
+      }
       await handlePendingApprovals(
         safeWriter,
         messageHistory,
@@ -4262,7 +4288,13 @@ export async function runChatEngineLoop(
 
       while (!mrtrPaused && effectiveSteps() < resolvedMaxSteps) {
         if (aborted) break;
+        await options.durableCheckpoint?.({
+          phase: "model",
+          messages: messageHistory,
+          step: effectiveSteps(),
+        });
         const { shouldContinue, didEmitFinish } = await processOneStep({
+          durableCheckpoint: options.durableCheckpoint,
           writer: safeWriter,
           messageHistory,
           toolDefs,
@@ -4312,6 +4344,15 @@ export async function runChatEngineLoop(
         });
 
         steps++;
+        await options.durableCheckpoint?.({
+          phase: shouldContinue
+            ? "ready"
+            : didEmitFinish
+            ? "complete"
+            : "model",
+          messages: messageHistory,
+          step: effectiveSteps(),
+        });
         if (didEmitFinish) {
           finishEmitted = true;
         }
@@ -4333,6 +4374,7 @@ export async function runChatEngineLoop(
         if (!shouldContinue) {
           break;
         }
+        if (options.yieldAfterStep) break;
 
         // BETWEEN STEPS, and only on a step that continues: a turn that is
         // finishing has nothing to advertise to. Placed after

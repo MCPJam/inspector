@@ -639,7 +639,7 @@ describe("analysis states and provenance", () => {
     ).toBeVisible();
     expect(
       screen.getByTestId("unified-findings-stale-enrichment"),
-    ).toHaveTextContent("Analyze again");
+    ).toHaveTextContent("The evidence changed after this analysis ran.");
     expect(screen.queryByRole("tablist")).toBeNull();
   });
   it("does not label the fix as standard guidance or AI explanation", () => {

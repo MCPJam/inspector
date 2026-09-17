@@ -3,6 +3,7 @@ import { expect, it } from "vitest";
 import { ImportedDraftEditor } from "../imported-draft-editor";
 import {
   importedDraftBlockedReason,
+  importedDraftBlockedBadge,
   type GeneratedDraft,
 } from "@/lib/mcpjam-agent/eval-workspace";
 import type { EvalAgentScope } from "@/shared/eval-agent-scope";
@@ -76,4 +77,19 @@ it("does not block a complete case on model diagnostics or acknowledgment", () =
       input: { ...draft.input, expectedOutput: "" },
     }),
   ).toMatch(/Complete the case/);
+});
+it("names the missing field in the badge instead of listing all three", () => {
+  expect(importedDraftBlockedBadge(draft)).toBeUndefined();
+  expect(
+    importedDraftBlockedBadge({
+      ...draft,
+      input: { ...draft.input, expectedOutput: "" },
+    }),
+  ).toBe("Missing expected outcome");
+  expect(
+    importedDraftBlockedBadge({
+      ...draft,
+      input: { ...draft.input, title: "", expectedOutput: "" },
+    }),
+  ).toBe("Missing title, expected outcome");
 });

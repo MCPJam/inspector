@@ -123,6 +123,28 @@ function isSkippableClientFulfilledToolCall(
   );
 }
 
+/** Approval responses still awaiting reconciliation by the approval handler. */
+export function hasUnresolvedApprovalResponses(
+  messages: ModelMessage[],
+): boolean {
+  const requests = new Map<string, string>();
+  const results = new Set<string>();
+  const responses = new Set<string>();
+  for (const message of messages) {
+    if (!Array.isArray(message.content)) continue;
+    for (const part of message.content) {
+      if (part.type === "tool-approval-request")
+        requests.set(part.approvalId, part.toolCallId);
+      if (part.type === "tool-approval-response")
+        responses.add(part.approvalId);
+      if (part.type === "tool-result") results.add(part.toolCallId);
+    }
+  }
+  return [...responses].some(
+    (id) => requests.has(id) && !results.has(requests.get(id)!),
+  );
+}
+
 export const hasUnresolvedToolCalls = (messages: ModelMessage[]): boolean => {
   const toolCallIds = new Set<string>();
   const toolResultIds = new Set<string>();
