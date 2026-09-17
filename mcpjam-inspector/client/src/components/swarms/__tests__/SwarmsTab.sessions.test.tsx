@@ -101,10 +101,7 @@ let personaSessionsStatus: "CanLoadMore" | "LoadingMore" | "Exhausted" =
 const personaSessionsLoadMore = vi.fn();
 
 vi.mock("convex/react", () => ({
-  // Main's shared-host-shell refactor made the transcript panes read auth
-  // state directly. A partial mock throws on access, which takes the whole
-  // pane down and fails assertions that have nothing to do with auth.
-  useConvexAuth: () => ({ isAuthenticated: false, isLoading: false }),
+  useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
   useQuery: (name: string, args: unknown) => {
     if (args === "skip") return undefined;
     switch (name) {

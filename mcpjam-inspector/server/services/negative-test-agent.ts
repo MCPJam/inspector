@@ -1,5 +1,6 @@
 import type { ServerToolSnapshot } from "../utils/export-helpers.js";
 import type { ServerAttachmentInput } from "./eval-agent";
+import { upstreamRefusalFromResponse } from "./upstream-refusal.js";
 
 /**
  * Inspector-side adapter for backend negative eval test-case generation.
@@ -49,8 +50,13 @@ export async function generateNegativeTestCases(
   });
 
   if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Failed to generate negative test cases: ${errorText}`);
+    // Same refusal passthrough as the normal-mode sibling — see
+    // `upstreamRefusalFromResponse`. Both modes hit one backend route, so a
+    // 429 that only one of them forwarded would be a coin-flip for the caller.
+    throw await upstreamRefusalFromResponse(
+      response,
+      "Failed to generate negative test cases",
+    );
   }
 
   const data = (await response.json()) as {

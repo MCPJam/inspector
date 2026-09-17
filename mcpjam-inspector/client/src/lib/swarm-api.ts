@@ -1065,12 +1065,12 @@ async function postGenerate<T>(
       body?.details && typeof body.details === "object"
         ? (body.details as Record<string, unknown>)
         : undefined;
-    // The backend's own code, forwarded by the proxy in `details` (the
-    // envelope's top-level `code` is the proxy's HTTP-shaped one — `FORBIDDEN`
-    // for every 403, whatever caused it).
-    const signInRequired =
-      details?.upstreamCode === SIGN_IN_REQUIRED_CODE ||
-      code === SIGN_IN_REQUIRED_CODE;
+    // The backend's own code. The proxy forwards its whole refusal envelope as
+    // `details` (`upstreamRefusalRouteError`), so the backend's `code` lives
+    // there; the response's TOP-LEVEL `code` is the proxy's HTTP-shaped one —
+    // `FORBIDDEN` for every 403, whatever caused it — and "not a member of
+    // this project" is a 403 that signing in does not fix.
+    const signInRequired = details?.code === SIGN_IN_REQUIRED_CODE;
     // Raise the top-up dialog HERE, where the body still carries the route's
     // `code`. `SwarmGenerateError` keeps only status + message, so by the time
     // the create flow catches this the limit is no longer identifiable — and

@@ -474,7 +474,8 @@ describe("launchJourneyRun — MCPJam limit", () => {
  *
  * The backend refuses at the door with 403 `sign_in_required`, before it reads
  * the body and before it reserves the platform lane. The proxy forwards that
- * code in `details.upstreamCode` — the envelope's top-level `code` is the
+ * whole refusal envelope as `details`, so its `code` is the backend's own —
+ * the response's top-level `code` is the
  * proxy's HTTP-shaped one, `FORBIDDEN` for every 403 whatever caused it, and
  * "not a member of this project" is also a 403 that signing in does not fix.
  */
@@ -503,7 +504,7 @@ describe("generateSwarmPersonaBatch — sign-in refusal", () => {
     const err = await refusalFrom({
       code: "FORBIDDEN",
       message: "Sign in to generate personas and journeys.",
-      details: { upstreamCode: "sign_in_required" },
+      details: { ok: false, code: "sign_in_required", feature: "swarm generation" },
     });
     expect(err.signInRequired).toBe(true);
     expect(err.status).toBe(403);

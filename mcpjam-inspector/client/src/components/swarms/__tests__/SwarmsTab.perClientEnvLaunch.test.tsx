@@ -43,7 +43,9 @@ const HOSTS = [
   { hostId: "host-claude", name: "Claude" },
 ];
 
-vi.mock("@/hooks/useClients", () => ({
+vi.mock("@/hooks/useClients", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/hooks/useClients")>()),
+  useHost: () => ({ host: null, isLoading: false }),
   useHostList: () => ({ hosts: HOSTS, isLoading: false }),
   // `SwarmLiveStreamPane` resolves the live target's host snapshot through
   // `useHostSnapshotForHost`, which reads this hook. A partial mock makes the
