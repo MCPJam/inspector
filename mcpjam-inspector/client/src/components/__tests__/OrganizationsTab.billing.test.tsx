@@ -596,6 +596,13 @@ describe("OrganizationsTab billing", () => {
         { confirmPaidPlanChange: true },
       ),
     );
+    expect(trackMock).toHaveBeenCalledWith(
+      "billing_flow_started",
+      expect.objectContaining({
+        flow: "plan_change",
+        source: "plans_page",
+      }),
+    );
   });
 
   it("does not auto-checkout a Pro deep link for a legacy catalog", async () => {
@@ -713,6 +720,57 @@ describe("OrganizationsTab billing", () => {
         }),
       );
     });
+  });
+
+  it("reports a fresh impression when the organization changes", async () => {
+    mockUseOrganizationQueries.mockReturnValue({
+      sortedOrganizations: [
+        {
+          _id: "org-1",
+          name: "Org One",
+          createdBy: "user_1",
+          createdAt: 1,
+          updatedAt: 1,
+          myRole: "owner",
+        },
+        {
+          _id: "org-2",
+          name: "Org Two",
+          createdBy: "user_2",
+          createdAt: 2,
+          updatedAt: 2,
+          myRole: "owner",
+        },
+      ],
+      isLoading: false,
+    });
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({ plan: "free" }),
+      }),
+    );
+
+    const view = render(
+      <OrganizationsTab organizationId="org-1" section="billing" />,
+    );
+    await waitFor(() =>
+      expect(
+        trackMock.mock.calls.filter(
+          ([event]) => event === "billing_plans_viewed",
+        ),
+      ).toHaveLength(1),
+    );
+
+    view.rerender(
+      <OrganizationsTab organizationId="org-2" section="billing" />,
+    );
+    await waitFor(() =>
+      expect(
+        trackMock.mock.calls.filter(
+          ([event]) => event === "billing_plans_viewed",
+        ),
+      ).toHaveLength(2),
+    );
   });
 
   it.each(["v1", "v2"])(
@@ -1085,6 +1143,10 @@ describe("OrganizationsTab billing", () => {
 
     await waitFor(() => expect(retrySeatPayment).toHaveBeenCalled());
     expect(toast.success).not.toHaveBeenCalled();
+    expect(trackMock).not.toHaveBeenCalledWith(
+      "billing_flow_succeeded",
+      expect.objectContaining({ flow: "seat_payment_retry" }),
+    );
   });
 
   it("keeps Remove invite available while a retry is in flight", () => {

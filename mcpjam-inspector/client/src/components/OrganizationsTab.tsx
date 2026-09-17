@@ -595,7 +595,7 @@ interface OrganizationPageProps {
 interface CheckoutNavigationOptions {
   navigation?: "new-tab" | "same-tab";
   onBeforeNavigate?: () => void;
-  source?: "billing_page" | "pricing_deep_link";
+  source?: "billing_page" | "plans_page" | "pricing_deep_link";
 }
 
 type SeatPaymentSurface = "billing_page" | "plans_page" | "members_page";
@@ -728,21 +728,22 @@ function OrganizationPage({
   const slackTab: SlackSettingsTabId = resolveSlackSettingsTab(rawSurfaceTab);
   const discordTab: DiscordSettingsTabId =
     resolveDiscordSettingsTab(rawSurfaceTab);
-  const billingViewTrackedSectionRef = useRef<"billing" | "plans" | null>(null);
+  const billingViewTrackedKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (activeSection !== "billing" && activeSection !== "plans") {
-      billingViewTrackedSectionRef.current = null;
+      billingViewTrackedKeyRef.current = null;
       return;
     }
+    const viewKey = `${organization._id}:${activeSection}`;
     if (
-      billingViewTrackedSectionRef.current === activeSection ||
+      billingViewTrackedKeyRef.current === viewKey ||
       isLoadingBilling ||
       isLoadingPlanCatalog ||
       !billingStatus
     ) {
       return;
     }
-    billingViewTrackedSectionRef.current = activeSection;
+    billingViewTrackedKeyRef.current = viewKey;
     track("billing_plans_viewed", {
       location: "organization_billing",
       source: checkoutIntent
@@ -763,6 +764,7 @@ function OrganizationPage({
     checkoutIntent,
     isLoadingBilling,
     isLoadingPlanCatalog,
+    organization._id,
   ]);
   const memberInviteGate = resolveBillingGateState({
     billingUiEnabled,
@@ -1002,14 +1004,14 @@ function OrganizationPage({
     });
     try {
       const result = await retrySeatPayment();
-      track("billing_flow_succeeded", {
-        location: seatPaymentLocation(surface),
-        flow: "seat_payment_retry",
-        source: surface,
-        outcome: result?.status ?? "no_op",
-        current_plan: billingStatus?.plan ?? "unknown",
-      });
       if (result?.status === "paid") {
+        track("billing_flow_succeeded", {
+          location: seatPaymentLocation(surface),
+          flow: "seat_payment_retry",
+          source: surface,
+          outcome: "paid",
+          current_plan: billingStatus?.plan ?? "unknown",
+        });
         toast.success(
           `${
             activeSeatPaymentIntent?.email ?? "Member"
@@ -1804,7 +1806,12 @@ function OrganizationPage({
               pendingPlanChangeTarget={pendingPlanChangeTarget}
               isOpeningPortal={isOpeningPortal}
               onDowngradePlan={handleDowngradePlan}
-              onStartPlanChange={handlePlanChange}
+              onStartPlanChange={(tier, billingInterval) =>
+                handlePlanChange(tier, billingInterval, {
+                  source:
+                    activeSection === "plans" ? "plans_page" : "billing_page",
+                })
+              }
               onStartAutoPlanChange={handleAutoPlanChange}
               checkoutIntent={checkoutIntent}
               onCheckoutIntentConsumed={onCheckoutIntentConsumed}
