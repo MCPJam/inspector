@@ -722,6 +722,26 @@ describe("OrganizationsTab billing", () => {
     });
   });
 
+  it("does not report a plan impression while plan billing is disabled", async () => {
+    mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
+      flag === "billing-entitlements-ui" ? false : true,
+    );
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({ plan: "free" }),
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="plans" />);
+    await waitFor(() =>
+      expect(
+        trackMock.mock.calls.filter(
+          ([event]) => event === "billing_plans_viewed",
+        ),
+      ).toHaveLength(0),
+    );
+  });
+
   it("reports a fresh impression when the organization changes", async () => {
     mockUseOrganizationQueries.mockReturnValue({
       sortedOrganizations: [
@@ -873,6 +893,36 @@ describe("OrganizationsTab billing", () => {
     fireEvent.click(screen.getByRole("button", { name: "Finish payment" }));
     await waitFor(() =>
       expect(finishSeatPayment).toHaveBeenCalledWith(undefined),
+    );
+  });
+
+  it("does not report a canceled seat-payment finish as success", async () => {
+    const finishSeatPayment = vi.fn().mockResolvedValue({
+      status: "noop",
+      reason: "seat_payment_canceled",
+    });
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "team",
+          effectivePlan: "team",
+          source: "subscription",
+          billingInterval: "monthly",
+          subscriptionStatus: "active",
+          hasCustomer: true,
+        }),
+        activeSeatPaymentIntent: pendingSeatPaymentIntentFixture(),
+        finishSeatPayment,
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+    fireEvent.click(screen.getByRole("button", { name: "Finish payment" }));
+
+    await waitFor(() => expect(finishSeatPayment).toHaveBeenCalled());
+    expect(trackMock).not.toHaveBeenCalledWith(
+      "billing_flow_succeeded",
+      expect.objectContaining({ flow: "seat_payment" }),
     );
   });
 
@@ -2609,7 +2659,7 @@ describe("OrganizationsTab billing", () => {
     expect(navigateBillingInSameTab).not.toHaveBeenCalled();
   });
 
-  it("opens the cadence-change portal flow from the billing current plan card", async () => {
+  it("attributes the cadence-change portal flow to the Plans route", async () => {
     const openIntervalChangePortal = vi
       .fn()
       .mockResolvedValue("https://stripe.test/portal/interval");
@@ -2631,7 +2681,7 @@ describe("OrganizationsTab billing", () => {
 
     const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
 
-    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+    render(<OrganizationsTab organizationId="org-1" section="plans" />);
 
     fireEvent.click(screen.getByRole("button", { name: "Change to annual" }));
 
@@ -2642,6 +2692,13 @@ describe("OrganizationsTab billing", () => {
       );
     });
     expect(openPortal).not.toHaveBeenCalled();
+    expect(trackMock).toHaveBeenCalledWith(
+      "billing_flow_started",
+      expect.objectContaining({
+        flow: "change_interval",
+        source: "plans_page",
+      }),
+    );
     expect(openSpy).toHaveBeenCalledWith(
       "https://stripe.test/portal/interval",
       "_blank",
@@ -2650,7 +2707,7 @@ describe("OrganizationsTab billing", () => {
     openSpy.mockRestore();
   });
 
-  it("opens the billing portal from the billing current plan card for paid owners", async () => {
+  it("attributes the billing portal flow to the Plans route", async () => {
     const openPortal = vi.fn().mockResolvedValue("https://stripe.test/portal");
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
@@ -2668,7 +2725,7 @@ describe("OrganizationsTab billing", () => {
 
     const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
 
-    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+    render(<OrganizationsTab organizationId="org-1" section="plans" />);
 
     fireEvent.click(screen.getByRole("button", { name: "Manage plan" }));
 
@@ -2677,6 +2734,13 @@ describe("OrganizationsTab billing", () => {
         expect.stringContaining("/organizations/org-1/billing"),
       );
     });
+    expect(trackMock).toHaveBeenCalledWith(
+      "billing_flow_started",
+      expect.objectContaining({
+        flow: "manage_billing",
+        source: "plans_page",
+      }),
+    );
     expect(openSpy).toHaveBeenCalledWith(
       "https://stripe.test/portal",
       "_blank",
