@@ -73,6 +73,7 @@ function UnifiedFindingsBody({
           observationCoverage={state.envelope?.observationCoverage ?? null}
           mode={state.mode}
           analyze={state.analyze}
+          analysisFailure={state.analysisFailure}
           build={state.build}
           scopeControl={scopeControl}
           iterationRows={affectedRowsById(iterations, clientLabel)}

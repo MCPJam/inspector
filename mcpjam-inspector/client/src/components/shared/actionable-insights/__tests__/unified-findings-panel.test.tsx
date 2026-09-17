@@ -871,3 +871,20 @@ describe("analysis states and provenance", () => {
     expect(screen.queryByText("AI explanation")).toBeNull();
   });
 });
+
+describe("automatic analysis failure note", () => {
+  it.each(["evidence_changed", "unknown_failure", undefined])(
+    "keeps findings visible for %s",
+    (errorCode) => {
+      renderPanel({ analysisFailure: { errorCode } });
+      const note = screen.getByTestId("unified-findings-analysis-failed");
+      expect(note).toHaveTextContent("AI analysis did not complete.");
+      expect(note).not.toHaveAttribute("role", "alert");
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.getByTestId("unified-findings-list")).toBeVisible();
+      if (errorCode === "unknown_failure") {
+        expect(note.textContent).toBe("AI analysis did not complete.");
+      }
+    },
+  );
+});
