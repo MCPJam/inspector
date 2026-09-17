@@ -222,6 +222,12 @@ function TraceBlobLoadErrorPanel({
 export type ScorecardTabContext = {
   /** The resolved trace envelope, for per-step evidence. Null until loaded. */
   envelope: StepReplayEnvelope | null;
+  /**
+   * The whole downloaded trace, for the scorecard's recorded stage floor. The
+   * same object `envelope` narrows — handed over unnarrowed because the floor
+   * reads messages and spans, which the step assembler has no use for.
+   */
+  trace: { messages?: unknown; spans?: unknown } | null;
   envelopeLoading: boolean;
   reviewActive: boolean;
   judgeHidden: boolean;
@@ -1251,6 +1257,7 @@ export function IterationDetails({
         previewTraceMode === "scorecard" ? (
           scorecard.render({
             envelope: blobEnvelope,
+            trace: blob ?? null,
             envelopeLoading: loading,
             reviewActive: Boolean(enableJudgeReview && iteration.suiteRunId),
             judgeHidden,

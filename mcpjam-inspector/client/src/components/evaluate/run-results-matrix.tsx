@@ -933,6 +933,7 @@ function IterationDrawer({
                   steps={authored.steps}
                   chain={decisionChain}
                   envelope={context.envelope}
+                  trace={context.trace}
                   scoresSection={context.scoresSection}
                   judgeHidden={context.judgeHidden}
                 />

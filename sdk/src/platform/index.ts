@@ -262,6 +262,7 @@ export type {
   PlatformInsightsObservationState,
   PlatformInsightsFindingProvenance,
   PlatformEvalIterationReport,
+  PlatformEvalIterationReportUnavailableReason,
   PlatformEvalFindingsAnalysis,
   PlatformUnifiedFindings,
   PlatformInsightsStatus,
