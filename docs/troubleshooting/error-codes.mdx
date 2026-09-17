@@ -638,6 +638,14 @@ that renews with the billing period. The error card names the one you hit.
 - **Paid plan** — The limit dialog shows **Buy credits** to top up, or wait for the daily reset or billing period to renew.
 - Add your own API key under **Settings → LLM Providers** for chat (BYOK does not cover Swarm, Evals, or other MCPJam-billed features).
 
+**In a swarm run**
+
+When the MCPJam model limit stops one or more sessions during a swarm wave, the run screen shows an amber banner:
+
+> **N sessions stopped at your MCPJam model limit.**
+
+When the limit stops every session in the wave, the run-level failure banner carries the same message instead. Either way, switching models does not lift this limit — add credits or wait for the allowance to reset.
+
 <Warning>
   Bring-your-own-key covers chat. Swarm persona generation and persona-driver
   turns are always billed to MCPJam and have no BYOK path, so adding a key does
