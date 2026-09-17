@@ -505,7 +505,9 @@ export function SuiteIterationsView({
   /** Observe-first authoring: the spine, Run test, and run-derived checks. */
   evaluateObserveFirst?: boolean;
   /** Passed through to {@link SuiteDetailOverview}; see its prop doc. */
-  onGeneratingChange?: (state: { exit: () => void } | null) => void;
+  onGeneratingChange?: (
+    state: { exit: () => void; label?: string } | null,
+  ) => void;
   /** Playground run detail: show edit affordance on every row that has a test case id. */
   alwaysShowEditIterationRows?: boolean;
   /** Override default test edit navigation (e.g. playground hash navigation). */
@@ -668,7 +670,9 @@ export function SuiteIterationsView({
     route.type === "run-detail"
       ? "run-detail"
       : route.type === "test-detail"
-        ? evaluateCaseEditor ? "test-edit" : "test-detail"
+        ? evaluateCaseEditor
+          ? "test-edit"
+          : "test-detail"
         : route.type === "test-edit" && (!editingDisabled || evaluateCaseEditor)
           ? "test-edit"
           : route.type === "test-edit"
@@ -1887,7 +1891,8 @@ export function SuiteIterationsView({
                   projectServers={projectServers}
                   onExportDraft={handleOpenDraftExport}
                   openCompareFromRoute={
-                    (route.type === "test-edit" && Boolean(route.openCompare)) ||
+                    (route.type === "test-edit" &&
+                      Boolean(route.openCompare)) ||
                     (route.type === "test-detail" && Boolean(route.iteration))
                   }
                   openCompareIterationId={
@@ -1908,7 +1913,9 @@ export function SuiteIterationsView({
                     })
                   }
                   checksPage={
-                    !editingDisabled && route.type === "test-edit" && Boolean(route.checks)
+                    !editingDisabled &&
+                    route.type === "test-edit" &&
+                    Boolean(route.checks)
                   }
                   onOpenCaseChecks={() =>
                     navigation.toTestEdit(suite._id, selectedTestId, {
