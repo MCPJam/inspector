@@ -82,7 +82,7 @@ describe("route mappings", () => {
         parent: { type: "eval_suite", id: "s_1" },
         projectId: PROJECT,
       }).path
-    ).toBe(`/evals/suite/s_1/test/c_1?project=${PROJECT}`);
+    ).toBe(`/evaluate/suite/s_1/test/c_1?project=${PROJECT}`);
     expect(
       build({
         type: "eval_run",
@@ -90,7 +90,7 @@ describe("route mappings", () => {
         parent: { type: "eval_suite", id: "s_1" },
         projectId: PROJECT,
       }).path
-    ).toBe(`/evals/suite/s_1/runs/run_1?project=${PROJECT}`);
+    ).toBe(`/evaluate/suite/s_1/runs/run_1?project=${PROJECT}`);
   });
 
   it("selects an iteration on its run's page, two levels under the suite", () => {
@@ -108,7 +108,7 @@ describe("route mappings", () => {
       projectId: PROJECT,
     });
     expect(permalink.path).toBe(
-      `/evals/suite/s_1/runs/run_1?iteration=it_1&project=${PROJECT}`
+      `/evaluate/suite/s_1/runs/run_1?iteration=it_1&project=${PROJECT}`
     );
     expect(permalink.label).toBe("View iteration");
     expect(permalink.resource).toEqual({ type: "eval_iteration", id: "it_1" });
@@ -125,7 +125,7 @@ describe("route mappings", () => {
 
   it("the ref builder composes the same chain by hand", () => {
     expect(build(evalIterationRef("it_1", "run_1", "s_1", PROJECT)).path).toBe(
-      `/evals/suite/s_1/runs/run_1?iteration=it_1&project=${PROJECT}`
+      `/evaluate/suite/s_1/runs/run_1?iteration=it_1&project=${PROJECT}`
     );
     // Without a project the ref carries none, and the builder refuses it the
     // way it refuses every other project-scoped type.
@@ -145,7 +145,7 @@ describe("route mappings", () => {
       projectId: PROJECT,
     });
     expect(permalink.path).toBe(
-      `/evals/suite/s_1?view=runs&project=${PROJECT}`
+      `/evaluate/suite/s_1?view=runs&project=${PROJECT}`
     );
     expect(permalink.resource).toEqual({ type: "eval_run_group", id: "grp_1" });
   });
@@ -313,7 +313,7 @@ describe("required scope and parents", () => {
 
   it("refuses an iteration whose chain is short, or wrong at either level", () => {
     // Run given, suite missing: the second level is checked, not just the
-    // first — otherwise the URL would be `/evals/suite/undefined/…`.
+    // first — otherwise the URL would be `/evaluate/suite/undefined/…`.
     expect(() =>
       build({
         type: "eval_iteration",
@@ -460,10 +460,10 @@ describe("the route registry is the type list", () => {
       project_environment: `/environments/id-1?project=${PROJECT}`,
       project_plugin: `/servers/plugins/id-1?project=${PROJECT}`,
       host: `/hosts/id-1?project=${PROJECT}`,
-      eval_suite: `/evals/suite/id-1?project=${PROJECT}`,
-      eval_case: `/evals/suite/p-1/test/id-1?project=${PROJECT}`,
-      eval_run: `/evals/suite/p-1/runs/id-1?project=${PROJECT}`,
-      eval_run_group: `/evals/suite/p-1?view=runs&project=${PROJECT}`,
+      eval_suite: `/evaluate/suite/id-1?project=${PROJECT}`,
+      eval_case: `/evaluate/suite/p-1/test/id-1?project=${PROJECT}`,
+      eval_run: `/evaluate/suite/p-1/runs/id-1?project=${PROJECT}`,
+      eval_run_group: `/evaluate/suite/p-1?view=runs&project=${PROJECT}`,
       chat_session: `/sessions?session=id-1&project=${PROJECT}`,
       playground_conversation: `/playground?conversation=id-1&project=${PROJECT}`,
       conformance_run: `/conformance/runs/id-1?project=${PROJECT}`,
@@ -691,7 +691,7 @@ describe("the receipt covers a result that stops carrying its project", () => {
       { appOrigin: ORIGIN }
     );
     expect(permalinks[0]!.url).toBe(
-      `${ORIGIN}/evals/suite/s_1/runs/run_1?project=${PROJECT}`
+      `${ORIGIN}/evaluate/suite/s_1/runs/run_1?project=${PROJECT}`
     );
   });
 });

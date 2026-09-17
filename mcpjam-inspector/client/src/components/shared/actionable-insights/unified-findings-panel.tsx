@@ -2,6 +2,7 @@
 import { useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
+import { Skeleton } from "@mcpjam/design-system/skeleton";
 import {
   sortFindingsForDisplay,
   type ActionableFinding,
@@ -29,6 +30,7 @@ export type FindingsAnalysisAction = {
   onRun: () => void;
 };
 export type UnifiedFindingsPanelProps = {
+  runPending?: boolean;
   analysis?: UnifiedFindings["analysis"];
   snapshot: UnifiedFindings["snapshot"];
   findings: readonly ActionableFinding[];
@@ -78,8 +80,8 @@ function StateNote({
         tone === "destructive"
           ? "border-destructive"
           : tone === "warning"
-          ? "border-warning"
-          : "border-border"
+            ? "border-warning"
+            : "border-border"
       }`}
       role={tone === "destructive" ? "alert" : undefined}
       data-testid={testId}
@@ -105,6 +107,7 @@ function humanExclusion(reason: string): string {
 }
 
 export function UnifiedFindingsPanel({
+  runPending = false,
   analysis,
   snapshot,
   findings,
@@ -187,10 +190,10 @@ export function UnifiedFindingsPanel({
               {analysis?.phase === "reading"
                 ? `Reading iterations ${analysis.progress.done}/${analysis.progress.total}`
                 : analysis?.phase === "grouping"
-                ? "Grouping problems…"
-                : analysis?.phase === "checking"
-                ? "Checking evidence…"
-                : "Analyzing…"}
+                  ? "Grouping problems…"
+                  : analysis?.phase === "checking"
+                    ? "Checking evidence…"
+                    : "Analyzing…"}
             </span>
           ) : null}
           {current ? (
@@ -237,18 +240,41 @@ export function UnifiedFindingsPanel({
           </StateNote>
         </div>
       ) : null}
-      {!snapshot ? (
+      {!current &&
+      !backendUnavailableNote &&
+      !analyze.error &&
+      !build?.error &&
+      (runPending || analyze.pending || build?.pending) ? (
+        <div
+          className="grid divide-y divide-border/40 lg:grid-cols-2 lg:divide-x lg:divide-y-0"
+          role="status"
+          aria-label="Loading findings"
+          data-testid="unified-findings-loading"
+        >
+          {[0, 1].map((column) => (
+            <div
+              key={column}
+              className="min-w-0 space-y-4 py-4 lg:px-6 lg:first:pl-0 lg:last:pr-0"
+              aria-hidden="true"
+            >
+              <Skeleton className="h-3 w-24 rounded-lg" />
+              <Skeleton className="h-4 w-full rounded-lg" />
+              <Skeleton className="h-4 w-4/5 rounded-lg" />
+            </div>
+          ))}
+        </div>
+      ) : !snapshot ? (
         fallback !== undefined && !analyze.pending && !build?.pending ? (
           fallback
         ) : (
           <div className="space-y-2">
-            <StateNote testId="unified-findings-no-snapshot">
-              {analyze.pending || build?.pending
-                ? "Reading this run’s recorded evidence…"
-                : build?.available
-                ? "Findings have not been built for this run yet. Building reads the recorded evidence; it does not call a model."
-                : "Analyze this run to see what broke, suggested fixes, and supporting evidence."}
-            </StateNote>
+            {analyze.pending || build?.pending || build?.available ? (
+              <StateNote testId="unified-findings-no-snapshot">
+                {analyze.pending || build?.pending
+                  ? "Reading this run’s recorded evidence…"
+                  : "Findings have not been built for this run yet. Building reads the recorded evidence; it does not call a model."}
+              </StateNote>
+            ) : null}
             {build?.available && !build.pending && !analyze.pending ? (
               <Button
                 variant="outline"
@@ -302,10 +328,10 @@ export function UnifiedFindingsPanel({
           {observationState === "unavailable" && !discovery
             ? "There isn’t enough recorded evidence to explain this run."
             : incomplete
-            ? "No supported finding yet. Evidence is incomplete; this does not mean the run passed."
-            : mode === "ai"
-            ? "Analysis found no supported issue to report. This does not change the run’s results."
-            : "No issue found in the recorded checks."}
+              ? "No supported finding yet. Evidence is incomplete; this does not mean the run passed."
+              : mode === "ai"
+                ? "Analysis found no supported issue to report. This does not change the run’s results."
+                : "No issue found in the recorded checks."}
         </StateNote>
       )}
       {observationCoverage &&
