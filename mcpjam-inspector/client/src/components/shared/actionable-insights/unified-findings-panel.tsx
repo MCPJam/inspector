@@ -134,6 +134,18 @@ export function UnifiedFindingsPanel({
     () => new Map(provenance.map((p) => [p.candidateId, p])),
     [provenance],
   );
+  // Every finding the envelope carries, so a consolidated finding can name
+  // the measured groups it came from even when this view shows only it.
+  const findingsById = useMemo(
+    () =>
+      new Map(
+        [...(snapshot?.deterministicFindings ?? []), ...findings].map((f) => [
+          f.id,
+          f,
+        ]),
+      ),
+    [snapshot?.deterministicFindings, findings],
+  );
   const carousel = useFindingsCarousel();
   const current = sorted[carousel.selected] ?? sorted[0];
   const enrichment = snapshot?.enrichment;
@@ -293,6 +305,7 @@ export function UnifiedFindingsPanel({
             context={context}
             onOpenEvidence={onOpenEvidence}
             iterationRows={iterationRows}
+            findingsById={findingsById}
             setApi={carousel.setApi}
           />
         </div>
@@ -350,6 +363,7 @@ export function UnifiedFindingsPanel({
         view={mode}
         onOpenEvidence={onOpenEvidence}
         iterationRows={iterationRows}
+        findingsById={findingsById}
         trigger={seeAllTrigger}
       />
     </div>

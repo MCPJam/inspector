@@ -52,6 +52,36 @@ export function mechanismCaveat(
   );
 }
 
+/**
+ * How much of an AI mechanism's count was verified trial by trial.
+ *
+ * Null when the backend sent no verification (older backend, or a
+ * deterministic group) or when every proposed trial was confirmed: the
+ * count then already says everything. Otherwise the reader learns that the
+ * count excludes the trials that could not be verified.
+ */
+export function verificationLine(
+  provenance: InsightsFindingProvenance | null,
+): string | null {
+  const verification = provenance?.verification;
+  if (!verification) return null;
+  const unresolved =
+    (verification.unsupported ?? 0) +
+    (verification.inconclusive ?? 0) +
+    (verification.unchecked ?? 0);
+  if (unresolved === 0) return null;
+  const parts = [
+    verification.unsupported > 0
+      ? `${verification.unsupported} did not show it`
+      : null,
+    verification.inconclusive > 0
+      ? `${verification.inconclusive} could not be verified`
+      : null,
+    verification.unchecked > 0 ? `${verification.unchecked} not checked` : null,
+  ].filter(Boolean);
+  return `Verified ${verification.confirmed} of ${verification.proposed} proposed trials (${parts.join(", ")}); only verified trials are counted.`;
+}
+
 /** A one-line rendering of recorded judge coverage. */
 export function judgeCoverageLine(
   provenance: InsightsFindingProvenance | null,

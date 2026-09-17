@@ -47,7 +47,11 @@ const {
   // a session written before the pin existed.
   mockCopyToClipboard: vi.fn().mockResolvedValue(true),
   mockHostConfigState: {
-    config: null as { hostStyle?: string; currentHostName?: string | null; modelId?: string } | null,
+    config: null as {
+      hostStyle?: string;
+      currentHostName?: string | null;
+      modelId?: string;
+    } | null,
   },
 }));
 
@@ -77,6 +81,18 @@ vi.mock("@/hooks/useSharedChatThreads", () => ({
       runAttemptStatus: mockThreadState.runAttemptStatus,
       messagesBlobUrl: "https://storage.example.com/thread.json",
       modelId: "openai/gpt-oss-120b",
+      recordedContext: {
+        toolSnapshots: [
+          {
+            hash: "frozen-catalog",
+            snapshot: {
+              servers: [
+                { serverId: "recorded-server", tools: [{ name: "search" }] },
+              ],
+            },
+          },
+        ],
+      },
       visitorDisplayName: "Marcelo Jimenez",
       messageCount: 2,
       startedAt: Date.now() - 1000,
@@ -203,10 +219,16 @@ vi.mock(
   }),
 );
 
+// Stubs, not reimplementations of the real builders (those are covered in
+// lib/__tests__/eval-route-url.test.ts). The route TYPE is in the stub path
+// on purpose: without it a promote that asked for the wrong kind of eval
+// route would produce the same URL and pass unnoticed.
 vi.mock("@/lib/app-navigation", () => ({
   navigateApp: (...args: unknown[]) => mockNavigateApp(...args),
   buildEvalsPath: (route: Record<string, unknown>) =>
-    `/evals/${route.suiteId}/${route.testId}`,
+    `/evals/${route.type}/${route.suiteId}/${route.testId}`,
+  buildEvaluatePath: (route: Record<string, unknown>) =>
+    `/evaluate/${route.type}/${route.suiteId}/${route.testId}`,
 }));
 
 describe("ShareUsageThreadDetail", () => {
@@ -251,7 +273,12 @@ describe("ShareUsageThreadDetail", () => {
   it("links a direct session to its Playground conversation", async () => {
     mockThreadState.sourceType = "direct";
     render(<ShareUsageThreadDetail threadId="thread-1" />);
-    expect(await screen.findByRole("link", { name: "Open in Playground" })).toHaveAttribute("href", "/playground?conversation=wire-uuid&project=project-1");
+    expect(
+      await screen.findByRole("link", { name: "Open in Playground" }),
+    ).toHaveAttribute(
+      "href",
+      "/playground?conversation=wire-uuid&project=project-1",
+    );
   });
 
   it("renders formatted share traces with collapsed reasoning", async () => {
@@ -290,6 +317,24 @@ describe("ShareUsageThreadDetail", () => {
         expect.objectContaining({ rawFadeScrollEdges: true }),
       );
     });
+  });
+
+  it("passes the frozen tool catalog into the shared Raw trace viewer", async () => {
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Raw" }));
+    await waitFor(() =>
+      expect(mockTraceViewer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          trace: expect.objectContaining({
+            recordedContext: expect.objectContaining({
+              toolSnapshots: expect.arrayContaining([
+                expect.objectContaining({ hash: "frozen-catalog" }),
+              ]),
+            }),
+          }),
+        }),
+      ),
+    );
   });
 
   it("leaves Raw alone on a surface that did not ask for the fade", async () => {
@@ -622,7 +667,7 @@ describe("ShareUsageThreadDetail — promote affordance", () => {
     // Default behavior lands the user on the artifact they just created.
     await user.click(screen.getByText("simulate import"));
     await waitFor(() =>
-      expect(mockNavigateApp).toHaveBeenCalledWith("/evals/suite-1/case-1"),
+      expect(mockNavigateApp).toHaveBeenCalledWith("/evaluate/test-edit/suite-1/case-1"),
     );
   });
 
