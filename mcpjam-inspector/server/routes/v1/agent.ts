@@ -97,7 +97,6 @@ import { capForModel, toToolError } from "../../utils/built-in-tools/mcpjam.js";
 import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 import {
   MCPJAM_AGENT_BILLING_FEATURE,
-  MCPJAM_AGENT_MODEL,
   MCPJAM_AGENT_MODEL_DEFINITION,
 } from "../../../shared/mcpjam-agent-model.js";
 import type { ModelDefinition } from "@/shared/types";
@@ -895,7 +894,7 @@ const AGENT_API_MODEL: ModelDefinition = MCPJAM_AGENT_MODEL_DEFINITION;
  * use). The user can always name a bigger model; moving the agent's pin must
  * not move this one.
  */
-const DEFAULT_SUITE_MODEL = MCPJAM_AGENT_MODEL;
+const DEFAULT_SUITE_MODEL = "anthropic/claude-haiku-4.5";
 
 /**
  * The rules that hold for every operation on this surface.
