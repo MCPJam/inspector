@@ -30,7 +30,7 @@ import {
 } from "./xaa-connect-failure.js";
 
 /** Matches the `SwarmAgentError` message envelope the runner throws. */
-const AGENT_ERROR_ENVELOPE = /^swarm-agent\s+\S+\s+failed\s+\((\d{3})\):\s*/i;
+const AGENT_ERROR_ENVELOPE = /^(?:swarm-agent\s+\S+\s+failed\s+\((\d{3})\):|Backend stream error:\s*(\d{3}))\s*/i;
 
 /** Belt-and-braces: never let a URL reach a stored/rendered message. */
 const URL_PATTERN = /https?:\/\/\S+/g;
@@ -154,6 +154,13 @@ export function humanizeSwarmAttemptError(
   raw: string | undefined | null,
   errorCode?: string | null
 ): SwarmAttemptErrorInfo {
+  if (errorCode === "stale_runner") {
+    return {
+      code: errorCode,
+      message:
+        "The runner stopped reporting progress, so this run was marked interrupted. Sessions may have run before the interruption; inspect their saved traces. The reason contact was lost was not recorded.",
+    };
+  }
   const sandboxMessage = errorCode
     ? SANDBOX_ERROR_CODE_MESSAGES[errorCode]
     : undefined;
@@ -161,6 +168,19 @@ export function humanizeSwarmAttemptError(
     return { message: sandboxMessage, code: errorCode };
   }
   const input = (raw ?? "").trim();
+  // Older backend failures were truncated JSON envelopes. Recognize this
+  // specific reservation conflict even when the JSON can no longer be parsed.
+  if (
+    errorCode === "spending_reservation_busy" ||
+    (input.includes("streamSpendingReservations") &&
+      input.includes("changed while this mutation was being run"))
+  ) {
+    return {
+      code: "spending_reservation_busy",
+      message:
+        "MCPJam could not reserve spending capacity because concurrent requests kept changing it. This is an internal execution failure. Retry this attempt.",
+    };
+  }
   if (isXaaConnectFailureReason(errorCode)) {
     return {
       message: (scrub(input) || XAA_REASON_FALLBACK_MESSAGES[errorCode]).slice(
@@ -178,7 +198,7 @@ export function humanizeSwarmAttemptError(
 
   const envelope = AGENT_ERROR_ENVELOPE.exec(input);
   if (envelope) {
-    httpStatus = Number(envelope[1]);
+    httpStatus = Number(envelope[1] ?? envelope[2]);
     body = input.slice(envelope[0].length).trim();
   }
 

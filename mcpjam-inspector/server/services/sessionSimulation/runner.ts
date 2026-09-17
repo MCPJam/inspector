@@ -1036,7 +1036,25 @@ export async function runSyntheticHostSession(
 
       const next = await nextPersonaTurn(lastTranscript);
 
-      if (next.endSession) break;
+      if (next.endSession) {
+        if (turn === 0) {
+          throw Object.assign(
+            new Error(
+              "The simulated user ended the session before sending the first message. The assistant was not tested. Re-run this attempt."
+            ),
+            { details: { reason: "persona_ended_before_start" } }
+          );
+        }
+        break;
+      }
+      if (!next.message.trim()) {
+        throw Object.assign(
+          new Error(
+            "The simulated user returned an empty message. No assistant turn was started for that message. Re-run this attempt."
+          ),
+          { details: { reason: "persona_empty_message" } }
+        );
+      }
 
       messageHistory.push({
         role: "user",
@@ -1380,11 +1398,16 @@ export async function runSyntheticHostSession(
       if (failedTurn) throw failedTurn;
     }
 
-    // Session ended before any assistant turn completed (persona returned
-    // endSession on turn 0, or every turn aborted). Persist once with no trace
-    // so the chatSessions row exists and the run summary lines up. Kept on the
-    // success path (rather than deferred to the terminal) so a failure to write
-    // it still fails the session, as it always has.
+    // The success path must have exercised the assistant. In particular, an
+    // invalid zero-turn budget must not turn an empty simulation into success.
+    if (messageHistory.length === 0) {
+      throw Object.assign(
+        new Error(
+          "The simulation ended without starting a conversation. The assistant was not tested."
+        ),
+        { details: { reason: "simulation_no_conversation" } }
+      );
+    }
     await ensureSessionPersisted();
 
     emit?.({ type: "session_complete", status: "succeeded" });

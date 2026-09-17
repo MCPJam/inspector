@@ -59,7 +59,7 @@ import { v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexWriteError } from "./convex-errors.js";
 import { translateConvexReadError } from "./convex-read-errors.js";
 import { launchJourneyRun } from "../../services/sessionSimulation/launch-journey-run.js";
-import { getConvexBearerThunkForRequest } from "../../utils/v1-convex-token.js";
+import { getBackgroundRunBearerForRequest } from "../../utils/v1-convex-token.js";
 import { resolveXaaIssuer } from "../../services/xaa-mint.js";
 import { callerContextFromHono } from "../web/auth.js";
 import { HOSTED_MODE } from "../../config.js";
@@ -959,7 +959,7 @@ journeys.post("/projects/:projectId/journeys/:journeyId/runs", async (c) => {
         bearerToken: await getConvexBearerForRequest(c),
         // A THUNK for the detached runner. The launch outlives the delegated
         // JWT that authorized it; see `launch-journey-run.ts`.
-        getRunBearer: getConvexBearerThunkForRequest(c),
+        getRunBearer: await getBackgroundRunBearerForRequest(c, projectId),
         // Both read the LIVE request and must be resolved before the 202.
         xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
         callerContext: callerContextFromHono(c),
