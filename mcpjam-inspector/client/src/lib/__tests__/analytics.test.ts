@@ -1,14 +1,19 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { captureMock, standardEventPropsMock } = vi.hoisted(() => ({
-  captureMock: vi.fn(),
-  standardEventPropsMock: vi.fn((location: string) => ({
-    location,
-    platform: "web",
-    environment: "test",
-  })),
+const { captureMock, getPropertyMock, standardEventPropsMock } = vi.hoisted(
+  () => ({
+    captureMock: vi.fn(),
+    getPropertyMock: vi.fn(),
+    standardEventPropsMock: vi.fn((location: string) => ({
+      location,
+      platform: "web",
+      environment: "test",
+    })),
+  }),
+);
+vi.mock("posthog-js", () => ({
+  default: { capture: captureMock, get_property: getPropertyMock },
 }));
-vi.mock("posthog-js", () => ({ default: { capture: captureMock } }));
 vi.mock("../PosthogUtils", () => ({
   standardEventProps: standardEventPropsMock,
 }));
@@ -18,6 +23,7 @@ import { track } from "../analytics";
 describe("track()", () => {
   afterEach(() => {
     captureMock.mockClear();
+    getPropertyMock.mockReset();
     standardEventPropsMock.mockClear();
     vi.restoreAllMocks();
   });
@@ -44,7 +50,8 @@ describe("track()", () => {
     expect(props.location).toBe("skills_tab");
   });
 
-  it("redacts the registered organization id from billing events", () => {
+  it("keeps the registered organization id only as the billing group", () => {
+    getPropertyMock.mockReturnValue("org_valid");
     track("billing_flow_started", {
       location: "billing_page",
       organization_id: "org_raw",
@@ -52,8 +59,39 @@ describe("track()", () => {
 
     expect(captureMock).toHaveBeenCalledWith(
       "billing_flow_started",
-      expect.objectContaining({ organization_id: null }),
+      expect.objectContaining({
+        organization_id: null,
+        $groups: {
+          organization: "org_valid",
+        },
+      }),
     );
+  });
+
+  it("drops sensitive billing properties at the capture boundary", () => {
+    getPropertyMock.mockReturnValue("org_valid");
+    track("billing_flow_failed", {
+      location: "billing_page",
+      flow: "plan_change",
+      failure_kind: "request_failed",
+      organization_id: "org_raw",
+      price_cents: 2900,
+      package_id: "pkg_secret",
+      error_name: "CardError",
+      stripe_customer_id: "cus_secret",
+    });
+
+    const properties = captureMock.mock.calls[0][1];
+    expect(properties).toMatchObject({
+      organization_id: null,
+      flow: "plan_change",
+      failure_kind: "request_failed",
+      $groups: { organization: "org_valid" },
+    });
+    expect(properties).not.toHaveProperty("price_cents");
+    expect(properties).not.toHaveProperty("package_id");
+    expect(properties).not.toHaveProperty("error_name");
+    expect(properties).not.toHaveProperty("stripe_customer_id");
   });
 
   it("does not change organization context for unrelated events", () => {
@@ -70,11 +108,11 @@ describe("track()", () => {
     });
 
     expect(() =>
-      track("skill_viewed", { location: "skills_tab", skill_name: "x" })
+      track("skill_viewed", { location: "skills_tab", skill_name: "x" }),
     ).not.toThrow();
     expect(warnMock).toHaveBeenCalledWith(
       "[analytics] Failed to capture skill_viewed",
-      error
+      error,
     );
   });
 
@@ -86,12 +124,12 @@ describe("track()", () => {
     });
 
     expect(() =>
-      track("skill_viewed", { location: "skills_tab", skill_name: "x" })
+      track("skill_viewed", { location: "skills_tab", skill_name: "x" }),
     ).not.toThrow();
     expect(captureMock).not.toHaveBeenCalled();
     expect(warnMock).toHaveBeenCalledWith(
       "[analytics] Failed to capture skill_viewed",
-      error
+      error,
     );
   });
 

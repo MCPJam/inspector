@@ -2,18 +2,35 @@ import posthog from "posthog-js";
 import type { ClientAnalyticsEventName } from "@/shared/analytics-events";
 import { standardEventProps } from "./PosthogUtils";
 
-const PRIVATE_ORGANIZATION_EVENT_PREFIXES = [
+const ORGANIZATION_GROUP_ONLY_EVENT_PREFIXES = [
   "billing_",
   "credit_topup_",
   "plan_limit_",
   "pricing_",
 ] as const;
 
-function mustRedactOrganizationContext(
-  event: ClientAnalyticsEventName,
-): boolean {
-  return PRIVATE_ORGANIZATION_EVENT_PREFIXES.some((prefix) =>
+function usesOrganizationGroupOnly(event: ClientAnalyticsEventName): boolean {
+  return ORGANIZATION_GROUP_ONLY_EVENT_PREFIXES.some((prefix) =>
     event.startsWith(prefix),
+  );
+}
+
+function isForbiddenBillingProperty(name: string): boolean {
+  const normalized = name.toLowerCase();
+  return (
+    normalized === "organization_id" ||
+    normalized === "package_id" ||
+    normalized === "price_cents" ||
+    normalized === "price_paid_cents" ||
+    normalized === "granted_credits" ||
+    normalized === "amount_credits" ||
+    normalized === "error" ||
+    normalized === "error_name" ||
+    normalized === "error_message" ||
+    normalized.startsWith("stripe_") ||
+    normalized.startsWith("invoice_") ||
+    normalized === "checkout_session_id" ||
+    normalized === "payment_intent_id"
   );
 }
 
@@ -40,7 +57,7 @@ function mustRedactOrganizationContext(
  */
 export function track(
   event: ClientAnalyticsEventName,
-  props: Record<string, unknown> & { location?: string } = {}
+  props: Record<string, unknown> & { location?: string } = {},
 ): void {
   // Drop platform/environment from the caller's props rather than relying
   // on spread order alone: standardEventProps() OMITS `environment` when
@@ -56,14 +73,39 @@ export function track(
     ...rest
   } = props;
   try {
+    const organizationGroupOnlyEvent = usesOrganizationGroupOnly(event);
+    const registeredOrganizationId = organizationGroupOnlyEvent
+      ? posthog.get_property?.("organization_id")
+      : undefined;
+    const billingOrganizationId =
+      typeof registeredOrganizationId === "string" &&
+      registeredOrganizationId.length > 0
+        ? registeredOrganizationId
+        : undefined;
+    const eventProperties = organizationGroupOnlyEvent
+      ? Object.fromEntries(
+          Object.entries(rest).filter(
+            ([name]) => !isForbiddenBillingProperty(name),
+          ),
+        )
+      : rest;
     posthog.capture(event, {
-      ...rest,
+      ...eventProperties,
       ...standardEventProps(location),
-      // Billing identifiers must stay opaque. An explicit null overrides the
-      // raw organization_id registered as a PostHog super-property without
-      // changing organization context for unrelated product events.
-      ...(mustRedactOrganizationContext(event)
-        ? { organization_id: null }
+      // Keep the raw id in PostHog's native organization group only. An
+      // explicit null prevents the registered super-property from duplicating
+      // it into every billing event's ordinary property bag.
+      ...(organizationGroupOnlyEvent
+        ? {
+            organization_id: null,
+            ...(billingOrganizationId
+              ? {
+                  $groups: {
+                    organization: billingOrganizationId,
+                  },
+                }
+              : {}),
+          }
         : {}),
     });
   } catch (error) {

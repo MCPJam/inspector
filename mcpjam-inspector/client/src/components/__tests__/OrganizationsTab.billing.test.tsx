@@ -21,6 +21,16 @@ const mockUseOrganizationMembers = vi.fn();
 const mockUseFeatureFlagEnabled = vi.fn();
 const mockUseOrganizationBilling = vi.mocked(useOrganizationBilling);
 const trackMock = vi.hoisted(() => vi.fn());
+
+function mockReservedBillingTab() {
+  const reservedTab = {
+    close: vi.fn(),
+    location: { href: "" },
+    opener: window,
+  } as unknown as Window;
+  const openSpy = vi.spyOn(window, "open").mockReturnValue(reservedTab);
+  return { openSpy, reservedTab };
+}
 const {
   addMemberMock,
   removeMemberMock,
@@ -511,6 +521,7 @@ describe("OrganizationsTab billing", () => {
   });
 
   it("renders Pro only from a v2 catalog and checks out the selected annual plan", async () => {
+    const { openSpy } = mockReservedBillingTab();
     const legacy = createPlanCatalog();
     const pro = {
       ...legacy.plans.team,
@@ -603,6 +614,7 @@ describe("OrganizationsTab billing", () => {
         source: "plans_page",
       }),
     );
+    openSpy.mockRestore();
   });
 
   it("does not auto-checkout a Pro deep link for a legacy catalog", async () => {
@@ -1200,6 +1212,12 @@ describe("OrganizationsTab billing", () => {
 
     await waitFor(() => expect(retrySeatPayment).toHaveBeenCalled());
     expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith(
+      errorToastMessage(
+        "This seat payment can no longer be retried. Try adding the member again.",
+      ),
+      { duration: 8000 },
+    );
     expect(trackMock).not.toHaveBeenCalledWith(
       "billing_flow_succeeded",
       expect.objectContaining({ flow: "seat_payment_retry" }),
@@ -2101,7 +2119,7 @@ describe("OrganizationsTab billing", () => {
       }),
     );
 
-    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+    const { openSpy, reservedTab } = mockReservedBillingTab();
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
@@ -2118,10 +2136,38 @@ describe("OrganizationsTab billing", () => {
       );
     });
     expect(screen.queryByText("Upgrade to Team?")).not.toBeInTheDocument();
-    expect(openSpy).toHaveBeenCalledWith(
-      "https://stripe.test/checkout",
-      "_blank",
-      "noopener,noreferrer",
+    expect(openSpy).toHaveBeenCalledWith("", "_blank");
+    expect(reservedTab.location.href).toBe("https://stripe.test/checkout");
+    openSpy.mockRestore();
+  });
+
+  it("records failure instead of success when the checkout popup is blocked", async () => {
+    const startPlanChange = vi.fn().mockResolvedValue({
+      kind: "checkout",
+      checkoutUrl: "https://stripe.test/checkout",
+    });
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture(),
+        startPlanChange,
+      }),
+    );
+    const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+    fireEvent.click(screen.getAllByRole("button", { name: "Upgrade" })[0]!);
+
+    await waitFor(() => expect(startPlanChange).toHaveBeenCalled());
+    expect(trackMock).toHaveBeenCalledWith(
+      "billing_flow_failed",
+      expect.objectContaining({ flow: "plan_change" }),
+    );
+    expect(trackMock).not.toHaveBeenCalledWith(
+      "billing_flow_succeeded",
+      expect.objectContaining({
+        flow: "plan_change",
+        outcome: "checkout_handoff",
+      }),
     );
     openSpy.mockRestore();
   });
@@ -2202,7 +2248,7 @@ describe("OrganizationsTab billing", () => {
       }),
     );
 
-    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+    const { openSpy, reservedTab } = mockReservedBillingTab();
 
     render(<OrganizationsTab organizationId="org-1" section="plans" />);
 
@@ -2237,11 +2283,8 @@ describe("OrganizationsTab billing", () => {
     });
     expect(startPlanChange).not.toHaveBeenCalled();
     expect(openPortal).not.toHaveBeenCalled();
-    expect(openSpy).toHaveBeenCalledWith(
-      "https://stripe.test/portal/cancel",
-      "_blank",
-      "noopener,noreferrer",
-    );
+    expect(openSpy).toHaveBeenCalledWith("", "_blank");
+    expect(reservedTab.location.href).toBe("https://stripe.test/portal/cancel");
 
     openSpy.mockRestore();
   });
@@ -2332,7 +2375,7 @@ describe("OrganizationsTab billing", () => {
       }),
     );
 
-    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+    const { openSpy } = mockReservedBillingTab();
     const navigateBillingInSameTab = vi.fn();
     const onCheckoutIntentConsumed = vi.fn();
     const onCheckoutIntentNavigationStarted = vi.fn();
@@ -2363,6 +2406,21 @@ describe("OrganizationsTab billing", () => {
       "https://stripe.test/checkout",
     );
     expect(openSpy).not.toHaveBeenCalled();
+    expect(
+      trackMock.mock.calls.filter(
+        ([event, props]) =>
+          event === "billing_flow_succeeded" &&
+          props.flow === "plan_change" &&
+          props.source === "pricing_deep_link",
+      ),
+    ).toHaveLength(1);
+    expect(trackMock).not.toHaveBeenCalledWith(
+      "billing_flow_failed",
+      expect.objectContaining({
+        flow: "plan_change",
+        source: "pricing_deep_link",
+      }),
+    );
     await waitFor(() => {
       expect(
         screen.queryByTestId("billing-deep-link-redirect"),
@@ -2671,6 +2729,21 @@ describe("OrganizationsTab billing", () => {
       ).not.toBeInTheDocument();
     });
     expect(navigateBillingInSameTab).not.toHaveBeenCalled();
+    expect(trackMock).toHaveBeenCalledWith(
+      "billing_flow_failed",
+      expect.objectContaining({
+        flow: "plan_change",
+        source: "pricing_deep_link",
+        failure_kind: "request_failed",
+      }),
+    );
+    expect(trackMock).not.toHaveBeenCalledWith(
+      "billing_flow_succeeded",
+      expect.objectContaining({
+        flow: "plan_change",
+        source: "pricing_deep_link",
+      }),
+    );
   });
 
   it("attributes the cadence-change portal flow to the Plans route", async () => {
@@ -2693,7 +2766,7 @@ describe("OrganizationsTab billing", () => {
       }),
     );
 
-    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+    const { openSpy, reservedTab } = mockReservedBillingTab();
 
     render(<OrganizationsTab organizationId="org-1" section="plans" />);
 
@@ -2713,10 +2786,9 @@ describe("OrganizationsTab billing", () => {
         source: "plans_page",
       }),
     );
-    expect(openSpy).toHaveBeenCalledWith(
+    expect(openSpy).toHaveBeenCalledWith("", "_blank");
+    expect(reservedTab.location.href).toBe(
       "https://stripe.test/portal/interval",
-      "_blank",
-      "noopener,noreferrer",
     );
     openSpy.mockRestore();
   });
@@ -2737,7 +2809,7 @@ describe("OrganizationsTab billing", () => {
       }),
     );
 
-    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+    const { openSpy, reservedTab } = mockReservedBillingTab();
 
     render(<OrganizationsTab organizationId="org-1" section="plans" />);
 
@@ -2755,11 +2827,8 @@ describe("OrganizationsTab billing", () => {
         source: "plans_page",
       }),
     );
-    expect(openSpy).toHaveBeenCalledWith(
-      "https://stripe.test/portal",
-      "_blank",
-      "noopener,noreferrer",
-    );
+    expect(openSpy).toHaveBeenCalledWith("", "_blank");
+    expect(reservedTab.location.href).toBe("https://stripe.test/portal");
     openSpy.mockRestore();
   });
 
