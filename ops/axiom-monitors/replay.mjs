@@ -122,6 +122,66 @@ async function run(apl, at, lookbackDays = 14) {
   );
 }
 
+// Platform lanes have no incident history to replay against yet: their events
+// ship with backend #1463/#1470. This mode reports what each monitor reads NOW
+// over its own window and refuses to call an empty window a pass — no rows is
+// INSUFFICIENT EVIDENCE, never "silent, therefore fine".
+if (process.argv.includes("--platform-lanes")) {
+  const keys = [
+    "platform-lane-spend-hourly-warn",
+    "platform-lane-spend-hourly-page",
+    "platform-lane-budget-refusals-hourly",
+    "platform-lane-guard-failures",
+    "platform-lane-stale-holds",
+    "platform-lane-snapshot-deadman",
+    "platform-lane-customer-billed",
+  ];
+  // The event each monitor needs at least one of, over the last day, before
+  // its current value means anything.
+  const evidenceEvent = {
+    "platform-lane-spend-hourly-warn": "platform_lane_admitted",
+    "platform-lane-spend-hourly-page": "platform_lane_admitted",
+    "platform-lane-budget-refusals-hourly": "platform_lane_admitted",
+    "platform-lane-guard-failures": "platform_lane_admitted",
+    "platform-lane-stale-holds": "platform_lane_snapshot",
+    "platform-lane-snapshot-deadman": "platform_lane_snapshot_completed",
+    "platform-lane-customer-billed": "llm_usage_record_created",
+  };
+  const now = new Date().toISOString();
+  let insufficient = 0;
+  for (const key of keys) {
+    const definition = loadMonitor(key);
+    const event = evidenceEvent[key];
+    const coverage = await run(
+      [
+        "['mcpjam-backend-prod']",
+        "| where _sysTime >= ago(24h)",
+        `| where tostring(['data.message']) contains '"event":"${event}"'`,
+        // The usage event predates the funding field; only rows that carry
+        // it prove the backend that writes it is deployed.
+        ...(event === "llm_usage_record_created"
+          ? [`| where tostring(['data.message']) contains '"funding":'`]
+          : []),
+        "| summarize Rows=count()",
+      ].join("\n"),
+      now,
+      1,
+    );
+    const rows = Number(coverage[0]?.Rows ?? 0);
+    if (!(rows > 0)) {
+      insufficient++;
+      console.log(`INSUFFICIENT EVIDENCE ${key}: no ${event} rows in 24h — backend events not in prod yet, or history expired`);
+      continue;
+    }
+    const result = await run(definition.aplQuery.join("\n"), now, 1);
+    const value = Number(result[0]?.[definition.monitor.columnName]);
+    const { operator, threshold } = definition.monitor;
+    const fires = operator === "Below" ? value < threshold : value > threshold;
+    console.log(`OBSERVED ${key}: ${definition.monitor.columnName}=${value} (${operator} ${threshold} → ${fires ? "WOULD FIRE" : "quiet"}); evidence rows=${rows}`);
+  }
+  process.exit(insufficient ? 2 : 0);
+}
+
 // Reuse the shipped monetary query, changing only its clock anchor. Coverage
 // must be nonzero so expired history cannot become a false passing SILENT.
 if (process.argv.includes("--spend")) {
