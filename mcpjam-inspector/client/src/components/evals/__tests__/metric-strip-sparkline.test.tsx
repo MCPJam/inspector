@@ -71,11 +71,15 @@ describe("MetricStrip sparkline hover", () => {
 
     fireEvent.mouseMove(sparkline, { clientX: 0 });
     expect(within(sparkline).getByText("Run 1")).toBeInTheDocument();
-    expect(within(sparkline).getByTestId("metric-sparkline-tooltip-value")).toHaveTextContent("1k");
+    expect(
+      within(sparkline).getByTestId("metric-sparkline-tooltip-value"),
+    ).toHaveTextContent("1k");
 
     fireEvent.mouseMove(sparkline, { clientX: 120 });
     expect(within(sparkline).getByText("Run 2")).toBeInTheDocument();
-    expect(within(sparkline).getByTestId("metric-sparkline-tooltip-value")).toHaveTextContent("1.5k");
+    expect(
+      within(sparkline).getByTestId("metric-sparkline-tooltip-value"),
+    ).toHaveTextContent("1.5k");
 
     fireEvent.mouseLeave(sparkline);
     expect(within(sparkline).queryByText("Run 1")).not.toBeInTheDocument();
@@ -87,9 +91,9 @@ describe("MetricStrip sparkline hover", () => {
 
     fireEvent.mouseMove(sparkline, { clientX: 120 });
     expect(within(sparkline).getByText("Run 2")).toBeInTheDocument();
-    expect(within(sparkline).getByTestId("metric-sparkline-tooltip-value")).toHaveTextContent(
-      /P50 2\.00s · P95 4\.00s/,
-    );
+    expect(
+      within(sparkline).getByTestId("metric-sparkline-tooltip-value"),
+    ).toHaveTextContent(/P50 2\.00s · P95 4\.00s/);
   });
 
   it("stacks latency values in embedded matrix cells", () => {
@@ -118,7 +122,9 @@ describe("MetricStrip sparkline hover", () => {
         testId="cell-metric-strip"
       />,
     );
-    expect(screen.getByTestId("cell-metric-strip")).toHaveClass("overflow-visible");
+    expect(screen.getByTestId("cell-metric-strip")).toHaveClass(
+      "overflow-visible",
+    );
   });
 
   it("shows the full run label when hovering the first sparkline point", () => {
@@ -146,6 +152,21 @@ describe("MetricStrip sparkline hover", () => {
     expect(screen.getByText("1/2 passed")).toBeInTheDocument();
   });
 
+  it("draws line trends in the same primary as Suite Health bars", () => {
+    render(<MetricStrip data={sampleData} testId="metric-strip" />);
+    expect(
+      screen.getByTestId("metric-sparkline-tokens").querySelector("svg"),
+    ).toHaveClass("text-primary");
+    expect(
+      screen.getByTestId("metric-sparkline-tokens").querySelector("polygon"),
+    ).toBeTruthy();
+    expect(
+      screen
+        .getByTestId("metric-sparkline-latency")
+        .querySelector("polyline.stroke-primary"),
+    ).toBeTruthy();
+  });
+
   it("renders card sparkline tooltips below the chart", () => {
     render(<MetricStrip data={sampleData} testId="metric-strip" />);
     const sparkline = screen.getByTestId("metric-sparkline-latency");
@@ -156,14 +177,46 @@ describe("MetricStrip sparkline hover", () => {
 });
 
 describe("MetricStrip bars", () => {
+  it("places cost last and uses orange bars", () => {
+    render(<MetricStrip bars data={sampleData} />);
+    const labels = screen.getAllByText(/^(Latency|Tokens|Tool calls|Cost)$/);
+    expect(labels.map((label) => label.textContent)).toEqual([
+      "Latency",
+      "Tokens",
+      "Tool calls",
+      "Cost",
+    ]);
+    expect(
+      screen.getByTestId("metric-sparkline-pass-rate").querySelector("svg"),
+    ).toHaveClass("text-primary");
+    // Both series are primary, and the pair stays TELLABLE APART: a dual
+    // sparkline whose two bars share one fill hides the shorter inside the
+    // taller, which is the comparison the chart exists to make.
+    const bars = [
+      ...screen
+        .getByTestId("metric-sparkline-latency")
+        .querySelectorAll("rect[data-chart-bar]"),
+    ];
+    for (const bar of bars) {
+      expect(bar.getAttribute("class")).toMatch(/fill-primary/);
+    }
+    expect(
+      new Set(bars.map((bar) => bar.getAttribute("class"))).size,
+    ).toBeGreaterThan(1);
+  });
+
   it("uses zero-based bars without trend lines across the metric row", () => {
     render(<MetricStrip bars data={sampleData} />);
     for (const metric of ["pass-rate", "tokens", "tool-calls"]) {
       const chart = screen.getByTestId(`metric-sparkline-${metric}`);
-      expect(chart.querySelectorAll("rect[data-chart-bar=value]")).toHaveLength(2);
+      expect(chart.querySelectorAll("rect[data-chart-bar=value]")).toHaveLength(
+        2,
+      );
       expect(chart.querySelector("polyline")).toBeNull();
     }
-    const bars = screen.getByTestId("metric-sparkline-pass-rate").querySelectorAll("rect");
+    const bars = screen
+      .getByTestId("metric-sparkline-pass-rate")
+      .querySelectorAll("rect");
     const heights = [...bars].map((bar) => Number(bar.getAttribute("height")));
     // 50% is half the height of 100%, rather than appearing as zero.
     expect(heights[1]).toBe(heights[0] / 2);
@@ -177,11 +230,24 @@ describe("MetricStrip bars", () => {
     const secondary = [...chart.querySelectorAll('[data-chart-bar="p95"]')];
     expect(primary).toHaveLength(2);
     expect(secondary).toHaveLength(2);
-    expect(Number(primary[1].getAttribute("height"))).toBe(Number(secondary[1].getAttribute("height")) / 2);
+    expect(Number(primary[1].getAttribute("height"))).toBe(
+      Number(secondary[1].getAttribute("height")) / 2,
+    );
   });
 
   it("keeps zero values at the baseline", () => {
-    render(<MetricStrip bars data={{ ...sampleData, series: sampleData.series.map((point) => ({ ...point, toolCalls: 0 })) }} />);
+    render(
+      <MetricStrip
+        bars
+        data={{
+          ...sampleData,
+          series: sampleData.series.map((point) => ({
+            ...point,
+            toolCalls: 0,
+          })),
+        }}
+      />,
+    );
     const chart = screen.getByTestId("metric-sparkline-tool-calls");
     for (const bar of chart.querySelectorAll("rect")) {
       expect(bar).toHaveAttribute("height", "0");
@@ -204,5 +270,7 @@ it("can omit the suite summary cost block and use four columns", () => {
   expect(screen.queryByText("Cost")).toBeNull();
   expect(screen.queryByText("not priced")).toBeNull();
   expect(screen.getByText("Tokens")).toBeVisible();
-  expect(screen.getByTestId("metric-strip").className).toContain("sm:grid-cols-[1.4fr_1fr_1fr_1fr]");
+  expect(screen.getByTestId("metric-strip").className).toContain(
+    "sm:grid-cols-[1.4fr_1fr_1fr_1fr]",
+  );
 });

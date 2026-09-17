@@ -86,7 +86,7 @@ export function LatencyTrendMetric({
                   {bars && (
                     <span
                       aria-hidden
-                      className="size-1.5 shrink-0 rounded-[1px] bg-foreground/30"
+                      className="size-1.5 shrink-0 rounded-[1px] bg-primary/40"
                     />
                   )}
                   P50
@@ -100,7 +100,7 @@ export function LatencyTrendMetric({
                   {bars && (
                     <span
                       aria-hidden
-                      className="size-1.5 shrink-0 rounded-[1px] bg-foreground/65"
+                      className="size-1.5 shrink-0 rounded-[1px] bg-primary"
                     />
                   )}
                   P95
@@ -433,6 +433,30 @@ export function MetricStrip({
     </div>
   );
 
+  const costSection = showCost && (
+    <TrendMetric
+      label="Cost"
+      value={costHeadline}
+      sub={costSub}
+      compact={compact}
+      layout={layout}
+      matrixCell={matrixCell}
+      chart={
+        // Empty when the window is not fully priced; `EvalSparkline` renders
+        // nothing below two points, which is the intended suppression.
+        showTrend && costSeries.length > 0 ? (
+          <EvalSparkline
+            bars={bars}
+            points={costSeries}
+            pointLabels={runLabels}
+            formatValue={formatCost}
+            testId="metric-sparkline-cost"
+          />
+        ) : null
+      }
+    />
+  );
+
   const metricSections = (
     <>
       <LatencyTrendMetric
@@ -448,29 +472,7 @@ export function MetricStrip({
         layout={layout}
         matrixCell={matrixCell}
       />
-      {showCost && (
-        <TrendMetric
-          label="Cost"
-          value={costHeadline}
-          sub={costSub}
-          compact={compact}
-          layout={layout}
-          matrixCell={matrixCell}
-          chart={
-            // Empty when the window is not fully priced; `EvalSparkline` renders
-            // nothing below two points, which is the intended suppression.
-            showTrend && costSeries.length > 0 ? (
-              <EvalSparkline
-                bars={bars}
-                points={costSeries}
-                pointLabels={runLabels}
-                formatValue={formatCost}
-                testId="metric-sparkline-cost"
-              />
-            ) : null
-          }
-        />
-      )}
+      {!bars && costSection}
       <TrendMetric
         label="Tokens"
         value={formatCompactNumber(tokenHeadline)}
@@ -509,6 +511,7 @@ export function MetricStrip({
           ) : null
         }
       />
+      {bars && costSection}
     </>
   );
 

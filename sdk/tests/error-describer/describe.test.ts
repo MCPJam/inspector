@@ -206,6 +206,20 @@ const CASES: Case[] = [
     build: () => new Error("Missing or invalid bearer token"),
     expectSlug: "auth/missing_bearer",
   },
+  // MCPJam's own consent wording. Both strings are produced by the client's
+  // OAuth orchestrator and used to land on `internal/unknown`, which rendered
+  // an expected one-click state as "Unknown error".
+  {
+    name: "consent-required wording",
+    build: () =>
+      new Error("OAuth consent is required for asana. Click Reconnect to continue."),
+    expectSlug: "auth/consent_required",
+  },
+  {
+    name: "reauthenticate-to-continue wording",
+    build: () => new Error("Reauthenticate asana to continue."),
+    expectSlug: "auth/consent_required",
+  },
   // Provider quota / rate limit. A 429 reaches us in three shapes: the AI-SDK
   // `APICallError` carries `statusCode`, some transports set a numeric `code`,
   // and the local-BYOK swarm path loses both and leaves only the message.
@@ -801,5 +815,32 @@ describe("a 429 is attributed to the boundary it crossed", () => {
       surface: "mcpServer",
     });
     expect(d.slug).toBe("auth/http_401");
+  });
+});
+
+it.each(["content", "messages"])(
+  "describes an empty hosted model response (%s) without blaming the server",
+  (noun) => {
+    expect(
+      describeError(
+        `Backend step returned no ${noun} (stream error or empty response)`
+      )
+    ).toMatchObject({
+      slug: "provider/empty_response",
+      origin: "ambiguous",
+      oneLine:
+        "The model returned no response, so the turn could not complete.",
+    });
+  }
+);
+
+
+describe("MCPJam containment refusals", () => {
+  it.each([
+    ["platform_free_budget_exhausted", "provider/mcpjam_platform_budget"],
+    ["account_suspended", "account/suspended"],
+  ])("preserves %s without reporting provider authentication failure", (code, slug) => {
+    expect(describeError({ code, message: "Forbidden" }).slug).toBe(slug);
+    expect(describeError({ data: { code }, message: "Forbidden" }).slug).toBe(slug);
   });
 });

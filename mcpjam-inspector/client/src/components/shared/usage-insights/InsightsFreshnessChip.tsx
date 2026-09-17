@@ -10,6 +10,7 @@ import type {
   ClusterRunState,
   InsightsScope,
 } from "@/hooks/useUsageInsights";
+import { SHOW_RECLUSTERING_UI } from "@/lib/cluster-tuning";
 import { SCENARIO_INSIGHTS_QUERIES } from "@/lib/scenario-insights-api";
 
 /**
@@ -30,6 +31,20 @@ import { SCENARIO_INSIGHTS_QUERIES } from "@/lib/scenario-insights-api";
  * Specifics live behind the expand, per the minimal-UI norm: the chip is a
  * timestamp, the popover is the run detail plus Rebuild.
  */
+/**
+ * What this chip calls the thing it is reporting on.
+ *
+ * The copy used to say "scenario" everywhere, which is now wrong twice over:
+ * User Testing renamed it to a STUDY, and on Swarm the chip has always been
+ * describing one wave's run, never a scenario at all. (`benchmark` is in
+ * `InsightsScope` but never reaches this chip — that surface renders
+ * `ExplanatoryFlowOptIn`, not the workbench — so it is folded in with Swarm
+ * rather than given copy nobody would read.)
+ */
+function scopeNoun(scope: InsightsScope): string {
+  return scope.kind === "scenario" ? "study" : "run";
+}
+
 export function InsightsFreshnessChip({
   scope,
   latestRun,
@@ -104,7 +119,7 @@ export function InsightsFreshnessChip({
               ? `Last analyzed ${formatDistanceToNow(builtAt, { addSuffix: true })}`
               : failed
                 ? "The last analysis failed"
-                : "This scenario has not been analyzed yet"}
+                : `This ${scopeNoun(scope)} has not been analyzed yet`}
           </div>
           {builtAt ? (
             <div className="text-muted-foreground">
@@ -114,7 +129,9 @@ export function InsightsFreshnessChip({
           ) : null}
           {dataStale ? (
             <div className="text-muted-foreground">
-              New sessions have arrived since. Rebuild to include them.
+              {SHOW_RECLUSTERING_UI
+                ? "New sessions have arrived since. Rebuild to include them."
+                : "New sessions have arrived since this analysis."}
             </div>
           ) : null}
           {jobStuck ? (
@@ -126,23 +143,24 @@ export function InsightsFreshnessChip({
             <div className="text-destructive">{latestRun.errorMessage}</div>
           ) : null}
         </div>
-        {/* A run in flight — started here, elsewhere, or before this mount —
-            makes Rebuild a redundant second request. A STUCK one is the
-            exception: that is exactly what retry is for. */}
-        <button
-          type="button"
-          className="inline-flex items-center gap-1.5 rounded-md border px-2 py-1 font-medium transition-colors hover:bg-muted disabled:opacity-50"
-          disabled={rebuildBusy || (running && !jobStuck)}
-          onClick={() => void onRebuild()}
-          data-testid={testId ? `${testId}-rebuild` : undefined}
-        >
-          {rebuildBusy ? (
-            <Loader2 className="size-3 animate-spin" />
-          ) : (
-            <RefreshCw className="size-3" />
-          )}
-          {jobStuck ? "Retry analysis" : failed ? "Retry" : "Rebuild"}
-        </button>
+        {/* Recovery (failed / stuck) stays. Voluntary Rebuild is the
+            re-clustering path and is gated off for now. */}
+        {SHOW_RECLUSTERING_UI || jobStuck || failed ? (
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 rounded-md border px-2 py-1 font-medium transition-colors hover:bg-muted disabled:opacity-50"
+            disabled={rebuildBusy || (running && !jobStuck)}
+            onClick={() => void onRebuild()}
+            data-testid={testId ? `${testId}-rebuild` : undefined}
+          >
+            {rebuildBusy ? (
+              <Loader2 className="size-3 animate-spin" />
+            ) : (
+              <RefreshCw className="size-3" />
+            )}
+            {jobStuck ? "Retry analysis" : failed ? "Retry" : "Rebuild"}
+          </button>
+        ) : null}
       </PopoverContent>
     </Popover>
   );

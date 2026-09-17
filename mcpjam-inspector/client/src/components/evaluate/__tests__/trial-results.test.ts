@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildEvaluationConfigSnapshot,
   definitionHash,
@@ -211,8 +211,8 @@ describe("joinTrialResults — case and suite rows", () => {
   });
 
   it("still joins after the check's role was changed", () => {
-    // Policy is stripped from identity on purpose: a Gate → Warn edit must not
-    // orphan the check's own history.
+    // Policy is stripped from identity on purpose: a Required → Advisory edit
+    // must not orphan the check's own history.
     const warned = { ...finalNonEmpty, role: "advisory", severity: "warn" } as Predicate;
     const rows = join(
       { ...authored, predicates: { mode: "extend", list: [warned] } },
@@ -228,7 +228,7 @@ describe("joinTrialResults — case and suite rows", () => {
       state: "failed",
       reason: "empty answer",
     });
-    expect(rowByKey(rows, "case:0").role).toBe("warn");
+    expect(rowByKey(rows, "case:0").role).toBe("advisory");
   });
 
   it("gives two identical checks the same result, because the server minted one scorer", () => {
@@ -461,38 +461,40 @@ describe("summarizeTrialScorecard", () => {
     },
   ];
 
-  it("counts gates, and only gates", () => {
+  it("counts required rows, and only required rows", () => {
     const summary = summarizeTrialScorecard(
       rowsWith([
-        ["gate", { state: "passed", source: "stepResult" }],
-        ["gate", { state: "passed", source: "stepResult" }],
-        ["warn", { state: "failed", source: "stepResult" }],
-        ["report", { state: "failed", source: "stepResult" }],
+        ["required", { state: "passed", source: "stepResult" }],
+        ["required", { state: "passed", source: "stepResult" }],
+        ["advisory", { state: "failed", source: "stepResult" }],
+        ["advisory", { state: "failed", source: "stepResult" }],
       ]),
     );
-    expect(summary.gates).toEqual({ passed: 2, counted: 2 });
-    expect(summary.warn).toBe(1);
-    expect(summary.report).toBe(1);
+    expect(summary.required).toEqual({ passed: 2, counted: 2 });
+    // One advisory tally, not a warn/report split.
+    expect(summary.advisory).toBe(2);
   });
 
-  it("keeps an unmeasured gate out of the denominator", () => {
+  it("keeps an unmeasured required row out of the denominator", () => {
     // "1 of 2" for a scorer that never ran would claim a failure nobody saw.
     const summary = summarizeTrialScorecard(
       rowsWith([
-        ["gate", { state: "passed", source: "stepResult" }],
-        ["gate", { state: "notMeasured" }],
-        ["gate", { state: "skipped", source: "stepResult" }],
+        ["required", { state: "passed", source: "stepResult" }],
+        ["required", { state: "notMeasured" }],
+        ["required", { state: "skipped", source: "stepResult" }],
       ]),
     );
-    expect(summary.gates).toEqual({ passed: 1, counted: 1 });
+    expect(summary.required).toEqual({ passed: 1, counted: 1 });
     expect(summary.notMeasured).toBe(1);
   });
 
-  it("counts a gating scorer that errored as counted but not passed", () => {
+  it("counts a required scorer that errored as counted but not passed", () => {
     const summary = summarizeTrialScorecard(
-      rowsWith([["gate", { state: "error", source: "scoreRow", reason: "x" }]]),
+      rowsWith([
+        ["required", { state: "error", source: "scoreRow", reason: "x" }],
+      ]),
     );
-    expect(summary.gates).toEqual({ passed: 0, counted: 1 });
+    expect(summary.required).toEqual({ passed: 0, counted: 1 });
     expect(summary.errors).toBe(1);
   });
 });
@@ -520,3 +522,108 @@ it.each([
     expect(rowByKey(rows, "step:a1").result.state).toBe(state);
   },
 );
+
+describe("the trace narrative join", () => {
+  const report = (
+    rows: Array<{ joinKey: string; verdictSeen: string; actual: string }>,
+    status: "ready" | "stale" = "ready",
+  ) =>
+    ({
+      schemaVersion: 1,
+      iterationId: "it1",
+      runRevision: "r",
+      builtAt: 0,
+      status,
+      rows: rows.map((row) => ({
+        ...row,
+        stage: "userValue",
+        citations: ["m:0"],
+      })),
+      stageNotes: [],
+    }) as unknown as TrialFacts["report"];
+
+  const judgeKey = "judge:goalCompletion";
+  const failedJudge = {
+    caseKey: "c1",
+    score: 0.1,
+    passed: false,
+    reason: "The server was never saved.",
+    rubricHits: [],
+  } as never;
+
+  it("gives a row the note minted for its own scorer id", () => {
+    const rows = join(authored, {
+      iteration: iteration({}),
+      judgeCase: failedJudge,
+      report: report([
+        { joinKey: judgeKey, verdictSeen: "failed", actual: "It never saved." },
+      ]),
+    });
+    expect(rowByKey(rows, "judge:goalCompletion").narrative).toMatchObject({
+      text: "It never saved.",
+      stale: false,
+    });
+  });
+
+  it("marks a note stale when the grade moved under it", () => {
+    const rows = join(authored, {
+      iteration: iteration({}),
+      judgeCase: failedJudge,
+      report: report([
+        // The report saw a pass; the recorded verdict now says failed.
+        { joinKey: judgeKey, verdictSeen: "passed", actual: "It saved." },
+      ]),
+    });
+    expect(rowByKey(rows, "judge:goalCompletion").narrative?.stale).toBe(true);
+  });
+
+  it("marks every note stale when the report itself is stale", () => {
+    const rows = join(authored, {
+      iteration: iteration({}),
+      judgeCase: failedJudge,
+      report: report(
+        [
+          {
+            joinKey: judgeKey,
+            verdictSeen: "failed",
+            actual: "It never saved.",
+          },
+        ],
+        "stale",
+      ),
+    });
+    expect(rowByKey(rows, "judge:goalCompletion").narrative?.stale).toBe(true);
+  });
+
+  it("refuses to pick between two notes claiming one scorer", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const rows = join(authored, {
+      iteration: iteration({}),
+      judgeCase: failedJudge,
+      report: report([
+        { joinKey: judgeKey, verdictSeen: "failed", actual: "One story." },
+        { joinKey: judgeKey, verdictSeen: "failed", actual: "Another story." },
+      ]),
+    });
+    expect(rowByKey(rows, "judge:goalCompletion").narrative).toBeUndefined();
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("leaves a keyless row alone rather than matching it to anything", () => {
+    // A step-authored check with no criterion id mints no scorer id. An
+    // `undefined` key must match nothing, not every note without one.
+    const rows = join(authored, {
+      iteration: iteration({}),
+      report: report([
+        { joinKey: "predicate:whatever", verdictSeen: "passed", actual: "x" },
+      ]),
+    });
+    expect(rowByKey(rows, "step:a1").narrative).toBeUndefined();
+  });
+
+  it("leaves every row alone when no report exists", () => {
+    const rows = join(authored, { iteration: iteration({}) });
+    expect(rows.every((row) => row.narrative === undefined)).toBe(true);
+  });
+});

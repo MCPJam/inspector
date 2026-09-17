@@ -4,6 +4,7 @@ import { updateSuiteSchema } from "../evals.js";
 import {
   EVAL_SUITE_SETTINGS_MANIFEST,
   QUALITY_GATE_REQUEST_SAMPLES,
+  CANONICAL_ROLE_SAMPLE_BY_PATH,
   SAMPLE_BY_PATH,
   SETTINGS_PAGE_HIDDEN_KEYS,
 } from "@/shared/eval-suite-settings-manifest";
@@ -36,7 +37,7 @@ function bodyForPath(path: string, value: unknown): Record<string, unknown> {
   const segments = path.split(".");
   return segments.reduceRight<unknown>(
     (inner, key) => ({ [key]: inner }),
-    value
+    value,
   ) as Record<string, unknown>;
 }
 
@@ -45,11 +46,13 @@ const OPERATION_NAMES = new Set(ALL_OPERATIONS.map((op) => op.name));
 /** Full refined bodies for quality-gate leaves — a standalone leaf fails the reason/revision refine. */
 const QUALITY_GATE_BODY_BY_PATH: Record<string, Record<string, unknown>> = {
   "settings.qualityGate.baseline":
-    QUALITY_GATE_REQUEST_SAMPLES.find((sample) => sample.name === "baseline only")
-      ?.body ?? {},
+    QUALITY_GATE_REQUEST_SAMPLES.find(
+      (sample) => sample.name === "baseline only",
+    )?.body ?? {},
   "settings.qualityGate.maximumPassRateDrop":
-    QUALITY_GATE_REQUEST_SAMPLES.find((sample) => sample.name === "maximum drop")
-      ?.body ?? {},
+    QUALITY_GATE_REQUEST_SAMPLES.find(
+      (sample) => sample.name === "maximum drop",
+    )?.body ?? {},
   "settings.qualityGate.noDeterministicRegressions":
     QUALITY_GATE_REQUEST_SAMPLES.find(
       (sample) => sample.name === "deterministic regressions",
@@ -74,11 +77,12 @@ describe("eval suite settings manifest — API parity", () => {
   it("declares exactly one reachability answer per row", () => {
     for (const row of EVAL_SUITE_SETTINGS_MANIFEST) {
       const answers = [row.api, row.op, row.excluded].filter(
-        (value) => value !== undefined
+        (value) => value !== undefined,
       );
-      expect(answers, `${row.key} must declare exactly one answer`).toHaveLength(
-        1
-      );
+      expect(
+        answers,
+        `${row.key} must declare exactly one answer`,
+      ).toHaveLength(1);
     }
   });
 
@@ -94,10 +98,10 @@ describe("eval suite settings manifest — API parity", () => {
       const sample = SAMPLE_BY_PATH[row.api];
       expect(
         sample,
-        `${row.key} names api path "${row.api}" with no sample value in this test — add one`
+        `${row.key} names api path "${row.api}" with no sample value in this test — add one`,
       ).toBeDefined();
       const parsed = updateSuiteSchema.safeParse(
-        requestBodyForApiPath(row.api, sample)
+        requestBodyForApiPath(row.api, sample),
       );
       if (!parsed.success) {
         unreachable.push(`${row.key} → ${row.api}: ${parsed.error.message}`);
@@ -110,14 +114,14 @@ describe("eval suite settings manifest — API parity", () => {
       const [head] = row.api.split(".");
       expect(
         parsed.data,
-        `${row.key} → ${row.api} parsed but was dropped from the result`
+        `${row.key} → ${row.api} parsed but was dropped from the result`,
       ).toHaveProperty(head);
     }
     expect(
       unreachable,
       `Manifest rows claiming a PATCH field the schema does not accept:\n  ${unreachable.join(
-        "\n  "
-      )}`
+        "\n  ",
+      )}`,
     ).toEqual([]);
   });
 
@@ -129,11 +133,11 @@ describe("eval suite settings manifest — API parity", () => {
       if (!row.api || !row.api.includes(".")) continue;
       const [head, leaf] = row.api.split(".");
       const parsed = updateSuiteSchema.parse(
-        requestBodyForApiPath(row.api, SAMPLE_BY_PATH[row.api])
+        requestBodyForApiPath(row.api, SAMPLE_BY_PATH[row.api]),
       ) as Record<string, Record<string, unknown>>;
       expect(
         parsed[head],
-        `${row.key} → ${row.api} lost its leaf "${leaf}"`
+        `${row.key} → ${row.api} lost its leaf "${leaf}"`,
       ).toHaveProperty(leaf);
     }
   });
@@ -143,7 +147,7 @@ describe("eval suite settings manifest — API parity", () => {
       if (!row.op) continue;
       expect(
         OPERATION_NAMES.has(row.op),
-        `${row.key} names operation "${row.op}", which is not in ALL_OPERATIONS`
+        `${row.key} names operation "${row.op}", which is not in ALL_OPERATIONS`,
       ).toBe(true);
     }
   });
@@ -155,7 +159,7 @@ describe("eval suite settings manifest — API parity", () => {
         parsed.success,
         `${sample.name} should be accepted: ${
           parsed.success ? "" : parsed.error.message
-        }`
+        }`,
       ).toBe(true);
     }
   });
@@ -199,9 +203,9 @@ describe("eval suite settings manifest — API parity", () => {
       }
     }
     expect(SAMPLE_BY_PATH["settings.judge.groundedness"]).toBeUndefined();
-    expect(
-      JSON.stringify(SAMPLE_BY_PATH["settings.judge"] ?? {}),
-    ).not.toMatch(/groundedness/);
+    expect(JSON.stringify(SAMPLE_BY_PATH["settings.judge"] ?? {})).not.toMatch(
+      /groundedness/,
+    );
     const refused = updateSuiteSchema.safeParse({
       settings: { judge: { groundedness: { enabled: true } } },
     });
@@ -216,6 +220,13 @@ describe("eval suite settings manifest — API parity", () => {
     expect(Object.keys(SETTINGS_PAGE_HIDDEN_KEYS).sort()).toEqual([
       "deleteSuite",
       "githubChecks",
+      // Baseline comparison left the settings page. The API still accepts all
+      // four fields and a run still enforces them, so they are hidden rather
+      // than excluded, and a stored value is shown read-only in the section.
+      "qualityGateAllowedDrop",
+      "qualityGateBaseline",
+      "qualityGateMaximumP95LatencyIncreaseMs",
+      "qualityGateNoDeterministicRegressions",
       "schedule",
     ]);
     for (const [key, whereItLives] of Object.entries(
@@ -251,7 +262,7 @@ describe("eval suite settings manifest — API parity", () => {
       if (!row.excluded) continue;
       expect(
         row.excluded.trim().length,
-        `${row.key}'s exclusion reason is too thin to argue with`
+        `${row.key}'s exclusion reason is too thin to argue with`,
       ).toBeGreaterThanOrEqual(40);
       // Length is not truth. The `checks` row once explained itself with
       // "saved through applySuiteSettings.disabledStageChecks; it has no
@@ -265,5 +276,32 @@ describe("eval suite settings manifest — API parity", () => {
         `${row.key}'s reason claims a backend save path this repo cannot check — describe the row instead`,
       ).toBe(false);
     }
+  });
+});
+
+describe("the canonical role spelling reaches the PATCH schema", () => {
+  // The SCHEMA takes all three spellings — reading a stored contract must
+  // never fail on one. Which of them a given REQUEST may send is decided by
+  // `x-mcpjam-eval-vocabulary` at the route, and `eval-edit.test.ts` covers
+  // that refusal end to end. This test is the half that would otherwise go
+  // unnoticed: a schema that quietly stopped accepting `required` would make
+  // the route's vocabulary-2 branch unreachable, with every existing test
+  // still green.
+  for (const [path, sample] of Object.entries(CANONICAL_ROLE_SAMPLE_BY_PATH)) {
+    it(`accepts ${path}`, () => {
+      const parsed = updateSuiteSchema.safeParse(
+        requestBodyForApiPath(path, sample),
+      );
+      expect(parsed.success, parsed.success ? "" : parsed.error.message).toBe(
+        true,
+      );
+    });
+  }
+
+  it("keeps the vocabulary-1 sample's advisory severity, which is a later step to drop", () => {
+    const checks = SAMPLE_BY_PATH["settings.checks"] as Array<
+      Record<string, unknown>
+    >;
+    expect(checks.some((c) => c.severity === "warn")).toBe(true);
   });
 });

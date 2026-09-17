@@ -1,4 +1,6 @@
+import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type { ModelMessage } from "ai";
+import type { ResolvedExecutionBudgets } from "@mcpjam/sdk/contract";
 import type { ConvexHttpClient } from "convex/browser";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { PromptTraceSummary } from "@/shared/eval-trace";
@@ -131,6 +133,7 @@ export type SuiteRunRecorder = {
     /** Effective model used by the iteration; persisted on the eval session. */
     modelId?: string;
     spans?: EvalTraceSpan[];
+    requestPayloads?: LiveChatTraceRequestPayloadEntry[];
     prompts?: PromptTraceSummary[];
     widgetSnapshots?: EvalTraceWidgetSnapshot[];
     /**
@@ -1049,6 +1052,27 @@ export const startSuiteRunWithRecorder = async ({
     suiteId,
     config,
     recorder,
+    /**
+     * The run's FROZEN execution budgets, exactly as the launch resolved them
+     * against the suite's authored values and the org's ceilings.
+     *
+     * Read off the RESPONSE rather than re-read from the suite, and that is
+     * the whole point: re-reading would let an edit mid-run change what the
+     * run may spend, and two iterations of one run could end up bounded
+     * differently. The launch decided; this only carries the decision.
+     *
+     * Absent from a backend that predates the field, which the runner reads as
+     * "resolve the platform defaults" — the same code path, differing only in
+     * which rung each field came from.
+     */
+    // Read from the response's `configSnapshot`, where every other frozen
+    // decision on this surface lives (`gradingEngine`, `pluginVersions`), with
+    // the top-level spelling as a fallback so the two repos can deploy in
+    // either order.
+    executionBudgets: ((response?.configSnapshot as Record<string, unknown>)
+      ?.executionBudgets ?? response?.executionBudgets) as
+      | ResolvedExecutionBudgets
+      | undefined,
     githubCredentialPolicy: response?.githubCredentialPolicy as
       | "no_customer_credentials"
       | "suite_credentials"

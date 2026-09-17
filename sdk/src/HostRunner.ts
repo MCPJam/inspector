@@ -2,8 +2,10 @@
  * HostRunner - Runs LLM prompts with tool calling for evals
  */
 
+import type { McpjamModelLeaseScope } from "./mcpjam-model-lease.js";
 import {
   generateText,
+  asSchema,
   hasToolCall,
   stepCountIs,
   dynamicTool,
@@ -30,9 +32,7 @@ import { createModelFromString, parseLLMString } from "./model-factory.js";
  */
 function customProviderNameSet(
   customProviders:
-    | Map<string, CustomProvider>
-    | Record<string, CustomProvider>
-    | undefined
+    Map<string, CustomProvider> | Record<string, CustomProvider> | undefined
 ): Set<string> | undefined {
   if (!customProviders) return undefined;
   return new Set(
@@ -84,6 +84,10 @@ import {
  * string (legacy path with no host-derived defaults).
  */
 interface HostRunnerBaseConfig {
+  /** @internal Lease ownership inherited by iteration clones. */
+  mcpjamLeaseScope?: McpjamModelLeaseScope;
+  mcpjamProject?: string;
+  baseUrls?: CreateModelOptions["baseUrls"];
   /** Tools to provide to the LLM (Tool[] from manager.getTools() or AiSdkTool from manager.getToolsForAiSdk()) */
   tools: Tool[] | AiSdkTool;
   /** API key for the LLM provider */
@@ -96,7 +100,8 @@ interface HostRunnerBaseConfig {
   maxSteps?: number;
   /** Custom providers registry for non-standard LLM providers */
   customProviders?:
-    Map<string, CustomProvider> | Record<string, CustomProvider>;
+    | Map<string, CustomProvider>
+    | Record<string, CustomProvider>;
   /** Optional MCP client manager for capturing MCP App replay snapshots */
   mcpClientManager?: MCPClientManager;
   /**
@@ -267,11 +272,15 @@ export class HostRunner implements HostExecutor {
   private readonly rawTools: Tool[] | AiSdkTool;
   private readonly model: string;
   private readonly apiKey: string;
+  private readonly mcpjamLeaseScope?: McpjamModelLeaseScope;
+  private readonly mcpjamProject?: string;
+  private readonly baseUrls?: CreateModelOptions["baseUrls"];
   private systemPrompt: string;
   private temperature: number | undefined;
   private readonly maxSteps: number;
   private readonly customProviders?:
-    Map<string, CustomProvider> | Record<string, CustomProvider>;
+    | Map<string, CustomProvider>
+    | Record<string, CustomProvider>;
   private readonly mcpClientManager?: MCPClientManager;
   private readonly injectOpenAiCompat: boolean;
   /**
@@ -282,7 +291,8 @@ export class HostRunner implements HostExecutor {
    * byte-identical to before this was wired up.
    */
   private readonly openAiCompatCapabilities:
-    Record<string, unknown> | undefined;
+    | Record<string, unknown>
+    | undefined;
 
   /**
    * Immutable host snapshot driving this runner, if constructed with a
@@ -303,7 +313,8 @@ export class HostRunner implements HostExecutor {
    * `withOptions` re-runs them against the raw `Tool[]` under a new host.
    */
   private readonly toolDescriptionOverrides:
-    Readonly<Record<string, string>> | undefined;
+    | Readonly<Record<string, string>>
+    | undefined;
 
   /** Normalized provider name parsed from the model string */
   private readonly _parsedProvider: string;
@@ -382,8 +393,16 @@ export class HostRunner implements HostExecutor {
       : config.tools;
     this.model = resolvedModel;
     this.apiKey = config.apiKey;
+    this.mcpjamLeaseScope = config.mcpjamLeaseScope;
+    this.mcpjamProject = config.mcpjamProject;
+    this.baseUrls = config.baseUrls;
+    // An EMPTY system prompt is treated as "none given", the same as the
+    // snapshot branch below already does. Anthropic refuses an empty system
+    // block outright ("system: text content blocks must be non-empty"), so a
+    // caller that passes `""` — a saved client with no system prompt, read by
+    // `runWithClient` — would otherwise 400 on every generation.
     this.systemPrompt =
-      config.systemPrompt ??
+      (config.systemPrompt ? config.systemPrompt : undefined) ??
       (this.hostSnapshot?.systemPrompt && this.hostSnapshot.systemPrompt !== ""
         ? this.hostSnapshot.systemPrompt
         : "You are a helpful assistant.");
@@ -730,6 +749,31 @@ export class HostRunner implements HostExecutor {
    */
   async run(message: string, options?: PromptOptions): Promise<PromptResult> {
     const startTime = Date.now();
+    const unavailable: string[] = [];
+    const toolDefinitions = Object.entries(this.tools).map(([name, tool]) => {
+      try {
+        const rawTool = isToolArray(this.rawTools)
+          ? this.rawTools.find((candidate) => candidate.name === name)
+          : undefined;
+        const { execute: _execute, ...metadata } = rawTool ?? {};
+        return {
+          ...metadata,
+          name,
+          description: tool.description,
+          inputSchema: asSchema(tool.inputSchema).jsonSchema,
+        };
+      } catch {
+        unavailable.push(`toolDefinitions.${name}.inputSchema`);
+        return { name, description: tool.description };
+      }
+    });
+    const recordedContext = {
+      toolDefinitions,
+      systemPrompt: this.systemPrompt,
+      model: this.model,
+      temperature: this.temperature,
+      ...(unavailable.length ? { unavailable } : {}),
+    };
     let totalMcpMs = 0;
     let lastStepEndTime = startTime;
     let totalLlmMs = 0;
@@ -776,6 +820,9 @@ export class HostRunner implements HostExecutor {
     try {
       const modelOptions: CreateModelOptions = {
         apiKey: this.apiKey,
+        mcpjamLeaseScope: this.mcpjamLeaseScope,
+        mcpjamProject: this.mcpjamProject,
+        baseUrls: this.baseUrls,
         customProviders: this.customProviders,
       };
       const model = createModelFromString(this.model, modelOptions);
@@ -886,6 +933,7 @@ export class HostRunner implements HostExecutor {
       );
 
       this.lastResult = PromptResult.from({
+        recordedContext,
         prompt: message,
         messages,
         text: result.text,
@@ -933,6 +981,7 @@ export class HostRunner implements HostExecutor {
       const totalTokens = partialInputTokens + partialOutputTokens;
 
       this.lastResult = PromptResult.from({
+        recordedContext,
         prompt: message,
         messages: partialMessages,
         text: lastCompletedStepText,
@@ -1020,6 +1069,9 @@ export class HostRunner implements HostExecutor {
     const base = {
       tools: options.tools ?? this.rawTools,
       apiKey: options.apiKey ?? this.apiKey,
+      mcpjamLeaseScope: options.mcpjamLeaseScope ?? this.mcpjamLeaseScope,
+      mcpjamProject: options.mcpjamProject ?? this.mcpjamProject,
+      baseUrls: options.baseUrls ?? this.baseUrls,
       maxSteps: options.maxSteps ?? this.maxSteps,
       customProviders: options.customProviders ?? this.customProviders,
       mcpClientManager: options.mcpClientManager ?? this.mcpClientManager,

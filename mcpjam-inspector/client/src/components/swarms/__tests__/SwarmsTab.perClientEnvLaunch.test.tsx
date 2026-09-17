@@ -16,6 +16,11 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("@/hooks/use-host-snapshot", () => ({
+  useHostSnapshotForHost: () => ({ status: "unavailable" }),
+  useHostSnapshotForSession: () => ({ status: "unavailable" }),
+}));
+
 vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({ availableModels: [] }),
 }));
@@ -43,12 +48,14 @@ const HOSTS = [
   { hostId: "host-claude", name: "Claude" },
 ];
 
-vi.mock("@/hooks/useClients", () => ({
+vi.mock("@/hooks/useClients", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/hooks/useClients")>()),
+  useHost: () => ({ host: null, isLoading: false }),
   useHostList: () => ({ hosts: HOSTS, isLoading: false }),
 }));
 
-vi.mock("@/components/hosts/ServerGroupPicker", () => ({
-  ServerGroupPicker: () => <div data-testid="server-group-picker" />,
+vi.mock("@/components/hosts/server-picker", () => ({
+  ServerPicker: () => <div data-testid="server-group-picker" />,
 }));
 
 vi.mock("@/contexts/db-user-ready-context", () => ({
@@ -301,7 +308,7 @@ describe("SwarmsTab — a swarm across two per-client environments", () => {
     );
     expect(
       screen.getByTestId("new-swarm-launch-session-estimate"),
-    ).toHaveTextContent(/4 sessions/i);
+    ).toHaveTextContent(/4 conversations/i);
     expect(
       screen.queryByTestId("new-swarm-grading-toggle"),
     ).not.toBeInTheDocument();

@@ -2,6 +2,9 @@ import { isIP, isIPv4, isIPv6 } from "node:net";
 import type { webcrypto } from "node:crypto";
 import { getGuestSessionHashPepper } from "./guest-session-pepper.js";
 
+import { edgeAttestationConfigured } from "./client-ip.js";
+import { logger } from "./logger.js";
+
 const SCOPE = "guest-spend-ip";
 
 let cachedKeyPepper: string | null = null;
@@ -103,4 +106,21 @@ export async function hashGuestSpendIp(rawIp: string): Promise<string | null> {
     new TextEncoder().encode(`${SCOPE}:${canonical}`),
   );
   return bytesToBase64Url(new Uint8Array(sig));
+}
+
+/**
+ * Headers that forward a hashed client IP to Convex. The hash is only sent
+ * with the service token that proves it came from this server; Convex keys
+ * an unproven request on its own edge IP and ignores the hash.
+ */
+export function guestIpForwardHeaders(
+  ipHash: string | null | undefined,
+): Record<string, string> {
+  const token = process.env.INSPECTOR_SERVICE_TOKEN?.trim();
+  if (!token || (!ipHash && !edgeAttestationConfigured())) return {};
+  if (!ipHash) logger.warn("Pooling unattested guest IP", { event: "llm_spend_unattested_ip_pooled" });
+  return {
+    "x-mcpjam-guest-ip-hash": ipHash ?? "_unattested",
+    "x-inspector-service-token": token,
+  };
 }

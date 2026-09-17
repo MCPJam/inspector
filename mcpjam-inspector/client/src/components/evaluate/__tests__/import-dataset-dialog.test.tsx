@@ -90,6 +90,17 @@ beforeEach(() => {
   });
 });
 describe("Markdown case import", () => {
+  it("labels file sizes and validation messages in KB", () => {
+    renderWithProviders(<ImportDatasetDialog {...props} />);
+    expect(screen.getByText(/Up to 100 KB/)).toBeVisible();
+    upload("cases.md", "a".repeat(1024));
+    expect(screen.getByText(/cases.md · 1.0 KB/)).toBeVisible();
+    upload("large.md", "a".repeat(100 * 1024 + 1));
+    expect(
+      screen.getByText("Split the file into documents of at most 100 KB."),
+    ).toBeVisible();
+  });
+
   it("stages extracted cases on the suite page and only saves after review", async () => {
     renderWithProviders(<Harness />);
     upload();
@@ -284,5 +295,35 @@ describe("Markdown case import", () => {
       useEvalGeneration.getState().suites[evalSuiteKey(props)].drafts[0]
         .markdownImport?.source,
     ).toEqual(source);
+  });
+
+  it("replaces the raw limit refusal with the plain sentence", async () => {
+    vi.mocked(extractMarkdownCases).mockRejectedValueOnce(
+      new Error(
+        "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
+      ),
+    );
+    renderWithProviders(<ImportDatasetDialog {...props} />);
+    upload();
+    fireEvent.click(screen.getByRole("button", { name: "Extract cases" }));
+
+    const alert = await screen.findByRole("alert");
+    // Loose on the wording: the sentence is owned by the SDK error catalog,
+    // and the point of the test is that the backend's own phrasing is gone.
+    expect(alert).toHaveTextContent(/MCPJam (model )?limit reached\./);
+    expect(alert).not.toHaveTextContent("Use BYOK");
+  });
+
+  it("keeps non-limit errors verbatim", async () => {
+    vi.mocked(extractMarkdownCases).mockRejectedValueOnce(
+      new Error("You cannot import cases into this suite."),
+    );
+    renderWithProviders(<ImportDatasetDialog {...props} />);
+    upload();
+    fireEvent.click(screen.getByRole("button", { name: "Extract cases" }));
+
+    await expect(screen.findByRole("alert")).resolves.toHaveTextContent(
+      "You cannot import cases into this suite.",
+    );
   });
 });

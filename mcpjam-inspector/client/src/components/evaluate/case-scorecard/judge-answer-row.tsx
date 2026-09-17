@@ -109,7 +109,7 @@ function Body({
           {threshold.toFixed(2)}
         </span>
         <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
-          {gating ? "Gate" : "Advisory — does not change the result"}
+          {gating ? "Required" : "Advisory — does not change the result"}
         </span>
       </>
     );

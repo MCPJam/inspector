@@ -26,7 +26,7 @@ import type {
 import type { MCPClientManager, Harness } from "@mcpjam/sdk";
 import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config/internal";
 import type { ModelDefinition } from "@/shared/types";
-import { isHostedCatalogModel } from "../services/hosted-model-catalog.js";
+import { isHostedModelDefinition } from "../services/hosted-model-catalog.js";
 import type { LiveChatTraceUsage } from "@/shared/live-chat-trace";
 import type {
   ProgressiveToolPlan,
@@ -189,6 +189,8 @@ export interface RunAssistantTurnOptions {
   onToolCall?: MCPJamHandlerOptions["onToolCall"];
   onToolResult?: MCPJamHandlerOptions["onToolResult"];
   onStepFinish?: MCPJamHandlerOptions["onStepFinish"];
+  durableCheckpoint?: MCPJamHandlerOptions["durableCheckpoint"];
+  yieldAfterStep?: boolean;
   /**
    * PR 5b-followup-2: structured-error pass-through. Eval's backend
    * stream runner uses this to surface guardrail detail (429
@@ -559,6 +561,12 @@ function buildHandlerOptions(
     ...(opts.onToolCall ? { onToolCall: opts.onToolCall } : {}),
     ...(opts.onToolResult ? { onToolResult: opts.onToolResult } : {}),
     ...(opts.onStepFinish ? { onStepFinish: opts.onStepFinish } : {}),
+    ...(opts.durableCheckpoint
+      ? {
+          durableCheckpoint: opts.durableCheckpoint,
+          yieldAfterStep: opts.yieldAfterStep,
+        }
+      : {}),
     // PR 5b-followup-2: pass-through structured-error callback.
     ...(opts.onEngineError ? { onEngineError: opts.onEngineError } : {}),
     ...(opts.failureReporter ? { failureReporter: opts.failureReporter } : {}),
@@ -670,8 +678,13 @@ export async function runAssistantTurn(
         adapter: harnessAdapter,
         modelId: harnessModelId,
         provider: opts.modelDefinition.provider,
+        hosted: opts.modelDefinition.hosted,
       })
-    : isHostedCatalogModel(harnessModelId, opts.modelDefinition.provider);
+    : isHostedModelDefinition({
+        id: harnessModelId,
+        provider: opts.modelDefinition.provider,
+        hosted: opts.modelDefinition.hosted,
+      });
   const useHarness = harnessRequested && modelEligible;
   if (harnessRequested && !modelEligible) {
     // AN EXTERNAL-ACCOUNT HARNESS HAS NO FALLBACK, so ineligibility here is a

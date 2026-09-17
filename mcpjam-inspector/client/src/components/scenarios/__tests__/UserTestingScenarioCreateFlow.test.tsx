@@ -67,12 +67,17 @@ vi.mock("@/hooks/useComputersEnabled", () => ({
 vi.mock("@/hooks/useClients", () => ({
   useHostList: () => hostListState,
 }));
-vi.mock("@/components/hosts/ServerGroupPicker", () => ({
-  ServerGroupPicker: () => <div data-testid="server-group-picker" />,
+vi.mock("@/components/hosts/server-picker", () => ({
+  ServerPicker: () => <div data-testid="server-group-picker" />,
 }));
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true }),
 }));
+
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({ signUp: vi.fn(), signIn: vi.fn() }),
+}));
+vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
 const sharePolicyState = vi.hoisted(() => ({
   policy: undefined as
@@ -1235,16 +1240,16 @@ describe("UserTestingScenarioCreateFlow — org share ceiling", () => {
     const { onCreateScenario } = renderFlow();
 
     expect(
-      screen.getByText("Your organization limits sharing to project members."),
+      screen.getByText("Your organization limits sharing to team members."),
     ).toBeInTheDocument();
     expect(screen.getByTestId("user-testing-create-access")).toHaveTextContent(
-      "Project members",
+      "Team members",
     );
 
     await user.click(screen.getByTestId("user-testing-create-access"));
     expect(
       await screen.findByRole("menuitemradio", {
-        name: "Anyone with the link",
+        name: "Anyone with the link who is signed in",
       }),
     ).toHaveAttribute("data-disabled");
     expect(
@@ -1458,5 +1463,33 @@ describe("isStudyNameTakenError", () => {
       false,
     );
     expect(isStudyNameTakenError(null)).toBe(false);
+  });
+});
+
+describe("guest publishing", () => {
+  it("prompts for signup and leaves the creation draft available to retry", async () => {
+    const onCreateScenario = vi
+      .fn()
+      .mockRejectedValue({
+        data: {
+          code: "guest_sharing_requires_sign_in",
+          message: "Sign up to share",
+        },
+      });
+    const onApplyStudySurfaces = vi.fn();
+    renderFlow(onCreateScenario, vi.fn(), onApplyStudySurfaces);
+    createStudy();
+    expect(
+      await screen.findByRole("dialog", { name: "Sign up to share" }),
+    ).toBeInTheDocument();
+    expect(toastError).not.toHaveBeenCalled();
+    expect(onApplyStudySurfaces).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Not now" }));
+    expect(screen.getByTestId("user-testing-create-save")).toBeEnabled();
+    fireEvent.click(screen.getByTestId("user-testing-create-save"));
+    await waitFor(() => expect(onCreateScenario).toHaveBeenCalledTimes(2));
+    expect(onCreateScenario.mock.calls[1]).toEqual(
+      onCreateScenario.mock.calls[0],
+    );
   });
 });

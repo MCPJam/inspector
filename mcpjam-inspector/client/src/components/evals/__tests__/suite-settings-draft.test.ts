@@ -576,7 +576,7 @@ describe("describeChange — verdict policy defaults", () => {
     expect(row.before).toBe("None");
     expect(row.after).toContain("Run run_abc");
     expect(row.after).toContain("5% allowed drop");
-    expect(row.after).toContain("any gating evaluator errored");
+    expect(row.after).toContain("any required evaluator errored");
     expect(row.after).not.toContain("Previous run");
   });
 
@@ -597,7 +597,7 @@ describe("describeChange — verdict policy defaults", () => {
     const row = describeChange("gatePolicy", before, after);
     expect(row.before).toContain("0% allowed drop");
     expect(row.before).toContain("no deterministic regressions");
-    expect(row.after).toBe("any gating evaluator errored");
+    expect(row.after).toBe("any required evaluator errored");
     expect(row.after).not.toContain("allowed drop");
   });
 

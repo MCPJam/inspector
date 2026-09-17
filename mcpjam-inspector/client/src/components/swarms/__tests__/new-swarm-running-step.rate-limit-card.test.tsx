@@ -107,6 +107,8 @@ const runFixture = {
 } as unknown as JourneyRun;
 
 vi.mock("convex/react", () => ({
+  useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
+  useMutation: () => vi.fn(),
   useQuery: (name: string) => {
     switch (name) {
       case "journeyRuns:getJourneyRun":
@@ -211,6 +213,7 @@ describe("NewSwarmRunningStep — provider rate-limit card", () => {
     attempt.status = "rate_limited";
     attempt.errorCode = null;
     attempt.errorMessage = null;
+    runFixture.summary = { total: 1, succeeded: 0, failed: 0, rateLimited: 1 };
     streamState.cellStatus = { "environment:env-1:0": "rate_limited" };
     streamState.sessions = {
       [CHAT_SESSION_ID]: {
@@ -275,6 +278,67 @@ describe("NewSwarmRunningStep — provider rate-limit card", () => {
     expect(screen.getByTestId("swarm-live-pane")).toHaveTextContent(
       "Daily credit limit reached.",
     );
+  });
+
+  it("does NOT name a provider for MCPJam's daily limit stored under the generic code", async () => {
+    // The row a real Haiku swarm wrote before the runner kept the denial code:
+    // the humanized sentence under a bare `rate_limited`. The banner read that
+    // as the user's key and printed "Anthropic rate-limited this key."
+    const sentence =
+      "Daily MCPJam model limit reached. Use BYOK or try again tomorrow. Try again in 621 minutes.";
+    attempt.errorCode = "rate_limited";
+    attempt.errorMessage = sentence;
+    (
+      streamState.sessions[CHAT_SESSION_ID] as { errorMessage: string }
+    ).errorMessage = sentence;
+    renderStep();
+    await openTheSession();
+
+    expect(
+      screen.queryByTestId("new-swarm-running-rate-limit"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("swarm-live-pane-rate-limit"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("explains an account limit above the table when other sessions succeeded", async () => {
+    // With a success in the wave the run banner stays silent, so without this
+    // the stopped sessions would be amber chips with no reason given.
+    attempt.errorCode = "user_rate_limit";
+    attempt.errorMessage =
+      "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.";
+    runFixture.summary = { total: 2, succeeded: 1, failed: 0, rateLimited: 1 };
+    renderStep();
+
+    const banner = await screen.findByTestId(
+      "new-swarm-running-account-limit",
+    );
+    expect(banner).toHaveTextContent(
+      "1 session stopped at your MCPJam model limit.",
+    );
+    expect(banner).toHaveTextContent(
+      "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
+    );
+    expect(
+      screen.queryByTestId("new-swarm-running-rate-limit"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("new-swarm-running-failure"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("leaves an all-limited run to the run banner rather than saying it twice", async () => {
+    attempt.errorCode = "user_rate_limit";
+    attempt.errorMessage =
+      "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.";
+    renderStep();
+
+    const failure = await screen.findByTestId("new-swarm-running-failure");
+    expect(failure).toHaveTextContent("Daily MCPJam model limit reached.");
+    expect(
+      screen.queryByTestId("new-swarm-running-account-limit"),
+    ).not.toBeInTheDocument();
   });
 
   it("does NOT show the provider card for a spend cap stored as a bare code", async () => {
@@ -445,3 +509,12 @@ describe("NewSwarmRunningStep — provider rate-limit card", () => {
     expect(card).toHaveTextContent("Anthropic rate-limited this key.");
   });
 });
+
+vi.mock("@/hooks/use-host-snapshot", () => ({
+  useHostSnapshotForSession: () => ({
+    status: "ready", snapshot: { hostStyle: "mcpjam" },
+  }),
+  useHostSnapshotForHost: () => ({
+    status: "ready", snapshot: { hostStyle: "mcpjam" },
+  }),
+}));

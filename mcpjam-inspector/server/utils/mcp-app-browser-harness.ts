@@ -597,6 +597,11 @@ export class McpAppBrowserHarness {
   private browser: Browser | null = null;
   private context: BrowserContext | null = null;
   private page: Page | null = null;
+  private launchPromise: Promise<void> | null = null;
+  private closing = false;
+  private disposePromise: Promise<void> | null = null;
+  private videoPromise: Promise<Buffer | null> | null = null;
+  private renderTail: Promise<unknown> = Promise.resolve();
   /**
    * Screenshot of the empty host page, captured once before the first widget
    * mounts. The host background + viewport are invariant, so this is the
@@ -698,7 +703,16 @@ export class McpAppBrowserHarness {
   }
 
   private async ensureLaunched(): Promise<void> {
-    if (this.page) return;
+    if (this.closing) throw new Error("Widget browser is closing");
+    // A page is assigned before its bindings are installed. Waiting for the
+    // entire initialization also prevents parallel tools from launching twice
+    // and overwriting each other's context/page fields.
+    this.launchPromise ??= this.launch();
+    await this.launchPromise;
+    if (this.closing) throw new Error("Widget browser is closing");
+  }
+
+  private async launch(): Promise<void> {
     const chromium = await this.loadChromium();
 
     let executablePath: string | undefined;
@@ -910,7 +924,14 @@ export class McpAppBrowserHarness {
 
   /* ---- render ---- */
 
-  async renderWidget(
+  renderWidget(input: RenderWidgetInput): Promise<WidgetRenderObservation> {
+    // The host page, CSP allowlist and mount buffers belong to ONE widget.
+    const render = this.renderTail.then(() => this.renderWidgetSerial(input));
+    this.renderTail = render.catch(() => {});
+    return render;
+  }
+
+  private async renderWidgetSerial(
     input: RenderWidgetInput
   ): Promise<WidgetRenderObservation> {
     const ts = Date.now();
@@ -1784,7 +1805,17 @@ export class McpAppBrowserHarness {
    * the context is already closed, or the file can't be read; and the result is
    * memoized so a second call (or a later `dispose()`) is a safe no-op.
    */
-  async collectVideo(): Promise<Buffer | null> {
+  collectVideo(): Promise<Buffer | null> {
+    this.closing = true;
+    this.videoPromise ??= this.collectVideoOnce();
+    return this.videoPromise;
+  }
+
+  private async collectVideoOnce(): Promise<Buffer | null> {
+    // Playwright's exposeBinding creates a page-owned disposable after its
+    // await. Closing the page during that await can crash the in-process
+    // protocol dispatcher, outside the caller's try/catch.
+    await this.launchPromise?.catch(() => {});
     if (this.videoCollected) return this.videoBytes;
     this.videoCollected = true;
 
@@ -1814,7 +1845,15 @@ export class McpAppBrowserHarness {
     return this.videoBytes;
   }
 
-  async dispose(): Promise<void> {
+  dispose(): Promise<void> {
+    this.closing = true;
+    this.disposePromise ??= this.disposeOnce();
+    return this.disposePromise;
+  }
+
+  private async disposeOnce(): Promise<void> {
+    await this.launchPromise?.catch(() => {});
+    await this.videoPromise;
     await waitForClose(this.context?.close());
     await waitForClose(this.browser?.close());
     // Always-runs cleanup of the recording temp dir (collectVideo already read
@@ -1830,7 +1869,7 @@ export class McpAppBrowserHarness {
     this.context = null;
     this.browser = null;
     this.page = null;
-    // Re-captured against the next launch's fresh page.
+    // Disposal is terminal; queued renders cannot resurrect the browser.
     this.blankReference = null;
     this.mounted.clear();
     this.widgetCspSources = [];

@@ -395,10 +395,22 @@ describe("eval-edit operation execution", () => {
     expect(gen?.headers["idempotency-key"]).toBeUndefined();
   });
 
-  it("generate_eval_cases is labelled as spending", () => {
+  it("generate_eval_cases is NOT labelled as spending", () => {
     // `operationDescription` appends the "COSTS MONEY" warning to the MCP tool
-    // off this facet, and the operation spends the organization's credits.
-    expect(generateEvalCasesOperation.risk).toBe("spend");
+    // off this facet, and the authoring model is platform-paid: the
+    // organization's credits are not touched, so that warning would be a lie.
+    // What generation DOES consume is a bounded daily request quota, which is
+    // why the agent surface still gates it (TIER_EXCEPTIONS in the
+    // inspector's `agent-op-registry.test.ts`) rather than deriving `direct`.
+    expect(generateEvalCasesOperation.risk).toBe("none");
+    expect(generateEvalCasesOperation.description).not.toMatch(/spends/i);
+    expect(generateEvalCasesOperation.description).toContain(
+      "no customer credits consumed"
+    );
+    // The quota is the organization's, not the project's.
+    expect(generateEvalCasesOperation.description).not.toMatch(
+      /project's daily generation quota/
+    );
   });
 
   it("generate_eval_cases omits varyUserStyles when not enabled", async () => {
@@ -653,10 +665,11 @@ describe("declaredSuiteId reaches the wire", () => {
 
   it("omits the marker entirely on an ordinary edit", async () => {
     const { client, calls } = makeClient();
-    await deleteEvalCaseOperation.execute(
-      { suite: "s1", case: "c2" },
-      { client, signal: undefined, onScopeResolved: undefined } as never
-    );
+    await deleteEvalCaseOperation.execute({ suite: "s1", case: "c2" }, {
+      client,
+      signal: undefined,
+      onScopeResolved: undefined,
+    } as never);
     const write = calls.find((call) => call.method === "DELETE");
     // Not a capability: an app edit sends nothing, and gets the refusal a
     // CI-owned suite is right to give it.
@@ -677,14 +690,91 @@ describe("declaredSuiteId reaches the wire", () => {
 
   it("sends nothing at all when the caller named no id", async () => {
     const { client, calls } = makeClient();
-    await updateEvalSuiteOperation.execute(
-      { suite: "s1", name: "Renamed" },
-      { client, signal: undefined, onScopeResolved: undefined } as never
-    );
+    await updateEvalSuiteOperation.execute({ suite: "s1", name: "Renamed" }, {
+      client,
+      signal: undefined,
+      onScopeResolved: undefined,
+    } as never);
     // An ordinary edit must not carry an empty marker: the route would forward
     // it, and a platform that predates the lock rejects unknown arguments.
     expect(
       calls.find((call) => call.method === "PATCH")?.body
     ).not.toHaveProperty("declaredSuiteId");
   });
+});
+
+describe("judge rubric parity", () => {
+  it("accepts instructions with the same shape exposed through MCP", () => {
+    const result = updateEvalSuiteOperation.inputSchema.safeParse({
+      suite: "s1",
+      settings: { judge: { rubric: { instructions: "Check evidence" } } },
+    });
+    expect(result.success).toBe(true);
+  });
+  it("rejects an invalid instruction even beside valid criteria", () => {
+    expect(
+      updateEvalSuiteOperation.inputSchema.safeParse({
+        suite: "s1",
+        settings: {
+          judge: {
+            rubric: {
+              instructions: "x".repeat(2001),
+              criteria: [{ id: "a", label: "A" }],
+            },
+          },
+        },
+      }).success
+    ).toBe(false);
+  });
+});
+
+describe("update_eval_suite grading scope", () => {
+  it.each([
+    {
+      settings: { policy: "legacy" },
+      edit: { repetitions: 5, passThreshold: 0.9 },
+      error: /no default iteration count/,
+    },
+    {
+      settings: {
+        policy: "v2",
+        verdictPolicyVersion: 2,
+        verdictPolicyDefaults: { repetitions: 1, passThreshold: 1 },
+      },
+      edit: { minimumIterations: 3 },
+      error: /no iteration minimum/,
+    },
+    {
+      settings: {},
+      edit: { passThreshold: 0.9 },
+      error: /deployment does not report/,
+    },
+    {
+      settings: {
+        policy: "v2",
+        verdictPolicyVersion: 2,
+        verdictPolicyDefaults: { repetitions: 1, passThreshold: 1 },
+      },
+      edit: { repetitions: 5, passThreshold: 0.9 },
+    },
+  ])(
+    "guards grading fields before PATCH: $edit",
+    async ({ settings, edit, error }) => {
+      const { client, calls } = makeClient();
+      vi.spyOn(client, "getEvalSuite").mockResolvedValue({ settings } as any);
+      const result = updateEvalSuiteOperation.execute(
+        { suite: "My Suite", settings: edit },
+        { client }
+      );
+      if (error) {
+        await expect(result).rejects.toThrow(error);
+        expect(calls.filter((call) => call.method === "PATCH")).toHaveLength(0);
+      } else {
+        await result;
+        expect(calls.find((call) => call.method === "PATCH")?.body).toEqual({
+          settings: edit,
+        });
+      }
+    }
+  );
 });

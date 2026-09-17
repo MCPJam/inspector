@@ -89,6 +89,7 @@ function GoalCompletionJudgeCard({
         capabilityPresent={judgesCapabilities?.goalCompletion != null}
       />
       <JudgesSection
+        policy={judgesCapabilities?.goalCompletion.policy}
         chrome="bare"
         value={judgeConfig}
         availableModels={availableModels}
@@ -99,11 +100,10 @@ function GoalCompletionJudgeCard({
         <div className="space-y-2" data-setting-key="judgeRubric">
           <div>
             <h4 className="text-sm font-semibold text-foreground">
-              Judge criteria
+              Grading instructions
             </h4>
             <p className="mt-1 text-sm text-muted-foreground">
-              Applied to every case, alongside each case&apos;s own expected
-              output. The judge cites criterion ids in its reasons.
+              Guide how the judge evaluates every case in this suite.
             </p>
           </div>
           {rubricEditor}
@@ -194,8 +194,8 @@ function TemplateLine({
   const label = !capabilityPresent
     ? "Template unavailable on this deployment"
     : template
-      ? `Template v${template.version}`
-      : "No template yet";
+    ? `Template v${template.version}`
+    : "No template yet";
   return (
     <p
       className="text-[11px] text-muted-foreground"

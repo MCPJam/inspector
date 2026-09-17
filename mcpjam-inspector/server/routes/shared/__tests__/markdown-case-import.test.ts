@@ -137,6 +137,26 @@ describe("Markdown import adapters", () => {
     expect(response.status).toBe(402);
     expect(await response.json()).toEqual({ error: "Credits exhausted" });
   });
+  it("preserves backend rate-limit errors", async () => {
+    // The client classifies the daily-limit refusal out of this body to raise
+    // the out-of-credits wall, so the proxy has to hand back the code and
+    // limitKind untouched, not just the status.
+    const refusal = {
+      ok: false,
+      code: "user_rate_limit",
+      limitKind: "total",
+      error:
+        "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
+      organizationId: "org_1",
+    };
+    mocks.fetch.mockResolvedValueOnce(Response.json(refusal, { status: 429 }));
+    const response = await post("/local/extract", {
+      ...body,
+      convexAuthToken: "token",
+    });
+    expect(response.status).toBe(429);
+    expect(await response.json()).toEqual(refusal);
+  });
 });
 
 it("returns JSON failure when the extraction upstream serves HTML", async () => {

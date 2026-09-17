@@ -759,11 +759,19 @@ describe("the evaluator-vocabulary scanner", () => {
     expect(unscoped.json.violations[0].reason).toBe("protected field");
   });
 
-  it("retires `repetitions` in the committed mapping, legacy floor first", async () => {
-    // `repetitions` is the legacy spelling of the configured count. The count
-    // becomes `iterations`, but only after the legacy per-case field that
-    // already answers to `iterations` (read as a FLOOR) has moved out of the
-    // way, and the revision-payload key never moves at all.
+  it("has retired the two count rows, and keeps the flag rows and the frozen keys", async () => {
+    // `repetitions` is the legacy spelling of the configured count, and the
+    // count rename was ORDERED: the legacy per-case field that answered to
+    // `iterations` (read as a FLOOR) became `legacyIterations` first, then
+    // `repetitions` became `iterations`. Both rows are gone now, on purpose:
+    // the wire speaks both spellings under `x-mcpjam-eval-vocabulary`, and
+    // the SDK types, the CLI and the v1 route hold the legacy floor beside
+    // the exact count BY DESIGN (`PlatformEvalCaseV2.legacyIterations` next
+    // to `PlatformEvalCase.iterations`) — the shape the per-file
+    // target-in-use guard reads as two fields merging into one. A committed
+    // row would refuse the expand phase it was written to sequence. The flag
+    // rows stay (they name what a user types), and the revision-payload key
+    // never moves at all.
     const dir = dirname(SCANNER);
     const mapping = JSON.parse(
       readFileSync(join(dir, "mapping.json"), "utf8")
@@ -789,17 +797,8 @@ describe("the evaluator-vocabulary scanner", () => {
           sameMeaning: r.sameMeaning,
         }));
 
-    expect(pick("iterations")).toEqual([
-      { from: "iterations", to: "legacyIterations", scope: "wire-field" },
-    ]);
-    expect(pick("repetitions")).toEqual([
-      {
-        from: "repetitions",
-        to: "iterations",
-        scope: "wire-field",
-        after: "iterations",
-      },
-    ]);
+    expect(pick("iterations")).toEqual([]);
+    expect(pick("repetitions")).toEqual([]);
     expect(pick("--repetitions")).toEqual([
       { from: "--repetitions", to: "--iterations", scope: "flag" },
     ]);
@@ -810,12 +809,59 @@ describe("the evaluator-vocabulary scanner", () => {
     const protectedSpec = JSON.parse(
       readFileSync(join(dir, "protected.json"), "utf8")
     ) as { fields: Array<{ name: string; paths?: string[] }> };
+    // Every key the configuration-revision payload names, plus `role` — whose
+    // VALUE is frozen in that payload for the same reason the keys are: the
+    // payload is an identity, and rotating it renames nothing while orphaning
+    // everything.
     expect(
       protectedSpec.fields
         .filter((f) => f.paths?.includes("convex/lib/evalConfigRevision.ts"))
         .map((f) => f.name)
         .sort()
-    ).toEqual(["defaultPredicates", "predicates", "repetitions", "runs"]);
+    ).toEqual([
+      "defaultPredicates",
+      "predicates",
+      "repetitions",
+      "role",
+      "runs",
+    ]);
+  });
+
+  it("protects `role` inside both hash payloads, not just the revision one", () => {
+    // `definitionHash` is the join key between a stored score row and its
+    // definition, and the selector `eval gate --baseline` resolves a scorer
+    // set with. A rename that reached `derive.ts` would turn this program's
+    // value rename into a rehash: every historical row stops joining, every
+    // baseline reports its whole scorer set replaced, and both sides of the
+    // rehash agree with each other so nothing goes red.
+    const dir = dirname(SCANNER);
+    const protectedSpec = JSON.parse(
+      readFileSync(join(dir, "protected.json"), "utf8")
+    ) as { fields: Array<{ name: string; paths?: string[] }> };
+    const role = protectedSpec.fields.find((f) => f.name === "role");
+    expect(role, "`role` must be a protected field").toBeDefined();
+    for (const owner of [
+      "evaluators/src/contract/derive.ts",
+      "sdk/src/contract/derive.ts",
+      "convex/lib/scoreContract.ts",
+      "convex/lib/evalConfigRevision.ts",
+    ]) {
+      expect(role!.paths, owner).toContain(owner);
+    }
+  });
+
+  it("proposes no rename of the role VALUE — it is an alias, not a move", () => {
+    // `gating` → `required` is deliberately absent from the mapping. The two
+    // are one value with two spellings and the legacy one is frozen in the
+    // hash payload forever, so there is nothing for a codemod to rewrite. The
+    // scanner would refuse it anyway: `required` is already in use as a word.
+    const dir = dirname(SCANNER);
+    const mapping = JSON.parse(
+      readFileSync(join(dir, "mapping.json"), "utf8")
+    ) as { renames: Array<{ from: string; to: string }> };
+    expect(
+      mapping.renames.filter((r) => r.from === "gating" || r.to === "required")
+    ).toEqual([]);
   });
 
   const COUNT_CASE = {
@@ -1205,6 +1251,9 @@ describe("the evaluator-vocabulary scanner", () => {
       // Not an eval adapter at all: outside the rename's paths.
       "sdk/src/platform/show-servers.ts":
         "export const f = (report: any) => report.checks.tools;\n",
+      // A list of iteration RECORDS. With the count rows retired this is no
+      // longer anybody's rename target, so it is neither proposed nor set
+      // aside — it is simply not in the inventory.
       "mcpjam-inspector/server/routes/v1/evals.ts":
         "export const page = { iterations: (rows ?? []).map(toIterationDto) };\n",
     });
@@ -1217,7 +1266,6 @@ describe("the evaluator-vocabulary scanner", () => {
       "sdk/src/platform/operations.ts:1 checks",
     ]);
     expect(json.excludedByRule.map(key).sort()).toEqual([
-      "mcpjam-inspector/server/routes/v1/evals.ts:1 iterations",
       "sdk/src/platform/operations.ts:2 checks",
     ]);
   });

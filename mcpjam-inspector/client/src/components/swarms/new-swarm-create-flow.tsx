@@ -65,8 +65,10 @@ import {
 } from "@/components/swarms/new-swarm-flow-draft";
 import {
   DEFAULT_SWARM_INTENSITY,
+  DEFAULT_SWARM_ITERATIONS,
+  MAX_SWARM_ITERATIONS,
+  MIN_SWARM_ITERATIONS,
   SWARM_INTENSITY_PRESETS,
-  type SwarmPushIntensity,
 } from "@/components/swarms/swarm-intensity";
 import {
   SOLO_HERO_CHARACTERS,
@@ -206,7 +208,11 @@ export type CreateSwarmDraft = {
   name: string;
   description?: string;
   environmentIds?: string[];
-  config: { sessionsPerTarget: number; maxTurns: number };
+  config: {
+    sessionsPerTarget: number;
+    maxTurns: number;
+    setupWrites?: boolean;
+  };
   judgeConfig?: GoalJudgeConfig;
   rubric?: ReturnType<typeof serializeRubricForWire>;
   /** The launch wave this swarm names — see `swarmRunGroupId` on the runs. */
@@ -228,7 +234,11 @@ export type CreateJourneyDraft = {
   goal: string;
   hostIds: string[];
   environmentIds: string[];
-  config: { sessionsPerTarget: number; maxTurns: number };
+  config: {
+    sessionsPerTarget: number;
+    maxTurns: number;
+    setupWrites?: boolean;
+  };
   judgeConfig?: GoalJudgeConfig;
   rubric?: ReturnType<typeof serializeRubricForWire>;
   /** Authoring provenance — the swarm this journey is created in. */
@@ -513,8 +523,33 @@ export function NewSwarmCreateFlow({
   const [materializing, setMaterializing] = useState(false);
   /** "Add existing personas" popover. */
   const [personaPickerOpen, setPersonaPickerOpen] = useState(false);
-  const [pushIntensity, setPushIntensity] = useState<SwarmPushIntensity>(
-    restoredDraft?.pushIntensity ?? DEFAULT_SWARM_INTENSITY,
+  // Sizes GENERATION only — how many personas and goals the Describe step
+  // asks for. Confirm no longer picks it: iterations is the control there.
+  const pushIntensity =
+    restoredDraft?.pushIntensity ?? DEFAULT_SWARM_INTENSITY;
+  // One entry per persona, keyed by its proposal key. Absent means the
+  // default: a persona the user has not touched costs nothing to store,
+  // and a regenerated slate mints new keys rather than inheriting numbers
+  // from personas that no longer exist.
+  const [iterationsByPersona, setIterationsByPersona] = useState<
+    Record<string, number>
+  >(restoredDraft?.iterationsByPersona ?? {});
+  const handleIterationsChange = useCallback(
+    (personaKey: string, value: number) => {
+      // Clearing the field reports "", which Number() turns into 0; the clamp
+      // below lifts that to the minimum rather than quoting zero conversations.
+      // The guard covers anything that cannot be clamped at all.
+      if (!Number.isFinite(value)) return;
+      const next = Math.min(
+        MAX_SWARM_ITERATIONS,
+        Math.max(MIN_SWARM_ITERATIONS, Math.round(value)),
+      );
+      setIterationsByPersona((current) => ({
+        ...current,
+        [personaKey]: next,
+      }));
+    },
+    [],
   );
   const [reusedIds, setReusedIds] = useState<string[]>(
     restoredDraft?.reusedIds ?? [],
@@ -1146,6 +1181,9 @@ export function NewSwarmCreateFlow({
        * retry, and retrying a credit limit cannot work.
        */
       let billingBlocked = false;
+      /** A model limit that already opened its own dialog. Kept apart from
+       * `billingBlocked` so the wave's copy never mis-names which cap refused. */
+      let limitDialogBlocked = false;
       /**
        * The 402's own message, kept SEPARATE from `firstError`. The billing
        * summary has to state the hard stop, and `firstError` may already hold
@@ -1194,8 +1232,9 @@ export function NewSwarmCreateFlow({
                 ? { environmentIds: envPayload.environmentIds }
                 : {}),
               config: {
-                sessionsPerTarget: preset.sessionsPerTarget,
+                sessionsPerTarget: DEFAULT_SWARM_ITERATIONS,
                 maxTurns: preset.maxTurns,
+                setupWrites: true,
               },
               ...(payload.judgeConfig
                 ? { judgeConfig: payload.judgeConfig }
@@ -1278,9 +1317,9 @@ export function NewSwarmCreateFlow({
                   err,
                   "A reused goal could not be updated for this swarm.",
                 );
-                // Only grading can fail here now, and grading is advisory: the
-                // run is still the one the user asked for, so it goes ahead
-                // ungraded rather than being dropped. (The environment
+                // Only the grading update can fail here now. The run is still
+                // the one the user asked for, so it goes ahead with the goal's
+                // previous grading rather than being dropped. (The environment
                 // selection can no longer fail at this point — it is applied at
                 // launch, where a rejection fails that launch loudly.)
               }
@@ -1333,8 +1372,11 @@ export function NewSwarmCreateFlow({
                   hostIds: envPayload!.hostIds,
                   environmentIds: envPayload!.environmentIds,
                   config: {
-                    sessionsPerTarget: preset.sessionsPerTarget,
+                    sessionsPerTarget:
+                      iterationsByPersona[persona.key] ??
+                      DEFAULT_SWARM_ITERATIONS,
                     maxTurns: preset.maxTurns,
+                    setupWrites: true,
                   },
                   ...(payload.judgeConfig
                     ? { judgeConfig: payload.judgeConfig }
@@ -1398,6 +1440,13 @@ export function NewSwarmCreateFlow({
                 )
                   ? { environmentIds: envPayload.environmentIds }
                   : {}),
+                // Iterations chosen on Confirm for a REUSED persona, applied
+                // to this run only. Absent on just-created targets: they are
+                // born with the chosen count, so an override would restate
+                // their own config.
+                ...(target.sessionsPerTarget != null
+                  ? { sessionsPerTarget: target.sessionsPerTarget }
+                  : {}),
               });
               if (result.status === "launched") {
                 launched += 1;
@@ -1423,6 +1472,21 @@ export function NewSwarmCreateFlow({
                 }
               }
             } catch (err) {
+              // The limit dialog already carries this sentence plus the
+              // actions that clear it, so record NO message — an inline copy
+              // would say the same thing twice with nothing to act on. The
+              // wave still stops, for the same reason a 402 does.
+              //
+              // Tracked on its OWN flag, not `billingBlocked`: that one's copy
+              // names the organization's credit limit, which is a different
+              // refusal from a model limit and would mis-name this one.
+              if (
+                err instanceof LaunchJourneyRunError &&
+                err.limitDialogRaised
+              ) {
+                limitDialogBlocked = true;
+                return "stop";
+              }
               // BILLING is terminal for the WHOLE wave, not for this target.
               // Every sibling would be rejected identically, so stop
               // scheduling and report the limit ONCE — `firstError` already
@@ -1461,6 +1525,15 @@ export function NewSwarmCreateFlow({
         intensity: pushIntensity,
       });
 
+      if (
+        limitDialogBlocked &&
+        (launched === 0 || launchedBatch.length === 0)
+      ) {
+        // The dialog IS the explanation, and it names the fix. A banner saying
+        // the requests "were rejected" adds nothing and reads as a second,
+        // unrelated failure.
+        return;
+      }
       if (launched === 0 || launchedBatch.length === 0) {
         // Nothing is running, so leaving the flow would strand the user on an
         // empty view with no explanation. Rows that DID land are real, and the
@@ -1485,6 +1558,10 @@ export function NewSwarmCreateFlow({
         toast.success(
           `Launched ${launched} ${launched === 1 ? "run" : "runs"}`,
         );
+      } else if (limitDialogBlocked) {
+        // No cause named here — the dialog already carries it. The count is
+        // what this toast adds: the runs that DID land are real.
+        toast.warning(`Launched ${launched} of ${targets.length} runs`);
       } else if (billingBlocked) {
         // ONE billing message for the whole wave. The count matters here in a
         // way it doesn't for other partial failures: the remaining runs were
@@ -1511,6 +1588,7 @@ export function NewSwarmCreateFlow({
       onCreateJourney,
       onCreatePersona,
       onUpdateJourney,
+      iterationsByPersona,
       personaList.length,
       preset,
       proposed,
@@ -1576,6 +1654,7 @@ export function NewSwarmCreateFlow({
       resolvedEnvironments,
       createdEnvOverlay,
       pushIntensity,
+      iterationsByPersona,
       reusedIds,
       proposed,
       launchedRuns,
@@ -1594,6 +1673,7 @@ export function NewSwarmCreateFlow({
     draft,
     generatingSince,
     hasResumableWork,
+    iterationsByPersona,
     nameEdited,
     launchedRuns,
     projectId,
@@ -1835,9 +1915,8 @@ export function NewSwarmCreateFlow({
             onRemoveReused={(personaId) =>
               setReusedIds((ids) => ids.filter((id) => id !== personaId))
             }
-            preset={preset}
-            pushIntensity={pushIntensity}
-            onPushIntensityChange={setPushIntensity}
+            iterationsByPersona={iterationsByPersona}
+            onIterationsChange={handleIterationsChange}
             environmentCount={environmentIds.length}
             environmentLabels={environmentLabels}
             launching={launching}

@@ -21,6 +21,8 @@
  * that mocks convex/react to `undefined`). The ErrorBoundary below catches a
  * THROWING query; it cannot catch `undefined.runs`, so the shells are explicit.
  */
+import { foldSwarmRunVerdicts } from "@mcpjam/sdk/contract";
+import { runVerdictBadge } from "./swarm-verdict-presentation";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery, usePaginatedQuery } from "convex/react";
 import { Loader2 } from "lucide-react";
@@ -49,8 +51,6 @@ import {
   formatCriterion,
   isKnownPredicateKind,
 } from "@/shared/predicate-kinds";
-import { EvalSparkline } from "@/components/evals/eval-sparkline";
-import { MIN_TREND_POINTS } from "@/components/evals/metric-strip-data";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 
@@ -61,12 +61,6 @@ import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEna
  * without gluing unrelated solo re-runs together.
  */
 const SWARM_WAVE_GAP_MS = 2 * 60 * 1000;
-
-/** One decimal below 10%, whole percent above. `rate` is a 0..1 fraction. */
-export function formatPercent(rate: number): string {
-  const pct = rate * 100;
-  return `${pct >= 10 || pct === 0 ? Math.round(pct) : pct.toFixed(1)}%`;
-}
 
 /**
  * Author label, else the predicate kind's label, else the raw criterion id.
@@ -125,33 +119,6 @@ export function waveScoreRate(runs: readonly SwarmOverviewRun[]): number | null 
 }
 
 /**
- * Status-dot colour from the wave's worst terminal outcome. Score is shown
- * separately under Score — the dot answers "did the swarm finish cleanly?",
- * not "did the judge like it".
- */
-export function waveStatusDotClass(runs: readonly SwarmOverviewRun[]): string {
-  // Derived from `waveRunState`, never from its own scan of `status`. The two
-  // used to disagree on precedence — this tested `failed`/`stale` first while
-  // `waveRunState` puts `running` first — so a wave holding one failed goal and
-  // one still fanning out painted a red dot beside a "Running" pill on the same
-  // row. One source, one answer.
-  switch (waveRunState(runs)) {
-    case "running":
-      // The run's own accent, and animated at the call sites: a live wave used
-      // to wear the same muted grey as everything else, so the list could not
-      // answer "is this still going?" — the question a returning viewer
-      // arrives with.
-      return "bg-primary";
-    case "failed":
-      return "bg-red-500";
-    case "issues":
-      return "bg-amber-500";
-    case "complete":
-      return "bg-emerald-500";
-  }
-}
-
-/**
  * One wave's state as the UI must SAY it, shared by the list row and the run
  * page so the two can never disagree.
  *
@@ -164,15 +131,27 @@ export function waveStatusDotClass(runs: readonly SwarmOverviewRun[]): string {
  * `getSwarmOverview` does not project. The run page substitutes `stopped` from
  * its own local evidence when the viewer is the one who stopped it.
  */
-export type SwarmWaveRunState = "running" | "complete" | "issues" | "failed";
+export type SwarmWaveRunState = "running" | "complete" | "issues";
 
 export function waveRunState(
   runs: readonly SwarmOverviewRun[]
 ): SwarmWaveRunState {
   const statuses = new Set(runs.map((r) => r.status));
   if (statuses.has("running") || statuses.has("pending")) return "running";
-  if (statuses.has("failed") || statuses.has("stale")) return "failed";
-  if (statuses.has("partial") || statuses.has("rate_limited")) return "issues";
+  // `failed`/`stale` and `partial`/`rate_limited` are ONE bucket on purpose.
+  // The split never survived contact with a viewer: a `stale` run is only one
+  // the sweeper gave up on, and `partial`/`rate_limited` runs produced sessions
+  // too, so "Failed" read as "nothing ran" about waves that had plenty of
+  // output. The one thing the row can honestly say about all four is that the
+  // wave did not finish cleanly.
+  if (
+    statuses.has("failed") ||
+    statuses.has("stale") ||
+    statuses.has("partial") ||
+    statuses.has("rate_limited")
+  ) {
+    return "issues";
+  }
   return "complete";
 }
 
@@ -187,8 +166,6 @@ export function swarmWaveRunStateChipClass(state: SwarmWaveRunState): string {
   switch (state) {
     case "running":
       return "bg-primary/15 text-primary";
-    case "failed":
-      return "bg-red-500/10 text-red-700 dark:text-red-400";
     case "issues":
       return "bg-muted text-muted-foreground";
     case "complete":
@@ -196,13 +173,11 @@ export function swarmWaveRunStateChipClass(state: SwarmWaveRunState): string {
   }
 }
 
-/** Short label for a wave state — list row pill and run-page strip. */
+/** Short label for a wave state — list row pill and run-page header. */
 export function swarmWaveRunStateLabel(state: SwarmWaveRunState): string {
   switch (state) {
     case "running":
       return "Running";
-    case "failed":
-      return "Failed";
     case "issues":
       return "Completed with issues";
     case "complete":
@@ -616,90 +591,14 @@ function SwarmOverviewPanelBody({
         {waves.length === 0 ? (
           <NoRunsEmptyState />
         ) : (
-          <>
-            <GoalTrendStrip goalCompletion={overview.goalCompletion} />
-            <SwarmRunsList
-              waves={waves}
-              onOpenSwarm={onOpenSwarm}
-              environmentsEnabled={environmentsEnabled}
-            />
-          </>
+          <SwarmRunsList
+            waves={waves}
+            onOpenSwarm={onOpenSwarm}
+            environmentsEnabled={environmentsEnabled}
+          />
         )}
       </div>
     </ScrollArea>
-  );
-}
-
-// ── goal completion trend ───────────────────────────────────────────────────
-
-/** Short day label for trend points, e.g. "Aug 3". */
-function formatTrendDay(ms: number): string {
-  return new Date(ms).toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-  });
-}
-
-/**
- * Goal-completion pass rate across the overview window, with the daily trend
- * the backend has computed all along (`getSwarmOverview.goalCompletion.trend`)
- * and no UI ever rendered.
- *
- * The buckets arrive pre-filtered: a day with no graded sessions is DROPPED
- * server-side rather than emitted as 0% — a flat line at zero would read as
- * "everything failed" when the truth is "nothing was graded". Never re-insert
- * missing days here.
- *
- * Renders nothing until the window holds a graded pass rate and at least
- * MIN_TREND_POINTS graded days — a single day is a number, not a trend.
- * Optional-chained throughout so an older backend that predates the field
- * degrades to nothing instead of throwing into the panel's ErrorBoundary.
- */
-function GoalTrendStrip({
-  goalCompletion,
-}: {
-  goalCompletion: SwarmOverview["goalCompletion"] | undefined;
-}) {
-  const trend = goalCompletion?.trend ?? [];
-  if (
-    !goalCompletion ||
-    goalCompletion.passRate === null ||
-    trend.length < MIN_TREND_POINTS
-  ) {
-    return null;
-  }
-
-  return (
-    <section
-      data-testid="swarm-overview-goal-trend"
-      aria-label="Goal completion trend"
-      className="flex items-center gap-6 rounded-xl border border-border/40 bg-muted/10 px-4 py-3"
-    >
-      <div className="flex shrink-0 flex-col">
-        <span className="text-2xl font-semibold tabular-nums leading-none tracking-tight text-foreground">
-          {formatPercent(goalCompletion.passRate)}
-        </span>
-        <span className="mt-1 text-xs tabular-nums text-muted-foreground">
-          Goal completion · {goalCompletion.passedCount}/
-          {goalCompletion.gradedCount} graded sessions ·{" "}
-          {goalCompletion.runsWithGrades} run
-          {goalCompletion.runsWithGrades === 1 ? "" : "s"}
-        </span>
-      </div>
-      <div className="min-w-0 flex-1">
-        <EvalSparkline
-          points={trend.map((point) => point.passRate * 100)}
-          pointLabels={trend.map((point) => formatTrendDay(point.dayStartMs))}
-          formatValue={(value) => `${Math.round(value)}%`}
-          tooltipValues={trend.map(
-            (point) =>
-              `${Math.round(point.passRate * 100)}% · ${point.passedCount}/${point.gradedCount} passed`,
-          )}
-          testId="swarm-overview-goal-trend-sparkline"
-          height={30}
-        />
-      </div>
-    </section>
   );
 }
 
@@ -952,6 +851,11 @@ function SwarmWaveRow({
   const personaCount = new Set(wave.runs.map((r) => r.personaName)).size;
   const targets = waveTargets(wave.runs);
   const runState = waveRunState(wave.runs);
+  const decision = runVerdictBadge(
+    foldSwarmRunVerdicts(
+      wave.runs.map((r) => r.report?.verdict ?? "notEstablished"),
+    ),
+  );
   const environmentLabel = formatWaveEnvironmentLabel(targets);
   const clientLabel = formatWaveClientLabel(targets);
   const modelLabel = formatWaveModelLabel(targets);
@@ -970,14 +874,6 @@ function SwarmWaveRow({
         onClick={onOpen}
         data-testid="swarm-overview-run-open"
       >
-        <span
-          className={cn(
-            "size-2 shrink-0 rounded-full",
-            waveStatusDotClass(wave.runs),
-            runState === "running" ? "animate-pulse" : null
-          )}
-          aria-hidden
-        />
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-baseline gap-2">
             <span
@@ -986,25 +882,33 @@ function SwarmWaveRow({
             >
               {title}
             </span>
-            {/* State in WORDS, not just a coloured dot: a returning viewer had
-                no way to tell an active run from a finished one, and a dot is
-                not an answer to that. */}
-            <span
-              className={cn(
-                "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-                swarmWaveRunStateChipClass(runState)
-              )}
-              data-testid="swarm-overview-run-state"
-              data-run-state={runState}
-            >
-              {swarmWaveRunStateLabel(runState)}
-            </span>
+            {/* One badge, and only when it has something to say. A clean
+                finish is the expected outcome and gets no pill at all, so the
+                row stays quiet until it cannot: "Completed with issues" is
+                then the only thing on a terminal row, which is what makes it
+                legible. `running` is the exception that keeps its pill — with
+                the coloured dot gone it is the row's only remaining answer to
+                "is this still going?", the question a returning viewer arrives
+                with, and the one BB-74 added it for. */}
+            {runState === "complete" ? null : (
+              <span
+                className={cn(
+                  "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                  swarmWaveRunStateChipClass(runState)
+                )}
+                data-testid="swarm-overview-run-state"
+                data-run-state={runState}
+              >
+                {swarmWaveRunStateLabel(runState)}
+              </span>
+            )}
             <span className="shrink-0 text-xs text-muted-foreground">
               {formatJourneyRelativeTime(wave.createdAt)}
             </span>
           </div>
           <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
-            {sessions.succeeded}/{sessions.total} sessions
+            {sessions.succeeded}/{sessions.total} executions completed · Run
+            decision: {decision.label}
             {wave.runs.length === 1
               ? ` · ${wave.runs[0]!.journeyName} · ${wave.runs[0]!.personaName}`
               : ` · ${wave.runs.length} goals · ${personaCount} persona${

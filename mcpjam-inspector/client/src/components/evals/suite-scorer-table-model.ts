@@ -1,3 +1,4 @@
+import type { GoalJudgePolicy } from "@/shared/judge-defaults";
 /**
  * The Scorers table as configuration — what will grade each link of the chain.
  *
@@ -7,6 +8,8 @@
  */
 
 import {
+  STANDARD_CHECKS,
+  authoredRequiredRole,
   GRADER_PRESENTATION_GROUP,
   PREDICATE_KINDS,
   PREDICATE_STAGE,
@@ -18,12 +21,13 @@ import {
 } from "@mcpjam/sdk/contract";
 import {
   checkRole,
-  checkSeverity,
+  isRequiredRole,
   type Predicate,
 } from "@mcpjam/sdk/predicates";
 import {
   formatCriterion,
   PREDICATE_KIND_LABELS,
+  type ScorerUiRole,
 } from "@/shared/predicate-kinds";
 import {
   STAGE_CHIP_TONE_CLASS,
@@ -101,39 +105,41 @@ export function authorablePredicateKinds(
   );
 }
 
-export type ScorerUiRole = "gate" | "warn" | "report";
+export type { ScorerUiRole };
 
+/**
+ * What each tier means, in the reader's terms: what happens to the test.
+ *
+ * The two entries replace Gate / Warn / Report. Warn and Report said the same
+ * thing about the iteration — neither failed it — and differed only by an
+ * amber highlight, so a reader had to learn a distinction the verdict never
+ * made. `severity: "warn"` is still accepted on the wire and still renders its
+ * highlight where one exists; it no longer names a tier.
+ */
 export const ROLE_LEGEND: Record<
   ScorerUiRole,
   { label: string; meaning: string }
 > = {
-  gate: {
-    label: "Gate",
+  required: {
+    label: "Required",
     meaning: "If this assertion fails, the iteration fails.",
   },
-  warn: {
-    label: "Warn",
-    meaning:
-      "If this assertion fails, a warning is shown without failing the iteration.",
-  },
-  report: {
-    label: "Report",
-    meaning:
-      "Records the result for reference without changing the iteration verdict.",
+  advisory: {
+    label: "Advisory",
+    meaning: "Shown on the result. Never fails the iteration.",
   },
 };
 
 /**
  * Authored role a settings row can write.
  *
- * Gate is the default: both policy fields stripped, so a saved check looks
- * like every check written before roles existed. Warn is the only pairing
- * the schema admits for a highlight (`advisory` + `severity: "warn"`).
- * Report is advisory without a severity.
+ * Required is the default: both policy fields stripped, so a saved check looks
+ * like every check written before roles existed. `severity` is ignored here —
+ * an advisory check reads as Advisory whether or not it carries one, which is
+ * what collapsing Warn into Report means.
  */
 export function roleOfPredicate(predicate: Predicate): ScorerUiRole {
-  if (checkRole(predicate) === "gating") return "gate";
-  return checkSeverity(predicate) === "warn" ? "warn" : "report";
+  return checkRole(predicate) === "advisory" ? "advisory" : "required";
 }
 
 export function withPredicateRole(
@@ -141,10 +147,13 @@ export function withPredicateRole(
   role: ScorerUiRole,
 ): Predicate {
   const { role: _role, severity: _severity, ...rest } = predicate;
-  if (role === "gate") return rest as Predicate;
-  if (role === "warn") {
-    return { ...(rest as Predicate), role: "advisory", severity: "warn" };
-  }
+  // Required writes the stored form Gate always had — both fields absent — so
+  // a row switched to Required is byte-identical to one authored before roles
+  // existed, and its configuration revision does not move.
+  if (role === "required") return rest as Predicate;
+  // A NEW advisory write carries no `severity`: it no longer decides a label,
+  // and the reducer only rewrites rows the author touched, so an untouched
+  // row keeps whatever severity it was stored with.
   return { ...(rest as Predicate), role: "advisory" };
 }
 
@@ -155,39 +164,48 @@ export function roleOfJudgeSlot(
   slot: JudgeSlot,
   judgeConfig: EvalJudgeConfig | undefined,
 ): ScorerUiRole {
-  if (slot === "groundedness") {
-    return judgeConfig?.groundedness?.severity === "warn" ? "warn" : "report";
-  }
-  const goal = judgeConfig?.goalCompletion;
-  if (goal?.role === "gating") return "gate";
-  return goal?.severity === "warn" ? "warn" : "report";
+  if (slot === "groundedness") return "advisory";
+  // Either spelling: a suite configured before the rename stores `"gating"`
+  // and one configured after stores `"required"`, and this table renders both.
+  return isRequiredRole(judgeConfig?.goalCompletion?.role)
+    ? "required"
+    : "advisory";
 }
 
-/** Authored goal-completion role a settings row can write. */
+/**
+ * Authored goal-completion role a settings row can write.
+ *
+ * Writes the spelling this build emits, which is the canonical one now that
+ * the boundary takes it. Deliberately NOT capability-gated: the client and the
+ * server it writes to are one deployment, unlike an SDK runner in somebody's
+ * CI — and a deployment that shipped this build shipped the boundary with it.
+ */
 export function withGoalCompletionRole(
   current: NonNullable<EvalJudgeConfig["goalCompletion"]>,
   role: ScorerUiRole,
 ): NonNullable<EvalJudgeConfig["goalCompletion"]> {
   const { role: _role, severity: _severity, ...rest } = current;
-  if (role === "gate") return { ...rest, role: "gating" };
-  if (role === "warn") return { ...rest, role: "advisory", severity: "warn" };
+  if (role === "required") return { ...rest, role: authoredRequiredRole() };
   return { ...rest, role: "advisory" };
 }
 
 export type ScorerLibraryCategoryId =
   "discovery" | "selection" | "call" | "userValue" | "budget" | "response";
 
-export const SCORER_LIBRARY_CATEGORY_LABELS: Record<
-  ScorerLibraryCategoryId,
-  string
-> = {
+/**
+ * `as const satisfies` rather than a `Record<_, string>` annotation: the
+ * exhaustiveness check is the same, but the literal value types survive, which
+ * is what lets the Add drawer derive a real union of section headings from
+ * these instead of widening to `string`.
+ */
+export const SCORER_LIBRARY_CATEGORY_LABELS = {
   discovery: "Discovery",
   selection: "Selection",
   call: "Tool call",
   userValue: "User value",
   budget: "Budgets",
   response: "Response",
-};
+} as const satisfies Record<ScorerLibraryCategoryId, string>;
 
 /**
  * Chain order, then the budget group: the same six-stage order the run page
@@ -287,6 +305,7 @@ export type ScorerTableRowKind =
  */
 export type ScorerTableFamily = {
   id: AssertionCheck["id"];
+  name: string;
   label: string;
   suiteRules: number;
 };
@@ -339,24 +358,28 @@ export type ScorerTableView = {
 
 const STAGE_CONFIG_CHIP_LABEL: Record<StageConfigState["state"], string> = {
   runner: "Observed by the runner",
-  gated: "Gated",
+  gated: "Required",
   gap: "No evaluator",
   judgeOnRequest: "Judge on request",
   judgeAutomatic: "Judge automatic",
   judgeOff: "Judge off",
+  judgeUnknown: "Grading state unavailable",
 };
 
-export function formatStageConfigLine(state: StageConfigState): string {
+/**
+ * "N required · M advisory", or "" when nothing is authored.
+ *
+ * Takes the counters structurally rather than a whole {@link StageConfigState}
+ * so a case's `StageCoverage` can be passed directly — the suite card and the
+ * case card render the same sentence, and neither needs a cast to say so.
+ */
+export function formatStageConfigLine(state: {
+  required: number;
+  advisory: number;
+}): string {
   const parts: string[] = [];
-  if (state.gates > 0) {
-    parts.push(`${state.gates} ${state.gates === 1 ? "gate" : "gates"}`);
-  }
-  if (state.warn > 0) {
-    parts.push(`${state.warn} warn`);
-  }
-  if (state.report > 0) {
-    parts.push(`${state.report} ${state.report === 1 ? "report" : "reports"}`);
-  }
+  if (state.required > 0) parts.push(`${state.required} required`);
+  if (state.advisory > 0) parts.push(`${state.advisory} advisory`);
   return parts.join(" · ");
 }
 
@@ -413,16 +436,35 @@ function hasAuthoredThreshold(predicate: Predicate): boolean {
   );
 }
 
+/**
+ * What the runner measures at a stage without any authored assertion: named
+ * like one ("Successful connection"), because that is how it reads beside the
+ * assertions, but never a box — it is on for every iteration and cannot be
+ * turned off.
+ */
+export const RUNNER_MEASUREMENT_LABELS: Record<UserValueStage, string> = {
+  connection: STANDARD_CHECKS.find(
+    (check) => check.id === "connection.success",
+  )!.name,
+  discovery: STANDARD_CHECKS.find(
+    (check) => check.id === "discovery.toolsList",
+  )!.name,
+  selection: "A tool was selected",
+  call: "Tool call completed",
+  response: "Result returned to the model",
+  userValue: "Observed by the runner",
+};
+
 function observedRow(stage: UserValueStage): ScorerTableRow {
   return {
     id: `observed:${stage}`,
     kind: "observed",
     enabled: true,
-    name: "Observed by the runner",
+    name: RUNNER_MEASUREMENT_LABELS[stage],
     kindLabel: "Runner",
     threshold: "",
     thresholdKind: "none",
-    role: "report",
+    role: "advisory",
     muted: true,
     observedStage: stage,
   };
@@ -437,7 +479,7 @@ function matchTableRow(row: GraderRow): ScorerTableRow {
     kindLabel: matchKindLabel(row.matchField),
     threshold: "1",
     thresholdKind: "fixed",
-    role: "gate",
+    role: "required",
     muted: false,
     matchField: row.matchField,
   };
@@ -451,6 +493,7 @@ function familyOf(
   if (!check) return undefined;
   return {
     id: check.id,
+    name: check.name,
     label: check.label,
     suiteRules: rules.filter(
       (rule) =>
@@ -495,7 +538,12 @@ function presetTableRow(check: AssertionCheck): ScorerTableRow {
     id: `preset:${check.id}`,
     kind: "preset",
     enabled: false,
-    family: { id: check.id, label: check.label, suiteRules: 0 },
+    family: {
+      id: check.id,
+      name: check.name,
+      label: check.label,
+      suiteRules: 0,
+    },
     preset,
     name: formatCriterion({ predicate: preset }),
     kindLabel: predicateKindLabel(preset),
@@ -652,6 +700,7 @@ export function buildScorerTable(input: {
   /** Overrides the judge row's On state; a case's judge-skipped flag. */
   judgeEnabled?: boolean;
   judgeCapabilities?: SuiteCapabilities["judge"];
+  judgePolicy?: GoalJudgePolicy;
   /** List the standard checks nothing authors yet as off rows. Default on. */
   listPresets?: boolean;
 }): ScorerTableView {
@@ -665,7 +714,7 @@ export function buildScorerTable(input: {
       suppressed: false,
     }));
   // A case can skip the judge, never switch on one the suite turned off.
-  const configuredMode = judgeMode(input.judgeConfig);
+  const configuredMode = judgeMode(input.judgeConfig, input.judgePolicy);
   const judgeEnabled = configuredMode !== "off" && (input.judgeEnabled ?? true);
   const mode: JudgeMode = judgeEnabled ? configuredMode : "off";
   const groups = USER_VALUE_STAGES.map((stage, index) => ({

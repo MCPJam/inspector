@@ -35,6 +35,7 @@ import {
   type TopicMapScope,
 } from "@/hooks/useScenarioTopicMap";
 import type { ClusterRunState, InsightsScope } from "@/hooks/useUsageInsights";
+import { SHOW_RECLUSTERING_UI } from "@/lib/cluster-tuning";
 import { cn } from "@/lib/utils";
 
 const CLUSTER_COLORS = [
@@ -201,16 +202,6 @@ interface TopicMapPanelProps {
    * toggle on swarms), rendered above the Color-by control.
    */
   headerActions?: ReactNode;
-  /**
-   * When the map lives inside a page that scrolls (the swarm Insights tab in
-   * `bodyLayout="scroll"`), a plain wheel over the canvas must scroll the page
-   * rather than be swallowed by d3-zoom, which `preventDefault`s every wheel.
-   * With this set, a bare wheel passes through to the page and zoom happens on
-   * Ctrl/Cmd+wheel or a trackpad pinch (browsers deliver pinch as a ctrlKey
-   * wheel). Default `false` keeps the locked-viewport behavior where wheel
-   * zooms, since that pane does not scroll.
-   */
-  cooperativeWheelZoom?: boolean;
 }
 
 function rebuildButtonLabel(
@@ -673,7 +664,6 @@ export function TopicMapPanel({
   rebuildBusy,
   onOpenSession,
   headerActions,
-  cooperativeWheelZoom = false,
 }: TopicMapPanelProps) {
   const topicMapScope = useMemo<TopicMapScope | null>(() => {
     if (!scopeProp) return null;
@@ -706,36 +696,7 @@ export function TopicMapPanel({
   const autoFitKeyRef = useRef<string | null>(null);
   const topicMapSelectionRunIdRef = useRef<string | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
-  // Element state, not a ref: the graph wrapper mounts only once a snapshot
-  // exists (the loading and empty branches return before it), so an effect
-  // keyed on `cooperativeWheelZoom` alone would read a null ref on the first
-  // render and never re-run when the wrapper arrived.
-  const [graphWrapEl, setGraphWrapEl] = useState<HTMLDivElement | null>(null);
   const topicMapPalette = useTopicMapCanvasPalette(panelRef);
-
-  // Cooperative wheel gestures (see `cooperativeWheelZoom`): block a bare wheel
-  // in the capture phase before it reaches the canvas's own d3-zoom listener,
-  // so the event stays undefaulted and scrolls the page. A modifier (Ctrl/Cmd)
-  // or a trackpad pinch (delivered as a ctrlKey wheel) is let through to zoom.
-  //
-  // Passive: this handler only stopPropagation()s and NEVER preventDefault()s
-  // (letting the page scroll is the whole point), so declaring it passive keeps
-  // the browser's async-scroll optimization for the graph subtree — and
-  // stopPropagation still runs on a passive listener.
-  useEffect(() => {
-    if (!cooperativeWheelZoom || !graphWrapEl) return;
-    const onWheelCapture = (event: WheelEvent) => {
-      if (!event.ctrlKey && !event.metaKey) event.stopPropagation();
-    };
-    graphWrapEl.addEventListener("wheel", onWheelCapture, {
-      capture: true,
-      passive: true,
-    });
-    return () =>
-      graphWrapEl.removeEventListener("wheel", onWheelCapture, {
-        capture: true,
-      });
-  }, [cooperativeWheelZoom, graphWrapEl]);
   const canvasPalette = useMemo(
     () => topicMapPalette ?? DEFAULT_CANVAS_PALETTE,
     [topicMapPalette],
@@ -1459,8 +1420,14 @@ export function TopicMapPanel({
       snapshotError ??
       latestRun?.errorMessage ??
       (isSwarmScope
-        ? "Rebuild once to generate the map. Session themes may already exist in Session flow."
-        : "Run a rebuild to summarize and cluster historical sessions.");
+        ? SHOW_RECLUSTERING_UI
+          ? "Rebuild once to generate the map. Session themes may already exist in Session flow."
+          : "The cluster map has not been generated yet. Session themes may already exist in Session flow."
+        : SHOW_RECLUSTERING_UI
+          ? "Run a rebuild to summarize and cluster historical sessions."
+          : "Historical sessions have not been clustered into a map yet.");
+    const showEmptyRebuild =
+      SHOW_RECLUSTERING_UI || latestRun?.status === "failed";
     return (
       <div className="relative flex h-full min-h-0 items-center justify-center bg-background text-foreground">
         {headerActions ? (
@@ -1476,15 +1443,17 @@ export function TopicMapPanel({
             <p className="text-sm font-medium">{emptyTitle}</p>
             <p className="mt-1 text-xs text-muted-foreground">{emptyBody}</p>
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            disabled={rebuildDisabled(latestRun) || rebuildBusy}
-            onClick={() => onRebuild()}
-          >
-            <RefreshCw className="mr-2 h-3.5 w-3.5" />
-            {rebuildButtonLabel(latestRun)}
-          </Button>
+          {showEmptyRebuild ? (
+            <Button
+              type="button"
+              variant="outline"
+              disabled={rebuildDisabled(latestRun) || rebuildBusy}
+              onClick={() => onRebuild()}
+            >
+              <RefreshCw className="mr-2 h-3.5 w-3.5" />
+              {rebuildButtonLabel(latestRun)}
+            </Button>
+          ) : null}
         </div>
       </div>
     );
@@ -1588,8 +1557,8 @@ export function TopicMapPanel({
                 </TooltipTrigger>
                 {!supportsOutcomeColor ? (
                   <TooltipContent side="bottom" className="max-w-xs">
-                    This map was built before outcomes were recorded. Rebuild
-                    clusters to color by outcome.
+                    This map was built before outcomes were recorded. Outcome
+                    color is unavailable until the map is rebuilt.
                   </TooltipContent>
                 ) : null}
               </Tooltip>
@@ -1633,62 +1602,63 @@ export function TopicMapPanel({
                 Fit view
               </TooltipContent>
             </Tooltip>
-            <Tooltip delayDuration={200}>
-              <TooltipTrigger asChild>
-                <Button
-                  type="button"
-                  variant={
-                    latestRun?.isStale ||
-                    (snapshot.stats.unmappedSessionCount > 0 &&
-                      latestRun?.status === "done")
-                      ? "default"
-                      : "outline"
-                  }
-                  size="icon"
-                  className={cn(
-                    "relative",
-                    (latestRun?.isStale ||
+            {SHOW_RECLUSTERING_UI || latestRun?.status === "failed" ? (
+              <Tooltip delayDuration={200}>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant={
+                      latestRun?.isStale ||
                       (snapshot.stats.unmappedSessionCount > 0 &&
-                        latestRun?.status === "done")) &&
-                      "bg-warning text-warning-foreground hover:bg-warning/90",
-                  )}
-                  aria-label={rebuildButtonLabel(
+                        latestRun?.status === "done")
+                        ? "default"
+                        : "outline"
+                    }
+                    size="icon"
+                    className={cn(
+                      "relative",
+                      (latestRun?.isStale ||
+                        (snapshot.stats.unmappedSessionCount > 0 &&
+                          latestRun?.status === "done")) &&
+                        "bg-warning text-warning-foreground hover:bg-warning/90",
+                    )}
+                    aria-label={rebuildButtonLabel(
+                      latestRun,
+                      snapshot.stats.unmappedSessionCount,
+                    )}
+                    disabled={rebuildDisabled(latestRun) || rebuildBusy}
+                    onClick={() => onRebuild()}
+                  >
+                    <RefreshCw
+                      className={cn(
+                        "h-3.5 w-3.5",
+                        latestRun?.status === "running" && !latestRun.isStale
+                          ? "animate-spin"
+                          : "",
+                      )}
+                    />
+                    {(latestRun?.isStale ||
+                      (snapshot.stats.unmappedSessionCount > 0 &&
+                        latestRun?.status === "done")) && (
+                      <span className="absolute -right-1 -top-1 flex h-2.5 w-2.5">
+                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-warning opacity-75" />
+                        <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-warning ring-2 ring-background" />
+                      </span>
+                    )}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="top" sideOffset={6}>
+                  {rebuildButtonLabel(
                     latestRun,
                     snapshot.stats.unmappedSessionCount,
                   )}
-                  disabled={rebuildDisabled(latestRun) || rebuildBusy}
-                  onClick={() => onRebuild()}
-                >
-                  <RefreshCw
-                    className={cn(
-                      "h-3.5 w-3.5",
-                      latestRun?.status === "running" && !latestRun.isStale
-                        ? "animate-spin"
-                        : "",
-                    )}
-                  />
-                  {(latestRun?.isStale ||
-                    (snapshot.stats.unmappedSessionCount > 0 &&
-                      latestRun?.status === "done")) && (
-                    <span className="absolute -right-1 -top-1 flex h-2.5 w-2.5">
-                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-warning opacity-75" />
-                      <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-warning ring-2 ring-background" />
-                    </span>
-                  )}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="top" sideOffset={6}>
-                {rebuildButtonLabel(
-                  latestRun,
-                  snapshot.stats.unmappedSessionCount,
-                )}
-              </TooltipContent>
-            </Tooltip>
+                </TooltipContent>
+              </Tooltip>
+            ) : null}
           </div>
         </div>
 
         <div
-          ref={setGraphWrapEl}
           className="h-full min-h-0 w-full"
           data-selected-session={selectedNodeId ?? ""}
         >
@@ -1763,7 +1733,14 @@ export function TopicMapPanel({
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col">
-          <ScrollArea className="min-h-0 flex-1">
+          {/* Radix wraps the viewport's children in a `display: table` box,
+              which shrink-to-fits its content rather than taking the rail's
+              width. A cluster label is `truncate` — i.e. `nowrap` — so a long
+              one became that box's minimum width and pushed every card past
+              the 372px rail, where the viewport's `overflow-x: hidden` clipped
+              it with no scrollbar to reach the rest. Block layout takes the
+              rail's width, and the label truncates as it was meant to. */}
+          <ScrollArea className="min-h-0 flex-1 [&>[data-slot=scroll-area-viewport]>div]:block!">
             <div className="space-y-3 p-4">
               {communities.map((community) => {
                 const isActive = activeClusterIds.has(community.clusterId);

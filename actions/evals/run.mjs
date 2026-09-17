@@ -10,6 +10,15 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import {
+  SUMMARY_LIMIT,
+  accessHeadersFromEnv,
+  fetchRunBundle,
+  publishPullRequestComment,
+  readActionReceipts,
+  renderReports,
+  truncateMarkdown,
+} from "./report.mjs";
 
 const validId = (value) =>
   typeof value === "string" && /^[a-zA-Z0-9_-]+$/.test(value);
@@ -29,13 +38,22 @@ export function parseInputs(env) {
     waitTimeout: get("WAIT_TIMEOUT"),
     cliVersion: get("CLI_VERSION") || "5.7.1",
     idempotencyKey: get("IDEMPOTENCY_KEY"),
+    command: get("COMMAND"),
+    comment: get("COMMENT") || "false",
   };
-  for (const key of ["apiKey", "project", "suite"]) {
+  for (const key of ["apiKey"]) {
     if (!inputs[key])
       throw new Error(
         `Missing required input: ${key === "apiKey" ? "api-key (add MCPJAM_API_KEY to GitHub Actions secrets)" : key}.`,
       );
   }
+  if (!inputs.command && (!inputs.project || !inputs.suite))
+    throw new Error("Provide project and suite, or provide command.");
+  if (inputs.command && (inputs.project || inputs.suite))
+    throw new Error("Use command or project/suite, not both.");
+  if (!["true", "false"].includes(inputs.comment))
+    throw new Error("comment must be true or false.");
+  inputs.comment = inputs.comment === "true";
   if (!["true", "false"].includes(inputs.gate))
     throw new Error("gate must be true or false.");
   inputs.gate = inputs.gate === "true";
@@ -44,6 +62,15 @@ export function parseInputs(env) {
     (inputs.minPassRate || inputs.baselineRun || inputs.baselineSha)
   ) {
     throw new Error("Gate settings require gate: true.");
+  }
+  if (
+    inputs.command &&
+    (inputs.gate ||
+      inputs.minPassRate ||
+      inputs.baselineRun ||
+      inputs.baselineSha)
+  ) {
+    throw new Error("Gate settings are not supported with command.");
   }
   if (inputs.baselineRun && inputs.baselineSha)
     throw new Error("Use baseline-run or baseline-sha, not both.");
@@ -71,9 +98,43 @@ export function parseInputs(env) {
     throw new Error("cli-version must be an exact version, such as 5.7.1.");
   if (inputs.idempotencyKey.length > 256)
     throw new Error("idempotency-key must be at most 256 characters.");
-  if (!inputs.idempotencyKey)
+  if (!inputs.idempotencyKey && !inputs.command)
     inputs.idempotencyKey = deriveIdempotencyKey(env, inputs);
   return inputs;
+}
+
+/**
+ * The ONE deployment this action talks to.
+ *
+ * The CLI reads `MCPJAM_API_URL` and the SDK reads `MCPJAM_BASE_URL`, so a
+ * workflow that sets only one of them would otherwise point hosted mode and
+ * command mode at different deployments. Both are collapsed to an origin here,
+ * the command is given it as `MCPJAM_BASE_URL`, and a receipt naming any other
+ * origin is refused rather than sent the API key.
+ */
+export function resolveConfiguredOrigin(env) {
+  const configured = [
+    ["MCPJAM_BASE_URL", env.MCPJAM_BASE_URL],
+    ["MCPJAM_API_URL", env.MCPJAM_API_URL],
+  ].flatMap(([name, value]) => {
+    const raw = (value ?? "").trim();
+    if (!raw) return [];
+    let url;
+    try {
+      url = new URL(raw);
+    } catch {
+      throw new Error(`${name} must be an absolute URL.`);
+    }
+    if (url.username || url.password)
+      throw new Error(`${name} must not carry credentials.`);
+    if (url.protocol !== "https:")
+      throw new Error(`${name} must use HTTPS.`);
+    return [url.origin];
+  });
+  if (configured.length === 0) return "https://app.mcpjam.com";
+  if (new Set(configured).size > 1)
+    throw new Error("MCPJAM_BASE_URL and MCPJAM_API_URL must use the same origin.");
+  return configured[0];
 }
 
 export function deriveIdempotencyKey(env, inputs) {
@@ -143,6 +204,18 @@ export function invokeCli(args, env) {
           stdout: Buffer.concat(chunks).toString("utf8"),
         });
     });
+  });
+}
+
+export function invokeCommand(command, env) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, {
+      env,
+      shell: true,
+      stdio: "inherit",
+    });
+    child.on("error", () => reject(new Error("Could not start the eval command.")));
+    child.on("close", (code) => resolve({ code: code ?? 1 }));
   });
 }
 
@@ -223,10 +296,74 @@ async function output(env, values, apiKey) {
   }
 }
 
+// One run at a time, and a run that cannot be read costs only itself: a
+// concurrent fetch that rejects discards every bundle already paid for and
+// leaves the reader with no report at all.
+async function loadRunBundles(receipts, apiKey, fetchImpl, log, env) {
+  const accessHeaders = accessHeadersFromEnv(env);
+  const bundles = [];
+  const missing = [];
+  for (const receipt of receipts) {
+    try {
+      bundles.push(
+        await fetchRunBundle(receipt, apiKey, fetchImpl, accessHeaders),
+      );
+    } catch (error) {
+      // Name the reason: an identity proxy in front of the deployment answers
+      // every read the same way, and "could not load" alone sent readers
+      // looking at the run instead of at the request.
+      log(
+        `::warning::Could not read MCPJam run ${receipt.runId}: ${redactSecret(error.message, apiKey)}`,
+      );
+      missing.push(receipt.runId);
+    }
+  }
+  if (missing.length > 0)
+    log(
+      `::warning::Could not load MCPJam results for ${missing.join(", ")}. The summary covers the runs that loaded.`,
+    );
+  return { bundles, missing };
+}
+
+async function publishDetailedReports({
+  bundles,
+  directory,
+  jsonName,
+  inputs,
+  env,
+  log,
+  fetchImpl,
+  outcome,
+}) {
+  const reports = renderReports(bundles, outcome);
+  await writeFile(join(directory, "eval-report.md"), `${reports.summary}\n`);
+  await writeFile(
+    join(directory, jsonName),
+    JSON.stringify({ schemaVersion: 1, runs: bundles }, null, 2),
+  );
+  if (inputs.comment && env.MCPJAM_ACTION_PULL_REQUEST) {
+    try {
+      const published = await publishPullRequestComment(
+        reports.comment,
+        env,
+        fetchImpl,
+      );
+      log(`MCPJam PR comment ${published}.`);
+    } catch {
+      log(
+        "::warning::Could not publish the MCPJam PR comment. Check pull-requests: write permission.",
+      );
+    }
+  }
+  return reports.summary;
+}
+
 export async function runAction(
   env = process.env,
   invoke = invokeCli,
   log = (message) => process.stdout.write(`${message}\n`),
+  execute = invokeCommand,
+  fetchImpl = fetch,
 ) {
   const state = {
     result: "failed",
@@ -235,102 +372,219 @@ export async function runAction(
     gateExitCodes: {},
     message: "Evaluation did not complete.",
   };
+  let renderedSummary = "";
   const key = (env.MCPJAM_API_KEY ?? "").trim();
   if (key) log(`::add-mask::${escapeCommand(key)}`);
+  const githubToken = (env.MCPJAM_ACTION_GITHUB_TOKEN ?? "").trim();
+  if (githubToken) log(`::add-mask::${escapeCommand(githubToken)}`);
+  // The identity-proxy service token, when one is configured, is a credential
+  // like the others and never belongs in a log line. Both halves: Cloudflare
+  // issues and revokes the id and the secret as one pair.
+  for (const name of ["CF_ACCESS_CLIENT_ID", "CF_ACCESS_CLIENT_SECRET"]) {
+    const value = (env[name] ?? "").trim();
+    if (value) log(`::add-mask::${escapeCommand(value)}`);
+  }
   let directory;
   try {
     const inputs = parseInputs(env);
+    const origin = resolveConfiguredOrigin(env);
     directory = await mkdtemp(
       join(env.RUNNER_TEMP || tmpdir(), "mcpjam-evals-"),
     );
-    const prefix = [
-      "--yes",
-      `@mcpjam/cli@${inputs.cliVersion}`,
-      "cloud",
-      "eval",
-    ];
-    const reportPath = join(directory, "eval-report.json");
-    const args = [
-      ...prefix,
-      "run",
-      `--project=${inputs.project}`,
-      `--suite=${inputs.suite}`,
-      "--wait",
-      `--out=${reportPath}`,
-      "--format=json",
-      `--idempotency-key=${inputs.idempotencyKey}`,
-    ];
-    if (inputs.waitTimeout) args.push(`--wait-timeout=${inputs.waitTimeout}`);
-    const cliEnv = { ...env, MCPJAM_API_KEY: inputs.apiKey };
-    const run = await invoke(args, cliEnv);
-    state.runExitCode = run.code;
-    const { receipt, ids } = parseReceipt(run.stdout);
-    state.runIds = ids;
-    let report;
-    try {
-      report = JSON.parse(await readFile(reportPath, "utf8"));
-    } catch {
-      /* Missing evidence cannot pass. */
-    }
-    let safeToPass =
-      [0, 1].includes(run.code) && completeEvidence(report, receipt, ids);
-    if (inputs.gate) {
-      for (const [index, row] of receipt.runs.entries()) {
-        if (row.status !== "completed") continue;
-        const gatePath = join(directory, `gate-${index + 1}.xml`);
-        const gateArgs = [
-          ...prefix,
-          "gate",
-          `--project=${receipt.launch.project?.id || inputs.project}`,
-          `--run=${row.id}`,
-          "--wait",
-          "--reporter=junit-xml",
-          `--out=${gatePath}`,
-        ];
-        if (inputs.minPassRate)
-          gateArgs.push(`--min-pass-rate-percent=${inputs.minPassRate}`);
-        if (inputs.baselineRun)
-          gateArgs.push(`--baseline=${inputs.baselineRun}`);
-        if (inputs.baselineSha)
-          gateArgs.push(`--baseline-sha=${inputs.baselineSha}`);
-        if (inputs.waitTimeout)
-          gateArgs.push(`--wait-timeout=${inputs.waitTimeout}`);
-        let gate;
-        try {
-          gate = await invoke(gateArgs, cliEnv);
-        } catch {
-          state.gateExitCodes[row.id] = 3;
-          safeToPass = false;
-          continue;
-        }
-        state.gateExitCodes[row.id] = gate.code;
-        let xml = "";
-        try {
-          xml = await readFile(gatePath, "utf8");
-        } catch {
-          /* A missing gate report fails the action. */
-        }
-        safeToPass &&=
-          gate.code === 0 &&
-          xml.includes("<testsuites ") &&
-          xml.includes("</testsuites>");
+    if (inputs.command) {
+      // The action's own token is never handed to the user's command: the
+      // command needs the MCPJam key and its receipt directory, nothing else.
+      const { MCPJAM_ACTION_GITHUB_TOKEN: _token, ...commandEnv } = env;
+      const command = await execute(inputs.command, {
+        ...commandEnv,
+        MCPJAM_API_KEY: inputs.apiKey,
+        MCPJAM_BASE_URL: origin,
+        MCPJAM_ACTION_RECEIPT_DIR: directory,
+      });
+      state.runExitCode = command.code;
+      const receipts = await readActionReceipts(directory, origin);
+      if (receipts.length === 0) {
+        // Every cause but one leaves the same empty directory, so name the
+        // condition rather than blaming a version: a command that never got
+        // that far, and reporting that failed non-strictly (an expired key, an
+        // unreachable API) both land here having exited normally.
+        state.message =
+          command.code === 0
+            ? `The eval command exited 0 but reported no MCPJam run to ${origin}. Check its output for an API key or connectivity failure, and that it reports results with @mcpjam/sdk.`
+            : `The eval command exited ${command.code} without reporting a MCPJam run.`;
+        throw new Error(state.message);
       }
-      safeToPass &&= Object.keys(state.gateExitCodes).length === ids.length;
+      state.runIds = receipts.map((receipt) => receipt.runId);
+      const { bundles, missing } = await loadRunBundles(
+        receipts,
+        inputs.apiKey,
+        fetchImpl,
+        log,
+        env,
+      );
+      if (bundles.length === 0) {
+        state.message = "Could not load any uploaded MCPJam run.";
+        throw new Error(state.message);
+      }
+      const unresolved = bundles.filter(
+        (bundle) => bundle.run.result !== "passed",
+      );
+      const result =
+        command.code === 0 && unresolved.length === 0 && missing.length === 0
+          ? "passed"
+          : "failed";
+      // Name what actually happened. An inconclusive run is not a failed one,
+      // and a summary that says it is contradicts the report beside it.
+      const outcome = {
+        result,
+        message:
+          result === "passed"
+            ? "All eval runs passed."
+            : command.code !== 0
+              ? `The eval command exited ${command.code}.`
+              : unresolved.length > 0
+                ? `Not every eval run passed: ${unresolved.map((bundle) => `${bundle.receipt.runId} is ${bundle.run.result}`).join(", ")}.`
+                : `Could not load every uploaded eval run: ${missing.join(", ")}.`,
+      };
+      renderedSummary = await publishDetailedReports({
+        bundles,
+        directory,
+        jsonName: "eval-report.json",
+        inputs,
+        env,
+        log,
+        fetchImpl,
+        outcome,
+      });
+      // Adopted only once the reports the verdict points at actually exist.
+      state.result = outcome.result;
+      state.message = outcome.message;
     } else {
-      safeToPass &&=
-        run.code === 0 && receipt.runs.every((row) => row.result === "passed");
+      const prefix = [
+        "--yes",
+        `@mcpjam/cli@${inputs.cliVersion}`,
+        "cloud",
+        "eval",
+      ];
+      const reportPath = join(directory, "eval-report.json");
+      const args = [
+        ...prefix,
+        "run",
+        `--project=${inputs.project}`,
+        `--suite=${inputs.suite}`,
+        "--wait",
+        `--out=${reportPath}`,
+        "--format=json",
+        `--idempotency-key=${inputs.idempotencyKey}`,
+      ];
+      if (inputs.waitTimeout) args.push(`--wait-timeout=${inputs.waitTimeout}`);
+      const cliEnv = { ...env, MCPJAM_API_KEY: inputs.apiKey };
+      const run = await invoke(args, cliEnv);
+      state.runExitCode = run.code;
+      const { receipt, ids } = parseReceipt(run.stdout);
+      state.runIds = ids;
+      let report;
+      try {
+        report = JSON.parse(await readFile(reportPath, "utf8"));
+      } catch {
+        /* Missing evidence cannot pass. */
+      }
+      let safeToPass =
+        [0, 1].includes(run.code) && completeEvidence(report, receipt, ids);
+      if (inputs.gate) {
+        for (const [index, row] of receipt.runs.entries()) {
+          if (row.status !== "completed") continue;
+          const gatePath = join(directory, `gate-${index + 1}.xml`);
+          const gateArgs = [
+            ...prefix,
+            "gate",
+            `--project=${receipt.launch.project?.id || inputs.project}`,
+            `--run=${row.id}`,
+            "--wait",
+            "--reporter=junit-xml",
+            `--out=${gatePath}`,
+          ];
+          if (inputs.minPassRate)
+            gateArgs.push(`--min-pass-rate-percent=${inputs.minPassRate}`);
+          if (inputs.baselineRun)
+            gateArgs.push(`--baseline=${inputs.baselineRun}`);
+          if (inputs.baselineSha)
+            gateArgs.push(`--baseline-sha=${inputs.baselineSha}`);
+          if (inputs.waitTimeout)
+            gateArgs.push(`--wait-timeout=${inputs.waitTimeout}`);
+          let gate;
+          try {
+            gate = await invoke(gateArgs, cliEnv);
+          } catch {
+            state.gateExitCodes[row.id] = 3;
+            safeToPass = false;
+            continue;
+          }
+          state.gateExitCodes[row.id] = gate.code;
+          let xml = "";
+          try {
+            xml = await readFile(gatePath, "utf8");
+          } catch {
+            /* A missing gate report fails the action. */
+          }
+          safeToPass &&=
+            gate.code === 0 &&
+            xml.includes("<testsuites ") &&
+            xml.includes("</testsuites>");
+        }
+        safeToPass &&= Object.keys(state.gateExitCodes).length === ids.length;
+      } else {
+        safeToPass &&=
+          run.code === 0 && receipt.runs.every((row) => row.result === "passed");
+      }
+      state.result = safeToPass ? "passed" : "failed";
+      state.message = safeToPass
+        ? inputs.gate
+          ? "All gates passed or were waived."
+          : "All eval runs passed."
+        : "Eval, gate, or reporting failed or was incomplete. See the reports and exit codes.";
+      const projectId = receipt.launch.project?.id;
+      const suiteId = receipt.launch.suite?.id;
+      if (ids.length > 0 && validId(projectId) && validId(suiteId)) {
+        const detailReceipts = ids.map((runId) => ({
+          schemaVersion: 1,
+          baseUrl: origin,
+          projectId,
+          suiteId,
+          suiteName: receipt.launch.suite.name || inputs.suite,
+          runId,
+        }));
+        try {
+          const { bundles } = await loadRunBundles(
+            detailReceipts,
+            inputs.apiKey,
+            fetchImpl,
+            log,
+            env,
+          );
+          if (bundles.length > 0)
+            renderedSummary = await publishDetailedReports({
+              bundles,
+              directory,
+              jsonName: "eval-details.json",
+              inputs,
+              env,
+              log,
+              fetchImpl,
+              outcome: state,
+            });
+        } catch {
+          log("::warning::Could not load detailed MCPJam results for the summary.");
+        }
+      }
     }
-    state.result = safeToPass ? "passed" : "failed";
-    state.message = safeToPass
-      ? inputs.gate
-        ? "All gates passed or were waived."
-        : "All eval runs passed."
-      : "Eval, gate, or reporting failed or was incomplete. See the reports and exit codes.";
   } catch (error) {
     // Only validation errors are echoed; unexpected filesystem/process errors
     // can contain credentials or other data from the environment.
     state.message = directory
-      ? "Could not finish the eval action. Check the reports and CLI exit code."
+      ? state.message === "Evaluation did not complete."
+        ? "Could not finish the eval action. Check the reports and CLI exit code."
+        : state.message
       : redactSecret(error.message, key);
   }
   if (directory) {
@@ -353,13 +607,25 @@ export async function runAction(
     }
   }
   if (env.GITHUB_STEP_SUMMARY) {
-    await appendFile(
-      env.GITHUB_STEP_SUMMARY,
-      redactSecret(
-        `### MCPJam evals: ${state.result}\n\n${state.message}\n\nRun exit code: ${state.runExitCode === "" ? "not started" : state.runExitCode}\n\nRuns: ${state.runIds.join(", ") || "none"}\n\nGate exit codes: ${JSON.stringify(state.gateExitCodes)}\n`,
-        key,
-      ),
+    // The verdict block is never replaced by the rendered report: it carries
+    // the action's own result, the exit codes and the run ids, and GitHub
+    // discards an oversized summary whole rather than trimming it.
+    const verdict = redactSecret(
+      `### MCPJam evals: ${state.result}\n\n${state.message}\n\nRun exit code: ${state.runExitCode === "" ? "not started" : state.runExitCode}\n\nRuns: ${state.runIds.join(", ") || "none"}\n\nGate exit codes: ${JSON.stringify(state.gateExitCodes)}\n`,
+      key,
     );
+    const separator = "\n\n---\n\n";
+    const safeSummary = redactSecret(renderedSummary, key);
+    const detail = renderedSummary
+      ? `${truncateMarkdown(
+          safeSummary,
+          SUMMARY_LIMIT -
+            Buffer.byteLength(verdict, "utf8") -
+            Buffer.byteLength(separator, "utf8"),
+          "\n\n_Report truncated. See the uploaded reports and the MCPJam run._",
+        )}${separator}`
+      : "";
+    await appendFile(env.GITHUB_STEP_SUMMARY, `${detail}${verdict}`);
   }
   await output(
     env,

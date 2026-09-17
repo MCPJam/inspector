@@ -10,7 +10,11 @@
  * `convex/journeyExecution/*` + `convex/{personas,journeys,journeyRuns}` by
  * hand (two-repo layout).
  */
-
+import type {
+  SwarmSessionVerdict,
+  JourneyRunVerdictSummary,
+  SwarmReport,
+} from "@mcpjam/sdk/contract";
 import { authFetch } from "@/lib/session-token";
 import { notifyMCPJamLimitError } from "@/lib/mcpjam-limit";
 import { WebApiError } from "@/lib/apis/web/base";
@@ -218,6 +222,8 @@ export interface JourneyRunAttempt {
 }
 
 export interface JourneyRun {
+  verdictSummary?: JourneyRunVerdictSummary;
+  report?: SwarmReport;
   _id: string;
   status: JourneyRunStatus | string;
   /**
@@ -256,6 +262,13 @@ export interface JourneyRun {
  * `goalScore` are the server-denormalized subsets the badges read.
  */
 export interface JourneySessionRow {
+  verdict?: SwarmSessionVerdict;
+  observations?: Array<{
+    evaluatorId: string;
+    predicateType: string;
+    role: "advisory" | "required";
+    status: "passed" | "failed" | "pending" | "unavailable";
+  }>;
   /** `s._id` — the id `ShareUsageThreadDetail` opens + the deep-link threadId. */
   id: string;
   chatSessionId: string;
@@ -360,6 +373,8 @@ export interface SwarmOverviewTarget {
 }
 
 export interface SwarmOverviewRun {
+  verdictSummary?: JourneyRunVerdictSummary;
+  report?: SwarmReport;
   runId: string;
   journeyRefId: string;
   journeyName: string;
@@ -440,12 +455,7 @@ export interface SwarmWaveSignalCandidate {
   /** Identity component (toolName / criterionId / environmentId / hostId /
    * personaRefId / journeyRefId) — stable across waves; never a label. */
   subjectKind:
-    | "tool"
-    | "criterion"
-    | "environment"
-    | "host"
-    | "persona"
-    | "journey";
+    "tool" | "criterion" | "environment" | "host" | "persona" | "journey";
   subjectId: string;
   /** Display-only. */
   subjectLabel: string;
@@ -860,6 +870,12 @@ export interface LaunchJourneyRunArgs {
    */
   launchKey: string;
   /**
+   * Iterations for THIS run, overriding the journey's stored
+   * `sessionsPerTarget` without rewriting it. Sent for a reused persona whose
+   * saved fan-out differs from what Confirm chose.
+   */
+  sessionsPerTarget?: number;
+  /**
    * Opaque id shared by every run of ONE co-launched wave, so the Overview can
    * group them without inferring a batch from `createdAt` proximity. A solo
    * "Run again" mints its own and is simply a wave of one. Omitted against a
@@ -887,10 +903,14 @@ export interface LaunchJourneyRunResult {
  */
 export class LaunchJourneyRunError extends Error {
   readonly status: number;
-  constructor(status: number, message: string) {
+  /** A model limit the dialog took over. The caller must not also render this
+   * message inline — the modal already carries it, with the actions. */
+  readonly limitDialogRaised: boolean;
+  constructor(status: number, message: string, limitDialogRaised = false) {
     super(message);
     this.name = "LaunchJourneyRunError";
     this.status = status;
+    this.limitDialogRaised = limitDialogRaised;
   }
 }
 
@@ -916,6 +936,9 @@ export async function launchJourneyRun(
         ...(args.environmentIds?.length
           ? { environmentIds: args.environmentIds }
           : {}),
+        ...(args.sessionsPerTarget !== undefined
+          ? { sessionsPerTarget: args.sessionsPerTarget }
+          : {}),
       }),
     }
   );
@@ -928,15 +951,38 @@ export async function launchJourneyRun(
   }
 
   if (!response.ok) {
-    const rawMessage =
+    const parsed =
       body && typeof body === "object"
-        ? (body as { message?: unknown }).message
-        : undefined;
+        ? (body as Record<string, unknown>)
+        : null;
+    const rawMessage = parsed?.message;
     const message =
       typeof rawMessage === "string" && rawMessage.length > 0
         ? rawMessage
         : `Failed to launch goal run (${response.status})`;
-    throw new LaunchJourneyRunError(response.status, message);
+    // `code` first, `error` as the fallback: the limit body sets both, and the
+    // generic fallback message above would otherwise be all the classifier
+    // sees.
+    const code =
+      typeof parsed?.code === "string"
+        ? parsed.code
+        : typeof parsed?.error === "string"
+          ? parsed.error
+          : null;
+    // Raise the wall HERE, while the body still carries the route's `code` —
+    // same reasoning as `postGenerate`. Launching a goal run spends model
+    // budget like every other action that already shows this dialog.
+    const limitDialogRaised = notifyMCPJamLimitError({
+      ...(code ? { code } : {}),
+      details: body,
+      message,
+      surface: "swarm",
+    });
+    throw new LaunchJourneyRunError(
+      response.status,
+      message,
+      limitDialogRaised
+    );
   }
 
   const runId =
@@ -1120,6 +1166,7 @@ export async function generateSwarmPersonaBatch(
 export async function generateSwarmJourneys(
   args: {
     projectId: string;
+    swarmRefId?: string;
     journeyCount: number;
     persona: SwarmGeneratedPersona;
   } & SwarmGenerationGrounding

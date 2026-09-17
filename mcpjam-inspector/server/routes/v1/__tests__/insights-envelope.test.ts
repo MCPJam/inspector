@@ -364,6 +364,7 @@ describe("eval-run detail — judges envelope", () => {
           // The join key. Without it a caller can only pair a judge case with
           // its iteration by array POSITION.
           iterationId: "it_1",
+          status: "scored",
           score: 0.9,
           passed: true,
           reason: "named the right tool",
@@ -423,7 +424,7 @@ describe("eval-run detail — judges envelope", () => {
     expect(body.judges.groundedness.status).toBeNull();
   });
 
-  it("carries no cases for a pending or failed judge, and names the error code", async () => {
+  it("retains completed measurements when a goal-completion job fails", async () => {
     vi.clearAllMocks();
     answerQueries({
       getTestSuiteRun: {
@@ -439,7 +440,98 @@ describe("eval-run detail — judges envelope", () => {
     const body = (await res.json()) as any;
     expect(body.judges.goalCompletion.status).toBe("failed");
     expect(body.judges.goalCompletion.errorCode).toBe("spend_cap_exceeded");
-    expect(body.judges.goalCompletion.cases).toEqual([]);
+    expect(body.judges.goalCompletion.cases).toEqual([
+      { ...GRADED_RUN.goalCompletion.cases[0], status: "scored" },
+    ]);
+  });
+
+  it("exposes pending progress without replaying previous result cases", async () => {
+    const progress = { total: 3, completed: 1, errors: 0, skipped: 0 };
+    vi.clearAllMocks();
+    answerQueries({
+      getTestSuiteRun: {
+        ...GRADED_RUN,
+        goalCompletionStatus: "pending",
+        goalCompletionProgress: progress,
+      },
+      getEvalRunInsightsEnvelope: ENVELOPE,
+    });
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}`,
+    );
+    const body = (await res.json()) as any;
+    expect(body.judges.goalCompletion).toMatchObject({
+      status: "pending",
+      progress,
+      cases: [],
+    });
+  });
+
+  it("preserves terminal error and skipped rows with template and evidence provenance", async () => {
+    const evidenceManifest = {
+      version: 1,
+      traceComplete: true,
+      traceFields: ["messages"],
+      messageCount: 2,
+      spanCount: 1,
+      artifactSources: [],
+      uncaptured: [],
+      inputBytes: 128,
+    };
+    const provenance = {
+      gradingKey: "grading-key",
+      judgeTemplateVersion: 4,
+      judgeTemplateHash: "template-hash",
+      evidenceHash: "evidence-hash",
+      evidenceManifest,
+    };
+    vi.clearAllMocks();
+    answerQueries({
+      getTestSuiteRun: {
+        ...GRADED_RUN,
+        goalCompletionStatus: "failed",
+        goalCompletionErrorCode: "judge_evidence_unavailable",
+        goalCompletion: {
+          ...GRADED_RUN.goalCompletion,
+          judgeTemplateVersion: 4,
+          judgeTemplateHash: "template-hash",
+          cases: [
+            ...GRADED_RUN.goalCompletion.cases,
+            {
+              caseKey: "ui_error", iterationId: "it_2", status: "error",
+              errorCode: "judge_evidence_unavailable", score: 0.9,
+              passed: false, reason: "Evidence unavailable", rubricHits: [],
+              ...provenance,
+            },
+            {
+              caseKey: "ui_skipped", iterationId: "it_3", status: "skipped",
+              passed: false, reason: "Case judge disabled", rubricHits: [],
+            },
+          ],
+        },
+      },
+      getEvalRunInsightsEnvelope: ENVELOPE,
+    });
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}`,
+    );
+    const body = (await res.json()) as any;
+    expect(body.judges.goalCompletion).toMatchObject({
+      status: "failed", judgeTemplateVersion: 4, judgeTemplateHash: "template-hash",
+    });
+    expect(body.judges.goalCompletion.cases).toEqual([
+      { ...GRADED_RUN.goalCompletion.cases[0], status: "scored" },
+      {
+        caseKey: "ui_error", iterationId: "it_2", status: "error",
+        errorCode: "judge_evidence_unavailable", score: null,
+        passed: false, reason: "Evidence unavailable", rubricHits: [],
+        ...provenance,
+      },
+      {
+        caseKey: "ui_skipped", iterationId: "it_3", status: "skipped",
+        score: null, passed: false, reason: "Case judge disabled", rubricHits: [],
+      },
+    ]);
   });
 
   it("projects groundedness with its own per-case evidence field", async () => {

@@ -55,7 +55,8 @@ These are the invariants. A PR that trips one has found a defect in itself, not 
    `implementationHash`, `deterministic`, `passThreshold`, `role`, `onError`, `onSkipped`, `model`,
    `scope`). `evaluationConfigHash`, `PREDICATES_VERSION` (`"1"`) and `JUDGE_TEMPLATE_VERSION`
    (`"3"`) are unchanged. The canonical public names are a projection **over** this payload, never a
-   new payload.
+   new payload. The same holds for a renamed VALUE: `role` is emitted through `hashSpelling`, frozen
+   at `gating`, so every digest ever computed survives the rename (see [Policy role](#policy-role)).
 3. **Backend configuration identity.** `convex/lib/evalConfigRevision.ts` keeps serializing the keys
    `predicates`, `defaultPredicates`, `repetitions` and `runs`, and keeps its legacy escape hatch
    that fires only when all eight suite fields are absent. Those four are string literals in the
@@ -134,6 +135,9 @@ SDK. Protect the unrelated identifiers, and review eval imports there by hand.
 | `Predicate`, `PredicateResult`, `PredicateScope` | `Assertion`, `AssertionResult`, `AssertionScope` | type aliases from a new subpath |
 | `@mcpjam/sdk/predicates` | `@mcpjam/sdk/assertions` | new subpath; the old one keeps working |
 | `EvalTestConfig.predicates` / `.scorers` / `.test` | `.evaluators` / `.execute` | additive |
+
+Values are renamed on the same terms and have their own section: see [Policy role](#policy-role) for
+`role: "gating"` → `role: "required"`.
 
 `RECOMMENDED_DEFAULT_PREDICATES` stays declared in `sdk/src/contract/grader-stage.ts`, byte for byte.
 The backend pins it through a whole-file capture of the three `{type, role, severity}` triples
@@ -420,7 +424,7 @@ vocabulary: {
   version: 2,
   evaluatorKinds: ["assertion", "judge"],
   assertionKinds: PREDICATE_KINDS,
-  fields: { assertions: ["checks", "predicates"], defaultAssertions: ["defaultPredicates"], iterations: ["repetitions"], legacyIterations: ["runs"] },
+  fields: { assertions: ["checks", "predicates"], defaultAssertions: ["defaultPredicates", "checks"], iterations: ["repetitions"], legacyIterations: ["runs"] },
 }
 ```
 
@@ -443,6 +447,136 @@ misread a new file under its existing version.
 The loader accepts both. The writer emits the file's own dialect, and a new dialect is written only
 when the author asks for it. An offline tool has no capability handshake, so the conservative default
 is what keeps an export loadable by whatever is installed on the other side.
+
+## Policy role
+
+The value twin of everything above: the same program, applied to what a field SAYS rather than to
+what it is called. It reuses the mechanisms — expand → migrate → contract, the
+`x-mcpjam-eval-vocabulary` header, capability advertisement, codemod protections, the golden gate —
+and slots into the same wave order.
+
+### Why
+
+The scorer table, judge panel, Add drawer and trial scorecard labelled an assertion's policy **Gate /
+Warn / Report**. Those name what the system does; a reader's question is what happens to the test.
+"Gate" already means five other things here — `mcpjam cloud eval gate` and its four-exit-code
+contract, gate waivers, the quality gate, the judge-gate capability, GitHub check gates — and Warn
+and Report differed only by an amber highlight, never by consequence: neither failed the iteration.
+
+### The target
+
+Two tiers named by consequence. **Required** — if this fails, the test fails. **Advisory** — shown on
+the result, never fails the test. `advisory` already matched; only `gating` moves.
+
+`required` and `gating` are ONE value with two spellings. `required` is canonical; `gating` is what
+every row written before the rename says, what a dialect-1 suite file says, and what every hash
+payload says forever.
+
+`severity` stays declared and accepted (`"warn"` only), and no longer affects any label. Presets keep
+emitting it so the mirror capture and the manifest ratchet stay put. Dropping it is a contraction
+item, not this one.
+
+### Invariant: hash payloads stay frozen
+
+This is invariant 2 applied to a value, and it is why the rename costs nothing.
+
+| Digest | Where | What it does |
+|---|---|---|
+| `definitionHash` | `evaluators/src/contract/derive.ts`, backend `convex/lib/scoreContract.ts` | payload emits `hashSpelling(role)`, frozen at `gating`. Every digest ever computed stays byte-identical. |
+| configuration revision | `convex/lib/evalConfigRevision.ts` | the predicate walk applies the storage canonicalizer; `freezeJudgeRoleSpelling` does the same for `judgeConfig`, which is hashed verbatim. No suite's revision moves. |
+| anonymous scorer id | `evaluators/src/scorers/predicate-scorer.ts` | digests `canonicalizeCheckRole(rule)`, so a raw `predicateScorer` caller's spelling does not fork the id. |
+| hosted criterion id, `implementationHash` | already policy-stripped | nothing. |
+
+An authored `required` on a CHECK canonicalizes to the ABSENT field — the form Gate has always been
+written in — so a rule authored today is byte-identical to one authored before roles existed. An
+explicit `role: "gating"` keeps its OWN existing id and revision: folding it into the bare form would
+rotate exactly the identities this program promises not to touch. A JUDGE's storage form is a present
+value, so there one spelling has to win, and from the migrate step it is the canonical one.
+
+`sdk/tests/evaluator-vocabulary-golden.test.ts` proves it: an authored `required`, an authored
+`gating` and an absent role produce one `scorerId`, one `implementationHash` and one `definitionHash`
+through `assertion()`. The fixture's 63 pinned hex values did not change when emission flipped — only
+its 24 `role` strings did, which is a reviewable diff that is itself the proof.
+
+### Symbol map
+
+| Existing | Canonical | Kind of change |
+|---|---|---|
+| `role: "gating"` | `role: "required"` | value alias; `gating` reads forever, and is the frozen hash spelling |
+| `CheckRole`, `GoalCompletionRole` (effective) | `"required" \| "advisory"` | narrowed; the legacy word moves to `AuthoredCheckRole` / `AuthoredGoalCompletionRole` |
+| `ScorerRole` (contract) | `"gating" \| "advisory" \| "required"` | widened for READING; a stored contract is never rewritten |
+| `ScorerUiRole` | `"required" \| "advisory"` | Warn and Report collapse into Advisory |
+| — | `isRequiredRole`, `hashSpelling`, `canonicalizeCheckRole` | new; the one place each comparison lives |
+
+### Authoring
+
+```ts
+assertion({ type: "noToolErrors", role: "required" })   // canonical
+assertion({ type: "noToolErrors", role: "gating" })     // legacy, identical definition
+assertion({ type: "noToolErrors" })                     // required by default
+judge({ /* … */ role: "required" })
+```
+
+### The wire
+
+`role` joins the negotiation table, as a VALUE rather than a field:
+
+| | vocabulary 1 (no header) | vocabulary 2 |
+|---|---|---|
+| accepted on a write | `gating`, `advisory` — exactly today's values | those, plus `required` |
+| refused | `required`, as a value today's contract has never taken | — (one field has one value, so the both-spellings refusal does not apply) |
+| read projection | a required role is projected back to `gating` | `required` |
+
+Vocabulary 1 is not widened to meet vocabulary 2 half way, for the reason the header exists: a
+published `mcpjam cloud eval gate` finds the scorers that decide a run through
+`.filter(role === "gating")`, and an unannounced `required` would empty that set and pass a failing
+run.
+
+### Capability
+
+```ts
+vocabulary: {
+  version: 2,
+  fields: { /* … */ },
+  values: { role: ["gating"] },
+}
+```
+
+Each list is the legacy spellings a vocabulary-2 body may use for that VALUE, keyed by the field that
+carries it — the value twin of `fields`. Its PRESENCE is the signal, and it is advertised only from
+the deploy whose validators actually accept the value. A client reads this value; it never infers
+support from a version number or from a field beside it.
+
+What an SDK runner does with it depends on the payload, because the two upload paths carry different
+risk. The PRIMARY iteration payload (`/report`, `/runs/iterations`) does not consult it at all: that
+payload embeds each iteration's `evaluationConfig` through `scoreMetadata`, it is what almost every
+run sends, and a backend that does not accept `required` there does not reject the upload — it
+quarantines every iteration as `score_integrity_invalid`, and the dashboard then looks empty rather
+than broken. Negotiating it would mean probing `/capabilities` before the first upload of every run,
+and a run whose probe was slow, cached, or answered by the wrong deployment would be exactly the run
+that got quarantined. So that payload is FROZEN at the legacy spelling, the same promise
+`hashSpelling` makes for the digest; a vocabulary-2 reader still sees `required`, because the read
+projection puts it there. The OPTIONAL case-run evaluations payload (`/runs/evaluations`) is the one
+that negotiates, because it already handshakes with the target for its own reasons and its rows are
+advisory by construction.
+
+### The suite file
+
+Dialect 1's published JSON Schema widens its `role` enum additively — a pin amendment, reviewed as
+one: nothing is removed, so a dialect-1 file that says `gating` still validates. The loader accepts
+both spellings in either dialect; the writer emits the file's own dialect. Accepting is not the same
+as publishing.
+
+### Compatibility posture
+
+The same as the rest of this program, with one addition that is permanent rather than transitional:
+the HASH spelling is frozen forever, not until contraction. `legacyRoleSpelling` — the vocabulary-1
+wire projection — is a separate function from `hashSpelling` despite the identical body, precisely
+because the two are frozen by different promises and will diverge when vocabulary 1 retires.
+
+Historical rows keep whatever they were written with. Identities and baselines are preserved: after
+this program, `eval gate --baseline <a run from before the rename>` reports zero removed and zero
+added scorers, which is the test a rehash would have failed.
 
 ## UVC is unchanged
 

@@ -106,9 +106,9 @@ vi.mock("../../../utils/chat-v2-orchestration", () => ({
 
 import {
   createConcurrencyLimiter,
-  EVAL_ITERATION_TIMEOUT_MS,
+  defaultEvalExecutionBudgets,
   runEvalSuiteWithAiSdk,
-  runIterationWithTimeout,
+  runIterationUnderBudget,
   streamTestCase,
 } from "../../evals-runner";
 
@@ -600,40 +600,112 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
   });
 
   // Regression: the run-lifecycle watchdog must stop a stuck iteration.
-  // Without `runIterationWithTimeout`, a hung iteration (stuck LLM call /
-  // browser render) leaves the suite run "running" forever. These lock the
-  // wrapper that the runner uses to bound every iteration.
-  describe("runIterationWithTimeout (lifecycle watchdog)", () => {
-    it("rejects with the iteration-timeout stop reason and fires onTimeout when the run hangs", async () => {
+  // Without a per-iteration budget, a hung iteration (stuck LLM call / browser
+  // render) leaves the suite run "running" forever.
+  //
+  // This block was rewritten when iteration timeouts stopped killing the run.
+  // The OLD contract — reject with `stopReason: "iteration_timeout"` — was not
+  // a detail: `runIterationWithTimeout` raced a bare timer, declared a winner,
+  // and walked away, so the losing iteration kept running with its stream and
+  // its sandbox open. The timeout bounded the WAIT, not the WORK.
+  describe("runIterationUnderBudget (per-iteration clock)", () => {
+    const UNIT_MS = 10 * 60 * 1000;
+    const timedOut = { evaluation: { passed: false } } as never;
+
+    it("aborts the iteration's own signal and RESOLVES a timed-out outcome", async () => {
       vi.useFakeTimers();
       try {
         const onTimeout = vi.fn().mockResolvedValue(undefined);
-        const rejection = runIterationWithTimeout({
-          run: () => new Promise<never>(() => {}), // never settles
+        let seen: AbortSignal | undefined;
+        const promise = runIterationUnderBudget({
+          run: (iterationSignal) => {
+            seen = iterationSignal;
+            return new Promise<never>(() => {}); // never settles
+          },
+          runSignal: undefined,
+          unitTimeoutMs: UNIT_MS,
+          graceMs: 1_000,
           onTimeout,
-          shouldSkipTimeout: () => false,
+          timedOutOutcome: () => timedOut,
         });
-        // Assert before the timer fires so the rejection is observed (no leak).
-        const assertion = expect(rejection).rejects.toMatchObject({
-          stopReason: "iteration_timeout",
-          terminalStatus: "timed_out",
-        });
-        await vi.advanceTimersByTimeAsync(EVAL_ITERATION_TIMEOUT_MS + 1);
-        await assertion;
+
+        await vi.advanceTimersByTimeAsync(UNIT_MS + 1);
+        await vi.advanceTimersByTimeAsync(1_001); // grace window
+        await expect(promise).resolves.toBe(timedOut);
+
+        // The work is actually stopped, not merely un-awaited.
+        expect(seen?.aborted).toBe(true);
+        // ...and the abort names WHICH clock fired, so the persisted row can
+        // say `iteration` rather than a bare "aborted".
+        expect((seen?.reason as { clock?: string })?.clock).toBe("iteration");
         expect(onTimeout).toHaveBeenCalledTimes(1);
       } finally {
         vi.useRealTimers();
       }
     });
 
-    it("resolves with the run result and never fires onTimeout when the run finishes first", async () => {
+    it("NEVER rejects on its own budget", async () => {
+      // The load-bearing property. The caller is a sequential
+      // `for (runIndex…)` loop with no try/catch, so a rejection here skips
+      // iterations runIndex+1..N of that case entirely — leaving pre-created
+      // rows `pending` forever and blocking the run's terminal transition.
+      vi.useFakeTimers();
+      try {
+        const promise = runIterationUnderBudget({
+          run: () => new Promise<never>(() => {}),
+          runSignal: undefined,
+          unitTimeoutMs: UNIT_MS,
+          graceMs: 0,
+          onTimeout: async () => {},
+          timedOutOutcome: () => timedOut,
+        });
+        await vi.advanceTimersByTimeAsync(UNIT_MS + 10);
+        await expect(promise).resolves.toBeDefined();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("writes the terminal row BEFORE resolving", async () => {
+      // Ordering, not decoration: `internalUpdateTestIteration` lets
+      // `timed_out` overwrite `failed` but never the reverse, so a
+      // fire-and-forget write races the runner's own failure write and can
+      // silently downgrade an infrastructure timeout to a product failure.
+      vi.useFakeTimers();
+      try {
+        const order: string[] = [];
+        const promise = runIterationUnderBudget({
+          run: () => new Promise<never>(() => {}),
+          runSignal: undefined,
+          unitTimeoutMs: UNIT_MS,
+          graceMs: 0,
+          onTimeout: async () => {
+            order.push("wrote");
+          },
+          timedOutOutcome: () => {
+            order.push("resolved");
+            return timedOut;
+          },
+        });
+        await vi.advanceTimersByTimeAsync(UNIT_MS + 10);
+        await promise;
+        expect(order).toEqual(["wrote", "resolved"]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("resolves with the real result and never fires onTimeout when it finishes first", async () => {
       vi.useFakeTimers();
       try {
         const onTimeout = vi.fn();
-        const result = await runIterationWithTimeout({
-          run: async () => "done",
+        const result = await runIterationUnderBudget({
+          run: async () => "done" as never,
+          runSignal: undefined,
+          unitTimeoutMs: UNIT_MS,
+          graceMs: 0,
           onTimeout,
-          shouldSkipTimeout: () => false,
+          timedOutOutcome: () => timedOut,
         });
         expect(result).toBe("done");
         expect(onTimeout).not.toHaveBeenCalled();
@@ -642,23 +714,114 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       }
     });
 
-    it("skips the timeout (no onTimeout, no reject) when the run was already aborted", async () => {
+    it("still times out when a result arrives inside the grace window", async () => {
+      // This pins a CORRECTED contract. The first version kept a value that
+      // arrived after the clock fired, reasoning that a trial finishing by a
+      // hair had produced real evidence.
+      //
+      // That reasoning does not survive the control flow: we only reach the
+      // grace window because the ABORT won the race, so the trial had not
+      // finished, and what arrives afterwards is post-abort. In practice it is
+      // the runner's own cancellation stub — and once the runners began
+      // THROWING on a budget abort instead, the same arm propagated the throw
+      // out of the helper, which is the reject-don't-resolve failure that
+      // strands a case's remaining iterations at `pending`.
+      //
+      // Reading the clock before honouring the race winner covers both shapes.
+      // The grace window stays, for letting partial writes land.
       vi.useFakeTimers();
       try {
-        const onTimeout = vi.fn();
-        let resolveRun: (v: string) => void = () => {};
-        const rejection = runIterationWithTimeout({
-          run: () => new Promise<string>((res) => (resolveRun = res)),
+        const onTimeout = vi.fn().mockResolvedValue(undefined);
+        let finish: (v: never) => void = () => {};
+        const promise = runIterationUnderBudget({
+          run: () => new Promise<never>((res) => (finish = res)),
+          runSignal: undefined,
+          unitTimeoutMs: UNIT_MS,
+          graceMs: 30_000,
           onTimeout,
-          shouldSkipTimeout: () => true, // run was aborted elsewhere
+          timedOutOutcome: () => timedOut,
         });
-        await vi.advanceTimersByTimeAsync(EVAL_ITERATION_TIMEOUT_MS + 1);
-        resolveRun("late");
-        await expect(rejection).resolves.toBe("late");
-        expect(onTimeout).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(UNIT_MS + 1);
+        finish("late-but-real" as never);
+        await vi.advanceTimersByTimeAsync(1);
+        await expect(promise).resolves.toBe(timedOut);
+        expect(onTimeout).toHaveBeenCalledTimes(1);
       } finally {
         vi.useRealTimers();
       }
+    });
+
+    it("RESOLVES a timed-out outcome when the runner throws its budget abort", async () => {
+      // The runners throw on a budget abort so the timeout cannot be swallowed
+      // as a benign cancellation. This helper must absorb that throw, not
+      // propagate it: `runSingleIteration` rejecting means iterations
+      // `runIndex+1..N` of that case never start, land `pending`, and block the
+      // run's terminal transition until the stale reaper takes the whole run.
+      vi.useFakeTimers();
+      try {
+        const onTimeout = vi.fn().mockResolvedValue(undefined);
+        const promise = runIterationUnderBudget({
+          run: (iterationSignal) =>
+            new Promise<never>((_resolve, reject) => {
+              iterationSignal.addEventListener(
+                "abort",
+                () => reject(iterationSignal.reason),
+                { once: true },
+              );
+            }),
+          runSignal: undefined,
+          unitTimeoutMs: UNIT_MS,
+          graceMs: 1_000,
+          onTimeout,
+          timedOutOutcome: () => timedOut,
+        });
+
+        await vi.advanceTimersByTimeAsync(UNIT_MS + 1);
+        await vi.advanceTimersByTimeAsync(1_001);
+
+        await expect(promise).resolves.toBe(timedOut);
+        expect(onTimeout).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("re-throws the RUN's stop rather than claiming an iteration timeout", async () => {
+      // The run being cancelled is not this iteration's problem to report.
+      // `firedClock()` is what tells the two apart — the composed signal
+      // aborts either way.
+      const runController = new AbortController();
+      const stop = Object.assign(new Error("cancelled"), {
+        stopReason: "user_cancelled",
+      });
+      const onTimeout = vi.fn();
+      const promise = runIterationUnderBudget({
+        run: () => new Promise<never>(() => {}),
+        runSignal: runController.signal,
+        unitTimeoutMs: UNIT_MS,
+        graceMs: 0,
+        onTimeout,
+        timedOutOutcome: () => timedOut,
+      });
+      runController.abort(stop);
+      await expect(promise).rejects.toBe(stop);
+      expect(onTimeout).not.toHaveBeenCalled();
+    });
+
+    it("propagates a genuine failure untouched", async () => {
+      const boom = new Error("model refused");
+      await expect(
+        runIterationUnderBudget({
+          run: async () => {
+            throw boom;
+          },
+          runSignal: undefined,
+          unitTimeoutMs: UNIT_MS,
+          graceMs: 0,
+          onTimeout: async () => {},
+          timedOutOutcome: () => timedOut,
+        }),
+      ).rejects.toBe(boom);
     });
   });
 
@@ -1230,6 +1393,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     });
 
     await streamTestCase({
+      budgets: defaultEvalExecutionBudgets(),
       test: {
         title: "Case",
         query: "Hello",
@@ -1473,6 +1637,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
 
     await expect(
       streamTestCase({
+        budgets: defaultEvalExecutionBudgets(),
         test: {
           title: "Case",
           query: "Hello",
@@ -1661,6 +1826,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     const prepareMock = vi.mocked(orchestration.prepareChatV2);
 
     await streamTestCase({
+      budgets: defaultEvalExecutionBudgets(),
       test: {
         title: "Case",
         query: "Hello",
@@ -2194,6 +2360,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     const emitted: Array<Record<string, unknown>> = [];
     try {
       await streamTestCase({
+        budgets: defaultEvalExecutionBudgets(),
         test: {
           title: "Stream backend setup-fail case",
           query: "Hello",
@@ -2375,7 +2542,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     expect(String(payload.error)).toMatch(/backend (stream|step)/i);
   });
 
-  it("does not record an iteration when abortSignal fires mid-turn (PR 3 review fix)", async () => {
+  it("records a cancelled iteration, not a cycle failure, when abortSignal fires mid-turn (PR 3 review fix)", async () => {
     // Cursor review on PR #2457: the engine swallows AbortError
     // internally (sets its `aborted` flag, returns with no `turnTrace`,
     // doesn't throw). `RunAssistantTurnResult` doesn't expose the
@@ -2450,17 +2617,28 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
 
       expect(runAssistantTurnSpy).toHaveBeenCalledTimes(1);
 
-      // The aborted iteration must NOT be finalized via the action
-      // pipeline — no updateTestIteration, no appendEvalTurnTrace, no
-      // lockEvalSession.
+      // The aborted iteration must NOT be finalized as a completed or failed
+      // trial — no appendEvalTurnTrace, no lockEvalSession, and nothing that
+      // dresses a cancellation up as a cycle failure.
       const finalizeCall = convexClient.action.mock.calls.find((c) =>
         [
-          "testSuites:updateTestIteration",
           "testSuites:appendEvalTurnTrace",
           "testSuites:lockEvalSession",
         ].includes(c[0] as string)
       );
       expect(finalizeCall).toBeUndefined();
+
+      // It IS recorded as cancelled, though. Writing nothing used to leave the
+      // claimed row `running` forever, so the case history showed a trial that
+      // never ended and nothing said a person had stopped it.
+      const iterationWrites = convexClient.action.mock.calls.filter(
+        (c) => c[0] === "testSuites:updateTestIteration"
+      );
+      expect(iterationWrites).toHaveLength(1);
+      expect(iterationWrites[0]?.[1]).toMatchObject({
+        status: "cancelled",
+        result: "cancelled",
+      });
     } finally {
       runAssistantTurnSpy.mockRestore();
     }
@@ -3634,6 +3812,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       }));
 
       await streamTestCase({
+        budgets: defaultEvalExecutionBudgets(),
         test: {
           title: "Case",
           query: "Hello",
@@ -3682,6 +3861,70 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       });
       expect(persistedCarriesIt).toBe(true);
     });
+
+    it("persists a stopped quick run as a cancelled iteration", async () => {
+      // The editor's Stop aborts the stream. The iteration row was claimed
+      // before the first turn, so writing nothing here leaves it `running`
+      // forever and the case history shows a trial that never ends.
+      const controller = new AbortController();
+      streamTextMock.mockReset();
+      streamTextMock.mockImplementationOnce((_options: any) => ({
+        fullStream: (async function* () {
+          controller.abort(new Error("Eval stream aborted by the client"));
+        })(),
+        steps: Promise.resolve([]),
+        response: Promise.resolve({ messages: [] }),
+      }));
+
+      // However the call settles — a cooperative return or the abort reason
+      // rethrown — the row must not be left mid-flight.
+      await streamTestCase({
+        budgets: defaultEvalExecutionBudgets(),
+        test: {
+          title: "Case",
+          query: "Hello",
+          runs: 1,
+          model: "gpt-4-turbo",
+          provider: "openai",
+          expectedToolCalls: [],
+          promptTurns: [
+            { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+          ],
+          testCaseId: "case-stopped",
+        },
+        tools: {},
+        selectedServers: [],
+        mcpClientManager: mcpClientManager as any,
+        recorder: null,
+        modelApiKeys: { openai: "sk-test" },
+        convexClient: convexClient as any,
+        convexHttpUrl: "https://example.convex.site",
+        convexAuthToken: "token",
+        testCaseId: "case-stopped",
+        suiteId: "suite-1",
+        runId: null,
+        abortSignal: controller.signal,
+        emit: () => {},
+      } as any).catch(() => {});
+
+      const cancelWrite = convexClient.action.mock.calls.find(
+        (call) =>
+          call[0] === "testSuites:updateTestIteration" &&
+          (call[1] as Record<string, unknown> | undefined)?.status ===
+            "cancelled",
+      );
+      expect(cancelWrite).toBeDefined();
+      expect(cancelWrite?.[1]).toMatchObject({
+        iterationId: "iter-1",
+        status: "cancelled",
+        result: "cancelled",
+        metadata: { stopReason: "user_cancelled" },
+      });
+      // The reason the person will read, carried from the abort itself.
+      expect((cancelWrite?.[1] as any).error).toBe(
+        "Eval stream aborted by the client",
+      );
+    });
   });
 
   describe("PR2 — streaming quick-run routes by step kind", () => {
@@ -3721,6 +3964,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       const emitted: Array<Record<string, unknown>> = [];
       await expect(
         streamTestCase({
+          budgets: defaultEvalExecutionBudgets(),
           ...streamBase,
           test: {
             title: "Show me a redbull",
@@ -3788,6 +4032,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       const emitted: Array<Record<string, unknown>> = [];
       await expect(
         streamTestCase({
+          budgets: defaultEvalExecutionBudgets(),
           ...streamBase,
           selectedServers: ["amazon"],
           modelApiKeys: { openai: "sk-test" },
@@ -3844,6 +4089,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       const emitted: Array<Record<string, unknown>> = [];
       await expect(
         streamTestCase({
+          budgets: defaultEvalExecutionBudgets(),
           ...streamBase,
           selectedServers: ["amazon"],
           test: {
@@ -3907,6 +4153,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     }) {
       const emitted = args.emitCollector ?? [];
       await streamTestCase({
+        budgets: defaultEvalExecutionBudgets(),
         test: {
           title: "Case",
           query: "Hello",
@@ -4110,6 +4357,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       const emitted: Array<Record<string, unknown>> = [];
       try {
         await streamTestCase({
+          budgets: defaultEvalExecutionBudgets(),
           test: {
             title: "Backend SSE prefix",
             query: "Hello",
@@ -4509,6 +4757,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       const emitted: Array<Record<string, unknown>> = [];
       try {
         await streamTestCase({
+          budgets: defaultEvalExecutionBudgets(),
           test: {
             title: "PR 5b SSE vocabulary",
             query: "Hello",
@@ -4637,6 +4886,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       const emitted: Array<Record<string, unknown>> = [];
       try {
         await streamTestCase({
+          budgets: defaultEvalExecutionBudgets(),
           test: {
             title: "PR 5b step usage delta",
             query: "Hello",
@@ -4751,6 +5001,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       const emitted: Array<Record<string, unknown>> = [];
       try {
         await streamTestCase({
+          budgets: defaultEvalExecutionBudgets(),
           test: {
             title: "PR 5b mid-turn snapshot fidelity",
             query: "Hello",
@@ -4919,6 +5170,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       const emitted: Array<Record<string, unknown>> = [];
       try {
         await streamTestCase({
+          budgets: defaultEvalExecutionBudgets(),
           test: {
             title: "PR 5b cumulative partials across steps",
             query: "Hello",
@@ -5082,6 +5334,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       const emitted: Array<Record<string, unknown>> = [];
       try {
         await streamTestCase({
+          budgets: defaultEvalExecutionBudgets(),
           test: {
             title: "PR 5b-followup-2 turnSpans",
             query: "Hello",
@@ -5199,6 +5452,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       const emitted: Array<Record<string, unknown>> = [];
       try {
         await streamTestCase({
+          budgets: defaultEvalExecutionBudgets(),
           test: {
             title: "PR 5b-followup-2 guardrail detail",
             query: "Hello",
@@ -5311,6 +5565,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       const emitted: Array<Record<string, unknown>> = [];
       try {
         await streamTestCase({
+          budgets: defaultEvalExecutionBudgets(),
           test: {
             title: "PR 5b-followup-2 error-span engine error",
             query: "Hello",
@@ -5401,6 +5656,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       const emitted: Array<Record<string, unknown>> = [];
       try {
         await streamTestCase({
+          budgets: defaultEvalExecutionBudgets(),
           test: {
             title: "PR 5b settledWithError gate",
             query: "Hello",
@@ -5468,6 +5724,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
 
       try {
         await streamTestCase({
+          budgets: defaultEvalExecutionBudgets(),
           test: {
             title: "PR 5b call shape",
             query: "Hello",

@@ -11,7 +11,7 @@ import {
 } from "./auth.js";
 import {
   getConvexBearerForRequest,
-  getConvexBearerThunkForRequest,
+  getBackgroundRunBearerForRequest,
 } from "../../utils/v1-convex-token.js";
 import { WEB_STREAM_TIMEOUT_MS, HOSTED_MODE } from "../../config.js";
 import { resolveXaaIssuer } from "../../services/xaa-mint.js";
@@ -158,6 +158,12 @@ const startRunSchema = z.object({
    * transaction, since only it can see the project's environments.
    */
   environmentIds: z.array(z.string().min(1)).optional(),
+  /**
+   * Per-run iterations. Shape-checked here; the backend enforces the real
+   * bounds inside the launch transaction, against the same constants a
+   * journey definition write is checked with.
+   */
+  sessionsPerTarget: z.number().int().optional(),
 });
 
 /**
@@ -181,22 +187,23 @@ swarmRuns.post("/journeys/:journeyId/runs", async (c) =>
       // delegated JWT for API-key callers. Without this, an API-key launch
       // forwards the raw `sk_…` and every downstream action 401s.
       const bearerToken = await getConvexBearerForRequest(c);
-      // The runner detaches after the 202 and can fan out for hours, while a
-      // delegated JWT lives ~2h — so it gets a THUNK, resolved while `c` is
-      // still live, not the string above. Everything that stays inside this
-      // request keeps using `bearerToken`.
-      const getRunBearer = getConvexBearerThunkForRequest(c);
       const journeyId = c.req.param("journeyId");
       if (!journeyId) {
         throw new WebRouteError(
           400,
           ErrorCode.VALIDATION_ERROR,
-          "journeyId required"
+          "journeyId required",
         );
       }
       const body = parseWithSchema(
         startRunSchema,
-        await readJsonBody<unknown>(c)
+        await readJsonBody<unknown>(c),
+      );
+      // Authorize renewable delegation before creating the durable run; the
+      // original browser token may expire shortly after this request ends.
+      const getRunBearer = await getBackgroundRunBearerForRequest(
+        c,
+        body.projectId,
       );
       return launchJourneyRun(
         {
@@ -215,6 +222,9 @@ swarmRuns.post("/journeys/:journeyId/runs", async (c) =>
           ...(body.swarmRunGroupId ? { waveId: body.swarmRunGroupId } : {}),
           ...(body.environmentIds?.length
             ? { environmentIds: body.environmentIds }
+            : {}),
+          ...(body.sessionsPerTarget !== undefined
+            ? { sessionsPerTarget: body.sessionsPerTarget }
             : {}),
         }
       );

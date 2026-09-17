@@ -29,7 +29,9 @@ import {
   type ScoreDefinition,
   type ScoreRawOutcome,
   type ScoreResult,
+  type ScorerRole,
 } from "./types.js";
+import { isRequiredRole } from "../predicates/policy.js";
 
 /**
  * Fill every semantic default.
@@ -43,7 +45,7 @@ import {
 export function resolveScoreDefinition(
   definition: ScoreDefinition,
 ): ResolvedScoreDefinition {
-  const fallback = definition.role === "gating" ? "fail" : "ignore";
+  const fallback = isRequiredRole(definition.role) ? "fail" : "ignore";
   const { onError, onSkipped, ...rest } = definition;
   return {
     ...rest,
@@ -63,7 +65,30 @@ export function resolveScoreDefinition(
  *   - **`label` is EXCLUDED.** It is presentation-only; hashing it would make
  *     fixing a typo in a dashboard label read as an evaluation-config change
  *     and flag every case in the next run as `configChanged`.
+ *   - **`role` goes through {@link hashSpelling}**, so the payload says
+ *     `"gating"` whichever spelling the definition carries. That is why
+ *     renaming the value costs nothing: every `definitionHash` ever computed
+ *     stays byte-identical.
  */
+/**
+ * The spelling a role takes INSIDE A HASH PAYLOAD. Frozen at `"gating"`.
+ *
+ * Not a storage rule and not a wire rule — those are settled elsewhere and
+ * will move. This one may not: a digest is an identity, and rotating
+ * identities to rename a word would orphan every stored score row from its
+ * definition and empty every `eval gate --baseline`. The pinned contract
+ * (`docs/evals-vocabulary-consolidation.md`, invariant 2) says hash payloads
+ * stay frozen regardless; this function is how that is kept while the value
+ * itself is renamed everywhere a human or a client can see it.
+ *
+ * Mirrored by `hashSpelling` in `mcpjam-backend/convex/lib/scoreContract.ts`,
+ * and proven by the shared score-contract parity fixtures, which pin a
+ * `required` definition and its `gating` twin to one digest.
+ */
+export function hashSpelling(role: ScorerRole): "gating" | "advisory" {
+  return role === "advisory" ? "advisory" : "gating";
+}
+
 function definitionHashPayload(
   definition: ResolvedScoreDefinition,
 ): Record<string, unknown> {
@@ -74,7 +99,7 @@ function definitionHashPayload(
     implementationHash: definition.implementationHash,
     deterministic: definition.deterministic,
     passThreshold: definition.passThreshold,
-    role: definition.role,
+    role: hashSpelling(definition.role),
     onError: definition.onError,
     onSkipped: definition.onSkipped,
     model: definition.model,
@@ -345,6 +370,18 @@ export function finalizeScoreResult(
     ...(evidence ? { evidence } : {}),
     ...(model ? { model } : {}),
     ...(outcome.promptHash ? { promptHash: outcome.promptHash } : {}),
+    ...(outcome.judgeTemplateVersion !== undefined
+      ? { judgeTemplateVersion: outcome.judgeTemplateVersion }
+      : {}),
+    ...(outcome.judgeTemplateHash !== undefined
+      ? { judgeTemplateHash: outcome.judgeTemplateHash }
+      : {}),
+    ...(outcome.evidenceHash !== undefined
+      ? { evidenceHash: outcome.evidenceHash }
+      : {}),
+    ...(outcome.evidenceManifest !== undefined
+      ? { evidenceManifest: outcome.evidenceManifest }
+      : {}),
     ...(scope ? { scope } : {}),
   };
 }
@@ -409,7 +446,7 @@ export function allGatingScorersPassed(
   const unresolvedScorerIds: string[] = [];
 
   for (const definition of config.definitions) {
-    if (definition.role !== "gating") continue;
+    if (!isRequiredRole(definition.role)) continue;
     const hash = definitionHash(definition);
     const joined = scores.filter((score) => score.definitionHash === hash);
     // `not_applicable` is excluded from EVERY denominator — that is what the

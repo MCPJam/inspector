@@ -122,7 +122,11 @@ vi.mock("../../../utils/chat-v2-orchestration", () => ({
   })),
 }));
 
-import { runEvalSuiteWithAiSdk, streamTestCase } from "../../evals-runner";
+import {
+  defaultEvalExecutionBudgets,
+  runEvalSuiteWithAiSdk,
+  streamTestCase,
+} from "../../evals-runner";
 import type { EvalStreamEvent } from "@/shared/eval-stream-events";
 
 // ── normalization: scrub wall-clock + volatile values so snapshots are stable ──
@@ -152,6 +156,15 @@ function scrub(value: unknown): unknown {
         out[k] = 11;
       } else if (SCRUB_KEYS.has(k)) {
         out[k] = v == null ? v : "<scrubbed>";
+      } else if (k === "requestPayloadsJson" && typeof v === "string") {
+        // Per-step request payloads persist as a JSON STRING, so `scrub` never
+        // descends into it. The turn ids inside embed `Date.now()` plus a
+        // random suffix; normalize them so the persisted shape is what the
+        // snapshot pins, not the clock.
+        out[k] = v.replace(
+          /trace_turn_\d+_[a-z0-9]+/g,
+          "trace_turn_<scrubbed>"
+        );
       } else if (
         k === "id" &&
         typeof v === "string" &&
@@ -291,6 +304,7 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
     environment?: unknown;
   }) {
     return streamTestCase({
+      budgets: defaultEvalExecutionBudgets(),
       test: {
         title: "Case",
         query: "Hello",

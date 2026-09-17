@@ -10,6 +10,7 @@ export function ScrollToBottomButton() {
     <div className="pointer-events-none absolute inset-x-0 bottom-12 flex justify-center animate-in slide-in-from-bottom fade-in duration-200">
       <button
         type="button"
+        aria-label="Scroll to bottom"
         className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-border bg-background/90 px-2 py-2 text-xs font-medium shadow-sm transition hover:bg-accent"
         onClick={() => scrollToBottom({ animation: "smooth" })}
       >

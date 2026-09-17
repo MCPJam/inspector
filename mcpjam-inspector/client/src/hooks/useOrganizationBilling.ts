@@ -1,9 +1,10 @@
+import { canCheckoutPlan } from "@/lib/pricing-catalog";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { useCallback, useRef, useState } from "react";
 import { confirmSeatPaymentWithStripe } from "@/lib/seat-payment-stripe";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 
-export type OrganizationPlan = "free" | "team" | "enterprise";
+export type OrganizationPlan = "free" | "pro" | "team" | "enterprise";
 export type BillingInterval = "monthly" | "annual";
 export type BillingModel = "free" | "flat" | "per_seat" | "contact";
 export type BillingFeatureName =
@@ -88,6 +89,10 @@ export interface OrganizationEntitlements {
 export interface OrganizationBillingStatus {
   organizationId: string;
   organizationName: string;
+  catalogPlanId?: string;
+  pricingVersion?: "v1" | "v2";
+  priceModel?: BillingModel;
+  topUpEligible?: boolean;
   plan: OrganizationPlan;
   effectivePlan: OrganizationPlan;
   source: "free" | "subscription" | "trial" | "simulation";
@@ -157,6 +162,32 @@ export type SeatPaymentCancelResult = {
 };
 
 export interface PlanCatalogEntry {
+  catalogPlanId?: string;
+  includedCredits?:
+    | { model: "daily_bucket"; dailyCredits: number }
+    | { model: "monthly_ledger"; flat: number }
+    | { model: "monthly_ledger"; perSeat: number }
+    | { model: "monthly_ledger"; negotiated: true };
+  rollover?: { capMultiplier: number; capCredits: number } | null;
+  topUp?: {
+    centsPerCredit: number;
+    monthlyCapCredits: number | null;
+    eligible: boolean;
+  };
+  rateCard?: {
+    id: string;
+    creditsPerProviderDollar: number;
+    platformFees: Record<string, number>;
+  };
+  display?: {
+    features: Array<{
+      key: string;
+      label: string;
+      included: boolean;
+      detail?: string;
+    }>;
+    support: "community" | "email" | "priority" | "dedicated";
+  };
   plan: OrganizationPlan;
   displayName: string;
   billingModel: BillingModel;
@@ -167,7 +198,7 @@ export interface PlanCatalogEntry {
   includedSeats: number | null;
   seatMinimum: number | null;
   checkout: {
-    plan: "team";
+    plan: "pro" | "team";
     supportedIntervals: BillingInterval[];
   } | null;
 }
@@ -176,7 +207,9 @@ export interface PlanCatalog {
   catalogVersion: string;
   currency: string;
   appOrigin?: string;
-  plans: Record<OrganizationPlan, PlanCatalogEntry>;
+  plans: Record<Exclude<OrganizationPlan, "pro">, PlanCatalogEntry> & {
+    pro?: PlanCatalogEntry;
+  };
 }
 
 export interface OrganizationPlanChangeSnapshot {
@@ -186,7 +219,7 @@ export interface OrganizationPlanChangeSnapshot {
   stripeSubscriptionItemId?: string;
   stripePriceId?: string;
   stripeSeatQuantity?: number;
-  stripeScheduledPlan?: "team" | null;
+  stripeScheduledPlan?: "pro" | "team" | null;
   stripeScheduledBillingInterval?: BillingInterval | null;
   stripeScheduledPriceId?: string | null;
   stripeScheduledEffectiveAt?: number | null;
@@ -237,20 +270,20 @@ export interface StartOrganizationPlanChangeOptions {
 
 export function useOrganizationBillingStatus(
   organizationId: string | null,
-  options?: UseOrganizationBillingStatusOptions
+  options?: UseOrganizationBillingStatusOptions,
 ): OrganizationBillingStatus | undefined {
   const isUserReady = useDbUserReady();
   const enabled = (options?.enabled ?? true) && isUserReady;
 
   return useQuery(
     "billing:getOrganizationBillingStatus" as any,
-    enabled && organizationId ? ({ organizationId } as any) : "skip"
+    enabled && organizationId ? ({ organizationId } as any) : "skip",
   ) as OrganizationBillingStatus | undefined;
 }
 
 export function useOrganizationBilling(
   organizationId: string | null,
-  options?: UseOrganizationBillingOptions
+  options?: UseOrganizationBillingOptions,
 ) {
   const projectId = options?.projectId ?? null;
   const isUserReady = useDbUserReady();
@@ -267,50 +300,50 @@ export function useOrganizationBilling(
 
   const entitlements = useQuery(
     "billing:getOrganizationEntitlements" as any,
-    shouldQueryOrganization ? ({ organizationId } as any) : "skip"
+    shouldQueryOrganization ? ({ organizationId } as any) : "skip",
   ) as OrganizationEntitlements | undefined;
 
   const organizationPremiumness = useQuery(
     "billing:getOrganizationPremiumness" as any,
-    shouldQueryOrganization ? ({ organizationId } as any) : "skip"
+    shouldQueryOrganization ? ({ organizationId } as any) : "skip",
   ) as PremiumnessState | undefined;
 
   const projectPremiumness = useQuery(
     "billing:getProjectPremiumness" as any,
-    shouldQueryProject ? ({ organizationId, projectId } as any) : "skip"
+    shouldQueryProject ? ({ organizationId, projectId } as any) : "skip",
   ) as PremiumnessState | undefined;
 
   const planCatalog = useQuery(
     "billing:getPlanCatalog" as any,
-    shouldQueryOrganization ? ({ organizationId } as any) : "skip"
+    shouldQueryOrganization ? ({ organizationId } as any) : "skip",
   ) as PlanCatalog | undefined;
 
   const activeSeatPaymentIntent = useQuery(
     "billing:getActiveOrganizationSeatPaymentIntent" as any,
-    shouldQuerySeatPaymentIntent ? ({ organizationId } as any) : "skip"
+    shouldQuerySeatPaymentIntent ? ({ organizationId } as any) : "skip",
   ) as OrganizationSeatPaymentIntent | null | undefined;
 
   const startPlanChangeAction = useAction(
-    "billing:startOrganizationPlanChange" as any
+    "billing:startOrganizationPlanChange" as any,
   );
   const createPortal = useAction(
-    "billing:createOrganizationBillingPortalSession" as any
+    "billing:createOrganizationBillingPortalSession" as any,
   );
   const createCancellationPortal = useAction(
-    "billing:createOrganizationBillingPortalCancellationSession" as any
+    "billing:createOrganizationBillingPortalCancellationSession" as any,
   );
   const createIntervalChangePortal = useAction(
-    "billing:createOrganizationBillingPortalIntervalChangeSession" as any
+    "billing:createOrganizationBillingPortalIntervalChangeSession" as any,
   );
   const cancelScheduledBillingChangeAction = useAction(
-    "billing:cancelOrganizationScheduledBillingChange" as any
+    "billing:cancelOrganizationScheduledBillingChange" as any,
   );
   const selectFreeAfterTrialMutation = useMutation(
-    "billing:selectOrganizationFreePlanAfterTrial" as any
+    "billing:selectOrganizationFreePlanAfterTrial" as any,
   );
   const startSeatPaymentAction = useAction("billing:startSeatPayment" as any);
   const completeSeatPaymentAction = useAction(
-    "billing:completeSeatPayment" as any
+    "billing:completeSeatPayment" as any,
   );
   const cancelSeatPaymentAction = useAction("billing:cancelSeatPayment" as any);
   const retrySeatPaymentMutation = useMutation(
@@ -319,7 +352,7 @@ export function useOrganizationBilling(
 
   const [isStartingPlanChange, setIsStartingPlanChange] = useState(false);
   const [pendingPlanChangeTarget, setPendingPlanChangeTarget] = useState<
-    "team" | null
+    "pro" | "team" | null
   >(null);
   const [isOpeningPortal, setIsOpeningPortal] = useState(false);
   const [
@@ -338,11 +371,15 @@ export function useOrganizationBilling(
   const startPlanChange = useCallback(
     async (
       returnUrl: string,
-      tier: "team" = "team",
+      tier: "pro" | "team" = "team",
       billingInterval: BillingInterval = "monthly",
-      options: StartOrganizationPlanChangeOptions = {}
+      options: StartOrganizationPlanChangeOptions = {},
     ): Promise<OrganizationPlanChangeResult> => {
       if (!organizationId) throw new Error("Organization is required");
+      if (!canCheckoutPlan(planCatalog, tier, billingInterval))
+        throw new Error(
+          "This plan or billing interval is not offered to this organization.",
+        );
       setIsStartingPlanChange(true);
       setPendingPlanChangeTarget(tier);
       setError(null);
@@ -365,7 +402,7 @@ export function useOrganizationBilling(
         setPendingPlanChangeTarget(null);
       }
     },
-    [organizationId, startPlanChangeAction]
+    [organizationId, startPlanChangeAction, planCatalog],
   );
 
   const openPortal = useCallback(
@@ -388,7 +425,7 @@ export function useOrganizationBilling(
         setIsOpeningPortal(false);
       }
     },
-    [createPortal, organizationId]
+    [createPortal, organizationId],
   );
 
   const openIntervalChangePortal = useCallback(
@@ -414,7 +451,7 @@ export function useOrganizationBilling(
         setIsOpeningPortal(false);
       }
     },
-    [createIntervalChangePortal, organizationId]
+    [createIntervalChangePortal, organizationId],
   );
 
   const openCancellationPortal = useCallback(
@@ -439,7 +476,7 @@ export function useOrganizationBilling(
         setIsOpeningPortal(false);
       }
     },
-    [createCancellationPortal, organizationId]
+    [createCancellationPortal, organizationId],
   );
 
   const cancelScheduledBillingChange = useCallback(async () => {
@@ -522,7 +559,7 @@ export function useOrganizationBilling(
             } catch (cancelError) {
               console.warn(
                 "[billing] Failed to cancel incomplete seat payment",
-                cancelError
+                cancelError,
               );
             }
             throw confirmError;
@@ -555,7 +592,7 @@ export function useOrganizationBilling(
         if (startResult.status === "failed") {
           if (startResult.reason === "missing_payment_method") {
             throw new Error(
-              "Stripe has no default payment method for this subscription. Add or select a card in Billing, then click Finish payment again."
+              "Stripe has no default payment method for this subscription. Add or select a card in Billing, then click Finish payment again.",
             );
           }
           throw new Error("Payment failed. The member was not added.");
@@ -577,7 +614,7 @@ export function useOrganizationBilling(
       completeSeatPaymentAction,
       organizationId,
       startSeatPaymentAction,
-    ]
+    ],
   );
 
   /**
@@ -662,7 +699,7 @@ export function useOrganizationBilling(
       activeSeatPaymentIntent?.stripeInvoiceId,
       cancelSeatPaymentAction,
       organizationId,
-    ]
+    ],
   );
 
   // The caller asked for billing and we're only waiting on the `users` row.
@@ -694,7 +731,8 @@ export function useOrganizationBilling(
     isLoadingOrganizationPremiumness,
     isLoadingProjectPremiumness,
     isLoadingPlanCatalog:
-      isAwaitingUserRow || (shouldQueryOrganization && planCatalog === undefined),
+      isAwaitingUserRow ||
+      (shouldQueryOrganization && planCatalog === undefined),
     isStartingPlanChange,
     pendingPlanChangeTarget,
     isOpeningPortal,

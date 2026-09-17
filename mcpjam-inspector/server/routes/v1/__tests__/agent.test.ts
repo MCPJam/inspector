@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
+import * as routeHelpers from "../../../services/evals/route-helpers.js";
 
 // Covers the v1 agent-turn surface: auth/guest gating, schema limits, the
 // deployment guard, engine failure → code mapping, the per-org concurrency
@@ -252,6 +253,87 @@ describe("POST /api/v1/projects/:projectId/agent", () => {
 
   afterEach(() => {
     vi.clearAllMocks();
+  });
+
+  it.each(["GET", "POST"])(
+    "guards %s job requests without a hosted deployment",
+    async (method) => {
+      const previous = process.env.CONVEX_URL;
+      delete process.env.CONVEX_URL;
+      try {
+        const response = await makeApp().request(
+          `/api/v1/projects/p1/agent/jobs/job${
+            method === "POST" ? "/cancel" : ""
+          }`,
+          { method, headers: { Authorization: "Bearer tok" } },
+        );
+        expect(await response.json()).toMatchObject({
+          code: "FEATURE_NOT_SUPPORTED",
+        });
+        expect(getConvexBearerMock).not.toHaveBeenCalled();
+      } finally {
+        if (previous === undefined) delete process.env.CONVEX_URL;
+        else process.env.CONVEX_URL = previous;
+      }
+    },
+  );
+
+  it.each([
+    { "x-mcpjam-agent-job": "job" },
+    { "x-mcpjam-agent-lease": "lease" },
+    { "x-mcpjam-agent-job": "job", "x-mcpjam-agent-lease": "lease" },
+  ])("rejects dispatch without owned lease proof: %j", async (headers) => {
+    const query = vi.fn().mockResolvedValue(null);
+    const client = vi.spyOn(routeHelpers, "createConvexClient").mockReturnValue({ query } as any);
+    try {
+      const response = await makeApp().request("/api/v1/projects/p1/agent", {
+        method: "POST",
+        headers: { Authorization: "Bearer tok", "Content-Type": "application/json", "x-inspector-service-token": "svc", ...headers } as Record<string, string>,
+        body: JSON.stringify(OK_BODY),
+      });
+      expect(response.status).toBe(403);
+      expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
+      if (headers["x-mcpjam-agent-job"] && headers["x-mcpjam-agent-lease"])
+        expect(query).toHaveBeenCalledWith("agentTurnState:resumeContext", { jobId: "job", token: "lease" });
+      else expect(query).not.toHaveBeenCalled();
+    } finally { client.mockRestore(); }
+  });
+
+  it("rejects durable headers from a non-service caller", async () => {
+    const response = await makeApp().request("/api/v1/projects/p1/agent", {
+      method: "POST",
+      headers: { Authorization: "Bearer tok", "Content-Type": "application/json", "x-mcpjam-agent-job": "job", "x-mcpjam-agent-lease": "lease" },
+      body: JSON.stringify(OK_BODY),
+    });
+    expect(response.status).toBe(403);
+    expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
+  });
+
+  it.each(["GET", "POST"])("returns 404 for missing agent jobs on %s", async (method) => {
+    const previous = process.env.CONVEX_URL;
+    process.env.CONVEX_URL = "https://convex.test";
+    const client = vi.spyOn(routeHelpers, "createConvexClient").mockReturnValue({ query: vi.fn().mockResolvedValue(null) } as any);
+    try {
+      const response = await makeApp().request(`/api/v1/projects/p1/agent/jobs/job${method === "POST" ? "/cancel" : ""}`, { method, headers: { Authorization: "Bearer tok" } });
+      expect(response.status).toBe(404);
+    } finally {
+      client.mockRestore();
+      if (previous === undefined) delete process.env.CONVEX_URL; else process.env.CONVEX_URL = previous;
+    }
+  });
+  it("returns a top-level job ID for pending durable turns", async () => {
+    const oldFlag = process.env.DURABLE_AGENT_TURNS_ENABLED;
+    process.env.DURABLE_AGENT_TURNS_ENABLED = "true";
+    const client = vi.spyOn(routeHelpers, "createConvexClient").mockReturnValue({} as any);
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ jobId: "job" }));
+    try {
+      const response = await turnRequest(makeApp(), OK_BODY);
+      expect(response.status).toBe(202);
+      expect(await response.json()).toEqual({ jobId: "job", status: "pending" });
+    } finally {
+      client.mockRestore(); fetchMock.mockRestore();
+      if (oldFlag === undefined) delete process.env.DURABLE_AGENT_TURNS_ENABLED; else process.env.DURABLE_AGENT_TURNS_ENABLED = oldFlag;
+    }
   });
 
   it("requires a bearer token", async () => {
@@ -705,7 +787,7 @@ describe("agent tool surface", () => {
       permalinks?: Array<{ url: string }>;
     };
     expect(created).toEqual([]);
-    expect(result.permalinks?.[0]?.url).toContain("/evals/suite/ts_1");
+    expect(result.permalinks?.[0]?.url).toContain("/evaluate/suite/ts_1");
     executeSpy.mockRestore();
   });
 
@@ -899,7 +981,7 @@ describe("agent tool surface", () => {
         name: "smoke",
         // `?project=` makes the link land on the right project for viewers
         // parked elsewhere (eval routes carry no project segment).
-        url: expect.stringContaining("/evals/suite/ts_1?project=p1"),
+        url: expect.stringContaining("/evaluate/suite/ts_1?project=p1"),
       },
     ]);
     // The model-facing result may be truncated; the collector must not be.

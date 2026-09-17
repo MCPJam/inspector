@@ -9,6 +9,7 @@
  * evidence landed on it (all sessions launched, every graded session
  * passed). Silence renders as "none" — the legend says "do not infer pass".
  */
+import type { ChatSessionStageFunnel } from "@/components/shared/user-value-chain/user-value-chain-types";
 
 import type {
   SwarmOverviewRun,
@@ -21,10 +22,10 @@ import {
   findingName,
   findingSeverity,
   findingSessionLabel,
-  waveSessionTotals,
 } from "@/components/swarms/swarm-overview-panel";
 import {
   JOURNEY_STAGES,
+  JOURNEY_STAGE_BY_CHAIN,
   journeyStageIndex,
   journeyStageTitle,
   type JourneyStageId,
@@ -60,11 +61,25 @@ export interface GoalStageModel {
   evidence: StageEvidence[];
 }
 
+/** Wave-wide launch outcomes. REPORTING, never evidence — see {@link CONNECTION_CAVEAT}. */
+export interface LaunchTotals {
+  total: number;
+  succeeded: number;
+  failed: number;
+  rateLimited: number;
+}
+
 export interface GoalFindingsModel {
   journeyRefId: string;
   runId: string;
   title: string;
   sessions: number;
+  /**
+   * Every session of this goal failed to launch, and the run is settled. The
+   * goal was never tried, which is NOT the same as a goal that was tried and
+   * showed nothing — so it never reaches a sentiment that implies experience.
+   */
+  notRun: boolean;
   sentiment: SentimentPillModel;
   stages: Record<JourneyStageId, GoalStageModel>;
   /** Earliest stage with failure evidence, else null. */
@@ -90,6 +105,9 @@ export interface PersonaFindingsModel {
 
 export interface SwarmFindingsModel {
   personas: PersonaFindingsModel[];
+  /** Wave-wide launch outcomes, for the summary and the honesty chips. */
+  launch: LaunchTotals;
+  neverLaunched?: boolean;
   /** Headline denominator — `waveSignals.sessionCount`, else wave totals. */
   sessionCount: number;
   /** First persona with a failing goal, else 0 — the default selected tab. */
@@ -120,6 +138,21 @@ export const DETECTOR_STAGE_MAP: Record<
   persona_struggles: { stage: "value", tone: "warn" },
 };
 
+/**
+ * The stages whose evidence GRADES the experience — every stage but
+ * connection.
+ *
+ * Launch outcomes are reporting, not a finding about the server
+ * ({@link CONNECTION_CAVEAT}), and the backend miner agrees: it refuses to mine
+ * them as candidates and ships them beside the findings as `targetHealth`. So
+ * nothing that aggregates evidence into a FEELING or a DIAGNOSIS may read the
+ * connection stage. The stage row still renders it — that is where launch
+ * reporting belongs.
+ */
+const GRADED_STAGES = JOURNEY_STAGES.filter(
+  (stage) => stage.id !== "connection",
+);
+
 const TONE_RANK: Record<StageTone, number> = { fail: 2, warn: 1, ok: 0 };
 const DEMO_SENTIMENTS: SentimentPillModel[] = [
   { label: "Stalled", tone: "fail" },
@@ -134,7 +167,7 @@ function worstTone(evidence: readonly StageEvidence[]): StageState {
   if (evidence.length === 0) return "none";
   return evidence.reduce<StageTone>(
     (worst, e) => (TONE_RANK[e.tone] > TONE_RANK[worst] ? e.tone : worst),
-    "ok"
+    "ok",
   );
 }
 
@@ -161,6 +194,30 @@ export function runIsTerminal(run: SwarmOverviewRun): boolean {
 
 function plural(n: number, noun: string): string {
   return `${n} ${noun}${n === 1 ? "" : "s"}`;
+}
+
+/** Sum the wave's launch outcomes. One pass, all four counters. */
+export function waveLaunchTotals(
+  runs: readonly SwarmOverviewRun[],
+): LaunchTotals {
+  const out: LaunchTotals = {
+    total: 0,
+    succeeded: 0,
+    failed: 0,
+    rateLimited: 0,
+  };
+  for (const run of runs) {
+    out.total += run.summary.total;
+    out.succeeded += run.summary.succeeded;
+    out.failed += run.summary.failed;
+    out.rateLimited += run.summary.rateLimited;
+  }
+  return out;
+}
+
+/** A settled run whose every session failed to launch — the goal never ran. */
+function runNeverLaunched(run: SwarmOverviewRun): boolean {
+  return runIsTerminal(run) && run.report?.execution.neverLaunched === true;
 }
 
 /** The launch-outcome caveat every connection row carries, verbatim. */
@@ -198,13 +255,16 @@ function connectionEvidence(run: SwarmOverviewRun): StageEvidence | null {
 function rubricEvidence(run: SwarmOverviewRun): StageEvidence[] {
   return run.findings.map((finding) => ({
     tone: findingSeverity(finding) === "blocking" ? "fail" : ("warn" as const),
-    observation: `Rubric check "${findingName(finding)}" failed`,
+    observation: `Evaluator "${findingName(finding)}" failed`,
     meta: findingSessionLabel(finding),
   }));
 }
 
 function judgeEvidence(run: SwarmOverviewRun): StageEvidence | null {
-  const rollup = run.goalScoreSummary;
+  const g = run.report?.goalGrading;
+  const rollup = g
+    ? { gradedCount: g.passed + g.failed, passedCount: g.passed }
+    : run.goalScoreSummary;
   // A zero graded count contributes NOTHING — absent is unknown, never ok.
   if (!rollup || rollup.gradedCount <= 0) return null;
   const { gradedCount, passedCount } = rollup;
@@ -220,7 +280,7 @@ function judgeEvidence(run: SwarmOverviewRun): StageEvidence | null {
     tone: passedCount / gradedCount < 0.5 ? "fail" : "warn",
     observation: `Goal completion missed in ${plural(
       missed,
-      "graded session"
+      "graded session",
     )}`,
     meta: `${missed} of ${plural(gradedCount, "graded session")}`,
   };
@@ -228,7 +288,7 @@ function judgeEvidence(run: SwarmOverviewRun): StageEvidence | null {
 
 function detectorEvidence(
   candidate: SwarmWaveSignalCandidate,
-  opts: { personaScoped: boolean }
+  opts: { personaScoped: boolean },
 ): { stage: JourneyStageId; evidence: StageEvidence } | null {
   // Guard beyond the type: a newer server may mine detectors this build has
   // no id for, and an unmapped one has no stage to land on.
@@ -241,7 +301,7 @@ function detectorEvidence(
       observation: signalSentence(candidate),
       meta: `${candidate.affectedSessions} of ${plural(
         candidate.sliceTotal,
-        "session"
+        "session",
       )}${opts.personaScoped ? " · persona-scoped" : ""}`,
       ...(opts.personaScoped ? { personaScoped: true } : {}),
       ...(candidate.exemplarSessionIds[0]
@@ -255,10 +315,14 @@ function detectorEvidence(
 
 function goalSentiment(
   stages: Record<JourneyStageId, GoalStageModel>,
+  notRun: boolean,
   demoVariant = false,
-  variantIndex = 0
+  variantIndex = 0,
 ): SentimentPillModel {
-  const states = JOURNEY_STAGES.map((s) => stages[s.id].state);
+  // GRADED stages only. A wave that never connected has warn evidence on every
+  // connection row, and reading it here is what made nine untried goals report
+  // as nine goals that "showed friction".
+  const states = GRADED_STAGES.map((s) => stages[s.id].state);
   if (states.includes("fail")) {
     return demoVariant
       ? DEMO_SENTIMENTS[variantIndex % DEMO_SENTIMENTS.length]!
@@ -266,10 +330,19 @@ function goalSentiment(
   }
   if (states.includes("warn")) return { label: "Uneasy", tone: "warn" };
   if (stages.value.state === "ok") return { label: "Landed", tone: "ok" };
+  // Checked after the evidence branches so real evidence always wins. A goal
+  // with no session cannot have any, but the ordering is the honest one.
+  if (notRun) return { label: "Not run", tone: "muted" };
   return { label: "Unscored", tone: "muted" };
 }
 
-/** Feeling word for the EARLIEST failing stage across a persona's goals. */
+/**
+ * Feeling word for the EARLIEST failing stage across a persona's goals.
+ *
+ * `connection` is unreachable — the scan below reads {@link GRADED_STAGES}, and
+ * connection evidence never carries a `fail` tone anyway. The key stays only
+ * because the record is exhaustive over the stage ids.
+ */
 const FAIL_STAGE_SENTIMENT: Record<JourneyStageId, string> = {
   connection: "Stuck",
   discovery: "Lost",
@@ -282,13 +355,13 @@ const FAIL_STAGE_SENTIMENT: Record<JourneyStageId, string> = {
 function personaSentiment(
   goals: readonly GoalFindingsModel[],
   demoVariant = false,
-  variantIndex = 0
+  variantIndex = 0,
 ): SentimentPillModel {
   let earliestFail: JourneyStageId | null = null;
   let sawWarn = false;
   let sawLanded = false;
   for (const goal of goals) {
-    for (const stage of JOURNEY_STAGES) {
+    for (const stage of GRADED_STAGES) {
       const state = goal.stages[stage.id].state;
       if (state === "fail") {
         if (
@@ -310,14 +383,22 @@ function personaSentiment(
   }
   if (sawWarn) return { label: "Uneasy", tone: "warn" };
   if (sawLanded) return { label: "Relieved", tone: "ok" };
+  // Nothing they tried ever started. "Unscored" would imply sessions ran and
+  // went ungraded.
+  if (goals.length > 0 && goals.every((goal) => goal.notRun)) {
+    return { label: "Not run", tone: "muted" };
+  }
   return { label: "Unscored", tone: "muted" };
 }
 
-function goalDiagnosis(stages: Record<JourneyStageId, GoalStageModel>): {
+function goalDiagnosis(
+  stages: Record<JourneyStageId, GoalStageModel>,
+  notRun: boolean,
+): {
   diagnosisStage: JourneyStageId | null;
   diagnosis: { title: string; detail: string };
 } {
-  for (const stage of JOURNEY_STAGES) {
+  for (const stage of GRADED_STAGES) {
     if (stages[stage.id].state === "fail") {
       return {
         diagnosisStage: stage.id,
@@ -330,12 +411,12 @@ function goalDiagnosis(stages: Record<JourneyStageId, GoalStageModel>): {
   }
   // Launch outcomes are not a finding about the server (CONNECTION_CAVEAT),
   // so a successful launch alone never earns "Landed" — it is not grading.
-  const gradedStages = JOURNEY_STAGES.filter(
-    (stage) => stage.id !== "connection" && stages[stage.id].state !== "none"
+  const gradedStages = GRADED_STAGES.filter(
+    (stage) => stages[stage.id].state !== "none",
   );
   if (gradedStages.length > 0) {
     const sawWarn = gradedStages.some(
-      (stage) => stages[stage.id].state === "warn"
+      (stage) => stages[stage.id].state === "warn",
     );
     return {
       diagnosisStage: null,
@@ -349,6 +430,16 @@ function goalDiagnosis(stages: Record<JourneyStageId, GoalStageModel>): {
             title: "Landed",
             detail: "Every measured stage held for this goal.",
           },
+    };
+  }
+  if (notRun) {
+    return {
+      diagnosisStage: null,
+      diagnosis: {
+        title: "Not run",
+        detail:
+          "No session launched for this goal, so nothing about the server was tested.",
+      },
     };
   }
   return {
@@ -365,12 +456,17 @@ function goalDiagnosis(stages: Record<JourneyStageId, GoalStageModel>): {
  * experience is always the failure's subject — never the persona.
  */
 function personaIssue(goals: readonly GoalFindingsModel[]): string {
+  // Before anything about the experience: if none of it ran, there is no
+  // experience to describe.
+  if (goals.length > 0 && goals.every((goal) => goal.notRun)) {
+    return "No session launched, so nothing about the server was tested.";
+  }
   const failing = goals
     .filter((g) => g.diagnosisStage !== null)
     .sort(
       (a, b) =>
         journeyStageIndex(a.diagnosisStage!) -
-        journeyStageIndex(b.diagnosisStage!)
+        journeyStageIndex(b.diagnosisStage!),
     );
   const worst = failing[0];
   if (worst) {
@@ -403,6 +499,7 @@ export function deriveSwarmFindingsModel(args: {
   personas: ReadonlyArray<FindingsPersonaDoc>;
   /** Presentation-only variety for demos; never changes severity or evidence. */
   demoVariant?: boolean;
+  funnels?: Readonly<Record<string, ChatSessionStageFunnel | null>>;
 }): SwarmFindingsModel {
   const { runs, signals, personas, demoVariant = false } = args;
 
@@ -425,9 +522,30 @@ export function deriveSwarmFindingsModel(args: {
     const stages = forRun(run.runId);
     const connection = connectionEvidence(run);
     if (connection) stages.connection.push(connection);
-    stages.value.push(...rubricEvidence(run));
-    const judge = judgeEvidence(run);
-    if (judge) stages.value.push(judge);
+    const funnel = args.funnels?.[run.runId];
+    if (funnel && funnel.counted > 0) {
+      for (const row of funnel.stages) {
+        if (row.stage === "connection" || row.eligible === 0) continue;
+        stages[JOURNEY_STAGE_BY_CHAIN[row.stage]].push({
+          tone: row.failed > 0 ? "fail" : "ok",
+          observation: `${row.failed} failed, ${row.passed} passed among ${row.eligible} measured sessions`,
+          meta: `Chain coverage: ${funnel.counted}/${funnel.total} sessions · ${funnel.exclusions.absent} absent · ${funnel.exclusions.deriving} deriving · ${funnel.exclusions.stale} stale · ${funnel.exclusions.failed} unavailable`,
+        });
+      }
+    } else {
+      stages.value.push(
+        ...rubricEvidence(run).map((e) => ({
+          ...e,
+          meta: `${e.meta} · Legacy evidence; chain unmeasured`,
+        })),
+      );
+      const judge = judgeEvidence(run);
+      if (judge)
+        stages.value.push({
+          ...judge,
+          meta: `${judge.meta} · Chain unmeasured`,
+        });
+    }
   }
 
   // Detector candidates: journey subjects land on their goal, persona
@@ -471,6 +589,7 @@ export function deriveSwarmFindingsModel(args: {
       const doc = personaByName.get(name);
       const goals: GoalFindingsModel[] = personaRuns.map((run, goalIndex) => {
         const evidence = forRun(run.runId);
+        const notRun = runNeverLaunched(run);
         const stages = Object.fromEntries(
           JOURNEY_STAGES.map((stage) => [
             stage.id,
@@ -478,21 +597,23 @@ export function deriveSwarmFindingsModel(args: {
               state: worstTone(evidence[stage.id]),
               evidence: evidence[stage.id],
             },
-          ])
+          ]),
         ) as Record<JourneyStageId, GoalStageModel>;
-        const { diagnosisStage, diagnosis } = goalDiagnosis(stages);
+        const { diagnosisStage, diagnosis } = goalDiagnosis(stages, notRun);
         const firstMeasured = JOURNEY_STAGES.find(
-          (stage) => stages[stage.id].state !== "none"
+          (stage) => stages[stage.id].state !== "none",
         );
         return {
           journeyRefId: run.journeyRefId,
           runId: run.runId,
           title: run.journeyName,
           sessions: run.summary.total,
+          notRun,
           sentiment: goalSentiment(
             stages,
+            notRun,
             demoVariant,
-            personaIndex + goalIndex
+            personaIndex + goalIndex,
           ),
           stages,
           diagnosisStage,
@@ -512,7 +633,7 @@ export function deriveSwarmFindingsModel(args: {
           : {}),
         sessionsAuthored: personaRuns.reduce(
           (sum, run) => sum + run.summary.total,
-          0
+          0,
         ),
         sentiment: personaSentiment(goals, demoVariant, personaIndex),
         issue: personaIssue(goals),
@@ -522,12 +643,18 @@ export function deriveSwarmFindingsModel(args: {
 
   const defaultPersonaIndex = Math.max(
     0,
-    personaModels.findIndex((p) => p.sentiment.tone === "fail")
+    personaModels.findIndex((p) => p.sentiment.tone === "fail"),
   );
+
+  const launch = waveLaunchTotals(runs);
 
   return {
     personas: personaModels,
-    sessionCount: signals?.sessionCount ?? waveSessionTotals(runs).total,
+    neverLaunched:
+      runs.length > 0 &&
+      runs.every((r) => r.report?.execution.neverLaunched === true),
+    launch,
+    sessionCount: signals?.sessionCount ?? launch.total,
     defaultPersonaIndex,
   };
 }

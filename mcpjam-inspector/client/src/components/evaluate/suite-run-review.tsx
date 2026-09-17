@@ -298,7 +298,7 @@ export function SuiteRunReviewContent({
               }}
             >
               <Settings2 className="size-4" aria-hidden />
-              Edit Suite Settings
+              Configure suite evaluators
             </Button>
           )}
         </div>

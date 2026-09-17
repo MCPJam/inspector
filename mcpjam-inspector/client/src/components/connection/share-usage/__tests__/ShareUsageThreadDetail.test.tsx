@@ -1,11 +1,10 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ShareUsageThreadDetail } from "../ShareUsageThreadDetail";
 
 const {
   mockMessageView,
-  mockReadOnlyTranscript,
   mockAdaptTraceToUiMessages,
   mockRequestJudge,
   mockNavigateApp,
@@ -17,9 +16,10 @@ const {
   mockTurnTracesState,
   mockHostConfigState,
   mockCopyToClipboard,
+  mockScoreState,
 } = vi.hoisted(() => ({
+  mockScoreState: { error: false },
   mockMessageView: vi.fn(),
-  mockReadOnlyTranscript: vi.fn(),
   mockAdaptTraceToUiMessages: vi.fn(),
   mockRequestJudge: vi.fn().mockResolvedValue(null),
   mockNavigateApp: vi.fn(),
@@ -29,6 +29,7 @@ const {
     synthetic: false as boolean,
     readiness: undefined as unknown,
     goalScore: undefined as unknown,
+    runAttemptStatus: undefined as unknown,
   },
   mockBrowserArtifactsState: {
     artifacts: undefined as unknown,
@@ -45,7 +46,11 @@ const {
   // a session written before the pin existed.
   mockCopyToClipboard: vi.fn().mockResolvedValue(true),
   mockHostConfigState: {
-    config: null as { hostStyle?: string; currentHostName?: string | null; modelId?: string } | null,
+    config: null as {
+      hostStyle?: string;
+      currentHostName?: string | null;
+      modelId?: string;
+    } | null | undefined,
   },
 }));
 
@@ -72,8 +77,21 @@ vi.mock("@/hooks/useSharedChatThreads", () => ({
       synthetic: mockThreadState.synthetic,
       readiness: mockThreadState.readiness,
       goalScore: mockThreadState.goalScore,
+      runAttemptStatus: mockThreadState.runAttemptStatus,
       messagesBlobUrl: "https://storage.example.com/thread.json",
       modelId: "openai/gpt-oss-120b",
+      recordedContext: {
+        toolSnapshots: [
+          {
+            hash: "frozen-catalog",
+            snapshot: {
+              servers: [
+                { serverId: "recorded-server", tools: [{ name: "search" }] },
+              ],
+            },
+          },
+        ],
+      },
       visitorDisplayName: "Marcelo Jimenez",
       messageCount: 2,
       startedAt: Date.now() - 1000,
@@ -83,6 +101,14 @@ vi.mock("@/hooks/useSharedChatThreads", () => ({
   useSharedChatWidgetSnapshots: () => ({
     snapshots: [],
   }),
+  // Absent from this factory the transcript subtree threw on every test in the
+  // file and rendered the ErrorBoundary fallback instead — green, but not
+  // exercising the tree it claims to. The assertions here sit outside that
+  // boundary, so nothing was wrong, just unwatched.
+  useSharedChatTurnScores: () => {
+    if (mockScoreState.error) throw new Error("scores unavailable");
+    return { scores: [] };
+  },
   useSharedChatTurnTraces: () => ({
     traces: mockTurnTracesState.traces,
   }),
@@ -157,10 +183,7 @@ vi.mock("@/components/chat-v2/thread/message-view", () => ({
 
 vi.mock("@mcpjam/chat-ui", () => ({
   hydrateMessageTimestamps: (messages: unknown[]) => messages,
-  ReadOnlyTranscript: (props: Record<string, unknown>) => {
-    mockReadOnlyTranscript(props);
-    return <div data-testid="read-only-transcript" />;
-  },
+
 }));
 
 vi.mock(
@@ -193,10 +216,16 @@ vi.mock(
   }),
 );
 
+// Stubs, not reimplementations of the real builders (those are covered in
+// lib/__tests__/eval-route-url.test.ts). The route TYPE is in the stub path
+// on purpose: without it a promote that asked for the wrong kind of eval
+// route would produce the same URL and pass unnoticed.
 vi.mock("@/lib/app-navigation", () => ({
   navigateApp: (...args: unknown[]) => mockNavigateApp(...args),
   buildEvalsPath: (route: Record<string, unknown>) =>
-    `/evals/${route.suiteId}/${route.testId}`,
+    `/evals/${route.type}/${route.suiteId}/${route.testId}`,
+  buildEvaluatePath: (route: Record<string, unknown>) =>
+    `/evaluate/${route.type}/${route.suiteId}/${route.testId}`,
 }));
 
 describe("ShareUsageThreadDetail", () => {
@@ -204,6 +233,7 @@ describe("ShareUsageThreadDetail", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockScoreState.error = false;
     mockThreadState.sourceType = "scenario";
     mockTurnTracesState.traces = [];
     mockHydrateTurnTraceSpans.mockResolvedValue([]);
@@ -211,7 +241,7 @@ describe("ShareUsageThreadDetail", () => {
     mockThreadState.readiness = undefined;
     mockThreadState.goalScore = undefined;
     mockBrowserArtifactsState.artifacts = undefined;
-    mockHostConfigState.config = null;
+    mockHostConfigState.config = { hostStyle: "claude" };
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => [{ role: "assistant", content: [] }],
@@ -238,10 +268,39 @@ describe("ShareUsageThreadDetail", () => {
     global.fetch = originalFetch;
   });
 
+  it("keeps the configured transcript after a ratings failure and retries on session change", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockScoreState.error = true;
+    const { rerender } = render(<ShareUsageThreadDetail threadId="thread-1" />);
+    await waitFor(() => expect(mockTraceViewer).toHaveBeenCalledWith(expect.objectContaining({
+      hostSnapshot: expect.objectContaining({ hostStyle: "claude" }),
+      widgetPolicy: "live", frame: "none", interactive: false,
+    })));
+    expect(mockTraceViewer.mock.lastCall?.[0].renderAssistantTurnFooter).toBeUndefined();
+    mockScoreState.error = false;
+    rerender(<ShareUsageThreadDetail threadId="thread-2" />);
+    await waitFor(() => expect(mockTraceViewer.mock.lastCall?.[0].renderAssistantTurnFooter).toEqual(expect.any(Function)));
+    consoleError.mockRestore();
+  });
+
+  it("waits for the pinned host before mounting Chat and leaves Raw accessible", async () => {
+    mockHostConfigState.config = undefined;
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+    expect(await screen.findByText("Loading host configuration…")).toBeInTheDocument();
+    expect(mockTraceViewer).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Raw" }));
+    await waitFor(() => expect(mockTraceViewer).toHaveBeenCalled());
+  });
+
   it("links a direct session to its Playground conversation", async () => {
     mockThreadState.sourceType = "direct";
     render(<ShareUsageThreadDetail threadId="thread-1" />);
-    expect(await screen.findByRole("link", { name: "Open in Playground" })).toHaveAttribute("href", "/playground?conversation=wire-uuid&project=project-1");
+    expect(
+      await screen.findByRole("link", { name: "Open in Playground" }),
+    ).toHaveAttribute(
+      "href",
+      "/playground?conversation=wire-uuid&project=project-1",
+    );
   });
 
   it("renders formatted share traces with collapsed reasoning", async () => {
@@ -255,11 +314,69 @@ describe("ShareUsageThreadDetail", () => {
           toolResultDisplay: "attached-to-tool",
         }),
       );
-      expect(mockReadOnlyTranscript).toHaveBeenCalledWith(
+      expect(mockTraceViewer).toHaveBeenCalledWith(
         expect.objectContaining({
           reasoningDisplayMode: "collapsible",
-          widgetPolicy: "placeholder",
+          widgetPolicy: "live",
         }),
+      );
+    });
+  });
+
+  it("fades Raw's scroll edges from the same switch as Chat", async () => {
+    // Both panes of a session scroll, and the complaint that started this was
+    // about the edge, not about what was behind it — so one flag covers both
+    // rather than a caller having to remember two.
+    render(<ShareUsageThreadDetail threadId="thread-1" fadeScrollEdges />);
+
+    // `TraceViewer` only mounts off the Chat tab, so the assertion has to get
+    // there first — asserting on the landing tab would pass for the wrong
+    // reason (a spy that was never called cannot disagree).
+    fireEvent.click(await screen.findByRole("button", { name: "Raw" }));
+
+    await waitFor(() => {
+      expect(mockTraceViewer).toHaveBeenCalledWith(
+        expect.objectContaining({ rawFadeScrollEdges: true }),
+      );
+    });
+  });
+
+  it("passes the frozen tool catalog into the shared Raw trace viewer", async () => {
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Raw" }));
+    await waitFor(() =>
+      expect(mockTraceViewer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          trace: expect.objectContaining({
+            recordedContext: expect.objectContaining({
+              toolSnapshots: expect.arrayContaining([
+                expect.objectContaining({ hash: "frozen-catalog" }),
+              ]),
+            }),
+          }),
+        }),
+      ),
+    );
+  });
+
+  it("leaves Raw alone on a surface that did not ask for the fade", async () => {
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Raw" }));
+
+    await waitFor(() => {
+      expect(mockTraceViewer).toHaveBeenCalledWith(
+        expect.objectContaining({ rawFadeScrollEdges: false }),
+      );
+    });
+  });
+
+  it("uses the inspector renderer with the pinned host and live MCP Apps", async () => {
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+
+    await waitFor(() => {
+      expect(mockTraceViewer).toHaveBeenCalledWith(
+        expect.objectContaining({ frame: "none", widgetPolicy: "live", interactive: false, hostSnapshot: expect.objectContaining({ hostStyle: "claude" }), adaptedTrace: expect.objectContaining({ messages: expect.any(Array) }) }),
       );
     });
   });
@@ -268,7 +385,7 @@ describe("ShareUsageThreadDetail", () => {
     render(<ShareUsageThreadDetail threadId="thread-1" />);
 
     await waitFor(() => {
-      expect(mockReadOnlyTranscript).toHaveBeenCalledWith(
+      expect(mockTraceViewer).toHaveBeenCalledWith(
         expect.objectContaining({
           reasoningDisplayMode: "collapsible",
         }),
@@ -388,7 +505,7 @@ describe("ShareUsageThreadDetail", () => {
     // blob re-fetch on thread switch is async — don't depend on the previous
     // thread's messages state being retained (CodeRabbit, PR 2610).
     expect(
-      await screen.findByTestId("read-only-transcript"),
+      await screen.findByTestId("trace-viewer"),
     ).toBeInTheDocument();
   });
 });
@@ -400,6 +517,7 @@ describe("ShareUsageThreadDetail — promote affordance", () => {
     mockThreadState.synthetic = false;
     mockThreadState.readiness = undefined;
     mockThreadState.goalScore = undefined;
+    mockThreadState.runAttemptStatus = undefined;
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => [{ role: "assistant", content: [] }],
@@ -461,6 +579,94 @@ describe("ShareUsageThreadDetail — promote affordance", () => {
     ).not.toBeInTheDocument();
   });
 
+  /**
+   * A swarm session is promotable only when its run attempt SUCCEEDED. The
+   * transcript renders the same either way, so before BB-247 the button was
+   * live on every row and a non-succeeded one answered with a raw Convex
+   * stack trace inside the dialog.
+   */
+  describe("swarm sessions whose run did not succeed", () => {
+    beforeEach(() => {
+      mockThreadState.sourceType = "swarm";
+    });
+
+    it("stays enabled when the attempt succeeded", async () => {
+      mockThreadState.runAttemptStatus = "succeeded";
+      render(<ShareUsageThreadDetail threadId="thread-1" promote={PROMOTE} />);
+
+      const button = await screen.findByTestId(
+        "share-usage-promote-to-test-case",
+      );
+      expect(button).toBeEnabled();
+      expect(button).not.toHaveAttribute("aria-disabled");
+      expect(
+        screen.queryByTestId("share-usage-promote-blocked"),
+      ).not.toBeInTheDocument();
+    });
+
+    it.each([
+      ["failed", /did not finish/i],
+      ["rate_limited", /rate limit/i],
+      ["running", /still running/i],
+      // What the backend actually sends for an attempt it could not identify
+      // (`chatSessions.ts` returns the literal `null`, never `undefined`), so
+      // this is the real unclaimed-session path rather than a synthetic one.
+      [null, /outcome is unknown/i],
+    ])("disables the button on a %s attempt", async (status, copy) => {
+      mockThreadState.runAttemptStatus = status;
+      const user = userEvent.setup();
+      render(<ShareUsageThreadDetail threadId="thread-1" promote={PROMOTE} />);
+
+      const button = await screen.findByTestId(
+        "share-usage-promote-to-test-case",
+      );
+      // `aria-disabled`, not `disabled`: the control keeps focus so keyboard
+      // and touch users can reach its explanation.
+      expect(button).toHaveAttribute("aria-disabled", "true");
+
+      // Inert all the same — opening the dialog is the path that rendered the
+      // server error.
+      await user.click(button);
+      expect(
+        screen.getByTestId("promote-dialog").getAttribute("data-open"),
+      ).toBe("false");
+
+      // The reason reaches a mouse (title) and assistive tech (description).
+      expect(button).toHaveAttribute("title", expect.stringMatching(copy));
+      expect(button).toHaveAccessibleDescription(copy);
+    });
+
+    /**
+     * A failed attempt often persists no transcript at all, and that shell
+     * renders before the header — so neither the disabled button nor its
+     * hover reason is reachable there. The reason has to appear in the empty
+     * state itself or the reader is left guessing.
+     */
+    it("explains the blocked state when there is no transcript either", async () => {
+      mockThreadState.runAttemptStatus = "failed";
+      mockAdaptTraceToUiMessages.mockReturnValue({
+        messages: [],
+        toolRenderOverrides: {},
+      });
+      render(<ShareUsageThreadDetail threadId="thread-1" promote={PROMOTE} />);
+
+      expect(
+        await screen.findByTestId("share-usage-empty-promote-blocked"),
+      ).toHaveTextContent(/did not finish/i);
+    });
+
+    it("blocks when the backend reports no status at all", async () => {
+      // Older backend, or an attempt row that claims no session. Absence is
+      // not permission.
+      mockThreadState.runAttemptStatus = undefined;
+      render(<ShareUsageThreadDetail threadId="thread-1" promote={PROMOTE} />);
+
+      expect(
+        await screen.findByTestId("share-usage-promote-to-test-case"),
+      ).toHaveAttribute("aria-disabled", "true");
+    });
+  });
+
   it("opens the dialog on this thread and navigates to the created case", async () => {
     const user = userEvent.setup();
     render(<ShareUsageThreadDetail threadId="thread-1" promote={PROMOTE} />);
@@ -479,7 +685,7 @@ describe("ShareUsageThreadDetail — promote affordance", () => {
     // Default behavior lands the user on the artifact they just created.
     await user.click(screen.getByText("simulate import"));
     await waitFor(() =>
-      expect(mockNavigateApp).toHaveBeenCalledWith("/evals/suite-1/case-1"),
+      expect(mockNavigateApp).toHaveBeenCalledWith("/evaluate/test-edit/suite-1/case-1"),
     );
   });
 

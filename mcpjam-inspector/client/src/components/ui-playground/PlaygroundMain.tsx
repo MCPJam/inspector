@@ -1692,7 +1692,7 @@ export function PlaygroundMain({
       createPlaygroundHost({
         projectId: seedProjectId,
         name: "MCPJam",
-        // Pin a cheap default model — see HostOverlayBar's seed for why a
+        // Pin a cheap default model — see ClientSelectionSync's seed for why a
         // modelless default host breaks synthetic/swarm runs.
         input: emptyHostConfigInputV2({
           modelId: DEFAULT_SEEDED_HOST_MODEL_ID,
@@ -5844,6 +5844,14 @@ export function PlaygroundMain({
                                 ? { hostId: previewedHostId }
                                 : {}),
                             }}
+                            // The same org provider config the tab root and
+                            // the multi-host columns get. Each column builds
+                            // its own model list from this, so without it a
+                            // "Your providers" model is missing from the
+                            // column's list, its provider gets guessed from
+                            // the bare id (which reads as Ollama), and the
+                            // turn fails.
+                            hostedOrgModelConfig={hostedOrgModelConfig}
                             personalBrowserEngine={personalBrowserEngineOption}
                             personalComputerEngine={
                               personalComputerEngineOption

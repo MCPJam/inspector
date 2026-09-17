@@ -44,11 +44,11 @@ describe("coverageForCase", () => {
         ],
       }),
     );
-    expect(c.userValue).toMatchObject({ gates: 0, warn: 1 });
-    expect(c.response).toMatchObject({ gates: 1, warn: 0 });
+    expect(c.userValue).toMatchObject({ required: 0, advisory: 1 });
+    expect(c.response).toMatchObject({ required: 1, advisory: 0 });
   });
 
-  it("counts a real route as one Selection gate", () => {
+  it("counts a real route as one required Selection rule", () => {
     const c = coverageForCase(
       card({
         steps: [
@@ -66,7 +66,7 @@ describe("coverageForCase", () => {
         toolsChoice: "tools",
       }),
     );
-    expect(c.selection.gates).toBe(1);
+    expect(c.selection.required).toBe(1);
   });
 
   it("does NOT count a route that asserts nothing", () => {
@@ -79,7 +79,7 @@ describe("coverageForCase", () => {
         ],
       }),
     );
-    expect(c.selection.gates).toBe(0);
+    expect(c.selection.required).toBe(0);
   });
 
   it("marks the links only the runner observes", () => {
@@ -93,7 +93,7 @@ describe("coverageForCase", () => {
     expect(c.userValue.runner).toBe(false);
   });
 
-  it("records the judge at user value when it runs for the case", () => {
+  it("records configured judge coverage while scheduling policy is unknown", () => {
     const c = coverageForCase(
       card({
         expectedOutput: "states the email",
@@ -102,10 +102,23 @@ describe("coverageForCase", () => {
     );
     expect(c.userValue.judge).toBe(true);
   });
+
+  it("does not count an explicitly disabled or skipped judge", () => {
+    for (const config of [
+      { suiteJudgeConfig: { goalCompletion: { enabled: false } } },
+      {
+        suiteJudgeConfig: { goalCompletion: { enabled: true } },
+        judgeConfigOverride: { goalCompletion: { enabled: false } },
+      },
+    ]) {
+      expect(coverageForCase(card(config)).userValue.judge).toBe(false);
+    }
+  });
+
 });
 
 describe("coverageDetail", () => {
-  const empty = { gates: 0, warn: 0, report: 0, judge: false, runner: false };
+  const empty = { required: 0, advisory: 0, judge: false, runner: false };
 
   it("says what the runner observes", () => {
     expect(coverageDetail({ ...empty, runner: true }, 0).label).toBe(
@@ -114,14 +127,14 @@ describe("coverageDetail", () => {
   });
 
   it("prints the configuration line the suite table prints", () => {
-    expect(coverageDetail({ ...empty, gates: 2, warn: 1 }, 0).label).toBe(
-      "2 gates · 1 warn",
+    expect(coverageDetail({ ...empty, required: 2, advisory: 1 }, 0).label).toBe(
+      "2 required · 1 advisory",
     );
   });
 
   it("names the judge alongside the checks", () => {
-    expect(coverageDetail({ ...empty, gates: 1, judge: true }, 0).label).toBe(
-      "1 gate · judge",
+    expect(coverageDetail({ ...empty, required: 1, judge: true }, 0).label).toBe(
+      "1 required · judge",
     );
   });
 
@@ -134,7 +147,7 @@ describe("coverageDetail", () => {
   });
 
   it("keeps a configured stage neutral — the chip above carries the tone", () => {
-    const configured = coverageDetail({ ...empty, gates: 1 }, 0);
+    const configured = coverageDetail({ ...empty, required: 1 }, 0);
     const gap = coverageDetail(empty, 0);
     expect(configured.toneClass).toBe(gap.toneClass);
   });

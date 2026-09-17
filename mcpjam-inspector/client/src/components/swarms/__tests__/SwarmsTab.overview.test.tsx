@@ -17,10 +17,11 @@ import {
   SWARM_COLUMN_HEADER,
   filterAndSortSwarmWaves,
   groupRunsIntoSwarmWaves,
+  swarmWaveRunStateChipClass,
+  swarmWaveRunStateLabel,
   swarmWaveTitle,
   waveLiveProgress,
   waveRunState,
-  waveStatusDotClass,
 } from "../swarm-overview-panel";
 
 /**
@@ -317,6 +318,7 @@ vi.mock("@/lib/swarm-api", async (importOriginal) => {
   return {
     ...actual,
     launchJourneyRun: (...args: unknown[]) => launchJourneyRunMock(...args),
+    streamJourneyRun: vi.fn(async () => undefined),
   };
 });
 
@@ -443,12 +445,11 @@ describe("waveLiveProgress", () => {
   });
 });
 
-describe("waveStatusDotClass", () => {
-  // The dot ran its own scan of `status` and tested `failed`/`stale` first,
-  // while `waveRunState` puts `running` first. A wave holding one failed goal
-  // and one still fanning out therefore painted a red dot beside a "Running"
-  // pill on the same row.
-  it("keeps the dot on the state the pill reports", () => {
+describe("waveRunState", () => {
+  // `running` still wins over every terminal status: a wave holding one goal
+  // that settled badly and one still fanning out is running, and sending the
+  // viewer away from a run that is still producing results is the bug.
+  it("reports running while any goal is still going", () => {
     const [newest, second] = overview.runs;
     const runs = [
       { ...newest!, status: "failed" },
@@ -456,15 +457,36 @@ describe("waveStatusDotClass", () => {
     ] as SwarmOverviewRun[];
 
     expect(waveRunState(runs)).toBe("running");
-    expect(waveStatusDotClass(runs)).toBe("bg-primary");
   });
 
-  it("still reds a wave whose goals have all settled badly", () => {
-    const [newest] = overview.runs;
-    const runs = [{ ...newest!, status: "failed" }] as SwarmOverviewRun[];
+  // "Failed" told the viewer nothing ran. It was never true: a `stale` run is
+  // only one the sweeper gave up on, and `partial`/`rate_limited` runs produced
+  // sessions too. All four now say the one honest thing — it did not finish
+  // cleanly — under a single label.
+  it.each(["failed", "stale", "partial", "rate_limited"])(
+    "folds %s into the single not-clean outcome",
+    (status) => {
+      const [newest] = overview.runs;
+      const runs = [{ ...newest!, status }] as SwarmOverviewRun[];
 
-    expect(waveRunState(runs)).toBe("failed");
-    expect(waveStatusDotClass(runs)).toBe("bg-red-500");
+      expect(waveRunState(runs)).toBe("issues");
+      expect(swarmWaveRunStateLabel(waveRunState(runs))).toBe(
+        "Completed with issues"
+      );
+    }
+  );
+
+  it("reports complete when every goal settled cleanly", () => {
+    const [newest] = overview.runs;
+    const runs = [{ ...newest!, status: "completed" }] as SwarmOverviewRun[];
+
+    expect(waveRunState(runs)).toBe("complete");
+  });
+
+  // No caller may paint a not-clean wave red any more: one badge, one neutral
+  // treatment, which is the whole point of collapsing the two buckets.
+  it("gives the not-clean outcome a neutral chip, not a red one", () => {
+    expect(swarmWaveRunStateChipClass("issues")).not.toMatch(/red/);
   });
 });
 
@@ -778,9 +800,11 @@ describe("Swarm Run detail — /swarms/:swarmId", () => {
     expect(screen.queryByTestId("swarm-insights-statline")).toBeNull();
     expect(screen.queryByRole("button", { name: "Overview" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Personas" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Run" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Findings" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Insights" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Sessions" })).toBeTruthy();
+    expect(screen.queryByTestId("swarm-run-detail-view-run")).toBeNull();
     expect(screen.queryByTestId("swarm-run-detail-score")).toBeNull();
     expect(screen.queryByTestId("swarms-tab-header-chrome")).toBeNull();
   });
@@ -859,7 +883,7 @@ describe("Swarm Run detail — /swarms/:swarmId", () => {
 
     fireEvent.click(screen.getByTestId("swarm-run-detail-share"));
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
-      "https://app.test/swarms/run-2b"
+      "https://app.test/swarms/run-2b?tab=findings"
     );
   });
 
@@ -912,9 +936,29 @@ describe("Swarm Run detail — /swarms/:swarmId", () => {
     ).toBe("25");
 
     fireEvent.click(screen.getByTestId("swarm-run-detail-back-to-run"));
-    // Same tab, minus the focused session: back to the whole run.
+    // The live watch surface, not the Sessions list minus a thread.
     expect(window.location.pathname).toBe("/swarms/run-2b");
-    expect(window.location.search).toBe("?tab=sessions");
+    expect(window.location.search).toBe("?tab=run");
+  });
+
+  it("opens the live matrix and stream on a running wave with no tab", async () => {
+    const [newest, second, ...rest] = overview.runs;
+    overviewData = {
+      ...overview,
+      runs: [
+        { ...newest!, status: "running" },
+        { ...second!, status: "running" },
+        ...rest,
+      ],
+    };
+    renderTab("run-2b");
+
+    expect(await screen.findByTestId("new-swarm-running-step")).toBeTruthy();
+    expect(screen.getByTestId("new-swarm-running-stream")).toBeTruthy();
+    expect(screen.queryByTestId("swarm-findings-tab")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Run" }).getAttribute("aria-current")
+    ).toBe("page");
   });
 
   /**
@@ -981,77 +1025,23 @@ describe("Swarm Run detail — /swarms/:swarmId", () => {
     expect(screen.queryByTestId("swarm-run-detail-live")).toBeNull();
   });
 
+  it("opens the matrix from the Run tab on a finished wave", async () => {
+    renderTab("run-2b");
+    const state = await screen.findByTestId("swarm-run-detail-state");
+    expect(state.getAttribute("data-run-state")).toBe("complete");
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    expect(window.location.search).toBe("?tab=run");
+    expect(await screen.findByTestId("new-swarm-running-step")).toBeTruthy();
+    expect(screen.getByTestId("new-swarm-running-stream")).toBeTruthy();
+  });
+
   it("does not show rubric findings on the Insights tab", async () => {
     renderTab("run-2b");
     await screen.findByTestId("swarm-run-detail");
     fireEvent.click(screen.getByRole("button", { name: "Insights" }));
     expect(screen.queryByTestId("swarm-overview-wave-findings")).toBeNull();
     expect(screen.queryByTestId("swarm-overview-finding")).toBeNull();
-  });
-});
-
-describe("Overview — goal completion trend", () => {
-  it("renders the daily trend strip when the window has graded days", async () => {
-    overviewData = {
-      ...overviewData!,
-      goalCompletion: {
-        gradedCount: 20,
-        passedCount: 11,
-        passRate: 11 / 20,
-        runsWithGrades: 3,
-        trend: [
-          { dayStartMs: NOW - 2 * 86_400_000, gradedCount: 8, passedCount: 4, passRate: 0.5 },
-          { dayStartMs: NOW - 86_400_000, gradedCount: 12, passedCount: 7, passRate: 7 / 12 },
-        ],
-      },
-    };
-    renderTab();
-    const strip = await screen.findByTestId("swarm-overview-goal-trend");
-    // Window pass rate headline (11/20 = 55%), with its denominators.
-    expect(within(strip).getByText("55%")).toBeTruthy();
-    expect(strip.textContent).toContain("11/20 graded sessions");
-    expect(
-      within(strip).getByTestId("swarm-overview-goal-trend-sparkline"),
-    ).toBeTruthy();
-  });
-
-  it("renders NO strip for a single graded day — one day is a number, not a trend", async () => {
-    overviewData = {
-      ...overviewData!,
-      goalCompletion: {
-        gradedCount: 8,
-        passedCount: 4,
-        passRate: 0.5,
-        runsWithGrades: 1,
-        trend: [
-          { dayStartMs: NOW - 86_400_000, gradedCount: 8, passedCount: 4, passRate: 0.5 },
-        ],
-      },
-    };
-    renderTab();
-    await screen.findByTestId("swarm-overview-runs");
-    expect(screen.queryByTestId("swarm-overview-goal-trend")).toBeNull();
-  });
-
-  it("renders NO strip when the window pass rate is null — nothing honest to headline", async () => {
-    // Can't happen from today's server (trend buckets imply grades), but the
-    // strip reads wire data and must not render "—%" over a sparkline.
-    overviewData = {
-      ...overviewData!,
-      goalCompletion: {
-        gradedCount: 0,
-        passedCount: 0,
-        passRate: null,
-        runsWithGrades: 0,
-        trend: [
-          { dayStartMs: NOW - 2 * 86_400_000, gradedCount: 1, passedCount: 1, passRate: 1 },
-          { dayStartMs: NOW - 86_400_000, gradedCount: 1, passedCount: 0, passRate: 0 },
-        ],
-      },
-    };
-    renderTab();
-    await screen.findByTestId("swarm-overview-runs");
-    expect(screen.queryByTestId("swarm-overview-goal-trend")).toBeNull();
   });
 });
 
@@ -1102,10 +1092,10 @@ describe("Overview — empty and loading states", () => {
 });
 
 describe("Swarm header chrome", () => {
-  const SUBTITLE =
+  const HEADLINE =
     "No recruiting, no scheduling, no setup. Agents find what breaks in every client.";
 
-  it("keeps tabs inline and drops the subtitle on the empty state", async () => {
+  it("keeps tabs inline and shows the headline on the empty state", async () => {
     personasData = [];
     renderTab();
     await screen.findByTestId("swarms-empty-hero");
@@ -1115,14 +1105,14 @@ describe("Swarm header chrome", () => {
     expect(row?.contains(within(header).getByRole("button", { name: "Overview" }))).toBe(
       true,
     );
-    expect(screen.queryByText(SUBTITLE)).toBeNull();
+    expect(screen.getByText(HEADLINE)).toBeTruthy();
   });
 
   it("keeps that chrome once the project has personas and runs", async () => {
     renderTab();
     await screen.findByTestId("swarm-overview-runs");
     expect(screen.queryByTestId("swarms-empty-hero")).toBeNull();
-    expect(screen.queryByText(SUBTITLE)).toBeNull();
+    expect(screen.getByText(HEADLINE)).toBeTruthy();
     expect(
       screen.queryByText("The library of user personas you send into swarms."),
     ).toBeNull();
@@ -1164,13 +1154,12 @@ describe("Swarm run state and navigation", () => {
     renderTab("run-2b");
 
     const state = await screen.findByTestId("swarm-run-detail-state");
-    // The page used to render NOTHING once the run settled, so a returning
-    // viewer had no way to tell a finished run from a live one.
+    // Settled outcome sits in the header, not on a second status strip.
     expect(state.getAttribute("data-run-state")).toBe("complete");
     expect(
       screen.getByTestId("swarm-run-detail-state-label").textContent
     ).toBe("Complete");
-    expect(state.textContent).toMatch(/sessions succeeded/);
+    expect(state.textContent).toMatch(/\d+ of \d+/);
     expect(screen.queryByTestId("swarm-run-detail-live")).toBeNull();
   });
 
@@ -1300,7 +1289,7 @@ describe("Swarm run state and navigation", () => {
     expect(toast.success).not.toHaveBeenCalled();
   });
 
-  it("says Stopped, not Failed, to the viewer who stopped the run", async () => {
+  it("says Stopped, not Completed with issues, to the viewer who stopped the run", async () => {
     overviewData = runningOverview();
     renderTab("run-2b");
 
@@ -1488,7 +1477,7 @@ describe("Swarm run state and navigation", () => {
     expect(window.location.pathname).toBe(`/swarms/${groupId}`);
   });
 
-  it("says Running on the list row, not just a coloured dot", async () => {
+  it("says Running on the list row, which is now its only liveness signal", async () => {
     overviewData = runningOverview();
     renderTab();
 
@@ -1499,14 +1488,48 @@ describe("Swarm run state and navigation", () => {
     expect(pill.textContent).toBe("Running");
   });
 
-  it("says Complete on a settled list row", async () => {
+  // One badge on the row, and only when the outcome is not clean. A settled run
+  // is the expected case and says nothing — which is what leaves the issues
+  // badge as the only thing on a row that has something to report.
+  it("badges nothing on a cleanly settled list row", async () => {
+    renderTab();
+
+    await screen.findByTestId("swarms-overview-panel");
+    expect(
+      within(waveRow("run-2b")).queryByTestId("swarm-overview-run-state")
+    ).toBeNull();
+  });
+
+  it("badges a failed wave as Completed with issues, not Failed", async () => {
+    // What the ask is really about: `failed` used to earn its own red pill, and
+    // "Failed" read as "nothing ran" about a wave that had sessions in it.
+    overviewData = {
+      ...overview,
+      runs: overview.runs.map((run) =>
+        run.runId === "run-2b" || run.runId === "run-2a"
+          ? { ...run, status: "failed" }
+          : run
+      ),
+    };
     renderTab();
 
     await screen.findByTestId("swarms-overview-panel");
     const pill = within(waveRow("run-2b")).getByTestId(
       "swarm-overview-run-state"
     );
-    expect(pill.getAttribute("data-run-state")).toBe("complete");
-    expect(pill.textContent).toBe("Complete");
+    expect(pill.getAttribute("data-run-state")).toBe("issues");
+    expect(pill.textContent).toBe("Completed with issues");
+    expect(pill.className).not.toMatch(/red/);
+  });
+
+  // The dot, not every round thing on the row — the targets pill is also
+  // `rounded-full` and is staying.
+  it("leaves no coloured status dot on the rows", async () => {
+    renderTab();
+
+    await screen.findByTestId("swarms-overview-panel");
+    const row = waveRow("run-2b");
+    expect(row.querySelectorAll("span.size-2.rounded-full")).toHaveLength(0);
+    expect(row.innerHTML).not.toMatch(/bg-(red|amber|emerald)-500\b/);
   });
 });

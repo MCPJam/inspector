@@ -139,7 +139,17 @@ export type MCPServerReplayConfig = {
   clientSecret?: string;
 };
 
+export interface SelectedEvalClient {
+  id: string;
+  name: string;
+  configId: string;
+  versionId: string;
+  versionNumber: number;
+}
+
 export type MCPJamReportingConfig = {
+  /** Saved client selected at the beginning of this run. */
+  selectedClient?: SelectedEvalClient;
   /** Explicitly end a partial run without certifying its incomplete population. Requires target termination support. */
   terminalStatus?: "cancelled" | "timed_out";
   enabled?: boolean;
@@ -160,6 +170,7 @@ export type MCPJamReportingConfig = {
    * works too). Defaults to the API key org's Default project.
    */
   project?: string;
+  /** Defaults to server IDs from resolved replay configs; pass [] to opt out. */
   serverNames?: string[];
   serverReplayConfigs?: MCPServerReplayConfig[];
   suiteName?: string;

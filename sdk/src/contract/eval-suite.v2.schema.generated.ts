@@ -180,6 +180,59 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
         systemPrompt: { type: "string" },
         temperature: { type: "number" },
         iterations: { type: "integer", minimum: 1, maximum: 100 },
+        judge: {
+          type: "object",
+          properties: {
+            enabled: { type: "boolean" },
+            model: { type: "string", minLength: 1 },
+            autoRun: { type: "boolean" },
+            threshold: { type: "number", minimum: 0, maximum: 1 },
+            role: { type: "string", enum: ["advisory", "gating", "required"] },
+            severity: { type: "string", const: "warn" },
+            rubric: {
+              anyOf: [
+                {
+                  type: "object",
+                  properties: {
+                    criteria: {
+                      minItems: 1,
+                      maxItems: 25,
+                      type: "array",
+                      items: {
+                        type: "object",
+                        properties: {
+                          id: {
+                            type: "string",
+                            pattern: "^[A-Za-z0-9_-]{1,64}$",
+                          },
+                          label: {
+                            type: "string",
+                            minLength: 1,
+                            maxLength: 200,
+                          },
+                          description: { type: "string", maxLength: 1000 },
+                          required: { type: "boolean" },
+                        },
+                        required: ["id", "label"],
+                        additionalProperties: false,
+                      },
+                    },
+                    instructions: {
+                      description:
+                        "Grading instructions: extra rules applied alongside each case's task and expected outcome. They do not replace the expected outcome.",
+                      type: "string",
+                      minLength: 1,
+                      maxLength: 2000,
+                    },
+                  },
+                  additionalProperties: false,
+                },
+                { type: "null" },
+              ],
+            },
+          },
+          additionalProperties: false,
+        },
         passThreshold: { type: "number", minimum: 0, maximum: 1 },
         validity: {
           type: "object",
@@ -624,7 +677,7 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                                     },
                                     role: {
                                       type: "string",
-                                      enum: ["gating", "advisory"],
+                                      enum: ["gating", "advisory", "required"],
                                     },
                                     severity: { type: "string", const: "warn" },
                                   },
@@ -650,7 +703,7 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                                     },
                                     role: {
                                       type: "string",
-                                      enum: ["gating", "advisory"],
+                                      enum: ["gating", "advisory", "required"],
                                     },
                                     severity: { type: "string", const: "warn" },
                                   },
@@ -665,7 +718,7 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                                     },
                                     role: {
                                       type: "string",
-                                      enum: ["gating", "advisory"],
+                                      enum: ["gating", "advisory", "required"],
                                     },
                                     severity: { type: "string", const: "warn" },
                                   },
@@ -680,7 +733,7 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                                     },
                                     role: {
                                       type: "string",
-                                      enum: ["gating", "advisory"],
+                                      enum: ["gating", "advisory", "required"],
                                     },
                                     severity: { type: "string", const: "warn" },
                                   },
@@ -695,7 +748,7 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                                     },
                                     role: {
                                       type: "string",
-                                      enum: ["gating", "advisory"],
+                                      enum: ["gating", "advisory", "required"],
                                     },
                                     severity: { type: "string", const: "warn" },
                                   },
@@ -710,7 +763,7 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                                     },
                                     role: {
                                       type: "string",
-                                      enum: ["gating", "advisory"],
+                                      enum: ["gating", "advisory", "required"],
                                     },
                                     severity: { type: "string", const: "warn" },
                                   },
@@ -746,7 +799,7 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                                     },
                                     role: {
                                       type: "string",
-                                      enum: ["gating", "advisory"],
+                                      enum: ["gating", "advisory", "required"],
                                     },
                                     severity: { type: "string", const: "warn" },
                                   },
@@ -762,7 +815,7 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                                     toolName: { type: "string", minLength: 1 },
                                     role: {
                                       type: "string",
-                                      enum: ["gating", "advisory"],
+                                      enum: ["gating", "advisory", "required"],
                                     },
                                     severity: { type: "string", const: "warn" },
                                   },
@@ -778,7 +831,7 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                                     toolName: { type: "string", minLength: 1 },
                                     role: {
                                       type: "string",
-                                      enum: ["gating", "advisory"],
+                                      enum: ["gating", "advisory", "required"],
                                     },
                                     severity: { type: "string", const: "warn" },
                                   },
@@ -797,7 +850,7 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                                     },
                                     role: {
                                       type: "string",
-                                      enum: ["gating", "advisory"],
+                                      enum: ["gating", "advisory", "required"],
                                     },
                                     severity: { type: "string", const: "warn" },
                                   },
@@ -813,7 +866,7 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                                     toolName: { type: "string", minLength: 1 },
                                     role: {
                                       type: "string",
-                                      enum: ["gating", "advisory"],
+                                      enum: ["gating", "advisory", "required"],
                                     },
                                     severity: { type: "string", const: "warn" },
                                   },
@@ -840,7 +893,7 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                                     normalizeWhitespace: { type: "boolean" },
                                     role: {
                                       type: "string",
-                                      enum: ["gating", "advisory"],
+                                      enum: ["gating", "advisory", "required"],
                                     },
                                     severity: { type: "string", const: "warn" },
                                   },
@@ -861,7 +914,7 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                                     caseSensitive: { type: "boolean" },
                                     role: {
                                       type: "string",
-                                      enum: ["gating", "advisory"],
+                                      enum: ["gating", "advisory", "required"],
                                     },
                                     severity: { type: "string", const: "warn" },
                                   },
@@ -877,7 +930,7 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                                     pattern: { type: "string", minLength: 1 },
                                     role: {
                                       type: "string",
-                                      enum: ["gating", "advisory"],
+                                      enum: ["gating", "advisory", "required"],
                                     },
                                     severity: { type: "string", const: "warn" },
                                   },
@@ -892,7 +945,7 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                                     },
                                     role: {
                                       type: "string",
-                                      enum: ["gating", "advisory"],
+                                      enum: ["gating", "advisory", "required"],
                                     },
                                     severity: { type: "string", const: "warn" },
                                   },
@@ -907,7 +960,7 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                                     },
                                     role: {
                                       type: "string",
-                                      enum: ["gating", "advisory"],
+                                      enum: ["gating", "advisory", "required"],
                                     },
                                     severity: { type: "string", const: "warn" },
                                   },
@@ -927,7 +980,7 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                                     },
                                     role: {
                                       type: "string",
-                                      enum: ["gating", "advisory"],
+                                      enum: ["gating", "advisory", "required"],
                                     },
                                     severity: { type: "string", const: "warn" },
                                   },
@@ -943,7 +996,7 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                                     toolName: { type: "string", minLength: 1 },
                                     role: {
                                       type: "string",
-                                      enum: ["gating", "advisory"],
+                                      enum: ["gating", "advisory", "required"],
                                     },
                                     severity: { type: "string", const: "warn" },
                                   },
@@ -964,7 +1017,7 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                                     toolName: { type: "string", minLength: 1 },
                                     role: {
                                       type: "string",
-                                      enum: ["gating", "advisory"],
+                                      enum: ["gating", "advisory", "required"],
                                     },
                                     severity: { type: "string", const: "warn" },
                                   },
@@ -980,7 +1033,7 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                                     toolName: { type: "string", minLength: 1 },
                                     role: {
                                       type: "string",
-                                      enum: ["gating", "advisory"],
+                                      enum: ["gating", "advisory", "required"],
                                     },
                                     severity: { type: "string", const: "warn" },
                                   },
@@ -1000,7 +1053,7 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                                     },
                                     role: {
                                       type: "string",
-                                      enum: ["gating", "advisory"],
+                                      enum: ["gating", "advisory", "required"],
                                     },
                                     severity: { type: "string", const: "warn" },
                                   },
@@ -1015,7 +1068,7 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                                     },
                                     role: {
                                       type: "string",
-                                      enum: ["gating", "advisory"],
+                                      enum: ["gating", "advisory", "required"],
                                     },
                                     severity: { type: "string", const: "warn" },
                                   },
@@ -1036,7 +1089,7 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                                     toolName: { type: "string", minLength: 1 },
                                     role: {
                                       type: "string",
-                                      enum: ["gating", "advisory"],
+                                      enum: ["gating", "advisory", "required"],
                                     },
                                     severity: { type: "string", const: "warn" },
                                   },
@@ -1058,7 +1111,7 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                                     toolName: { type: "string", minLength: 1 },
                                     role: {
                                       type: "string",
-                                      enum: ["gating", "advisory"],
+                                      enum: ["gating", "advisory", "required"],
                                     },
                                     severity: { type: "string", const: "warn" },
                                   },
@@ -1075,7 +1128,7 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                                     toolName: { type: "string", minLength: 1 },
                                     role: {
                                       type: "string",
-                                      enum: ["gating", "advisory"],
+                                      enum: ["gating", "advisory", "required"],
                                     },
                                     severity: { type: "string", const: "warn" },
                                   },
@@ -1096,7 +1149,7 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                                     toolName: { type: "string", minLength: 1 },
                                     role: {
                                       type: "string",
-                                      enum: ["gating", "advisory"],
+                                      enum: ["gating", "advisory", "required"],
                                     },
                                     severity: { type: "string", const: "warn" },
                                   },
@@ -1112,7 +1165,7 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                                     toolName: { type: "string", minLength: 1 },
                                     role: {
                                       type: "string",
-                                      enum: ["gating", "advisory"],
+                                      enum: ["gating", "advisory", "required"],
                                     },
                                     severity: { type: "string", const: "warn" },
                                   },
@@ -1128,7 +1181,7 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                                     toolName: { type: "string", minLength: 1 },
                                     role: {
                                       type: "string",
-                                      enum: ["gating", "advisory"],
+                                      enum: ["gating", "advisory", "required"],
                                     },
                                     severity: { type: "string", const: "warn" },
                                   },
@@ -1149,7 +1202,7 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                                     toolName: { type: "string", minLength: 1 },
                                     role: {
                                       type: "string",
-                                      enum: ["gating", "advisory"],
+                                      enum: ["gating", "advisory", "required"],
                                     },
                                     severity: { type: "string", const: "warn" },
                                   },
@@ -1169,7 +1222,7 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                                     },
                                     role: {
                                       type: "string",
-                                      enum: ["gating", "advisory"],
+                                      enum: ["gating", "advisory", "required"],
                                     },
                                     severity: { type: "string", const: "warn" },
                                   },
@@ -1188,7 +1241,7 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                                     },
                                     role: {
                                       type: "string",
-                                      enum: ["gating", "advisory"],
+                                      enum: ["gating", "advisory", "required"],
                                     },
                                     severity: { type: "string", const: "warn" },
                                   },
@@ -1203,7 +1256,7 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                                     },
                                     role: {
                                       type: "string",
-                                      enum: ["gating", "advisory"],
+                                      enum: ["gating", "advisory", "required"],
                                     },
                                     severity: { type: "string", const: "warn" },
                                   },
@@ -1219,7 +1272,7 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                                     toolName: { type: "string", minLength: 1 },
                                     role: {
                                       type: "string",
-                                      enum: ["gating", "advisory"],
+                                      enum: ["gating", "advisory", "required"],
                                     },
                                     severity: { type: "string", const: "warn" },
                                   },
@@ -1235,7 +1288,7 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                                     toolName: { type: "string", minLength: 1 },
                                     role: {
                                       type: "string",
-                                      enum: ["gating", "advisory"],
+                                      enum: ["gating", "advisory", "required"],
                                     },
                                     severity: { type: "string", const: "warn" },
                                   },
@@ -1246,6 +1299,7 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                             {
                               type: "object",
                               properties: { kind: { not: {} } },
+                              additionalProperties: {},
                             },
                           ],
                         },
@@ -1272,7 +1326,10 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                       exclusiveMinimum: 0,
                       maximum: 9007199254740991,
                     },
-                    role: { type: "string", enum: ["gating", "advisory"] },
+                    role: {
+                      type: "string",
+                      enum: ["gating", "advisory", "required"],
+                    },
                     severity: { type: "string", const: "warn" },
                   },
                   required: ["type"],
@@ -1289,7 +1346,10 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                         enum: ["readOnlyHint", "destructiveHint"],
                       },
                     },
-                    role: { type: "string", enum: ["gating", "advisory"] },
+                    role: {
+                      type: "string",
+                      enum: ["gating", "advisory", "required"],
+                    },
                     severity: { type: "string", const: "warn" },
                   },
                   required: ["type"],
@@ -1298,7 +1358,10 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                   type: "object",
                   properties: {
                     type: { type: "string", const: "toolNamesUnique" },
-                    role: { type: "string", enum: ["gating", "advisory"] },
+                    role: {
+                      type: "string",
+                      enum: ["gating", "advisory", "required"],
+                    },
                     severity: { type: "string", const: "warn" },
                   },
                   required: ["type"],
@@ -1307,7 +1370,10 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                   type: "object",
                   properties: {
                     type: { type: "string", const: "noDeprecatedToolExposed" },
-                    role: { type: "string", enum: ["gating", "advisory"] },
+                    role: {
+                      type: "string",
+                      enum: ["gating", "advisory", "required"],
+                    },
                     severity: { type: "string", const: "warn" },
                   },
                   required: ["type"],
@@ -1319,7 +1385,10 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                       type: "string",
                       const: "toolInputSchemasWellFormed",
                     },
-                    role: { type: "string", enum: ["gating", "advisory"] },
+                    role: {
+                      type: "string",
+                      enum: ["gating", "advisory", "required"],
+                    },
                     severity: { type: "string", const: "warn" },
                   },
                   required: ["type"],
@@ -1328,7 +1397,10 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                   type: "object",
                   properties: {
                     type: { type: "string", const: "toolOutputSchemasPresent" },
-                    role: { type: "string", enum: ["gating", "advisory"] },
+                    role: {
+                      type: "string",
+                      enum: ["gating", "advisory", "required"],
+                    },
                     severity: { type: "string", const: "warn" },
                   },
                   required: ["type"],
@@ -1358,7 +1430,10 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                       exclusiveMinimum: 0,
                       maximum: 9007199254740991,
                     },
-                    role: { type: "string", enum: ["gating", "advisory"] },
+                    role: {
+                      type: "string",
+                      enum: ["gating", "advisory", "required"],
+                    },
                     severity: { type: "string", const: "warn" },
                   },
                   required: ["type", "toolName", "args"],
@@ -1368,7 +1443,10 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                   properties: {
                     type: { type: "string", const: "toolCalledAtLeastOnce" },
                     toolName: { type: "string", minLength: 1 },
-                    role: { type: "string", enum: ["gating", "advisory"] },
+                    role: {
+                      type: "string",
+                      enum: ["gating", "advisory", "required"],
+                    },
                     severity: { type: "string", const: "warn" },
                   },
                   required: ["type", "toolName"],
@@ -1378,7 +1456,10 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                   properties: {
                     type: { type: "string", const: "toolNeverCalled" },
                     toolName: { type: "string", minLength: 1 },
-                    role: { type: "string", enum: ["gating", "advisory"] },
+                    role: {
+                      type: "string",
+                      enum: ["gating", "advisory", "required"],
+                    },
                     severity: { type: "string", const: "warn" },
                   },
                   required: ["type", "toolName"],
@@ -1391,7 +1472,10 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                       type: "array",
                       items: { type: "string", minLength: 1 },
                     },
-                    role: { type: "string", enum: ["gating", "advisory"] },
+                    role: {
+                      type: "string",
+                      enum: ["gating", "advisory", "required"],
+                    },
                     severity: { type: "string", const: "warn" },
                   },
                   required: ["type", "toolNames"],
@@ -1401,7 +1485,10 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                   properties: {
                     type: { type: "string", const: "firstToolWas" },
                     toolName: { type: "string", minLength: 1 },
-                    role: { type: "string", enum: ["gating", "advisory"] },
+                    role: {
+                      type: "string",
+                      enum: ["gating", "advisory", "required"],
+                    },
                     severity: { type: "string", const: "warn" },
                   },
                   required: ["type", "toolName"],
@@ -1418,7 +1505,10 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                     maxDistance: { type: "number", minimum: 0, maximum: 1 },
                     caseSensitive: { type: "boolean" },
                     normalizeWhitespace: { type: "boolean" },
-                    role: { type: "string", enum: ["gating", "advisory"] },
+                    role: {
+                      type: "string",
+                      enum: ["gating", "advisory", "required"],
+                    },
                     severity: { type: "string", const: "warn" },
                   },
                   required: ["type", "reference", "maxDistance"],
@@ -1429,7 +1519,10 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                     type: { type: "string", const: "responseContains" },
                     needle: { type: "string", minLength: 1 },
                     caseSensitive: { type: "boolean" },
-                    role: { type: "string", enum: ["gating", "advisory"] },
+                    role: {
+                      type: "string",
+                      enum: ["gating", "advisory", "required"],
+                    },
                     severity: { type: "string", const: "warn" },
                   },
                   required: ["type", "needle"],
@@ -1439,7 +1532,10 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                   properties: {
                     type: { type: "string", const: "responseMatches" },
                     pattern: { type: "string", minLength: 1 },
-                    role: { type: "string", enum: ["gating", "advisory"] },
+                    role: {
+                      type: "string",
+                      enum: ["gating", "advisory", "required"],
+                    },
                     severity: { type: "string", const: "warn" },
                   },
                   required: ["type", "pattern"],
@@ -1448,7 +1544,10 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                   type: "object",
                   properties: {
                     type: { type: "string", const: "noToolErrors" },
-                    role: { type: "string", enum: ["gating", "advisory"] },
+                    role: {
+                      type: "string",
+                      enum: ["gating", "advisory", "required"],
+                    },
                     severity: { type: "string", const: "warn" },
                   },
                   required: ["type"],
@@ -1460,7 +1559,10 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                       type: "string",
                       const: "finalAssistantMessageNonEmpty",
                     },
-                    role: { type: "string", enum: ["gating", "advisory"] },
+                    role: {
+                      type: "string",
+                      enum: ["gating", "advisory", "required"],
+                    },
                     severity: { type: "string", const: "warn" },
                   },
                   required: ["type"],
@@ -1474,7 +1576,10 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                       exclusiveMinimum: 0,
                       maximum: 9007199254740991,
                     },
-                    role: { type: "string", enum: ["gating", "advisory"] },
+                    role: {
+                      type: "string",
+                      enum: ["gating", "advisory", "required"],
+                    },
                     severity: { type: "string", const: "warn" },
                   },
                   required: ["type", "tokens"],
@@ -1484,7 +1589,10 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                   properties: {
                     type: { type: "string", const: "widgetRendered" },
                     toolName: { type: "string", minLength: 1 },
-                    role: { type: "string", enum: ["gating", "advisory"] },
+                    role: {
+                      type: "string",
+                      enum: ["gating", "advisory", "required"],
+                    },
                     severity: { type: "string", const: "warn" },
                   },
                   required: ["type"],
@@ -1499,7 +1607,10 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                       maximum: 9007199254740991,
                     },
                     toolName: { type: "string", minLength: 1 },
-                    role: { type: "string", enum: ["gating", "advisory"] },
+                    role: {
+                      type: "string",
+                      enum: ["gating", "advisory", "required"],
+                    },
                     severity: { type: "string", const: "warn" },
                   },
                   required: ["type", "ms"],
@@ -1509,7 +1620,10 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                   properties: {
                     type: { type: "string", const: "widgetNoConsoleErrors" },
                     toolName: { type: "string", minLength: 1 },
-                    role: { type: "string", enum: ["gating", "advisory"] },
+                    role: {
+                      type: "string",
+                      enum: ["gating", "advisory", "required"],
+                    },
                     severity: { type: "string", const: "warn" },
                   },
                   required: ["type"],
@@ -1523,7 +1637,10 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                       exclusiveMinimum: 0,
                       maximum: 9007199254740991,
                     },
-                    role: { type: "string", enum: ["gating", "advisory"] },
+                    role: {
+                      type: "string",
+                      enum: ["gating", "advisory", "required"],
+                    },
                     severity: { type: "string", const: "warn" },
                   },
                   required: ["type", "turns"],
@@ -1532,7 +1649,10 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                   type: "object",
                   properties: {
                     type: { type: "string", const: "noEndingQuestion" },
-                    role: { type: "string", enum: ["gating", "advisory"] },
+                    role: {
+                      type: "string",
+                      enum: ["gating", "advisory", "required"],
+                    },
                     severity: { type: "string", const: "warn" },
                   },
                   required: ["type"],
@@ -1547,7 +1667,10 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                       maximum: 9007199254740991,
                     },
                     toolName: { type: "string", minLength: 1 },
-                    role: { type: "string", enum: ["gating", "advisory"] },
+                    role: {
+                      type: "string",
+                      enum: ["gating", "advisory", "required"],
+                    },
                     severity: { type: "string", const: "warn" },
                   },
                   required: ["type", "ms"],
@@ -1559,7 +1682,10 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                     needle: { type: "string", minLength: 1, maxLength: 1000 },
                     caseSensitive: { type: "boolean" },
                     toolName: { type: "string", minLength: 1 },
-                    role: { type: "string", enum: ["gating", "advisory"] },
+                    role: {
+                      type: "string",
+                      enum: ["gating", "advisory", "required"],
+                    },
                     severity: { type: "string", const: "warn" },
                   },
                   required: ["type", "needle"],
@@ -1570,7 +1696,10 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                     type: { type: "string", const: "toolResultMatchesSchema" },
                     schema: {},
                     toolName: { type: "string", minLength: 1 },
-                    role: { type: "string", enum: ["gating", "advisory"] },
+                    role: {
+                      type: "string",
+                      enum: ["gating", "advisory", "required"],
+                    },
                     severity: { type: "string", const: "warn" },
                   },
                   required: ["type", "schema"],
@@ -1585,7 +1714,10 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                       maximum: 9007199254740991,
                     },
                     toolName: { type: "string", minLength: 1 },
-                    role: { type: "string", enum: ["gating", "advisory"] },
+                    role: {
+                      type: "string",
+                      enum: ["gating", "advisory", "required"],
+                    },
                     severity: { type: "string", const: "warn" },
                   },
                   required: ["type", "maxBytes"],
@@ -1595,7 +1727,10 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                   properties: {
                     type: { type: "string", const: "argumentsMatchToolSchema" },
                     toolName: { type: "string", minLength: 1 },
-                    role: { type: "string", enum: ["gating", "advisory"] },
+                    role: {
+                      type: "string",
+                      enum: ["gating", "advisory", "required"],
+                    },
                     severity: { type: "string", const: "warn" },
                   },
                   required: ["type"],
@@ -1605,7 +1740,10 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                   properties: {
                     type: { type: "string", const: "noRepeatedIdenticalCall" },
                     toolName: { type: "string", minLength: 1 },
-                    role: { type: "string", enum: ["gating", "advisory"] },
+                    role: {
+                      type: "string",
+                      enum: ["gating", "advisory", "required"],
+                    },
                     severity: { type: "string", const: "warn" },
                   },
                   required: ["type"],
@@ -1620,7 +1758,10 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                       maximum: 9007199254740991,
                     },
                     toolName: { type: "string", minLength: 1 },
-                    role: { type: "string", enum: ["gating", "advisory"] },
+                    role: {
+                      type: "string",
+                      enum: ["gating", "advisory", "required"],
+                    },
                     severity: { type: "string", const: "warn" },
                   },
                   required: ["type", "count"],
@@ -1631,7 +1772,10 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                     type: { type: "string", const: "toolCalledBefore" },
                     toolName: { type: "string", minLength: 1 },
                     beforeToolName: { type: "string", minLength: 1 },
-                    role: { type: "string", enum: ["gating", "advisory"] },
+                    role: {
+                      type: "string",
+                      enum: ["gating", "advisory", "required"],
+                    },
                     severity: { type: "string", const: "warn" },
                   },
                   required: ["type", "toolName", "beforeToolName"],
@@ -1640,7 +1784,10 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                   type: "object",
                   properties: {
                     type: { type: "string", const: "noDeprecatedToolCalled" },
-                    role: { type: "string", enum: ["gating", "advisory"] },
+                    role: {
+                      type: "string",
+                      enum: ["gating", "advisory", "required"],
+                    },
                     severity: { type: "string", const: "warn" },
                   },
                   required: ["type"],
@@ -1649,7 +1796,10 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                   type: "object",
                   properties: {
                     type: { type: "string", const: "noDestructiveToolCalled" },
-                    role: { type: "string", enum: ["gating", "advisory"] },
+                    role: {
+                      type: "string",
+                      enum: ["gating", "advisory", "required"],
+                    },
                     severity: { type: "string", const: "warn" },
                   },
                   required: ["type"],
@@ -1659,7 +1809,10 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                   properties: {
                     type: { type: "string", const: "toolErrorNamesInput" },
                     toolName: { type: "string", minLength: 1 },
-                    role: { type: "string", enum: ["gating", "advisory"] },
+                    role: {
+                      type: "string",
+                      enum: ["gating", "advisory", "required"],
+                    },
                     severity: { type: "string", const: "warn" },
                   },
                   required: ["type"],
@@ -1669,7 +1822,10 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                   properties: {
                     type: { type: "string", const: "fullPageHasContinuation" },
                     toolName: { type: "string", minLength: 1 },
-                    role: { type: "string", enum: ["gating", "advisory"] },
+                    role: {
+                      type: "string",
+                      enum: ["gating", "advisory", "required"],
+                    },
                     severity: { type: "string", const: "warn" },
                   },
                   required: ["type"],
@@ -1700,6 +1856,11 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                 "userValue.turns",
               ],
             },
+          },
+          judge: {
+            type: "object",
+            properties: { enabled: { type: "boolean" } },
+            additionalProperties: false,
           },
           expectedOutput: { type: "string" },
           isNegativeTest: { type: "boolean" },

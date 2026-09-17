@@ -103,7 +103,7 @@ import {
   mapRuntimeError,
 } from "./auth.js";
 import { createHostedRpcLogCollector } from "./hosted-rpc-logs.js";
-import { getClientIp } from "../../utils/client-ip.js";
+import { getSpendClientIp } from "../../utils/client-ip.js";
 import { hostedMcpBaseFetch } from "../../utils/hosted-mcp-base-fetch.js";
 
 const DOCS_SERVER_ID = "mcpjam-docs";
@@ -489,7 +489,7 @@ mcpjamAgent.post("/", async (c) => {
         },
         runtime: {
           authHeader,
-          clientIp: getClientIp(c),
+          clientIp: getSpendClientIp(c),
           abortSignal: c.req.raw.signal as AbortSignal | undefined,
           rpcCollector,
           c,

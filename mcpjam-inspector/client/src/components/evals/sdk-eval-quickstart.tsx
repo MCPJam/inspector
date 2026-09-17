@@ -21,7 +21,10 @@ const LEARN_MCP_URL = "https://learn.mcpjam.com/mcp";
 export const SDK_EVAL_QUICKSTART_ENV = `export MCP_SERVER_URL=${LEARN_MCP_URL}
 export LLM_API_KEY=<your-llm-api-key>
 export EVAL_MODEL=<provider/model-id> # e.g. openai/gpt-4o-mini, anthropic/claude-sonnet-4-20250514
-export MCPJAM_API_KEY=<your sk_… key from Settings → API keys> # optional: saves results to MCPJam`;
+export MCPJAM_API_KEY=<your sk_… key from Settings → API keys> # optional: saves results to MCPJam
+# No provider key? Prefix the model with mcpjam/ and it runs on your MCPJam
+# credits, with MCPJAM_API_KEY as the only secret:
+#   export EVAL_MODEL=mcpjam/anthropic/claude-sonnet-4.5`;
 
 /**
  * The rendered `.env` block.
@@ -68,6 +71,11 @@ const MCP_SERVER_URL =
 const LLM_API_KEY = process.env.LLM_API_KEY!;
 // provider/model-id — must match an allowed HostRunner provider (see Configure environment in the app or SDK README).
 const MODEL = process.env.EVAL_MODEL!;
+// An mcpjam/… model runs on your MCPJam credits, so it takes the MCPJam key
+// instead of a provider key.
+const API_KEY = MODEL.startsWith("mcpjam/")
+  ? process.env.MCPJAM_API_KEY!
+  : LLM_API_KEY;
 
 describe("MCP eval quickstart", () => {
   let manager: MCPClientManager;
@@ -81,7 +89,7 @@ describe("MCP eval quickstart", () => {
     agent = new HostRunner({
       tools,
       model: MODEL,
-      apiKey: LLM_API_KEY,
+      apiKey: API_KEY,
       maxSteps: 8,
       mcpClientManager: manager,
     });
@@ -223,7 +231,7 @@ function CreateApiKeyStep({
   const keyReady = hasKey || keys.length > 0;
 
   const handleSignIn = useCallback(() => {
-    writeApiKeysSignInReturnPath(routePaths.evalsRuns);
+    writeApiKeysSignInReturnPath(routePaths.evaluate);
     signIn();
   }, [signIn]);
 

@@ -1,5 +1,6 @@
 import { getModelById } from "../../shared/types";
 import { logger } from "./logger";
+import { fetchTokenizerCount } from "./tokenizer-backend.js";
 
 /**
  * Mapping from AI SDK model IDs to ai-tokenizer model IDs.
@@ -253,11 +254,7 @@ export async function countToolsTokens(
         return estimateTokensFromChars(toolsText);
       }
 
-      const response = await fetch(`${convexHttpUrl}/tokenizer/count`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: toolsText, model: mappedModelId }),
-      });
+      const response = await fetchTokenizerCount(toolsText, mappedModelId);
 
       if (response.ok) {
         const data = (await response.json()) as {

@@ -56,18 +56,21 @@ import {
  * Budgets are the one presentation group the contract carries. Actions are
  * steps, not evaluators, and keep their own section.
  */
-const ASSERTION_SECTIONS: Record<ScorerLibraryCategoryId, string> =
+export type AddSection =
+  | "Actions"
+  | `Assertions · ${(typeof SCORER_LIBRARY_CATEGORY_LABELS)[ScorerLibraryCategoryId]}`;
+
+const ASSERTION_SECTIONS: Record<ScorerLibraryCategoryId, AddSection> =
   Object.fromEntries(
     LIBRARY_CATEGORY_ORDER.map((id) => [
       id,
-      `Assertions · ${SCORER_LIBRARY_CATEGORY_LABELS[id]}`,
+      `Assertions · ${SCORER_LIBRARY_CATEGORY_LABELS[id]}` as const,
     ]),
-  ) as Record<ScorerLibraryCategoryId, string>;
-export const ADD_SECTIONS: readonly string[] = [
+  ) as Record<ScorerLibraryCategoryId, AddSection>;
+export const ADD_SECTIONS: readonly AddSection[] = [
   "Actions",
   ...LIBRARY_CATEGORY_ORDER.map((id) => ASSERTION_SECTIONS[id]),
 ];
-export type AddSection = (typeof ADD_SECTIONS)[number];
 export type EvalAddChoice =
   | { kind: "step"; stepKind: "prompt" | "interact" | "toolCall" }
   | { kind: "check"; predicateKind: PredicateKind }

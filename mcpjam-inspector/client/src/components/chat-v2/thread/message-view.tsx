@@ -68,6 +68,7 @@ interface MessageViewProps {
   showInlineEdit?: boolean;
   minimalMode?: boolean;
   interactive?: boolean;
+  widgetPolicy?: "live" | "placeholder";
   reasoningDisplayMode?: ReasoningDisplayMode;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   claudeFooterMode?: ClaudeFooterMode;
@@ -217,6 +218,7 @@ function areMessageViewPropsEqual(
     prev.showInlineEdit === next.showInlineEdit &&
     prev.minimalMode === next.minimalMode &&
     prev.interactive === next.interactive &&
+    prev.widgetPolicy === next.widgetPolicy &&
     prev.reasoningDisplayMode === next.reasoningDisplayMode &&
     prev.mcpToolResultImageRendering === next.mcpToolResultImageRendering &&
     prev.claudeFooterMode === next.claudeFooterMode &&
@@ -456,6 +458,7 @@ function MessageViewImpl({
   showInlineEdit = true,
   minimalMode = false,
   interactive = true,
+  widgetPolicy = "live",
   reasoningDisplayMode = "inline",
   mcpToolResultImageRendering,
   claudeFooterMode = "none",
@@ -523,6 +526,7 @@ function MessageViewImpl({
               showInlineEdit={showInlineEdit}
               minimalMode={minimalMode}
               interactive={interactive}
+              widgetPolicy={widgetPolicy}
               reasoningDisplayMode={reasoningDisplayMode}
               mcpToolResultImageRendering={mcpToolResultImageRendering}
             />
@@ -559,6 +563,7 @@ function MessageViewImpl({
               showInlineEdit={showInlineEdit}
               minimalMode={minimalMode}
               interactive={interactive}
+              widgetPolicy={widgetPolicy}
               reasoningDisplayMode={reasoningDisplayMode}
               mcpToolResultImageRendering={mcpToolResultImageRendering}
             />
@@ -663,6 +668,7 @@ function MessageViewImpl({
                   showInlineEdit={showInlineEdit}
                   minimalMode={minimalMode}
                   interactive={interactive}
+                  widgetPolicy={widgetPolicy}
                   reasoningDisplayMode={reasoningDisplayMode}
                   mcpToolResultImageRendering={mcpToolResultImageRendering}
                   {...recorder}

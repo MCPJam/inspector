@@ -581,7 +581,7 @@ describe("POST /api/v1/projects/:projectId/proposed-actions/:actionId/execute", 
     expect(body.resource).toMatchObject({ type: "eval_run", id: "run_1" });
     // `?project=` makes the link land on the right project for viewers whose
     // picker is parked elsewhere (eval routes carry no project segment).
-    expect(body.resource!.url).toContain("/evals/suite/ts_1/runs/run_1");
+    expect(body.resource!.url).toContain("/evaluate/suite/ts_1/runs/run_1");
     expect(body.resource!.url).toContain("project=p1");
   });
 
@@ -711,7 +711,7 @@ describe("POST /api/v1/projects/:projectId/proposed-actions/:actionId/execute", 
       expect.objectContaining({
         status: "succeeded",
         resourceId: "run_1",
-        resourceUrl: expect.stringContaining("/evals/suite/ts_1/runs/run_1"),
+        resourceUrl: expect.stringContaining("/evaluate/suite/ts_1/runs/run_1"),
       })
     );
   });

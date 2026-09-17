@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   useEvalQueries: vi.fn(),
   navigatePlaygroundEvalsRoute: vi.fn(),
   toSuiteOverview: vi.fn(),
+  toTestEdit: vi.fn(),
   createTestSuiteMutation: vi.fn(),
   createSuitePage: vi.fn(() => null),
   suiteIterationsView: vi.fn(),
@@ -85,8 +86,7 @@ vi.mock("posthog-js", () => ({
   default: { capture: vi.fn() },
 }));
 
-// `useEvaluateEnabled` resolves `evaluate-enabled` here. The canonical
-// decision-summary read rides that same flag, so these specs can flip it.
+// Decision summaries remain enabled regardless of the legacy flag.
 vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: () => mocks.evaluateFlag.enabled,
 }));
@@ -162,7 +162,7 @@ vi.mock("../evaluate/create-suite-navigation", () => ({
     toSuiteOverview: (...args: unknown[]) => mocks.toSuiteOverview(...args),
     toRunDetail: vi.fn(),
     toTestDetail: vi.fn(),
-    toTestEdit: vi.fn(),
+    toTestEdit: mocks.toTestEdit,
     toSuiteEdit: vi.fn(),
   }),
 }));
@@ -409,6 +409,13 @@ describe("EvaluateTab", () => {
     expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
   });
 
+  it("opens a test definition without selecting the run comparison view", () => {
+    render(<EvaluateTab projectId="ws-1" />);
+    const props = mocks.suiteIterationsView.mock.calls.at(-1)?.[0];
+    props.onEditTestCase("case-a");
+    expect(mocks.toTestEdit).toHaveBeenCalledWith("suite-a", "case-a");
+  });
+
   it("renders from suite-driven route state without depending on an active server", () => {
     render(<EvaluateTab projectId="ws-1" />);
 
@@ -435,7 +442,7 @@ describe("EvaluateTab", () => {
     });
   });
 
-  it.each([false, true])("tracks only launched case runs unless the case skips judging (%s)", async (skipJudge) => {
+  it.each([false, true])("leaves grading of launched case runs to the backend (skipJudge: %s)", async (skipJudge) => {
     mocks.handleRerun.mockResolvedValueOnce({
       status: "started",
       runIds: ["new-a", "new-b"],
@@ -449,15 +456,11 @@ describe("EvaluateTab", () => {
     const runQueries = () => mocks.useQuery.mock.calls
       .filter(([name]) => name === "testSuites:getTestSuiteRun")
       .map(([, args]) => (args as { runId: string }).runId);
-    if (skipJudge) {
-      expect(runQueries()).toEqual([]);
-    } else {
-      expect(runQueries()).toEqual(expect.arrayContaining(["new-a", "new-b"]));
-      mocks.useQuery.mockClear();
-      mocks.route.current = { type: "list" };
-      view.rerender(<EvaluateTab projectId="ws-1" />);
-      expect(runQueries()).toEqual(expect.arrayContaining(["new-a", "new-b"]));
-    }
+    expect(runQueries()).toEqual([]);
+    mocks.useQuery.mockClear();
+    mocks.route.current = { type: "list" };
+    view.rerender(<EvaluateTab projectId="ws-1" />);
+    expect(runQueries()).toEqual([]);
   });
 
   it("does not request judging for a refused launch or ordinary suite rerun", async () => {
@@ -493,25 +496,19 @@ describe("EvaluateTab", () => {
     expect(screen.getByTestId("project-runs-table")).toBeInTheDocument();
     expect(screen.queryByTestId("evals-suites-landing")).toBeNull();
     const tabs = screen.getByRole("navigation", { name: "Evaluate view" });
-    expect(tabs.querySelector("button")).toHaveTextContent("Runs");
-    expect(screen.getByRole("button", { name: /^runs$/i })).toHaveAttribute("aria-current", "page");
+    expect(tabs.querySelector("button")).toHaveTextContent("Overview");
+    expect(screen.getByRole("button", { name: /^overview$/i })).toHaveAttribute("aria-current", "page");
   });
 
-  /**
-   * The canonical run decision summary rides `evaluate-enabled` and is
-   * threaded down as a prop, so a flag-off render reaches the shared
-   * `/evals` components with the read switched off — which is what keeps
-   * those components' behaviour on the shipped tab unchanged.
-   */
-  describe("canonical decision summary flag", () => {
-    it("is off for both surfaces while the flag is off", async () => {
+  describe("public decision summaries", () => {
+    it("enables run summaries even when the legacy flag is off", async () => {
       mocks.route.current = { type: "list" };
       const user = userEvent.setup();
       render(<EvaluateTab projectId="ws-1" />);
-      await user.click(screen.getByRole("button", { name: /^runs$/i }));
+      await user.click(screen.getByRole("button", { name: /^overview$/i }));
 
       expect(mocks.projectRunsTable.mock.calls.at(-1)?.[0]).toMatchObject({
-        decisionSummaryEnabled: false,
+        decisionSummaryEnabled: true,
       });
     });
 
@@ -520,7 +517,7 @@ describe("EvaluateTab", () => {
       mocks.route.current = { type: "list" };
       const user = userEvent.setup();
       render(<EvaluateTab projectId="ws-1" />);
-      await user.click(screen.getByRole("button", { name: /^runs$/i }));
+      await user.click(screen.getByRole("button", { name: /^overview$/i }));
 
       expect(mocks.projectRunsTable.mock.calls.at(-1)?.[0]).toMatchObject({
         projectId: "ws-1",
@@ -539,11 +536,11 @@ describe("EvaluateTab", () => {
       });
     });
 
-    it("leaves the suite surface's read off while the flag is off", () => {
+    it("enables suite summaries even when the legacy flag is off", () => {
       render(<EvaluateTab projectId="ws-1" />);
 
       expect(mocks.suiteIterationsView.mock.calls.at(-1)?.[0]).toMatchObject({
-        evaluateDecisionSummary: false,
+        evaluateDecisionSummary: true,
       });
     });
   });
@@ -556,12 +553,12 @@ describe("EvaluateTab", () => {
     await user.click(screen.getByRole("button", { name: /^suites$/i }));
     expect(screen.getByTestId("evals-suites-landing")).toBeInTheDocument();
     expect(screen.queryByTestId("evals-runs-landing")).toBeNull();
-    await user.click(screen.getByRole("button", { name: /^runs$/i }));
+    await user.click(screen.getByRole("button", { name: /^overview$/i }));
 
     expect(screen.getByTestId("evals-runs-landing")).toBeInTheDocument();
     expect(screen.getByTestId("project-runs-table")).toBeInTheDocument();
     expect(screen.queryByTestId("evals-suites-landing")).toBeNull();
-    expect(screen.getByRole("button", { name: /^runs$/i })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: /^overview$/i })).toHaveAttribute(
       "aria-current",
       "page",
     );
@@ -659,7 +656,7 @@ describe("EvaluateTab", () => {
     ).toBeInTheDocument();
     expect(screen.queryByTestId("evals-runs-landing")).toBeNull();
     expect(screen.queryByTestId("project-runs-table")).toBeNull();
-    expect(screen.getByRole("button", { name: /^runs$/i })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: /^overview$/i })).toHaveAttribute(
       "aria-current",
       "page",
     );

@@ -469,8 +469,7 @@ describe("TopicMapPanel", () => {
   // There are two rebuild buttons and they need a test each: this one renders
   // with `snapshot: null`, and the map-header button lives inside a branch that
   // dereferences `snapshot.stats`, so it cannot appear here.
-  it("rebuilds from the empty state with no arguments", async () => {
-    const user = userEvent.setup();
+  it("rebuilds from the empty state with no arguments", () => {
     const onRebuild = vi.fn();
     mockUseScenarioTopicMap.mockReturnValue({
       ...createDefaultScenarioTopicMapHookValue(),
@@ -489,15 +488,15 @@ describe("TopicMapPanel", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: /Rebuild clusters/ }));
-    expect(onRebuild).toHaveBeenCalledTimes(1);
-    expect(onRebuild.mock.calls[0]).toEqual([]);
+    expect(
+      screen.queryByRole("button", { name: /Rebuild clusters/ }),
+    ).not.toBeInTheDocument();
+    expect(onRebuild).not.toHaveBeenCalled();
   });
 
   // The second call site: the rebuild control in the map header, which only
   // renders once a snapshot exists.
-  it("rebuilds from the map header with no arguments", async () => {
-    const user = userEvent.setup();
+  it("rebuilds from the map header with no arguments", () => {
     const onRebuild = vi.fn();
     mockUseScenarioTopicMap.mockReturnValue(
       createDefaultScenarioTopicMapHookValue(),
@@ -513,78 +512,10 @@ describe("TopicMapPanel", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: /Rebuild clusters/ }));
-    expect(onRebuild).toHaveBeenCalledTimes(1);
-    expect(onRebuild.mock.calls[0]).toEqual([]);
-  });
-
-  describe("cooperative wheel zoom", () => {
-    const panelProps = {
-      scenarioId: "scenario-1",
-      filter: EMPTY_FILTER,
-      onToggleChip: vi.fn(),
-      onClearChip: vi.fn(),
-      onRebuild: vi.fn(),
-      cooperativeWheelZoom: true,
-    };
-
-    /** Dispatch a wheel on the canvas and report whether it reached it. */
-    function wheelReachesCanvas(init: WheelEventInit = {}) {
-      const canvas = screen.getByTestId("force-graph");
-      let reached = false;
-      const onWheel = () => {
-        reached = true;
-      };
-      canvas.addEventListener("wheel", onWheel);
-      try {
-        canvas.dispatchEvent(
-          new WheelEvent("wheel", { bubbles: true, cancelable: true, ...init })
-        );
-      } finally {
-        canvas.removeEventListener("wheel", onWheel);
-      }
-      return reached;
-    }
-
-    function renderThenLoad(props = panelProps) {
-      mockUseScenarioTopicMap.mockReturnValue({
-        ...createDefaultScenarioTopicMapHookValue(),
-        snapshot: null,
-        isLoading: true,
-      });
-      const view = render(<TopicMapPanel {...props} />);
-      expect(screen.queryByTestId("force-graph")).toBeNull();
-
-      mockUseScenarioTopicMap.mockReturnValue(
-        createDefaultScenarioTopicMapHookValue()
-      );
-      view.rerender(<TopicMapPanel {...props} />);
-      return view;
-    }
-
-    it("blocks a bare wheel once the graph mounts after loading", () => {
-      renderThenLoad();
-      expect(wheelReachesCanvas()).toBe(false);
-    });
-
-    it("lets a Ctrl/Cmd wheel (and trackpad pinch) through to zoom", () => {
-      renderThenLoad();
-      expect(wheelReachesCanvas({ ctrlKey: true })).toBe(true);
-      expect(wheelReachesCanvas({ metaKey: true })).toBe(true);
-    });
-
-    it("removes the listener when the pane stops owning a scrolling page", () => {
-      const view = renderThenLoad();
-      view.rerender(
-        <TopicMapPanel {...panelProps} cooperativeWheelZoom={false} />
-      );
-      expect(wheelReachesCanvas()).toBe(true);
-    });
-
-    it("leaves the wheel alone in the default (viewport-locked) layout", () => {
-      renderThenLoad({ ...panelProps, cooperativeWheelZoom: false });
-      expect(wheelReachesCanvas()).toBe(true);
-    });
+    expect(
+      screen.queryByRole("button", { name: /Rebuild clusters/ }),
+    ).not.toBeInTheDocument();
+    expect(onRebuild).not.toHaveBeenCalled();
   });
 
   it("renders cluster list with summaries in the sidebar", () => {
@@ -608,7 +539,7 @@ describe("TopicMapPanel", () => {
     expect(screen.getByText("Invoice and refund help.")).toBeInTheDocument();
   });
 
-  it("renders Fit view and rebuild controls overlayed on the canvas", () => {
+  it("renders Fit view overlayed on the canvas without a rebuild control", () => {
     render(
       <TopicMapPanel
         scope={{ kind: "scenario", scenarioId: "scenario-1" }}
@@ -619,11 +550,10 @@ describe("TopicMapPanel", () => {
       />
     );
 
-    const fitView = screen.getByRole("button", { name: /fit view/i });
-    const rebuild = screen.getByRole("button", { name: /rebuild clusters/i });
-    expect(fitView.compareDocumentPosition(rebuild)).toBe(
-      Node.DOCUMENT_POSITION_FOLLOWING
-    );
+    expect(screen.getByRole("button", { name: /fit view/i })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /rebuild clusters/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("shows rebuild status in the header while a run is active", () => {

@@ -401,10 +401,224 @@ describe("OrganizationsTab billing", () => {
     });
   });
 
+  it.each(["plans", "billing"] as const)(
+    "does not promote local installation on %s in hosted mode",
+    (section) => {
+      mockUseOrganizationBilling.mockReturnValue(
+        createBillingHookState({
+          billingStatus: billingStatusFixture({ plan: "free" }),
+        }),
+      );
+      vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+      try {
+        render(<OrganizationsTab organizationId="org-1" section={section} />);
+        expect(
+          screen.queryByRole("region", { name: "Use Inspector locally" }),
+        ).not.toBeInTheDocument();
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    },
+  );
+
+  it("does not identify an unversioned paid subscription as the offered bundle", () => {
+    const catalog = createPlanCatalog();
+    catalog.plans.team.catalogPlanId = "team";
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "team",
+          effectivePlan: "team",
+          hasCustomer: true,
+          billingInterval: "monthly",
+        }),
+        planCatalog: catalog,
+      }),
+    );
+    render(<OrganizationsTab organizationId="org-1" section="plans" />);
+    expect(
+      within(screen.getByTestId("current-plan-panel")).getByText(
+        /existing subscription terms apply/,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(getPlanColumn("Team")).getByRole("button", {
+        name: "Change plan",
+      }),
+    ).toBeEnabled();
+  });
+
+  it.each(["upgrade", "downgrade"] as const)(
+    "disables %s for a mismatched checkout plan",
+    (action) => {
+      const catalog = createPlanCatalog();
+      const pro = {
+        ...catalog.plans.team,
+        plan: "pro",
+        displayName: "Pro",
+        checkout: { plan: "team", supportedIntervals: ["monthly", "annual"] },
+      };
+      mockUseOrganizationBilling.mockReturnValue(
+        createBillingHookState({
+          billingStatus: billingStatusFixture({
+            plan: action === "upgrade" ? "free" : "team",
+            effectivePlan: action === "upgrade" ? "free" : "team",
+            hasCustomer: true,
+          }),
+          planCatalog: { ...catalog, plans: { ...catalog.plans, pro } },
+        }),
+      );
+      render(<OrganizationsTab organizationId="org-1" section="plans" />);
+      expect(
+        within(getPlanColumn("Pro")).getByRole("button", {
+          name: "Unavailable",
+        }),
+      ).toBeDisabled();
+    },
+  );
+
+  it("shows loading feedback on a pending Pro upgrade", () => {
+    const catalog = createPlanCatalog();
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture(),
+        isStartingPlanChange: true,
+        pendingPlanChangeTarget: "pro",
+        planCatalog: {
+          ...catalog,
+          plans: {
+            ...catalog.plans,
+            pro: {
+              ...catalog.plans.team,
+              plan: "pro",
+              displayName: "Pro",
+              checkout: {
+                plan: "pro",
+                supportedIntervals: ["monthly", "annual"],
+              },
+            },
+          },
+        },
+      }),
+    );
+    render(<OrganizationsTab organizationId="org-1" section="plans" />);
+    expect(
+      within(getPlanColumn("Pro")).getByRole("button", { name: "Loading..." }),
+    ).toBeDisabled();
+  });
+
+  it("renders Pro only from a v2 catalog and checks out the selected annual plan", async () => {
+    const legacy = createPlanCatalog();
+    const pro = {
+      ...legacy.plans.team,
+      plan: "pro",
+      displayName: "Pro",
+      billingModel: "flat",
+      catalogPlanId: "pro",
+      prices: { monthly: 2900, annual: 28800 },
+      includedCredits: { model: "monthly_ledger", flat: 3000 },
+      checkout: { plan: "pro", supportedIntervals: ["monthly", "annual"] },
+    };
+    const startPlanChange = vi
+      .fn()
+      .mockResolvedValue({ kind: "updated", subscription: { plan: "pro" } });
+    const catalog = {
+      ...legacy,
+      plans: {
+        ...legacy.plans,
+        free: { ...legacy.plans.free, catalogPlanId: "free" },
+        pro,
+        team: {
+          ...legacy.plans.team,
+          catalogPlanId: "team",
+          billingModel: "flat",
+          prices: { monthly: 24900, annual: 238800 },
+        },
+      },
+    };
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture(),
+        planCatalog: catalog,
+        startPlanChange,
+      }),
+    );
+    render(<OrganizationsTab organizationId="org-1" section="plans" />);
+    const column = within(getPlanColumn("Pro"));
+    expect(screen.queryByText("-20%")).not.toBeInTheDocument();
+    expect(column.getByText("$24")).toBeInTheDocument();
+    expect(column.queryByText("/seat/mo")).not.toBeInTheDocument();
+    expect(
+      column.queryByText(
+        "For individual developers deploying MCP servers in production.",
+      ),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("CI/CD Integration")).not.toBeInTheDocument();
+    const disclosure = screen.getByRole("button", { name: "SSO / SAML" });
+    expect(disclosure).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(disclosure);
+    expect(disclosure).toHaveAttribute("aria-expanded", "true");
+    expect(
+      screen.getByText("Single sign-on with SAML is available on Enterprise."),
+    ).toBeVisible();
+    fireEvent.click(disclosure);
+    expect(disclosure).toHaveAttribute("aria-expanded", "false");
+    expect(
+      screen.getByText("Single sign-on with SAML is available on Enterprise."),
+    ).not.toBeVisible();
+    const ssoRow = screen.getByRole("row", { name: /SSO \/ SAML/ });
+    expect(within(ssoRow).getAllByRole("cell")[3]).toHaveTextContent(
+      "Not included",
+    );
+    expect(
+      within(getPlanColumn("Team")).queryByText("Legacy"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Auth forensics, SIEM reports"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("3,000").closest("td")).toHaveTextContent(
+      "3,000/ mo",
+    );
+    fireEvent.click(column.getByRole("button", { name: "Upgrade" }));
+    await waitFor(() =>
+      expect(startPlanChange).toHaveBeenCalledWith(
+        expect.any(String),
+        "pro",
+        "annual",
+        { confirmPaidPlanChange: true },
+      ),
+    );
+  });
+
+  it("does not auto-checkout a Pro deep link for a legacy catalog", async () => {
+    const startPlanChange = vi.fn();
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture(),
+        startPlanChange,
+      }),
+    );
+    const consumed = vi.fn();
+    renderAutoCheckoutTab({
+      checkoutIntent: {
+        organizationId: "org-1",
+        plan: "pro",
+        interval: "annual",
+      },
+      onCheckoutIntentConsumed: consumed,
+    });
+    await waitFor(() => expect(consumed).toHaveBeenCalled());
+    expect(startPlanChange).not.toHaveBeenCalled();
+    expect(screen.queryByText("Pro")).not.toBeInTheDocument();
+  });
+
   it("shows the current plan summary in the billing view", () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
-        billingStatus: billingStatusFixture({ plan: "free" }),
+        billingStatus: billingStatusFixture({
+          plan: "free",
+          stripeCurrentPeriodEnd: 1792022400000,
+        }),
       }),
     );
 
@@ -422,10 +636,70 @@ describe("OrganizationsTab billing", () => {
     expect(panel.getByText("Current")).toBeInTheDocument();
     expect(panel.queryByText("Billing cycle")).not.toBeInTheDocument();
     expect(panel.queryByText("Subscription status")).not.toBeInTheDocument();
-    expect(screen.getByTestId("current-plan-renewal")).toHaveTextContent(
-      "No active subscription",
-    );
+    expect(panel.queryByTestId("current-plan-renewal")).not.toBeInTheDocument();
+    expect(
+      panel.queryByText("No credit card required"),
+    ).not.toBeInTheDocument();
   });
+
+  it.each(["v1", "v2"])(
+    "labels only legacy Team while V2 offers are enabled (subscription %s)",
+    (pricingVersion) => {
+      const legacy = createPlanCatalog();
+      const startPlanChange = vi.fn();
+      mockUseOrganizationBilling.mockReturnValue(
+        createBillingHookState({
+          billingStatus: billingStatusFixture({
+            plan: "team",
+            effectivePlan: "team",
+            source: "subscription",
+            pricingVersion,
+            catalogPlanId: `team_${pricingVersion}`,
+            billingInterval: "monthly",
+            hasCustomer: true,
+          }),
+          planCatalog: {
+            ...legacy,
+            plans: {
+              ...legacy.plans,
+              pro: {
+                ...legacy.plans.team,
+                plan: "pro",
+                displayName: "Pro",
+                billingModel: "flat",
+              },
+              team: {
+                ...legacy.plans.team,
+                catalogPlanId: "team_v2",
+                billingModel: "flat",
+                prices: { monthly: 24900, annual: 238800 },
+              },
+            },
+          },
+          startPlanChange,
+        }),
+      );
+      render(<OrganizationsTab organizationId="org-1" section="billing" />);
+      const panel = within(screen.getByTestId("current-plan-panel"));
+      if (pricingVersion === "v1") {
+        expect(
+          panel.getByTestId("current-plan-legacy-badge"),
+        ).toHaveTextContent("Legacy");
+        expect(
+          panel.getByText(
+            "Your existing subscription terms apply. View billing details for your price.",
+          ),
+        ).toBeInTheDocument();
+        expect(panel.queryByText(/\$249/)).not.toBeInTheDocument();
+      } else {
+        expect(
+          panel.queryByTestId("current-plan-legacy-badge"),
+        ).not.toBeInTheDocument();
+        expect(panel.getByText(/\$249 flat monthly rate/)).toBeInTheDocument();
+      }
+      expect(startPlanChange).not.toHaveBeenCalled();
+    },
+  );
 
   it("shows pending seat payment notice in the billing view", async () => {
     const finishSeatPayment = vi
@@ -957,83 +1231,87 @@ describe("OrganizationsTab billing", () => {
     ).toBeInTheDocument();
   });
 
-  it("confirms and cancels a scheduled same-tier cadence change from the current plan card", async () => {
-    const cancelScheduledBillingChange = vi.fn();
-    const hookState = createBillingHookState({
-      billingStatus: billingStatusFixture({
-        plan: "team",
-        effectivePlan: "team",
-        billingInterval: "annual",
-        subscriptionStatus: "active",
-        hasCustomer: true,
-        stripeCurrentPeriodEnd: Date.parse("2027-03-31T12:00:00.000Z"),
-        stripePriceId: "price_team_annual",
-        stripeScheduledPlan: "team",
-        stripeScheduledBillingInterval: "monthly",
-        stripeScheduledPriceId: "price_team_monthly",
-        stripeScheduledEffectiveAt: Date.parse("2027-04-01T12:00:00.000Z"),
-        canCancelScheduledBillingChange: true,
-      }),
-      cancelScheduledBillingChange:
-        cancelScheduledBillingChange.mockImplementation(async () => {
-          hookState.billingStatus = billingStatusFixture({
-            plan: "team",
-            effectivePlan: "team",
-            billingInterval: "annual",
-            subscriptionStatus: "active",
-            hasCustomer: true,
-            stripeCurrentPeriodEnd: Date.parse("2027-03-31T12:00:00.000Z"),
-            stripePriceId: "price_team_annual",
-          });
-          return {
-            plan: "team",
-            billingInterval: "annual",
-          };
+  it.each(["team", "pro"] as const)(
+    "cancels a scheduled %s cadence change",
+    async (plan) => {
+      const name = plan === "team" ? "Team" : "Pro";
+      const cancelScheduledBillingChange = vi.fn();
+      const hookState = createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan,
+          effectivePlan: plan,
+          billingInterval: "annual",
+          subscriptionStatus: "active",
+          hasCustomer: true,
+          stripeCurrentPeriodEnd: Date.parse("2027-03-31T12:00:00.000Z"),
+          stripePriceId: "price_team_annual",
+          stripeScheduledPlan: plan,
+          stripeScheduledBillingInterval: "monthly",
+          stripeScheduledPriceId: "price_team_monthly",
+          stripeScheduledEffectiveAt: Date.parse("2027-04-01T12:00:00.000Z"),
+          canCancelScheduledBillingChange: true,
         }),
-    });
-    mockUseOrganizationBilling.mockImplementation(() => hookState);
+        cancelScheduledBillingChange:
+          cancelScheduledBillingChange.mockImplementation(async () => {
+            hookState.billingStatus = billingStatusFixture({
+              plan,
+              effectivePlan: plan,
+              billingInterval: "annual",
+              subscriptionStatus: "active",
+              hasCustomer: true,
+              stripeCurrentPeriodEnd: Date.parse("2027-03-31T12:00:00.000Z"),
+              stripePriceId: "price_team_annual",
+            });
+            return {
+              plan,
+              billingInterval: "annual",
+            };
+          }),
+      });
+      mockUseOrganizationBilling.mockImplementation(() => hookState);
 
-    const view = render(
-      <OrganizationsTab organizationId="org-1" section="billing" />,
-    );
+      const view = render(
+        <OrganizationsTab organizationId="org-1" section="billing" />,
+      );
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "Keep Team annual plan" }),
-    );
+      fireEvent.click(
+        screen.getByRole("button", { name: `Keep ${name} annual plan` }),
+      );
 
-    expect(
-      screen.getByRole("heading", { name: "Keep Team annual plan?" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "This cancels the pending switch to monthly billing on Apr 1, 2027. Team annual remains active.",
-      ),
-    ).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", { name: `Keep ${name} annual plan?` }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          `This cancels the pending switch to monthly billing on Apr 1, 2027. ${name} annual remains active.`,
+        ),
+      ).toBeInTheDocument();
 
-    fireEvent.click(
-      within(screen.getByRole("alertdialog")).getByRole("button", {
-        name: "Keep Team annual plan",
-      }),
-    );
+      fireEvent.click(
+        within(screen.getByRole("alertdialog")).getByRole("button", {
+          name: `Keep ${name} annual plan`,
+        }),
+      );
 
-    await waitFor(() => {
-      expect(cancelScheduledBillingChange).toHaveBeenCalledTimes(1);
-    });
-    expect(toast.success).toHaveBeenCalledWith(
-      "Scheduled billing change canceled. Team annual remains active.",
-    );
+      await waitFor(() => {
+        expect(cancelScheduledBillingChange).toHaveBeenCalledTimes(1);
+      });
+      expect(toast.success).toHaveBeenCalledWith(
+        `Scheduled billing change canceled. ${name} annual remains active.`,
+      );
 
-    view.rerender(
-      <OrganizationsTab organizationId="org-1" section="billing" />,
-    );
+      view.rerender(
+        <OrganizationsTab organizationId="org-1" section="billing" />,
+      );
 
-    expect(
-      screen.queryByTestId("current-plan-scheduled-change"),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Change to monthly" }),
-    ).toBeInTheDocument();
-  });
+      expect(
+        screen.queryByTestId("current-plan-scheduled-change"),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Change to monthly" }),
+      ).toBeInTheDocument();
+    },
+  );
 
   it("shows trial messaging without paid Team pricing copy for active trials", () => {
     mockUseOrganizationBilling.mockReturnValue(

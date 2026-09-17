@@ -1,12 +1,12 @@
 # MCPJam evals action
 
-Run an existing hosted eval suite, wait for its result, and save reports as a
-GitHub Actions artifact. Optional gates can apply thresholds, compare a baseline,
-and honor existing run waivers. The action does not create waivers.
+Run an existing hosted eval suite or an SDK eval command, publish a detailed job
+summary, and save reports as a GitHub Actions artifact. On pull requests it can
+also post the client/model and failed-case tables as one updated comment.
 
-This action supports GitHub.com and Ubuntu runners. It tests the suite's saved
-server; it does **not** build or deploy the code in a pull request. Use MCPJam's
-GitHub App integration for builds from PR source.
+This action supports GitHub.com and Ubuntu runners. Hosted mode tests a suite's
+saved server. Command mode runs the repository's own SDK eval command against
+whatever server its workflow started.
 
 ## Setup
 
@@ -28,9 +28,52 @@ Node setup step is required when using the published action.
     suite: "My eval suite"
 ```
 
-**Release status:** `evals-v1` becomes usable only after the release procedure
-below succeeds and the tag is published. Until then, test with a checkout and
-`uses: ./actions/evals`, as the live smoke workflow does.
+### SDK eval command and PR comment
+
+Use `command` after checking out the repository, installing its dependencies,
+and starting any server the evals need. The command must use an MCPJam SDK version
+that supports action receipts. The action links each uploaded run directly; it
+never searches for the latest run.
+
+```yaml
+permissions:
+  contents: read
+  pull-requests: write
+
+steps:
+  - uses: actions/checkout@v4
+  - run: npm ci
+  - run: npm run build
+  - name: Start the MCP server
+    run: npm run serve &
+  - uses: MCPJam/inspector/actions/evals@evals-v1
+    with:
+      api-key: ${{ secrets.MCPJAM_API_KEY }}
+      command: npm run eval:smoke
+      comment: true
+```
+
+The checks summary contains the complete report. The PR comment contains only
+the client/model result table, the failed-case matrix, and MCPJam run links.
+Failure reasons are copied from stored results in the full summary; the action
+does not infer them. A missing comment permission warns without changing the eval
+verdict.
+
+**Behind an identity proxy:** a deployment fronted by Cloudflare Access needs a
+service token to answer the API at all. Set `CF_ACCESS_CLIENT_ID` and
+`CF_ACCESS_CLIENT_SECRET` in the step's `env:`; the action sends them with its
+MCPJam reads and with nothing else. Both are required — one alone is ignored.
+
+**Release status:** `evals-v1` is published by the `Release` workflow (see
+[Tests and release](#tests-and-release)). Check whether it exists yet:
+
+```sh
+git ls-remote --tags https://github.com/MCPJam/inspector 'evals-v*'
+```
+
+While that prints nothing the action has never been released, so the examples
+above cannot resolve. Test with a checkout and `uses: ./actions/evals`, as the
+live smoke workflow does.
 
 ## Optional gates
 
@@ -62,8 +105,11 @@ its own thresholds or deciding whether a waiver is active.
 | Input                   | Default     | Meaning                                                                      |
 | ----------------------- | ----------- | ---------------------------------------------------------------------------- |
 | `api-key`               | Required    | API key from GitHub Actions secrets.                                         |
-| `project`               | Required    | Existing project name or ID.                                                 |
-| `suite`                 | Required    | Existing hosted suite name or ID.                                            |
+| `project`               | Hosted mode | Existing project name or ID.                                                 |
+| `suite`                 | Hosted mode | Existing hosted suite name or ID.                                            |
+| `command`               | None        | SDK eval command; replaces `project` and `suite`.                             |
+| `comment`               | `false`     | Create or update the PR result comment.                                      |
+| `github-token`          | Workflow token | Optional token override for PR comments.                                  |
 | `gate`                  | `false`     | Let `eval gate` decide the result.                                           |
 | `min-pass-rate-percent` | CLI default | Gate threshold, 0–100; requires `gate: true`.                                |
 | `baseline-run`          | None        | Baseline run ID; requires gates.                                             |
@@ -71,6 +117,14 @@ its own thresholds or deciding whether a waiver is active.
 | `wait-timeout-ms`       | CLI default | Positive integer; applied to run and gate waits.                             |
 | `cli-version`           | `5.7.1`     | Exact published version, not `latest` or a URL.                              |
 | `idempotency-key`       | Derived     | Optional stable retry key, at most 256 characters.                           |
+
+### Targeting a non-production deployment
+
+Set `MCPJAM_BASE_URL` (or the CLI's `MCPJAM_API_URL`) on the step to point both
+modes at one deployment; the action reduces either to its origin, hands it to
+the eval command as `MCPJAM_BASE_URL`, and refuses a run receipt that names any
+other origin rather than sending it the API key. It defaults to
+`https://app.mcpjam.com`.
 
 The CLI's default wait is 10 minutes, with its existing grading extension when
 no explicit limit is supplied. The example workflow sets a 60-minute job limit.
@@ -84,8 +138,12 @@ need to preserve identity across changes to the workflow's step layout.
 
 ## Reports and outputs
 
-The action saves `eval-report.json`, one `gate-N.xml` per attempted gate when
-enabled, and `action-result.json`. It uploads them before the final failure step,
+The action saves JSON and Markdown eval reports, one `gate-N.xml` per attempted
+hosted gate when enabled, and `action-result.json`. The checks summary always
+ends with the action's own verdict, its message and the exit codes, after the
+rendered report; the rendered report is trimmed if it would otherwise push the
+summary past the size GitHub accepts. It uploads them before the
+final failure step,
 using a unique artifact name per invocation. Reports use the CLI's redaction, with
 an additional literal API-key scrub. Raw CLI stdout and stderr are not uploaded.
 
@@ -112,22 +170,43 @@ Run the tests without installing workspace dependencies:
 node --test actions/evals/*.test.mjs
 ```
 
-The `Evals action tests` workflow runs these checks on action changes. Before
-releasing, run `Evals action live smoke` manually against the candidate commit,
-supplying an existing project and suite and setting `MCPJAM_API_KEY` in the repo's
-Actions secrets. This spends eval credits. Test both gate settings before the
-first release. The smoke workflow verifies the pinned CLI is published, runs
-the helper tests, executes the local action, and uploads real reports.
+The `Evals action tests` workflow runs these checks on action changes.
 
-Publish only a commit with a successful live smoke run. The release guard checks
-the run's repository, workflow, event, conclusion and exact commit:
+### How the tags are published
+
+`Release` publishes the action. It compares this folder against whatever
+`evals-v1` points at, ignoring `README.md`, and when they differ it runs
+`Evals action live smoke` against the release commit. Only if that smoke passes
+does it create the next immutable `evals-v1.X.Y` and force-move `evals-v1` to
+the same commit. The smoke verifies the pinned CLI is published, runs the helper
+tests, executes the local action and uploads real reports — it spends eval
+credits, which is why a release that did not touch the folder skips both jobs.
+
+The action has no changeset of its own, so it rides along with the next package
+release that includes the change. Re-running a release after a successful one is
+a no-op: the folder now matches `evals-v1`.
+
+Set these once, in the repository's settings:
+
+| Kind | Name | Value |
+| --- | --- | --- |
+| Secret | `MCPJAM_API_KEY` | Key the smoke runs its evals with |
+| Variable | `EVALS_SMOKE_PROJECT` | An existing MCPJam project |
+| Variable | `EVALS_SMOKE_SUITE` | An existing hosted suite in it |
+
+`Evals action live smoke` can still be dispatched by hand — do that to exercise
+both `gate` settings before the first release.
+
+### Releasing out of band
+
+`check-release.mjs` guards a tag pushed by hand, and only recognises a manually
+dispatched smoke run:
 
 ```sh
 node actions/evals/check-release.mjs <successful-smoke-run-id> <full-commit-sha>
 ```
 
-After that check passes, maintainers can tag that exact commit `evals-v1.0.0`
-and create the moving `evals-v1` tag pointing at it. For later releases, repeat the
-smoke check for the new commit, create a new immutable version tag, then update
-`evals-v1`. These tags are separate from Inspector's application releases. Do not
-publish a tag or describe the action as released before the live check passes.
+It rejects a `Release` run, because there the smoke is a job of the release
+itself rather than its own run — a stronger guarantee than this after-the-fact
+check, since the tag cannot be pushed unless that job passed. These tags are
+separate from Inspector's application releases.

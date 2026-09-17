@@ -299,7 +299,9 @@ export function runClientIdentity(
     // Use the persisted style, not the inspector's default: the backend's
     // historical fallback is Claude while the inspector defaults to MCPJam.
     const name =
-      (namedHostId && hostNamesById?.get(namedHostId)?.trim()) ||
+      (client.versionId
+        ? client.name.trim()
+        : namedHostId && hostNamesById?.get(namedHostId)?.trim()) ||
       (client.source === "suite_default" && findHostStyle(hostStyle)
         ? getScenarioHostLabel(hostStyle!)
         : client.name.trim()) ||
@@ -349,9 +351,7 @@ export function snapshotTestModels(
 /** Context groups retain environment identity, never its mutable revision. */
 export function runContextKey(run: RunContextSource): string {
   const ref = runEnvironmentRef(run);
-  return ref
-    ? `environment:${ref.environmentId}`
-    : runClientIdentity(run).key;
+  return ref ? `environment:${ref.environmentId}` : runClientIdentity(run).key;
 }
 
 /**
@@ -366,15 +366,23 @@ export function runHostLabel(
   run: RunContextSource,
   hostNamesById?: Map<string, string | null>,
 ): string | null {
-  // Old environment-only rows have no resolved host to reveal with the flag off.
-  if (runEnvironmentRef(run) && !run.client && !run.namedHostId) return null;
+  // A run that names no client at all stays null rather than borrowing
+  // `runClientIdentity`'s "Suite default" placeholder. That string is a label
+  // for a client the run DOES have and could not name; handing it back here
+  // would invent a host for rows that never recorded one, and callers read a
+  // non-null label as "this run ran somewhere nameable" — one of them turns it
+  // into a client filter option.
+  if (!run.client && !run.namedHostId) return null;
   return runClientIdentity(run, hostNamesById).name;
 }
 
 /**
  * Display name for a run's context: the environment name for environment-backed
  * runs, the resolved host name (falling back to a truncated id) for legacy runs.
- * `null` when the run names neither — the caller decides what to show instead.
+ * A run that names neither gets the neutral "Suite default" placeholder rather
+ * than `null` — a context chip always says something. Callers that want to show
+ * their own text instead (a count, say) must read {@link runHostLabel}, which
+ * DOES return `null` there.
  *
  * This CAN return environment identity, so every call site must sit behind
  * `project-environments-enabled`; the flag-off branch uses
@@ -386,7 +394,13 @@ export function runContextLabel(
 ): string | null {
   const ref = runEnvironmentRef(run);
   if (ref) return ref.name;
-  return runHostLabel(run, hostNamesById);
+  // A context chip always says something, so a run that names no client falls
+  // back to the neutral placeholder. `runHostLabel` deliberately does not —
+  // see the note there.
+  return (
+    runHostLabel(run, hostNamesById) ??
+    runClientIdentity(run, hostNamesById).name
+  );
 }
 
 /**
@@ -1408,6 +1422,41 @@ export function formatCostOrDash(value: number | null | undefined): string {
 }
 
 /**
+ * Mean of the values that WERE measured, or `null` when none were. Callers
+ * decide which iterations count as measured before handing them over — a
+ * missing reading is not a zero.
+ */
+export function average(values: readonly number[]): number | null {
+  return values.length
+    ? values.reduce((sum, value) => sum + value, 0) / values.length
+    : null;
+}
+
+/**
+ * Compact metric numbers for the run matrix and case workspace tiles:
+ * `1240` → `1.2k`, `2000` → `2k`, `1500000` → `1.5m`, `18` → `18`,
+ * `1.75` → `1.8`.
+ *
+ * Lowercase units on purpose (the matrix toggle's design), which is why this
+ * is not `Intl.NumberFormat`'s compact notation. It still has to carry the
+ * millions step the way that formatter did: without it a long agent run's
+ * token average renders as `1500k` and overflows the fixed-width tile.
+ */
+export function compactMetric(value: number): string {
+  const unit = (divisor: number, suffix: string) =>
+    `${(value / divisor).toFixed(1).replace(/\.0$/, "")}${suffix}`;
+  return value >= 1_000_000_000
+    ? unit(1_000_000_000, "b")
+    : value >= 1_000_000
+      ? unit(1_000_000, "m")
+      : value >= 1000
+        ? unit(1000, "k")
+        : Number.isInteger(value)
+          ? value.toLocaleString()
+          : value.toFixed(1);
+}
+
+/**
  * Why this row has no cost, phrased for the person reading it.
  *
  * Returns `null` when a cost IS present and needs no explanation — except for
@@ -1501,4 +1550,30 @@ export function iterationCosts(
   return iterations
     .map((iteration) => iteration.usage?.estimatedCostUsd)
     .filter((value): value is number => typeof value === "number");
+}
+
+/**
+ * Statuses a run can still be cancelled from.
+ *
+ * Mirrors the backend gate in `cancelSuiteRunRows` (Convex `testSuites.ts`),
+ * which rejects anything else with `Cannot cancel run with status: …`.
+ * `grading` counts: the trials are done but the gating judge is still billing.
+ */
+export function isRunCancellable(run: { status?: string | null }): boolean {
+  return (
+    run.status === "pending" ||
+    run.status === "running" ||
+    run.status === "grading"
+  );
+}
+
+/**
+ * Ids of every still-cancellable run in `runs` — what a Cancel button hands to
+ * `handleCancelRun`. A launch fans out into one run per client-model pairing,
+ * so cancelling a launch means cancelling all of them.
+ */
+export function cancellableRunIds(
+  runs: readonly { _id: string; status?: string | null }[],
+): string[] {
+  return runs.filter(isRunCancellable).map((run) => run._id);
 }

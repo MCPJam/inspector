@@ -93,10 +93,43 @@ describe("InsightsFreshnessChip", () => {
     expect(screen.getByTestId("chip")).not.toHaveTextContent("Built");
   });
 
-  it("disables Rebuild while a run is in flight", async () => {
+  it("names the thing it is reporting on, per surface", async () => {
+    // The copy used to say "scenario" on both surfaces that render this chip,
+    // which is now wrong twice over: User Testing renamed it to a STUDY, and
+    // on Swarm it has always been describing one wave's run.
     renderChip(run({ status: "running", finishedAt: null }));
     await screen.getByTestId("chip").click();
-    expect(screen.getByTestId("chip-rebuild")).toBeDisabled();
+    expect(
+      screen.getByText("This study has not been analyzed yet"),
+    ).toBeInTheDocument();
+  });
+
+  it("says run, not study, on a swarm wave", async () => {
+    render(
+      <InsightsFreshnessChip
+        scope={{ kind: "swarm", projectId: "p1" }}
+        latestRun={run({ status: "running", finishedAt: null })}
+        onRebuild={vi.fn()}
+        rebuildBusy={false}
+        testId="chip"
+      />,
+    );
+    await screen.getByTestId("chip").click();
+    expect(
+      screen.getByText("This run has not been analyzed yet"),
+    ).toBeInTheDocument();
+  });
+
+  it("hides Rebuild while a run is in flight", async () => {
+    renderChip(run({ status: "running", finishedAt: null }));
+    await screen.getByTestId("chip").click();
+    expect(screen.queryByTestId("chip-rebuild")).not.toBeInTheDocument();
+  });
+
+  it("hides voluntary Rebuild on a completed run", async () => {
+    renderChip(run({}));
+    await screen.getByTestId("chip").click();
+    expect(screen.queryByTestId("chip-rebuild")).not.toBeInTheDocument();
   });
 
   it("keeps retry available on a stuck run", async () => {

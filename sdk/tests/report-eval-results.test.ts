@@ -468,6 +468,7 @@ describe("reportEvalResults", () => {
 
     expect(mcpClientManager.getServerReplayConfigs).toHaveBeenCalledTimes(1);
     const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(requestBody.serverNames).toEqual(["manager"]);
     expect(requestBody.serverReplayConfigs).toEqual([
       {
         serverId: "manager",
@@ -609,6 +610,7 @@ describe("reportEvalResults", () => {
     });
 
     const startBody = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(startBody.serverNames).toEqual(["remote"]);
     expect(startBody.serverReplayConfigs).toEqual([
       {
         serverId: "remote",
@@ -847,10 +849,9 @@ describe("printRunUrl", () => {
       results: [{ caseTitle: "case", passed: true }],
     });
 
-    // The UNFLAGGED /evals route: /ci-evals sits behind a flag whose redirect
-    // drops the run path.
+    // The public Evaluate link preserves the exact uploaded run.
     expect(logLines(logSpy)).toEqual([
-      "[mcpjam/sdk] View run: https://app.mcpjam.com/evals/suite/suite_print_1/runs/run_print_1?project=proj_resolved",
+      "[mcpjam/sdk] View run: https://app.mcpjam.com/evaluate/suite/suite_print_1/runs/run_print_1?project=proj_resolved",
     ]);
   });
 
@@ -876,7 +877,7 @@ describe("printRunUrl", () => {
     // `?project=default` that resolves to nothing.
     const [line] = logLines(logSpy);
     expect(line).toBe(
-      "[mcpjam/sdk] View run: https://app.mcpjam.com/evals/suite/suite_print_2/runs/run_print_2"
+      "[mcpjam/sdk] View run: https://app.mcpjam.com/evaluate/suite/suite_print_2/runs/run_print_2"
     );
   });
 
@@ -949,7 +950,7 @@ describe("printRunUrl", () => {
     });
 
     expect(logLines(logSpy)).toEqual([
-      "[mcpjam/sdk] View run: https://app.mcpjam.com/evals/suite/suite_chunk/runs/run_chunk?project=proj_chunk",
+      "[mcpjam/sdk] View run: https://app.mcpjam.com/evaluate/suite/suite_chunk/runs/run_chunk?project=proj_chunk",
     ]);
   });
 
@@ -992,7 +993,7 @@ describe("printRunUrl", () => {
     });
 
     expect(logLines(logSpy)).toEqual([
-      "[mcpjam/sdk] View run: https://app.mcpjam.com/evals/suite/suite_reuse/runs/run_reuse?project=proj_reuse",
+      "[mcpjam/sdk] View run: https://app.mcpjam.com/evaluate/suite/suite_reuse/runs/run_reuse?project=proj_reuse",
     ]);
   });
 

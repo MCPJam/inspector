@@ -28,7 +28,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@mcpjam/design-system/popover";
-import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
+import { buildEvaluatePath, navigateApp } from "@/lib/app-navigation";
 import { track } from "@/lib/analytics";
 import {
   formatRunId,
@@ -68,13 +68,14 @@ interface SuiteHeaderProps {
   viewMode: "overview" | "run-detail" | "test-detail" | "test-edit";
   selectedRunDetails: EvalSuiteRun | null;
   isEditMode: boolean;
+  settingsActions?: ReactNode;
   onRerun: (
     suite: EvalSuite,
     opts?: {
       matchOptionsOverride?: EvalMatchOptions;
       iterationOverride?: number;
       refreshSnapshot?: boolean;
-    }
+    },
   ) => void;
   onReplayRun?: (suite: EvalSuite, run: EvalSuiteRun) => void;
   onCancelRun: (runId: string) => void;
@@ -154,6 +155,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     viewMode,
     selectedRunDetails,
     isEditMode,
+    settingsActions,
     onRerun,
     onReplayRun,
     onCancelRun,
@@ -250,7 +252,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
         toast.success("Suite name updated");
       } catch (error) {
         toast.error(
-          getBillingErrorMessage(error, "Failed to update suite name")
+          getBillingErrorMessage(error, "Failed to update suite name"),
         );
         console.error("Failed to update suite name:", error);
         setEditedName(suite.name);
@@ -269,7 +271,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
         setEditedName(suite.name);
       }
     },
-    [handleNameBlur, suite.name]
+    [handleNameBlur, suite.name],
   );
 
   // Calculate suite server status from the EFFECTIVE server list —
@@ -285,8 +287,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
   });
   const { hasServersConfigured, missingServers } = replayEligibility;
   const canTriggerLiveRun = hasServersConfigured;
-  const isRerunning =
-    rerunningSuiteId === suite._id || latestRunIsInProgress;
+  const isRerunning = rerunningSuiteId === suite._id || latestRunIsInProgress;
   const replayableLatestRun = replayEligibility.replayableLatestRun;
   const isReplayingLatestRun =
     replayableLatestRun != null && replayingRunId === replayableLatestRun._id;
@@ -316,8 +317,9 @@ export function SuiteHeader(props: SuiteHeaderProps) {
 
     return (
       <div className="mb-1 w-full max-w-5xl px-6 pt-8 mx-auto min-w-0">
-        <div className="min-w-0" data-setting-key="name">
-          {/*
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0" data-setting-key="name">
+            {/*
             The name is the ONE setting that lives outside the sheet's
             `fieldset[disabled]`, so it needs its own lock. It became reachable
             when the sheet started rendering for a CI-owned suite — the settings
@@ -326,37 +328,39 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             put the suite in the commit flow, and end in the 409 the rest of
             the sheet exists to avoid offering.
           */}
-          {configLocked ? (
-            <h2
-              className="block h-8 min-w-0 max-w-full truncate text-left text-lg font-semibold leading-8 tracking-tight"
-              title={nameValue}
-            >
-              {nameValue}
-            </h2>
-          ) : isEditingName ? (
-            <input
-              type="text"
-              value={editedName}
-              onChange={(e) => handleDraftNameChange(e.target.value)}
-              onBlur={handleDraftNameBlur}
-              onKeyDown={handleDraftNameKeyDown}
-              autoFocus
-              aria-label="Suite name"
-              className="h-8 min-w-0 w-full max-w-full rounded-md border border-input bg-background px-2 text-lg font-semibold tracking-tight focus:outline-none focus:ring-2 focus:ring-ring"
-            />
-          ) : (
-            <button
-              type="button"
-              onClick={handleNameClick}
-              className="block h-8 min-w-0 max-w-full truncate text-left text-lg font-semibold tracking-tight hover:text-foreground/80"
-              title={nameValue}
-            >
-              {nameValue}
-            </button>
-          )}
-          {nameError ? (
-            <p className="mt-1 text-xs text-destructive">{nameError}</p>
-          ) : null}
+            {configLocked ? (
+              <h2
+                className="block h-8 min-w-0 max-w-full truncate text-left text-lg font-semibold leading-8 tracking-tight"
+                title={nameValue}
+              >
+                {nameValue}
+              </h2>
+            ) : isEditingName ? (
+              <input
+                type="text"
+                value={editedName}
+                onChange={(e) => handleDraftNameChange(e.target.value)}
+                onBlur={handleDraftNameBlur}
+                onKeyDown={handleDraftNameKeyDown}
+                autoFocus
+                aria-label="Suite name"
+                className="h-8 min-w-0 w-full max-w-full rounded-md border border-input bg-background px-2 text-lg font-semibold tracking-tight focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={handleNameClick}
+                className="block h-8 min-w-0 max-w-full truncate text-left text-lg font-semibold tracking-tight hover:text-foreground/80"
+                title={nameValue}
+              >
+                {nameValue}
+              </button>
+            )}
+            {nameError ? (
+              <p className="mt-1 text-xs text-destructive">{nameError}</p>
+            ) : null}
+          </div>
+          {settingsActions}
         </div>
       </div>
     );
@@ -400,13 +404,13 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             "mb-4 flex min-w-0",
             runDetailKpiStrip
               ? "flex-nowrap items-center gap-3"
-              : "flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4"
+              : "flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4",
           )}
         >
           <div
             className={cn(
               "flex min-w-0 flex-col gap-1",
-              runDetailKpiStrip ? "shrink-0" : "flex-1"
+              runDetailKpiStrip ? "shrink-0" : "flex-1",
             )}
           >
             <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
@@ -435,7 +439,9 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             )}
           </div>
           {runDetailKpiStrip ? (
-            <div className="min-w-0 flex-1 self-center">{runDetailKpiStrip}</div>
+            <div className="min-w-0 flex-1 self-center">
+              {runDetailKpiStrip}
+            </div>
           ) : null}
           {!hideRunActions ? (
             <div className={cn("shrink-0", !runDetailKpiStrip && "sm:pt-0.5")}>
@@ -484,7 +490,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
               runningTestCaseId != null ||
               evalRunsDisabledReason ||
               testCaseCount === 0 ||
-              runAllNeedsLocalServers
+              runAllNeedsLocalServers,
           );
           const runAllDisabledReasonTooltip = evalRunsDisabledReason
             ? evalRunsDisabledReason
@@ -586,7 +592,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                         onChange={(e) => {
                           const raw = e.target.value;
                           onIterationOverrideChange(
-                            raw === "" ? undefined : Number(raw)
+                            raw === "" ? undefined : Number(raw),
                           );
                         }}
                         aria-label="Iterations per test case for the next run"
@@ -597,7 +603,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                             <option key={n} value={n}>
                               {n}
                             </option>
-                          )
+                          ),
                         )}
                       </select>
                     </div>
@@ -607,7 +613,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                     density="compact"
                     value={runMatchOptionsOverride}
                     inheritedFrom={resolveMatchOptions(
-                      suite.defaultMatchOptions
+                      suite.defaultMatchOptions,
                     )}
                     onChange={setRunMatchOptionsOverride}
                     showBadges
@@ -678,7 +684,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                 // the COUNT: exactly one attached host is disclosed for real
                 // since G4c, several is the multi-target refusal.
                 hostIds={(suite.hostAttachments ?? []).map(
-                  (attachment) => attachment.namedHostId
+                  (attachment) => attachment.namedHostId,
                 )}
                 suppressed={testCaseCount === 0 || runAllNeedsLocalServers}
               />
@@ -698,34 +704,33 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     (showCaseAuthoringCtas && Boolean(onGenerateTestCases)) ||
     (showCaseAuthoringCtas && Boolean(onCreateTestCase));
 
-  const overviewSuiteNavButtons =
-    overviewHasSuiteNav ? (
-      <>
-        {casesSidebarHidden && onShowCasesSidebar && runsViewMode === "runs" ? (
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="h-8 gap-1.5"
-            onClick={onShowCasesSidebar}
-          >
-            <PanelLeft className="h-3.5 w-3.5 shrink-0" aria-hidden />
-            Cases
-          </Button>
-        ) : null}
-        {onSetupCi && !readOnlyConfig && !configLocked ? (
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-8 gap-1.5"
-            onClick={onSetupCi}
-          >
-            <GitBranch className="h-3.5 w-3.5 shrink-0" aria-hidden />
-            Setup CI
-          </Button>
-        ) : null}
-      </>
-    ) : null;
+  const overviewSuiteNavButtons = overviewHasSuiteNav ? (
+    <>
+      {casesSidebarHidden && onShowCasesSidebar && runsViewMode === "runs" ? (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-8 gap-1.5"
+          onClick={onShowCasesSidebar}
+        >
+          <PanelLeft className="h-3.5 w-3.5 shrink-0" aria-hidden />
+          Cases
+        </Button>
+      ) : null}
+      {onSetupCi && !readOnlyConfig && !configLocked ? (
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-8 gap-1.5"
+          onClick={onSetupCi}
+        >
+          <GitBranch className="h-3.5 w-3.5 shrink-0" aria-hidden />
+          Setup CI
+        </Button>
+      ) : null}
+    </>
+  ) : null;
 
   const overviewSettingsButton =
     !readOnlyConfig && !isEditMode ? (
@@ -739,7 +744,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             aria-label="Suite settings"
             onClick={() =>
               navigateApp(
-                buildEvalsPath({
+                buildEvaluatePath({
                   type: "suite-edit",
                   suiteId: suite._id,
                 }),
@@ -798,9 +803,9 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             {isGeneratingTestCases
               ? "Generating test cases…"
               : !canGenerateTestCases
-                ? (generateTestCasesDisabledReason ??
-                  "Configure suite servers before generating cases.")
-                : "Generate suggested cases from your server's tools. Use the arrow to set how many and what kind."}
+              ? generateTestCasesDisabledReason ??
+                "Configure suite servers before generating cases."
+              : "Generate suggested cases from your server's tools. Use the arrow to set how many and what kind."}
           </TooltipContent>
         </Tooltip>
         <GenerateCasesConfigPopover
@@ -916,8 +921,8 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                     ? "Replaying..."
                     : "Running..."
                   : replayableLatestRun
-                    ? "Replay latest run"
-                    : "Run"}
+                  ? "Replay latest run"
+                  : "Run"}
               </Button>
             </span>
           </TooltipTrigger>
@@ -927,12 +932,12 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                 ? evalRunsDisabledReason
                 : "Replay the latest CI run"
               : evalRunsDisabledReason
-                ? evalRunsDisabledReason
-                : !hasServersConfigured
-                  ? "No MCP servers are configured for this suite"
-                  : missingServers.length > 0
-                    ? "Connect and run."
-                    : "Run all cases"}
+              ? evalRunsDisabledReason
+              : !hasServersConfigured
+              ? "No MCP servers are configured for this suite"
+              : missingServers.length > 0
+              ? "Connect and run."
+              : "Run all cases"}
           </TooltipContent>
         </Tooltip>
       </>
