@@ -149,11 +149,11 @@ const percentile = (values, p) => {
   return sorted[lower] + (sorted[upper] - sorted[lower]) * (index - lower);
 };
 const variantKey = (provider, model) => `${provider ?? ""}\0${model ?? ""}`;
-// The column is "Client / Model". With no client, show the model alone rather
-// than padding the cell with the provider or the test framework — neither is a
-// client, and a reader comparing rows takes whatever sits there as one.
-const variantLabel = (client, model, provider) =>
-  [client, model || provider].filter(Boolean).join(" / ") || "Default";
+// The column is "Client / Model" and holds nothing else. The provider and the
+// test framework are neither, and a reader comparing rows takes whatever sits
+// in that cell for a client.
+const variantLabel = (client, model) =>
+  [client, model].filter(Boolean).join(" / ") || "Default";
 const RESULT_LABELS = {
   passed: "Passed",
   failed: "Failed",
@@ -335,7 +335,7 @@ function renderBundle(bundle, full, outcome) {
         ? "inconclusive"
         : "passed";
     return [
-      variantLabel(client, variant.model, variant.provider),
+      variantLabel(client, variant.model),
       `${statusIcon(verdict)} ${verdict[0].toUpperCase()}${verdict.slice(1)}`,
       `${passedCases}/${rows.length}`,
       pct(passed, eligible),
@@ -397,7 +397,7 @@ function renderBundle(bundle, full, outcome) {
           "Each cell shows the recorded pass rate over eligible iterations.",
           "",
           table(
-            ["Case", ...variants.map((row) => variantLabel(client, row.model, row.provider))],
+            ["Case", ...variants.map((row) => variantLabel(client, row.model))],
             failedRows,
           ),
         ]
@@ -421,7 +421,7 @@ function renderBundle(bundle, full, outcome) {
     const costs = items.map((item) => item.usage?.estimatedCostUsd).filter(Number.isFinite);
     const tools = items.reduce((sum, item) => sum + (item.actualToolCalls?.length ?? 0), 0);
     return [
-      variantLabel(client, variant.model, variant.provider),
+      variantLabel(client, variant.model),
       duration(percentile(times, 0.5)),
       duration(percentile(times, 0.95)),
       tokens || "—",
@@ -451,7 +451,7 @@ function renderBundle(bundle, full, outcome) {
             ["Case", "Client / Model", "Pass rate"],
             passing.map((row) => [
               row.title,
-              variantLabel(client, row.model, row.provider),
+              variantLabel(client, row.model),
               pct(row.passed, row.eligible),
             ]),
           ),
