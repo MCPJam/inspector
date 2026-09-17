@@ -4355,15 +4355,44 @@ export interface PlatformInsightsFindingProvenance {
   populationCaveat?: string;
 }
 
-/** One iteration's trace report, as the run page's iteration drawer reads it. */
+/**
+ * Why one iteration has no model-written report.
+ *
+ * Closed so a reader gets an instruction rather than a code: "Trace too large
+ * to analyze" and "the daily analysis budget is spent" are different next
+ * steps. The producer narrows an unknown value to `analysis_unavailable`, so a
+ * newer server can add a reason without breaking an older client's label table.
+ */
+export type PlatformEvalIterationReportUnavailableReason =
+  | "trace_too_large"
+  | "context_too_large"
+  | "budget"
+  | "missing_trace"
+  | "extraction_rejected"
+  | "analysis_unavailable";
+
+/**
+ * One iteration's trace report, as the run page's iteration drawer reads it.
+ *
+ * `pending` is the state a reader meets most often on a large run: the read
+ * phase is still working through the population and THIS iteration's row has
+ * not been written yet. It is distinct from the absent report (`null` from the
+ * query) that means nobody ever analyzed the run.
+ *
+ * Pinned against the producer by `tests/fixtures/eval-iteration-report/wire.json`
+ * in mcpjam-backend, mirrored here — these declarations are hand-mirrored and
+ * nothing else notices them drifting.
+ */
 export interface PlatformEvalIterationReport {
   schemaVersion: 1;
   iterationId: string;
   runRevision: string;
   builtAt: number;
   modelUsed?: string;
-  status: "ready" | "stale" | "failed";
-  reason?: string;
+  status: "ready" | "stale" | "failed" | "pending";
+  reason?: PlatformEvalIterationReportUnavailableReason;
+  /** Present on `pending` only: iterations read so far, of the population. */
+  progress?: { done: number; total: number };
   rows: Array<{
     joinKey: string;
     stage: import("../contract/chain.js").UserValueStage;

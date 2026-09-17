@@ -342,7 +342,7 @@ describe("TrialScorecard", () => {
     renderCard({
       judgeSlot: <div data-testid="judge-panel">Judge score hidden</div>,
     });
-    const judge = rowFor("Judge · Goal completion");
+    const judge = rowFor("Outcome achieved");
     expect(within(judge).getByTestId("judge-panel")).toBeInTheDocument();
   });
 
@@ -542,5 +542,148 @@ describe("blind review keeps the chain and masks one card", () => {
     renderCard({ chain: judgeDecided, judgeHidden: false, judgeCase });
     expect(screen.queryByTestId("trial-stage-masked")).toBeNull();
     expect(screen.queryByTestId("judge-result-withheld")).toBeNull();
+  });
+});
+
+describe("what the scorecard says about its AI explanations", () => {
+  const verifiedChain = {
+    status: "verified",
+    stages: [
+      { stage: "connection", state: "passed", reason: "observed" },
+      { stage: "discovery", state: "passed", reason: "observed" },
+      { stage: "selection", state: "passed", reason: "observed" },
+      { stage: "call", state: "passed", reason: "observed" },
+      { stage: "response", state: "failed", reason: "toolError" },
+      { stage: "userValue", state: "failed", reason: "predicateFailed" },
+    ],
+  } as never;
+
+  const toolErrorTrace = {
+    messages: [
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-1",
+            toolName: "create_journey",
+            result: {
+              isError: true,
+              content: [
+                {
+                  type: "text",
+                  text: "VALIDATION_ERROR: A journey must target at least one host",
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ],
+  };
+
+  it("offers Analyze on a settled iteration with no report", () => {
+    renderCard({ chain: verifiedChain });
+    expect(screen.getByTestId("report-availability")).toHaveTextContent(
+      "Analyze this run to add AI explanations to these rows.",
+    );
+  });
+
+  it("counts the read in progress instead of promising nothing", () => {
+    renderCard({
+      chain: verifiedChain,
+      report: {
+        schemaVersion: 1,
+        iterationId: "it1",
+        runRevision: "r",
+        builtAt: 0,
+        status: "pending",
+        progress: { done: 4, total: 40 },
+        rows: [],
+      } as never,
+    });
+    const line = screen.getByTestId("report-availability");
+    expect(line).toHaveTextContent("Reading iterations 4 of 40…");
+    expect(line).toHaveAttribute("aria-live", "polite");
+  });
+
+  it("names what stopped the analysis, and keeps the recorded page", () => {
+    renderCard({
+      chain: verifiedChain,
+      trace: toolErrorTrace,
+      report: {
+        schemaVersion: 1,
+        iterationId: "it1",
+        runRevision: "r",
+        builtAt: 0,
+        status: "failed",
+        reason: "trace_too_large",
+        rows: [],
+      } as never,
+    });
+    expect(screen.getByTestId("report-availability")).toHaveTextContent(
+      "This iteration's trace was too large to analyze.",
+    );
+    // The deterministic floor does not depend on the model having run.
+    // The tool name renders as code, so assert on the words, not the marks.
+    const floor = screen.getByTestId("stage-floor");
+    expect(within(floor).getByText("create_journey").tagName).toBe("CODE");
+    expect(floor).toHaveTextContent(
+      "returned an error: VALIDATION_ERROR: A journey must target at least one host",
+    );
+  });
+
+  it("quotes the server on a failed stage with no report at all", () => {
+    renderCard({ chain: verifiedChain, trace: toolErrorTrace });
+    expect(screen.getByTestId("stage-floor")).toHaveAttribute(
+      "data-narrative-source",
+      "recorded",
+    );
+  });
+
+  it("yields the stage to an AI explanation rather than saying it twice", () => {
+    renderCard({
+      chain: verifiedChain,
+      trace: toolErrorTrace,
+      report: {
+        schemaVersion: 1,
+        iterationId: "it1",
+        runRevision: "r",
+        builtAt: 0,
+        status: "ready",
+        rows: [],
+        stageNotes: [
+          {
+            stage: "response",
+            actual: "The journey call was rejected for having no host.",
+            citations: ["tc:call-1"],
+          },
+        ],
+      } as never,
+    });
+    expect(screen.queryByTestId("stage-floor")).toBeNull();
+    expect(screen.queryByTestId("report-availability")).toBeNull();
+    expect(
+      screen.getByText("The journey call was rejected for having no host."),
+    ).toBeVisible();
+  });
+
+  it("promises a reviewer nothing while they are labelling blind", () => {
+    renderCard({
+      chain: verifiedChain,
+      trace: toolErrorTrace,
+      judgeHidden: true,
+      report: {
+        schemaVersion: 1,
+        iterationId: "it1",
+        runRevision: "r",
+        builtAt: 0,
+        status: "pending",
+        progress: { done: 1, total: 4 },
+        rows: [],
+      } as never,
+    });
+    expect(screen.queryByTestId("report-availability")).toBeNull();
+    expect(screen.queryByTestId("stage-floor")).toBeNull();
   });
 });
