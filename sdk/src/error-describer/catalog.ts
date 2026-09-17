@@ -118,6 +118,8 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   // Deliberately NOT credential-owned: MCPJam holds the key, but a spent
   // allowance is an account state the user resolves, never an outage of ours.
   "provider/mcpjam_limit": "user_config",
+  "provider/mcpjam_platform_budget": "user_config",
+  "account/suspended": "user_config",
   "provider/mcpjam_limit_daily": "user_config",
   "provider/mcpjam_limit_monthly": "user_config",
   // The MCP server under test throttled US. That is the server's own
@@ -813,6 +815,18 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     ],
     "mcpjam-model-limit-reached",
     "warning",
+  ),
+  "provider/mcpjam_platform_budget": entry(
+    "provider/mcpjam_platform_budget", "MCPJam shared free allowance unavailable",
+    "The shared free allowance is exhausted or temporarily paused.",
+    ["This limit applies across free usage, not just your account."],
+    ["Wait until the supplied reset time, if present.", "Use purchased credits or your own provider key for chat."],
+    "mcpjam-platform-budget", "warning",
+  ),
+  "account/suspended": entry(
+    "account/suspended", "Account suspended",
+    "This account has been suspended by MCPJam.", ["Support has suspended this account."],
+    ["Contact founders@mcpjam.com for support."], "account-suspended", "warning",
   ),
   "provider/mcpjam_limit": entry(
     "provider/mcpjam_limit",

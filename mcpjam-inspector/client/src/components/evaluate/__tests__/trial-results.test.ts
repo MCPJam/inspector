@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildEvaluationConfigSnapshot,
   definitionHash,
@@ -522,3 +522,108 @@ it.each([
     expect(rowByKey(rows, "step:a1").result.state).toBe(state);
   },
 );
+
+describe("the trace narrative join", () => {
+  const report = (
+    rows: Array<{ joinKey: string; verdictSeen: string; actual: string }>,
+    status: "ready" | "stale" = "ready",
+  ) =>
+    ({
+      schemaVersion: 1,
+      iterationId: "it1",
+      runRevision: "r",
+      builtAt: 0,
+      status,
+      rows: rows.map((row) => ({
+        ...row,
+        stage: "userValue",
+        citations: ["m:0"],
+      })),
+      stageNotes: [],
+    }) as unknown as TrialFacts["report"];
+
+  const judgeKey = "judge:goalCompletion";
+  const failedJudge = {
+    caseKey: "c1",
+    score: 0.1,
+    passed: false,
+    reason: "The server was never saved.",
+    rubricHits: [],
+  } as never;
+
+  it("gives a row the note minted for its own scorer id", () => {
+    const rows = join(authored, {
+      iteration: iteration({}),
+      judgeCase: failedJudge,
+      report: report([
+        { joinKey: judgeKey, verdictSeen: "failed", actual: "It never saved." },
+      ]),
+    });
+    expect(rowByKey(rows, "judge:goalCompletion").narrative).toMatchObject({
+      text: "It never saved.",
+      stale: false,
+    });
+  });
+
+  it("marks a note stale when the grade moved under it", () => {
+    const rows = join(authored, {
+      iteration: iteration({}),
+      judgeCase: failedJudge,
+      report: report([
+        // The report saw a pass; the recorded verdict now says failed.
+        { joinKey: judgeKey, verdictSeen: "passed", actual: "It saved." },
+      ]),
+    });
+    expect(rowByKey(rows, "judge:goalCompletion").narrative?.stale).toBe(true);
+  });
+
+  it("marks every note stale when the report itself is stale", () => {
+    const rows = join(authored, {
+      iteration: iteration({}),
+      judgeCase: failedJudge,
+      report: report(
+        [
+          {
+            joinKey: judgeKey,
+            verdictSeen: "failed",
+            actual: "It never saved.",
+          },
+        ],
+        "stale",
+      ),
+    });
+    expect(rowByKey(rows, "judge:goalCompletion").narrative?.stale).toBe(true);
+  });
+
+  it("refuses to pick between two notes claiming one scorer", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const rows = join(authored, {
+      iteration: iteration({}),
+      judgeCase: failedJudge,
+      report: report([
+        { joinKey: judgeKey, verdictSeen: "failed", actual: "One story." },
+        { joinKey: judgeKey, verdictSeen: "failed", actual: "Another story." },
+      ]),
+    });
+    expect(rowByKey(rows, "judge:goalCompletion").narrative).toBeUndefined();
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("leaves a keyless row alone rather than matching it to anything", () => {
+    // A step-authored check with no criterion id mints no scorer id. An
+    // `undefined` key must match nothing, not every note without one.
+    const rows = join(authored, {
+      iteration: iteration({}),
+      report: report([
+        { joinKey: "predicate:whatever", verdictSeen: "passed", actual: "x" },
+      ]),
+    });
+    expect(rowByKey(rows, "step:a1").narrative).toBeUndefined();
+  });
+
+  it("leaves every row alone when no report exists", () => {
+    const rows = join(authored, { iteration: iteration({}) });
+    expect(rows.every((row) => row.narrative === undefined)).toBe(true);
+  });
+});

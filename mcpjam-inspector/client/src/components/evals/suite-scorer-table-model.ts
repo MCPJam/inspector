@@ -364,7 +364,6 @@ const STAGE_CONFIG_CHIP_LABEL: Record<StageConfigState["state"], string> = {
   judgeAutomatic: "Judge automatic",
   judgeOff: "Judge off",
   judgeUnknown: "Grading state unavailable",
-  judgePaused: "Grading paused",
 };
 
 /**

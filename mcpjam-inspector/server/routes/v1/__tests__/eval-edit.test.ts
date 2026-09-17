@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { isOpaqueId } from "@mcpjam/sdk/contract";
 import { MAX_CASES_PER_BATCH } from "../../shared/eval-case-batch.js";
+import { upstreamRefusalFromResponse } from "../../../services/upstream-refusal.js";
 import { Hono } from "hono";
 
 // Covers the v1 eval-edit surface: suite settings/schedule/delete + case CRUD
@@ -613,7 +614,7 @@ describe("v1 eval-edit routes", () => {
 
   it("GET reports the backend automatic policy for an untouched suite", async () => {
     convexQueryMock.mockImplementation((name: string) => name === "testSuites:getTestSuite"
-      ? Promise.resolve({ ...SUITE_DOC, judgeConfig: undefined, judgePolicy: { contractVersion: 4, executionPaused: false, automatic: true, effective: { enabled: true, autoRun: true, judgeModel: "openai/gpt-5.4-mini", threshold: 0.7, role: "advisory" } } })
+      ? Promise.resolve({ ...SUITE_DOC, judgeConfig: undefined, judgePolicy: { contractVersion: 4, automatic: true, effective: { enabled: true, autoRun: true, judgeModel: "openai/gpt-5.4-mini", threshold: 0.7, role: "advisory" } } })
       : defaultQueryImpl(name));
     const res = await request("GET", "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx");
     expect(res.status).toBe(200);
@@ -1878,6 +1879,97 @@ describe("v1 eval-edit routes", () => {
       assertion: { type: "toolCalledWith", toolName: "list" },
     });
     expect(createArgs.promptTurns).toBeUndefined();
+  });
+
+  /**
+   * The public contract `$ref`s `RateLimited` (which documents `Retry-After`)
+   * from almost every operation, and generation answered 500 INTERNAL_ERROR
+   * for every backend refusal instead — so a CI caller had no code to branch
+   * on, no header to wait on, and MCPJam's 5xx monitors counted the customer's
+   * own exhausted allowance as an MCPJam fault.
+   */
+  it("generate answers a backend platform_capacity 429 as RATE_LIMITED with Retry-After", async () => {
+    createAuthorizedManagerMock.mockResolvedValue({
+      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+    });
+    // Built from a real upstream `Response`, so the adapter's reader is part
+    // of what this test pins rather than a hand-written stand-in.
+    generateEvalTestsMock.mockRejectedValue(
+      await upstreamRefusalFromResponse(
+        new Response(
+          JSON.stringify({
+            ok: false,
+            code: "platform_capacity",
+            error: "MCPJam's daily generation budget is used up.",
+            isRetryable: true,
+            retryAfterMs: 3_600_000,
+            canTopUp: false,
+          }),
+          {
+            status: 429,
+            headers: {
+              "Content-Type": "application/json",
+              "Retry-After": "1800",
+            },
+          },
+        ),
+        "Failed to generate test cases",
+      ),
+    );
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getSuiteRunServerSelection")
+        return Promise.resolve({ serverIds: ["srv_1"], serverNames: ["S"] });
+      return defaultQueryImpl(name);
+    });
+
+    const res = await request(
+      "POST",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
+      { mode: "normal" },
+    );
+
+    expect(res.status).toBe(429);
+    expect(res.headers.get("Retry-After")).toBe("1800");
+    const body = (await res.json()) as any;
+    expect(body.code).toBe("RATE_LIMITED");
+    // MCPJam's own budget, not the caller's — so no top-up is on offer.
+    expect(body.details?.code).toBe("platform_capacity");
+    expect(body.details?.canTopUp).toBe(false);
+    // Nothing was persisted: the generator never produced a draft.
+    expect(
+      convexMutationMock.mock.calls.some(
+        (c) => c[0] === "testSuites:createTestCases",
+      ),
+    ).toBe(false);
+  });
+
+  it("generate still answers 5xx when the backend itself failed", async () => {
+    createAuthorizedManagerMock.mockResolvedValue({
+      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+    });
+    generateEvalTestsMock.mockRejectedValue(
+      await upstreamRefusalFromResponse(
+        new Response(JSON.stringify({ ok: false, code: "provider_error" }), {
+          status: 503,
+          headers: { "Content-Type": "application/json" },
+        }),
+        "Failed to generate test cases",
+      ),
+    );
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getSuiteRunServerSelection")
+        return Promise.resolve({ serverIds: ["srv_1"], serverNames: ["S"] });
+      return defaultQueryImpl(name);
+    });
+
+    const res = await request(
+      "POST",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
+      { mode: "normal" },
+    );
+
+    expect(res.status).toBeGreaterThanOrEqual(500);
+    expect(res.headers.get("Retry-After")).toBeNull();
   });
 
   it("generate carries the backend's sanitized arguments through verbatim", async () => {

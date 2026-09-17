@@ -1701,7 +1701,6 @@ export interface PlatformEvalSuiteSettingsBase {
    */
   judge: PlatformEvalSuiteGoalCompletionJudge & {
     contractVersion?: 4;
-    executionPaused?: boolean;
     automatic?: boolean;
     /**
      * Stored groundedness, when the suite has a reserved slot. Read-only
@@ -2613,6 +2612,9 @@ export interface PlatformClient {
 
 /** Full client detail, including the resolved config DTO and its read-backs. */
 export interface PlatformClientDetail {
+  /** Saved configuration revision, read atomically with config. */
+  versionId?: string;
+  versionNumber?: number;
   id: string;
   name: string;
   /** The concurrency token — see {@link PlatformClient.configId}. */
@@ -3540,6 +3542,7 @@ export interface PlatformJourney {
   /** Sessions run against EACH target. Total sessions = targets x this. */
   sessionsPerTarget: number | null;
   maxTurns: number | null;
+  setupWrites?: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -4022,6 +4025,7 @@ export interface PlatformSwarm {
   environmentIds: string[];
   sessionsPerTarget: number | null;
   maxTurns: number | null;
+  setupWrites?: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -4310,6 +4314,27 @@ export interface PlatformInsightsFindingProvenance {
    * run-wide mechanism rate is claimed. */
   mechanismBasis: "complete" | "sampled" | "none";
   affectedIterationIds: string[];
+  /** For a mechanism consolidated across error groups: the deterministic
+   * candidates it was merged from. */
+  sourceCandidateIds?: string[];
+  /**
+   * Per-member verification of an AI mechanism. Every trial the mechanism
+   * proposed was checked against its own recorded evidence; `confirmed` is
+   * the published count, and the others are disclosed, never counted.
+   * Absent on deterministic groups and on older backends.
+   */
+  verification?: {
+    proposed: number;
+    confirmed: number;
+    unsupported: number;
+    inconclusive: number;
+    unchecked: number;
+    members?: Array<{
+      iterationId: string;
+      verdict: "supported" | "unsupported" | "inconclusive" | "unchecked";
+      reason?: string;
+    }>;
+  };
   /** Per-prose-field origin for the view this provenance accompanies.
    * Producer-owned: a deterministic fallback sentence and a model that wrote
    * the same sentence are indistinguishable to a consumer. */
@@ -4330,15 +4355,44 @@ export interface PlatformInsightsFindingProvenance {
   populationCaveat?: string;
 }
 
-/** One iteration's trace report, as the run page's iteration drawer reads it. */
+/**
+ * Why one iteration has no model-written report.
+ *
+ * Closed so a reader gets an instruction rather than a code: "Trace too large
+ * to analyze" and "the daily analysis budget is spent" are different next
+ * steps. The producer narrows an unknown value to `analysis_unavailable`, so a
+ * newer server can add a reason without breaking an older client's label table.
+ */
+export type PlatformEvalIterationReportUnavailableReason =
+  | "trace_too_large"
+  | "context_too_large"
+  | "budget"
+  | "missing_trace"
+  | "extraction_rejected"
+  | "analysis_unavailable";
+
+/**
+ * One iteration's trace report, as the run page's iteration drawer reads it.
+ *
+ * `pending` is the state a reader meets most often on a large run: the read
+ * phase is still working through the population and THIS iteration's row has
+ * not been written yet. It is distinct from the absent report (`null` from the
+ * query) that means nobody ever analyzed the run.
+ *
+ * Pinned against the producer by `tests/fixtures/eval-iteration-report/wire.json`
+ * in mcpjam-backend, mirrored here — these declarations are hand-mirrored and
+ * nothing else notices them drifting.
+ */
 export interface PlatformEvalIterationReport {
   schemaVersion: 1;
   iterationId: string;
   runRevision: string;
   builtAt: number;
   modelUsed?: string;
-  status: "ready" | "stale" | "failed";
-  reason?: string;
+  status: "ready" | "stale" | "failed" | "pending";
+  reason?: PlatformEvalIterationReportUnavailableReason;
+  /** Present on `pending` only: iterations read so far, of the population. */
+  progress?: { done: number; total: number };
   rows: Array<{
     joinKey: string;
     stage: import("../contract/chain.js").UserValueStage;
@@ -4947,6 +5001,10 @@ export interface PlatformReadinessStageResult {
  *
  * `billing_limit_reached` is the value a client keys a top-up prompt on — it
  * is machine-readable precisely so nobody has to string-match `detail`.
+ *
+ * `platform_cap_reached` is its deliberate opposite: MCPJam's own daily budget
+ * for observations is spent. Observations are MCPJam-paid, so there is nothing
+ * for the customer to buy, and a client must NOT offer a top-up for it.
  */
 export interface PlatformReadinessObservationState {
   status:
@@ -4959,6 +5017,7 @@ export interface PlatformReadinessObservationState {
   reason?:
     | "not_requested"
     | "billing_limit_reached"
+    | "platform_cap_reached"
     | "provider_error"
     | "provider_timeout"
     | "schema_invalid"

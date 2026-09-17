@@ -62,6 +62,7 @@ import {
   type SwarmWaveSignals,
 } from "@/lib/swarm-api";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
+import { useRunInsights } from "@/hooks/use-run-insights";
 import { SwarmsSessionsPanel } from "@/components/swarms/SwarmsSessionsPanel";
 import { InsightsWorkbench } from "@/components/shared/usage-insights/InsightsWorkbench";
 import {
@@ -112,7 +113,7 @@ export interface SwarmRunDetailProps {
    * confirmation with no link, never a dead one.
    */
   onRunAgain: (
-    journeyRefIds: string[]
+    journeyRefIds: string[],
   ) => Promise<{ swarmRunGroupId?: string } | void>;
 }
 
@@ -137,7 +138,7 @@ export function SwarmRunDetail({
       if (sessionParam) search.set("session", sessionParam);
       const query = search.toString();
       return query ? `?${query}` : "";
-    })()
+    })(),
   );
   const urlSelection = useMemo(() => parseSelectionParam(selParam), [selParam]);
   const [sessionsPersonaFilter, setSessionsPersonaFilter] = useState<
@@ -162,16 +163,16 @@ export function SwarmRunDetail({
   const queryable = shouldQueryProjectId(projectId);
   const overview = useQuery(
     SWARM_QUERIES.getSwarmOverview as any,
-    (queryable ? { projectId } : "skip") as any
+    (queryable ? { projectId } : "skip") as any,
   ) as SwarmOverview | undefined;
 
   const waves = useMemo(
     () => groupRunsIntoSwarmWaves(overview?.runs ?? []),
-    [overview]
+    [overview],
   );
   const wave = useMemo(
     () => (overview === undefined ? null : resolveSwarmWave(waves, swarmId)),
-    [overview, waves, swarmId]
+    [overview, waves, swarmId],
   );
   const launchedRuns = useMemo(
     () => (wave ? launchedRunsFromWave(wave.runs, personas) : []),
@@ -196,8 +197,29 @@ export function SwarmRunDetail({
     SWARM_QUERIES.getWaveSignals as any,
     (queryable && waveGroupId
       ? { projectId, swarmRunGroupId: waveGroupId }
-      : "skip") as any
+      : "skip") as any,
   ) as SwarmWaveSignals | null | undefined;
+
+  // Lane A's wave narration, READ-ONLY (`autoRequest: false`). Findings is the
+  // default landing tab, so an auto-request here would bill a generation for
+  // merely opening a swarm. Generation stays where a person asks for it (the
+  // Insights tab) or where the backend schedules it on wave settle
+  // (`insightAutoTrigger.checkWaveTerminalAndRequestInsights`).
+  const waveInsights = useRunInsights(
+    queryable && waveGroupId
+      ? {
+          kind: "swarm",
+          projectId: projectId as string,
+          swarmRunGroupId: waveGroupId,
+        }
+      : null,
+    { autoRequest: false },
+  );
+  const generatedWaveSummary =
+    waveInsights.status === "completed" &&
+    waveInsights.insights?.summary?.trim()
+      ? waveInsights.insights.summary.trim()
+      : null;
 
   const handleTabChange = useCallback(
     (next: SwarmDetailTab) => {
@@ -206,10 +228,10 @@ export function SwarmRunDetail({
           tab: next,
           sel: selParam ?? undefined,
         }),
-        { replace: true }
+        { replace: true },
       );
     },
-    [navigate, selParam, swarmId]
+    [navigate, selParam, swarmId],
   );
 
   const handleShare = useCallback(async () => {
@@ -234,10 +256,10 @@ export function SwarmRunDetail({
           session: sessionId,
           sel: selParam ?? undefined,
           finding: criterionId,
-        })
+        }),
       );
     },
-    [navigate, selParam, swarmId]
+    [navigate, selParam, swarmId],
   );
 
   const handleOpenFindings = useCallback(() => {
@@ -260,15 +282,19 @@ export function SwarmRunDetail({
   const handleBackToRun = useCallback(() => {
     navigate(
       buildSwarmPath(swarmId, {
-        tab: liveProgress ? "run" : parsedTab === "run" ? "findings" : parsedTab,
+        tab: liveProgress
+          ? "run"
+          : parsedTab === "run"
+            ? "findings"
+            : parsedTab,
         sel: selParam ?? undefined,
-      })
+      }),
     );
   }, [liveProgress, navigate, parsedTab, selParam, swarmId]);
 
   const handleSelectionChange = useCallback(
     (
-      themes: ReadonlyArray<Pick<ThemeRef, "dimension" | "clusterId">> | null
+      themes: ReadonlyArray<Pick<ThemeRef, "dimension" | "clusterId">> | null,
     ) => {
       navigate(
         buildSwarmPath(swarmId, {
@@ -276,17 +302,17 @@ export function SwarmRunDetail({
           session: sessionParam ?? undefined,
           sel: themes ? serializeSelectionParam(themes) : undefined,
         }),
-        { replace: true }
+        { replace: true },
       );
     },
-    [navigate, sessionParam, swarmId, tab]
+    [navigate, sessionParam, swarmId, tab],
   );
 
   const launchableJourneyIds = useMemo(() => {
     if (!wave) return [];
     return [
       ...new Set(
-        wave.runs.filter((r) => !r.journeyArchived).map((r) => r.journeyRefId)
+        wave.runs.filter((r) => !r.journeyArchived).map((r) => r.journeyRefId),
       ),
     ];
   }, [wave]);
@@ -316,16 +342,14 @@ export function SwarmRunDetail({
       );
     } catch (err) {
       toast.error(
-        err instanceof Error ? err.message : "Could not start swarm run"
+        err instanceof Error ? err.message : "Could not start swarm run",
       );
     } finally {
       setRunAgainBusy(false);
     }
   }, [launchableJourneyIds, navigate, onRunAgain]);
 
-  const cancelJourneyRun = useMutation(
-    SWARM_MUTATIONS.cancelJourneyRun as any,
-  );
+  const cancelJourneyRun = useMutation(SWARM_MUTATIONS.cancelJourneyRun as any);
 
   const runningRunIds = useMemo(() => {
     if (!wave) return [];
@@ -465,7 +489,7 @@ export function SwarmRunDetail({
   const runIds = wave.runs.map((r) => r.runId);
   const runLabels = new Map(wave.runs.map((r) => [r.runId, r.journeyName]));
   const goalLabels = new Map(
-    wave.runs.map((r) => [r.journeyRefId, r.journeyName])
+    wave.runs.map((r) => [r.journeyRefId, r.journeyName]),
   );
 
   return (
@@ -702,6 +726,7 @@ export function SwarmRunDetail({
               personas={personas}
               onOpenSession={handleOpenSession}
               projectId={projectId ?? undefined}
+              generatedSummary={generatedWaveSummary}
             />
           </div>
         ) : null}

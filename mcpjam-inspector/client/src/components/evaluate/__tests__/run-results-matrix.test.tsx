@@ -6,6 +6,7 @@ import {
   buildRunResultsMatrix,
   launchRuns,
   resultCounts,
+  cellResult,
 } from "../run-results-matrix-model";
 import type { EvalIteration, EvalSuiteRun } from "../../evals/types";
 
@@ -61,6 +62,34 @@ const names = new Map([
 ]);
 
 describe("run results matrix", () => {
+  it.each([
+    [[], null],
+    [["passed", "passed"], "passed"],
+    [["passed", "failed"], "failed"],
+    [["passed", "timed_out"], "failed"],
+    [["passed", "cancelled"], "cancelled"],
+    [["failed", "cancelled"], "failed"],
+    [["passed", "failed", "pending"], "pending"],
+  ] as const)("uses the displayed result for %j", (results, expected) => {
+    expect(
+      cellResult(
+        results.map((result, index) =>
+          iteration(String(index), "one", {
+            result,
+            status:
+              result === "pending"
+                ? "running"
+                : result === "cancelled"
+                  ? "cancelled"
+                  : result === "timed_out"
+                    ? "timed_out"
+                    : "completed",
+          }),
+        ),
+      ),
+    ).toBe(expected);
+  });
+
   it("opens the test case from the left column in Results and Metrics", async () => {
     const user = userEvent.setup();
     const onEditCase = vi.fn();
@@ -72,7 +101,9 @@ describe("run results matrix", () => {
         onEditCase={onEditCase}
       />,
     );
-    const caseButton = screen.getByRole("button", { name: "Open test case: Refund order" });
+    const caseButton = screen.getByRole("button", {
+      name: "Open test case: Refund order",
+    });
     expect(caseButton).toHaveClass("min-h-16", "text-foreground");
     expect(caseButton).not.toHaveClass("hover:underline", "hover:bg-muted/30");
     expect(caseButton.closest("th")).toHaveClass("hover:bg-muted/50");
@@ -144,11 +175,15 @@ describe("run results matrix", () => {
         name: "Inspect Refund order on Claude · sonnet",
       }),
     );
-    expect(screen.queryByRole("button", { name: "Configure test case evaluators" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Configure test case evaluators" }),
+    ).toBeNull();
     await user.click(
       screen.getByRole("button", { name: "Open iteration 1 details" }),
     );
-    await user.click(screen.getByRole("button", { name: "Configure test case evaluators" }));
+    await user.click(
+      screen.getByRole("button", { name: "Configure test case evaluators" }),
+    );
     expect(onEditEvaluator).toHaveBeenCalledWith("refund");
     expect(screen.queryByRole("dialog")).toBeNull();
   });
@@ -480,6 +515,41 @@ describe("run results matrix", () => {
     expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
   });
 
+  it("filters by the displayed cell result instead of any passing iteration", async () => {
+    const user = userEvent.setup();
+    render(
+      <RunResultsMatrix
+        run={run("one")}
+        runs={[run("two", { namedHostId: "cursor", effectiveModelId: "gpt" })]}
+        iterations={[
+          iteration("mixed-pass", "one"),
+          iteration("mixed-fail", "one", { result: "failed" }),
+          iteration("other-fail", "two", { result: "failed" }),
+          iteration("clean-pass", "one", {
+            testCaseId: "clean",
+            testCaseSnapshot: {
+              ...iteration("base", "one").testCaseSnapshot!,
+              title: "Clean case",
+            },
+          }),
+        ]}
+        hostNamesById={names}
+      />,
+    );
+    await user.click(
+      screen.getByRole("combobox", { name: "Filter by status" }),
+    );
+    await user.click(screen.getByRole("option", { name: "Passed" }));
+    expect(screen.queryByText("Refund order")).toBeNull();
+    expect(screen.getByText("Clean case")).toBeVisible();
+    await user.click(
+      screen.getByRole("combobox", { name: "Filter by status" }),
+    );
+    await user.click(screen.getByRole("option", { name: "Failures" }));
+    expect(screen.getByText("Refund order")).toBeVisible();
+    expect(screen.queryByText("Clean case")).toBeNull();
+  });
+
   it("filters cases and opens the correct evidence when switching client/model in the drawer", async () => {
     const user = userEvent.setup();
     render(
@@ -540,6 +610,70 @@ describe("run results matrix", () => {
     expect(drawer.getByRole("button", { name: "Scorecard" })).toBeVisible();
   });
 
+  it.each([
+    ["passed", "Passed"],
+    ["failed", "Failures"],
+    ["pending", "Pending"],
+    ["cancelled", "Cancelled"],
+  ] as const)(
+    "clears %s only when no visible cell still matches",
+    async (result, label) => {
+      const user = userEvent.setup();
+      const onFilterChange = vi.fn();
+      const props = {
+        run: run("one", { status: "running" }),
+        hostNamesById: names,
+        onFilterChange,
+      };
+      const match = iteration("match", "one", {
+        result,
+        status:
+          result === "pending"
+            ? "running"
+            : result === "cancelled"
+              ? "cancelled"
+              : "completed",
+      });
+      const { rerender } = render(
+        <RunResultsMatrix {...props} iterations={[match]} />,
+      );
+      await user.click(
+        screen.getByRole("combobox", { name: "Filter by status" }),
+      );
+      await user.click(screen.getByRole("option", { name: label }));
+      rerender(<RunResultsMatrix {...props} iterations={[{ ...match }]} />);
+      expect(
+        screen.getByRole("combobox", { name: "Filter by status" }),
+      ).toHaveTextContent(label);
+      expect(onFilterChange).toHaveBeenLastCalledWith({
+        search: "",
+        status: result,
+      });
+      rerender(
+        <RunResultsMatrix
+          {...props}
+          iterations={[
+            iteration("changed", "one", {
+              result: result === "passed" ? "failed" : "passed",
+            }),
+          ]}
+        />,
+      );
+      expect(
+        screen.getByRole("combobox", { name: "Filter by status" }),
+      ).toHaveTextContent("Status");
+      expect(onFilterChange).toHaveBeenLastCalledWith({
+        search: "",
+        status: "__all__",
+      });
+      expect(
+        screen.getByRole("button", {
+          name: "Inspect Refund order on Claude · sonnet",
+        }),
+      ).toBeVisible();
+    },
+  );
+
   it("keeps Pending while a run is live and hides it once every run is terminal", async () => {
     const user = userEvent.setup();
     const live = run("one", { status: "running" });
@@ -586,7 +720,7 @@ describe("run results matrix", () => {
     );
     expect(screen.queryByRole("option", { name: "Pending" })).toBeNull();
     expect(screen.getByRole("option", { name: "Failures" })).toBeVisible();
-    expect(screen.getByRole("option", { name: "Passed" })).toBeVisible();
+    expect(screen.queryByRole("option", { name: "Passed" })).toBeNull();
   });
 
   it.each(["pending", "running", "grading"] as const)(
@@ -608,16 +742,28 @@ describe("run results matrix", () => {
   );
 });
 
-
 describe("test-name navigation", () => {
-  it.each(["sdk", "ui"] as const)("opens the saved definition for %s cases instead of run details", async (source) => {
-    const onEditCase = vi.fn();
-    render(<RunResultsMatrix run={run("one", { source })} iterations={[iteration("only", "one")]} onEditCase={onEditCase} />);
-    await userEvent.click(screen.getByRole("button", { name: "Open test case: Refund order" }));
-    expect(onEditCase).toHaveBeenCalledWith("refund");
-    expect(screen.queryByRole("dialog")).toBeNull();
-    await userEvent.click(screen.getByRole("button", { name: /Inspect Refund order on/ }));
-    expect(screen.getByRole("dialog")).toBeVisible();
-    expect(onEditCase).toHaveBeenCalledTimes(1);
-  });
+  it.each(["sdk", "ui"] as const)(
+    "opens the saved definition for %s cases instead of run details",
+    async (source) => {
+      const onEditCase = vi.fn();
+      render(
+        <RunResultsMatrix
+          run={run("one", { source })}
+          iterations={[iteration("only", "one")]}
+          onEditCase={onEditCase}
+        />,
+      );
+      await userEvent.click(
+        screen.getByRole("button", { name: "Open test case: Refund order" }),
+      );
+      expect(onEditCase).toHaveBeenCalledWith("refund");
+      expect(screen.queryByRole("dialog")).toBeNull();
+      await userEvent.click(
+        screen.getByRole("button", { name: /Inspect Refund order on/ }),
+      );
+      expect(screen.getByRole("dialog")).toBeVisible();
+      expect(onEditCase).toHaveBeenCalledTimes(1);
+    },
+  );
 });

@@ -297,6 +297,7 @@ import { parseStepStatusById } from "@/shared/eval-step-replay";
 import { chainForQuickRunIteration } from "../evaluate/simple-case/quick-run-chain";
 import { TrialJudgeReviewPanel } from "./trial-judge-review";
 import { TrialScorecard } from "../evaluate/case-scorecard/trial-scorecard";
+import { IterationReportScorecard } from "../evaluate/case-scorecard/iteration-report-subscriber";
 import { authoredForTrial } from "../evaluate/case-scorecard/trial-authored";
 
 interface TestTemplate {
@@ -320,6 +321,8 @@ interface TestTemplate {
 }
 
 interface TestTemplateEditorProps {
+  /** View a code-owned case without enabling authoring. */
+  readOnly?: boolean;
   suiteId: string;
   selectedTestCaseId: string;
   /**
@@ -973,6 +976,7 @@ function CaseEditorTabs({
 }
 
 export function TestTemplateEditor({
+  readOnly = false,
   suiteId,
   selectedTestCaseId,
   onDeleteCase,
@@ -2599,6 +2603,7 @@ export function TestTemplateEditor({
    * looking at.
    */
   const handleSave = async (): Promise<boolean> => {
+    if (readOnly) return false;
     if (isDraft) {
       await handleCreateFromDraft();
       return true;
@@ -2667,7 +2672,7 @@ export function TestTemplateEditor({
   const saveCaseChecks = (
     changes: Partial<Parameters<typeof updateTestCaseMutation>[0]>,
   ) => {
-    if (!currentTestCase || isDraft || !editForm) return;
+    if (readOnly || !currentTestCase || isDraft || !editForm) return;
     const testCaseId = currentTestCase._id;
     const revision = ++checksSaveRevision.current;
     const payload = {
@@ -2981,6 +2986,7 @@ export function TestTemplateEditor({
     modelValues?: string[];
     sessionMode?: "new" | "reuse";
   }) => {
+    if (readOnly) return;
     // A draft has no Convex id to attach iterations to — Run is disabled in the
     // UI until the user saves; this guards the programmatic paths too.
     if (isDraft) {
@@ -4089,7 +4095,7 @@ export function TestTemplateEditor({
                   <button
                     type="button"
                     className="min-w-0 w-full text-left"
-                    onClick={handleTitleClick}
+                    onClick={readOnly ? undefined : handleTitleClick}
                   >
                     <h2 className="text-base font-semibold tracking-tight transition-opacity hover:opacity-80">
                       {editForm?.title || currentTestCase.title}
@@ -4099,8 +4105,9 @@ export function TestTemplateEditor({
                 {(currentTestCase as { lastSdkWriteAt?: number })
                   ?.lastSdkWriteAt != null ? (
                   <p className="mt-0.5 text-[11px] text-muted-foreground">
-                    Synced from CI — the next CI report may overwrite manual
-                    edits.
+                    {readOnly
+                      ? "Managed in code. Update this test in your repository."
+                      : "Synced from CI — the next CI report may overwrite manual edits."}
                   </p>
                 ) : null}
                 {/*
@@ -4122,7 +4129,7 @@ export function TestTemplateEditor({
                   className="mt-2"
                 />
               </div>
-              <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+              {!readOnly && <div className="flex shrink-0 flex-wrap items-center gap-1.5">
                 {onExportDraft && !useWorkspace ? (
                   <Button
                     type="button"
@@ -4521,7 +4528,7 @@ export function TestTemplateEditor({
                   }
                   side="top"
                 />
-              </div>
+              </div>}
             </div>
           </div>
           {useWorkspace ? (
@@ -4543,7 +4550,7 @@ export function TestTemplateEditor({
                         onStepsChange={
                           workspaceInspectSteps ? () => undefined : setSteps
                         }
-                        readOnly={Boolean(workspaceInspectSteps)}
+                        readOnly={readOnly || Boolean(workspaceInspectSteps)}
                         availableTools={assertableTools}
                         argumentMatching={
                           resolveMatchOptions(
@@ -4654,6 +4661,7 @@ export function TestTemplateEditor({
                     />
                   ) : editForm && useSpine ? (
                     <CaseSpine
+                      readOnly={readOnly}
                       defaultChecks={
                         !useWorkspace ? (
                           <DefaultChecksReference
@@ -4775,6 +4783,7 @@ export function TestTemplateEditor({
                     />
                   ) : editForm ? (
                     <SimpleCaseForm
+                      readOnly={readOnly}
                       key={`simple-case:${currentTestCase?._id ?? "none"}`}
                       steps={editForm.steps}
                       onStepsChange={setSteps}
@@ -5115,7 +5124,7 @@ export function TestTemplateEditor({
                         }
                         scorecard={{
                           render: (ctx) => (
-                            <TrialScorecard
+                            <IterationReportScorecard
                               authored={
                                 authoredForTrial({
                                   trial: workspaceSelectedTrial,
@@ -5141,6 +5150,7 @@ export function TestTemplateEditor({
                                 workspacePersistedIteration,
                               )}
                               envelope={ctx.envelope}
+                              trace={ctx.trace}
                               judgeHidden={ctx.reviewActive && ctx.judgeHidden}
                               judgeSlot={
                                 // The tab owns launch-triggered judging; this

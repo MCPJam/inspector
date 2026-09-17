@@ -208,6 +208,16 @@ describe("buildSuiteRunHistoryRows", () => {
     expect(rows[0].date).toBe(200);
   });
 
+  it("preserves the recorded SDK client name and version after a rename", () => {
+    const rows = buildSuiteRunHistoryRows([makeRun({
+      _id: "sdk-run", source: "sdk", client: {
+        source: "sdk", name: "Original name", namedHostId: "client1",
+        hostConfigId: "config1", versionId: "version1", versionNumber: 1,
+      },
+    })], [], makeSuite(), new Map([["client1", "Renamed client"]]), false);
+    expect(rows[0]).toMatchObject({ client: "Original name", clientId: "client1", clientVersionId: "version1", clientVersionNumber: 1 });
+  });
+
   it("shows the frozen client model before any iterations arrive", () => {
     const rows = buildSuiteRunHistoryRows(
       [makeRun({ _id: "pending", effectiveModelId: "claude-sonnet", status: "pending" })],

@@ -87,6 +87,7 @@ interface ModelSelectorProps {
    * org settings; omitted, the footer is absent rather than disabled.
    */
   onManageOrgProviders?: () => void;
+  platformPaidFallback?: boolean;
 }
 
 type GroupKey = string;
@@ -185,6 +186,20 @@ const groupHasMatch = (group: ModelGroup, search: string): boolean =>
     (model) => modelFilter(modelSearchValue(model, group.title), search) > 0,
   );
 
+// The credential source is part of a selection: equal IDs can belong to
+// different providers, and an omitted routing flag has legacy server semantics.
+function sameModelSelection(
+  left: ModelDefinition,
+  right: ModelDefinition,
+): boolean {
+  return (
+    String(left.id) === String(right.id) &&
+    left.provider === right.provider &&
+    left.customProviderName === right.customProviderName &&
+    left.hosted === right.hosted
+  );
+}
+
 function sameModelOrder(
   left: ModelDefinition[],
   right: ModelDefinition[],
@@ -194,7 +209,7 @@ function sameModelOrder(
   }
 
   return left.every(
-    (model, index) => String(model.id) === String(right[index]?.id),
+    (model, index) => sameModelSelection(model, right[index]!),
   );
 }
 
@@ -219,6 +234,7 @@ export function ModelSelector({
   analyticsLocation = "chat_input",
   respondToProviderTabIntent = false,
   onManageOrgProviders,
+  platformPaidFallback = false,
 }: ModelSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [providerTab, setProviderTab] = useState<"provided" | "configured">(
@@ -495,7 +511,7 @@ export function ModelSelector({
   const requestSelectionChange = (nextChange: PendingSelectionChange) => {
     const isSingleNoOp =
       nextChange.type === "single" &&
-      String(nextChange.nextModel.id) === String(currentModel.id);
+      sameModelSelection(nextChange.nextModel, currentModel);
     const isMultiNoOp =
       nextChange.type === "multi" &&
       nextChange.enabled === multiModelEnabled &&
@@ -646,7 +662,7 @@ export function ModelSelector({
                 />
               ) : null}
             </div>
-          ) : String(model.id) === String(currentModel.id) ? (
+          ) : sameModelSelection(model, currentModel) ? (
             <div className="ml-auto size-1.5 shrink-0 rounded-full bg-primary" />
           ) : null}
         </CommandItem>
@@ -865,13 +881,18 @@ export function ModelSelector({
                           )}
                         >
                           {tab === "provided"
-                            ? "Free models"
+                            ? (platformPaidFallback ? "MCPJam models" : "Free models")
                             : "Your providers"}
                         </button>
                       ))}
                     </div>
                   ) : null}
 
+                  {platformPaidFallback && providerTab === "provided" && (
+                    <p className="px-3 py-2 text-xs text-muted-foreground" role="status">
+                      Shared free allowance is unavailable. These models use your purchased credits.
+                    </p>
+                  )}
                   <CommandList className="max-h-[min(320px,45vh)]">
                     {/* cmdk renders Empty whenever no rows are mounted, which
                         the empty providers tab below would otherwise inherit —
@@ -888,7 +909,7 @@ export function ModelSelector({
 
                     {showProvided ? (
                       <CommandGroup
-                        heading={isSearching ? "Free models" : undefined}
+                        heading={isSearching ? (platformPaidFallback ? "MCPJam models" : "Free models") : undefined}
                       >
                         {visibleSections.provided.map((group) => (
                           <div key={`${group.provider}:${group.providerType}`}>

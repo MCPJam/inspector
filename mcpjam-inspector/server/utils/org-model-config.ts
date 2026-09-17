@@ -11,7 +11,7 @@ import {
   isRuntimeChosenModelSentinel,
   runtimeChosenModelSentinelName,
 } from "@/shared/model-provider";
-import { isHostedCatalogModel } from "../services/hosted-model-catalog.js";
+import { isHostedModelDefinition } from "../services/hosted-model-catalog.js";
 import type { OrgProviderResolvedConfig } from "@mcpjam/sdk/model-factory";
 import type { BaseUrls, CustomProviderConfig } from "./chat-helpers";
 import {
@@ -733,7 +733,7 @@ export async function resolveSyntheticModelSource(args: {
   serverIds?: string[];
 }): Promise<SyntheticModelResolution> {
   const modelIdStr = String(args.modelDefinition.id);
-  if (isHostedCatalogModel(modelIdStr)) {
+  if (isHostedModelDefinition(args.modelDefinition)) {
     return { source: "mcpjam" };
   }
   // A runtime-chosen sentinel resolves NO org provider — see
@@ -779,6 +779,9 @@ export async function resolveSyntheticModelSource(args: {
  * Build a `ModelDefinition` from a bare modelId string (e.g. the value
  * `runtime.config.modelId` returns from `fetchScenarioRuntimeConfig`).
  *
+ * Optional routing provenance comes from the pinned snapshot, never the live
+ * host. Omitted keeps legacy inference; copying avoids mutating the catalog.
+ *
  * Resolution order:
  *   1. Blank id — THROWS. An unpinned host persists modelId "", and without
  *      this guard the bare-id fallback silently classifies it as an Ollama
@@ -801,6 +804,7 @@ export async function resolveSyntheticModelSource(args: {
  */
 export function buildSyntheticModelDefinition(
   modelId: string,
+  routing: Pick<ModelDefinition, "hosted"> = {},
 ): ModelDefinition {
   const classification = classifyModelIdProvider(modelId);
   // Both interactive host-wins call sites gate on a truthy modelId before
@@ -812,7 +816,11 @@ export function buildSyntheticModelDefinition(
   }
 
   const supported = getModelById(modelId);
-  if (supported) return supported;
+  if (supported) {
+    return routing.hosted === undefined
+      ? supported
+      : { ...supported, hosted: routing.hosted };
+  }
 
   return {
     id: modelId,
@@ -821,6 +829,7 @@ export function buildSyntheticModelDefinition(
     // The id itself is NEVER rewritten — it is what traces and eval metadata
     // record, and the whole point of the sentinel is that it names no model.
     name: runtimeChosenModelSentinelName(modelId) ?? modelId,
+    ...(routing.hosted !== undefined ? { hosted: routing.hosted } : {}),
     provider: classification.provider,
     ...(classification.customProviderName !== undefined
       ? { customProviderName: classification.customProviderName }
@@ -847,11 +856,16 @@ export function matchOrgProviderForModelId(
   for (const p of config.providers) {
     if (p.providerKey === "openrouter" || p.providerKey === "bedrock") {
       if (p.selectedModels?.includes(modelId)) {
-        return { id: modelId, name: modelId, provider: p.providerKey };
+        return {
+          id: modelId,
+          name: modelId,
+          provider: p.providerKey,
+          hosted: false,
+        };
       }
     } else if (p.providerKey === "ollama") {
       if (p.modelIds?.includes(modelId)) {
-        return { id: modelId, name: modelId, provider: "ollama" };
+        return { id: modelId, name: modelId, provider: "ollama", hosted: false };
       }
     } else if (p.providerKey.startsWith("custom:")) {
       const slug = p.providerKey.slice("custom:".length);
@@ -865,6 +879,7 @@ export function matchOrgProviderForModelId(
           name: modelId,
           provider: "custom",
           customProviderName: slug,
+          hosted: false,
         };
       }
     }

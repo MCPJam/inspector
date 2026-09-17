@@ -186,11 +186,6 @@ export function JudgesSection({
         )}
       </div>
 
-      {policy?.executionPaused ? (
-        <p role="status" className="text-xs text-muted-foreground">
-          Grading is paused on this deployment.
-        </p>
-      ) : null}
       {sectionOn ? (
         <div className="grid grid-cols-[1fr_auto] items-center gap-x-4 gap-y-2 pt-1">
           <Label
