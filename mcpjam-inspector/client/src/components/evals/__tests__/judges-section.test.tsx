@@ -20,9 +20,7 @@ function renderBare(value: EvalJudgeConfig | undefined) {
 describe("JudgesSection — bare (suite settings) auto-grade toggle", () => {
   it("turning it ON enables AND auto-runs (one switch = auto-grade every run)", async () => {
     const user = userEvent.setup();
-    // A suite that was 'enabled' the old way (no autoRun) reads as OFF here,
-    // because it is NOT actually auto-grading yet.
-    const { onChange } = renderBare({ goalCompletion: { enabled: true } });
+    const { onChange } = renderBare({ goalCompletion: { enabled: true, autoRun: false } });
     const sw = screen.getByRole("switch", {
       name: /auto-grade every run/i,
     });
@@ -112,4 +110,46 @@ describe("pruneEmpty keeps a config that still means something", () => {
       });
     }
   });
+});
+
+it("uses the backend's inherited automatic setting", () => {
+  // A suite that has never touched its judge settings reads the resolved
+  // policy off the backend rather than assuming anything. There is no
+  // deployment pause to report any more: grading stops through these
+  // settings, so the switch IS the whole story.
+  render(
+    <JudgesSection
+      chrome="panel"
+      value={undefined}
+      availableModels={[]}
+      onChange={() => {}}
+      policy={{
+        contractVersion: 4,
+        effective: {
+          enabled: true,
+          autoRun: true,
+          judgeModel: "openai/gpt-5.4-mini",
+          threshold: 0.7,
+          role: "advisory",
+        },
+        automatic: true,
+      }}
+    />,
+  );
+  expect(screen.getAllByRole("switch")).toHaveLength(1);
+  expect(screen.getByRole("switch")).toHaveAttribute("data-state", "checked");
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+});
+
+
+it("does not call unknown inheritance off", () => {
+  renderBare(undefined);
+  expect(screen.getByText("Grading state unavailable")).toBeInTheDocument();
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+});
+
+it("shows the backend automatic default for an untouched suite", () => {
+  render(<JudgesSection value={undefined} availableModels={[]} onChange={vi.fn()} policy={{ contractVersion: 4, automatic: true, effective: { enabled: true, autoRun: true, judgeModel: "openai/gpt-5.4-mini", threshold: 0.7, role: "advisory" } }} />);
+  expect(screen.getByRole("switch")).toHaveAttribute("data-state", "checked");
 });

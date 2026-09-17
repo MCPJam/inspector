@@ -926,6 +926,7 @@ export type {
 // EvalSuite - Groups multiple EvalTests
 export { EvalSuite } from "./EvalSuite.js";
 export type {
+  EvalSuiteClientOptions,
   EvalSuiteConfig,
   EvalSuiteResult,
   TestResult,
@@ -960,6 +961,7 @@ export type {
   EvalWidgetSnapshotInput,
   EvalResultInput,
   MCPServerReplayConfig,
+  SelectedEvalClient,
   MCPJamReportingConfig,
   ReportEvalResultsInput,
   ReportEvalResultsOutput,
@@ -1747,6 +1749,19 @@ export type { EvalVariantEntry } from "./eval-variants.js";
 export type { EvalSelectionManifest } from "./eval-selection.js";
 export { formatRunSummaryTable } from "./eval-summary.js";
 export { buildRunUrl } from "./report-eval-results.js";
+
+// MCPJam-hosted inference for `mcpjam/…` models — the eval that needs no
+// provider key. `EvalSuite.run` already revokes at teardown; export the
+// release so a suite built by hand (a vitest `afterAll`, say) can too.
+export {
+  releaseMcpjamModelLeases,
+  McpjamLeaseClient,
+  McpjamLeaseError,
+} from "./mcpjam-model-lease.js";
+export type {
+  McpjamModelLease,
+  McpjamLeaseClientOptions,
+} from "./mcpjam-model-lease.js";
 export type { EvaluatorOverride } from "./EvalTest.js";
 export type {
   EvalExecutionContext,

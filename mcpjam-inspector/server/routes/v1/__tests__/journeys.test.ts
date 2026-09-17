@@ -40,7 +40,7 @@ vi.mock("convex/browser", () => ({
 
 vi.mock("../../../utils/v1-convex-token.js", () => ({
   getConvexBearerForRequest: async () => "convex-jwt",
-  getConvexBearerThunkForRequest: () => async () => "convex-jwt",
+  getBackgroundRunBearerForRequest: async () => async () => "convex-jwt",
 }));
 
 vi.mock("../../../services/xaa-mint.js", () => ({
@@ -549,5 +549,52 @@ describe("session DTO outcome join", () => {
     ]);
     // The archival flag survives unchanged alongside the verdict.
     expect(body.items[0]?.status).toBe("active");
+  });
+});
+
+describe("setupWrites config forwarding", () => {
+  it.each([true, false])(
+    "preserves explicit setupWrites=%s on creation",
+    async (setupWrites) => {
+      queryMock.mockResolvedValue([{ _id: "persona_1", projectId: PROJECT }]);
+      mutationMock.mockResolvedValue(
+        journeyRow({
+          config: { sessionsPerTarget: 1, maxTurns: 6, setupWrites },
+        }),
+      );
+      const response = await makeApp().request(
+        `/api/v1/projects/${PROJECT}/journeys`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            personaId: "persona_1",
+            goal: "Test",
+            sessionsPerTarget: 1,
+            maxTurns: 6,
+            setupWrites,
+          }),
+        },
+      );
+      expect(response.status).toBe(201);
+      expect(mutationMock.mock.calls[0][1].config).toEqual({
+        sessionsPerTarget: 1,
+        maxTurns: 6,
+        setupWrites,
+      });
+      expect(await response.json()).toMatchObject({ setupWrites });
+    },
+  );
+  it("rejects a setup-only PATCH without the required config pair", async () => {
+    const response = await makeApp().request(
+      `/api/v1/projects/${PROJECT}/journeys/${JOURNEY}`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ setupWrites: false }),
+      },
+    );
+    expect(response.status).toBe(400);
+    expect(mutationMock).not.toHaveBeenCalled();
   });
 });

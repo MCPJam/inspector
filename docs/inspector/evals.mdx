@@ -251,13 +251,15 @@ A run override shows an **override** badge; click **Reset** in the popover to cl
 
 ## LLM as judge
 
+**Data sent for grading:** the hosted v4 judge sends the complete recorded conversation, trace, available tool definitions, runtime context and supported inline media through OpenRouter to the selected model provider. Existing credential redaction applies. This includes more data than the previous clipped-text judge. Automatic grading sends this evidence without a separate Run judge click; turn grading off or use manual mode if that is not appropriate for your data.
+
 For cases where "did the right tools fire" isn't enough — anything graded on the quality of the final answer — the judge grades the run against your **expected output** if you set one, and against the user prompt otherwise. It's advisory: it produces a score and a rationale, but doesn't gate the run unless you ask it to.
 
-- **On by default** at the suite level. The cost is gated by an explicit **Run judge** click on the run-detail page — it won't run for every iteration unless you turn auto-run on.
+- **Automatic grading** grades each completed iteration with the effective policy shown in suite settings. Untouched suites inherit the deployment default; explicit manual and off settings are preserved. Automatic grading remains advisory unless release gating is separately authorized.
 - **Calibrate per suite.** Judge scores aren't comparable across domains; a 0.7 on one suite isn't a 0.7 on another.
 - When grading against the prompt rather than an expected output, scores are capped at 0.85 — you can't get a "perfect" without saying what perfect means.
 
-Open a completed run and find the **LLM as Judge** panel (labelled **Goal judge** when shown inside the suite results split). Pick a judge model (default: `openai/gpt-5.4-mini`) and a threshold (default 0.7), then click **Run judge**. Each case gets a score, an advisory verdict, a one-line reason, and rubric hits. The judge never runs automatically unless you enable **Auto-run** in suite settings.
+Open a completed run and find the **LLM as Judge** panel (labelled **Goal judge** when shown inside the suite results split). Pick a judge model (default: `openai/gpt-5.4-mini`) and a threshold (default 0.7), then click **Run judge**. Each case gets a score, an advisory verdict, a one-line reason, and rubric hits. Use **Automatic grading** in suite settings to enable or disable automatic grading; API-authored manual mode runs only on request. A deployment may pause grading during rollout.
 
 Judge results are also accessible outside the app. `mcpjam cloud eval status` returns a `judges` block in its JSON output with each grader's status, summary, model used, threshold, and per-case grades. To request grading from the CLI, use `mcpjam cloud eval judge --run <id> --project <name>`. See the [`cloud eval judge` reference](/cli/reference#cloud-eval-judge) for the full flag list, including `--force` to re-grade and `--enable` to grade a run recorded before the judge was turned on.
 
@@ -489,7 +491,7 @@ compare runs, waive a gate, read every setting.
 
 ### CI-synced test cases
 
-Test cases written by a CI report carry a **CI** chip next to their name in the cases list. Opening such a case in the editor shows a notice: "Synced from CI — the next CI report may overwrite manual edits." Manual edits to these cases are preserved until the next CI ingest, which may overwrite them.
+Test cases written by a CI report carry a **CI** chip next to their name in the cases list. Opening such a case opens the case workspace in **read-only mode**: the saved definition and iteration history are fully inspectable, but authoring controls are hidden and saves are blocked. A notice below the case title reads "Managed in code. Update this test in your repository." To change the case, edit the test file in your repository and run it again.
 
 ### Suite deletion
 
@@ -574,7 +576,7 @@ While a run is in progress, the run header shows a **HOLD** or **SHIP** pill for
 
 Below the header, the hero section shows a row per client/model pairing with a pass/fail bar and counts, plus P50 and P95 latency, average tokens, and average tool calls for that pairing. When a previous launch exists and the current run has finished, each pairing row also shows a delta — how many more or fewer cases passed compared to the equivalent pairing in the prior launch. Deltas are hidden while a run is still in progress. The first launch of a suite shows no deltas.
 
-Below the pairing rows, the hero renders a **Findings** block. When findings have been built for the run, it shows a lead finding with a carousel, a **See details** sheet, and an **Analyze findings** button. When no findings have been built yet, a **Build findings** button appears instead — building is deterministic and does not call a model. When findings are unavailable for the run, the hero falls back to a contract-derived "What broke / Next step" summary. For combined runs (multiple clients or models in one report), a **Findings for** selector scopes the findings block to one member run at a time.
+Below the pairing rows, the hero renders a **Findings** block. When findings have been built for the run, it shows a lead finding with a carousel and a **See details** sheet. When no findings have been built yet, a **Build findings** button appears instead — building is deterministic and does not call a model. When findings are unavailable for the run, the hero falls back to a contract-derived "What broke / Next step" summary. For combined runs (multiple clients or models in one report), a **Findings for** selector scopes the findings block to one member run at a time. When an AI analysis has run, its "N of M trials" count includes only trials that were each verified against their own recorded evidence; the **See details** sheet discloses any proposed trials that did not show the mechanism or could not be verified, and names the error groups a finding was consolidated from.
 
 The **Test cases** section (formerly the matrix) lists every test case with a search box and **Status**, **Client**, and **Model** filters on one row. There is no master pass/fail bar or "RUN RESULTS" eyebrow label in this section.
 

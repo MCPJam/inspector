@@ -199,11 +199,22 @@ vi.mock("../../../utils/chat-helpers", async () => {
 // Hosted-model classification moved behind the catalog service; the route keys
 // billing dispatch on isHostedCatalogModel. Default false — tests that exercise
 // the MCPJam path override it explicitly.
-vi.mock("../../../services/hosted-model-catalog.js", () => ({
-  isHostedCatalogModel: vi.fn().mockReturnValue(false),
-  startHostedModelCatalogRefresh: vi.fn(),
-  refreshHostedModelCatalog: vi.fn(),
-}));
+vi.mock("../../../services/hosted-model-catalog.js", () => {
+  const isHostedCatalogModel = vi.fn().mockReturnValue(false);
+  return {
+    isHostedCatalogModel,
+    // Mirrors the real helper so `vi.mocked(isHostedCatalogModel)` keeps
+    // steering the route's classification, and so the provider-aware
+    // assertion below still observes the `(id, provider)` call.
+    isHostedModelDefinition: vi.fn(
+      (model: { id: string; provider?: string; hosted?: boolean }) =>
+        model.hosted !== false &&
+        isHostedCatalogModel(String(model.id), model.provider),
+    ),
+    startHostedModelCatalogRefresh: vi.fn(),
+    refreshHostedModelCatalog: vi.fn(),
+  };
+});
 
 vi.mock("../../../utils/guest-auth.js", () => ({
   getProductionGuestAuthHeader: vi

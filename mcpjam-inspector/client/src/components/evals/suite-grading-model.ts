@@ -1,3 +1,4 @@
+import type { GoalJudgePolicy } from "@/shared/judge-defaults";
 /**
  * Which stage of the user-value chain each of a suite's graders measures.
  *
@@ -286,23 +287,19 @@ export function stageEmptyIsGap(stage: UserValueStage): boolean {
   return STAGE_EMPTY_COPY[stage] === "No evaluator";
 }
 
-/**
- * How the judge is configured, not what a run did.
- *
- * Absent config is `manual`: `enabled` defaults on and `autoRun` defaults off,
- * matching `judges-section.tsx`. The `gating` mode means the stored role is
- * required — under EITHER spelling. Storage said `"gating"` before the rename
- * and says `"required"` after it, and a comparator that took one word would
- * read a required judge as merely manual on one side of that line.
- */
-export type JudgeMode = "off" | "manual" | "automatic" | "gating";
+/** Inheritance is resolved by the backend, never by a frontend default. */
+export type JudgeMode = "off" | "manual" | "automatic" | "gating" | "unknown";
 
-export function judgeMode(judgeConfig: EvalJudgeConfig | undefined): JudgeMode {
+export function judgeMode(
+  judgeConfig: EvalJudgeConfig | undefined,
+  policy?: GoalJudgePolicy,
+): JudgeMode {
   const goal = judgeConfig?.goalCompletion;
-  if (goal?.enabled === false) return "off";
-  if (isRequiredRole(goal?.role)) return "gating";
-  if (goal?.autoRun === true) return "automatic";
-  return "manual";
+  if ((goal?.enabled ?? policy?.effective.enabled) === false) return "off";
+  if (isRequiredRole(goal?.role ?? policy?.effective.role)) return "gating";
+  const automatic = goal?.autoRun ?? policy?.effective.autoRun;
+  if (automatic === undefined) return "unknown";
+  return automatic ? "automatic" : "manual";
 }
 
 export type StageConfigState = {
@@ -313,7 +310,8 @@ export type StageConfigState = {
     | "gap"
     | "judgeOnRequest"
     | "judgeAutomatic"
-    | "judgeOff";
+    | "judgeOff"
+    | "judgeUnknown";
   /** Deterministic required rows (match + predicate). The judge is excluded. */
   required: number;
   /**
@@ -346,6 +344,9 @@ export function stageConfigStates(
     }
     if (judge === "automatic") {
       return { stage, state: "judgeAutomatic", required, advisory, judge };
+    }
+    if (judge === "unknown") {
+      return { stage, state: "judgeUnknown", required, advisory, judge };
     }
     if (judge === "manual") {
       return { stage, state: "judgeOnRequest", required, advisory, judge };

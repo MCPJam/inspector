@@ -185,6 +185,7 @@ describe("workspace tool catalog", () => {
       "get_eval_run_steps",
       "cancel_eval_run",
       "backtest_eval_run",
+      "backtest_eval_run_judge",
       "request_eval_run_judge",
       // The GitHub-checks READ, under both spellings. Their connect siblings
       // are in EXCLUDED_FROM_WORKSPACE: they reach a shared repository.
@@ -605,6 +606,7 @@ describe("live server operations", () => {
       ).needsApproval;
 
     expect(approval("request_eval_run_judge")).toBe(true);
+    expect(approval("backtest_eval_run_judge")).toBe(true);
     expect(approval("propose_eval_description_rewrite")).toBe(true);
     expect(approval("start_eval_description_experiment")).toBe(true);
     // The read closes the loop and spends nothing.

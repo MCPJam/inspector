@@ -208,7 +208,11 @@ export type CreateSwarmDraft = {
   name: string;
   description?: string;
   environmentIds?: string[];
-  config: { sessionsPerTarget: number; maxTurns: number };
+  config: {
+    sessionsPerTarget: number;
+    maxTurns: number;
+    setupWrites?: boolean;
+  };
   judgeConfig?: GoalJudgeConfig;
   rubric?: ReturnType<typeof serializeRubricForWire>;
   /** The launch wave this swarm names — see `swarmRunGroupId` on the runs. */
@@ -230,7 +234,11 @@ export type CreateJourneyDraft = {
   goal: string;
   hostIds: string[];
   environmentIds: string[];
-  config: { sessionsPerTarget: number; maxTurns: number };
+  config: {
+    sessionsPerTarget: number;
+    maxTurns: number;
+    setupWrites?: boolean;
+  };
   judgeConfig?: GoalJudgeConfig;
   rubric?: ReturnType<typeof serializeRubricForWire>;
   /** Authoring provenance — the swarm this journey is created in. */
@@ -1173,6 +1181,9 @@ export function NewSwarmCreateFlow({
        * retry, and retrying a credit limit cannot work.
        */
       let billingBlocked = false;
+      /** A model limit that already opened its own dialog. Kept apart from
+       * `billingBlocked` so the wave's copy never mis-names which cap refused. */
+      let limitDialogBlocked = false;
       /**
        * The 402's own message, kept SEPARATE from `firstError`. The billing
        * summary has to state the hard stop, and `firstError` may already hold
@@ -1223,6 +1234,7 @@ export function NewSwarmCreateFlow({
               config: {
                 sessionsPerTarget: DEFAULT_SWARM_ITERATIONS,
                 maxTurns: preset.maxTurns,
+                setupWrites: true,
               },
               ...(payload.judgeConfig
                 ? { judgeConfig: payload.judgeConfig }
@@ -1364,6 +1376,7 @@ export function NewSwarmCreateFlow({
                       iterationsByPersona[persona.key] ??
                       DEFAULT_SWARM_ITERATIONS,
                     maxTurns: preset.maxTurns,
+                    setupWrites: true,
                   },
                   ...(payload.judgeConfig
                     ? { judgeConfig: payload.judgeConfig }
@@ -1452,6 +1465,21 @@ export function NewSwarmCreateFlow({
                 }
               }
             } catch (err) {
+              // The limit dialog already carries this sentence plus the
+              // actions that clear it, so record NO message — an inline copy
+              // would say the same thing twice with nothing to act on. The
+              // wave still stops, for the same reason a 402 does.
+              //
+              // Tracked on its OWN flag, not `billingBlocked`: that one's copy
+              // names the organization's credit limit, which is a different
+              // refusal from a model limit and would mis-name this one.
+              if (
+                err instanceof LaunchJourneyRunError &&
+                err.limitDialogRaised
+              ) {
+                limitDialogBlocked = true;
+                return "stop";
+              }
               // BILLING is terminal for the WHOLE wave, not for this target.
               // Every sibling would be rejected identically, so stop
               // scheduling and report the limit ONCE — `firstError` already
@@ -1490,6 +1518,15 @@ export function NewSwarmCreateFlow({
         intensity: pushIntensity,
       });
 
+      if (
+        limitDialogBlocked &&
+        (launched === 0 || launchedBatch.length === 0)
+      ) {
+        // The dialog IS the explanation, and it names the fix. A banner saying
+        // the requests "were rejected" adds nothing and reads as a second,
+        // unrelated failure.
+        return;
+      }
       if (launched === 0 || launchedBatch.length === 0) {
         // Nothing is running, so leaving the flow would strand the user on an
         // empty view with no explanation. Rows that DID land are real, and the
@@ -1514,6 +1551,10 @@ export function NewSwarmCreateFlow({
         toast.success(
           `Launched ${launched} ${launched === 1 ? "run" : "runs"}`,
         );
+      } else if (limitDialogBlocked) {
+        // No cause named here — the dialog already carries it. The count is
+        // what this toast adds: the runs that DID land are real.
+        toast.warning(`Launched ${launched} of ${targets.length} runs`);
       } else if (billingBlocked) {
         // ONE billing message for the whole wave. The count matters here in a
         // way it doesn't for other partial failures: the remaining runs were

@@ -23,7 +23,7 @@ export const SUITE_SETTINGS_GROUPS = [
 
 /**
  * Placement manifest for the fixed sections of one settings page. Grading
- * spans Quality gate and Checks by stage, with Where it runs between them.
+ * spans Quality gate and Evaluators, with Where it runs between them.
  * Trigger configuration remains hidden; these groups support key lookup and
  * parity checks, rather than selecting tabs.
  */

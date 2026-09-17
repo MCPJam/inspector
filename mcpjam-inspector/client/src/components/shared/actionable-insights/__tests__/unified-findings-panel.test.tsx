@@ -138,8 +138,7 @@ describe("walkthrough findings layout", () => {
     ).toBeNull();
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(analyze.onRun).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Analyze findings" }));
-    expect(analyze.onRun).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: /Analyze/ })).toBeNull();
   });
 
   it("opens the details sheet without recorded evidence or a successful comparison", () => {
@@ -490,7 +489,7 @@ describe("analysis states and provenance", () => {
         "data-analysis-phase",
         phase,
       );
-      expect(screen.getByRole("button", { name: label })).toBeDisabled();
+      expect(screen.getByText(label)).toBeVisible();
       expect(screen.getByTestId("unified-finding-observed")).toBeVisible();
     },
   );
@@ -511,11 +510,11 @@ describe("analysis states and provenance", () => {
       finding().observed,
     );
   });
-  it("uses a single pending action and retains the current finding", () => {
+  it("shows pending status and retains the current finding", () => {
     renderPanel({
       analyze: { available: true, pending: true, error: null, onRun: vi.fn() },
     });
-    expect(screen.getByRole("button", { name: "Analyzing…" })).toBeDisabled();
+    expect(screen.getByRole("status")).toHaveTextContent("Analyzing…");
     expect(screen.getByTestId("unified-finding-observed")).toBeVisible();
   });
   it("distinguishes not analyzed, incomplete, and known-empty results", () => {
@@ -640,6 +639,93 @@ describe("analysis states and provenance", () => {
     expect(screen.getByTestId("unified-finding-caveat")).toHaveTextContent(
       "No run-wide rate",
     );
+  });
+  it("discloses proposed trials that were not verified, and stays quiet when all were", () => {
+    renderPanel({
+      mode: "ai",
+      provenance: [
+        provenance({
+          groupKind: "ai_discovery",
+          mechanismBasis: "complete",
+          verification: {
+            proposed: 6,
+            confirmed: 4,
+            unsupported: 1,
+            inconclusive: 1,
+            unchecked: 0,
+          },
+        }),
+      ],
+    });
+    openDetails();
+    expect(
+      screen.getByTestId("unified-finding-verification"),
+    ).toHaveTextContent(
+      "Verified 4 of 6 proposed trials (1 did not show it, 1 could not be verified); only verified trials are counted.",
+    );
+  });
+  it("prints nothing about verification when every proposed trial was confirmed or the backend sent none", () => {
+    renderPanel({
+      mode: "ai",
+      provenance: [
+        provenance({
+          groupKind: "ai_discovery",
+          verification: {
+            proposed: 6,
+            confirmed: 6,
+            unsupported: 0,
+            inconclusive: 0,
+            unchecked: 0,
+          },
+        }),
+      ],
+    });
+    openDetails();
+    expect(screen.queryByTestId("unified-finding-verification")).toBeNull();
+    expect(screen.queryByTestId("unified-finding-caveat")).toBeNull();
+  });
+  it("names the measured error groups a consolidated finding was built from", () => {
+    const merged = finding({
+      id: "merged:mechanism:1",
+      title: "6 of 40 trials failed to save the server.",
+      observed: "6 of 40 trials failed to save the server.",
+      affected: { count: 6, total: 40, unit: "iterations" },
+    });
+    renderPanel({
+      mode: "ai",
+      findings: [merged],
+      provenance: [
+        provenance({
+          candidateId: merged.id,
+          groupKind: "ai_discovery",
+          sourceCandidateIds: ["rf_src1", "rf_src2"],
+        }),
+      ],
+      snapshot: snapshot({
+        deterministicFindings: [
+          finding({
+            id: "rf_src1",
+            observed:
+              "`save_project_servers` returned an error in 3 of 40 iterations.",
+          }),
+          finding({
+            id: "rf_src2",
+            observed:
+              "`save_project_servers` rejected the arguments in 3 of 40 iterations.",
+          }),
+        ],
+      }),
+    });
+    openDetails();
+    const sources = screen.getByTestId("unified-finding-sources");
+    expect(sources).toHaveTextContent("Consolidated from 2 error groups");
+    expect(sources).toHaveTextContent("returned an error in 3 of 40");
+    expect(sources).toHaveTextContent("rejected the arguments in 3 of 40");
+  });
+  it("shows no consolidation section on a finding that was not merged", () => {
+    renderPanel({ mode: "ai" });
+    openDetails();
+    expect(screen.queryByTestId("unified-finding-sources")).toBeNull();
   });
   it("does not print a coverage footer under the findings panel", () => {
     renderPanel({

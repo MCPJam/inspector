@@ -654,6 +654,20 @@ If you instead run evals inside your own CI job with [`@mcpjam/sdk`](/sdk/concep
         run: npx vitest run evals/
 ```
 
+#### Without a provider key
+
+Prefix the model with `mcpjam/` and MCPJam runs it on your organization's credits, so `MCPJAM_API_KEY` is the only secret the job needs:
+
+```yaml
+      - name: Run SDK evals
+        env:
+          MCPJAM_API_KEY: ${{ secrets.MCPJAM_API_KEY }}
+          EVAL_MODEL: mcpjam/anthropic/claude-sonnet-4.5
+        run: npx vitest run evals/
+```
+
+See [LLM Providers](/sdk/reference/llm-providers) for which models are hosted and how the spend is capped.
+
 The SDK automatically attaches available CI metadata on GitHub Actions, GitLab CI, CircleCI, Buildkite, Jenkins, Vercel, and Netlify. You do not need to pass `mcpjam.ci`; an explicit object still replaces detection, and `mcpjam: { ci: {} }` disables it. This SDK behavior is separate from the hosted CLI launch detector, which supports GitHub Actions only.
 
 See [Save Results to MCPJam](/sdk/concepts/saving-results) for auto-save, the manual reporting APIs, CI metadata (branch, commit SHA, run URL), and artifact upload (JUnit XML, Jest/Vitest JSON).

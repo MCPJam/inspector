@@ -74,6 +74,25 @@ describe("TraceRawView scroll-edge fade", () => {
 });
 
 describe("TraceRawView", () => {
+  it("labels saved context and preserves the recorded evidence", () => {
+    renderWithProviders(
+      <TraceRawView trace={{ traceVersion: 1, messages: [], recordedContext: { modelId: "z-ai/glm-4.5" } } as never} />,
+    );
+    expect(screen.getByTestId("trace-raw-recorded-context")).toHaveTextContent("Saved session evidence");
+    expect(screen.getByTestId("json-editor")).toHaveTextContent("z-ai/glm-4.5");
+  });
+
+  it("does not label a live request payload as saved session evidence", () => {
+    renderWithProviders(
+      <TraceRawView
+        trace={{ traceVersion: 1, messages: [], recordedContext: { modelId: "z-ai/glm-4.5" } } as never}
+        requestPayloadHistory={{ entries: [makeEntry(0, "System")], hasUiMessages: true }}
+      />,
+    );
+    expect(screen.queryByTestId("trace-raw-recorded-context")).not.toBeInTheDocument();
+    expect(screen.getByTestId("json-editor")).toHaveTextContent("System");
+  });
+
   it("shows the latest request payload for live history (no turn/step header)", () => {
     const { rerender } = renderWithProviders(
       <TraceRawView

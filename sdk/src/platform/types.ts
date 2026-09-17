@@ -1,3 +1,8 @@
+import type { CaseJudgeSettings } from "../contract/judge-settings.js";
+import type {
+  JudgeRubric,
+  JudgeEvidenceManifest,
+} from "../contract/goal-completion.js";
 import type {
   BrowserAgentCommand,
   BrowserAgentResult,
@@ -1120,11 +1125,18 @@ export interface PlatformEvalRunJudgeState {
   threshold: number | null;
 }
 
-export interface PlatformEvalRunGoalCompletionJudge
-  extends PlatformEvalRunJudgeState {
+export interface PlatformEvalRunGoalCompletionJudge extends PlatformEvalRunJudgeState {
+  progress?: {
+    total: number;
+    completed: number;
+    errors: number;
+    skipped: number;
+  };
+  judgeTemplateVersion?: number;
+  judgeTemplateHash?: string;
   /**
-   * Per-case grades. EMPTY unless `status` is `"completed"` — a pending or
-   * failed judge carries no cases, and `status` is what says which.
+   * Per-iteration measurements and unscored errors on terminal jobs.
+   * Pending jobs expose progress; failed jobs retain completed measurements.
    */
   cases: PlatformEvalRunGoalCompletionCase[];
 }
@@ -1157,8 +1169,14 @@ export interface PlatformEvalRunJudgeCase {
   reason: string | null;
 }
 
-export interface PlatformEvalRunGoalCompletionCase
-  extends PlatformEvalRunJudgeCase {
+export interface PlatformEvalRunGoalCompletionCase extends PlatformEvalRunJudgeCase {
+  status?: "scored" | "error" | "skipped";
+  gradingKey?: string;
+  errorCode?: string;
+  judgeTemplateVersion?: number;
+  judgeTemplateHash?: string;
+  evidenceHash?: string;
+  evidenceManifest?: JudgeEvidenceManifest;
   /** Rubric criteria the answer satisfied. */
   rubricHits: string[];
 }
@@ -1597,6 +1615,16 @@ export type PlatformEvalSuiteGoalCompletionJudge = {
    */
   threshold?: number;
   /**
+   * Whether the judge's verdict may DECIDE a trial or only describe it.
+   *
+   * Spelled in the vocabulary the request asked for: `required` under
+   * vocabulary 2, `gating` under vocabulary 1. The API has always returned
+   * this; the type omitted it, which left the CLI exporter unable to read
+   * back a role a caller had just written. Absent on a suite that never set
+   * one, and on older API deployments.
+   */
+  role?: "advisory" | "required" | "gating";
+  /**
    * Presentation severity. Legal only with an advisory role. Absent when
    * the suite has none, and on older API deployments.
    */
@@ -1612,14 +1640,7 @@ export type PlatformEvalSuiteGoalCompletionJudge = {
    * agreement with a question nobody is asking. Absent on older API
    * deployments and on suites with no criteria.
    */
-  rubric?: {
-    criteria: Array<{
-      id: string;
-      label: string;
-      description?: string;
-      required?: boolean;
-    }>;
-  } | null;
+  rubric?: JudgeRubric | null;
 };
 
 /**
@@ -1679,6 +1700,8 @@ export interface PlatformEvalSuiteSettingsBase {
    * `judgeModel`, which is `null` for a suite that never picked one.
    */
   judge: PlatformEvalSuiteGoalCompletionJudge & {
+    contractVersion?: 4;
+    automatic?: boolean;
     /**
      * Stored groundedness, when the suite has a reserved slot. Read-only
      * while execution is unwired — PATCH refuses this key.
@@ -2020,6 +2043,7 @@ export interface PlatformEvalStep {
  * (vocabulary 1) and {@link PlatformEvalCaseV2} (vocabulary 2).
  */
 export interface PlatformEvalCaseBase {
+  judge?: CaseJudgeSettings;
   id: string;
   /**
    * The case's effective DECLARED id — what it answers to in a suite file, an
@@ -2588,6 +2612,9 @@ export interface PlatformClient {
 
 /** Full client detail, including the resolved config DTO and its read-backs. */
 export interface PlatformClientDetail {
+  /** Saved configuration revision, read atomically with config. */
+  versionId?: string;
+  versionNumber?: number;
   id: string;
   name: string;
   /** The concurrency token — see {@link PlatformClient.configId}. */
@@ -3515,6 +3542,7 @@ export interface PlatformJourney {
   /** Sessions run against EACH target. Total sessions = targets x this. */
   sessionsPerTarget: number | null;
   maxTurns: number | null;
+  setupWrites?: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -3997,6 +4025,7 @@ export interface PlatformSwarm {
   environmentIds: string[];
   sessionsPerTarget: number | null;
   maxTurns: number | null;
+  setupWrites?: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -4285,6 +4314,27 @@ export interface PlatformInsightsFindingProvenance {
    * run-wide mechanism rate is claimed. */
   mechanismBasis: "complete" | "sampled" | "none";
   affectedIterationIds: string[];
+  /** For a mechanism consolidated across error groups: the deterministic
+   * candidates it was merged from. */
+  sourceCandidateIds?: string[];
+  /**
+   * Per-member verification of an AI mechanism. Every trial the mechanism
+   * proposed was checked against its own recorded evidence; `confirmed` is
+   * the published count, and the others are disclosed, never counted.
+   * Absent on deterministic groups and on older backends.
+   */
+  verification?: {
+    proposed: number;
+    confirmed: number;
+    unsupported: number;
+    inconclusive: number;
+    unchecked: number;
+    members?: Array<{
+      iterationId: string;
+      verdict: "supported" | "unsupported" | "inconclusive" | "unchecked";
+      reason?: string;
+    }>;
+  };
   /** Per-prose-field origin for the view this provenance accompanies.
    * Producer-owned: a deterministic fallback sentence and a model that wrote
    * the same sentence are indistinguishable to a consumer. */

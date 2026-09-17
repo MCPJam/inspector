@@ -178,7 +178,27 @@ export type EvaluationConfigSnapshot = {
  * about whether something gates is precisely the disagreement you cannot
  * afford. Consumers join to the snapshot on {@link definitionHash}.
  */
-export type ScoreResult = {
+export type JudgeEvidenceProvenance = {
+  judgeTemplateVersion?: number;
+  judgeTemplateHash?: string;
+  evidenceHash?: string;
+  evidenceManifest?: {
+    version: 1;
+    traceComplete: true;
+    traceFields: string[];
+    messageCount: number;
+    spanCount: number;
+    artifactSources: Array<{
+      sourceId: string;
+      mediaType: string;
+      modality: "image" | "audio" | "video" | "file";
+    }>;
+    uncaptured: string[];
+    inputBytes: number;
+  };
+};
+
+export type ScoreResult = JudgeEvidenceProvenance & {
   scorerId: string;
   scorerVersion: string;
   /** Joins this result to its definition in the run's snapshot. */
@@ -218,7 +238,7 @@ export type ScoreResult = {
  * no code path where a scorer asserts its own verdict.
  */
 export type ScoreRawOutcome =
-  | {
+  | (JudgeEvidenceProvenance & {
       kind: "scored";
       /** Must be a finite number in [0,1]; anything else finalizes to `error`. */
       value: number;
@@ -227,7 +247,7 @@ export type ScoreRawOutcome =
       model?: string;
       promptHash?: string;
       scope?: PredicateScope;
-    }
+    })
   | { kind: "skipped"; rationale?: string; scope?: PredicateScope }
   | { kind: "not_applicable"; rationale?: string; scope?: PredicateScope };
 
@@ -247,7 +267,12 @@ export type ScoreRawOutcome =
  * `score(context, signal)`.
  */
 export type ScorerContextV1 = {
+  /** Complete captured runtime records for this iteration, in prompt order. */
+  recordedContext?: unknown[];
+  toolDefinitions?: unknown;
+  evidenceUnavailable?: string[];
   version: 1;
+  gradingKey?: string;
   scenario: {
     title: string;
     isNegativeTest?: boolean;
@@ -257,6 +282,7 @@ export type ScorerContextV1 = {
   /** Exactly what the deterministic predicates evaluate against. */
   transcript: import("../predicates/types.js").IterationTranscript;
   trace: {
+    [key: string]: unknown;
     messages: Array<{ role: string; content: unknown }>;
     spans?: import("../eval-reporting-types.js").EvalTraceSpanInput[];
   };

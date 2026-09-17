@@ -323,7 +323,13 @@ export interface ModelDefinition {
   /**
    * True when the model comes from the MCPJam backend hosted catalog (billed to
    * MCPJam credits). Drives `isMCPJamProvidedModelMenuItem` and the free/paid
-   * locks. Absent on BYOK/org/custom models.
+   * locks.
+   *
+   * Explicitly false on every own-provider picker row, including dynamic
+   * OpenRouter, Bedrock, Ollama and custom models. IDs can overlap the hosted
+   * catalog; provider + ID alone cannot recover the user's credential choice.
+   * The server treats false as a BYOK opt-out, while true still requires a
+   * hosted catalog match. Omitted preserves legacy ID-based classification.
    */
   hosted?: boolean;
   /**

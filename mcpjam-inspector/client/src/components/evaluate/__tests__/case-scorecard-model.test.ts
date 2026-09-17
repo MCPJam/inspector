@@ -589,7 +589,7 @@ describe("the scorer library", () => {
 
 describe("the judge", () => {
   const suiteJudgeConfig = {
-    goalCompletion: { judgeModel: "anthropic/claude", threshold: 0.8 },
+    goalCompletion: { judgeModel: "anthropic/claude", threshold: 0.8, autoRun: false },
   };
 
   it("reports what the suite will actually do, and the case's one override", () => {

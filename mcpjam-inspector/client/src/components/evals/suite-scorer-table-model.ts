@@ -1,3 +1,4 @@
+import type { GoalJudgePolicy } from "@/shared/judge-defaults";
 /**
  * The Scorers table as configuration — what will grade each link of the chain.
  *
@@ -189,12 +190,7 @@ export function withGoalCompletionRole(
 }
 
 export type ScorerLibraryCategoryId =
-  | "discovery"
-  | "selection"
-  | "call"
-  | "userValue"
-  | "budget"
-  | "response";
+  "discovery" | "selection" | "call" | "userValue" | "budget" | "response";
 
 /**
  * `as const satisfies` rather than a `Record<_, string>` annotation: the
@@ -299,11 +295,7 @@ export function scorerLibraryCategories(
 }
 
 export type ScorerTableRowKind =
-  | "observed"
-  | "match"
-  | "predicate"
-  | "judge"
-  | "preset";
+  "observed" | "match" | "predicate" | "judge" | "preset";
 
 /**
  * A standard-check family a row belongs to, when its kind backs one.
@@ -371,6 +363,7 @@ const STAGE_CONFIG_CHIP_LABEL: Record<StageConfigState["state"], string> = {
   judgeOnRequest: "Judge on request",
   judgeAutomatic: "Judge automatic",
   judgeOff: "Judge off",
+  judgeUnknown: "Grading state unavailable",
 };
 
 /**
@@ -707,22 +700,21 @@ export function buildScorerTable(input: {
   /** Overrides the judge row's On state; a case's judge-skipped flag. */
   judgeEnabled?: boolean;
   judgeCapabilities?: SuiteCapabilities["judge"];
+  judgePolicy?: GoalJudgePolicy;
   /** List the standard checks nothing authors yet as off rows. Default on. */
   listPresets?: boolean;
 }): ScorerTableView {
   void input.judgeCapabilities;
   const rules =
     input.rules ??
-    input.predicates.map(
-      (predicate, index): EffectiveRule => ({
-        predicate,
-        source: "suite",
-        index,
-        suppressed: false,
-      }),
-    );
+    input.predicates.map((predicate, index): EffectiveRule => ({
+      predicate,
+      source: "suite",
+      index,
+      suppressed: false,
+    }));
   // A case can skip the judge, never switch on one the suite turned off.
-  const configuredMode = judgeMode(input.judgeConfig);
+  const configuredMode = judgeMode(input.judgeConfig, input.judgePolicy);
   const judgeEnabled = configuredMode !== "off" && (input.judgeEnabled ?? true);
   const mode: JudgeMode = judgeEnabled ? configuredMode : "off";
   const groups = USER_VALUE_STAGES.map((stage, index) => ({

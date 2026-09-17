@@ -443,7 +443,7 @@ describe("EvaluateTab", () => {
     });
   });
 
-  it.each([false, true])("tracks only launched case runs unless the case skips judging (%s)", async (skipJudge) => {
+  it.each([false, true])("leaves grading of launched case runs to the backend (skipJudge: %s)", async (skipJudge) => {
     mocks.handleRerun.mockResolvedValueOnce({
       status: "started",
       runIds: ["new-a", "new-b"],
@@ -457,15 +457,11 @@ describe("EvaluateTab", () => {
     const runQueries = () => mocks.useQuery.mock.calls
       .filter(([name]) => name === "testSuites:getTestSuiteRun")
       .map(([, args]) => (args as { runId: string }).runId);
-    if (skipJudge) {
-      expect(runQueries()).toEqual([]);
-    } else {
-      expect(runQueries()).toEqual(expect.arrayContaining(["new-a", "new-b"]));
-      mocks.useQuery.mockClear();
-      mocks.route.current = { type: "list" };
-      view.rerender(<EvaluateTab projectId="ws-1" />);
-      expect(runQueries()).toEqual(expect.arrayContaining(["new-a", "new-b"]));
-    }
+    expect(runQueries()).toEqual([]);
+    mocks.useQuery.mockClear();
+    mocks.route.current = { type: "list" };
+    view.rerender(<EvaluateTab projectId="ws-1" />);
+    expect(runQueries()).toEqual([]);
   });
 
   it("does not request judging for a refused launch or ordinary suite rerun", async () => {

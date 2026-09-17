@@ -72,6 +72,16 @@ function renderTable(
 }
 
 describe("SuiteScorerTable", () => {
+  it("shows disabled checked boxes for required match rules", () => {
+    const { container } = renderTable();
+    const rows = container.querySelectorAll('[data-scorer-row="match"]');
+    expect(rows.length).toBeGreaterThanOrEqual(2);
+    for (const row of rows) {
+      const checkbox = within(row as HTMLElement).getByRole("checkbox");
+      expect(checkbox).toBeChecked();
+      expect(checkbox).toBeDisabled();
+    }
+  });
   it("mounts muted observed rows with folded facts", () => {
     const { container } = renderTable({
       stageFacts: {
@@ -410,11 +420,10 @@ it("shows short names at rest and allows multiple role editors to stay open", ()
       { type: "toolLatencyUnder", ms: 1234 },
     ],
   });
-  expect(screen.getByText("Evaluators")).toBeInTheDocument();
   for (const question of Object.values(USER_VALUE_STAGE_QUESTIONS))
     expect(screen.queryByText(question)).toBeNull();
   expect(
-    screen.getByRole("heading", { name: "Checks by stage" }),
+    screen.getByRole("heading", { name: "Evaluators" }),
   ).toBeInTheDocument();
   const row = container.querySelector(
     '[data-scorer-id="predicate:0"]',

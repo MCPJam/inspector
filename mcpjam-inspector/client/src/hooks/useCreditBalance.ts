@@ -5,6 +5,9 @@ import { readStoredActiveOrganizationId } from "@/lib/active-organization-storag
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 
 export interface CreditBalanceState {
+  platformPaidFallback?: boolean;
+  platformFreeBudgetExhausted?: boolean;
+  platformFreeBudgetResetAt?: number | null;
   /** Shared paid top-up credits currently available to the organization. */
   paidCreditsRemaining: number;
   /**
@@ -34,6 +37,8 @@ export interface CreditBalanceState {
    */
   billingModel: "daily" | "monthly_per_seat" | "monthly_flat";
   topUpEligible?: boolean;
+  outstandingDeficitCredits?: number;
+  rolloverCreditsRemaining?: number;
   rolloverCapCredits?: number | null;
   /** Team monthly allowance granted this period. Only set when monthly. */
   monthlyAllowanceTotal?: number;
@@ -74,7 +79,16 @@ export const normalizeBalance = (
   if (!raw || typeof raw !== "object") return undefined;
   const r = raw as Record<string, unknown>;
   return {
+    platformPaidFallback: r.platformPaidFallback === true,
+    platformFreeBudgetExhausted: r.platformFreeBudgetExhausted === true,
+    platformFreeBudgetResetAt: optionalNumberOrUndefined(r.platformFreeBudgetResetAt) ?? null,
     paidCreditsRemaining: optionalNumber(r.paidCreditsRemaining),
+    outstandingDeficitCredits: optionalNumberOrUndefined(
+      r.outstandingDeficitCredits,
+    ),
+    rolloverCreditsRemaining: optionalNumberOrUndefined(
+      r.rolloverCreditsRemaining,
+    ),
     hasPurchaseHistory: r.hasPurchaseHistory === true,
     freeDailyPercentUsed: clampPercent(r.freeDailyPercentUsed),
     freeDailyResetAt: optionalNumber(r.freeDailyResetAt),

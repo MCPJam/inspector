@@ -31,6 +31,7 @@ import {
 } from "@/shared/declared-tools";
 import { useChat, type UIMessage } from "@ai-sdk/react";
 import { toast } from "sonner";
+import { track } from "@/lib/analytics";
 import {
   convertToModelMessages,
   type ChatTransport,
@@ -2165,8 +2166,18 @@ export function useChatSession(
     [],
   );
 
+  const paidFallbackNotices = useRef(new Set<string>());
   const handleStreamDataPart = useCallback(
     (part: unknown) => {
+      if (part && typeof part === "object" && "type" in part && part.type === "data-platform-paid-fallback") {
+        const session = chatSessionIdRef.current ?? "new";
+        if (!paidFallbackNotices.current.has(session)) {
+          paidFallbackNotices.current.add(session);
+          toast.info("MCPJam's shared free allowance is unavailable; this chat is using your credits.");
+          track("platform_paid_fallback_notice", { chatSessionId: session });
+        }
+        return;
+      }
       if (
         part &&
         typeof part === "object" &&

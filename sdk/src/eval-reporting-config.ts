@@ -9,6 +9,7 @@ const NORMALIZED = Symbol("normalizedEvalReportingConfig");
 
 /** A total inventory: adding a public option requires choosing its boundary. */
 export const REPORTING_CONFIG_FIELDS = {
+  selectedClient: "wire",
   enabled: "local",
   terminalStatus: "local",
   transport: "local",

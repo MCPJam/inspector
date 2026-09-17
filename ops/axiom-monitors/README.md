@@ -20,6 +20,34 @@ Plan mode runs every query read-only against the real API and asserts it
 produces the declared `columnName`. A monitor whose APL does not compile, or
 whose query cannot produce the column the threshold reads, is never written.
 
+## What the alert actually says
+
+Axiom's Slack payload is, in order: the monitor **name**, the **whole
+description**, the managed marker, and *then* the line carrying the number
+(`Current value of 150.97 is above the threshold value of 150`). The number is
+last. Every extra paragraph of description pushes it further into Slack's
+"Show more" fold, in a channel that also carries Sentry and PostHog alerts.
+
+So a description is not documentation — it is the pager text. Write it as:
+
+1. One line a woken engineer can act on: tier, what crossed, and what normal
+   looks like for comparison.
+2. The triage step, as something to paste or click. `View Query` is already in
+   the message, so "open View Query and replace the last line with …" beats
+   restating the whole APL.
+3. Two or three readings of the result: this shape means X, that shape means Y.
+4. One pointer to the runbook.
+
+Everything else — why the monitor exists, how the threshold was measured, the
+incident it came from — goes in **`rationale`**, a repo-only field that
+`apply.mjs` never sends to Axiom. It is still code-reviewed and still diffable;
+it just does not wake anyone up. `apply.mjs` hard-fails a description over 900
+characters and tells you to move the prose.
+
+The seven `inspector-*` definitions predate this rule and carry
+`"descriptionLengthExempt": true`. That flag is visible debt, not an
+endorsement: delete it when the description is rewritten.
+
 ## Replay before changing thresholds
 
 ```bash
@@ -50,7 +78,14 @@ data, treat it as expired rather than as a passing SILENT.
 
 Notifier IDs are org-specific, so definitions reference a **logical key**
 (`mcpjam-alerts-page`) and the script resolves it from
-`AXIOM_NOTIFIER_MCPJAM_ALERTS_PAGE` at apply time. An unresolved notifier is a
+`AXIOM_NOTIFIER_MCPJAM_ALERTS_PAGE` at apply time.
+
+Logical keys in use: `mcpjam-alerts-page` (`jnWZGoVFRcvyTdUjBe`),
+`mcpjam-alerts-warn` (`Q3BO52GfVxE82N9tWH`), and `llm-safety`
+(`ox9MvFUsrwZtx9HfxM`, the existing "MCPJam LLM Safety Slack" notifier that
+every LLM-spend monitor routes through — set `AXIOM_NOTIFIER_LLM_SAFETY`). All
+three post to `#mcpjam-alerts` today; `llm-safety` exists as its own object so
+spend pages can be moved to a quieter channel with an env-var change. An unresolved notifier is a
 hard failure, never a default — a monitor wired to nothing looks healthy
 forever, which is the exact failure this work exists to fix.
 
@@ -119,3 +154,10 @@ someone records that observation here, assume the pre-existing behavior
 appear in the current API's monitor payload. After `--apply` the script reports
 any field the API did not persist. Treat such a report as real: `resolvable`
 silently dropped would turn a day-long incident into repeated notifications.
+
+### Spend containment rollout
+
+`node --test ops/axiom-monitors/monetary-parsing.test.mjs` verifies that each shipped spend query reads `5e-7` as a microdollar-rounded `0.000001`, never `5`.
+`node ops/axiom-monitors/replay.mjs --spend` replays the two monetary ladders against the 2026-09-15 07:00–08:00Z incident hour and the same ordinary hour on September 8 and 10. It fails if history has expired. This requires the existing read-only Axiom credentials.
+
+Apply changed definitions individually with `--only <key>`, after replay. New definitions cover free-budget refusal, 80% utilization, settlement backlog, daily accounting drift, and a switch left disabled for 24 hours. Move the existing `llm-safety` notifier to the dedicated spending channel and verify a disposable monitor delivery as a rollout step; these files do not send messages or change a live notifier.

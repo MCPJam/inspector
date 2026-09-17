@@ -64,7 +64,12 @@ export function coverageForCase(
     }
   }
 
-  if (card.judge.judge?.runsForCase) out.userValue.judge = true;
+  // Coverage describes configured evaluators, even while scheduling policy is
+  // loading or execution is paused. It does not promise a grading attempt.
+  const judge = card.judge.judge;
+  if (judge && judge.suiteMode !== "off" && !judge.skippedForCase) {
+    out.userValue.judge = true;
+  }
 
   for (const stage of USER_VALUE_STAGES) {
     const entry = out[stage];
