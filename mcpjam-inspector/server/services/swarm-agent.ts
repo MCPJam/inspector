@@ -208,6 +208,7 @@ export interface JourneySnapshot {
    * "no `criteria` stamp" mean "no rubric" downstream).
    */
   rubric?: JourneyCriterion[];
+  standardCheckProfile?: { version: 1; criteria: JourneyCriterion[] };
 }
 
 export interface CreateJourneyRunResult {
@@ -486,7 +487,7 @@ export async function createJourneyRun(
         : {}),
       // Asserted by this process, never a caller: the runner is the only
       // honest source for what it can execute.
-      runnerCapabilities: [...runnerCapabilities()],
+      runnerCapabilities: [...runnerCapabilities(), "swarm-standard-checks-v1"],
     },
     NON_LLM_TIMEOUT_MS,
   );
@@ -597,6 +598,8 @@ export async function reportAttempt(
 export interface SwarmCriterionResult {
   criterionId: string;
   passed: boolean;
+  /** An evaluator error is unmeasured, not a failed assertion. */
+  status?: "scored" | "error";
   reason: string;
   scope?: { kind: "turn"; promptIndex: number };
 }
@@ -617,6 +620,8 @@ export interface SwarmChecksClaim {
     messages?: unknown[];
     spans?: unknown[];
     widgetRenderObservations?: unknown[];
+    traceComplete?: boolean;
+    recordedContext?: unknown;
   } | null;
   /**
    * Session-level token totals (Σ of turn-trace usage), or null when no turn
@@ -651,6 +656,7 @@ export async function claimSwarmChecks(
       projectId: args.projectId,
       runId: args.runId,
       chatSessionId: args.chatSessionId,
+      checkCapability: "swarm-standard-checks-v1",
     },
     NON_LLM_TIMEOUT_MS,
     signal,
@@ -760,12 +766,7 @@ export async function failSwarmChecks(
 }
 
 type JourneyHeartbeatStatus =
-  | "running"
-  | "completed"
-  | "partial"
-  | "failed"
-  | "rate_limited"
-  | "missing";
+  "running" | "completed" | "partial" | "failed" | "rate_limited" | "missing";
 
 export async function heartbeatJourneyRun(
   convexHttpUrl: string,

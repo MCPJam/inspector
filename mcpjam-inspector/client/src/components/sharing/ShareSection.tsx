@@ -256,7 +256,7 @@ export function ShareSection<TEnvelope>({
   }
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-6">
       {guestSharingPrompt}
       <div className="space-y-2">
         <label className="text-sm font-medium" htmlFor={testIds.linkOutput}>

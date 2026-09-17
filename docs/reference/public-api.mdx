@@ -366,12 +366,15 @@ drafts are stable across retries when they are not.
 | `POST .../journeys/generate` | Draft journeys for a persona passed **by value**, so you can draft before you save |
 
 <Warning>
-  The generation routes consume **no credits** — the model cost is on MCPJam.
-  They are still metered two ways, by request COUNT, and the two mean
-  different waits: a per-minute burst brake (`429`, retry in seconds) and your
-  plan's daily generation quota (`429`, resets at UTC midnight). Both normally
-  carry `Retry-After` — honor it rather than guessing, and fall back to your
-  own backoff on the refusal that arrives without one.
+  The generation routes consume **no customer credits** — the model cost is on
+  MCPJam. They are still subject to usage limits, and each limit means a
+  different wait: a per-minute burst brake (`429`, retry in seconds), your
+  organization's daily generation quota (`429`, resets at UTC midnight), and
+  MCPJam's own daily budget for the feature (`429` with
+  `details.code: "platform_capacity"`, resets at UTC midnight). All three carry
+  `Retry-After` — honor it rather than guessing. `details.canTopUp` is `false`
+  on every one: buying credits does not lift them, so do not retry in a loop
+  or switch identities to get around them.
 </Warning>
 
 **Swarms — runs** (`/projects/{projectId}/journeys/{journeyId}/runs`,

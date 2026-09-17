@@ -439,11 +439,15 @@ describe("SwarmsTab — New swarm create flow", () => {
     // A linkable route rather than in-page state, so the browser back button
     // exits the flow and a reload doesn't drop the user back on the list.
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    // The empty state's own button, not the header's. This project has no
+    // personas, and since REEV-6 the header offers creation only once the list
+    // has something in it, so this is the button an empty project actually
+    // shows. The assertion is unchanged: whichever button you press, creation
+    // is a route, not an in-page state flip.
     fireEvent.click(
-      within(screen.getByTestId("swarms-tab-header-chrome")).getByRole(
-        "button",
-        { name: /^create new swarm$/i },
-      ),
+      within(screen.getByTestId("swarms-empty-hero")).getByRole("button", {
+        name: /^create new swarm$/i,
+      }),
     );
     expect(navigateMock).toHaveBeenCalledWith("/swarms/new");
     // Still on the list: navigation is what swaps the view, not a state flip.
@@ -1069,7 +1073,7 @@ describe("SwarmsTab — New swarm create flow", () => {
       environmentIds: ["env-1"],
       config: { sessionsPerTarget: 1, maxTurns: 6, setupWrites: true },
     });
-    // Grading is opt-in: an untouched launch stamps no rubric and no judge.
+    // Untouched authoring omits overrides; the backend applies automatic grading defaults.
     expect(
       screen.queryByTestId("new-swarm-grading-toggle"),
     ).not.toBeInTheDocument();
@@ -1089,6 +1093,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(
       screen.getAllByLabelText(/Watch Refund Chaser/).length,
     ).toBeGreaterThan(0);
+    // No run/session has arrived in this fixture yet; pending is evidence-based.
     expect(screen.getByText(/Pending: Refund a charge/)).toBeInTheDocument();
     const swarmRunGroupId = (launchJourneyRunMock.mock.calls[0]![0] as {
       swarmRunGroupId: string;

@@ -31,6 +31,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
             "unexpected": [],
           },
         ],
+        "requestPayloadsJson": "[]",
         "sessionMessages": [
           {
             "content": "Pinned tool call: show_map on "srv-1"",
@@ -71,6 +72,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
             "unexpected": [],
           },
         ],
+        "requestPayloadsJson": "[{"turnId":"trace_turn_<scrubbed>","promptIndex":1,"stepIndex":0,"payload":{"system":"","tools":{},"messages":[{"role":"user","content":"Pinned tool call: show_map on \\"srv-1\\""},{"role":"assistant","content":"Pinned tool call show_map executed"},{"role":"user","content":"Describe the widget"}]}}]",
         "sessionMessages": [
           {
             "content": "Pinned tool call: show_map on "srv-1"",
@@ -586,6 +588,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch m
             "unexpected": [],
           },
         ],
+        "requestPayloadsJson": "[{"turnId":"trace_turn_<scrubbed>","promptIndex":0,"stepIndex":0,"payload":{"system":"","tools":{},"messages":[{"role":"user","content":"Hello"}]}}]",
         "sessionMessages": [
           {
             "content": "Hello",
@@ -671,6 +674,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch m
             "unexpected": [],
           },
         ],
+        "requestPayloadsJson": "[{"turnId":"trace_turn_<scrubbed>","promptIndex":1,"stepIndex":0,"payload":{"system":"","tools":{},"messages":[{"role":"user","content":"Hello"},{"role":"assistant","content":[{"type":"text","text":"Done"}]},{"role":"user","content":"Again"}]}}]",
         "sessionMessages": [
           {
             "content": "Hello",
@@ -934,6 +938,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch p
             "unexpected": [],
           },
         ],
+        "requestPayloadsJson": "[{"turnId":"trace_turn_<scrubbed>","promptIndex":0,"stepIndex":0,"payload":{"system":"","tools":{},"messages":[{"role":"user","content":"Hello"}]}}]",
         "sessionMessages": [
           {
             "content": "Hello",
@@ -1184,6 +1189,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-stream 
             "unexpected": [],
           },
         ],
+        "requestPayloadsJson": "[]",
         "sessionMessages": [
           {
             "content": "Pinned tool call: show_map on "srv-1"",
@@ -1224,6 +1230,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-stream 
             "unexpected": [],
           },
         ],
+        "requestPayloadsJson": "[{"turnId":"trace_turn_<scrubbed>","promptIndex":1,"stepIndex":0,"payload":{"system":"","tools":{},"messages":[{"role":"user","content":"Pinned tool call: show_map on \\"srv-1\\""},{"role":"assistant","content":"Pinned tool call show_map executed"},{"role":"user","content":"Describe the widget"}]}}]",
         "sessionMessages": [
           {
             "content": "Pinned tool call: show_map on "srv-1"",
@@ -1506,6 +1513,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-stream 
             "unexpected": [],
           },
         ],
+        "requestPayloadsJson": "[{"turnId":"trace_turn_<scrubbed>","promptIndex":0,"stepIndex":0,"payload":{"system":"","tools":{},"messages":[{"role":"user","content":"Hello"}]}}]",
         "sessionMessages": [
           {
             "content": "Hello",

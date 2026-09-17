@@ -1317,9 +1317,9 @@ export function NewSwarmCreateFlow({
                   err,
                   "A reused goal could not be updated for this swarm.",
                 );
-                // Only grading can fail here now, and grading is advisory: the
-                // run is still the one the user asked for, so it goes ahead
-                // ungraded rather than being dropped. (The environment
+                // Only the grading update can fail here now. The run is still
+                // the one the user asked for, so it goes ahead with the goal's
+                // previous grading rather than being dropped. (The environment
                 // selection can no longer fail at this point — it is applied at
                 // launch, where a rejection fails that launch loudly.)
               }

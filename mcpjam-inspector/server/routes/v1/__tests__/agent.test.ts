@@ -705,7 +705,7 @@ describe("agent tool surface", () => {
       permalinks?: Array<{ url: string }>;
     };
     expect(created).toEqual([]);
-    expect(result.permalinks?.[0]?.url).toContain("/evals/suite/ts_1");
+    expect(result.permalinks?.[0]?.url).toContain("/evaluate/suite/ts_1");
     executeSpy.mockRestore();
   });
 
@@ -899,7 +899,7 @@ describe("agent tool surface", () => {
         name: "smoke",
         // `?project=` makes the link land on the right project for viewers
         // parked elsewhere (eval routes carry no project segment).
-        url: expect.stringContaining("/evals/suite/ts_1?project=p1"),
+        url: expect.stringContaining("/evaluate/suite/ts_1?project=p1"),
       },
     ]);
     // The model-facing result may be truncated; the collector must not be.
