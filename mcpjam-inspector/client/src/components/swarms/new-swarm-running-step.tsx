@@ -14,7 +14,6 @@
  * cancels it. A finished (or stopped) run goes to Findings on its own — see
  * `COMPLETION_TOAST_DWELL_MS`.
  */
-import { lifecycleChip, verdictBadge } from "./swarm-verdict-presentation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePaginatedQuery, useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
@@ -388,21 +387,43 @@ function RunLiveBridge({
   return null;
 }
 
-function cellTone(outcome: CellView["outcome"]): string {
-  switch (outcome) {
-    case "succeeded":
-      return "border-emerald-500/30 bg-emerald-500/10";
-    case "failed":
-      return "border-destructive/40 bg-destructive/10";
-    case "rate_limited":
-      return "border-amber-500/40 bg-amber-500/10";
+/**
+ * Goal result owns the chip fill. Execution stays on the headline
+ * (`Running:` / `Broke:`) so a broken-but-passed session reads green and a
+ * completed-but-failed one reads red — without a second "Goal result:" label.
+ */
+export function sessionChipTone(args: {
+  outcome: CellView["outcome"];
+  verdict?: JourneySessionRow["verdict"];
+}): string {
+  const goal = args.verdict?.verdict;
+  if (goal === "passed") return "border-success/40 bg-success/10";
+  if (goal === "failed") return "border-destructive/40 bg-destructive/10";
+  if (goal === "inconclusive") return "border-warning/40 bg-warning/10";
+  if (
+    args.verdict &&
+    (args.verdict.grading.state === "queued" ||
+      args.verdict.grading.state === "running")
+  ) {
+    return "border-pending/40 bg-pending/10";
+  }
+  switch (args.outcome) {
     case "running":
-      return "border-primary/40 bg-primary/5";
     case "queued":
       return "border-primary/40 bg-primary/5";
+    case "rate_limited":
+      return "border-warning/40 bg-warning/10";
+    case "failed":
+      return "border-destructive/40 bg-destructive/10";
     default:
       return "border-border/50 bg-muted/15";
   }
+}
+
+export function sessionGoalResultAttr(
+  verdict?: JourneySessionRow["verdict"],
+): string {
+  return verdict?.verdict ?? "unknown";
 }
 
 export function slotView(args: {
@@ -430,7 +451,16 @@ export function slotView(args: {
       limited: "rate_limited",
       withdrawn: "failed",
     } as const;
-    return { outcome: execution[verdict.lifecycle], headline: goal, verdict };
+    const mapped = execution[verdict.lifecycle];
+    return {
+      outcome: mapped,
+      headline: swarmCellHeadline({
+        outcome: mapped,
+        primary: mapped,
+        goal,
+      }),
+      verdict,
+    };
   }
 
   if (outcome === "running") {
@@ -1253,7 +1283,7 @@ export function NewSwarmRunningStep({
                                 aria-label={`Watch ${run.personaName} on ${column.label} session 1`}
                                 className={cn(
                                   "flex items-center gap-1 rounded-lg border px-2.5 py-2",
-                                  cellTone("queued"),
+                                  sessionChipTone({ outcome: "queued" }),
                                 )}
                               >
                                 <PersonaPixelAvatar
@@ -1283,6 +1313,9 @@ export function NewSwarmRunningStep({
                                       type="button"
                                       data-testid="new-swarm-running-session"
                                       data-outcome={slot.view.outcome}
+                                      data-goal-result={sessionGoalResultAttr(
+                                        slot.view.verdict,
+                                      )}
                                       aria-pressed={selected}
                                       aria-label={`Watch ${
                                         run.personaName
@@ -1302,7 +1335,10 @@ export function NewSwarmRunningStep({
                                       className={cn(
                                         "flex items-center gap-1 rounded-lg border px-2.5 py-2 text-left transition-colors",
                                         "hover:brightness-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                                        cellTone(slot.view.outcome),
+                                        sessionChipTone({
+                                          outcome: slot.view.outcome,
+                                          verdict: slot.view.verdict,
+                                        }),
                                         selected &&
                                           "ring-2 ring-primary ring-offset-1 ring-offset-background",
                                       )}
@@ -1316,29 +1352,6 @@ export function NewSwarmRunningStep({
                                       />
                                       <p className="min-w-0 flex-1 text-xs font-semibold leading-tight text-foreground">
                                         {slot.view.headline}
-                                        {slot.view.verdict && (
-                                          <span className="block text-[10px] text-muted-foreground">
-                                            <span>
-                                              {
-                                                lifecycleChip(
-                                                  slot.view.verdict.lifecycle,
-                                                ).label
-                                              }
-                                            </span>
-                                            {" · "}
-                                            <span
-                                              className={
-                                                verdictBadge(slot.view.verdict)
-                                                  .tone
-                                              }
-                                            >
-                                              {
-                                                verdictBadge(slot.view.verdict)
-                                                  .label
-                                              }
-                                            </span>
-                                          </span>
-                                        )}
                                       </p>
                                     </button>
                                   );
