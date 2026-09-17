@@ -1,3 +1,4 @@
+import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 /**
  * MCPJam Stream Handler
  *
@@ -310,6 +311,8 @@ import {
   wrapBackendToolsForTrace,
 } from "../services/evals/eval-trace-capture";
 import {
+  capRequestPayloadsForPersist,
+  cloneTraceValue,
   emitRequestPayload,
   emitTraceSnapshot,
   generateLiveTraceTurnId,
@@ -1281,6 +1284,7 @@ interface StepContext {
 type PersistedAssistantPart = TextPart | ToolCallPart | ReasoningUIPart;
 
 interface LiveTraceTurnContext {
+  recordedRequestPayloads: LiveChatTraceRequestPayloadEntry[];
   turnId: string;
   promptIndex: number;
   promptMessageStartIndex: number;
@@ -3021,7 +3025,7 @@ async function processOneStep(
       .filter((pair): pair is [string, unknown] => pair !== null),
   ) as ToolSet;
 
-  emitRequestPayload(writer, {
+  const requestPayloadEntry: LiveChatTraceRequestPayloadEntry = {
     turnId: traceTurn.turnId,
     promptIndex: traceTurn.promptIndex,
     stepIndex,
@@ -3030,7 +3034,9 @@ async function processOneStep(
       tools: toolsForPayload,
       messages: scrubbedMessages,
     }),
-  });
+  };
+  traceTurn.recordedRequestPayloads.push(cloneTraceValue(requestPayloadEntry));
+  emitRequestPayload(writer, requestPayloadEntry);
 
   // Call the Convex streaming endpoint. The default endpoint is /stream
   // (MCPJam-provided models); org BYOK chat targets /stream/org and adds
@@ -4084,6 +4090,7 @@ export async function runChatEngineLoop(
   // three must reach the same answer about the same call — once.
   const approvalDecisions = createApprovalDecisionCache();
   const traceTurn: LiveTraceTurnContext = {
+    recordedRequestPayloads: [],
     turnId: generateLiveTraceTurnId(),
     promptIndex: getPromptIndex(messageHistory),
     promptMessageStartIndex: getPromptMessageStartIndex(messageHistory),
@@ -4595,7 +4602,12 @@ export async function runChatEngineLoop(
       // partial by definition — recording it as a completed conversation
       // would corrupt history and reverse the cost-safety win.
       if (runSucceeded && !aborted) {
-        const trace: PersistedTurnTrace = driver.buildPersistedTrace();
+        const trace: PersistedTurnTrace = {
+          ...driver.buildPersistedTrace(),
+          requestPayloads: capRequestPayloadsForPersist(
+            traceTurn.recordedRequestPayloads,
+          ),
+        };
         capturedTurnTrace = trace;
         try {
           const persistOutcome = await onConversationComplete?.(

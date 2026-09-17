@@ -1,3 +1,4 @@
+import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import { EVAL_SANDBOX_CAPACITY_POLICY } from "../utils/run-supervisor/capacity-retry.js";
 import type { TimeoutMetadata } from "../utils/run-supervisor/deadline.js";
 import { isCredentialFreeGithubExecution } from "./github-checks/credential-policy.js";
@@ -4027,6 +4028,7 @@ const runLocalIteration = async ({
   const acc: LocalEvalTurnAcc = {
     conversationMessages: [],
     capturedSpans: [],
+    requestPayloads: [],
     accumulatedUsage: {
       inputTokens: 0,
       outputTokens: 0,
@@ -4687,6 +4689,7 @@ const runLocalIteration = async ({
         ? { systemPrompt: streamEnhancedSystemPromptForPersist }
         : {}),
       spans: acc.capturedSpans,
+      requestPayloads: acc.requestPayloads,
       prompts: promptTraceSummaries,
       ...(widgetSnapshots ? { widgetSnapshots } : {}),
       // PR 9: browser artifacts from the streamed Computer Use path.
@@ -4947,6 +4950,7 @@ const runLocalIteration = async ({
         ? { systemPrompt: streamEnhancedSystemPromptForPersist }
         : {}),
       spans: acc.capturedSpans,
+      requestPayloads: acc.requestPayloads,
       prompts: promptTraceSummaries,
       ...(widgetSnapshots ? { widgetSnapshots } : {}),
       // PR 9: browser artifacts collected before the failure still persist.
@@ -5801,6 +5805,7 @@ const runHostedIterationWithBrowser = async (
     | { source?: "model" | "setup"; code?: string; httpStatus?: number }
     | undefined = undefined;
   const capturedSpans: EvalTraceSpan[] = [];
+  const requestPayloads: LiveChatTraceRequestPayloadEntry[] = [];
   /**
    * Wire results for the friction signals, keyed as the GRADED call array
    * keys its calls. Filled per turn by `drive-hosted-eval-turn`; empty when
@@ -6005,6 +6010,7 @@ const runHostedIterationWithBrowser = async (
       messageHistory,
       traceMessageHistory,
       capturedSpans,
+      requestPayloads,
       evidenceResults,
       evidenceHadHole,
       accumulatedUsage,
@@ -6239,6 +6245,7 @@ const runHostedIterationWithBrowser = async (
       ? { systemPrompt: backendEnhancedSystemPromptForPersist }
       : {}),
     spans: capturedSpans,
+    requestPayloads,
     prompts: promptTraceSummaries,
     // Where the friction signals read their tool results from. THREE TIERS,
     // and the middle one is the reason this is threaded at all:

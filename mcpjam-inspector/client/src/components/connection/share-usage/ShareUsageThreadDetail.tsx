@@ -1,3 +1,4 @@
+import { useRequestPayloads } from "@/hooks/use-request-payloads";
 import { TranscriptEmptyState } from "@/components/chat-v2/transcript-empty-state";
 import {
   useCallback,
@@ -337,6 +338,7 @@ export function ShareUsageThreadDetail({
   });
   const { snapshots } = useSharedChatWidgetSnapshots({ threadId });
   const { traces: turnTraces } = useSharedChatTurnTraces({ threadId });
+  const requestPayloads = useRequestPayloads(threadId, turnTraces);
   const { artifacts: browserArtifacts } = useSessionBrowserArtifacts({
     threadId,
   });
@@ -502,6 +504,7 @@ export function ShareUsageThreadDetail({
       messages: messages as any,
       widgetSnapshots,
       spans: hydratedSpans,
+      requestPayloads,
       ...(renderObservations.length > 0
         ? { widgetRenderObservations: renderObservations }
         : {}),
@@ -515,6 +518,7 @@ export function ShareUsageThreadDetail({
     thread?.recordedContext,
     widgetSnapshots,
     hydratedSpans,
+    requestPayloads,
     replayUrl,
     renderObservations,
     interactionSteps,

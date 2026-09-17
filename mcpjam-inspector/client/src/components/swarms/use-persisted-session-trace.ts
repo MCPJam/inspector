@@ -1,3 +1,4 @@
+import { useRequestPayloads } from "@/hooks/use-request-payloads";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   useSessionBrowserArtifacts,
@@ -69,6 +70,7 @@ export function usePersistedSessionTrace(threadId: string | null): {
     includeRecordedContext: true,
   });
   const { traces: turnTraces } = useSharedChatTurnTraces({ threadId });
+  const requestPayloads = useRequestPayloads(threadId, turnTraces);
   // MCP App widget snapshots captured by the swarm runner per turn. Joined
   // into the envelope (same as ShareUsageThreadDetail) so the Chat view
   // replays the actual widget instead of collapsing to a plain tool pill.
@@ -238,6 +240,7 @@ export function usePersistedSessionTrace(threadId: string | null): {
       ? null
       : {
           traceVersion: 1,
+          requestPayloads,
           messages: messages as TraceEnvelope["messages"],
           ...(thread?.recordedContext
             ? { recordedContext: thread.recordedContext }

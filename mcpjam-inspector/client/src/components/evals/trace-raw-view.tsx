@@ -1,18 +1,6 @@
-/**
- * Raw trace panel — single JsonEditor with bordered chrome around the tree.
- * When `requestPayloadHistory` is provided (live chat or rehydrated session), Raw shows the resolved
- * model request payload (`system`, `tools`, `messages`) from the last entry. For live chat that's the
- * latest `request_payload` SSE event; for rehydrated sessions, `useChatSession` synthesizes a single
- * entry from the current `systemPrompt`, currently-resolved tool schemas, and the converted thread —
- * so tool schemas reflect what would be sent next, not a historical snapshot. `messages` are merged
- * with `trace.messages` from the live envelope when that snapshot is ahead of the last captured
- * request. If both `entries` and `traceTranscriptFromUi` are empty (e.g. no servers connected on
- * rehydration), we fall back to the `trace` blob below. Otherwise shows the stored trace blob
- * (evals / offline).
- */
+/** Raw shows the last resolved model request when recorded, or saved session evidence. */
 
 import { Copy, Loader2, ScanSearch } from "lucide-react";
-import type { ModelMessage } from "ai";
 import { toast } from "@/lib/toast";
 import { track } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
@@ -24,53 +12,12 @@ import {
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
-import type { ResolvedModelRequestPayload } from "@/shared/model-request-payload";
 import type { HarnessBuiltinToolInfo } from "@/hooks/useHarnessBuiltinTools";
 import type { TraceEnvelope, TraceMessage } from "./trace-viewer-adapter";
 
 export interface TraceRawRequestPayloadHistory {
   entries: LiveChatTraceRequestPayloadEntry[];
   hasUiMessages: boolean;
-}
-
-function getTraceEnvelopeMessages(
-  trace: TraceEnvelope | TraceMessage | TraceMessage[] | null,
-): ModelMessage[] | null {
-  if (!trace || Array.isArray(trace)) {
-    return null;
-  }
-  if (
-    typeof trace === "object" &&
-    "messages" in trace &&
-    Array.isArray((trace as { messages: unknown }).messages)
-  ) {
-    return (trace as { messages: ModelMessage[] }).messages;
-  }
-  return null;
-}
-
-/**
- * Last `request_payload` reflects the outgoing API call (no assistant text for the current turn yet).
- * `trace_snapshot` appends the assistant to the live envelope — merge so Raw stays in sync with Chat/Trace.
- */
-function mergeLiveRequestPayloadWithTraceSnapshot(
-  payload: ResolvedModelRequestPayload,
-  trace: TraceEnvelope | TraceMessage | TraceMessage[] | null,
-): ResolvedModelRequestPayload {
-  const traceMessages = getTraceEnvelopeMessages(trace);
-  if (!traceMessages || traceMessages.length === 0) {
-    return payload;
-  }
-
-  if (traceMessages.length > payload.messages.length) {
-    return { ...payload, messages: traceMessages };
-  }
-  if (traceMessages.length < payload.messages.length) {
-    // New user turn: request line already has the new prompt; snapshot not updated yet.
-    return payload;
-  }
-
-  return { ...payload, messages: traceMessages };
 }
 
 /** Same centered spinner as the trace timeline `TraceViewer` Suspense fallback. */
@@ -154,8 +101,8 @@ export function TraceRawView({
           <span className="font-medium text-foreground">
             inside the sandbox
           </span>
-          , so the <code className="font-mono">tools</code> above are empty here.
-          Its native built-in tools (see the Trace tab for live calls):
+          , so the <code className="font-mono">tools</code> above are empty
+          here. Its native built-in tools (see the Trace tab for live calls):
         </p>
         <ul className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1">
           {harnessBuiltinTools.map((t) => (
@@ -174,14 +121,20 @@ export function TraceRawView({
     ) : null;
 
   if (requestPayloadHistory) {
-    const hasLiveRequestLine =
-      hasUiMessages && orderedEntries.length > 0 && latestEntry != null;
+    const hasLiveRequestLine = orderedEntries.length > 0 && latestEntry != null;
 
     if (hasLiveRequestLine && latestEntry) {
-      const displayPayload = mergeLiveRequestPayloadWithTraceSnapshot(
-        latestEntry.payload,
-        trace,
-      );
+      const { messages, ...requestConfig } = latestEntry.payload;
+      const displayPayload = {
+        ...requestConfig,
+        ...(latestEntry.messageCount === undefined ? { messages } : {}),
+        ...(orderedEntries.some((entry) => entry.truncated)
+          ? { truncated: true }
+          : {}),
+        ...(latestEntry.messageCount !== undefined
+          ? { messageCount: latestEntry.messageCount }
+          : {}),
+      };
 
       if (growWithContent) {
         return (
@@ -285,18 +238,14 @@ export function TraceRawView({
     </div>
   );
 
-  const recordedContextNote =
-    !Array.isArray(trace) &&
-    "recordedContext" in trace &&
-    trace.recordedContext ? (
-      <p
-        className="px-3 py-2 text-xs text-muted-foreground"
-        data-testid="trace-raw-recorded-context"
-      >
-        Saved session evidence: messages, timing, and captured tool catalogs.
-        This is not the exact per-step model request shown in live Playground.
-      </p>
-    ) : null;
+  const recordedContextNote = (
+    <p
+      className="px-3 py-2 text-xs text-muted-foreground"
+      data-testid="trace-raw-recorded-context"
+    >
+      Saved session evidence; exact model requests are unavailable.
+    </p>
+  );
 
   if (growWithContent) {
     return (

@@ -1,3 +1,4 @@
+import { hydrateTurnRequestPayloads } from "@/components/evals/turn-trace-spans";
 import { releaseBrowserForChat } from "@/lib/browser-shell/chat-handoff";
 import { withWebMcpTraffic } from "@/lib/webmcp-traffic";
 import { useBrowserReadinessStore } from "@/stores/browser-readiness-store";
@@ -710,6 +711,7 @@ export interface UseChatSessionReturn {
         finishReason?: string;
         usage?: LiveChatTraceUsage;
         spansBlobUrl?: string | null;
+        requestPayloadsBlobUrl?: string | null;
         modelId?: string;
         pageToolsAtTurn?: MintedPageToolRecord[];
       }>;
@@ -881,6 +883,7 @@ function createEmptyLiveTraceState(): LiveTraceAccumulatorState {
 }
 
 export interface HydratedTurnTrace {
+  requestPayloads?: LiveChatTraceRequestPayloadEntry[];
   turnId: string;
   promptIndex: number;
   startedAt: number;
@@ -929,6 +932,7 @@ async function resolveHydratedTurnTraces(
         finishReason?: string;
         usage?: LiveChatTraceUsage;
         spansBlobUrl?: string | null;
+        requestPayloadsBlobUrl?: string | null;
         modelId?: string;
         pageToolsAtTurn?: MintedPageToolRecord[];
       }>
@@ -955,6 +959,9 @@ async function resolveHydratedTurnTraces(
       : raw;
   const results = await Promise.all(
     boundedRaw.map(async (trace) => {
+      const requestPayloads = await hydrateTurnRequestPayloads([trace]).catch(
+        () => [],
+      );
       let spans: EvalTraceSpan[] = [];
       if (trace.spansBlobUrl) {
         try {
@@ -985,6 +992,7 @@ async function resolveHydratedTurnTraces(
         finishReason: trace.finishReason,
         usage: trace.usage,
         spans,
+        requestPayloads,
         modelId: trace.modelId,
         ...(trace.pageToolsAtTurn !== undefined
           ? { pageToolsAtTurn: trace.pageToolsAtTurn }
@@ -1067,7 +1075,9 @@ function buildLiveTraceStateFromTurnTraces(
     turns,
     messages: [],
     events: [],
-    requestPayloadHistory: [],
+    requestPayloadHistory: ordered.flatMap(
+      (trace) => trace.requestPayloads ?? [],
+    ),
     activeTurnId: null,
     activeTurnHasSnapshot: false,
     anySnapshotSeen: true,
@@ -4714,6 +4724,7 @@ export function useChatSession(
           finishReason?: string;
           usage?: LiveChatTraceUsage;
           spansBlobUrl?: string | null;
+          requestPayloadsBlobUrl?: string | null;
           modelId?: string;
         }>;
       },

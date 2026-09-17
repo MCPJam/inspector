@@ -152,7 +152,7 @@ describe("TraceRawView", () => {
     expect(screen.getByTestId("json-editor")).toHaveTextContent("System 3");
   });
 
-  it("merges live trace envelope messages so the latest assistant is visible before the next user message", () => {
+  it("keeps the exact outgoing request when the transcript has advanced", () => {
     const outgoingPayload = {
       system: "You are a helpful assistant.",
       tools: {},
@@ -195,7 +195,7 @@ describe("TraceRawView", () => {
       />,
     );
 
-    expect(screen.getByTestId("json-editor")).toHaveTextContent(
+    expect(screen.getByTestId("json-editor")).not.toHaveTextContent(
       "Here is the reply to the follow up.",
     );
   });
@@ -252,4 +252,35 @@ describe("TraceRawView", () => {
 
     expect(screen.getByTestId("json-editor")).toHaveTextContent("stored");
   });
+});
+
+it("shows saved requests without UI messages, with explicit truncation and no envelope note", () => {
+  renderWithProviders(
+    <TraceRawView
+      trace={
+        {
+          messages: [{ role: "assistant", content: "later response" }],
+          recordedContext: {},
+        } as never
+      }
+      requestPayloadHistory={{
+        entries: [
+          {
+            ...makeEntry(0, "stored system"),
+            truncated: true,
+            messageCount: 9,
+          },
+        ],
+        hasUiMessages: false,
+      }}
+    />,
+  );
+  const json = screen.getByTestId("json-editor");
+  expect(json).toHaveTextContent("stored system");
+  expect(json).toHaveTextContent('"truncated": true');
+  expect(json).toHaveTextContent('"messageCount": 9');
+  expect(json).not.toHaveTextContent("later response");
+  expect(
+    screen.queryByTestId("trace-raw-recorded-context"),
+  ).not.toBeInTheDocument();
 });
