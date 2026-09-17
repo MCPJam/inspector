@@ -585,7 +585,20 @@ A **Results / Metrics** toggle above the case list switches what each cell shows
 - **Results** (default) — pass/fail status, a pass-count fraction, and a progress bar broken down by outcome.
 - **Metrics** — P50 and P95 latency, average tokens per iteration, and average tool calls per iteration.
 
-Click a **test case name** to open its definition — the user prompt, checks, and expected outcome. Click a **result cell** (pass/fail) to open a **case drawer** with per-pairing averages (passed count, P50, P95, tokens, calls) and a flat iteration list. Click an iteration row to open its full detail view — scorecard, transcript, tool calls, and trace — without leaving the run page. A **Back** breadcrumb returns to the iteration list. In the scorecard, each scorer row shows an **Expected** field (the configured criterion) and an **Actual** field (what the run recorded). When the findings pipeline has produced a narrative for the iteration, the **Actual** field shows the AI-generated explanation with a cited trace evidence disclosure; if the narrative predates the latest grade it is marked stale and the recorded evidence is shown instead.
+Click a **test case name** to open its definition — the user prompt, checks, and expected outcome. Click a **result cell** (pass/fail) to open a **case drawer** with per-pairing averages (passed count, P50, P95, tokens, calls) and a flat iteration list. Click an iteration row to open its full detail view — scorecard, transcript, tool calls, and trace — without leaving the run page. A **Back** breadcrumb returns to the iteration list.
+
+In the scorecard, each scorer row is titled by what it evaluates — standard checks use catalog names such as **Tool errors (isError)** and **Tool hops before the right tool**; the judge row is titled **Outcome achieved**. Each row shows an **Expected** field (the configured rule) and an **Actual** field (what the run recorded).
+
+When a stage fails because the server reported a tool error, the **Actual** field quotes the server's own error message directly from the downloaded trace — for example, `` `create_journey` returned an error: VALIDATION_ERROR: A journey must target at least one host `` — at no model cost. When an AI analysis has run for the iteration, its explanation supersedes the recorded quote for that stage.
+
+The scorecard also shows the current state of the AI analysis:
+
+- **No analysis yet** — "Analyze this run to add AI explanations to these rows." appears above the chain. Click **Analyze** on the run to start it.
+- **Analysis in progress** — "Reading iterations N of M…" updates as the read phase works through the population.
+- **Analysis failed** — a specific reason is shown, such as "This iteration's trace was too large to analyze." The recorded EXPECTED, ACTUAL, and verdict remain on every row regardless.
+- **Analysis ready** — AI-generated explanations appear on each row with a cited trace evidence disclosure. If the narrative predates the latest grade it is marked stale and the recorded evidence is shown instead.
+
+During blind review, none of these status lines are shown — a reviewer labelling a trial is not told whether an explanation is coming.
 
 For CI-managed (SDK) suites, clicking a test name still opens the definition in read-only mode — configuration edits remain locked, but you can inspect the prompt and checks.
 
