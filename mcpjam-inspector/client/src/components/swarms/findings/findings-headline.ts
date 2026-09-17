@@ -213,8 +213,7 @@ function composeLines(
   if (
     opts.terminal === true &&
     launch.total > 0 &&
-    launch.succeeded === 0 &&
-    launch.failed + launch.rateLimited > 0
+    model.neverLaunched === true
   ) {
     if (launch.failed > 0) {
       lines.push(

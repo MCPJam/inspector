@@ -1,4 +1,7 @@
+import { swarmLifecycleLabel } from "@mcpjam/sdk/contract";
 import { TranscriptEmptyState } from "@/components/chat-v2/transcript-empty-state";
+import { SwarmGoalResult, SwarmSessionReport } from "./swarm-report-panel";
+import type { SwarmSessionVerdict } from "@mcpjam/sdk/contract";
 import { useEffect, useMemo, useState } from "react";
 import { useConvexAuth } from "convex/react";
 import {
@@ -14,7 +17,6 @@ import {
   type SessionCriteria,
   type SessionGoalScore,
 } from "@/lib/swarm-api";
-import { SessionGoalScoreBadge } from "@/components/shared/session-quality/session-goal-score-badge";
 import { TraceViewer } from "@/components/evals/trace-viewer";
 import {
   TraceViewModeTabs,
@@ -43,11 +45,7 @@ import {
 } from "./session-rate-limit";
 
 export type SwarmMatrixCellOutcome =
-  | "pending"
-  | "running"
-  | "succeeded"
-  | "failed"
-  | "rate_limited";
+  "pending" | "running" | "succeeded" | "failed" | "rate_limited";
 
 const CELL_META: Record<
   SwarmMatrixCellOutcome,
@@ -64,12 +62,12 @@ const CELL_META: Record<
     text: "text-muted-foreground",
   },
   succeeded: {
-    label: "Done",
+    label: "Ran",
     dot: "bg-success",
     text: "text-success",
   },
   failed: {
-    label: "Fail",
+    label: "Broke",
     dot: "bg-destructive",
     text: "text-destructive",
   },
@@ -155,7 +153,7 @@ export function SwarmHostCell({
   hostLabel,
   sessionIndex,
   outcome,
-  goalScore,
+  verdict,
   criteria,
   selected,
   onSelect,
@@ -164,20 +162,36 @@ export function SwarmHostCell({
   sessionIndex: number;
   outcome: SwarmMatrixCellOutcome;
   goalScore?: SessionGoalScore;
+  verdict?: SwarmSessionVerdict;
   criteria?: SessionCriteria;
   selected: boolean;
   onSelect: () => void;
 }) {
-  const meta = CELL_META[outcome];
+  const executionOutcome = verdict
+    ? (
+        {
+          pending: "pending",
+          running: "running",
+          ran: "succeeded",
+          broke: "failed",
+          limited: "rate_limited",
+          withdrawn: "failed",
+        } as const
+      )[verdict.lifecycle]
+    : outcome;
+  const meta = CELL_META[executionOutcome];
+  const executionLabel = verdict
+    ? swarmLifecycleLabel(verdict.lifecycle)
+    : meta.label;
   return (
     <button
       type="button"
       onClick={onSelect}
       data-testid="swarm-host-cell"
       data-outcome={outcome}
-      aria-label={`Open session ${sessionIndex + 1} on ${hostLabel} (${
-        meta.label
-      })`}
+      aria-label={`Open session ${
+        sessionIndex + 1
+      } on ${hostLabel} (${executionLabel})`}
       className={cn(
         "inline-flex items-center gap-1.5 rounded-md border px-2 py-1.5 text-left text-[11px] transition-colors",
         "hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
@@ -191,9 +205,16 @@ export function SwarmHostCell({
         #{sessionIndex + 1}
       </span>
       <span className={cn("size-1.5 rounded-full", meta.dot)} />
-      <span className={cn("font-semibold", meta.text)}>{meta.label}</span>
-      <SessionGoalScoreBadge goalScore={goalScore} />
-      <SessionCriteriaChip criteria={criteria} />
+      <span className={cn("font-semibold", meta.text)}>{executionLabel}</span>
+      <SwarmGoalResult verdict={verdict} />
+      {verdict ? (
+        <span className="text-[10px] text-muted-foreground">
+          {verdict.counts.gatingPassed}/{verdict.counts.gating} required ·{" "}
+          {verdict.counts.advisoryFailed} advisory findings
+        </span>
+      ) : (
+        <SessionCriteriaChip criteria={criteria} />
+      )}
     </button>
   );
 }
@@ -355,6 +376,7 @@ export function SwarmSessionsMatrix({
                 sessionIndex={sessionIndex}
                 outcome={outcome}
                 goalScore={convexSession?.goalScore}
+                verdict={convexSession?.verdict}
                 criteria={convexSession?.criteria}
                 selected={selected}
                 onSelect={() =>
@@ -430,7 +452,7 @@ export function SwarmLiveStreamPane({
   const { isAuthenticated } = useConvexAuth();
   const sessionHost = useHostSnapshotForSession(convexSession?.id ?? null);
   const targetHost = useHostSnapshotForHost(
-    convexSession ? null : selection?.hostId ?? null,
+    convexSession ? null : (selection?.hostId ?? null),
     isAuthenticated,
   );
   const resolvedHost = convexSession ? sessionHost : targetHost;
@@ -599,26 +621,31 @@ export function SwarmLiveStreamPane({
               Following
             </span>
           ) : null}
-          {isStreaming || persisted.loading ? (
-            <Loader2 className="size-3 animate-spin text-muted-foreground" />
-          ) : (
+          {!convexSession?.verdict &&
+            (isStreaming || persisted.loading ? (
+              <Loader2 className="size-3 animate-spin text-muted-foreground" />
+            ) : (
+              <span
+                className={cn(
+                  "size-1.5 rounded-full",
+                  emptyCompletedTrace ? "bg-warning" : meta.dot,
+                )}
+              />
+            ))}
+          {!convexSession?.verdict && (
             <span
               className={cn(
-                "size-1.5 rounded-full",
-                emptyCompletedTrace ? "bg-warning" : meta.dot,
+                "text-[11px] font-semibold",
+                emptyCompletedTrace ? "text-warning-foreground" : meta.text,
               )}
-            />
+            >
+              {emptyCompletedTrace ? "No conversation" : meta.label}
+            </span>
           )}
-          <span
-            className={cn(
-              "text-[11px] font-semibold",
-              emptyCompletedTrace ? "text-warning-foreground" : meta.text,
-            )}
-          >
-            {emptyCompletedTrace ? "No conversation" : meta.label}
-          </span>
         </span>
       </div>
+
+      <SwarmSessionReport session={convexSession} />
 
       {providerRateLimit ? (
         <div data-testid="swarm-live-pane-rate-limit">
@@ -758,8 +785,11 @@ export function SwarmLiveStreamPane({
               <span role="alert">
                 Could not load this session's host configuration.
               </span>
-            ) : persisted.error ?? persisted.spanError ? (
-              <ErrorCard error={persisted.error ?? persisted.spanError} variant="inline" />
+            ) : (persisted.error ?? persisted.spanError) ? (
+              <ErrorCard
+                error={persisted.error ?? persisted.spanError}
+                variant="inline"
+              />
             ) : showLoading ||
               (displayTrace && resolvedHost.status === "loading") ? (
               <TranscriptEmptyState kind={displayTrace || persisted.loading ? "loading" : "streaming"} />

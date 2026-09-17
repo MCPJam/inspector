@@ -14,6 +14,7 @@
  * cancels it. A finished (or stopped) run goes to Findings on its own — see
  * `COMPLETION_TOAST_DWELL_MS`.
  */
+import { lifecycleChip, verdictBadge } from "./swarm-verdict-presentation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePaginatedQuery, useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
@@ -112,6 +113,7 @@ type RunningSelection = SwarmMatrixSelection & {
 type CellView = {
   outcome: SwarmMatrixCellOutcome | "queued";
   headline: string;
+  verdict?: JourneySessionRow["verdict"];
 };
 
 type SessionSlot = {
@@ -185,10 +187,10 @@ export function swarmCellHeadline(args: {
   if (args.outcome === "rate_limited") {
     return /\d+\/\d+ pass/.test(args.primary)
       ? "Run completed: Goal completion had mixed results"
-      : "Run limited: not run";
+      : "Execution limited";
   }
   if (args.outcome === "failed") {
-    return `Run failed: ${goal}`;
+    return `Broke: ${goal}`;
   }
   return goal;
 }
@@ -403,7 +405,7 @@ function cellTone(outcome: CellView["outcome"]): string {
   }
 }
 
-function slotView(args: {
+export function slotView(args: {
   liveStatus?: SwarmCellLiveStatus;
   session: JourneySessionRow | null;
   attempt?: SwarmAttemptOutcome | null;
@@ -417,6 +419,19 @@ function slotView(args: {
     attempt,
     runStatus,
   });
+
+  if (session?.verdict) {
+    const verdict = session.verdict;
+    const execution = {
+      pending: "pending",
+      running: "running",
+      ran: "succeeded",
+      broke: "failed",
+      limited: "rate_limited",
+      withdrawn: "failed",
+    } as const;
+    return { outcome: execution[verdict.lifecycle], headline: goal, verdict };
+  }
 
   if (outcome === "running") {
     return {
@@ -449,11 +464,7 @@ function slotView(args: {
     };
   }
 
-  // A non-success terminal is reported BEFORE the rubric, and never dressed up
-  // as one. A rate-limited attempt never ran, so it has no rubric result to
-  // show — and reusing the `rate_limited` tone for a partial rubric pass (as
-  // the block below still does for its own middle case) must not leak into a
-  // cell that was genuinely refused by the provider.
+  // Execution refusal remains distinct from a measured goal result.
   if (outcome === "rate_limited") {
     return {
       outcome: "rate_limited",
@@ -470,26 +481,6 @@ function slotView(args: {
       headline: swarmCellHeadline({
         outcome: "failed",
         primary: "failed",
-        goal,
-      }),
-    };
-  }
-
-  const criteria = session?.criteria;
-  if (criteria?.status === "completed" && criteria.results?.length) {
-    const checks = criteria.results.length;
-    const passed = criteria.results.filter((result) => result.passed).length;
-    const scored: CellView["outcome"] =
-      passed === checks
-        ? "succeeded"
-        : passed === 0
-        ? "failed"
-        : "rate_limited";
-    return {
-      outcome: scored,
-      headline: swarmCellHeadline({
-        outcome: scored,
-        primary: `${passed}/${checks} pass`,
         goal,
       }),
     };
@@ -555,8 +546,7 @@ function collectSessionSlots(args: {
       index,
     );
     const direct = snap.stream.cellStatus[swarmCellKey(columnKey, index)] as
-      | SwarmCellLiveStatus
-      | undefined;
+      SwarmCellLiveStatus | undefined;
     const fromEnvelope = Object.values(snap.stream.sessions).find(
       (entry) =>
         entry.envelope.sessionIndex === index &&
@@ -733,10 +723,12 @@ export function NewSwarmRunningStep({
           prev.attempts.length === snapshot.attempts.length &&
           prev.attempts.every((attempt, index) => {
             const next = snapshot.attempts[index];
-            return attempt.status === next?.status &&
+            return (
+              attempt.status === next?.status &&
               attempt.errorCode === next?.errorCode &&
               attempt.errorMessage === next?.errorMessage &&
-              attempt.chatSessionId === next?.chatSessionId;
+              attempt.chatSessionId === next?.chatSessionId
+            );
           }) &&
           prev.sessionsPerTarget === snapshot.sessionsPerTarget &&
           prev.stream === snapshot.stream &&
@@ -758,6 +750,10 @@ export function NewSwarmRunningStep({
                 snapshot.sessions[index]?.chatSessionId &&
               session.status === snapshot.sessions[index]?.status &&
               session.messageCount === snapshot.sessions[index]?.messageCount &&
+              JSON.stringify(session.verdict) ===
+                JSON.stringify(snapshot.sessions[index]?.verdict) &&
+              JSON.stringify(session.observations) ===
+                JSON.stringify(snapshot.sessions[index]?.observations) &&
               session.criteria?.status ===
                 snapshot.sessions[index]?.criteria?.status,
           )
@@ -1007,11 +1003,11 @@ export function NewSwarmRunningStep({
     // Two providers throttling in the same run name neither: the banner would
     // otherwise blame whichever attempt was read first for both.
     const [only] = labels;
-    return { count, label: labels.size === 1 ? only ?? null : null };
+    return { count, label: labels.size === 1 ? (only ?? null) : null };
   }, [snapshots]);
 
   const selectedRunStatus = selection
-    ? snapshots[selection.runId]?.status ?? "running"
+    ? (snapshots[selection.runId]?.status ?? "running")
     : "running";
 
   const fallbackTrace = useMemo(
@@ -1320,6 +1316,29 @@ export function NewSwarmRunningStep({
                                       />
                                       <p className="min-w-0 flex-1 text-xs font-semibold leading-tight text-foreground">
                                         {slot.view.headline}
+                                        {slot.view.verdict && (
+                                          <span className="block text-[10px] text-muted-foreground">
+                                            <span>
+                                              {
+                                                lifecycleChip(
+                                                  slot.view.verdict.lifecycle,
+                                                ).label
+                                              }
+                                            </span>
+                                            {" · "}
+                                            <span
+                                              className={
+                                                verdictBadge(slot.view.verdict)
+                                                  .tone
+                                              }
+                                            >
+                                              {
+                                                verdictBadge(slot.view.verdict)
+                                                  .label
+                                              }
+                                            </span>
+                                          </span>
+                                        )}
                                       </p>
                                     </button>
                                   );
