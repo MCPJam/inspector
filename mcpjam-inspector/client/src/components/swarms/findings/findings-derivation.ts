@@ -9,7 +9,6 @@
  * evidence landed on it (all sessions launched, every graded session
  * passed). Silence renders as "none" — the legend says "do not infer pass".
  */
-import { observationLabel } from "../swarm-verdict-presentation";
 import type { ChatSessionStageFunnel } from "@/components/shared/user-value-chain/user-value-chain-types";
 
 import type {
@@ -256,7 +255,7 @@ function connectionEvidence(run: SwarmOverviewRun): StageEvidence | null {
 function rubricEvidence(run: SwarmOverviewRun): StageEvidence[] {
   return run.findings.map((finding) => ({
     tone: findingSeverity(finding) === "blocking" ? "fail" : ("warn" as const),
-    observation: `Rubric check "${findingName(finding)}" failed`,
+    observation: `Evaluator "${findingName(finding)}" failed`,
     meta: findingSessionLabel(finding),
   }));
 }
@@ -546,20 +545,6 @@ export function deriveSwarmFindingsModel(args: {
           ...judge,
           meta: `${judge.meta} · Chain unmeasured`,
         });
-    }
-    for (const observation of run.report?.observations ?? []) {
-      if (observation.role !== "advisory" || observation.failed === 0) continue;
-      stages[JOURNEY_STAGE_BY_CHAIN[observation.stage]].push({
-        tone: "warn",
-        observation: `${observationLabel(observation.predicateType)}: ${
-          observation.failed
-        } sessions with advisory friction`,
-        meta: `${observation.passed + observation.failed}/${
-          observation.total
-        } measured · ${
-          observation.unavailable
-        } unavailable; does not change the goal result`,
-      });
     }
   }
 
