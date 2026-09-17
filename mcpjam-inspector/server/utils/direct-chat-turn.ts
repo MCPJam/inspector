@@ -49,6 +49,16 @@ import {
 } from "@/shared/mcp-tool-origin-metadata";
 import { pageToolBindingOf } from "./built-in-tools/page-tools";
 import type { PersistedTurnTrace } from "./chat-ingestion";
+import {
+  TurnOutcomeBuilder,
+  classifyAbort,
+  classifyCatch,
+} from "./stream-turn-driver";
+import type {
+  TurnCancellationSource,
+  TurnOutcomeRecord,
+} from "@/shared/turn-outcome";
+import { listUnresolvedToolCalls } from "@/shared/turn-outcome-closure";
 import { logger } from "./logger";
 import {
   applyPrepareAdvertisedTools,
@@ -392,6 +402,12 @@ export interface RunDirectChatTurnOptions {
    * observability; chat currently omits.
    */
   experimentalTelemetry?: Parameters<typeof streamText>[0]["experimental_telemetry"];
+  /**
+   * What an abort on `abortSignal` MEANS for this caller — `client_disconnect`
+   * for a web request signal, `caller` (the default) for a programmatic one.
+   * Only the caller knows which signal it handed in.
+   */
+  cancellationSource?: TurnCancellationSource;
 }
 
 export interface RunDirectChatTurnHandle {
@@ -410,6 +426,13 @@ export interface RunDirectChatTurnHandle {
    * `NoOutputGeneratedError`, which names neither provider nor status.
    */
   lastStreamError: () => unknown;
+  /**
+   * HOW THIS TURN ENDS. The direct engine runs in-process, so it is the
+   * `emulated` runtime on `direct` model access — the distinction that matters
+   * to a reader is whose credentials paid, and that is what `modelAccess`
+   * carries.
+   */
+  outcome: TurnOutcomeBuilder;
 }
 
 export function stampMcpToolOriginProviderOptions(
@@ -573,6 +596,7 @@ export function runDirectChatTurn(
     maxSteps,
     shouldPauseAfterStep,
     suspendedToolCallId,
+    cancellationSource,
   } = options;
   const resolvedMaxSteps =
     typeof maxSteps === "number" && Number.isFinite(maxSteps) && maxSteps > 0
@@ -611,6 +635,13 @@ export function runDirectChatTurn(
   // awaited accessors reject with the SDK's `NoOutputGeneratedError`, so
   // `onError` is the only place the provider's sentence exists.
   let streamError: unknown;
+  const outcomeBuilder = new TurnOutcomeBuilder({
+    engine: "emulated",
+    modelAccess: "direct",
+    ...(cancellationSource
+      ? { defaultCancellationSource: cancellationSource }
+      : {}),
+  });
   let listenerAttached = false;
   const markAborted = () => {
     aborted = true;
@@ -842,6 +873,10 @@ export function runDirectChatTurn(
         return;
       }
       if (chunk.type === "tool-call") {
+        // DISPATCHED. The AI SDK invokes `execute` as soon as it has emitted
+        // this chunk, so from here a cancellation leaves a call whose effect is
+        // unknown rather than one that never started.
+        outcomeBuilder.markToolDispatched(chunk.toolCallId, chunk.toolName);
         traceEvents?.onToolCallChunk?.({
           turnId: traceTurn.turnId,
           promptIndex: traceTurn.promptIndex,
@@ -854,6 +889,7 @@ export function runDirectChatTurn(
         return;
       }
       if (chunk.type === "tool-result") {
+        outcomeBuilder.markToolSettled(chunk.toolCallId);
         // Awaited (the callback may be async — the eval runner renders the MCP
         // App widget here so a rendered widget is mounted before the next
         // step's `prepareStep` decides whether to advertise Computer Use).
@@ -981,9 +1017,26 @@ export function runDirectChatTurn(
       if (aborted || isAbortError(error)) {
         aborted = true;
         turnFinished = true;
+        classifyCatch(outcomeBuilder, {
+          error,
+          signal: abortSignal,
+          // The direct engine invokes the model through `streamText`, so
+          // anything reaching `onError` is past the handover by definition.
+          errorSource: "model",
+          startedAtMs: turnStartedAt,
+        });
         return;
       }
       streamError = error;
+      // `onError` is the ONLY place the provider's own sentence exists: the
+      // awaited accessors all reject with the SDK's `NoOutputGeneratedError`,
+      // which names neither provider nor status.
+      classifyCatch(outcomeBuilder, {
+        error,
+        signal: abortSignal,
+        errorSource: "model",
+        startedAtMs: turnStartedAt,
+      });
 
       const failAt = Date.now();
       finalizeAiSdkTraceOnFailure(traceContext, failAt, {
@@ -1025,8 +1078,13 @@ export function runDirectChatTurn(
       if (aborted || abortSignal?.aborted) {
         aborted = true;
         turnFinished = true;
+        classifyAbort(outcomeBuilder, {
+          signal: abortSignal,
+          startedAtMs: turnStartedAt,
+        });
         return;
       }
+      outcomeBuilder.markCompleted(event.finishReason);
 
       patchAiSdkRecordedSpansMessageRangesFromSteps(
         traceContext.recordedSpans,
@@ -1108,6 +1166,7 @@ export function runDirectChatTurn(
     cleanup,
     isAborted: () => aborted || abortSignal?.aborted === true,
     lastStreamError: () => streamError,
+    outcome: outcomeBuilder,
   };
 }
 
@@ -1128,6 +1187,11 @@ export interface DirectChatTurnHeadlessResult {
   turnTrace: PersistedTurnTrace;
   /** True if the abort signal fired mid-turn. The caller should drop the result on true. */
   aborted: boolean;
+  /**
+   * HOW THE TURN ENDED. Always present — including on the abort path, which
+   * used to leave the caller nothing but a boolean.
+   */
+  outcome: TurnOutcomeRecord;
 }
 
 /**
@@ -1147,6 +1211,14 @@ export async function consumeDirectChatTurnHeadless(
     const messages = Array.isArray(response?.messages)
       ? (response.messages as ModelMessage[])
       : [];
+    // Read AFTER the stream settles, so `onFinish`/`onError` have marked, and
+    // AFTER `messages` so the unresolved list is computed from the same
+    // transcript the caller receives.
+    const outcome = handle.outcome.record(
+      listUnresolvedToolCalls(messages, (id) =>
+        handle.outcome.unresolvedToolCallState(id),
+      ),
+    );
     // Build the real turnTrace from the engine's own accumulator — mirrors the
     // streaming `onPersist` construction (runDirectChatTurn ~902) so headless
     // and streaming produce the identical PersistedTurnTrace.
@@ -1159,6 +1231,7 @@ export async function consumeDirectChatTurnHeadless(
       usage: handle.traceTurn.turnUsage,
       finishReason: finishReason ?? undefined,
       modelId: handle.modelId,
+      outcomeAtTurn: outcome,
     };
     return {
       messages,
@@ -1168,13 +1241,51 @@ export async function consumeDirectChatTurnHeadless(
       spans: handle.traceContext.recordedSpans,
       turnTrace,
       aborted: handle.isAborted(),
+      outcome,
     };
   } catch (error) {
-    // Every accessor above rejects with `NoOutputGeneratedError` once the
-    // stream errored, so prefer the error that actually stopped the turn —
-    // it is all a caller's failure classification has to read.
+    // AN ABORT IS NOT A CRASH, and it used to be reported as one.
+    //
+    // Once the stream is torn down every awaited accessor above rejects with
+    // the SDK's `NoOutputGeneratedError` — a sentence that names neither
+    // provider nor status. On a genuine stream failure `lastStreamError()`
+    // holds the real one and we throw that. On a CANCELLATION there is no
+    // stream error at all, so the old code threw `NoOutputGeneratedError`,
+    // and every caller's `catch` then filed a user pressing Stop as an engine
+    // crash. Return the partial turn with its record instead: the caller
+    // already has `aborted` to branch on, and now has the record that says who
+    // cancelled and which tool calls were left open.
     const streamError = handle.lastStreamError();
     if (streamError !== undefined) throw streamError;
+    if (handle.isAborted()) {
+      // No transcript survives an aborted `streamText` (every accessor
+      // rejects), so the record carries the cancellation and its source; the
+      // dispatch states it holds are still reported by the ENGINE-side closure
+      // at persist time, which reads the history the caller assembled.
+      const outcome = handle.outcome.record();
+      const turnTrace: PersistedTurnTrace = {
+        turnId: handle.traceTurn.turnId,
+        promptIndex: handle.traceTurn.promptIndex,
+        startedAt: handle.traceTurn.turnStartedAt,
+        endedAt: Date.now(),
+        spans: [...handle.traceContext.recordedSpans],
+        usage: handle.traceTurn.turnUsage,
+        modelId: handle.modelId,
+        outcomeAtTurn: outcome,
+      };
+      return {
+        messages: [],
+        steps: [] as DirectChatTurnHeadlessResult["steps"],
+        totalUsage:
+          handle.traceTurn.turnUsage as DirectChatTurnHeadlessResult["totalUsage"],
+        finishReason:
+          undefined as unknown as DirectChatTurnHeadlessResult["finishReason"],
+        spans: handle.traceContext.recordedSpans,
+        turnTrace,
+        aborted: true,
+        outcome,
+      };
+    }
     throw error;
   } finally {
     handle.cleanup();

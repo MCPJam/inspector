@@ -17,6 +17,7 @@
  * `messageHistory` and the engine's `onConversationComplete` tap.
  */
 import type { ModelMessage } from "@ai-sdk/provider-utils";
+import type { TurnOutcomeRecord } from "@/shared/turn-outcome";
 import type {
   AssistantModelMessage,
   ToolModelMessage,
@@ -175,6 +176,13 @@ export interface RunAssistantTurnOptions {
    * its own `chatSessions` row using the returned transcript).
    */
   onConversationComplete?: MCPJamHandlerOptions["onConversationComplete"];
+  /** HOW THE TURN ENDED — fires on both sinks, including paths that persist
+   *  nothing. See `MCPJamHandlerOptions.onTurnOutcome`. */
+  onTurnOutcome?: MCPJamHandlerOptions["onTurnOutcome"];
+  /** What an abort on `abortSignal` means for this caller. */
+  cancellationSource?: MCPJamHandlerOptions["cancellationSource"];
+  /** Whose model credentials paid; defaults to `"hosted"` on this engine. */
+  modelAccess?: MCPJamHandlerOptions["modelAccess"];
   /** Optional stream-cleanup hook (e.g. MCPClientManager teardown). */
   onStreamComplete?: MCPJamHandlerOptions["onStreamComplete"];
   onStreamWriterReady?: MCPJamHandlerOptions["onStreamWriterReady"];
@@ -354,6 +362,15 @@ export interface RunAssistantTurnResult {
    * the harness lease is never committed/released and the next turn 409s.
    */
   harnessSessionCommit?: HarnessSessionCommitPayload;
+  /**
+   * HOW THE TURN ENDED (`shared/turn-outcome.ts`).
+   *
+   * Populated on `streamSink: "none"` from the engine result, and on
+   * `streamSink: "ui"` once the body drains, via the engine's `onTurnOutcome`.
+   * A UI caller that returns before the drain sees `undefined` — the same
+   * timing `turnTrace` has always had.
+   */
+  outcome?: TurnOutcomeRecord;
 }
 
 function extractAssistantMessages(
@@ -434,6 +451,7 @@ function buildHandlerOptions(
     turnTrace: PersistedTurnTrace,
     harnessSessionCommit?: HarnessSessionCommitPayload,
   ) => void,
+  captureOutcome: (outcome: TurnOutcomeRecord) => void,
 ): MCPJamHandlerOptions {
   const wrappedOnConversationComplete: MCPJamHandlerOptions["onConversationComplete"] =
     async (fullHistory, turnTrace, harnessSessionCommit) => {
@@ -548,6 +566,18 @@ function buildHandlerOptions(
       ? { approvalMode: opts.approvalMode }
       : {}),
     onConversationComplete: wrappedOnConversationComplete,
+    // HOW THE TURN ENDED. Chained rather than replaced: a caller that wants the
+    // record directly still gets it, and the result object gets it either way.
+    // Unlike `turnTrace` this fires on the paths that persist NOTHING, which is
+    // the whole reason the option exists.
+    onTurnOutcome: (outcome) => {
+      captureOutcome(outcome);
+      opts.onTurnOutcome?.(outcome);
+    },
+    ...(opts.cancellationSource
+      ? { cancellationSource: opts.cancellationSource }
+      : {}),
+    ...(opts.modelAccess ? { modelAccess: opts.modelAccess } : {}),
     ...(opts.onStreamComplete
       ? { onStreamComplete: opts.onStreamComplete }
       : {}),
@@ -617,6 +647,9 @@ export async function runAssistantTurn(
   let capturedMessages: ModelMessage[] | undefined;
   let capturedTrace: PersistedTurnTrace | undefined;
   let capturedHarnessCommit: HarnessSessionCommitPayload | undefined;
+  // Captured from the engine's `onTurnOutcome`, which fires on BOTH sinks —
+  // including the paths that persist nothing and therefore produce no trace.
+  let capturedOutcome: TurnOutcomeRecord | undefined;
 
   const handlerOptions = buildHandlerOptions(
     opts,
@@ -624,6 +657,9 @@ export async function runAssistantTurn(
       capturedMessages = fullHistory;
       capturedTrace = turnTrace;
       capturedHarnessCommit = harnessSessionCommit;
+    },
+    (outcome) => {
+      capturedOutcome = outcome;
     },
   );
 
@@ -753,6 +789,10 @@ export async function runAssistantTurn(
   // resolved). For streamSink: "ui" the trace populates the wrapped
   // onConversationComplete callback after the response body is drained.
   const turnTrace = capturedTrace ?? engineResult.turnTrace;
+  // Same preference order as `turnTrace`: the callback's copy (which fires on
+  // every path) wins over the engine result's (`"none"` sink only).
+  const outcome =
+    capturedOutcome ?? engineResult.outcome ?? turnTrace?.outcomeAtTurn;
 
   const result: RunAssistantTurnResult = {
     messages,
@@ -770,6 +810,7 @@ export async function runAssistantTurn(
     ...(capturedHarnessCommit
       ? { harnessSessionCommit: capturedHarnessCommit }
       : {}),
+    ...(outcome ? { outcome } : {}),
   };
 
   if (opts.streamSink === "ui" && engineResult.response) {
