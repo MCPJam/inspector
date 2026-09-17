@@ -149,8 +149,11 @@ const percentile = (values, p) => {
   return sorted[lower] + (sorted[upper] - sorted[lower]) * (index - lower);
 };
 const variantKey = (provider, model) => `${provider ?? ""}\0${model ?? ""}`;
+// The column is "Client / Model". With no client, show the model alone rather
+// than padding the cell with the provider or the test framework — neither is a
+// client, and a reader comparing rows takes whatever sits there as one.
 const variantLabel = (client, model, provider) =>
-  [client || provider, model].filter(Boolean).join(" / ") || "Default";
+  [client, model || provider].filter(Boolean).join(" / ") || "Default";
 const RESULT_LABELS = {
   passed: "Passed",
   failed: "Failed",
@@ -316,7 +319,10 @@ function renderBundle(bundle, full, outcome) {
       ]),
     ).values(),
   ];
-  const client = bundle.run.environment?.name ?? bundle.receipt.framework;
+  // The run names the client it executed: a saved MCPJam client, or the
+  // synthetic "SDK harness" when the test code owned the model. `environment`
+  // is a project environment, not a client, and is the weaker label of the two.
+  const client = bundle.run.client?.name ?? bundle.run.environment?.name;
   const variantRows = variants.map((variant) => {
     const rows = cases.filter((row) => variantKey(row.provider, row.model) === variant.key);
     const passedCases = rows.filter((row) => row.verdict === "passed").length;
