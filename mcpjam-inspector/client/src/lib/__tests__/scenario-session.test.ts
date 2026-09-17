@@ -90,6 +90,24 @@ describe("scenario-session", () => {
     clearScenarioSignInReturnPath();
   });
 
+  it.each([
+    "https://evil.example/user-testing/study/token",
+    "//evil.example/user-testing/study/token",
+    "/\\evil.example/user-testing/study/token",
+  ])("rejects unsafe return state: %s", (path) => {
+    writeScenarioSignInReturnPath(path);
+    expect(readScenarioSignInReturnPath()).toBeNull();
+  });
+
+  it("preserves preview state but drops unrelated return parameters", () => {
+    writeScenarioSignInReturnPath(
+      "/user-testing/study/token?surface=preview&redirect=https://evil.example",
+    );
+    expect(readScenarioSignInReturnPath()).toBe(
+      "/user-testing/study/token?surface=preview",
+    );
+  });
+
   it("ignores the retired /chatbox/<slug>/<token> paths", () => {
     expect(extractScenarioTokenFromPath("/chatbox/demo/abc123")).toBeNull();
     expect(extractScenarioTokenFromPath("/chatbox/onlyone")).toBeNull();

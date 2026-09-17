@@ -2415,6 +2415,33 @@ describe("App hosted OAuth callback handling", () => {
     ).toBe(true);
   });
 
+  it.each(["", "?surface=preview"])(
+    "waits for the account before restoring a scenario return: %s",
+    async (query) => {
+      clearHostedOAuthPendingState();
+      clearScenarioSession();
+      sessionStorage.clear();
+      const destination = `/user-testing/demo/token-123${query}`;
+      writeScenarioSignInReturnPath(destination);
+      window.history.replaceState({}, "", "/callback?code=oauth-code");
+      mockConvexAuthState.isAuthenticated = true;
+      mockConvexAuthState.isLoading = false;
+      mockWorkOsAuthState.user = null;
+      mockWorkOsAuthState.isLoading = true;
+      const replaceStateSpy = vi.spyOn(window.history, "replaceState");
+      const view = render(<App />);
+      expect(window.location.pathname).toBe("/callback");
+      expect(readScenarioSignInReturnPath()).toBe(destination);
+      mockWorkOsAuthState.user = { id: "workos-user-1" };
+      mockWorkOsAuthState.isLoading = false;
+      view.rerender(<App />);
+      await waitFor(() => {
+        expect(replaceStateSpy).toHaveBeenCalledWith({}, "", destination);
+      });
+      expect(readScenarioSignInReturnPath()).toBeNull();
+    },
+  );
+
   it("prefers scenario callback restoration over billing callback restoration", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();

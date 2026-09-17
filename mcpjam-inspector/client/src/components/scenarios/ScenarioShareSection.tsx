@@ -97,9 +97,12 @@ export function ScenarioShareSection({
           },
           {
             value: "link_guests",
-            label: "Anyone with the link (guests included)",
-            description:
-              "Anyone with the link can open the scenario, including guests without an account.",
+            label: settings.requiresSignIn
+              ? "Anyone with the link who is signed in"
+              : "Anyone with the link (guests included)",
+            description: settings.requiresSignIn
+              ? "Testers must sign in or create an account to preview and test this scenario."
+              : "Anyone with the link can open the scenario, including guests without an account.",
           },
           {
             value: "project",
@@ -115,7 +118,7 @@ export function ScenarioShareSection({
         ],
         settings.maxShareMode,
       ),
-    [settings.maxShareMode],
+    [settings.maxShareMode, settings.requiresSignIn],
   );
 
   const updateSettings = (next: ScenarioSettings) => {
@@ -142,8 +145,9 @@ export function ScenarioShareSection({
       activeNote={
         accessPreset === "link_guests" ? (
           <p className="text-xs leading-relaxed text-muted-foreground">
-            Guest usage runs on your organization&apos;s credits. Guests are
-            people who open the link without being invited.
+            {settings.requiresSignIn
+              ? "Testers must sign in or create an account to preview and test this scenario."
+              : "Guest usage runs on your organization's credits. Guests are people who open the link without being invited."}
           </p>
         ) : null
       }

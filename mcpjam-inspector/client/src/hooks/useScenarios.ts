@@ -62,6 +62,7 @@ export interface ScenarioSettings {
   temperature: number;
   requireToolApproval: boolean;
   allowGuestAccess: boolean;
+  requiresSignIn?: boolean;
   mode: ScenarioMode;
   /** Org sharing ceiling from the legacy settings envelope. Absent ⇒ no ceiling. */
   maxShareMode?: ScenarioMode;
@@ -119,6 +120,7 @@ export interface ScenarioListItem {
   hostStyle: ScenarioHostStyle;
   mode: ScenarioMode;
   allowGuestAccess: boolean;
+  requiresSignIn?: boolean;
   serverCount: number;
   serverNames: string[];
   /** The named host this scenario resolves through. */
