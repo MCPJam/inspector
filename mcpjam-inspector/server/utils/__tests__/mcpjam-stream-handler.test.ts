@@ -2691,7 +2691,7 @@ describe("mcpjam-stream-handler", () => {
       delete process.env.GUEST_SESSION_HASH_PEPPER;
     });
 
-    it("omits the guest IP hash header when clientIp is null", async () => {
+    it("forwards the shared unattested key when clientIp is null", async () => {
       process.env.GUEST_SESSION_HASH_PEPPER = "test-pepper-for-ip-hash";
 
       await handleMCPJamFreeChatModel({

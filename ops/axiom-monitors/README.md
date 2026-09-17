@@ -154,3 +154,10 @@ someone records that observation here, assume the pre-existing behavior
 appear in the current API's monitor payload. After `--apply` the script reports
 any field the API did not persist. Treat such a report as real: `resolvable`
 silently dropped would turn a day-long incident into repeated notifications.
+
+### Spend containment rollout
+
+`node --test ops/axiom-monitors/monetary-parsing.test.mjs` verifies that each shipped spend query reads `5e-7` as a microdollar-rounded `0.000001`, never `5`.
+`node ops/axiom-monitors/replay.mjs --spend` replays the two monetary ladders against the 2026-09-15 07:00–08:00Z incident hour and the same ordinary hour on September 8 and 10. It fails if history has expired. This requires the existing read-only Axiom credentials.
+
+Apply changed definitions individually with `--only <key>`, after replay. New definitions cover free-budget refusal, 80% utilization, settlement backlog, daily accounting drift, and a switch left disabled for 24 hours. Move the existing `llm-safety` notifier to the dedicated spending channel and verify a disposable monitor delivery as a rollout step; these files do not send messages or change a live notifier.
