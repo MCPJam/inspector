@@ -10,6 +10,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TraceViewer } from "../trace-viewer";
+import { adaptTraceToUiMessages } from "../trace-viewer-adapter";
 import {
   ScenarioHostStyleProvider,
   useScenarioHostStyle,
@@ -1169,6 +1170,20 @@ describe("TraceViewer", () => {
     expect(screen.getByTestId("json-editor").textContent ?? "").toContain(
       "spans",
     );
+  });
+
+  it("passes prepared session messages and review policy through the real Thread", () => {
+    const adaptedTrace = adaptTraceToUiMessages({ trace: widgetSnapshotTrace, toolResultDisplay: "attached-to-tool" });
+    const footer = vi.fn(() => null);
+    render(<TraceViewer trace={widgetSnapshotTrace} adaptedTrace={adaptedTrace}
+      hostSnapshot={{ hostStyle: "claude" }} forcedViewMode="chat" hideToolbar
+      frame="none" interactive={false} widgetPolicy="placeholder"
+      reasoningDisplayMode="collapsible" renderAssistantTurnFooter={footer} />);
+    expect(mockMessageView).toHaveBeenCalledWith(expect.objectContaining({
+      message: adaptedTrace.messages.find(message => message.role === "assistant"),
+      widgetPolicy: "placeholder", interactive: false,
+      reasoningDisplayMode: "collapsible", renderAssistantTurnFooter: footer,
+    }));
   });
 
   // --- Widget snapshot replay ---

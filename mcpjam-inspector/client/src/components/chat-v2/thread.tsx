@@ -1,8 +1,6 @@
-// The inspector's renderer, for surfaces that have its store/context graph.
-// A transcript without it (Sessions, Scenarios, external embedders) renders
-// through `@mcpjam/chat-ui`; see "Which renderer to use" in chat-ui/README.md
-// before adding a third — and keep anything the two must agree on in shared
-// code, not matching CSS (BB-239).
+// Inspector transcript renderer for Playground, Evals, and session review
+// (Sessions, User Testing, Swarms, and share dialogs). Provider-free external
+// embedders use @mcpjam/chat-ui; shared adaptation and primitives live there.
 import {
   useCallback,
   useEffect,
@@ -78,6 +76,7 @@ interface ThreadProps {
   showInlineEdit?: boolean;
   minimalMode?: boolean;
   interactive?: boolean;
+  widgetPolicy?: "live" | "placeholder";
   reasoningDisplayMode?: ReasoningDisplayMode;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   focusMessageId?: string | null;
@@ -174,6 +173,7 @@ export function Thread({
   showInlineEdit = true,
   minimalMode = false,
   interactive = true,
+  widgetPolicy = "live",
   reasoningDisplayMode = "inline",
   mcpToolResultImageRendering,
   focusMessageId = null,
@@ -383,6 +383,7 @@ export function Thread({
           showInlineEdit={showInlineEdit}
           minimalMode={minimalMode}
           interactive={interactive}
+          widgetPolicy={widgetPolicy}
           reasoningDisplayMode={reasoningDisplayMode}
           mcpToolResultImageRendering={mcpToolResultImageRendering}
           focusMessageId={focusMessageId}
