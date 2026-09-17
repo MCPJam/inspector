@@ -473,7 +473,7 @@ describe("deriveHonestyFootnotes", () => {
       launch: { total: 9, succeeded: 6, failed: 3, rateLimited: 2 },
     });
     expect(notes).toContain(
-      "3 of 9 sessions failed to launch — findings cover the sessions that ran",
+      "3 of 9 sessions failed to launch; findings cover the sessions that ran",
     );
     expect(notes).toContain("2 sessions rate limited");
   });
