@@ -68,7 +68,7 @@ import {
   evalSurfaceHeaderClass,
   evalSurfaceRowHoverClass,
 } from "../evals/eval-surface-chrome";
-import { getEffectiveSuiteServers } from "../evals/helpers";
+import { cancellableRunIds, getEffectiveSuiteServers } from "../evals/helpers";
 import { EVAL_DESTRUCTIVE_BUTTON_CLASS } from "../evals/constants";
 import {
   SUITE_RUN_HISTORY_PAGE_SIZE,
@@ -137,6 +137,8 @@ export function SuiteDetailOverview({
   onDeleteTestCasesBatch,
   onRunClick,
   onTestCaseClick,
+  onCancelRun,
+  cancellingRunId = null,
   rerunningSuiteId,
   replayingRunId = null,
   runningTestCaseId = null,
@@ -178,6 +180,12 @@ export function SuiteDetailOverview({
   onDeleteTestCasesBatch?: (testCaseIds: string[]) => Promise<void>;
   onRunClick: (runId: string) => void;
   onTestCaseClick: (testCaseId: string) => void;
+  /**
+   * Stops runs that are still going. Takes every cancellable id at once — the
+   * header cancels the whole suite, a history row cancels its whole launch.
+   */
+  onCancelRun?: (runIds: readonly string[]) => void;
+  cancellingRunId?: string | null;
   rerunningSuiteId: string | null;
   replayingRunId?: string | null;
   runningTestCaseId?: string | null;
@@ -413,6 +421,27 @@ export function SuiteDetailOverview({
     return () => onGeneratingChange?.(null);
   }, [generating, exitGeneration, onGeneratingChange]);
 
+  const cancellableIds = cancellableRunIds(runs);
+  const isCancelling = cancellableIds.some((id) => id === cancellingRunId);
+  const cancelButton =
+    onCancelRun && cancellableIds.length > 0 ? (
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="h-8"
+        data-testid="suite-detail-cancel"
+        aria-label="Cancel run"
+        disabled={isCancelling}
+        onClick={() => onCancelRun(cancellableIds)}
+      >
+        {isCancelling ? (
+          <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" aria-hidden />
+        ) : null}
+        Cancel run
+      </Button>
+    ) : null;
+
   const runButton = (
     <Button
       type="button"
@@ -537,6 +566,7 @@ export function SuiteDetailOverview({
               Duplicate to edit
             </Button>
           ) : null}
+          {cancelButton}
           {runDisabled && runBlockedReason ? (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -629,6 +659,8 @@ export function SuiteDetailOverview({
                         historyRows={rowMap}
                         hostNamesById={hostNamesById}
                         onOpen={() => onRunClick(representative._id)}
+                        onCancelRun={onCancelRun}
+                        cancellingRunId={cancellingRunId}
                       />
                     );
                   })}

@@ -501,3 +501,113 @@ describe("run heading and scope", () => {
     expect(screen.queryByTestId("evaluate-run-scope")).toBeNull();
   });
 });
+
+describe("EvaluateRunPage cancel", () => {
+  const running = (id: string, overrides: Partial<EvalSuiteRun> = {}) =>
+    makeRun({
+      _id: id,
+      status: "running",
+      result: "pending",
+      completedAt: undefined,
+      runGroupId: "launch-1",
+      ...overrides,
+    });
+
+  it("cancels every still-running pairing of the launch, not just this run", async () => {
+    const user = userEvent.setup();
+    const onCancelRun = vi.fn();
+    render(
+      <EvaluateRunPage
+        run={running("run-a")}
+        hostNamesById={hostNamesById}
+        otherRuns={[]}
+        relatedRuns={[
+          running("run-a"),
+          running("run-b"),
+          // Same launch, already finished: cancelling it would throw.
+          makeRun({
+            _id: "run-c",
+            runGroupId: "launch-1",
+            status: "completed",
+          }),
+        ]}
+        defaultCompareRunId={null}
+        onCompareWithRun={vi.fn()}
+        onCancelRun={onCancelRun}
+      >
+        <div>run body</div>
+      </EvaluateRunPage>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Cancel run" }));
+    expect(onCancelRun).toHaveBeenCalledWith(["run-a", "run-b"]);
+  });
+
+  it("offers no cancel once the run has finished", () => {
+    render(
+      <EvaluateRunPage
+        run={makeRun({ _id: "run-a" })}
+        hostNamesById={hostNamesById}
+        otherRuns={[]}
+        defaultCompareRunId={null}
+        onCompareWithRun={vi.fn()}
+        onCancelRun={vi.fn()}
+      >
+        <div>run body</div>
+      </EvaluateRunPage>,
+    );
+
+    expect(screen.queryByTestId("evaluate-run-page-cancel")).toBeNull();
+  });
+
+  it("cancels a grading run — the judge is still billing", () => {
+    render(
+      <EvaluateRunPage
+        run={running("run-a", { status: "grading" })}
+        hostNamesById={hostNamesById}
+        otherRuns={[]}
+        defaultCompareRunId={null}
+        onCompareWithRun={vi.fn()}
+        onCancelRun={vi.fn()}
+      >
+        <div>run body</div>
+      </EvaluateRunPage>,
+    );
+
+    expect(screen.getByTestId("evaluate-run-page-cancel")).toBeTruthy();
+  });
+
+  it("disables the button while the cancel is in flight", () => {
+    render(
+      <EvaluateRunPage
+        run={running("run-a")}
+        hostNamesById={hostNamesById}
+        otherRuns={[]}
+        defaultCompareRunId={null}
+        onCompareWithRun={vi.fn()}
+        onCancelRun={vi.fn()}
+        cancellingRunId="run-a"
+      >
+        <div>run body</div>
+      </EvaluateRunPage>,
+    );
+
+    expect(screen.getByRole("button", { name: "Cancel run" })).toBeDisabled();
+  });
+
+  it("stays out of the way when the page has no cancel handler", () => {
+    render(
+      <EvaluateRunPage
+        run={running("run-a")}
+        hostNamesById={hostNamesById}
+        otherRuns={[]}
+        defaultCompareRunId={null}
+        onCompareWithRun={vi.fn()}
+      >
+        <div>run body</div>
+      </EvaluateRunPage>,
+    );
+
+    expect(screen.queryByTestId("evaluate-run-page-cancel")).toBeNull();
+  });
+});

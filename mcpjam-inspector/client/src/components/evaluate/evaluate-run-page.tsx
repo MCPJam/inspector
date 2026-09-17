@@ -17,10 +17,11 @@ import {
 import { SuiteRunReview, type SuiteRunReviewProps } from "./suite-run-review";
 import type { RunVerdictHeroView } from "./run-verdict-hero-model";
 import { launchRuns } from "./run-results-matrix-model";
-import { runClientIdentity } from "../evals/helpers";
+import { cancellableRunIds, runClientIdentity } from "../evals/helpers";
 import {
   ArrowUpRight,
   Copy,
+  Loader2,
   Play,
   Download,
   MoreHorizontal,
@@ -104,6 +105,8 @@ export function EvaluateRunPage({
   defaultCompareRunId,
   onCompareWithRun,
   onOpenComparison,
+  onCancelRun,
+  cancellingRunId = null,
   onExport,
   iterations,
   launchReview,
@@ -117,6 +120,13 @@ export function EvaluateRunPage({
   defaultCompareRunId: string | null;
   onCompareWithRun: (baseRunId: string) => void;
   onOpenComparison?: () => void;
+  /**
+   * Stops the run. Takes every cancellable id of the launch, not just
+   * `run._id`: this page is titled by the launch and shows all its pairings, so
+   * cancelling one would leave its siblings running under a cancelled heading.
+   */
+  onCancelRun?: (runIds: readonly string[]) => void;
+  cancellingRunId?: string | null;
   onExport?: () => void;
   /** Used to recover the model when the list projection omitted effectiveModelId. */
   iterations?: readonly EvalIteration[];
@@ -132,6 +142,8 @@ export function EvaluateRunPage({
   }, [run._id]);
   const targets = launchRuns(run, relatedRuns ?? otherRuns);
   const scope = runScopeSummary(targets, iterations);
+  const cancellableIds = cancellableRunIds(targets);
+  const isCancelling = cancellableIds.some((id) => id === cancellingRunId);
   const [headerActions, setHeaderActions] =
     useState<EvaluateRunPageHeaderActions | null>(null);
   const [, setHeaderVerdict] = useState<HeaderVerdict | null>(null);
@@ -172,6 +184,22 @@ export function EvaluateRunPage({
               ) : null}
             </div>
             <div className="flex min-w-0 flex-wrap items-center gap-1">
+              {onCancelRun && cancellableIds.length > 0 ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  data-testid="evaluate-run-page-cancel"
+                  aria-label="Cancel run"
+                  disabled={isCancelling}
+                  onClick={() => onCancelRun(cancellableIds)}
+                >
+                  {isCancelling ? (
+                    <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                  ) : null}
+                  Cancel run
+                </Button>
+              ) : null}
               {SHOW_EXPORT_REPORT && onExport && (
                 <Button
                   type="button"

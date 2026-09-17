@@ -1541,18 +1541,47 @@ export function useEvalHandlers({
   );
 
   // Cancel handler
+  //
+  // Takes one run id or several. A single launch fans out into one run per
+  // client-model pairing, and the Convex mutation is per-run, so the surfaces
+  // that show a whole launch (the run page, the suite page, a runs-table row)
+  // hand us every in-progress id at once. `Promise.allSettled` rather than
+  // `Promise.all`: a sibling that settled between render and click throws
+  // `Cannot cancel run with status: …`, and that must not hide the cancels
+  // that did land.
   const handleCancelRun = useCallback(
-    async (runId: string) => {
+    async (runId: string | readonly string[]) => {
       if (cancellingRunId) return;
 
-      setCancellingRunId(runId);
+      const runIds = typeof runId === "string" ? [runId] : [...runId];
+      if (runIds.length === 0) return;
+
+      setCancellingRunId(runIds[0]);
 
       try {
-        await mutations.cancelRunMutation({ runId });
-        toast.success("Run cancelled successfully");
-      } catch (error) {
-        console.error("Failed to cancel run:", error);
-        toast.error(getBillingErrorMessage(error, "Failed to cancel run"));
+        const outcomes = await Promise.allSettled(
+          runIds.map((id) => mutations.cancelRunMutation({ runId: id })),
+        );
+        const firstRejection = outcomes.find(
+          (outcome): outcome is PromiseRejectedResult =>
+            outcome.status === "rejected",
+        );
+        if (!firstRejection) {
+          toast.success("Run cancelled successfully");
+        } else if (outcomes.some((outcome) => outcome.status === "fulfilled")) {
+          // Partially cancelled: the runs still going are the ones that matter,
+          // and they stopped. Report success, keep the reason in the console.
+          console.error("Failed to cancel some runs:", firstRejection.reason);
+          toast.success("Run cancelled successfully");
+        } else {
+          console.error("Failed to cancel run:", firstRejection.reason);
+          toast.error(
+            getBillingErrorMessage(
+              firstRejection.reason,
+              "Failed to cancel run",
+            ),
+          );
+        }
       } finally {
         setCancellingRunId(null);
       }

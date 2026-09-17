@@ -2442,6 +2442,67 @@ describe("useEvalHandlers", () => {
       );
     });
   });
+
+  describe("handleCancelRun", () => {
+    it("cancels every id it is given, not just the first", async () => {
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+
+      await act(async () => {
+        await result.current.handleCancelRun(["run-1", "run-2"]);
+      });
+
+      expect(mockMutations.cancelRunMutation).toHaveBeenCalledTimes(2);
+      expect(mockMutations.cancelRunMutation).toHaveBeenCalledWith({
+        runId: "run-1",
+      });
+      expect(mockMutations.cancelRunMutation).toHaveBeenCalledWith({
+        runId: "run-2",
+      });
+      expect(toast.success).toHaveBeenCalledWith("Run cancelled successfully");
+    });
+
+    it("still reports success when a sibling had already settled", async () => {
+      // The launch's other pairing finished between render and click, so the
+      // backend rejects it. The run the person meant to stop did stop.
+      mockMutations.cancelRunMutation
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(
+          new Error("Cannot cancel run with status: completed"),
+        );
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+
+      await act(async () => {
+        await result.current.handleCancelRun(["run-1", "run-2"]);
+      });
+
+      expect(toast.success).toHaveBeenCalledWith("Run cancelled successfully");
+      expect(toast.error).not.toHaveBeenCalled();
+    });
+
+    it("reports the failure when nothing could be cancelled", async () => {
+      mockMutations.cancelRunMutation.mockRejectedValue(new Error("nope"));
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+
+      await act(async () => {
+        await result.current.handleCancelRun("run-1");
+      });
+
+      expect(toast.success).not.toHaveBeenCalled();
+      expect(toast.error).toHaveBeenCalled();
+    });
+
+    it("takes a bare id, the shape the suite cards still pass", async () => {
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+
+      await act(async () => {
+        await result.current.handleCancelRun("run-1");
+      });
+
+      expect(mockMutations.cancelRunMutation).toHaveBeenCalledWith({
+        runId: "run-1",
+      });
+    });
+  });
 });
 
 describe("formatEnsureServersReadyError", () => {
