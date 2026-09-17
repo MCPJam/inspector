@@ -115,3 +115,26 @@ export function estimateLaunchSessions({
   );
   return (authored + reused) * Math.max(1, environmentCount);
 }
+
+/**
+ * Where the iterations control starts for a REUSED persona.
+ *
+ * Its goals each carry their owner's own saved `sessionsPerTarget`, so there
+ * is a value worth showing only when they agree. Goals that disagree — or any
+ * goal with nothing saved — have no single truth to display, and picking one
+ * of them would misreport the others. The default starts the control instead,
+ * and whatever the user sets applies to all of that persona's goals for this
+ * run.
+ *
+ * Clamped, because a value saved before the current bounds must not seed a
+ * control whose every value the backend would then reject.
+ */
+export function reusedIterationsSeed(
+  stored: readonly (number | null | undefined)[],
+): number {
+  const first = stored[0];
+  if (first == null || stored.some((value) => value !== first)) {
+    return DEFAULT_SWARM_ITERATIONS;
+  }
+  return Math.min(MAX_SWARM_ITERATIONS, Math.max(MIN_SWARM_ITERATIONS, first));
+}

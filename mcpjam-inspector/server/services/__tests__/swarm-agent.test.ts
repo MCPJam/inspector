@@ -148,6 +148,20 @@ describe("swarm-agent createJourneyRun — request-body contract", () => {
       "user_testing",
     );
   });
+  it("serializes a per-run iterations override", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify(okCreateResponse())),
+    );
+    await createJourneyRun(CONVEX_HTTP_URL, "token", {
+      projectId: "proj-1",
+      journeyRefId: "journey-1",
+      launchKey: "lk-3",
+      sessionsPerTarget: 1,
+    });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).sessionsPerTarget).toBe(
+      1,
+    );
+  });
 });
 
 describe("swarm-agent fetchPinnedSkill — wire contract", () => {

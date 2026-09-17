@@ -66,6 +66,7 @@ import {
   getScenarioShellStyle,
 } from "@/lib/scenario-client-style";
 import { DEFAULT_HOST_STYLE } from "@/lib/client-styles";
+import { useFrontierSignInDialogStore } from "@/stores/frontier-sign-in-dialog-store";
 
 interface ScenarioChatPageProps {
   pathToken?: string | null;
@@ -979,6 +980,26 @@ export function ScenarioChatPage({
     },
     [clearCurrentSession],
   );
+
+  // A scenario still open to guests can run a frontier model the guest is
+  // refused. Send that visitor to the sign-in gate, not the Playground's
+  // "choose a standard model" dialog: the scenario owner picked the model.
+  const isSignedOutVisitor = !workOsUser && !isWorkOsLoading;
+  useEffect(() => {
+    if (!isSignedOutVisitor || isEmbeddedPreview()) return;
+    const override = () =>
+      handleHostedAccessRevoked({
+        status: 401,
+        code: "SCENARIO_SIGN_IN_REQUIRED",
+        message: "Sign in to preview this scenario",
+      });
+    useFrontierSignInDialogStore.getState().setOverride(override);
+    return () => {
+      if (useFrontierSignInDialogStore.getState().override === override) {
+        useFrontierSignInDialogStore.getState().setOverride(null);
+      }
+    };
+  }, [isSignedOutVisitor, handleHostedAccessRevoked]);
 
   const displayError = useMemo(
     () => getScenarioDisplayError(routeError),

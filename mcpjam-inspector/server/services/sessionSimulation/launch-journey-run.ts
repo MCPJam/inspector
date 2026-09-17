@@ -76,6 +76,8 @@ export interface LaunchJourneyRunInput {
   waveId?: string;
   /** Per-run environment fan-out; the backend does the real validation. */
   environmentIds?: string[];
+  /** Iterations for THIS run; leaves the journey's own config untouched. */
+  sessionsPerTarget?: number;
 }
 
 export interface LaunchJourneyRunResult {
@@ -249,6 +251,9 @@ export async function launchJourneyRun(
       launchKey: input.launchKey,
       kind: input.waveId ? "swarm" : "user_testing",
       ...(input.waveId ? { swarmRunGroupId: input.waveId } : {}),
+      ...(input.sessionsPerTarget !== undefined
+        ? { sessionsPerTarget: input.sessionsPerTarget }
+        : {}),
       ...(input.environmentIds?.length
         ? { environmentIds: input.environmentIds }
         : {}),
