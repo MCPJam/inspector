@@ -1,4 +1,3 @@
-import type { TargetGrounding } from "@/shared/swarm-grounding";
 /**
  * Swarm (journey-execution) client contract — the ONE place the Swarms surface
  * reaches the backend.
@@ -219,8 +218,6 @@ export interface JourneyRunAttempt {
 }
 
 export interface JourneyRun {
-  /** Backend run shape; grounding contract is hand-mirrored and pinned. */
-  grounding?: TargetGrounding[];
   _id: string;
   status: JourneyRunStatus | string;
   /**

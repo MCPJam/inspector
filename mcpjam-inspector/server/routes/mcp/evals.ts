@@ -32,6 +32,14 @@ function jsonRouteError(c: any, error: unknown) {
         ...(error.details ? { details: error.details } : {}),
       },
       error.status,
+      // `Retry-After` on a forwarded 429 — the local surface carried the
+      // status and the code but dropped the one thing that says WHEN, which
+      // is what a retrying client actually reads. Omitted entirely when
+      // there is nothing to send: several route tests pass a context double
+      // whose `json` takes two arguments.
+      error.headers && Object.keys(error.headers).length > 0
+        ? error.headers
+        : undefined,
     );
   }
 

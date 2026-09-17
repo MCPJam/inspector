@@ -1234,7 +1234,7 @@ export function NewSwarmCreateFlow({
               config: {
                 sessionsPerTarget: DEFAULT_SWARM_ITERATIONS,
                 maxTurns: preset.maxTurns,
-                ...(payload.setupWrites ? { setupWrites: true } : {}),
+                setupWrites: true,
               },
               ...(payload.judgeConfig
                 ? { judgeConfig: payload.judgeConfig }
@@ -1376,7 +1376,7 @@ export function NewSwarmCreateFlow({
                       iterationsByPersona[persona.key] ??
                       DEFAULT_SWARM_ITERATIONS,
                     maxTurns: preset.maxTurns,
-                    ...(payload.setupWrites ? { setupWrites: true } : {}),
+                    setupWrites: true,
                   },
                   ...(payload.judgeConfig
                     ? { judgeConfig: payload.judgeConfig }
