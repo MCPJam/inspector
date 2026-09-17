@@ -9,6 +9,20 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-09-17
+
+#### Fixed
+
+- **Swarm Findings no longer counts untried goals as friction** — when every session in a settled wave failed to launch, the Findings summary now reports the launch failure directly ("N of N sessions failed to launch. Nothing about the server was tested.") instead of counting the untried goals as goals that "showed friction". Goals whose sessions never launched are marked **Not run** rather than **Unscored**, and the persona sentiment reflects that nothing was tested rather than implying an experience that never happened.
+
+- **Suggested fix appears beside the findings summary, not instead of it** — when a model-written wave narration is available, it now renders as a **Suggested fix** line below the deterministic summary paragraph. The four-question template (which goal, whose, which stage, how it felt) is always the headline; the model's recommendation is always secondary. A footnote marks it as model-written. The suggested fix is suppressed entirely on a wave that never launched, since there are no sessions for the model to have read.
+
+- **Empty completed recordings are flagged, not celebrated** — a session that was marked completed but saved no conversation transcript now shows a **No conversation** warning in the session pane header and a note that the empty recording does not confirm the assistant was tested. Previously the pane showed "Done" as if the session had succeeded.
+
+- **Stale runner interruptions show a specific message** — when a run was stopped because the runner went silent (error code `stale_runner`), the session pane now explains that the runner stopped reporting progress and that sessions may have run before the interruption. The previous copy ("No sessions ran") was inaccurate for runs that were interrupted mid-execution.
+
+- **Raw trace view labels saved session evidence** — when a session's Raw tab shows archived context (frozen model, server, and tool catalog captured at run time), it now displays a note: "Saved session evidence: messages, timing, and captured tool catalogs. This is not the exact per-step model request shown in live Playground." This distinguishes archived evidence from a live Playground request payload.
+
 ### 2026-09-16
 
 #### Changed
