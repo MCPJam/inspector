@@ -31,7 +31,7 @@ import {
   type UsageFilterState,
 } from "@/hooks/scenario-usage-filters";
 import { useSessionMap, type TopicMapScope } from "@/hooks/useSessionMap";
-import type { ClusterRunState, InsightsScope } from "@/hooks/useUsageInsights";
+import type { InsightsScope } from "@/hooks/useUsageInsights";
 import { cn } from "@/lib/utils";
 
 const CLUSTER_COLORS = [
@@ -198,51 +198,6 @@ interface TopicMapPanelProps {
    * toggle on swarms), rendered above the Color-by control.
    */
   headerActions?: ReactNode;
-}
-
-function rebuildButtonLabel(
-  run: ClusterRunState | null,
-  unmappedCount?: number,
-): string {
-  if (!run) return "Rebuild clusters";
-  if (run.isStale) {
-    if (unmappedCount && unmappedCount > 0) {
-      return `Rebuild clusters \u00b7 ${unmappedCount.toLocaleString()} session${
-        unmappedCount === 1 ? "" : "s"
-      } not shown`;
-    }
-    return "Rebuild clusters \u00b7 new sessions available";
-  }
-  switch (run.status) {
-    case "queued":
-      return "Queued…";
-    case "running":
-      return "Refreshing…";
-    case "failed":
-      return "Retry rebuild clusters";
-    default:
-      if (unmappedCount && unmappedCount > 0) {
-        return `Rebuild clusters \u00b7 ${unmappedCount.toLocaleString()} session${
-          unmappedCount === 1 ? "" : "s"
-        } not shown`;
-      }
-      return "Rebuild clusters";
-  }
-}
-
-function rebuildDisabled(run: ClusterRunState | null): boolean {
-  if (!run) return false;
-  if (run.isStale) return false;
-  return run.status === "queued" || run.status === "running";
-}
-
-function formatRunTone(run: ClusterRunState | null): string {
-  if (!run) return "bg-muted text-muted-foreground";
-  if (run.status === "failed") return "bg-destructive/15 text-destructive";
-  if (run.status === "running" || run.status === "queued") {
-    return "bg-pending/15 text-pending-foreground";
-  }
-  return "bg-success/15 text-success";
 }
 
 /** Neutral grey for a node with no cluster and for a node with no outcome. */
@@ -691,19 +646,11 @@ export function TopicMapPanel({
     { scope: topicMapScope, enabled: topicMapScope !== null },
   );
   const analysis = snapshot?.analysis;
-  // Transitional local shape for button helpers; no legacy run is queried.
-  const latestRun: ClusterRunState | null = analysis
-    ? {
-        _id: scopeKey,
-        status: analysis.pending + analysis.running > 0 ? "running" : "done",
-        startedAt: 0,
-        finishedAt: analysis.lastAnalyzedAt,
-        sessionCount: analysis.analyzed,
-        clusterCount: snapshot?.clusters.length ?? 0,
-        errorMessage: null,
-        isStale: false,
-      }
-    : null;
+  const analyzing =
+    (analysis?.pending ?? 0) +
+      (analysis?.running ?? 0) -
+      (analysis?.deferred ?? 0) >
+    0;
   const isSwarmScope = topicMapScope?.kind === "swarm";
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
@@ -741,7 +688,6 @@ export function TopicMapPanel({
   // Whether this stored snapshot can answer "color by outcome" at all. A
   // pre-bump blob carries no outcome on its nodes, so offering the mode would
   // paint every node neutral and look like a bug rather than like stale data.
-  const supportsOutcomeColor = true;
 
   const activeOutcomes = useMemo(
     () =>
@@ -904,7 +850,6 @@ export function TopicMapPanel({
       // whole map — a blank canvas reads as a broken map, not as stale data.
       // The snapshot cannot honor the constraint, so it does not pretend to.
       const outcomeMatch =
-        !supportsOutcomeColor ||
         activeOutcomes.size === 0 ||
         (node.outcome
           ? activeOutcomes.has(node.outcome)
@@ -914,13 +859,7 @@ export function TopicMapPanel({
         focusedNeighborhood == null || focusedNeighborhood.has(node.id);
       return !(clusterMatch && outcomeMatch && searchMatch && focusMatch);
     },
-    [
-      activeClusterIds,
-      activeOutcomes,
-      focusedNeighborhood,
-      searchMatchIds,
-      supportsOutcomeColor,
-    ],
+    [activeClusterIds, activeOutcomes, focusedNeighborhood, searchMatchIds],
   );
 
   const communities = useMemo(
@@ -942,11 +881,6 @@ export function TopicMapPanel({
   // Fall back to theme whenever the snapshot stops supporting outcomes (e.g. a
   // rebuild rolled the blob back), so the mode can never be stuck on a source
   // that has no data.
-  useEffect(() => {
-    if (!supportsOutcomeColor && colorMode === "outcome") {
-      setColorMode("theme");
-    }
-  }, [colorMode, supportsOutcomeColor]);
 
   useEffect(() => {
     if (!snapshot) {
@@ -1399,12 +1333,7 @@ export function TopicMapPanel({
     [canvasPalette.mutedForeground, clusterColorIndex, colorMode, graphData],
   );
 
-  if (
-    !snapshot &&
-    (isLoading ||
-      latestRun?.status === "running" ||
-      latestRun?.status === "queued")
-  ) {
+  if (!snapshot && (isLoading || analyzing)) {
     return (
       <div className="relative flex h-full min-h-0 items-center justify-center bg-background text-foreground">
         {headerActions ? (
@@ -1431,7 +1360,6 @@ export function TopicMapPanel({
     const emptyTitle = "No mapped sessions yet";
     const emptyBody =
       snapshotError ??
-      latestRun?.errorMessage ??
       (isSwarmScope
         ? "Sessions appear here as analysis completes."
         : "Sessions appear here as analysis completes.");
@@ -1441,7 +1369,7 @@ export function TopicMapPanel({
           <div className="absolute right-4 top-4 z-10">{headerActions}</div>
         ) : null}
         <div className="flex max-w-md flex-col items-center gap-3 text-center">
-          {latestRun?.status === "failed" ? (
+          {snapshotError ? (
             <AlertTriangle className="h-8 w-8 text-destructive" />
           ) : (
             <Network className="h-8 w-8 text-muted-foreground" />
@@ -1453,11 +1381,11 @@ export function TopicMapPanel({
           <Button
             type="button"
             variant="outline"
-            disabled={rebuildDisabled(latestRun) || rebuildBusy}
+            disabled={rebuildBusy}
             onClick={() => onRebuild()}
           >
             <RefreshCw className="mr-2 h-3.5 w-3.5" />
-            {rebuildButtonLabel(latestRun)}
+            Re-analyze
           </Button>
         </div>
       </div>
@@ -1495,28 +1423,15 @@ export function TopicMapPanel({
                 {analysis?.projectionPending ?? 0} pending
               </div>
             ) : null}
-            {latestRun?.status === "running" ||
-            latestRun?.status === "queued" ||
-            latestRun?.status === "failed" ? (
-              <div className="flex flex-wrap items-center gap-2">
-                <span
-                  className={cn(
-                    "rounded-full px-2.5 py-1 text-[11px] font-medium",
-                    formatRunTone(latestRun),
-                  )}
-                >
-                  {latestRun?.status === "running"
-                    ? "Updating clusters"
-                    : latestRun?.status === "queued"
-                    ? "Queued for rebuild"
-                    : "Last rebuild failed"}
-                </span>
+            {analyzing ? (
+              <div className="rounded-md bg-background/90 px-3 py-2 text-xs text-muted-foreground">
+                Analyzing sessions…
               </div>
             ) : null}
             {snapshot.isSampled ? (
               <div className="max-w-xl rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[11px] text-warning-foreground">
-                Showing a stable 10,000-session sample of{" "}
-                {snapshot.stats.mappedSessionCount.toLocaleString()} mapped
+                Showing {snapshot.nodes.length.toLocaleString()} mapped sessions
+                from {snapshot.scopeTotals.mapped.toLocaleString()} mapped
                 sessions.
               </div>
             ) : null}
@@ -1545,43 +1460,19 @@ export function TopicMapPanel({
               >
                 Theme
               </button>
-              <Tooltip delayDuration={200}>
-                {/* The trigger is the SPAN, not the button. A native disabled
-                    button does not reliably emit pointer/focus events, so
-                    hanging the trigger off it would hide the explanation in
-                    exactly the case it exists for — the disabled one. The
-                    button keeps `disabled` for semantics and loses pointer
-                    events so the span receives the hover. */}
-                <TooltipTrigger asChild>
-                  <span
-                    className="inline-flex"
-                    tabIndex={supportsOutcomeColor ? -1 : 0}
-                  >
-                    <button
-                      type="button"
-                      aria-pressed={colorMode === "outcome"}
-                      disabled={!supportsOutcomeColor}
-                      onClick={() => setColorMode("outcome")}
-                      className={cn(
-                        "rounded px-2 py-0.5 text-[11px] transition",
-                        colorMode === "outcome"
-                          ? "bg-primary/15 font-medium text-foreground"
-                          : "text-muted-foreground hover:bg-muted/60",
-                        !supportsOutcomeColor &&
-                          "pointer-events-none cursor-not-allowed opacity-50 hover:bg-transparent",
-                      )}
-                    >
-                      Outcome
-                    </button>
-                  </span>
-                </TooltipTrigger>
-                {!supportsOutcomeColor ? (
-                  <TooltipContent side="bottom" className="max-w-xs">
-                    This map was built before outcomes were recorded. Rebuild
-                    clusters to color by outcome.
-                  </TooltipContent>
-                ) : null}
-              </Tooltip>
+              <button
+                type="button"
+                aria-pressed={colorMode === "outcome"}
+                onClick={() => setColorMode("outcome")}
+                className={cn(
+                  "rounded px-2 py-0.5 text-[11px] transition",
+                  colorMode === "outcome"
+                    ? "bg-primary/15 font-medium text-foreground"
+                    : "text-muted-foreground hover:bg-muted/60",
+                )}
+              >
+                Outcome
+              </button>
             </div>
 
             {colorMode === "outcome" ? (
@@ -1626,51 +1517,19 @@ export function TopicMapPanel({
               <TooltipTrigger asChild>
                 <Button
                   type="button"
-                  variant={
-                    latestRun?.isStale ||
-                    (snapshot.stats.unmappedSessionCount > 0 &&
-                      latestRun?.status === "done")
-                      ? "default"
-                      : "outline"
-                  }
+                  variant="outline"
                   size="icon"
-                  className={cn(
-                    "relative",
-                    (latestRun?.isStale ||
-                      (snapshot.stats.unmappedSessionCount > 0 &&
-                        latestRun?.status === "done")) &&
-                      "bg-warning text-warning-foreground hover:bg-warning/90",
-                  )}
-                  aria-label={rebuildButtonLabel(
-                    latestRun,
-                    snapshot.stats.unmappedSessionCount,
-                  )}
-                  disabled={rebuildDisabled(latestRun) || rebuildBusy}
+                  aria-label="Re-analyze"
+                  disabled={rebuildBusy}
                   onClick={() => onRebuild()}
                 >
                   <RefreshCw
-                    className={cn(
-                      "h-3.5 w-3.5",
-                      latestRun?.status === "running" && !latestRun.isStale
-                        ? "animate-spin"
-                        : "",
-                    )}
+                    className={cn("h-3.5 w-3.5", analyzing && "animate-spin")}
                   />
-                  {(latestRun?.isStale ||
-                    (snapshot.stats.unmappedSessionCount > 0 &&
-                      latestRun?.status === "done")) && (
-                    <span className="absolute -right-1 -top-1 flex h-2.5 w-2.5">
-                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-warning opacity-75" />
-                      <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-warning ring-2 ring-background" />
-                    </span>
-                  )}
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="top" sideOffset={6}>
-                {rebuildButtonLabel(
-                  latestRun,
-                  snapshot.stats.unmappedSessionCount,
-                )}
+                Re-analyze
               </TooltipContent>
             </Tooltip>
           </div>

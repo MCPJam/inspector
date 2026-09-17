@@ -491,7 +491,7 @@ describe("TopicMapPanel", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: /Rebuild clusters/ }));
+    await user.click(screen.getByRole("button", { name: /Re-analyze/ }));
     expect(onRebuild).toHaveBeenCalledTimes(1);
     expect(onRebuild.mock.calls[0]).toEqual([]);
   });
@@ -515,7 +515,7 @@ describe("TopicMapPanel", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: /Rebuild clusters/ }));
+    await user.click(screen.getByRole("button", { name: /Re-analyze/ }));
     expect(onRebuild).toHaveBeenCalledTimes(1);
     expect(onRebuild.mock.calls[0]).toEqual([]);
   });
@@ -553,7 +553,7 @@ describe("TopicMapPanel", () => {
     );
 
     const fitView = screen.getByRole("button", { name: /fit view/i });
-    const rebuild = screen.getByRole("button", { name: /rebuild clusters/i });
+    const rebuild = screen.getByRole("button", { name: /re-analyze/i });
     expect(fitView.compareDocumentPosition(rebuild)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     );
