@@ -870,6 +870,12 @@ export interface LaunchJourneyRunArgs {
    */
   launchKey: string;
   /**
+   * Iterations for THIS run, overriding the journey's stored
+   * `sessionsPerTarget` without rewriting it. Sent for a reused persona whose
+   * saved fan-out differs from what Confirm chose.
+   */
+  sessionsPerTarget?: number;
+  /**
    * Opaque id shared by every run of ONE co-launched wave, so the Overview can
    * group them without inferring a batch from `createdAt` proximity. A solo
    * "Run again" mints its own and is simply a wave of one. Omitted against a
@@ -929,6 +935,9 @@ export async function launchJourneyRun(
           : {}),
         ...(args.environmentIds?.length
           ? { environmentIds: args.environmentIds }
+          : {}),
+        ...(args.sessionsPerTarget !== undefined
+          ? { sessionsPerTarget: args.sessionsPerTarget }
           : {}),
       }),
     }
