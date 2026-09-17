@@ -263,7 +263,7 @@ Open a completed run and find the **LLM as Judge** panel (labelled **Goal judge*
 
 Judge results are also accessible outside the app. `mcpjam cloud eval status` returns a `judges` block in its JSON output with each grader's status, summary, model used, threshold, and per-case grades. To request grading from the CLI, use `mcpjam cloud eval judge --run <id> --project <name>`. See the [`cloud eval judge` reference](/cli/reference#cloud-eval-judge) for the full flag list, including `--force` to re-grade and `--enable` to grade a run recorded before the judge was turned on.
 
-The same judge config and defaults are shared with **Swarm journeys**. When creating a new journey, expand **Advanced → Judge** to set the judge model and enable auto-grade for that journey. Session score badges (showing the verdict and score) appear in the Sessions list and run matrix cells whenever a session has been graded. Sessions with no transcript still expose the on-demand judge entry point so failed or empty sessions can be graded against the journey goal.
+The same judge config and defaults are shared with **Swarm journeys**. When creating a new journey, expand **Advanced → Judge** to set the judge model and enable auto-grade for that journey. Session panes display an execution label and a separate goal badge — a session interrupted after meeting its goal shows **Broke · Passed**, not a failure. Sessions with no transcript still expose the on-demand judge entry point so failed or empty sessions can be graded against the journey goal.
 
 ### MCP App widgets in swarm sessions
 
