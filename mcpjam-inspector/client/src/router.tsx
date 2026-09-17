@@ -1,3 +1,4 @@
+import { ByokCreditsPage } from "./components/billing/ByokCreditsPage";
 import { CreditUsagePage } from "./components/billing/CreditUsagePage";
 import { createBrowserRouter, RouterProvider, redirect } from "react-router";
 import { RouteErrorScreen } from "./components/RouteErrorScreen";
@@ -253,6 +254,13 @@ const ROUTE_ELEMENTS: Record<
   "client-config": { element: <ServersRedirectRoute /> },
   "organizations/:orgId/members": { element: <OrganizationsRoute /> },
   "organizations/:orgId/sharing": { element: <OrganizationsRoute /> },
+  "organizations/:orgId/billing/byok": {
+    element: (
+      <OrganizationsRoute>
+        <ByokCreditsPage />
+      </OrganizationsRoute>
+    ),
+  },
   "organizations/:orgId/billing/usage": {
     element: (
       <OrganizationsRoute>
