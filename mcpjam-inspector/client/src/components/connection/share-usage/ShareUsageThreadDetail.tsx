@@ -1,3 +1,4 @@
+import { TranscriptEmptyState } from "@/components/chat-v2/transcript-empty-state";
 import {
   useCallback,
   useEffect,
@@ -650,7 +651,7 @@ export function ShareUsageThreadDetail({
   if (thread === undefined || isLoadingMessages) {
     return (
       <div className="flex h-full items-center justify-center">
-        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        <TranscriptEmptyState kind="loading" />
       </div>
     );
   }
@@ -681,9 +682,7 @@ export function ShareUsageThreadDetail({
         <div className="flex h-full flex-col">
           <SwarmJudgeSection threadId={threadId} goalScore={thread.goalScore} />
           <div className="flex flex-1 flex-col items-center justify-center gap-1.5 px-6 text-center">
-            <p className="text-sm text-muted-foreground">
-              No messages in this session
-            </p>
+            <TranscriptEmptyState kind="unrecorded" execution={(turnTraces?.length ?? 0) > 0 ? "observed" : "unknown"} />
             {/* This branch has no header, so the disabled promote button and
                 its hover reason never render here — and an empty transcript is
                 USUALLY a run that died before it said anything, which is the
@@ -703,7 +702,7 @@ export function ShareUsageThreadDetail({
     }
     return (
       <div className="flex h-full items-center justify-center">
-        <p className="text-sm text-muted-foreground">No messages in thread</p>
+        <TranscriptEmptyState kind="unrecorded" execution={(turnTraces?.length ?? 0) > 0 ? "observed" : "unknown"} />
       </div>
     );
   }
