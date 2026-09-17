@@ -10,6 +10,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // NewJourneyButton's Advanced → Judge section pulls the model catalog via
 // useAvailableModels (AppStateProvider-coupled); these tests render SwarmsTab
 // without providers, so stub it to an empty catalog.
+vi.mock("@/hooks/use-host-snapshot", () => ({
+  useHostSnapshotForHost: () => ({ status: "unavailable" }),
+  useHostSnapshotForSession: () => ({ status: "unavailable" }),
+}));
+
 vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({ availableModels: [] }),
 }));
@@ -404,7 +409,7 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
       .getAllByTestId("swarm-host-cell")
       .filter((el) => el.getAttribute("data-outcome") === "succeeded");
     expect(done.length).toBeGreaterThan(0);
-    expect(within(done[0]!).getByText("Done")).toBeInTheDocument();
+    expect(within(done[0]!).getByText("Ran")).toBeInTheDocument();
   });
 
   it("shows playground-style Trace / Chat / Raw tabs in the live pane", async () => {

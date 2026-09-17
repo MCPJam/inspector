@@ -10,7 +10,11 @@
  * `convex/journeyExecution/*` + `convex/{personas,journeys,journeyRuns}` by
  * hand (two-repo layout).
  */
-
+import type {
+  SwarmSessionVerdict,
+  JourneyRunVerdictSummary,
+  SwarmReport,
+} from "@mcpjam/sdk/contract";
 import { authFetch } from "@/lib/session-token";
 import { notifyMCPJamLimitError } from "@/lib/mcpjam-limit";
 import { WebApiError } from "@/lib/apis/web/base";
@@ -218,6 +222,8 @@ export interface JourneyRunAttempt {
 }
 
 export interface JourneyRun {
+  verdictSummary?: JourneyRunVerdictSummary;
+  report?: SwarmReport;
   _id: string;
   status: JourneyRunStatus | string;
   /**
@@ -256,6 +262,13 @@ export interface JourneyRun {
  * `goalScore` are the server-denormalized subsets the badges read.
  */
 export interface JourneySessionRow {
+  verdict?: SwarmSessionVerdict;
+  observations?: Array<{
+    evaluatorId: string;
+    predicateType: string;
+    role: "advisory" | "required";
+    status: "passed" | "failed" | "pending" | "unavailable";
+  }>;
   /** `s._id` — the id `ShareUsageThreadDetail` opens + the deep-link threadId. */
   id: string;
   chatSessionId: string;
@@ -360,6 +373,8 @@ export interface SwarmOverviewTarget {
 }
 
 export interface SwarmOverviewRun {
+  verdictSummary?: JourneyRunVerdictSummary;
+  report?: SwarmReport;
   runId: string;
   journeyRefId: string;
   journeyName: string;
@@ -440,12 +455,7 @@ export interface SwarmWaveSignalCandidate {
   /** Identity component (toolName / criterionId / environmentId / hostId /
    * personaRefId / journeyRefId) — stable across waves; never a label. */
   subjectKind:
-    | "tool"
-    | "criterion"
-    | "environment"
-    | "host"
-    | "persona"
-    | "journey";
+    "tool" | "criterion" | "environment" | "host" | "persona" | "journey";
   subjectId: string;
   /** Display-only. */
   subjectLabel: string;

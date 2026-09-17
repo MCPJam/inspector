@@ -1386,8 +1386,8 @@ async function runJourneyFanOut(
           // their keep; grading only the happy path would blind the scorecard
           // to the sessions worth looking at. Skipped only when the run has no
           // rubric or when there is no session to read a transcript from —
-          // a `rate_limited` attempt never produced one.
-          if (hasRubric && terminal.status !== "rate_limited") {
+          // The claim refuses empty transcripts; mid-conversation rate limits still grade.
+          if (hasRubric) {
             try {
               const graded = await runSwarmChecks({
                 convexHttpUrl,

@@ -24,7 +24,8 @@
  * The caller (`swarm-runner.ts`) awaits this inside a try/catch. Grading is
  * never allowed to affect the attempt it graded.
  */
-
+import { extractTranscriptEvidence } from "../evals/transcript-evidence.js";
+import { swarmCheckInventory } from "./swarm-check-evidence.js";
 import {
   buildIterationTranscript,
   evaluatePredicates,
@@ -167,13 +168,19 @@ export async function runSwarmChecks(
   const messages = Array.isArray(claim.envelope?.messages)
     ? (claim.envelope.messages as EnvelopeMessage[])
     : null;
-  if (messages === null) {
+  if (
+    messages === null ||
+    messages.length === 0 ||
+    claim.envelope?.traceComplete === false
+  ) {
     return reportFailure("transcript envelope unreadable");
   }
 
   let criterionResults: SwarmCriterionResult[];
   try {
     const transcript = buildIterationTranscript({
+      ...extractTranscriptEvidence(claim.envelope),
+      toolInventory: swarmCheckInventory(claim.envelope),
       trace: {
         messages,
         ...(claim.envelope?.spans
@@ -183,8 +190,8 @@ export async function runSwarmChecks(
       // The SHARED walker, not a copy: two extractors would let an
       // envelope-format or dedupe fix land on one grading path and not the
       // other, so the same session could grade differently depending on who
-      // asked. (Its identity dedupe — same tool + same args collapses to one
-      // entry — is a known limitation, now a single known limitation.)
+      // asked. Distinct call IDs preserve repeated calls; only duplicate
+      // representations of the same call are collapsed.
       toolCalls: extractToolCallsFromEnvelopeMessages(messages),
       // Session-level token totals, materialized backend-side from turn-trace
       // usage and returned on the claim. `null`/absent means no turn reported
@@ -209,6 +216,9 @@ export async function runSwarmChecks(
     criterionResults = claim.criteria.map((entry, index) => ({
       criterionId: entry.id,
       passed: results[index]?.passed ?? false,
+      // Older evaluators omit status on scored rows; only a missing result
+      // or an explicit evaluator error is unmeasured.
+      status: results[index] ? (results[index].status ?? "scored") : "error",
       reason: results[index]?.reason ?? "evaluator returned no verdict",
     }));
   } catch (error) {

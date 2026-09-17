@@ -680,6 +680,32 @@ describe("analysis states and provenance", () => {
       "No run-wide rate",
     );
   });
+  it("renders suite recurrence without describing missing history as new", () => {
+    renderPanel({
+      mode: "ai",
+      provenance: [
+        provenance({
+          recurrence: {
+            claimId: "claim",
+            occurrences: 2,
+            analyzedRuns: 3,
+            firstSeenAt: Date.UTC(2026, 8, 16),
+            firstSourceId: "run1",
+            novelty: "measured",
+          },
+        }),
+      ],
+    });
+    openDetails();
+    expect(screen.getByTestId("unified-finding-recurrence")).toHaveTextContent(
+      "Seen in 2 of this suite’s last 3 analyzed runs, first on Sep 16, 2026.",
+    );
+  });
+  it("omits recurrence for results from an older backend", () => {
+    renderPanel({ mode: "ai", provenance: [provenance()] });
+    openDetails();
+    expect(screen.queryByTestId("unified-finding-recurrence")).toBeNull();
+  });
   it("discloses proposed trials that were not verified, and stays quiet when all were", () => {
     renderPanel({
       mode: "ai",
