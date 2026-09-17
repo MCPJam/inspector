@@ -23,6 +23,7 @@ import {
   clearHostedOAuthResumeMarker,
   writeHostedOAuthResumeMarker,
 } from "@/lib/hosted-oauth-resume";
+import { useFrontierSignInDialogStore } from "@/stores/frontier-sign-in-dialog-store";
 
 const {
   mockConvexAuthState,
@@ -1085,6 +1086,89 @@ describe("ScenarioChatPage", () => {
         body: JSON.stringify({ scenarioToken: "token-stalled-convex" }),
       }),
     );
+  });
+
+  describe("guest refused a frontier model", () => {
+    function renderGuestLinkScenario() {
+      mockWorkOsAuthState.user = null;
+      consentAlreadyGiven();
+      window.history.replaceState({}, "", "/user-testing/test/token-guest");
+      mockAuthFetch.mockResolvedValueOnce(
+        createFetchResponse({
+          scenarioId: "sbx_1",
+          accessVersion: 1,
+          bootstrap: {
+            projectId: "ws_1",
+            scenarioId: "sbx_1",
+            name: "Guest Scenario",
+            hostStyle: "claude",
+            mode: "anyone_with_link",
+            allowGuestAccess: true,
+            viewerIsProjectMember: false,
+            systemPrompt: "",
+            modelId: "anthropic/claude-sonnet-4.5",
+            temperature: 0.7,
+            requireToolApproval: false,
+            servers: [],
+          },
+        }),
+      );
+      return render(<ScenarioChatPage pathToken="token-guest" />);
+    }
+
+    afterEach(() => {
+      useFrontierSignInDialogStore.setState({ isOpen: false, override: null });
+    });
+
+    it("shows the scenario sign-in gate instead of the model dialog", async () => {
+      renderGuestLinkScenario();
+      expect(
+        await screen.findByTestId("scenario-chat-tab"),
+      ).toBeInTheDocument();
+
+      act(() => useFrontierSignInDialogStore.getState().open());
+
+      expect(
+        await screen.findByRole("heading", {
+          name: "Sign in to preview this scenario",
+        }),
+      ).toBeInTheDocument();
+      expect(useFrontierSignInDialogStore.getState().isOpen).toBe(false);
+      fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+      expect(mockSignIn).toHaveBeenCalledOnce();
+      expect(
+        localStorage.getItem(SCENARIO_SIGN_IN_RETURN_PATH_STORAGE_KEY),
+      ).toBe("/user-testing/scenario/token-guest");
+    });
+
+    it("hands the dialog back once the page unmounts", async () => {
+      const { unmount } = renderGuestLinkScenario();
+      expect(
+        await screen.findByTestId("scenario-chat-tab"),
+      ).toBeInTheDocument();
+      unmount();
+
+      useFrontierSignInDialogStore.getState().open();
+
+      expect(useFrontierSignInDialogStore.getState().isOpen).toBe(true);
+    });
+
+    it("leaves a signed-in visitor on the model dialog", async () => {
+      consentAlreadyGiven();
+      render(<ScenarioChatPage pathToken="token-signed-in" />);
+      expect(
+        await screen.findByTestId("scenario-chat-tab"),
+      ).toBeInTheDocument();
+
+      act(() => useFrontierSignInDialogStore.getState().open());
+
+      expect(useFrontierSignInDialogStore.getState().isOpen).toBe(true);
+      expect(
+        screen.queryByRole("heading", {
+          name: "Sign in to preview this scenario",
+        }),
+      ).not.toBeInTheDocument();
+    });
   });
 
   it("keeps the access denied sign-in path intact", async () => {
