@@ -1,3 +1,4 @@
+import { WidgetPlaceholder } from "@mcpjam/chat-ui";
 import { useState, useCallback, useEffect, useRef } from "react";
 import { type ToolUIPart, type DynamicToolUIPart, type UITools } from "ai";
 import { UIMessage } from "@ai-sdk/react";
@@ -135,6 +136,7 @@ export function PartSwitch({
   showInlineEdit = true,
   minimalMode = false,
   interactive = true,
+  widgetPolicy = "live",
   reasoningDisplayMode = "inline",
   mcpToolResultImageRendering,
   recordCapable,
@@ -175,6 +177,7 @@ export function PartSwitch({
   showInlineEdit?: boolean;
   minimalMode?: boolean;
   interactive?: boolean;
+  widgetPolicy?: "live" | "placeholder";
   reasoningDisplayMode?: ReasoningDisplayMode;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   // Tier 3 recorder (default off — see recorder-types.ts).
@@ -504,6 +507,24 @@ export function PartSwitch({
       (uiType === UIType.OPENAI_SDK ||
         uiType === UIType.MCP_APPS ||
         uiType === UIType.OPENAI_SDK_AND_MCP_APPS);
+
+    // Session review records the presence of a widget, without mounting its
+    // runtime or fetching HTML from today's server. This policy also overrides
+    // frozen screenshots: the Browser tab owns recorded renders for Sessions.
+    if (widgetPolicy === "placeholder" && (
+      uiType === UIType.OPENAI_SDK || uiType === UIType.MCP_APPS ||
+      uiType === UIType.OPENAI_SDK_AND_MCP_APPS || renderOverride?.resourceUri ||
+      renderOverride?.cachedWidgetHtmlUrl || renderOverride?.frozenScreenshotUrl
+    )) {
+      return (
+        <>
+          <ToolPart part={toolPart} chatSessionId={chatSessionId} uiType={uiType}
+            minimalMode={minimalMode} serverId={serverId}
+            mcpToolResultImageRendering={mcpToolResultImageRendering} rawOutput={rawToolOutput} />
+          <WidgetPlaceholder toolName={toolInfo.toolName} />
+        </>
+      );
+    }
 
     // A frozen recorded screenshot (eval replay) renders INDEPENDENTLY of live
     // widget eligibility: a completed run's widget can fail host-caps / server /
