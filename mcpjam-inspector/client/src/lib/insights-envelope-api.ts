@@ -1,3 +1,7 @@
+export type {
+  PlatformSwarmJourneyFinding as SwarmJourneyFinding,
+  PlatformSwarmJourneyFindings as SwarmJourneyFindings,
+} from "@mcpjam/sdk/platform";
 /**
  * The common actionable-insights envelope — client contract.
  *

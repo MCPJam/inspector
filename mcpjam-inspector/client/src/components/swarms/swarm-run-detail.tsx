@@ -1,3 +1,5 @@
+import { promoteLaneANarration } from "./findings/findings-headline";
+import { useInsightsEnvelope } from "@/components/shared/actionable-insights/use-insights-envelope";
 /**
  * Dedicated Swarm Run (wave) detail at `/swarms/:swarmId`.
  *
@@ -171,11 +173,13 @@ export function SwarmRunDetail({
       : null,
     { autoRequest: false },
   );
-  const generatedWaveSummary =
-    waveInsights.status === "completed" &&
-    waveInsights.insights?.summary?.trim()
-      ? waveInsights.insights.summary.trim()
-      : null;
+  const { summary: generatedWaveSummary, narration } =
+    promoteLaneANarration(waveInsights);
+  const findingsEnvelope = useInsightsEnvelope({
+    kind: "journey_run",
+    projectId,
+    runId: wave?.anchor.runId,
+  });
 
   const handleTabChange = useCallback(
     (next: SwarmDetailTab) => {
@@ -581,6 +585,9 @@ export function SwarmRunDetail({
               onOpenSession={handleOpenSession}
               projectId={projectId ?? undefined}
               generatedSummary={generatedWaveSummary}
+              narration={narration}
+              journeyFindings={findingsEnvelope?.journeyFindings}
+              journeyFindingsJob={findingsEnvelope?.journeyFindingsJob}
             />
           </div>
         ) : null}

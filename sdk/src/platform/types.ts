@@ -1,4 +1,12 @@
 import type {
+  SwarmJourneyFinding,
+  SwarmJourneyFindings,
+  SwarmJourneyFindingsJob,
+} from "../contract/swarm-finding.js";
+export type PlatformSwarmJourneyFinding = SwarmJourneyFinding;
+export type PlatformSwarmJourneyFindings = SwarmJourneyFindings;
+
+import type {
   SwarmSessionVerdict,
   JourneyRunVerdictSummary,
   SwarmReport,
@@ -1130,8 +1138,7 @@ export interface PlatformEvalRunJudgeState {
   threshold: number | null;
 }
 
-export interface PlatformEvalRunGoalCompletionJudge
-  extends PlatformEvalRunJudgeState {
+export interface PlatformEvalRunGoalCompletionJudge extends PlatformEvalRunJudgeState {
   progress?: {
     total: number;
     completed: number;
@@ -1147,8 +1154,7 @@ export interface PlatformEvalRunGoalCompletionJudge
   cases: PlatformEvalRunGoalCompletionCase[];
 }
 
-export interface PlatformEvalRunGroundednessJudge
-  extends PlatformEvalRunJudgeState {
+export interface PlatformEvalRunGroundednessJudge extends PlatformEvalRunJudgeState {
   /** Per-case grades. EMPTY unless `status` is `"completed"`. */
   cases: PlatformEvalRunGroundednessCase[];
 }
@@ -1175,8 +1181,7 @@ export interface PlatformEvalRunJudgeCase {
   reason: string | null;
 }
 
-export interface PlatformEvalRunGoalCompletionCase
-  extends PlatformEvalRunJudgeCase {
+export interface PlatformEvalRunGoalCompletionCase extends PlatformEvalRunJudgeCase {
   status?: "scored" | "error" | "skipped";
   gradingKey?: string;
   errorCode?: string;
@@ -1188,8 +1193,7 @@ export interface PlatformEvalRunGoalCompletionCase
   rubricHits: string[];
 }
 
-export interface PlatformEvalRunGroundednessCase
-  extends PlatformEvalRunJudgeCase {
+export interface PlatformEvalRunGroundednessCase extends PlatformEvalRunJudgeCase {
   /** Claims the tool trajectory does not support. */
   unsupportedClaims: string[];
 }
@@ -1760,8 +1764,7 @@ export interface PlatformEvalSuiteSettingsBase {
 }
 
 /** A suite's settings as vocabulary 1 (no header) spells them. */
-export interface PlatformEvalSuiteSettings
-  extends PlatformEvalSuiteSettingsBase {
+export interface PlatformEvalSuiteSettings extends PlatformEvalSuiteSettingsBase {
   checks: PublicCheck[];
   /**
    * Suite defaults a case inherits under policy 2. Present only with
@@ -1776,8 +1779,7 @@ export interface PlatformEvalSuiteSettings
  * them: the suite-default rules are `defaultAssertions` and the policy-2
  * default count is `iterations`. Same facts, canonical words.
  */
-export interface PlatformEvalSuiteSettingsV2
-  extends PlatformEvalSuiteSettingsBase {
+export interface PlatformEvalSuiteSettingsV2 extends PlatformEvalSuiteSettingsBase {
   defaultAssertions: PublicCheck[];
   /** As {@link PlatformEvalSuiteSettings.verdictPolicyDefaults}, spelled canonically. */
   verdictPolicyDefaults?: PlatformEvalVerdictPolicyDefaultsV2;
@@ -1807,15 +1809,13 @@ export interface PlatformEvalVerdictPolicyDefaultsBase {
 }
 
 /** Suite-level defaults under verdict policy 2, as vocabulary 1 spells them. */
-export interface PlatformEvalVerdictPolicyDefaults
-  extends PlatformEvalVerdictPolicyDefaultsBase {
+export interface PlatformEvalVerdictPolicyDefaults extends PlatformEvalVerdictPolicyDefaultsBase {
   /** Trials per case unless the case overrides `repetitions`. */
   repetitions: number;
 }
 
 /** Suite-level defaults under verdict policy 2, as vocabulary 2 spells them. */
-export interface PlatformEvalVerdictPolicyDefaultsV2
-  extends PlatformEvalVerdictPolicyDefaultsBase {
+export interface PlatformEvalVerdictPolicyDefaultsV2 extends PlatformEvalVerdictPolicyDefaultsBase {
   /** Iterations per case unless the case overrides `iterations`. */
   iterations: number;
 }
@@ -3988,8 +3988,7 @@ export interface PlatformTraceDestinationHealth {
  * a caller can size the gap — NOTHING was queued while it was paused, and the
  * only way to fill the window is a backfill.
  */
-export interface PlatformTraceDestinationResumed
-  extends PlatformTraceDestination {
+export interface PlatformTraceDestinationResumed extends PlatformTraceDestination {
   pausedSince: number | null;
 }
 
@@ -4505,6 +4504,8 @@ export interface PlatformUnifiedFindings {
 }
 
 export interface PlatformInsightsEnvelope {
+  journeyFindings?: PlatformSwarmJourneyFindings | null;
+  journeyFindingsJob?: SwarmJourneyFindingsJob | null;
   schemaVersion: 1;
   scope: PlatformInsightScope;
   status: PlatformInsightsStatus;
@@ -4860,8 +4861,7 @@ export interface PlatformUserTestingScenario {
  * Scenario detail — the read shape, widened with the environment link and
  * the insights envelope.
  */
-export interface PlatformUserTestingScenarioDetail
-  extends PlatformUserTestingScenario {
+export interface PlatformUserTestingScenarioDetail extends PlatformUserTestingScenario {
   environmentId: string | null;
   /**
    * Present when the caller may have it. The envelope is gated on workspace
@@ -5134,8 +5134,7 @@ export interface PlatformReadinessStartBody {
   includeLlmObservations?: boolean;
 }
 
-export interface PlatformOpenAIReadinessStartBody
-  extends PlatformReadinessStartBody {
+export interface PlatformOpenAIReadinessStartBody extends PlatformReadinessStartBody {
   /**
    * The DECLARED submission shape. REQUIRED, and never inferred.
    *

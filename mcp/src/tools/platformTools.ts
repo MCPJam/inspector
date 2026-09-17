@@ -1,3 +1,4 @@
+import type { SwarmJourneyFindings } from "@mcpjam/sdk/contract";
 /**
  * MCP tools over the shared platform operation catalog. Each tool is a thin
  * adapter: parse args with the operation's schema, call the Platform API
@@ -595,18 +596,21 @@ export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
 };
 
 const catalogOperationNames = new Set(
-  PLATFORM_CATALOG_OPERATIONS.map((operation) => operation.name)
+  PLATFORM_CATALOG_OPERATIONS.map((operation) => operation.name),
 );
 const allOperationNames = new Set(
-  ALL_OPERATIONS.map((operation) => operation.name)
+  ALL_OPERATIONS.map((operation) => operation.name),
 );
 const staleCatalogExclusions = Object.keys(EXCLUDED_FROM_CATALOG).filter(
-  (name) => !allOperationNames.has(name)
+  (name) => !allOperationNames.has(name),
 );
 const uncoveredCatalogOperations = ALL_OPERATIONS.filter(
   (operation) =>
     !catalogOperationNames.has(operation.name) &&
-    !Object.prototype.hasOwnProperty.call(EXCLUDED_FROM_CATALOG, operation.name)
+    !Object.prototype.hasOwnProperty.call(
+      EXCLUDED_FROM_CATALOG,
+      operation.name,
+    ),
 );
 if (
   staleCatalogExclusions.length > 0 ||
@@ -614,10 +618,10 @@ if (
 ) {
   throw new Error(
     `Platform MCP catalog partition drift: stale=${staleCatalogExclusions.join(
-      ","
+      ",",
     )}; uncovered=${uncoveredCatalogOperations
       .map((operation) => operation.name)
-      .join(",")}`
+      .join(",")}`,
   );
 }
 
@@ -661,8 +665,8 @@ const DESTRUCTIVE_OPERATION_NAMES: ReadonlySet<string> = new Set(
   ALL_OPERATIONS.filter(
     (operation) =>
       operation.risk === "destructive" ||
-      LEGACY_DESTRUCTIVE_NAMES.has(operation.name)
-  ).map((operation) => operation.name)
+      LEGACY_DESTRUCTIVE_NAMES.has(operation.name),
+  ).map((operation) => operation.name),
 );
 
 /**
@@ -738,7 +742,7 @@ export const PLATFORM_TOOL_WIDGET_VIEWS: Readonly<
 
 export function registerPlatformCatalogTools(
   registrar: SessionToolRegistrar,
-  context: PlatformToolContext
+  context: PlatformToolContext,
 ): void {
   for (const operation of PLATFORM_CATALOG_OPERATIONS) {
     const view = PLATFORM_TOOL_WIDGET_VIEWS[operation.name];
@@ -751,7 +755,7 @@ export function registerPlatformCatalogTools(
         annotations: operationAnnotations(operation),
       },
       async (input) => runPlatformOperation(context, operation, input),
-      view ? platformWidgetUi(context, operation, view) : undefined
+      view ? platformWidgetUi(context, operation, view) : undefined,
     );
   }
 }
@@ -766,7 +770,7 @@ export function registerPlatformCatalogTools(
 export function platformWidgetUi(
   context: PlatformToolContext,
   operation: PlatformOperation<any, any>,
-  view: PlatformWidgetView
+  view: PlatformWidgetView,
 ) {
   return {
     resourceUri: PLATFORM_WIDGET_RESOURCE_URIS[view],
@@ -779,13 +783,13 @@ export function platformWidgetUi(
     },
     callback: async (input: unknown) =>
       runPlatformOperation(context, operation, input, (payload) =>
-        tagPlatformWidgetPayload(view, payload)
+        tagPlatformWidgetPayload(view, payload),
       ),
   };
 }
 
 export function operationAnnotations(
-  operation: PlatformOperation<unknown, unknown>
+  operation: PlatformOperation<unknown, unknown>,
 ): ToolAnnotations {
   if (operation.readOnly) {
     return { readOnlyHint: true };
@@ -833,7 +837,7 @@ export function operationAnnotations(
  * before the call, not from the invoice.
  */
 export function operationDescription(
-  operation: PlatformOperation<unknown, unknown>
+  operation: PlatformOperation<unknown, unknown>,
 ): string {
   return operation.risk === "spend"
     ? `${operation.description} COSTS MONEY: this consumes the organization's credits or configured provider keys.`
@@ -844,7 +848,7 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
   context: PlatformToolContext,
   operation: PlatformOperation<TInput, TOutput>,
   input: TInput,
-  transformPayload?: (payload: TOutput) => object
+  transformPayload?: (payload: TOutput) => object,
 ) {
   // Resolve the bearer: the verified token for an authed session, or a
   // lazily-minted guest token for an anonymous one. Minting happens here (on
@@ -890,22 +894,22 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
         onError: (error, operationName) => {
           console.error(
             `[platform-tools] could not build a permalink for ${operationName}:`,
-            error instanceof Error ? error.message : String(error)
+            error instanceof Error ? error.message : String(error),
           );
         },
-      }
+      },
     );
     return toolSuccess(
       withPermalinkEnvelope(
         transformPayload ? transformPayload(result) : result,
-        permalinks
+        permalinks,
       ),
-      permalinks
+      permalinks,
     );
   } catch (error) {
     return toolError(
       describeOperationError(error),
-      errorStructuredContent(error)
+      errorStructuredContent(error),
     );
   }
 }
@@ -916,7 +920,7 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
 // calmly instead of with the alarming destructive styling. The model/CLI still
 // see `isError` plus the human-readable text message.
 function errorStructuredContent(
-  error: unknown
+  error: unknown,
 ): Record<string, unknown> | undefined {
   if (isPlatformApiError(error)) {
     // A usage-limit refusal also carries WHEN to come back and whether credits
@@ -969,6 +973,7 @@ export const MODEL_MAX_EVIDENCE_PER_FINDING = 2;
 export const MODEL_CONTRACT_JSON_CAP = 600;
 
 type EnvelopeLike = {
+  journeyFindings?: SwarmJourneyFindings | null;
   schemaVersion: number;
   findings: Array<Record<string, unknown>>;
   truncation: {
@@ -994,9 +999,59 @@ function isInsightsEnvelope(value: unknown): value is EnvelopeLike {
   );
 }
 
-function compactEnvelope(envelope: EnvelopeLike): EnvelopeLike {
+export function compactJourneyFindings(value: SwarmJourneyFindings) {
+  const rank = { verifiedMechanism: 0, populationFact: 1, sessionReport: 2 };
   let omittedEvidence = 0;
   let contractTruncated = false;
+  const findings = [...value.findings]
+    .sort((a, b) => rank[a.basis] - rank[b.basis])
+    .slice(0, MODEL_MAX_FINDINGS)
+    .map((finding) => {
+      omittedEvidence += Math.max(
+        0,
+        finding.citations.length - MODEL_MAX_EVIDENCE_PER_FINDING,
+      );
+      let reportExcerpt = finding.reportExcerpt;
+      if (reportExcerpt) {
+        omittedEvidence += Math.max(
+          0,
+          reportExcerpt.citations.length - MODEL_MAX_EVIDENCE_PER_FINDING,
+        );
+        let actual = reportExcerpt.actual;
+        if (actual.length > 400) {
+          const head = actual.slice(0, 399);
+          actual = head.slice(0, Math.max(0, head.lastIndexOf(" "))) + "…";
+          contractTruncated = true;
+        }
+        reportExcerpt = {
+          actual,
+          citations: reportExcerpt.citations.slice(
+            0,
+            MODEL_MAX_EVIDENCE_PER_FINDING,
+          ),
+        };
+      }
+      return {
+        ...finding,
+        citations: finding.citations.slice(0, MODEL_MAX_EVIDENCE_PER_FINDING),
+        reportExcerpt,
+      };
+    });
+  const omittedFindings = value.findings.length - findings.length;
+  return {
+    value: { ...value, findings },
+    omittedFindings,
+    omittedEvidence,
+    contractTruncated,
+  };
+}
+
+function compactEnvelope(envelope: EnvelopeLike): EnvelopeLike {
+  const journey = envelope.journeyFindings
+    ? compactJourneyFindings(envelope.journeyFindings)
+    : null;
+  let omittedEvidence = journey?.omittedEvidence ?? 0;
+  let contractTruncated = journey?.contractTruncated ?? false;
   // Findings arrive ready-first from the producer, so a head slice keeps
   // every server-ready finding before any investigation is dropped.
   const kept = envelope.findings.slice(0, MODEL_MAX_FINDINGS).map((finding) => {
@@ -1026,13 +1081,15 @@ function compactEnvelope(envelope: EnvelopeLike): EnvelopeLike {
     }
     return next;
   });
-  const omittedFindings = envelope.findings.length - kept.length;
+  const omittedFindings =
+    envelope.findings.length - kept.length + (journey?.omittedFindings ?? 0);
   if (omittedFindings === 0 && omittedEvidence === 0 && !contractTruncated) {
     return envelope;
   }
   return {
     ...envelope,
     findings: kept,
+    ...(journey ? { journeyFindings: journey.value } : {}),
     truncation: {
       truncated: true,
       omittedFindings: envelope.truncation.omittedFindings + omittedFindings,
@@ -1108,7 +1165,7 @@ function toolSuccess(payload: object, permalinks: PlatformPermalink[] = []) {
 
 function toolError(
   message: string,
-  structuredContent?: Record<string, unknown>
+  structuredContent?: Record<string, unknown>,
 ) {
   return {
     isError: true,

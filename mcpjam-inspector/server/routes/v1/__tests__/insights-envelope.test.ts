@@ -1,3 +1,4 @@
+import swarmFindingsWire from "../../../../../sdk/tests/fixtures/swarm-findings-wire.json";
 /**
  * The common insights envelope on the v1 surface: detail embeds, the eval
  * retry, and — security-critical — the guest boundary. Share-link guests must
@@ -278,6 +279,8 @@ describe("journey-run detail — insights embed", () => {
         ...ENVELOPE,
         scope: { kind: "swarm_wave", id: "wave_1", runId: RUN },
         runHealth: { targets: [] },
+        journeyFindings: swarmFindingsWire,
+        journeyFindingsJob: { status: "completed", updatedAt: 0 },
       },
     });
     const res = await makeApp(journeys).request(
@@ -285,6 +288,12 @@ describe("journey-run detail — insights embed", () => {
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
+    expect((body.insights as Record<string, unknown>).journeyFindings).toEqual(
+      swarmFindingsWire,
+    );
+    expect(
+      (body.insights as Record<string, unknown>).journeyFindingsJob,
+    ).toEqual({ status: "completed", updatedAt: 0 });
     expect((body.insights as Record<string, unknown>).runHealth).toEqual({
       targets: [],
     });
@@ -498,14 +507,23 @@ describe("eval-run detail — judges envelope", () => {
           cases: [
             ...GRADED_RUN.goalCompletion.cases,
             {
-              caseKey: "ui_error", iterationId: "it_2", status: "error",
-              errorCode: "judge_evidence_unavailable", score: 0.9,
-              passed: false, reason: "Evidence unavailable", rubricHits: [],
+              caseKey: "ui_error",
+              iterationId: "it_2",
+              status: "error",
+              errorCode: "judge_evidence_unavailable",
+              score: 0.9,
+              passed: false,
+              reason: "Evidence unavailable",
+              rubricHits: [],
               ...provenance,
             },
             {
-              caseKey: "ui_skipped", iterationId: "it_3", status: "skipped",
-              passed: false, reason: "Case judge disabled", rubricHits: [],
+              caseKey: "ui_skipped",
+              iterationId: "it_3",
+              status: "skipped",
+              passed: false,
+              reason: "Case judge disabled",
+              rubricHits: [],
             },
           ],
         },
@@ -517,19 +535,31 @@ describe("eval-run detail — judges envelope", () => {
     );
     const body = (await res.json()) as any;
     expect(body.judges.goalCompletion).toMatchObject({
-      status: "failed", judgeTemplateVersion: 4, judgeTemplateHash: "template-hash",
+      status: "failed",
+      judgeTemplateVersion: 4,
+      judgeTemplateHash: "template-hash",
     });
     expect(body.judges.goalCompletion.cases).toEqual([
       { ...GRADED_RUN.goalCompletion.cases[0], status: "scored" },
       {
-        caseKey: "ui_error", iterationId: "it_2", status: "error",
-        errorCode: "judge_evidence_unavailable", score: null,
-        passed: false, reason: "Evidence unavailable", rubricHits: [],
+        caseKey: "ui_error",
+        iterationId: "it_2",
+        status: "error",
+        errorCode: "judge_evidence_unavailable",
+        score: null,
+        passed: false,
+        reason: "Evidence unavailable",
+        rubricHits: [],
         ...provenance,
       },
       {
-        caseKey: "ui_skipped", iterationId: "it_3", status: "skipped",
-        score: null, passed: false, reason: "Case judge disabled", rubricHits: [],
+        caseKey: "ui_skipped",
+        iterationId: "it_3",
+        status: "skipped",
+        score: null,
+        passed: false,
+        reason: "Case judge disabled",
+        rubricHits: [],
       },
     ]);
   });
@@ -717,7 +747,9 @@ describe("eval-run judge request", () => {
     // never move off `null`.
     vi.clearAllMocks();
     answerQueries({ getTestSuiteRun: RUN_ROW });
-    mutationMock.mockRejectedValue(new Error("Suite not found or unauthorized"));
+    mutationMock.mockRejectedValue(
+      new Error("Suite not found or unauthorized"),
+    );
     const res = await makeApp(evals).request(
       `/api/v1/projects/${PROJECT}/eval-runs/${RUN}/judge`,
       { method: "POST" },

@@ -244,7 +244,7 @@ const LEGACY_EM_DASH_COPY = new Map<string, number>([
   ["components/skills/ServerSkillsSection.tsx", 2],
   ["components/subscriptions/subscription-stream-state.ts", 1],
   ["components/subscriptions/SubscriptionStreamsPanel.tsx", 1],
-  ["components/swarms/findings/findings-derivation.ts", 1],
+  ["components/swarms/findings/findings-derivation-legacy.ts", 1],
   ["components/swarms/findings/findings-headline.ts", 4],
   ["components/swarms/journey-list.tsx", 3],
   ["components/swarms/journey-run-results.tsx", 2],

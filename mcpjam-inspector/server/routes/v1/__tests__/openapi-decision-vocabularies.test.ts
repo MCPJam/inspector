@@ -72,6 +72,47 @@ const spec = JSON.parse(readFileSync(SPEC_PATH, "utf8")) as {
  * exact shape of the bug this file was written for.
  */
 const SITES = [
+  { schema: "SwarmJourneyFinding", path: ["chainStage"], vocabulary: "stages" },
+  {
+    schema: "SwarmJourneyFinding",
+    path: ["chainStageState"],
+    vocabulary: "stageStates",
+  },
+  {
+    schema: "SwarmJourneyFinding",
+    path: ["disposition"],
+    vocabulary: "swarmFindingDispositions",
+  },
+  {
+    schema: "SwarmJourneyFinding",
+    path: ["basis"],
+    vocabulary: "swarmFindingBases",
+  },
+  {
+    schema: "SwarmJourneyFinding",
+    path: ["scopeLevel"],
+    vocabulary: "swarmFindingScopeLevels",
+  },
+  {
+    schema: "SwarmJourneyFinding",
+    path: ["coverageNotes", "items"],
+    vocabulary: "swarmFindingCoverageNotes",
+  },
+  {
+    schema: "SwarmJourneyFindings",
+    path: ["summaryKind"],
+    vocabulary: "swarmFindingSummaryKinds",
+  },
+  {
+    schema: "SwarmJourneyFindings",
+    path: ["coverageNotes", "items"],
+    vocabulary: "swarmFindingCoverageNotes",
+  },
+  {
+    schema: "SwarmJourneyFindings",
+    path: ["personas", "items", "disposition"],
+    vocabulary: "swarmFindingDispositions",
+  },
   { schema: "EvalIteration", path: ["firstFailedStage"], vocabulary: "stages" },
   {
     schema: "EvalIteration",
@@ -166,7 +207,7 @@ function resolveSite(site: (typeof SITES)[number]): Schema {
         : node?.properties?.[segment];
     expect(
       node,
-      `openapi.json has no ${site.schema}/${site.path.join("/")}`
+      `openapi.json has no ${site.schema}/${site.path.join("/")}`,
     ).toBeDefined();
   }
   return node!;
@@ -182,7 +223,7 @@ describe("openapi.json ↔ the decision vocabularies", () => {
       expect(
         new Set(node.enum as string[]),
         `${label} has drifted from ${site.vocabulary} — the wire carries members ` +
-          "the spec does not describe, or describes members the wire never sends"
+          "the spec does not describe, or describes members the wire never sends",
       ).toEqual(new Set(vocabulary));
       // Set equality alone would accept a duplicated member.
       expect(node.enum).toHaveLength(vocabulary.length);
@@ -202,7 +243,7 @@ describe("openapi.json ↔ the decision vocabularies", () => {
         expect(
           node.enum,
           `${label} lists the ${site.vocabulary} in a different order from the contract, ` +
-            "and their order is normative — `notReached` is derived from position"
+            "and their order is normative — `notReached` is derived from position",
         ).toEqual([...vocabulary]);
       }
     });
@@ -213,7 +254,7 @@ describe("openapi.json ↔ the decision vocabularies", () => {
         expect(
           description,
           `${label} never defines \`${member}\` — an agent reading it off the ` +
-            "wire has nowhere else to look"
+            "wire has nowhere else to look",
         ).toContain(`\`${member}\``);
       }
     });
@@ -226,7 +267,7 @@ describe("openapi.json ↔ the decision vocabularies", () => {
           expect(
             description,
             `${label} describes \`${member}\` in words that are not ` +
-              "`decision-labels.ts`'s — one run, five readings"
+              "`decision-labels.ts`'s — one run, five readings",
           ).toContain(labels[member]);
         }
       });
@@ -238,7 +279,7 @@ describe("openapi.json ↔ the decision vocabularies", () => {
     // vocabulary copied into a new schema and not listed above would be
     // exactly as unguarded as `StageResultRow.reason` was.
     const guarded = new Set(
-      SITES.map((site) => [site.schema, ...site.path].join("/"))
+      SITES.map((site) => [site.schema, ...site.path].join("/")),
     );
     const found = new Set<string>();
     const walk = (node: unknown, path: string[]) => {
@@ -248,9 +289,10 @@ describe("openapi.json ↔ the decision vocabularies", () => {
       }
       if (!node || typeof node !== "object") return;
       const members = new Set(
-        (Array.isArray((node as Schema).enum) ? (node as Schema).enum! : []).map(
-          String
-        )
+        (Array.isArray((node as Schema).enum)
+          ? (node as Schema).enum!
+          : []
+        ).map(String),
       );
       if (members.size > 0) {
         for (const vocabulary of Object.values(DECISION_LABEL_VOCABULARIES)) {
@@ -259,7 +301,7 @@ describe("openapi.json ↔ the decision vocabularies", () => {
           // drift, while never matching an unrelated enum that happens to
           // share a word or two.
           const overlap = vocabulary.filter((member: string) =>
-            members.has(member)
+            members.has(member),
           ).length;
           if (overlap >= Math.ceil(vocabulary.length * 0.75)) {
             found.add(path.join("/"));
@@ -280,7 +322,7 @@ describe("openapi.json ↔ the decision vocabularies", () => {
       [...found].filter((site) => !guarded.has(site)).sort(),
       "a closed decision vocabulary is spelled out in openapi.json at a site " +
         "SITES does not list — add it there so its membership and its member " +
-        "docs are pinned"
+        "docs are pinned",
     ).toEqual([]);
     // And the other direction: a site listed here that no longer exists would
     // silently stop guarding anything.

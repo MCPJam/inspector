@@ -1,3 +1,7 @@
+import {
+  SWARM_FINDING_COVERAGE_NOTE_LABELS,
+  type SwarmJourneyFindings,
+} from "@mcpjam/sdk/contract";
 /**
  * Deterministic summary sentences + honesty footnotes for the Findings card.
  *
@@ -165,7 +169,12 @@ function feelingLine(persona: PersonaFindingsModel): string | null {
  * can improve on, because there is no session for a model to have read.
  */
 export type FindingsSummaryKind =
-  "not_launched" | "broken" | "friction" | "landed" | "ungraded";
+  | "not_launched"
+  | "broken"
+  | "friction"
+  | "landed"
+  | "ungraded"
+  | "unread";
 
 export interface FindingsSummary {
   lines: string[];
@@ -355,9 +364,14 @@ export function deriveHonestyFootnotes(args: {
   hasGroupId: boolean;
   /** Wave launch outcomes. Absent on callers that predate the launch chips. */
   launch?: LaunchTotals;
+  narration?: SwarmNarration;
 }): string[] {
   const { signals, hasGroupId, launch } = args;
   const notes: string[] = [];
+  if (args.narration?.modelRan === false)
+    notes.push(
+      `No model narration, ${Math.max(0, args.narration.sessionCount - args.narration.unanalyzedSessionCount)} of ${args.narration.sessionCount} sessions covered by deterministic checks only`,
+    );
   if (!signals || !hasGroupId) {
     // Legacy wave (or a backend that has not answered): the deterministic
     // detector lane never ran, so the tab is rubric findings only.
@@ -382,4 +396,52 @@ export function deriveHonestyFootnotes(args: {
     notes.push(`${plural(launch.rateLimited, "session")} rate limited`);
   }
   return notes;
+}
+
+export type SwarmNarration = {
+  modelRan: boolean;
+  sessionCount: number;
+  unanalyzedSessionCount: number;
+};
+export function promoteLaneANarration(wave: {
+  status: string | null;
+  insights?: {
+    summary?: string;
+    candidates?: unknown[];
+    sessionCount: number;
+    unanalyzedSessionCount: number;
+  } | null;
+}): { summary: string | null; narration: SwarmNarration } {
+  const modelRan =
+    wave.status === "completed" && (wave.insights?.candidates?.length ?? 0) > 0;
+  return {
+    summary: modelRan ? wave.insights?.summary?.trim() || null : null,
+    narration: {
+      modelRan,
+      sessionCount: wave.insights?.sessionCount ?? 0,
+      unanalyzedSessionCount: wave.insights?.unanalyzedSessionCount ?? 0,
+    },
+  };
+}
+export function composeWireFindingsSummary(
+  wire: SwarmJourneyFindings,
+): FindingsSummary {
+  const lines: Record<SwarmJourneyFindings["summaryKind"], string> = {
+    notLaunched: "No sessions launched.",
+    broken: "Some goals were blocked.",
+    friction: "Goals were met with friction.",
+    landed: "The measured goals were met.",
+    ungraded: "No graded outcome is available.",
+    unread: `${wire.population.read} of ${wire.population.started} sessions were read.`,
+  };
+  return {
+    kind:
+      wire.summaryKind === "notLaunched" ? "not_launched" : wire.summaryKind,
+    lines: [lines[wire.summaryKind]],
+  };
+}
+export function wireFindingsFootnotes(wire: SwarmJourneyFindings): string[] {
+  return wire.coverageNotes.map(
+    (note) => SWARM_FINDING_COVERAGE_NOTE_LABELS[note],
+  );
 }

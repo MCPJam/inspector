@@ -7,7 +7,7 @@
  * index order here.
  */
 
-import type { UserValueStage } from "@mcpjam/sdk/contract";
+import { USER_VALUE_STAGES, type UserValueStage } from "@mcpjam/sdk/contract";
 
 export type JourneyStageId =
   | "connection"
@@ -26,44 +26,47 @@ export interface JourneyStage {
   question: string;
 }
 
-export const JOURNEY_STAGES = [
-  {
+export const JOURNEY_STAGE_COPY = {
+  connection: {
     id: "connection",
     num: "01",
     title: "Connection",
     question: "Could the configured client establish a session?",
   },
-  {
+  discovery: {
     id: "discovery",
     num: "02",
     title: "Discovery",
     question: "Did the client receive usable primitives and metadata?",
   },
-  {
+  selection: {
     id: "selection",
     num: "03",
     title: "Selection",
     question: "Did the agent choose an appropriate primitive?",
   },
-  {
+  call: {
     id: "call",
     num: "04",
     title: "Tool call",
     question: "Were the arguments valid and faithful to intent?",
   },
-  {
+  response: {
     id: "response",
     num: "05",
     title: "Tool response",
     question: "Did the server return an honest, usable result?",
   },
-  {
+  userValue: {
     id: "value",
     num: "06",
     title: "User value",
     question: "Did the configured system complete the original task?",
   },
-] as const satisfies readonly JourneyStage[];
+} as const satisfies Record<UserValueStage, JourneyStage>;
+export const JOURNEY_STAGES = USER_VALUE_STAGES.map(
+  (stage) => JOURNEY_STAGE_COPY[stage],
+);
 
 /**
  * Compile-time proof every panel stage has a ROW here.

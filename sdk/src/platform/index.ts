@@ -250,6 +250,8 @@ export type {
   PlatformSwarm,
   PlatformSwarmArchived,
   PlatformSwarmFinding,
+  PlatformSwarmJourneyFinding,
+  PlatformSwarmJourneyFindings,
   PlatformSwarmOverview,
   PlatformSwarmOverviewRun,
   PlatformSwarmOverviewFinding,

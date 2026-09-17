@@ -1,3 +1,5 @@
+import wireFixture from "../../../../../../sdk/tests/fixtures/swarm-findings-wire.json";
+import { swarmJourneyFindingsSchema } from "@mcpjam/sdk/contract";
 import { neverStartedReport } from "./swarm-report-fixtures";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -676,3 +678,26 @@ describe("SwarmRunDetail findings wiring", () => {
     expect(screen.queryByTestId("swarm-findings-tab")).not.toBeInTheDocument();
   });
 });
+
+it("renders backend findings and mounts remediation for this wave", () => {
+  render(
+    <SwarmFindingsTab
+      wave={wave()}
+      waveSignals={null}
+      personas={personas}
+      projectId="proj-1"
+      journeyFindings={swarmJourneyFindingsSchema.parse(wireFixture)}
+    />,
+  );
+  expect(screen.getByText("Some goals were blocked.")).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: /Ana/ })).toBeInTheDocument();
+  expect(screen.getByTestId("actionable-findings-mount")).toHaveAttribute(
+    "data-run-id",
+    wave().anchor.runId,
+  );
+});
+vi.mock("@/components/shared/actionable-insights/actionable-findings", () => ({
+  ActionableFindings: ({ surface }: { surface: { runId: string } }) => (
+    <div data-testid="actionable-findings-mount" data-run-id={surface.runId} />
+  ),
+}));

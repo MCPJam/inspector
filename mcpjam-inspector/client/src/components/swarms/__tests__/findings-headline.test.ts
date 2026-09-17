@@ -490,3 +490,22 @@ describe("deriveHonestyFootnotes", () => {
     ).toEqual([]);
   });
 });
+
+it("does not promote a detector-only summary into model narration", async () => {
+  const { promoteLaneANarration } =
+    await import("../findings/findings-headline");
+  expect(
+    promoteLaneANarration({
+      status: "completed",
+      insights: {
+        summary: "No anomalies",
+        candidates: [],
+        sessionCount: 5,
+        unanalyzedSessionCount: 5,
+      },
+    }),
+  ).toEqual({
+    summary: null,
+    narration: { modelRan: false, sessionCount: 5, unanalyzedSessionCount: 5 },
+  });
+});

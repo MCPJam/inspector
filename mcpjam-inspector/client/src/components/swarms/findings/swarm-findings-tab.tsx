@@ -1,3 +1,13 @@
+import type {
+  SwarmJourneyFindings,
+  SwarmJourneyFindingsJob,
+} from "@mcpjam/sdk/contract";
+import { ActionableFindings } from "@/components/shared/actionable-insights/actionable-findings";
+import {
+  composeWireFindingsSummary,
+  wireFindingsFootnotes,
+  type SwarmNarration,
+} from "./findings-headline";
 /**
  * The Findings tab on `/swarms/:swarmId` — the persona-journey narrative over
  * the wave. The model derives from the `wave`, `waveSignals`, and `personas`
@@ -29,6 +39,7 @@ import type { SwarmWaveSignals } from "@/lib/swarm-api";
 import type { SwarmWave } from "@/components/swarms/swarm-overview-panel";
 import {
   deriveSwarmFindingsModel,
+  deriveSwarmFindingsModelFromWire,
   runIsTerminal,
   type FindingsPersonaDoc,
 } from "./findings-derivation";
@@ -50,6 +61,9 @@ export function SwarmFindingsTab({
   onOpenSession,
   projectId,
   generatedSummary,
+  journeyFindings,
+  journeyFindingsJob,
+  narration,
 }: {
   wave: SwarmWave;
   waveSignals: SwarmWaveSignals | null | undefined;
@@ -58,6 +72,9 @@ export function SwarmFindingsTab({
   projectId?: string;
   /** Lane A's completed wave narration, else null. Never requested here. */
   generatedSummary?: string | null;
+  journeyFindings?: SwarmJourneyFindings | null;
+  journeyFindingsJob?: SwarmJourneyFindingsJob | null;
+  narration?: SwarmNarration;
 }) {
   const [funnels, setFunnels] = useState<
     Record<string, ChatSessionStageFunnel | null>
@@ -72,24 +89,32 @@ export function SwarmFindingsTab({
   );
   const model = useMemo(
     () =>
-      deriveSwarmFindingsModel({
-        runs: wave.runs,
-        signals: waveSignals,
-        personas,
-        funnels,
-      }),
-    [wave.runs, waveSignals, personas, funnels],
+      journeyFindings
+        ? deriveSwarmFindingsModelFromWire({
+            journeyFindings,
+            personas,
+            runs: wave.runs,
+          })
+        : deriveSwarmFindingsModel({
+            runs: wave.runs,
+            signals: waveSignals,
+            personas,
+            funnels,
+          }),
+    [wave.runs, waveSignals, personas, funnels, journeyFindings],
   );
   // Signals carry the authoritative answer. A legacy wave has none, so fall
   // back to the runs themselves rather than hiding that the run finished.
   const summary = useMemo(
     () =>
-      composeFindingsSummary(model, {
-        terminal: waveSignals
-          ? waveSignals.terminal
-          : wave.runs.every(runIsTerminal),
-      }),
-    [model, waveSignals, wave.runs],
+      journeyFindings
+        ? composeWireFindingsSummary(journeyFindings)
+        : composeFindingsSummary(model, {
+            terminal: waveSignals
+              ? waveSignals.terminal
+              : wave.runs.every(runIsTerminal),
+          }),
+    [model, waveSignals, wave.runs, journeyFindings],
   );
   // Swarm keys a goal by its run, so the scope is just the project. Memoized
   // because it reaches a query's arguments through the goal inspect panel.
@@ -103,15 +128,20 @@ export function SwarmFindingsTab({
   // dimension of this wave. Nothing to act on." is exactly the reassurance the
   // reader must not be given.
   const recommendation =
-    summary.kind === "not_launched" ? null : clampNarration(generatedSummary);
+    journeyFindings || summary.kind === "not_launched"
+      ? null
+      : clampNarration(generatedSummary);
   const footnotes = useMemo(
     () =>
-      deriveHonestyFootnotes({
-        signals: waveSignals,
-        hasGroupId: Boolean(wave.runs[0]?.swarmRunGroupId),
-        launch: model.launch,
-      }),
-    [waveSignals, wave.runs, model.launch],
+      journeyFindings
+        ? wireFindingsFootnotes(journeyFindings)
+        : deriveHonestyFootnotes({
+            narration,
+            signals: waveSignals,
+            hasGroupId: Boolean(wave.runs[0]?.swarmRunGroupId),
+            launch: model.launch,
+          }),
+    [waveSignals, wave.runs, model.launch, journeyFindings, narration],
   );
 
   // Keyed by name, not index: `deriveSwarmFindingsModel` sorts personas
@@ -150,28 +180,43 @@ export function SwarmFindingsTab({
       ? stageChoice.stage
       : (expandedGoal?.defaultStage ?? "value");
 
-  if (!persona) {
+  const jobStatus = journeyFindingsJob &&
+    journeyFindingsJob.status !== "completed" && (
+      <p className="mb-3 text-sm text-muted-foreground">
+        {journeyFindingsJob.status === "pending"
+          ? "Reading session evidence…"
+          : journeyFindingsJob.status === "failed"
+            ? "Session analysis did not complete."
+            : "Session analysis was skipped."}
+      </p>
+    );
+
+  if (!persona)
     return (
-      <div
-        className="flex h-full items-center justify-center text-sm text-muted-foreground"
-        data-testid="findings-empty"
-      >
-        No sessions in this swarm run.
+      <div data-testid="swarm-findings-tab">
+        {jobStatus}
+        <FindingsSummaryCard
+          sessionCount={model.sessionCount}
+          summary={summary.lines}
+          recommendation={recommendation}
+          footnotes={footnotes}
+        />
       </div>
     );
-  }
 
   return (
     <div className="w-full" data-testid="swarm-findings-tab">
       <ErrorBoundary fallback={null}>
-        {wave.runs.map((run) => (
-          <RunFunnelRead
-            key={run.runId}
-            runId={run.runId}
-            onRead={receiveFunnel}
-          />
-        ))}
+        {!journeyFindings &&
+          wave.runs.map((run) => (
+            <RunFunnelRead
+              key={run.runId}
+              runId={run.runId}
+              onRead={receiveFunnel}
+            />
+          ))}
       </ErrorBoundary>
+      {jobStatus}
       <FindingsSummaryCard
         sessionCount={model.sessionCount}
         summary={summary.lines}
@@ -210,6 +255,14 @@ export function SwarmFindingsTab({
         onOpenSession={onOpenSession}
         sessionScope={sessionScope}
       />
+      {projectId && (
+        <ActionableFindings
+          surface={{ kind: "journey_run", projectId, runId: wave.anchor.runId }}
+          context={{ rerunLabel: "this swarm" }}
+          boundaryName="swarm-actionable-findings"
+          onOpenSession={onOpenSession}
+        />
+      )}
     </div>
   );
 }
