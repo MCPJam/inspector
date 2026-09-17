@@ -25796,6 +25796,10 @@
           "maxTurns": {
             "type": ["integer", "null"]
           },
+          "setupWrites": {
+            "type": "boolean",
+            "description": "Whether the setup step may write. Absent on rows authored before the flag."
+          },
           "createdAt": {
             "type": "number",
             "description": "Epoch milliseconds."
@@ -25981,6 +25985,10 @@
           },
           "maxTurns": {
             "type": ["integer", "null"]
+          },
+          "setupWrites": {
+            "type": "boolean",
+            "description": "Whether the setup step may write. Absent on rows authored before the flag."
           },
           "createdAt": {
             "type": "number",

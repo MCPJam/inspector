@@ -224,7 +224,7 @@ describe("deriveScenarioFindingsFootnotes", () => {
       sessionCount: 900,
     });
     expect(deriveScenarioFindingsFootnotes(model)).toContain(
-      "Session scan hit its cap — counts cover a subset"
+      "Session scan hit its cap, so counts cover a subset"
     );
   });
 

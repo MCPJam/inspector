@@ -334,7 +334,7 @@ function composeLines(
     return {
       lines: [
         "Nothing graded yet.",
-        "This run is still going — findings land as sessions are analyzed.",
+        "This run is still going. Findings land as sessions are analyzed.",
       ],
       kind: "ungraded",
     };
@@ -365,17 +365,17 @@ export function deriveHonestyFootnotes(args: {
     // Legacy wave (or a backend that has not answered): the deterministic
     // detector lane never ran, so the tab is rubric findings only.
     notes.push(
-      "Rubric findings only — deterministic signals unavailable for this wave",
+      "Rubric findings only: deterministic signals unavailable for this wave",
     );
   } else {
     if (!signals.terminal) {
-      notes.push("This swarm is still running — findings may change");
+      notes.push("This swarm is still running, so findings may change");
     }
     if (signals.truncated) {
-      notes.push("Session scan hit its cap — counts cover a subset");
+      notes.push("Session scan hit its cap, so counts cover a subset");
     }
     if (signals.lowConfidence) {
-      notes.push("Most sessions are unanalyzed — treat counts as partial");
+      notes.push("Most sessions are unanalyzed, so treat counts as partial");
     }
   }
   // Partial launch. A wave where NOTHING launched says so in the summary
@@ -385,7 +385,7 @@ export function deriveHonestyFootnotes(args: {
   if (launch && launch.succeeded > 0) {
     if (launch.failed > 0) {
       notes.push(
-        `${launch.failed} of ${launch.total} sessions failed to launch — findings cover the sessions that ran`,
+        `${launch.failed} of ${launch.total} sessions failed to launch, so findings cover the sessions that ran`,
       );
     }
     if (launch.rateLimited > 0) {
@@ -396,7 +396,7 @@ export function deriveHonestyFootnotes(args: {
   // so: the summary above it and every stage row below it are deterministic
   // templates over counts.
   if (generatedSummary) {
-    notes.push("Suggested fix is model-written — the findings are not");
+    notes.push("Suggested fix is model-written. The findings are not.");
   }
   return notes;
 }

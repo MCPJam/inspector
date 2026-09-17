@@ -192,6 +192,11 @@ function buildGoals(
       runId: clusterId,
       title: clusterSessions[0]?.themeClusterLabel ?? "Unlabeled goal",
       sessions: clusterSessions.length,
+      // Always false here, and not a stub: a scenario goal is CLUSTERED FROM
+      // sessions that ran. The flag exists for a swarm goal whose every
+      // session failed to launch, which cannot happen to a cluster — with no
+      // sessions there is no cluster to show.
+      notRun: false,
       sentiment: goalSentiment(clusterSessions.map((s) => s.outcome)),
       stages: emptyStages(),
       diagnosisStage: null,
@@ -271,6 +276,11 @@ export function deriveScenarioFindingsModel(args: {
     // reading.
     defaultPersonaIndex: 0,
     unanalyzedCount,
+    // Scenarios have no wave to launch — sessions arrive already run — so the
+    // honesty chips this feeds have nothing to report. Zeroed rather than
+    // optional: a swarm reader must never mistake "no launch step" for "no
+    // launch failures", and every session here is by definition one that ran.
+    launch: { total, succeeded: total, failed: 0, rateLimited: 0 },
     coverage: { scanned: sessions.length, total, truncated },
   };
 }
@@ -288,7 +298,7 @@ export function deriveScenarioFindingsFootnotes(
 ): string[] {
   const notes: string[] = [];
   if (model.coverage.truncated) {
-    notes.push("Session scan hit its cap — counts cover a subset");
+    notes.push("Session scan hit its cap, so counts cover a subset");
   }
   if (model.unanalyzedCount > 0) {
     notes.push(

@@ -429,7 +429,7 @@ describe("deriveHonestyFootnotes", () => {
     expect(
       deriveHonestyFootnotes({ signals: null, hasGroupId: false }),
     ).toEqual([
-      "Rubric findings only — deterministic signals unavailable for this wave",
+      "Rubric findings only: deterministic signals unavailable for this wave",
     ]);
     expect(
       deriveHonestyFootnotes({ signals: signals(), hasGroupId: false })[0],
@@ -445,12 +445,12 @@ describe("deriveHonestyFootnotes", () => {
       }),
       hasGroupId: true,
     });
-    expect(notes).toContain("Session scan hit its cap — counts cover a subset");
+    expect(notes).toContain("Session scan hit its cap, so counts cover a subset");
     expect(notes).toContain(
-      "Most sessions are unanalyzed — treat counts as partial",
+      "Most sessions are unanalyzed, so treat counts as partial",
     );
     expect(notes).toContain(
-      "This swarm is still running — findings may change",
+      "This swarm is still running, so findings may change",
     );
 
     const partialJudge = deriveHonestyFootnotes({
@@ -473,7 +473,7 @@ describe("deriveHonestyFootnotes", () => {
       launch: { total: 9, succeeded: 6, failed: 3, rateLimited: 2 },
     });
     expect(notes).toContain(
-      "3 of 9 sessions failed to launch — findings cover the sessions that ran",
+      "3 of 9 sessions failed to launch, so findings cover the sessions that ran",
     );
     expect(notes).toContain("2 sessions rate limited");
   });
@@ -495,7 +495,7 @@ describe("deriveHonestyFootnotes", () => {
       generatedSummary: true,
     });
     expect(notes).toEqual([
-      "Suggested fix is model-written — the findings are not",
+      "Suggested fix is model-written. The findings are not.",
     ]);
   });
 });

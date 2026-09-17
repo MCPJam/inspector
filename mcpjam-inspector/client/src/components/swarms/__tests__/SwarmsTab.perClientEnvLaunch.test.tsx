@@ -45,6 +45,12 @@ const HOSTS = [
 
 vi.mock("@/hooks/useClients", () => ({
   useHostList: () => ({ hosts: HOSTS, isLoading: false }),
+  // Target grounding reads the selected host's detail before it can launch.
+  // Resolved from the same fixture list, so the mock cannot drift from it.
+  useHost: ({ hostId }: { hostId: string | null }) => ({
+    host: HOSTS.find((candidate) => candidate._id === hostId) ?? null,
+    isLoading: false,
+  }),
 }));
 
 vi.mock("@/components/hosts/server-picker", () => ({
