@@ -86,6 +86,23 @@ describe("useOnboarding", () => {
     });
   });
 
+  it("does not auto-connect when an explicit first-run overlay owns the choice", async () => {
+    const onConnect = vi.fn();
+    const { result } = renderHook(() =>
+      useOnboarding({
+        servers: {},
+        onConnect,
+        isSignedInWithWorkOs: false,
+        isWorkOsAuthLoading: false,
+        autoConnectFirstRun: false,
+      }),
+    );
+
+    expect(result.current.phase).toBe("dismissed");
+    await act(async () => {});
+    expect(onConnect).not.toHaveBeenCalled();
+  });
+
   it("waits for first-run client config sync before auto-connecting", async () => {
     const onConnect = vi.fn();
     const { rerender } = renderHook(

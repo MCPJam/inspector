@@ -24,6 +24,8 @@ interface ActiveHostServerReconcilerProps {
   isAuthenticated: boolean;
   activeHost?: HostConfigDtoV2;
   activeHostId: string | null;
+  isActiveHostSelectionHydrated: boolean;
+  suspendAutoConnect?: boolean;
 }
 
 /**
@@ -48,6 +50,8 @@ export function ActiveHostServerReconciler({
   isAuthenticated,
   activeHost,
   activeHostId,
+  isActiveHostSelectionHydrated,
+  suspendAutoConnect = false,
 }: ActiveHostServerReconcilerProps) {
   const { servers: projectServersList } = useProjectServers({
     projectId,
@@ -61,7 +65,7 @@ export function ActiveHostServerReconciler({
   // the catalog arrives, then fires exactly once.
   const serverNames = useMemo(
     () => (projectServersList ?? []).map((s) => s.name),
-    [projectServersList]
+    [projectServersList],
   );
 
   useAutoConnectProjectServers({
@@ -69,8 +73,11 @@ export function ActiveHostServerReconciler({
     // Scope key is the explicit host id when one is picked; otherwise the
     // host config's own id (so swapping the project default to a different
     // host still counts as a scope change).
-    hostScopeKey: activeHostId ?? activeHost?.id ?? null,
+    hostScopeKey: isActiveHostSelectionHydrated
+      ? (activeHostId ?? activeHost?.id ?? null)
+      : null,
     serverNames,
+    suspendAutoConnect,
   });
 
   // Single source of truth: the Playground active server set
@@ -86,7 +93,7 @@ export function ActiveHostServerReconciler({
       Object.entries(sharedAppState.servers)
         .filter(([, server]) => isActiveRuntimeStatus(server.connectionStatus))
         .map(([name]) => name),
-    [sharedAppState.servers]
+    [sharedAppState.servers],
   );
   useEffect(() => {
     if (

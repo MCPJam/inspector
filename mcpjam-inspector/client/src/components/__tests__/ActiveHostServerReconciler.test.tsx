@@ -42,6 +42,7 @@ function renderReconciler({
   }),
   activeHost,
   activeHostId = null,
+  isActiveHostSelectionHydrated = true,
 }: {
   appState: ReturnType<typeof makeAppState>;
   setSelectedServerNames: (names: string[]) => void;
@@ -53,6 +54,7 @@ function renderReconciler({
   }>;
   activeHost?: { id: string; serverIds: string[] };
   activeHostId?: string | null;
+  isActiveHostSelectionHydrated?: boolean;
 }) {
   const wrapper = ({ children }: { children: ReactNode }) => (
     <PreferencesStoreProvider themeMode="light" themePreset="default">
@@ -79,6 +81,7 @@ function renderReconciler({
         isAuthenticated
         activeHost={activeHost as any}
         activeHostId={activeHostId}
+        isActiveHostSelectionHydrated={isActiveHostSelectionHydrated}
       />,
       { wrapper },
     ),
@@ -166,6 +169,30 @@ describe("ActiveHostServerReconciler — auto-connect preference", () => {
     });
 
     await flush();
+    expect(ensureServersReady).toHaveBeenCalledWith(["alpha", "beta"]);
+  });
+
+  it("waits to establish the host scope until persisted selection hydrates", async () => {
+    const ensureServersReady = vi.fn().mockResolvedValue({
+      readyServerNames: ["alpha", "beta"],
+      failedServerNames: [],
+      missingServerNames: [],
+      reauthServerNames: [],
+    });
+
+    renderReconciler({
+      appState: makeAppState(
+        { alpha: "disconnected", beta: "disconnected" },
+        [],
+      ),
+      setSelectedServerNames: vi.fn(),
+      ensureServersReady,
+      activeHost: { id: "default-host", serverIds: [] },
+      isActiveHostSelectionHydrated: false,
+    });
+
+    await flush();
+
     expect(ensureServersReady).toHaveBeenCalledWith(["alpha", "beta"]);
   });
 

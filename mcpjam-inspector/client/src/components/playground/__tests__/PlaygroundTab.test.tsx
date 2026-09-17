@@ -19,6 +19,7 @@ vi.mock("@/hooks/useComputersEnabled", () => ({
   useBrowserEnabledState: () => true,
 }));
 const mockLoadingScreen = vi.hoisted(() => vi.fn());
+const mockPlaygroundCenter = vi.hoisted(() => vi.fn());
 const mockLoadingState = vi.hoisted(() => ({
   current: { kind: "skeleton" } as { kind: string },
 }));
@@ -67,8 +68,9 @@ vi.mock("@/hooks/useBrowserEngine", () => ({
     consent: null,
   }),
 }));
+const mockUseAutoConnectProjectServers = vi.hoisted(() => vi.fn());
 vi.mock("@/hooks/useAutoConnectProjectServers", () => ({
-  useAutoConnectProjectServers: () => {},
+  useAutoConnectProjectServers: mockUseAutoConnectProjectServers,
 }));
 vi.mock("@/lib/scenario-client-style", () => ({
   getScenarioShellStyle: () => ({}),
@@ -116,7 +118,10 @@ vi.mock("@/components/playground/PlaygroundRightRail", () => ({
 // Relative to PlaygroundTab.tsx, so "../X" from this __tests__ dir resolves to
 // the same module the source imports as "./X".
 vi.mock("../PlaygroundCenter", () => ({
-  PlaygroundCenter: () => <div data-testid="playground-center" />,
+  PlaygroundCenter: (props: unknown) => {
+    mockPlaygroundCenter(props);
+    return <div data-testid="playground-center" />;
+  },
 }));
 vi.mock("../PlaygroundPreviewedClientSync", () => ({
   PlaygroundPreviewedClientSync: () => null,
@@ -141,7 +146,17 @@ describe("PlaygroundTab loading branch", () => {
     });
     useBrowserWorkspaceStore.setState({ conversations: {} });
     mockLoadingScreen.mockClear();
+    mockPlaygroundCenter.mockClear();
     mockLoadingState.current = { kind: "skeleton" };
+    mockUseAutoConnectProjectServers.mockClear();
+  });
+
+  it("suspends route-level auto-connect while onboarding is open", () => {
+    render(<PlaygroundTab {...baseProps} suspendAutoConnect />);
+
+    expect(mockUseAutoConnectProjectServers).toHaveBeenCalledWith(
+      expect.objectContaining({ suspendAutoConnect: true }),
+    );
   });
 
   it("does not close a persisted panel while conversation metadata is restoring", () => {
@@ -182,5 +197,25 @@ describe("PlaygroundTab loading branch", () => {
 
     expect(mockLoadingScreen).not.toHaveBeenCalled();
     expect(screen.getByTestId("playground-center")).toBeInTheDocument();
+  });
+
+  it("passes the one-shot first-run prompt into the Playground center", () => {
+    mockLoadingState.current = { kind: "ready" };
+    const onFirstRunPromptConsumed = vi.fn();
+
+    render(
+      <PlaygroundTab
+        {...baseProps}
+        firstRunPrompt="What can this server do?"
+        onFirstRunPromptConsumed={onFirstRunPromptConsumed}
+      />,
+    );
+
+    expect(mockPlaygroundCenter).toHaveBeenCalledWith(
+      expect.objectContaining({
+        firstRunPrompt: "What can this server do?",
+        onFirstRunPromptConsumed,
+      }),
+    );
   });
 });

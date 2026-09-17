@@ -85,6 +85,7 @@ interface PlaygroundTabProps {
   isClientConfigSyncPending?: boolean;
   areServersHydrated?: boolean;
   hasSeenFirstRunOnboarding?: boolean;
+  autoConnectFirstRun?: boolean;
   isServerSyncing?: boolean;
   onConnect?: (formData: ServerFormData) => void;
   onSaveHostContext?: (
@@ -106,6 +107,11 @@ interface PlaygroundTabProps {
   activeHost?: HostConfigDtoV2 | null;
   evalChatHandoff?: EvalChatHandoff | null;
   onEvalChatHandoffConsumed?: (id: string) => void;
+  /** One-shot prompt handed off by first-run server connection. */
+  firstRunPrompt?: string | null;
+  onFirstRunPromptConsumed?: () => void;
+  /** Pauses route-local reconnect work while first-run onboarding owns it. */
+  suspendAutoConnect?: boolean;
 }
 
 /**
@@ -199,6 +205,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     projectId: props.sharedProjectId ?? props.activeProjectId ?? null,
     hostScopeKey: previewedHostId ?? effectiveHostConfig?.id ?? null,
     serverNames: projectServerNames,
+    suspendAutoConnect: props.suspendAutoConnect,
   });
 
   const playgroundState = usePlaygroundState({
@@ -217,6 +224,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     isClientConfigSyncPending: props.isClientConfigSyncPending,
     areServersHydrated: props.areServersHydrated,
     hasSeenFirstRunOnboarding: props.hasSeenFirstRunOnboarding,
+    autoConnectFirstRun: props.autoConnectFirstRun,
     isServerSyncing: props.isServerSyncing,
     onConnect: props.onConnect,
     onSaveHostContext: props.onSaveHostContext,
@@ -509,6 +517,10 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                           evalChatHandoff={props.evalChatHandoff}
                           onEvalChatHandoffConsumed={
                             props.onEvalChatHandoffConsumed
+                          }
+                          firstRunPrompt={props.firstRunPrompt}
+                          onFirstRunPromptConsumed={
+                            props.onFirstRunPromptConsumed
                           }
                         />
                       </ResizablePanel>
