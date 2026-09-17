@@ -265,7 +265,7 @@ describe("ScenarioGoalChain", () => {
 
 // ── the tab ─────────────────────────────────────────────────────────────────
 
-describe("the Findings tab starts its own analysis (BB-196)", () => {
+describe("the Findings tab observes server-owned analysis", () => {
   /** Sessions exist but none is analyzed — the state a tester lands on. */
   function unanalyzed() {
     mockUseGoalOutcomeDrilldown.mockReturnValue({
@@ -282,10 +282,7 @@ describe("the Findings tab starts its own analysis (BB-196)", () => {
     });
   }
 
-  it("queues the analysis and says it is working, not waiting", async () => {
-    // This is the LANDING tab, so it is the surface the ticket is really
-    // about. Before this it read "No session has been analyzed yet" with
-    // nothing queued and no affordance — less than the old button offered.
+  it("does not queue analysis when a study opens", async () => {
     unanalyzed();
     const rebuild = vi.fn().mockResolvedValue({
       runId: "run-1",
@@ -300,13 +297,13 @@ describe("the Findings tab starts its own analysis (BB-196)", () => {
 
     render(<ScenarioFindingsTab scenarioId="scn-1" />);
 
-    await waitFor(() => expect(rebuild).toHaveBeenCalledTimes(1));
+    expect(rebuild).not.toHaveBeenCalled();
     expect(screen.getByTestId("scenario-findings-empty")).toHaveTextContent(
-      /Analyzing sessions/,
+      "No session has been analyzed yet.",
     );
   });
 
-  it("keeps the honest dead end when the start is refused", async () => {
+  it("keeps unanalyzed sessions explicit without attempting a rebuild", async () => {
     // A signed-out guest: the rebuild mutation authenticates, so nothing is
     // ever coming and a spinner would be a lie.
     unanalyzed();
