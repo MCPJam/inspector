@@ -3,12 +3,15 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { IterationDetails } from "../iteration-details";
 import type { EvalCase, EvalIteration } from "../types";
 
-const { mockGetBlob, mockJsonEditor } = vi.hoisted(() => ({
+const { mockGetBlob, mockJsonEditor, mockCopy } = vi.hoisted(() => ({
+  mockCopy: vi.fn().mockResolvedValue(true),
   mockGetBlob: vi.fn(),
   mockJsonEditor: vi.fn((props: any) => (
     <div data-testid="json-editor">{JSON.stringify(props.value)}</div>
   )),
 }));
+
+vi.mock("@/lib/clipboard", () => ({ copyToClipboard: (...args: unknown[]) => mockCopy(...args) }));
 
 const expectedToolCalls = [
   {
@@ -382,4 +385,15 @@ describe("IterationDetails host presentation", () => {
     );
     expect(screen.queryByTestId("mock-trace-viewer")).not.toBeInTheDocument();
   });
+});
+
+it("shows a timeout summary and retains worker diagnostics in the disclosure", async () => {
+  render(<IterationDetails iteration={{ ...iteration, status: "timed_out", result: "timed_out",
+    error: "Worker heartbeat lost.", errorDetails: '{"worker":"stopped"}' }} testCase={testCase} />);
+  expect(screen.getByText("Run timed out")).toBeInTheDocument();
+  expect(screen.queryByText(/Worker heartbeat lost/)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Show details" }));
+  expect(screen.getByText(/Worker heartbeat lost/)).toHaveTextContent('"worker": "stopped"');
+  fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+  await waitFor(() => expect(mockCopy).toHaveBeenCalledWith(expect.stringContaining("Worker heartbeat lost.")));
 });
