@@ -10,6 +10,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // NewJourneyButton's Advanced → Judge section pulls the model catalog via
 // useAvailableModels (AppStateProvider-coupled); these tests render SwarmsTab
 // without providers, so stub it to an empty catalog.
+vi.mock("@/hooks/use-host-snapshot", () => ({
+  useHostSnapshotForHost: () => ({ status: "unavailable" }),
+  useHostSnapshotForSession: () => ({ status: "unavailable" }),
+}));
+
 vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({ availableModels: [] }),
 }));
@@ -90,6 +95,25 @@ const session = {
   readiness: { status: "completed", verdict: "ready", issueCount: 0 },
 };
 
+// The strip's cohort follows `journeyRunIds`: with a wave it reports that
+// wave, without one the whole project.
+const swarmSessionMetrics = (sessionCount: number) => ({
+  sessionCount,
+  analyzedCount: sessionCount,
+  truncated: false,
+  toolCallCount: 100,
+  toolErrorCount: 8,
+  toolErrorRate: 0.08,
+  sessionsWithToolErrors: 5,
+  topFailingTool: { toolName: "search_web", errorCount: 4 },
+  avgToolCallsPerSession: 8.3,
+  latencyP50Ms: 10500,
+  latencyP95Ms: 18500,
+  avgTokensPerSession: 3200,
+  tokenSampleCount: sessionCount,
+  trend: [],
+});
+
 // Capture every paginated-query dispatch so we can assert the session query's
 // arg NAME is `journeyRunId`.
 const paginatedCalls: Array<{ name: string; args: unknown }> = [];
@@ -113,6 +137,12 @@ vi.mock("convex/react", () => ({
         return [host, hostTwo];
       case "journeys:getJourneyRollup":
         return { journeyRefId: "journey-1", runCount: 2, hosts: [] };
+      case "journeyRuns:getSwarmSessionMetrics":
+        return swarmSessionMetrics(
+          (args as { journeyRunIds?: readonly string[] })?.journeyRunIds?.length
+            ? 14
+            : 653
+        );
       default:
         return undefined;
     }
@@ -230,6 +260,7 @@ vi.mock("@/lib/toast", () => ({
 }));
 
 import { SwarmsTab } from "../SwarmsTab";
+import { SwarmsSessionsPanel } from "../SwarmsSessionsPanel";
 import { openPersonasTab } from "./swarms-tab-test-helpers";
 
 beforeEach(() => {
@@ -346,6 +377,42 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
     });
   });
 
+  it("scopes session metrics to the run on a run Sessions tab", () => {
+    render(
+      <SwarmsSessionsPanel
+        projectId="proj-1"
+        personas={[persona]}
+        personaRefId={null}
+        onPersonaRefIdChange={() => {}}
+        journeyRunIds={["run-1"]}
+      />,
+    );
+
+    const panel = screen.getByTestId("swarms-sessions-panel");
+    expect(
+      within(panel).getByTestId("swarm-sessions-metric-shell"),
+    ).toBeInTheDocument();
+    expect(within(panel).getByText(/14 sessions in scope/i)).toBeInTheDocument();
+    expect(within(panel).queryByText(/653 sessions in scope/i)).toBeNull();
+  });
+
+  it("keeps project-wide session metrics on the top-level Sessions tab", () => {
+    render(
+      <SwarmsSessionsPanel
+        projectId="proj-1"
+        personas={[persona]}
+        personaRefId={null}
+        onPersonaRefIdChange={() => {}}
+      />,
+    );
+
+    const panel = screen.getByTestId("swarms-sessions-panel");
+    expect(
+      within(panel).getByTestId("swarm-sessions-metric-shell"),
+    ).toBeInTheDocument();
+    expect(within(panel).getByText(/653 sessions in scope/i)).toBeInTheDocument();
+  });
+
   it("opens a specific run when its trend segment is clicked", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
     openPersonasTab();
@@ -404,7 +471,7 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
       .getAllByTestId("swarm-host-cell")
       .filter((el) => el.getAttribute("data-outcome") === "succeeded");
     expect(done.length).toBeGreaterThan(0);
-    expect(within(done[0]!).getByText("Done")).toBeInTheDocument();
+    expect(within(done[0]!).getByText("Ran")).toBeInTheDocument();
   });
 
   it("shows playground-style Trace / Chat / Raw tabs in the live pane", async () => {

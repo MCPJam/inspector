@@ -49,6 +49,7 @@ export type UnifiedFindingsState = {
   findings: ActionableFinding[];
   provenance: InsightsFindingProvenance[];
   analyze: FindingsAnalysisAction;
+  analysisFailure: { errorCode?: string } | null;
   build: {
     available: boolean;
     pending: boolean;
@@ -358,24 +359,40 @@ export function useUnifiedFindings(args: {
       ? GENERATION_UNAVAILABLE_NOTE
       : null;
 
+  const analyzePending =
+    awaitingBuild ||
+    buildRequested ||
+    jobPending ||
+    enrichRequested ||
+    args.generation.pending;
+  const enrichment = experiment?.snapshot?.enrichment;
+  const job = experiment?.job;
+  const analysisFailure =
+    job?.kind === "enrich" &&
+    job.status === "failed" &&
+    !analyzePending &&
+    !(enrichment && enrichment.generatedAt >= job.startedAt)
+      ? {
+          ...(job.errorCode && job.errorCode !== "cancelled"
+            ? { errorCode: job.errorCode }
+            : {}),
+        }
+      : null;
+
   return {
     envelope: args.envelope,
     experiment,
     mode,
     findings,
     provenance,
+    analysisFailure,
     analyze: {
       available:
         analyzeCapable &&
         experiment?.job?.status !== "pending" &&
         !args.generation.unavailable &&
         args.generation.canRequest,
-      pending:
-        awaitingBuild ||
-        buildRequested ||
-        jobPending ||
-        enrichRequested ||
-        args.generation.pending,
+      pending: analyzePending,
       error:
         buildError ??
         (jobFailed

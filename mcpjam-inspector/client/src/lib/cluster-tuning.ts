@@ -7,7 +7,7 @@
  * drifted client would offer a slider position the mutation rejects.
  *
  * The PRESETS are client-only. The backend knows nothing about Broad or
- * Detailed — it only ever receives three numbers — which is deliberate: preset
+ * Detailed — it only ever receives four numbers — which is deliberate: preset
  * naming is a UI affordance, and baking it into the wire would make renaming a
  * preset a migration.
  */
@@ -16,15 +16,24 @@ export type ClusterTuning = {
   maxClusters?: number;
   minSeparation?: number;
   linkThreshold?: number;
+  minClusterSize?: number;
 };
 
 export type ResolvedClusterTuning = Required<ClusterTuning>;
+
+/**
+ * Temporary: hide the Balanced / Rebuild clusters affordances. Automatic
+ * first analysis and failed-run retry stay. Flip this when the control
+ * ships again — the components and wiring are still there.
+ */
+export const SHOW_RECLUSTERING_UI = false;
 
 /** Mirror of `CLUSTER_TUNING_DEFAULTS`. Also exactly the Balanced preset. */
 export const CLUSTER_TUNING_DEFAULTS: ResolvedClusterTuning = {
   maxClusters: 8,
   minSeparation: 0.15,
   linkThreshold: 0.78,
+  minClusterSize: 0,
 };
 
 /** Mirror of `CLUSTER_TUNING_RANGES`. The server re-checks every one of these. */
@@ -32,6 +41,7 @@ export const CLUSTER_TUNING_RANGES = {
   maxClusters: { min: 2, max: 24, step: 1 },
   minSeparation: { min: 0, max: 0.5, step: 0.01 },
   linkThreshold: { min: 0.5, max: 0.95, step: 0.01 },
+  minClusterSize: { min: 0, max: 100, step: 1 },
 } as const;
 
 export type ClusterTuningKnob = keyof ResolvedClusterTuning;
@@ -41,6 +51,7 @@ export const CLUSTER_TUNING_KNOBS: ClusterTuningKnob[] = [
   "maxClusters",
   "minSeparation",
   "linkThreshold",
+  "minClusterSize",
 ];
 
 /**
@@ -54,6 +65,10 @@ export const CLUSTER_TUNING_KNOB_COPY: Record<
   ClusterTuningKnob,
   { label: string; hint: string }
 > = {
+  minClusterSize: {
+    label: "Minimum theme size",
+    hint: "Auto requires two sessions per theme when there are at least eight sessions, and one otherwise. Smaller themes join their nearest theme.",
+  },
   maxClusters: {
     label: "Max themes",
     hint: "Ceiling on themes per axis. The clustering still picks the number that fits, and never exceeds √(sessions) — so a small scenario stays below this.",
@@ -69,9 +84,19 @@ export const CLUSTER_TUNING_KNOB_COPY: Record<
 };
 
 export const CLUSTER_TUNING_PRESETS = {
-  broad: { maxClusters: 4, minSeparation: 0.25, linkThreshold: 0.72 },
+  broad: {
+    maxClusters: 4,
+    minSeparation: 0.25,
+    linkThreshold: 0.72,
+    minClusterSize: 0,
+  },
   balanced: { ...CLUSTER_TUNING_DEFAULTS },
-  detailed: { maxClusters: 16, minSeparation: 0.08, linkThreshold: 0.82 },
+  detailed: {
+    maxClusters: 16,
+    minSeparation: 0.08,
+    linkThreshold: 0.82,
+    minClusterSize: 0,
+  },
 } as const satisfies Record<string, ResolvedClusterTuning>;
 
 export type ClusterTuningPreset = keyof typeof CLUSTER_TUNING_PRESETS;
@@ -88,15 +113,18 @@ export const CLUSTER_TUNING_PRESET_COPY: Record<
 > = {
   broad: {
     label: "Broad",
-    description: "Fewer, larger themes. Good for a first read of what sessions are about.",
+    description:
+      "Fewer, larger themes. Good for a first read of what sessions are about.",
   },
   balanced: {
     label: "Balanced",
-    description: "The default. Themes split only where the separation is clear.",
+    description:
+      "The default. Themes split only where the separation is clear.",
   },
   detailed: {
     label: "Detailed",
-    description: "More, smaller themes. Surfaces narrow behaviors a broad pass folds away.",
+    description:
+      "More, smaller themes. Surfaces narrow behaviors a broad pass folds away.",
   },
 };
 
@@ -105,6 +133,8 @@ export function resolveClusterTuning(
   tuning: ClusterTuning | null | undefined,
 ): ResolvedClusterTuning {
   return {
+    minClusterSize:
+      tuning?.minClusterSize ?? CLUSTER_TUNING_DEFAULTS.minClusterSize,
     maxClusters: tuning?.maxClusters ?? CLUSTER_TUNING_DEFAULTS.maxClusters,
     minSeparation:
       tuning?.minSeparation ?? CLUSTER_TUNING_DEFAULTS.minSeparation,
@@ -148,6 +178,7 @@ export function formatKnobValue(
   knob: ClusterTuningKnob,
   value: number,
 ): string {
+  if (knob === "minClusterSize" && value === 0) return "Auto";
   return CLUSTER_TUNING_RANGES[knob].step === 1
     ? String(value)
     : value.toFixed(2);

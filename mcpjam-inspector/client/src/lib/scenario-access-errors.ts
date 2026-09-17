@@ -55,7 +55,7 @@ function readMessage(body: RouteErrorBodyShape, status: number): string {
  */
 export function classifyScenarioAccessError(
   status: number,
-  body: unknown
+  body: unknown,
 ): ScenarioAccessErrorInfo | null {
   if (!body || typeof body !== "object") {
     return null;
@@ -68,7 +68,11 @@ export function classifyScenarioAccessError(
   if (code === "SCENARIO_ACCESS_STALE") {
     return { kind: "stale", status, code, message };
   }
-  if (code === "SCENARIO_ACCESS_DENIED") {
+  if (
+    code === "SCENARIO_ACCESS_DENIED" ||
+    code === "SCENARIO_SIGN_IN_REQUIRED" ||
+    (status === 401 && code === "UNAUTHORIZED")
+  ) {
     return { kind: "denied", status, code, message };
   }
 
@@ -91,7 +95,7 @@ export function classifyScenarioAccessError(
  * to the stream parser when the body turns out not to be an access verdict.
  */
 export async function classifyScenarioAccessResponse(
-  response: Response
+  response: Response,
 ): Promise<ScenarioAccessErrorInfo | null> {
   try {
     const body = await response.clone().json();
@@ -109,7 +113,7 @@ export async function classifyScenarioAccessResponse(
  */
 export function patchBodyAccessVersion(
   bodyJson: string,
-  accessVersion: number
+  accessVersion: number,
 ): string {
   try {
     const parsed = JSON.parse(bodyJson);

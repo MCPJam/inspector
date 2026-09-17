@@ -166,6 +166,10 @@ describe("swarm single-host runner — attempt ordering", () => {
     expect(adapter.runtime.modelDefinition.id).toBe(
       "anthropic/claude-haiku-4.5"
     );
+    // The swarm pins its own per-turn step cap instead of inheriting the
+    // engine's Playground default; a persona turn resends every tool result
+    // on every step, so this is what bounds turn time and tokens.
+    expect(adapter.runtime.maxSteps).toBe(10);
     expect(adapter.runtime.scenarioId).toBeUndefined();
     // A legacy host target pins no environment, so there is no grant boundary
     // to forward — and inventing one would let a harness turn believe a

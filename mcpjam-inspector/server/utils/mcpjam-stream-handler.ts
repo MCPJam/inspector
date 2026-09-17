@@ -2953,6 +2953,13 @@ async function processOneStep(
     }
   }
   Object.assign(convexHeaders, guestIpForwardHeaders(ipHash));
+  // Sponsored study inference must come through the trusted execution path
+  // that resolves the study's model and tools. This proof is required even
+  // when there is no client IP to forward. The viewer bearer remains intact.
+  const scenarioServiceToken = process.env.INSPECTOR_SERVICE_TOKEN?.trim();
+  if (scenarioId && scenarioServiceToken) {
+    convexHeaders["x-inspector-service-token"] = scenarioServiceToken;
+  }
   let res: Response;
   // Everything above this line is ours; everything at or below it is the
   // model's turn. Marked HERE, at the handover, not once a response comes

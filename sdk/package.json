@@ -1,6 +1,6 @@
 {
   "name": "@mcpjam/sdk",
-  "version": "8.8.0",
+  "version": "8.10.0",
   "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
   "type": "module",
   "main": "dist/index.js",
@@ -202,7 +202,7 @@
     "xpath": "^0.0.34",
     "yaml": "^2.9.0",
     "zod": "^4.2.0",
-    "@mcpjam/evaluators": "^0.2.0"
+    "@mcpjam/evaluators": "^0.3.0"
   },
   "peerDependencies": {
     "@sentry/node": "^8.55.0"

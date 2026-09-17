@@ -112,6 +112,7 @@ type RunningSelection = SwarmMatrixSelection & {
 type CellView = {
   outcome: SwarmMatrixCellOutcome | "queued";
   headline: string;
+  verdict?: JourneySessionRow["verdict"];
 };
 
 type SessionSlot = {
@@ -179,16 +180,16 @@ export function swarmCellHeadline(args: {
   if (args.outcome === "succeeded") {
     const checks = args.primary.match(/^(\d+)\/(\d+) pass$/);
     return checks && Number(checks[1]) > 0 && checks[1] === checks[2]
-      ? "Run completed: All checks passed"
+      ? "Run completed: All evaluators passed"
       : `Run completed: ${goal}`;
   }
   if (args.outcome === "rate_limited") {
     return /\d+\/\d+ pass/.test(args.primary)
       ? "Run completed: Goal completion had mixed results"
-      : "Run limited: not run";
+      : "Execution limited";
   }
   if (args.outcome === "failed") {
-    return `Run failed: ${goal}`;
+    return `Broke: ${goal}`;
   }
   return goal;
 }
@@ -386,24 +387,46 @@ function RunLiveBridge({
   return null;
 }
 
-function cellTone(outcome: CellView["outcome"]): string {
-  switch (outcome) {
-    case "succeeded":
-      return "border-emerald-500/30 bg-emerald-500/10";
-    case "failed":
-      return "border-destructive/40 bg-destructive/10";
-    case "rate_limited":
-      return "border-amber-500/40 bg-amber-500/10";
+/**
+ * Goal result owns the chip fill. Execution stays on the headline
+ * (`Running:` / `Broke:`) so a broken-but-passed session reads green and a
+ * completed-but-failed one reads red — without a second "Goal result:" label.
+ */
+export function sessionChipTone(args: {
+  outcome: CellView["outcome"];
+  verdict?: JourneySessionRow["verdict"];
+}): string {
+  const goal = args.verdict?.verdict;
+  if (goal === "passed") return "border-success/40 bg-success/10";
+  if (goal === "failed") return "border-destructive/40 bg-destructive/10";
+  if (goal === "inconclusive") return "border-warning/40 bg-warning/10";
+  if (
+    args.verdict &&
+    (args.verdict.grading.state === "queued" ||
+      args.verdict.grading.state === "running")
+  ) {
+    return "border-pending/40 bg-pending/10";
+  }
+  switch (args.outcome) {
     case "running":
-      return "border-primary/40 bg-primary/5";
     case "queued":
       return "border-primary/40 bg-primary/5";
+    case "rate_limited":
+      return "border-warning/40 bg-warning/10";
+    case "failed":
+      return "border-destructive/40 bg-destructive/10";
     default:
       return "border-border/50 bg-muted/15";
   }
 }
 
-function slotView(args: {
+export function sessionGoalResultAttr(
+  verdict?: JourneySessionRow["verdict"],
+): string {
+  return verdict?.verdict ?? "unknown";
+}
+
+export function slotView(args: {
   liveStatus?: SwarmCellLiveStatus;
   session: JourneySessionRow | null;
   attempt?: SwarmAttemptOutcome | null;
@@ -417,6 +440,28 @@ function slotView(args: {
     attempt,
     runStatus,
   });
+
+  if (session?.verdict) {
+    const verdict = session.verdict;
+    const execution = {
+      pending: "pending",
+      running: "running",
+      ran: "succeeded",
+      broke: "failed",
+      limited: "rate_limited",
+      withdrawn: "failed",
+    } as const;
+    const mapped = execution[verdict.lifecycle];
+    return {
+      outcome: mapped,
+      headline: swarmCellHeadline({
+        outcome: mapped,
+        primary: mapped,
+        goal,
+      }),
+      verdict,
+    };
+  }
 
   if (outcome === "running") {
     return {
@@ -449,11 +494,7 @@ function slotView(args: {
     };
   }
 
-  // A non-success terminal is reported BEFORE the rubric, and never dressed up
-  // as one. A rate-limited attempt never ran, so it has no rubric result to
-  // show — and reusing the `rate_limited` tone for a partial rubric pass (as
-  // the block below still does for its own middle case) must not leak into a
-  // cell that was genuinely refused by the provider.
+  // Execution refusal remains distinct from a measured goal result.
   if (outcome === "rate_limited") {
     return {
       outcome: "rate_limited",
@@ -470,26 +511,6 @@ function slotView(args: {
       headline: swarmCellHeadline({
         outcome: "failed",
         primary: "failed",
-        goal,
-      }),
-    };
-  }
-
-  const criteria = session?.criteria;
-  if (criteria?.status === "completed" && criteria.results?.length) {
-    const checks = criteria.results.length;
-    const passed = criteria.results.filter((result) => result.passed).length;
-    const scored: CellView["outcome"] =
-      passed === checks
-        ? "succeeded"
-        : passed === 0
-        ? "failed"
-        : "rate_limited";
-    return {
-      outcome: scored,
-      headline: swarmCellHeadline({
-        outcome: scored,
-        primary: `${passed}/${checks} pass`,
         goal,
       }),
     };
@@ -555,8 +576,7 @@ function collectSessionSlots(args: {
       index,
     );
     const direct = snap.stream.cellStatus[swarmCellKey(columnKey, index)] as
-      | SwarmCellLiveStatus
-      | undefined;
+      SwarmCellLiveStatus | undefined;
     const fromEnvelope = Object.values(snap.stream.sessions).find(
       (entry) =>
         entry.envelope.sessionIndex === index &&
@@ -733,10 +753,12 @@ export function NewSwarmRunningStep({
           prev.attempts.length === snapshot.attempts.length &&
           prev.attempts.every((attempt, index) => {
             const next = snapshot.attempts[index];
-            return attempt.status === next?.status &&
+            return (
+              attempt.status === next?.status &&
               attempt.errorCode === next?.errorCode &&
               attempt.errorMessage === next?.errorMessage &&
-              attempt.chatSessionId === next?.chatSessionId;
+              attempt.chatSessionId === next?.chatSessionId
+            );
           }) &&
           prev.sessionsPerTarget === snapshot.sessionsPerTarget &&
           prev.stream === snapshot.stream &&
@@ -758,6 +780,10 @@ export function NewSwarmRunningStep({
                 snapshot.sessions[index]?.chatSessionId &&
               session.status === snapshot.sessions[index]?.status &&
               session.messageCount === snapshot.sessions[index]?.messageCount &&
+              JSON.stringify(session.verdict) ===
+                JSON.stringify(snapshot.sessions[index]?.verdict) &&
+              JSON.stringify(session.observations) ===
+                JSON.stringify(snapshot.sessions[index]?.observations) &&
               session.criteria?.status ===
                 snapshot.sessions[index]?.criteria?.status,
           )
@@ -1007,11 +1033,11 @@ export function NewSwarmRunningStep({
     // Two providers throttling in the same run name neither: the banner would
     // otherwise blame whichever attempt was read first for both.
     const [only] = labels;
-    return { count, label: labels.size === 1 ? only ?? null : null };
+    return { count, label: labels.size === 1 ? (only ?? null) : null };
   }, [snapshots]);
 
   const selectedRunStatus = selection
-    ? snapshots[selection.runId]?.status ?? "running"
+    ? (snapshots[selection.runId]?.status ?? "running")
     : "running";
 
   const fallbackTrace = useMemo(
@@ -1257,7 +1283,7 @@ export function NewSwarmRunningStep({
                                 aria-label={`Watch ${run.personaName} on ${column.label} session 1`}
                                 className={cn(
                                   "flex items-center gap-1 rounded-lg border px-2.5 py-2",
-                                  cellTone("queued"),
+                                  sessionChipTone({ outcome: "queued" }),
                                 )}
                               >
                                 <PersonaPixelAvatar
@@ -1287,6 +1313,9 @@ export function NewSwarmRunningStep({
                                       type="button"
                                       data-testid="new-swarm-running-session"
                                       data-outcome={slot.view.outcome}
+                                      data-goal-result={sessionGoalResultAttr(
+                                        slot.view.verdict,
+                                      )}
                                       aria-pressed={selected}
                                       aria-label={`Watch ${
                                         run.personaName
@@ -1306,7 +1335,10 @@ export function NewSwarmRunningStep({
                                       className={cn(
                                         "flex items-center gap-1 rounded-lg border px-2.5 py-2 text-left transition-colors",
                                         "hover:brightness-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                                        cellTone(slot.view.outcome),
+                                        sessionChipTone({
+                                          outcome: slot.view.outcome,
+                                          verdict: slot.view.verdict,
+                                        }),
                                         selected &&
                                           "ring-2 ring-primary ring-offset-1 ring-offset-background",
                                       )}

@@ -1249,7 +1249,7 @@ describe("UserTestingScenarioCreateFlow — org share ceiling", () => {
     await user.click(screen.getByTestId("user-testing-create-access"));
     expect(
       await screen.findByRole("menuitemradio", {
-        name: "Anyone with the link",
+        name: "Anyone with the link who is signed in",
       }),
     ).toHaveAttribute("data-disabled");
     expect(

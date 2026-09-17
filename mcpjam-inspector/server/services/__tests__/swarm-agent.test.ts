@@ -123,7 +123,9 @@ describe("swarm-agent createJourneyRun — request-body contract", () => {
       // are the runner, so we are the only honest source for what we can
       // execute. The backend reads it to decide whether an environment's
       // materialized secrets make this wave unrunnable.
-      runnerCapabilities: [...runnerCapabilities()],
+      // The swarm path appends its own: the backend reads it to know this
+      // runner grades standard checks itself.
+      runnerCapabilities: [...runnerCapabilities(), "swarm-standard-checks-v1"],
     });
     // projectId is the field whose omission would produce the guaranteed 400.
     expect(body.projectId).toBe("proj-1");
@@ -144,6 +146,20 @@ describe("swarm-agent createJourneyRun — request-body contract", () => {
     });
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).kind).toBe(
       "user_testing",
+    );
+  });
+  it("serializes a per-run iterations override", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify(okCreateResponse())),
+    );
+    await createJourneyRun(CONVEX_HTTP_URL, "token", {
+      projectId: "proj-1",
+      journeyRefId: "journey-1",
+      launchKey: "lk-3",
+      sessionsPerTarget: 1,
+    });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).sessionsPerTarget).toBe(
+      1,
     );
   });
 });
