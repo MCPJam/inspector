@@ -53,7 +53,6 @@ function args() {
     convexHttpUrl: "https://test",
     bearer: "token",
     signal: new AbortController().signal,
-    emit: vi.fn(),
     setupWrites: true,
   } as unknown as Parameters<typeof prepareTargetGrounding>[0];
 }
@@ -73,12 +72,6 @@ describe("target preparation", () => {
     });
     expect(mocks.report.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.probe.mock.invocationCallOrder[0],
-    );
-    expect(a.emit).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: "setup_complete",
-        readiness: "not_needed",
-      }),
     );
     mocks.setup.mockClear();
     await prepareTargetGrounding({ ...a, setupWrites: undefined });

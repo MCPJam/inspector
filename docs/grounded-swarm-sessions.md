@@ -1,8 +1,8 @@
 # Grounded swarm sessions
 
-New journeys created by the UI default to `config.setupWrites: true`. The launch
-confirmation switch can disable it. Existing journeys and API calls that omit it
-keep setup off; every new run pins its journey's configuration in the snapshot.
+Grounding runs in the background with no UI. Journeys created in the app always
+get `config.setupWrites: true`. Existing journeys and API calls that omit it keep
+setup off; every new run pins its journey's configuration in the snapshot.
 API updates send `setupWrites` together with `sessionsPerTarget` and `maxTurns`.
 
 Before claiming sessions, each target optionally attempts prerequisite creation,
@@ -29,9 +29,8 @@ assessed and sessions can continue. Discovery and reporting failures degrade to 
 ungrounded persona, which must ask for existing names instead of inventing them.
 
 Setup records live in `journeyRuns.grounding`, outside chat sessions, grading and
-Findings. The run disclosure shows facts, created entities, tool calls, readiness
-and residue. Setup stream events do not create session cells. Recorded session
-context exposes the target's grounding for trace review.
+Findings. Nothing about grounding or setup is shown in the swarm UI. Recorded
+session context exposes the target's grounding in a session's Raw trace.
 
 Deploy the companion backend changes before serving this inspector version. The
 inspector tolerates a missing grounding endpoint. Existing stored records need no
