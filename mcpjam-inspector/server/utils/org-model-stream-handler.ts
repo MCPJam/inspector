@@ -82,6 +82,7 @@ import {
   isSuspendedScopeStepUpOutputChunk,
   resumeScopeStepUpBeforeDirectTurn,
 } from "./direct-chat-scope-step-up.js";
+import type { TurnPauseKind } from "@/shared/turn-outcome";
 
 export interface OrgModelHandlerOptions {
   projectId: string;
@@ -323,7 +324,7 @@ export interface OrgLocalModelHandlerOptions {
    */
   maxSteps?: number;
   scopeStepUpResume?: MrtrEngineResume;
-  shouldPauseAfterStep?: () => boolean;
+  pauseAfterStep?: () => TurnPauseKind | undefined;
   suspendedToolCallId?: () => string | undefined;
   /**
    * Progressive tool discovery plan. When `plan.enabled === true`, each
@@ -558,7 +559,7 @@ export function handleLocalOrgChatModel(
           : {}),
         ...(onLiveTextDelta ? { onLiveTextDelta } : {}),
         maxSteps: resolvedMaxSteps,
-        shouldPauseAfterStep: options.shouldPauseAfterStep,
+        pauseAfterStep: options.pauseAfterStep,
         suspendedToolCallId: options.suspendedToolCallId,
         // Shared SSE-callback factory — byte-identical wire output with
         // route 4 (`streamDirectChatWithLiveTrace`).

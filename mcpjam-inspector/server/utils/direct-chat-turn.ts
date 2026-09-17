@@ -60,6 +60,7 @@ import {
 import type {
   TurnCancellationSource,
   TurnOutcomeRecord,
+  TurnPauseKind,
 } from "@/shared/turn-outcome";
 import {
   closeUnresolvedToolCalls,
@@ -395,12 +396,18 @@ export interface RunDirectChatTurnOptions {
    */
   maxSteps?: number;
   /**
-   * Becomes true when a tool call was converted into a resumable SEP-2350
-   * continuation. The AI SDK otherwise feeds the temporary thrown error back
-   * to the model and starts another step; this predicate stops at that exact
-   * boundary.
+   * NAMES THE RAIL when a tool call was converted into a resumable SEP-2350
+   * continuation, and `undefined` while the turn is still running. The AI SDK
+   * otherwise feeds the temporary thrown error back to the model and starts
+   * another step; a defined return stops at that exact boundary.
+   *
+   * It returns the KIND rather than a boolean because the pause also has to be
+   * RECORDED, and only the caller knows which rail it suspended on. A boolean
+   * would leave this engine to guess one, and a pause naming the wrong rail
+   * sends a reader to the wrong resume — so the type makes a pause without a
+   * rail unrepresentable instead of defaulting to a neighbour.
    */
-  shouldPauseAfterStep?: () => boolean;
+  pauseAfterStep?: () => TurnPauseKind | undefined;
   /** Identifies the temporary tool-error result to omit from trace/history. */
   suspendedToolCallId?: () => string | undefined;
   /**
@@ -601,7 +608,7 @@ export function runDirectChatTurn(
     experimentalTelemetry,
     traceStartedAt,
     maxSteps,
-    shouldPauseAfterStep,
+    pauseAfterStep,
     suspendedToolCallId,
     cancellationSource,
   } = options;
@@ -761,8 +768,10 @@ export function runDirectChatTurn(
   opts: { terminal: boolean },
   ): Promise<void> => {
     if (!onPersist) return;
-    // `paused` is not reachable on this engine, so the terminal set here is
-    // exactly cancelled / failed / timed out.
+    // A `paused` turn never reaches this gate as terminal: the pause branch in
+    // `onFinish` persists with `terminal: false`, because its dangling call is
+    // the resume handle. So the terminal set here is exactly cancelled /
+    // failed / timed out.
     if (opts.terminal && !TERMINAL_TURN_RECORDING_ENABLED) return;
     const steps = Array.isArray(event.steps)
       ? (event.steps as Array<Record<string, unknown>>)
@@ -847,7 +856,7 @@ export function runDirectChatTurn(
     tools: executableTools,
     stopWhen: [
       stepCountIs(resolvedMaxSteps),
-      () => shouldPauseAfterStep?.() === true,
+      () => pauseAfterStep?.() !== undefined,
     ],
     ...(abortSignal ? { abortSignal } : {}),
     ...(maxRetries !== undefined ? { maxRetries } : {}),
@@ -1176,7 +1185,18 @@ export function runDirectChatTurn(
       // `failed` either way — but saying it here means the guarantee does not
       // live only in the builder, and a reader of this file can see which
       // ending the turn is claiming.
-      if (streamError === undefined) {
+      //
+      // NOR is it a completion when the turn stopped on the PAUSE predicate.
+      // `stopWhen` ends a suspended turn exactly the way a finished one ends —
+      // no abort, no `streamError` — so this path used to record a turn that is
+      // WAITING on a registered continuation as `completed`, and
+      // `didTurnComplete` read the resumable leg as success. This is the same
+      // closure `stopWhen` consulted, so a defined kind here means it is the
+      // one that stopped this turn.
+      const pausedKind = pauseAfterStep?.();
+      if (pausedKind !== undefined) {
+        outcomeBuilder.markPaused(pausedKind);
+      } else if (streamError === undefined) {
         outcomeBuilder.markCompleted(event.finishReason);
       } else {
         outcomeBuilder.setFinishReason(event.finishReason);

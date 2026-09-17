@@ -187,6 +187,7 @@ import {
   isSuspendedScopeStepUpOutputChunk,
   resumeScopeStepUpBeforeDirectTurn,
 } from "../../utils/direct-chat-scope-step-up.js";
+import type { TurnPauseKind } from "@/shared/turn-outcome";
 
 function formatStreamError(error: unknown, provider?: ModelProvider): string {
   if (!(error instanceof Error)) {
@@ -549,7 +550,7 @@ function streamDirectChatWithLiveTrace(options: {
   /** Session this stream persists to; required to attribute a persist receipt. */
   chatSessionId?: string;
   scopeStepUpResume?: MrtrEngineResume;
-  shouldPauseAfterStep?: () => boolean;
+  pauseAfterStep?: () => TurnPauseKind | undefined;
   suspendedToolCallId?: () => string | undefined;
 }): Response {
   const {
@@ -559,7 +560,7 @@ function streamDirectChatWithLiveTrace(options: {
     onPersist,
     chatSessionId: receiptChatSessionId,
     scopeStepUpResume,
-    shouldPauseAfterStep,
+    pauseAfterStep,
     suspendedToolCallId,
     ...turnOptions
   } = options;
@@ -627,7 +628,7 @@ function streamDirectChatWithLiveTrace(options: {
               }
             }
           : undefined,
-        shouldPauseAfterStep,
+        pauseAfterStep,
         suspendedToolCallId,
         onPersistError: (error) => {
           logger.warn("[mcp/chat-v2] onFinish ingestion error", {
@@ -2326,8 +2327,10 @@ chatV2.post("/", async (c) => {
           serverIds: hostConfigServerIds,
           requireToolApproval,
           scopeStepUpResume: scopeStepUpEngineResume,
-          shouldPauseAfterStep: () =>
-            suspendedScopeStepUpToolCallId !== undefined,
+          pauseAfterStep: () =>
+            suspendedScopeStepUpToolCallId !== undefined
+              ? "scope_step_up"
+              : undefined,
           suspendedToolCallId: () => suspendedScopeStepUpToolCallId,
           abortSignal: inboundAbortSignalOrg,
           onConversationComplete,
@@ -2451,7 +2454,10 @@ chatV2.post("/", async (c) => {
       progressivePlan,
       discoveryState,
       scopeStepUpResume: scopeStepUpEngineResume,
-      shouldPauseAfterStep: () => suspendedScopeStepUpToolCallId !== undefined,
+      pauseAfterStep: () =>
+        suspendedScopeStepUpToolCallId !== undefined
+          ? "scope_step_up"
+          : undefined,
       suspendedToolCallId: () => suspendedScopeStepUpToolCallId,
       abortSignal: inboundAbortSignalDirect,
       // Same invariant as the org-BYOK calls above: attach the bridge before
