@@ -1,3 +1,5 @@
+import { prepareTargetGrounding } from "./target-grounding";
+import { SwarmSetupError, swarmSetupChatSessionId } from "./swarm-setup-turn";
 import { composeAbortSignals } from "@mcpjam/sdk";
 import { logger } from "../../utils/logger.js";
 import { withDeadline } from "../../utils/run-supervisor/deadline.js";
@@ -176,6 +178,8 @@ export type JourneyManagerFactory = (host: PinnedHostExecutionSpec) => Promise<{
 }>;
 
 export interface StartJourneyRunOptions {
+  setupWrites?: boolean;
+  goal?: string;
   runId: string;
   projectId: string;
   /** Every pinned host this run fans out across (`snapshot.hosts`). */
@@ -772,6 +776,31 @@ async function runJourneyFanOut(
         bearer,
         signal: sessionSignal,
       });
+
+      if (!harnessTargetBlockedReason && !stopScheduling()) {
+        await prepareTargetGrounding({
+          runId,
+          projectId,
+          target,
+          persona: personaSnapshot,
+          goal: opts.goal,
+          setupWrites: opts.setupWrites,
+          modelDefinition,
+          managerFactory,
+          convexHttpUrl,
+          bearer,
+          signal: sessionSignal,
+          emit: (event) =>
+            hub.emit({
+              ...event,
+              runId,
+              hostId,
+              targetId,
+              chatSessionId: swarmSetupChatSessionId(runId, target),
+              sessionIndex: -1,
+            }),
+        });
+      }
 
       for (sessionIdx = 0; sessionIdx < sessionsPerTarget; sessionIdx++) {
         // Run-level stop (spend cap or shutdown/cancel) halts THIS target too.
@@ -1579,6 +1608,9 @@ async function runJourneyFanOut(
         { convexHttpUrl, bearer: cleanupBearer, projectId, runId, target },
         sessionIdx,
         sessionsPerTarget,
+        err instanceof SwarmSetupError
+          ? "prerequisites_unavailable"
+          : "host_worker_failed",
       );
     }
   };
@@ -1894,6 +1926,7 @@ async function markRemainingTargetAttemptsFailed(
   },
   fromIdx: number,
   toIdx: number,
+  errorCode = "host_worker_failed",
 ): Promise<void> {
   const { convexHttpUrl, bearer, projectId, runId, target } = ctx;
   const { hostId, targetId } = target;
@@ -1921,7 +1954,7 @@ async function markRemainingTargetAttemptsFailed(
         sessionIdx,
         status: "failed",
         chatSessionId,
-        errorCode: "host_worker_failed",
+        errorCode,
       });
     } catch (err) {
       logger.warn(

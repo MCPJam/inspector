@@ -1,3 +1,4 @@
+import { RunGroundingDisclosure } from "./grounding-disclosure";
 /**
  * Dedicated Swarm Run (wave) detail at `/swarms/:swarmId`.
  *
@@ -564,6 +565,11 @@ export function SwarmRunDetail({
 
       {/* Live only. Settled outcome lives in the header so a finished wave
           does not spend a second row repeating Complete + the session tally. */}
+      <div className="space-y-2 px-6">
+        {runIds.map((runId) => (
+          <RunGroundingDisclosure key={runId} runId={runId} />
+        ))}
+      </div>
       {live ? (
         <div
           className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border/40 bg-primary/[0.04] px-8 py-2"

@@ -1,3 +1,5 @@
+import { GroundingDisclosure } from "./grounding-disclosure";
+import type { TargetGrounding } from "@/shared/swarm-grounding";
 /**
  * Running step of the New swarm create flow.
  *
@@ -81,6 +83,7 @@ export type SwarmRunningColumn = {
 type AttributedSession = JourneySessionRow & { columnKey: string };
 
 type RunLiveSnapshot = {
+  grounding?: TargetGrounding[];
   status: string;
   sessions: AttributedSession[];
   stream: JourneyRunStreamState;
@@ -349,6 +352,7 @@ function RunLiveBridge({
     };
     onSnapshot(runId, {
       status: run.status,
+      grounding: run.grounding,
       sessions: attributed.sessions,
       stream,
       summaryTotal: summary.total,
@@ -594,6 +598,7 @@ function mergeStreams(
   for (const snap of Object.values(snapshots)) {
     stream = {
       sessions: { ...stream.sessions, ...snap.stream.sessions },
+      setupByTarget: { ...stream.setupByTarget, ...snap.stream.setupByTarget },
       cellStatus: { ...stream.cellStatus, ...snap.stream.cellStatus },
       runComplete: stream.runComplete && snap.stream.runComplete,
       connected: stream.connected || snap.stream.connected,
@@ -982,6 +987,32 @@ export function NewSwarmRunningStep({
             : "flex min-h-0 min-w-0 flex-1 flex-col gap-5 overflow-y-auto px-6 py-6 sm:px-8"
         }
       >
+        {Object.entries(snapshots).map(([runId, snapshot]) => (
+          <div key={runId} className="space-y-2">
+            {Object.entries(snapshot.stream.setupByTarget ?? {}).map(
+              ([targetKey, event]) => (
+                <p
+                  key={targetKey}
+                  role="status"
+                  className="text-sm text-muted-foreground"
+                >
+                  {hostName(event.hostId) ?? targetKey}:{" "}
+                  {event.type === "setup_start"
+                    ? "Setting up…"
+                    : event.readiness === "unavailable"
+                    ? "Prerequisites unavailable"
+                    : event.status === "skipped"
+                    ? "Setup skipped"
+                    : `Setup: ${event.createdCount} created`}
+                </p>
+              ),
+            )}
+            <GroundingDisclosure
+              entries={snapshot.grounding}
+              hostName={hostName}
+            />
+          </div>
+        ))}
         {showIntro ? (
         <div className="flex flex-wrap items-start gap-3">
           <div className="min-w-0 flex-1 space-y-2">

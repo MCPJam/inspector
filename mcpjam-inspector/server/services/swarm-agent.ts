@@ -1,3 +1,4 @@
+import type { GroundingReport } from "../../shared/swarm-grounding";
 import type { Harness } from "@mcpjam/sdk";
 import type {
   HostConfigMcpProfileV1,
@@ -195,6 +196,7 @@ export interface JourneyCriterion {
 }
 
 export interface JourneySnapshot {
+  setupWrites?: boolean;
   hosts: PinnedHostExecutionSpec[];
   personaSnapshot: PersonaSnapshot;
   goal?: string;
@@ -875,4 +877,26 @@ export async function swarmPersonaNextTurn(
     message: data.message,
     endSession: data.endSession === true,
   };
+}
+
+/** Old backends have no grounding route; discovery remains optional. */
+export async function reportTargetGrounding(
+  baseUrl: string,
+  bearer: string,
+  body: GroundingReport,
+  signal?: AbortSignal,
+): Promise<{ unavailable?: boolean }> {
+  try {
+    return await postJson(
+      `${baseUrl}/journey-execution/runs/grounding`,
+      bearer,
+      body,
+      LLM_TIMEOUT_MS,
+      signal,
+    );
+  } catch (error) {
+    if (error instanceof SwarmAgentError && error.status === 404)
+      return { unavailable: true };
+    throw error;
+  }
 }

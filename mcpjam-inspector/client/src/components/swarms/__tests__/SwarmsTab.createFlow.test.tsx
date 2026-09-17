@@ -1060,7 +1060,7 @@ describe("SwarmsTab — New swarm create flow", () => {
       name: "Refund a charge",
       goal: "Refund the charge",
       environmentIds: ["env-1"],
-      config: { sessionsPerTarget: 1, maxTurns: 6 },
+      config: { sessionsPerTarget: 1, maxTurns: 6, setupWrites: true },
     });
     // Grading is opt-in: an untouched launch stamps no rubric and no judge.
     expect(
@@ -2753,4 +2753,24 @@ describe("SwarmsTab — a reused persona whose save fails", () => {
     expect(toast.info).not.toHaveBeenCalled();
     expect(updatePersonaMock).not.toHaveBeenCalled();
   });
+});
+
+it("lets the user disable setup for newly created journeys", async () => {
+  openDescribe();
+  fillDescribe();
+  fireEvent.click(screen.getByTestId("new-swarm-continue"));
+  await screen.findByTestId("new-swarm-proposed-personas");
+  const toggle = screen.getByRole("switch", {
+    name: "Create prerequisite data before each run",
+  });
+  expect(toggle).toBeChecked();
+  fireEvent.click(toggle);
+  expect(toggle).not.toBeChecked();
+  fireEvent.click(screen.getByTestId("new-swarm-launch"));
+  await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
+  expect(
+    createJourneyMock.mock.calls.every(
+      ([args]) => args.config.setupWrites !== true,
+    ),
+  ).toBe(true);
 });

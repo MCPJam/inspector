@@ -38,7 +38,14 @@ import { composeAbortSignals } from "@mcpjam/sdk";
  * they are a closed set, not free text.
  */
 export type DeadlineClock =
-  "run" | "iteration" | "session" | "turn" | "toolCall" | "sandboxCapacity";
+  | "run"
+  | "iteration"
+  | "session"
+  | "turn"
+  | "toolCall"
+  | "sandboxCapacity"
+  | "setup"
+  | "discovery";
 
 /** Persisted attribution for a budget that expired. */
 export type TimeoutMetadata = { clock: DeadlineClock; budgetMs: number; elapsedMs: number };
