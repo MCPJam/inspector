@@ -6,6 +6,7 @@
  * while MCP tools execute locally in this Express server.
  */
 import { withPageToolAttributionMetadata } from "./page-tool-call-attribution";
+import { TERMINAL_TURN_RECORDING_ENABLED } from "../config.js";
 import {
   createUIMessageStream,
   createUIMessageStreamResponse,
@@ -4603,6 +4604,7 @@ export async function runChatEngineLoop(
             }
           : {}),
       });
+      const closedIds = new Set(guardClosed.map((call) => call.toolCallId));
 
       if (guardClosed.length > 0) {
         logger.info(
@@ -4612,6 +4614,50 @@ export async function runChatEngineLoop(
             count: guardClosed.length,
             toolNames: guardClosed.map((call) => call.toolName),
           },
+        );
+        // TELL THE CLIENT, rather than closing the call only in our own copy.
+        //
+        // The browser that sent this history is still showing a spinner on that
+        // call, and would keep showing one until a reload. The pair is emitted
+        // in this order because the AI SDK's reducer looks for a tool part on
+        // the message it is building: a result naming a call it has not seen
+        // introduced throws `No tool invocation found for tool call ID`. Same
+        // reason `emitInheritedToolCalls` exists — which cannot be reused here,
+        // because by now these calls DO have results and it skips those.
+        for (const call of guardClosed) {
+          const input = findToolCallInput(messageHistory, call.toolCallId);
+          emitToolInput(safeWriter, {
+            toolCallId: call.toolCallId,
+            toolName: call.toolName,
+            input,
+          });
+          await onToolCall?.({
+            toolCallId: call.toolCallId,
+            toolName: call.toolName,
+            input,
+            stepIndex: effectiveSteps(),
+            promptIndex: traceTurn.promptIndex,
+            // No server attribution: nothing ran, so there is no origin to
+            // claim. Attaching one would make a closure read as a reply.
+            serverId: undefined,
+          });
+        }
+        await emitToolResults(
+          safeWriter,
+          mcpClientManager,
+          messageHistory.filter(
+            (message) =>
+              message?.role === "tool" &&
+              Array.isArray((message as ToolModelMessage).content) &&
+              (message as ToolModelMessage).content.some((part) =>
+                closedIds.has(
+                  (part as { toolCallId?: string }).toolCallId ?? "",
+                ),
+              ),
+          ),
+          traceTurn,
+          effectiveSteps(),
+          onToolResult,
         );
       }
 
@@ -5008,15 +5054,55 @@ export async function runChatEngineLoop(
     write: (chunk: UIMessageChunk) => void;
   }) => {
     try {
-      // Persist only successful, non-aborted turns. An aborted turn is
-      // partial by definition — recording it as a completed conversation
-      // would corrupt history and reverse the cost-safety win.
-      if (runSucceeded && !aborted) {
-        const trace: PersistedTurnTrace = driver.buildPersistedTrace();
+      // WHAT GETS WRITTEN.
+      //
+      // The old rule was `runSucceeded && !aborted`: a turn that did not reach
+      // a clean end was dropped whole. The reasoning was that a partial turn is
+      // not a conversation. The cost was that tool calls which already ran and
+      // were already billed left NO durable trace — nobody could answer what a
+      // stopped session actually did, and the client grew a silent reconciler
+      // solely to cope with the absence.
+      //
+      // Now a terminal turn is recorded too, behind
+      // `TERMINAL_TURN_RECORDING_ENABLED`, with its open tool calls CLOSED
+      // first (see below). `paused` is deliberately not in the set: its
+      // dangling call is the resume handle, and closing it would destroy the
+      // thing the next request needs.
+      const outcomeForPersist = outcomeBuilder.settledLifecycle;
+      const recordTerminalTurn =
+        TERMINAL_TURN_RECORDING_ENABLED &&
+        (outcomeForPersist === "cancelled" ||
+          outcomeForPersist === "failed" ||
+          outcomeForPersist === "timed_out");
+      if ((runSucceeded && !aborted) || recordTerminalTurn) {
+        // CLOSE BEFORE WRITING, with the builder's own dispatch evidence —
+        // which is why this closure, unlike the ingress guard's, can say
+        // `never_started` where it is true rather than assuming the worst.
+        //
+        // The list and the transcript are computed from the SAME history in
+        // the same breath, so the record and the messages can never disagree
+        // about which calls were left open.
+        const unresolvedToolCalls = recordTerminalTurn
+          ? listUnresolvedToolCalls(messageHistory, (id) =>
+              outcomeBuilder.unresolvedToolCallState(id),
+            )
+          : [];
+        const persistedHistory =
+          unresolvedToolCalls.length > 0
+            ? closeUnresolvedToolCalls(messageHistory, unresolvedToolCalls, {
+                turnId: traceTurn.turnId,
+              })
+            : [...messageHistory];
+        const trace: PersistedTurnTrace = driver.buildPersistedTrace(
+          // `undefined`, not `[]`, on a PAUSED turn: the builder merges in the
+          // calls it witnessed dispatched, and a pause's dangling call is the
+          // resume handle rather than a loose end to report.
+          outcomeForPersist === "paused" ? {} : { unresolvedToolCalls },
+        );
         capturedTurnTrace = trace;
         try {
           const persistOutcome = await onConversationComplete?.(
-            [...messageHistory],
+            persistedHistory,
             trace,
           );
           // Costs no latency: `onConversationComplete` already awaited the

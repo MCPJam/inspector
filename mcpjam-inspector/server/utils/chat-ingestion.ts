@@ -778,6 +778,18 @@ async function attemptChatIngest(
         isVersionConflict = preview.includes("VERSION_CONFLICT");
       }
       if (isVersionConflict) {
+        // A CONFLICT DECLINES THE TRANSCRIPT, NOT THE TRACE.
+        //
+        // The turn-trace row is keyed by `(sessionId, turnId)` and describes
+        // ONE turn, so it is not in the version race at all; the control plane
+        // writes it on this same request even when the optimistic version
+        // check refuses the messages. That is what lets a stopped turn's
+        // persist land AFTER the next turn's and still leave a record of
+        // having ended, instead of losing the evidence to a race it was never
+        // part of.
+        //
+        // Nothing to do here, therefore — but the caller's `conflict` handling
+        // reads very differently once you know the trace survived it.
         return {
           kind: "settled",
           outcome: { outcome: "conflict", currentVersion },

@@ -9746,6 +9746,7 @@ function parseSandboxHosts(raw) {
 var SANDBOX_HOSTS = parseSandboxHosts(
   process.env.SANDBOX_HOSTS ?? "sandbox.mcpjam.com,sandbox-staging.mcpjam.com"
 );
+var TERMINAL_TURN_RECORDING_ENABLED = process.env.MCPJAM_TERMINAL_TURN_RECORDING === "true";
 
 // server/services/browserd/local/security-policy.ts
 var BrowserPolicyError = class extends Error {

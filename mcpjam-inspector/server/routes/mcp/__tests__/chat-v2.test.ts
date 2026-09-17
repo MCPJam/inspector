@@ -2596,6 +2596,20 @@ describe("POST /api/mcp/chat-v2", () => {
     });
   });
 
+  /**
+   * Unresolved tool calls inherited from an earlier request.
+   *
+   * These used to be EXECUTED — the loop ran every unresolved call in the
+   * resent history — which meant a call the user pressed Stop on ran for real
+   * on the next turn, after the Stop, with nobody watching. The ingress guard
+   * now closes any inherited call nothing names as a resume, and emits the
+   * input/output pair so the browser's spinner resolves instead of hanging
+   * until a reload.
+   *
+   * The wire contract these tests pin is unchanged and still load-bearing:
+   * `tool-input-available` must precede `tool-output-available`, or the AI
+   * SDK's reducer throws `No tool invocation found for tool call ID`.
+   */
   describe("unresolved tool calls from aborted requests (MCPJam models)", () => {
     beforeEach(async () => {
       // Enable MCPJam model path
@@ -2711,6 +2725,35 @@ describe("POST /api/mcp/chat-v2", () => {
         );
 
         expect(inputIndex).toBeLessThan(outputIndex);
+
+        // AND THE CALL WAS NOT RUN. The output above is the closure, not an
+        // execution: nothing names this call as a resume, so executing it
+        // would be the defect the guard exists to remove.
+        const executedOrphan = vi
+          .mocked(executeToolCallsFromMessages)
+          .mock.calls.some(([messages]) =>
+            (messages as any[]).some(
+              (message) =>
+                message?.role === "assistant" &&
+                Array.isArray(message.content) &&
+                message.content.some(
+                  (part: any) =>
+                    part?.type === "tool-call" &&
+                    part.toolCallId === "orphaned-call-123" &&
+                    // Still open at the time of the call means it was about to
+                    // be run; once closed it is inert.
+                    !(messages as any[]).some(
+                      (m) =>
+                        m?.role === "tool" &&
+                        Array.isArray(m.content) &&
+                        m.content.some(
+                          (p: any) => p?.toolCallId === "orphaned-call-123",
+                        ),
+                    ),
+                ),
+            ),
+          );
+        expect(executedOrphan).toBe(false);
       } finally {
         global.fetch = originalFetch;
       }

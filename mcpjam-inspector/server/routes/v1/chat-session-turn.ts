@@ -1822,12 +1822,19 @@ async function handleTurn(c: Context): Promise<Response> {
         ) as typeof result.turnTrace;
     }
 
-    if (
-      browserAttached &&
-      (abortController.signal.aborted || !result.turnTrace || lastEngineError)
-    ) {
-      // The shell and incrementally uploaded screenshots survive failure; retain
-      // the partial transcript/trace as well so retries can inspect what ran.
+    if (abortController.signal.aborted || !result.turnTrace || lastEngineError) {
+      // KEEP THE PARTIAL TURN.
+      //
+      // This used to be gated on `browserAttached`, on the reasoning that a
+      // browser turn has a shell and uploaded screenshots worth retaining. But
+      // the transcript is worth retaining for the same reason on every turn:
+      // the steps that ran are what a retry has to inspect, and the tool calls
+      // among them were already billed. A caller with no browser was simply
+      // told nothing happened.
+      //
+      // The engine's own record now says how the turn ended, so the inline
+      // `finishReason: "timeout" | "error"` guess below is only the fallback
+      // for a turn that produced no trace at all.
       const failed = await persistChatSessionToConvex(
         {
           chatSessionId: runtimeChatSessionId,
@@ -1853,7 +1860,17 @@ async function handleTurn(c: Context): Promise<Response> {
               modelId: String(modelDefinition.id),
             }),
             turnId: leaseTurnId,
-            finishReason: abortController.signal.aborted ? "timeout" : "error",
+            // The RECORD's word when the engine produced one; the inline guess
+            // only when it did not. A wall-clock abort and a turn the engine
+            // classified as a provider failure are different endings, and the
+            // guess could only ever tell them apart by which of OUR signals
+            // fired.
+            finishReason:
+              result.outcome?.finishReason ??
+              (abortController.signal.aborted ? "timeout" : "error"),
+            ...(result.outcome
+              ? { outcomeAtTurn: result.outcome }
+              : {}),
             ...(browser
               ? {
                   browserAtTurn: {

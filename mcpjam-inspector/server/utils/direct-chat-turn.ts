@@ -58,7 +58,11 @@ import type {
   TurnCancellationSource,
   TurnOutcomeRecord,
 } from "@/shared/turn-outcome";
-import { listUnresolvedToolCalls } from "@/shared/turn-outcome-closure";
+import {
+  closeUnresolvedToolCalls,
+  listUnresolvedToolCalls,
+} from "@/shared/turn-outcome-closure";
+import { TERMINAL_TURN_RECORDING_ENABLED } from "../config.js";
 import { logger } from "./logger";
 import {
   applyPrepareAdvertisedTools,
@@ -778,6 +782,91 @@ export function runDirectChatTurn(
   // a sync throw (provider config error, ToolSet shape validation, …)
   // leaks the listener and the SSE caller has no handle to call
   // `cleanup()` against.
+  // ONE persist path, two callers.
+  //
+  // `onFinish` reaches it twice — once on a clean settle, once on the abort
+  // branch that used to `return` and leave a stopped turn with no record of
+  // the steps that had already run. Factored so the two cannot drift: a
+  // stopped BYOK turn is written with exactly the shape a completed one is,
+  // minus what never happened.
+  const persistTurn = async (
+  event: { steps?: unknown[]; text?: string; finishReason?: string },
+  opts: { terminal: boolean },
+  ): Promise<void> => {
+    if (!onPersist) return;
+    // `paused` is not reachable on this engine, so the terminal set here is
+    // exactly cancelled / failed / timed out.
+    if (opts.terminal && !TERMINAL_TURN_RECORDING_ENABLED) return;
+    const steps = Array.isArray(event.steps)
+      ? (event.steps as Array<Record<string, unknown>>)
+      : [];
+    const responseMessages: ModelMessage[] = [];
+    for (const step of steps) {
+      appendDedupedModelMessages(
+        responseMessages,
+        scrubSuspendedToolResultMessages(
+          stampMcpToolOriginProviderOptions(
+            Array.isArray(
+              (step?.response as { messages?: unknown } | undefined)?.messages,
+            )
+              ? ((step.response as { messages: ModelMessage[] })
+                  .messages as ModelMessage[])
+              : [],
+            tools,
+          ),
+        ),
+      );
+    }
+    // CLOSE BEFORE WRITING, with this engine's own dispatch evidence: the
+    // `tool-call` chunk marks dispatch and `tool-result` marks settle, so a
+    // call the SDK sent and never answered reads as `outcome_unknown` while
+    // one it never reached reads as `never_started`.
+    const unresolvedToolCalls = opts.terminal
+      ? listUnresolvedToolCalls(responseMessages, (id) =>
+          outcomeBuilder.unresolvedToolCallState(id),
+        )
+      : [];
+    const persistedMessages =
+      unresolvedToolCalls.length > 0
+        ? closeUnresolvedToolCalls(responseMessages, unresolvedToolCalls, {
+            turnId: traceTurn.turnId,
+          })
+        : responseMessages;
+    try {
+      await onPersist({
+        responseMessages: persistedMessages,
+        assistantText: event.text ?? "",
+        toolCalls: steps.flatMap(
+          (step) => (step.toolCalls as unknown[] | undefined) ?? [],
+        ) as never,
+        toolResults: steps
+          .flatMap(
+            (step) => (step.toolResults as unknown[] | undefined) ?? [],
+          )
+          .filter(
+            (result) =>
+              (result as { toolCallId?: unknown }).toolCallId !==
+              suspendedToolCallId?.(),
+          ) as never,
+        usage: traceTurn.turnUsage,
+        finishReason: event.finishReason as never,
+        turnTrace: {
+          turnId: traceTurn.turnId,
+          promptIndex: traceTurn.promptIndex,
+          startedAt: traceTurn.turnStartedAt,
+          endedAt: Date.now(),
+          spans: [...traceTurn.turnSpans],
+          usage: traceTurn.turnUsage,
+          finishReason: event.finishReason,
+          modelId,
+          outcomeAtTurn: outcomeBuilder.record(unresolvedToolCalls),
+        },
+      });
+    } catch (error) {
+      onPersistError?.(error);
+    }
+  };
+
   let result: ReturnType<typeof streamText>;
   try {
     result = streamText({
@@ -1082,6 +1171,13 @@ export function runDirectChatTurn(
           signal: abortSignal,
           startedAtMs: turnStartedAt,
         });
+        // RECORD THE PARTIAL TURN, when the switch is on.
+        //
+        // The early return here is what made a stopped BYOK turn vanish: the
+        // steps that DID run — and the tokens they cost — left nothing behind.
+        // The transcript is written with its open tool calls closed, exactly
+        // as the hosted engine writes one.
+        await persistTurn(event, { terminal: true });
         return;
       }
       outcomeBuilder.markCompleted(event.finishReason);
@@ -1108,49 +1204,7 @@ export function runDirectChatTurn(
         turnFinished = true;
       }
 
-      if (!onPersist) return;
-      const responseMessages: ModelMessage[] = [];
-      for (const step of event.steps) {
-        appendDedupedModelMessages(
-          responseMessages,
-          scrubSuspendedToolResultMessages(
-            stampMcpToolOriginProviderOptions(
-              Array.isArray(step?.response?.messages)
-                ? (step.response.messages as ModelMessage[])
-                : [],
-              tools,
-            ),
-          ),
-        );
-      }
-      try {
-        await onPersist({
-          responseMessages,
-          assistantText: event.text,
-          toolCalls: event.steps.flatMap((step) => step.toolCalls ?? []),
-          toolResults: event.steps
-            .flatMap((step) => step.toolResults ?? [])
-            .filter(
-              (result) =>
-                (result as { toolCallId?: unknown }).toolCallId !==
-                suspendedToolCallId?.(),
-            ),
-          usage: traceTurn.turnUsage,
-          finishReason: event.finishReason,
-          turnTrace: {
-            turnId: traceTurn.turnId,
-            promptIndex: traceTurn.promptIndex,
-            startedAt: traceTurn.turnStartedAt,
-            endedAt: Date.now(),
-            spans: [...traceTurn.turnSpans],
-            usage: traceTurn.turnUsage,
-            finishReason: event.finishReason,
-            modelId,
-          },
-        });
-      } catch (error) {
-        onPersistError?.(error);
-      }
+      await persistTurn(event, { terminal: false });
     },
   });
   } catch (error) {
