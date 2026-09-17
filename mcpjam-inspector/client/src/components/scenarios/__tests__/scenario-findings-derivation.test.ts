@@ -29,6 +29,21 @@ function session(
 }
 
 describe("deriveScenarioFindingsModel", () => {
+  it("does not infer launch attempts for observed sessions", () => {
+    for (const sessions of [[], [session()]]) {
+      const model = deriveScenarioFindingsModel({ sessions });
+      expect(model.launch).toEqual({
+        total: 0,
+        succeeded: 0,
+        failed: 0,
+        rateLimited: 0,
+      });
+      for (const persona of model.personas) {
+        expect(persona.goals.every((goal) => goal.notRun === false)).toBe(true);
+      }
+    }
+  });
+
   it("groups sessions into sentiment personas, worst first", () => {
     const model = deriveScenarioFindingsModel({
       sessions: [
