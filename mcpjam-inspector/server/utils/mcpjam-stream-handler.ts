@@ -312,7 +312,11 @@ import type {
   TurnModelAccess,
   TurnOutcomeRecord,
 } from "@/shared/turn-outcome";
-import { listUnresolvedToolCalls } from "@/shared/turn-outcome-closure";
+import {
+  closeUnresolvedToolCalls,
+  listUnresolvedToolCalls,
+  type UnresolvedToolCall,
+} from "@/shared/turn-outcome-closure";
 import {
   pushAiSdkTrailingErrorSpan,
   pushBackendStepLlmFailureSpans,
@@ -1393,6 +1397,179 @@ function collectUsedToolCallIds(messages: ModelMessage[]): Set<string> {
   }
 
   return usedToolCallIds;
+}
+
+/**
+ * THE INGRESS GUARD: close inherited tool calls that nothing is coming back for.
+ *
+ * Before this, `emitInheritedToolCalls` plus `executeToolCallsFromMessages` ran
+ * EVERY unresolved call in the resent history on the next turn. That is correct
+ * for a call somebody is resuming, and dangerous for every other one: a call the
+ * user pressed Stop on would execute for real afterwards — after the Stop, with
+ * no turn in flight and nobody watching. Persisting stopped turns without this
+ * would turn a latent hole into a routine one.
+ *
+ * So the rule inverts. A call runs only when something NAMES it as a resume:
+ *
+ *   - the APPROVAL RAIL owns the step — the history already asked a human about
+ *     one of these calls, or one of them needs approval now. Nothing there can
+ *     run unasked, and its approval-free siblings are the drain the resumed
+ *     turn depends on;
+ *   - an MRTR or scope step-up resume names it, or names a sibling in the same
+ *     assistant message;
+ *   - it is a registered CLIENT-FULFILLED call, whose executor is the browser.
+ *
+ * Everything else is closed as `outcome_unknown`. Conservative on purpose: the
+ * guard has no dispatch evidence of its own — it is looking at a history that
+ * arrived from somewhere — so it cannot promise a call did nothing. The
+ * persist-time closure, which does have the builder's evidence, says
+ * `never_started` where it can.
+ *
+ * Returns the calls it closed, for the log. Mutates `messages` in place: the
+ * engine holds ONE history reference and everything downstream reads it.
+ */
+async function closeInheritedToolCallsWithoutResume(args: {
+  messages: ModelMessage[];
+  tools: ToolSet;
+  turnId: string;
+  decisions: ApprovalDecisionCache;
+  /** Named by an MRTR / scope step-up resume request. */
+  resumeToolCallId?: string;
+}): Promise<UnresolvedToolCall[]> {
+  const { messages, tools, turnId, decisions, resumeToolCallId } = args;
+  const unresolved = listUnresolvedToolCalls(messages, () => "outcome_unknown");
+  if (unresolved.length === 0) return [];
+
+  // (1) THE APPROVAL RAIL OWNS THE WHOLE STEP.
+  //
+  // Two ways to tell that it does, and either one stands the guard down:
+  //
+  //   - the history already carries a `tool-approval-request` for an unresolved
+  //     call. The previous turn gated it and is waiting for a human; the
+  //     decision can still arrive, and closing the call would destroy a pending
+  //     approval the user is looking at;
+  //   - an unresolved call needs approval NOW. The engine will re-emit the pill
+  //     and pause again, so nothing here is at risk of running unasked.
+  //
+  // WHOLE-STEP, not per-call, because the pause is whole-step:
+  // `handlePendingApprovals` and the pre-pause drain both operate on the
+  // approval-free SIBLINGS of the gated call, and closing those would strand
+  // the discovery side effect the resumed turn depends on.
+  //
+  // The second is asked of the engine's own predicate, with the turn's own
+  // decision cache, so this answer and the pause site's cannot disagree about
+  // the same call.
+  const awaitingApprovalIds = toolCallIdsWithApprovalRequests(messages);
+  for (const call of unresolved) {
+    if (awaitingApprovalIds.has(call.toolCallId)) return [];
+    const needsApproval = await toolCallNeedsApproval({
+      name: call.toolName,
+      input: findToolCallInput(messages, call.toolCallId),
+      toolCallId: call.toolCallId,
+      tools,
+      messages,
+      decisions,
+    });
+    if (needsApproval) return [];
+  }
+
+  // (2) A RESUME NAMES ONE CALL, but its siblings ride with it: the MRTR
+  // pre-phase pauses when any sibling in the same assistant message is still
+  // unresolved, and closing one would make it splice into a step it has
+  // already declared finished.
+  const protectedIds = new Set<string>();
+  if (resumeToolCallId) {
+    protectedIds.add(resumeToolCallId);
+    for (const sibling of siblingToolCallIds(messages, resumeToolCallId)) {
+      protectedIds.add(sibling);
+    }
+  }
+
+  const toClose = unresolved
+    .filter((call) => !protectedIds.has(call.toolCallId))
+    .filter((call) => {
+      // (3) CLIENT-FULFILLED calls are the browser's to run. This path never
+      // runs them (`skipNonExecutableTools`), and the loop's pause for them IS
+      // the rail that gets them fulfilled — closing one would break WebMCP
+      // rather than protect anything.
+      const entry = (tools as Record<string, { execute?: unknown } | undefined>)[
+        call.toolName
+      ];
+      return !(
+        isClientFulfilledToolName(call.toolName) &&
+        !!entry &&
+        typeof entry.execute !== "function"
+      );
+    });
+  if (toClose.length === 0) return [];
+
+  const closed = closeUnresolvedToolCalls(messages, toClose, { turnId });
+  messages.length = 0;
+  messages.push(...closed);
+  return toClose;
+}
+
+/**
+ * Tool calls the history has already asked a human about.
+ *
+ * Read from the same `tool-approval-request` parts `handlePendingApprovals`
+ * pairs decisions against, so the guard and the approval path cannot disagree
+ * about which calls are waiting on somebody.
+ */
+function toolCallIdsWithApprovalRequests(
+  messages: ModelMessage[],
+): Set<string> {
+  const ids = new Set<string>();
+  for (const msg of messages) {
+    if (msg?.role !== "assistant") continue;
+    const content = (msg as AssistantModelMessage).content;
+    if (!Array.isArray(content)) continue;
+    for (const part of content as Array<Record<string, unknown>>) {
+      if (
+        part?.type === "tool-approval-request" &&
+        typeof part.toolCallId === "string" &&
+        part.toolCallId
+      ) {
+        ids.add(part.toolCallId);
+      }
+    }
+  }
+  return ids;
+}
+
+/** The input a tool call was made with, for the approval predicate. */
+function findToolCallInput(
+  messages: ModelMessage[],
+  toolCallId: string,
+): unknown {
+  for (const msg of messages) {
+    if (msg?.role !== "assistant") continue;
+    const content = (msg as AssistantModelMessage).content;
+    if (!Array.isArray(content)) continue;
+    for (const part of content) {
+      if (part.type === "tool-call" && part.toolCallId === toolCallId) {
+        return part.input ?? {};
+      }
+    }
+  }
+  return {};
+}
+
+/** Every tool-call id in the SAME assistant message as `toolCallId`. */
+function siblingToolCallIds(
+  messages: ModelMessage[],
+  toolCallId: string,
+): string[] {
+  for (const msg of messages) {
+    if (msg?.role !== "assistant") continue;
+    const content = (msg as AssistantModelMessage).content;
+    if (!Array.isArray(content)) continue;
+    const ids = content
+      .filter((part) => part.type === "tool-call")
+      .map((part) => (part as { toolCallId: string }).toolCallId);
+    if (ids.includes(toolCallId)) return ids;
+  }
+  return [];
 }
 
 function hasUnresolvedClientFulfilledToolCalls(
@@ -4399,6 +4576,44 @@ export async function runChatEngineLoop(
         onToolCall,
         outcomeBuilder,
       );
+
+      // ── Ingress guard ─────────────────────────────────────────────────────
+      // Close inherited tool calls that nothing is coming back for, BEFORE the
+      // resume pre-phase and the loop both start reading unresolved calls as
+      // work to do. See `closeInheritedToolCallsWithoutResume` for the rule.
+      //
+      // AFTER `handlePendingApprovals`, deliberately: that path resolves every
+      // unresolved call on an approval resume, so by here there is normally
+      // nothing of its left open. The guard's own approval check is the
+      // belt-and-braces half — it stands down entirely on a history carrying an
+      // approval response, rather than racing a path that is mid-resume.
+      //
+      // Runs regardless of where the history came from — a client that never
+      // closed its partial message, a resumed session, a replayed transcript —
+      // which is what makes it defence in depth rather than a second copy of
+      // the client's logic.
+      const guardClosed = await closeInheritedToolCallsWithoutResume({
+        messages: messageHistory,
+        tools,
+        turnId: traceTurn.turnId,
+        decisions: approvalDecisions,
+        ...((scopeStepUpResume ?? mrtrResume)?.toolCallId
+          ? {
+              resumeToolCallId: (scopeStepUpResume ?? mrtrResume)!.toolCallId,
+            }
+          : {}),
+      });
+
+      if (guardClosed.length > 0) {
+        logger.info(
+          "[mcpjam-stream-handler] closed inherited tool calls with no resume marker",
+          {
+            turnId: traceTurn.turnId,
+            count: guardClosed.length,
+            toolNames: guardClosed.map((call) => call.toolName),
+          },
+        );
+      }
 
       // ── Hosted MRTR resume pre-phase (§12.5, PR5) ─────────────────────────
       // A fresh request resuming a suspended tool call drives ONE retry leg

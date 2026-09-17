@@ -8,8 +8,10 @@ import { compactEvalContextMessages } from "./eval-chat-context";
  * takeover) as well as the always-mounted side panel. A `useChat` instance
  * owned by a route-bound component dies with it on navigation — which a
  * WebMCP UI tool like `ui_navigate` can trigger mid-turn, killing the
- * in-flight stream before its tool output and auto-resume are delivered
- * (and the server only persists turns that complete un-aborted). Hoisting
+ * in-flight stream before its tool output and auto-resume are delivered.
+ * (A turn that ends abnormally is now recorded with its tool calls closed —
+ * see `shared/turn-outcome.ts` — but the stream still dies with the component,
+ * so the transcript stops where the navigation cut it.) Hoisting
  * the `Chat` instance here means any surface can attach/detach via
  * `useChat({ chat })` without owning the stream's lifetime.
  *

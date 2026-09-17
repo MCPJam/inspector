@@ -83,14 +83,21 @@ export function listUnresolvedToolCalls(
 }
 
 /**
- * Append synthetic `error-text` tool results for every unresolved call.
+ * Close every unresolved call by SPLICING a synthetic `error-text` tool result
+ * immediately after the assistant message that issued it.
  *
  * Returns a NEW array; the input is never mutated, because the caller's copy is
  * often the live history another closure is still reading.
  *
- * One tool message per closure, appended in history order, so the result is a
- * pure function of the input. The shape matches the auto-deny path, which
- * already splices an `error-text` result for a call that will not run.
+ * SPLICED, NOT APPENDED, and that is not a stylistic choice: providers require
+ * a tool result to follow its tool call directly (Anthropic rejects a request
+ * whose `tool_use` is not answered by the next message). Appending at the end
+ * would make the very next turn 400 — which is precisely the failure this
+ * closure exists to prevent. Same placement the auto-deny path already uses.
+ *
+ * One tool message per issuing assistant message, parts in history order, so
+ * the output is a pure function of the input: no timestamps, no ids, no map
+ * iteration order.
  */
 export function closeUnresolvedToolCalls(
   messages: readonly ModelMessage[],
@@ -99,47 +106,80 @@ export function closeUnresolvedToolCalls(
 ): ModelMessage[] {
   if (states.length === 0) return [...messages];
   const resolved = collectResolvedToolCallIds(messages);
-  const closures: ModelMessage[] = [];
-  const seen = new Set<string>();
+  const wanted = new Map<string, UnresolvedToolCall>();
   for (const call of states) {
     // Idempotent: closing an already-closed history is a no-op, which is what
     // makes it safe for the client and the server to both apply it.
-    if (resolved.has(call.toolCallId) || seen.has(call.toolCallId)) continue;
-    seen.add(call.toolCallId);
-    closures.push(buildClosureMessage(call, opts?.turnId));
+    if (resolved.has(call.toolCallId) || wanted.has(call.toolCallId)) continue;
+    wanted.set(call.toolCallId, call);
   }
-  return [...messages, ...closures];
+  if (wanted.size === 0) return [...messages];
+
+  const out = [...messages];
+  // Descending, so an earlier splice cannot shift a later index.
+  for (let i = out.length - 1; i >= 0; i -= 1) {
+    const message = out[i];
+    if (!message || message.role !== "assistant") continue;
+    const content = (message as { content?: unknown }).content;
+    if (!Array.isArray(content)) continue;
+    const parts: ToolResultLike[] = [];
+    for (const part of content) {
+      if (part?.type !== "tool-call") continue;
+      const call = wanted.get(part.toolCallId);
+      if (!call) continue;
+      parts.push(buildClosurePart(call, opts?.turnId));
+    }
+    if (parts.length > 0) {
+      out.splice(i + 1, 0, { role: "tool", content: parts } as ModelMessage);
+    }
+  }
+  return out;
 }
 
-/** The single tool message a closed call becomes. Shared so the client's
+/** The single tool-result part a closed call becomes. Shared so the client's
  *  projection and the server's write cannot drift. */
-export function buildClosureMessage(
+export function buildClosurePart(
   call: UnresolvedToolCall,
   turnId?: string,
-): ModelMessage {
+): ToolResultLike {
   return {
-    role: "tool",
-    content: [
-      {
-        type: "tool-result",
-        toolCallId: call.toolCallId,
-        toolName: call.toolName,
-        output: {
-          type: "error-text",
-          value: INTERRUPTED_TOOL_CALL_TEXT[call.state],
-        },
-        providerOptions: {
-          [INTERRUPTED_TOOL_CALL_PROVIDER_KEY]: {
-            interrupted: call.state,
-            // Omitted rather than nulled when absent: an explicit `null` would
-            // change the serialized bytes the two sides must agree on.
-            ...(turnId ? { turnId } : {}),
-          },
-        },
-      },
-    ],
-  } as unknown as ModelMessage;
+    type: "tool-result",
+    toolCallId: call.toolCallId,
+    toolName: call.toolName,
+    output: {
+      type: "error-text",
+      value: INTERRUPTED_TOOL_CALL_TEXT[call.state],
+    },
+    providerOptions: buildClosureProviderOptions(call.state, turnId),
+  };
 }
+
+/**
+ * The `providerOptions` stamp, shared by the server's tool-result and the
+ * client's `callProviderMetadata`.
+ *
+ * `turnId` is OMITTED rather than nulled when absent: an explicit `null` would
+ * change the serialized bytes the two sides have to agree on.
+ */
+export function buildClosureProviderOptions(
+  state: UnresolvedToolCallState,
+  turnId?: string,
+): Record<string, Record<string, unknown>> {
+  return {
+    [INTERRUPTED_TOOL_CALL_PROVIDER_KEY]: {
+      interrupted: state,
+      ...(turnId ? { turnId } : {}),
+    },
+  };
+}
+
+type ToolResultLike = {
+  type: "tool-result";
+  toolCallId: string;
+  toolName: string;
+  output: { type: "error-text"; value: string };
+  providerOptions: Record<string, Record<string, unknown>>;
+};
 
 /** Was this tool-result written by a closure rather than by a tool? */
 export function isInterruptedToolResult(part: unknown): boolean {
@@ -203,4 +243,95 @@ function* iterateToolCalls(
       }
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// The client's half
+// ---------------------------------------------------------------------------
+
+/**
+ * The tool-part shape the AI SDK's `UIMessage` uses. Typed structurally rather
+ * than imported so this module stays importable from the server without
+ * dragging a UI type across the boundary.
+ */
+type UiToolPart = {
+  type: string;
+  toolCallId?: string;
+  state?: string;
+  input?: unknown;
+  output?: unknown;
+  errorText?: string;
+  callProviderMetadata?: unknown;
+};
+
+type UiMessageLike = { role?: string; parts?: unknown[] };
+
+/**
+ * Read an unresolved UI tool part's state, CONSERVATIVELY.
+ *
+ * The client cannot see dispatch: the server executes the tool and the browser
+ * learns nothing until a result arrives. So `input-available` — the input is
+ * complete and the call is with the server — must read as `outcome_unknown`.
+ * Only `input-streaming`, where the model has not finished dictating the
+ * arguments, is safely `never_started`.
+ *
+ * Guessing the other way would put the reassuring sentence on a call that may
+ * have charged somebody's card.
+ */
+export function uiToolPartInterruptedState(
+  part: UiToolPart,
+): UnresolvedToolCallState {
+  return part.state === "input-streaming" ? "never_started" : "outcome_unknown";
+}
+
+/** Is this UI part a tool call still awaiting its result? */
+export function isUnresolvedUiToolPart(part: unknown): part is UiToolPart {
+  if (!part || typeof part !== "object") return false;
+  const candidate = part as UiToolPart;
+  if (typeof candidate.type !== "string") return false;
+  if (
+    !candidate.type.startsWith("tool-") &&
+    candidate.type !== "dynamic-tool"
+  ) {
+    return false;
+  }
+  if (typeof candidate.toolCallId !== "string" || !candidate.toolCallId) {
+    return false;
+  }
+  return (
+    candidate.state === "input-streaming" || candidate.state === "input-available"
+  );
+}
+
+/**
+ * Close a partial assistant UI message in place of the server.
+ *
+ * Applied by the client the moment Stop is pressed, so the user can send again
+ * immediately: the next request then carries a history with NO open calls, and
+ * the new turn can never run over one. The server applies the equivalent
+ * closure at persist time; `convertToModelMessages` maps this part to exactly
+ * the tool-result {@link buildClosurePart} writes, which is what makes the two
+ * ingests of the same history agree byte for byte.
+ *
+ * Returns the SAME object when nothing was open, so React sees no change.
+ */
+export function closeUnresolvedUiToolParts<T extends UiMessageLike>(
+  message: T,
+  opts?: { turnId?: string },
+): T {
+  const parts = message?.parts;
+  if (!Array.isArray(parts)) return message;
+  let changed = false;
+  const next = parts.map((part) => {
+    if (!isUnresolvedUiToolPart(part)) return part;
+    changed = true;
+    const state = uiToolPartInterruptedState(part);
+    return {
+      ...part,
+      state: "output-error",
+      errorText: INTERRUPTED_TOOL_CALL_TEXT[state],
+      callProviderMetadata: buildClosureProviderOptions(state, opts?.turnId),
+    };
+  });
+  return changed ? { ...message, parts: next } : message;
 }
