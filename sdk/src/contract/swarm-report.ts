@@ -153,7 +153,15 @@ export const swarmObservationCoverageSchema = z
       Object.keys(ASSERTION_STAGE) as [AssertionKind, ...AssertionKind[]]
     ),
     role: z.enum(["advisory", "required"]),
-    stage: z.enum(USER_VALUE_STAGES),
+    stage: z.enum(USER_VALUE_STAGES).describe(
+      "The stage this observation was read from, and the only stage it is " +
+        "evidence ABOUT. `connection` — the server was reachable and the " +
+        "session initialized. `discovery` — its tools and resources were " +
+        "listed and readable. `selection` — the model chose the right tool " +
+        "for the request. `call` — the call was made with usable arguments. " +
+        "`response` — the server returned data the model could use. " +
+        "`userValue` — the user's actual request was satisfied."
+    ),
     unit: z.literal("sessions"),
     total: count,
     passed: count,

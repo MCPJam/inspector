@@ -146,6 +146,20 @@ async function withArtifactFlushDeadline(
  * project environment (two environments may share a host and still count as
  * two targets). */
 export const MAX_CONCURRENT_TARGETS = 3;
+
+/**
+ * Tool-step cap for one persona turn, pinned by the swarm runner rather than
+ * inherited from the engine's Playground default of 30.
+ *
+ * Every step of a turn resends every tool result the turn has produced, so
+ * steps multiply context, wall clock and cost together. Measured on dev
+ * (2026-09-17): persona turns against the MCPJam server reached 677k to 881k
+ * tokens and 2 to 5 minutes each under the default, and then tripped the
+ * 6-minute turn budget. Ten steps still lets a persona chain several tool
+ * calls per turn while bounding the worst turn to roughly a third of that.
+ * A journey-level knob is deliberately not added yet; this is the default.
+ */
+export const SWARM_PERSONA_TURN_MAX_STEPS = 10;
 /** @deprecated Renamed {@link MAX_CONCURRENT_TARGETS} (targets ≠ hosts once
  * environments land). Kept for existing tests/imports. */
 export const MAX_CONCURRENT_HOSTS = MAX_CONCURRENT_TARGETS;
@@ -1157,6 +1171,7 @@ async function runJourneyFanOut(
               modelDefinition,
               systemPrompt: target.systemPrompt,
               temperature: target.temperature,
+              maxSteps: SWARM_PERSONA_TURN_MAX_STEPS,
               requireToolApproval: target.requireToolApproval,
               respectToolVisibility: target.respectToolVisibility,
               progressiveToolDiscovery: target.progressiveToolDiscovery,

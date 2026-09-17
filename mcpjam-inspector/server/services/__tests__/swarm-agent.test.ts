@@ -123,10 +123,8 @@ describe("swarm-agent createJourneyRun — request-body contract", () => {
       // are the runner, so we are the only honest source for what we can
       // execute. The backend reads it to decide whether an environment's
       // materialized secrets make this wave unrunnable.
-      // `swarm-standard-checks-v1` is added by the producer rather than by
-      // `runnerCapabilities()`, because it is a claim about this REQUEST —
-      // that the standard checks travel with it — not about the runner's
-      // general abilities.
+      // The swarm path appends its own: the backend reads it to know this
+      // runner grades standard checks itself.
       runnerCapabilities: [...runnerCapabilities(), "swarm-standard-checks-v1"],
     });
     // projectId is the field whose omission would produce the guaranteed 400.

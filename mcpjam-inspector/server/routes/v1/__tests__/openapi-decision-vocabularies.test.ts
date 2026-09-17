@@ -56,10 +56,6 @@ type Schema = {
   description?: string;
   properties?: Record<string, Schema>;
   oneOf?: Schema[];
-  // A vocabulary spelled out on an ARRAY's element schema rather than on a
-  // property. The completeness walk below already reaches these — `items` is
-  // not in its structure-skipping list — so the resolver has to as well, or a
-  // site it flags could not be registered.
   items?: Schema;
 };
 
@@ -122,14 +118,15 @@ const SITES = [
     path: ["condition"],
     vocabulary: "suspectedConditions",
   },
-  // The verdict reasons, spelled out twice for the same reason the friction
-  // ones are: the run-level list and the per-case one answer different
-  // questions.
+  // Array members. `items` is addressed explicitly because the vocabulary sits
+  // on the element schema, not on the array that holds it.
   {
     schema: "EvalVerdictDecision",
     path: ["reasons", "items"],
     vocabulary: "verdictDecisionReasons",
   },
+  // The same vocabulary once more, per case: the run-level list says why the
+  // RUN landed where it did, this one says why a single case did.
   {
     schema: "EvalVerdictDecision",
     path: ["cases", "items", "reason"],
@@ -162,12 +159,11 @@ function resolveSite(site: (typeof SITES)[number]): Schema {
   expect(node, `openapi.json has no schema "${site.schema}"`).toBeDefined();
   for (const segment of site.path) {
     if (segment === "oneOf") continue;
-    node =
-      segment === "items"
+    node = /^\d+$/.test(segment)
+      ? node?.oneOf?.[Number(segment)]
+      : segment === "items"
         ? node?.items
-        : /^\d+$/.test(segment)
-          ? node?.oneOf?.[Number(segment)]
-          : node?.properties?.[segment];
+        : node?.properties?.[segment];
     expect(
       node,
       `openapi.json has no ${site.schema}/${site.path.join("/")}`

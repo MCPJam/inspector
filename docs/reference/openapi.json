@@ -5074,7 +5074,7 @@
         },
         "tags": ["Eval runs"],
         "summary": "Generate eval cases from the suite's tools",
-        "description": "Discovers the suite's server tools over a live MCP connection, generates cases against them, and persists them — the only edit route that connects to a server. Synchronous: connect, generate, persist, disconnect, respond.\n\nThe authoring model is on MCPJam: **no credits are consumed.** The call still counts against the project's daily generation quota, so it can be refused with `429 RATE_LIMITED` once that is used up.\n\nAn environment-based suite generates against that environment's closed server set, so the cases match the tools its runs will actually see.\n\nPass `x-mcpjam-idempotency-key` to make a retry safe: drafts are recorded backend-side BEFORE any case is persisted, so a replay reuses them instead of taking a second slice of the daily quota, and each case is persisted under a derived per-item key so the loop is resumable.",
+        "description": "Discovers the suite's server tools over a live MCP connection, generates cases against them, and persists them — the only edit route that connects to a server. Synchronous: connect, generate, persist, disconnect, respond.\n\nThe authoring model is on MCPJam: **no customer credits are consumed.** The call still counts against the organization's daily generation quota, and against MCPJam's own daily budget for generation, so it can be refused with `429 RATE_LIMITED` and a `Retry-After`. `details.canTopUp` is `false`: wait until `Retry-After` rather than topping up or retrying in a loop.\n\nAn environment-based suite generates against that environment's closed server set, so the cases match the tools its runs will actually see.\n\nPass `x-mcpjam-idempotency-key` to make a retry safe: drafts are recorded backend-side BEFORE any case is persisted, so a replay reuses them instead of taking a second slice of the daily quota, and each case is persisted under a derived per-item key so the loop is resumable.",
         "parameters": [
           {
             "$ref": "#/components/parameters/evalVocabularyHeader"
@@ -5092,7 +5092,7 @@
             "schema": {
               "type": "string"
             },
-            "description": "Makes a retry replay the recorded drafts instead of taking a second slice of the daily generation quota."
+            "description": "Makes a retry replay the recorded drafts instead of taking a second slice of the organization's daily generation quota."
           }
         ],
         "requestBody": {
@@ -16687,7 +16687,7 @@
       },
       "EvalCaseGenerateRequest": {
         "type": "object",
-        "description": "AI-generate cases from the suite's server tools and persist them. The authoring model is on MCPJam — no credits are consumed; it counts against the project's daily generation quota.",
+        "description": "AI-generate cases from the suite's server tools and persist them. The authoring model is on MCPJam — no customer credits are consumed; it counts against the organization's daily generation quota.",
         "properties": {
           "mode": {
             "type": "string",
@@ -31862,7 +31862,7 @@
                     "response",
                     "userValue"
                   ],
-                  "description": "Which link of the user-value chain this row is a verdict on. The order is NORMATIVE: a run walks the six in sequence, and `notReached` is derived from position — every stage after the first failed one never ran. `connection` — the server was reachable and the session initialized. `discovery` — its tools and resources were listed and readable. `selection` — the model chose the right tool for the request. `call` — the call was made with usable arguments. `response` — the server returned data the model could use. `userValue` — the user's actual request was satisfied."
+                  "description": "The stage this observation was read from, and the only stage it is evidence ABOUT. `connection` — the server was reachable and the session initialized. `discovery` — its tools and resources were listed and readable. `selection` — the model chose the right tool for the request. `call` — the call was made with usable arguments. `response` — the server returned data the model could use. `userValue` — the user's actual request was satisfied."
                 },
                 "unit": {
                   "type": "string",
@@ -31959,7 +31959,7 @@
                 "casePassRateBelowThreshold",
                 "allMeasuredCasesMetThreshold"
               ],
-              "description": "Why this verdict is what it is. Phrased as statements of what was measured, never as blame. `configuredTrialsNotAttempted` — some configured iteration never ran, so the run does not cover what it was asked to. `noGradeableTrials` — nothing in the run produced a gradeable verdict. `eligibleTrialsBelowMinimum` — fewer gradeable iterations than the suite's validity floor requires. `completionRateBelowMinimum` — too few attempted iterations completed to meet the suite's completion floor. `completionRateNotMeasured` — nothing was attempted, so the completion floor cannot be satisfied. `evaluatorErrorRateAboveMaximum` — the evaluator failed too often for this run to describe the server. `evaluatorErrorRateNotMeasured` — nothing was attempted, so the evaluator-error ceiling cannot be satisfied. `caseHasNoEligibleTrials` — a case graded nothing at all. `casePassRateMetThreshold` — the case met its pass threshold. `casePassRateBelowThreshold` — a case did not meet its pass threshold. `allMeasuredCasesMetThreshold` — every measured case met its threshold."
+              "description": "Why the verdict is what it is. The validity reasons are evaluated FIRST and make a run `inconclusive`; the task reasons decide `passed` / `failed` once validity holds. `configuredTrialsNotAttempted` — some configured trial never ran. `noGradeableTrials` — nothing in the suite was gradeable. `eligibleTrialsBelowMinimum` — the explicit `minEligibleTrials` was not reached. `completionRateBelowMinimum` — measured, and under the floor. `completionRateNotMeasured` — nothing was attempted, so the floor is unsatisfiable; a not-measured rate never passes one. `evaluatorErrorRateAboveMaximum` — the grader failed too often for the run to describe the server. `evaluatorErrorRateNotMeasured` — the same unsatisfiable case for the ceiling. `caseHasNoEligibleTrials` — a case graded nothing, which is inconclusive even at `passThreshold: 0`. `casePassRateMetThreshold` — a case's own passing reason. `casePassRateBelowThreshold` — a case failed its threshold, and so therefore did the suite. `allMeasuredCasesMetThreshold` — the suite's only passing reason."
             }
           },
           "validity": {
@@ -32941,7 +32941,7 @@
                     "casePassRateBelowThreshold",
                     "allMeasuredCasesMetThreshold"
                   ],
-                  "description": "Why this verdict is what it is. Phrased as statements of what was measured, never as blame. `configuredTrialsNotAttempted` — some configured iteration never ran, so the run does not cover what it was asked to. `noGradeableTrials` — nothing in the run produced a gradeable verdict. `eligibleTrialsBelowMinimum` — fewer gradeable iterations than the suite's validity floor requires. `completionRateBelowMinimum` — too few attempted iterations completed to meet the suite's completion floor. `completionRateNotMeasured` — nothing was attempted, so the completion floor cannot be satisfied. `evaluatorErrorRateAboveMaximum` — the evaluator failed too often for this run to describe the server. `evaluatorErrorRateNotMeasured` — nothing was attempted, so the evaluator-error ceiling cannot be satisfied. `caseHasNoEligibleTrials` — a case graded nothing at all. `casePassRateMetThreshold` — the case met its pass threshold. `casePassRateBelowThreshold` — a case did not meet its pass threshold. `allMeasuredCasesMetThreshold` — every measured case met its threshold."
+                  "description": "Why the verdict is what it is. The validity reasons are evaluated FIRST and make a run `inconclusive`; the task reasons decide `passed` / `failed` once validity holds. `configuredTrialsNotAttempted` — some configured trial never ran. `noGradeableTrials` — nothing in the suite was gradeable. `eligibleTrialsBelowMinimum` — the explicit `minEligibleTrials` was not reached. `completionRateBelowMinimum` — measured, and under the floor. `completionRateNotMeasured` — nothing was attempted, so the floor is unsatisfiable; a not-measured rate never passes one. `evaluatorErrorRateAboveMaximum` — the grader failed too often for the run to describe the server. `evaluatorErrorRateNotMeasured` — the same unsatisfiable case for the ceiling. `caseHasNoEligibleTrials` — a case graded nothing, which is inconclusive even at `passThreshold: 0`. `casePassRateMetThreshold` — a case's own passing reason. `casePassRateBelowThreshold` — a case failed its threshold, and so therefore did the suite. `allMeasuredCasesMetThreshold` — the suite's only passing reason."
                 }
               },
               "required": [
