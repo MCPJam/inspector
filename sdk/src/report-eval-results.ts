@@ -55,6 +55,17 @@ const CHUNK_TARGET_BYTES = 1024 * 1024;
  */
 const RESULT_ENVELOPE_SLACK = 4096;
 
+/** Hosts that never leave the machine, so plain http to them is not on a wire. */
+function isLoopbackHostname(hostname: string): boolean {
+  const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  return (
+    host === "localhost" ||
+    host === "::1" ||
+    host === "0.0.0.0" ||
+    /^127(?:\.\d{1,3}){3}$/.test(host)
+  );
+}
+
 export const DEFAULT_MCPJAM_BASE_URL = "https://app.mcpjam.com";
 
 /**
@@ -686,8 +697,14 @@ function validateReportingResponse(
     if (!id("uploadUrl")) invalid();
     try {
       const url = new URL(body.uploadUrl as string);
+      // A widget snapshot is a whole built app, and this URL is now reached
+      // automatically, so it must not carry one in cleartext across a network.
+      // Loopback keeps `npx convex dev` and a self-hosted deployment working,
+      // where the upload URL is http://127.0.0.1 by construction.
+      const cleartextIsLocal =
+        url.protocol === "http:" && isLoopbackHostname(url.hostname);
       if (
-        !["https:", "http:"].includes(url.protocol) ||
+        (url.protocol !== "https:" && !cleartextIsLocal) ||
         url.username ||
         url.password
       )
@@ -1059,9 +1076,16 @@ async function offloadOversizedWidgetSnapshots(
     results.filter((_result, index) => oversized.has(index))
   );
   // Put each rewritten result back at its own index so order is unchanged.
+  // A short list would silently reinstate the oversized result this whole
+  // function exists to remove, so treat it as the contract break it is.
+  if (rewritten.length !== oversized.size) {
+    throw new ReportingProtocolError(
+      "Widget snapshot upload returned a different number of results"
+    );
+  }
   const queue = [...rewritten];
   return results.map((result, index) =>
-    oversized.has(index) ? (queue.shift() ?? result) : result
+    oversized.has(index) ? queue.shift()! : result
   );
 }
 
