@@ -627,7 +627,7 @@ In both cases the dialog shows the servers recorded for that session, lets you s
 
 The **Generate** button reads your attached servers' tool catalog and drafts realistic cases — a mix of positive ("call `search` with a query") and negative ("don't call `delete_user` on a meta-question"). Treat it as a draft: skim, edit the prompts to match how your users actually talk, tighten the assertions, then save.
 
-While generation is open, the breadcrumb reads **Evaluate / &lt;suite&gt; / Generate test cases**. Click the suite name in the breadcrumb to exit the generation view and return to the suite overview at any time.
+While generation is open, the breadcrumb reads **Evaluate / &lt;suite&gt; / Generate test cases**. When reviewing imported drafts, the breadcrumb reads **Evaluate / &lt;suite&gt; / Import test cases** instead. In both cases, click the suite name in the breadcrumb to exit the review view and return to the suite overview at any time.
 
 If generation fails because no tools are marked read-only, the workspace offers **Change generation settings** rather than a retry — retrying the same request would fail identically. Change the scope in the settings dialog, then generate again. For other failures (such as model-dependent ones), **Retry generation** is offered instead.
 
