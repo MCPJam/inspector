@@ -87,7 +87,9 @@ test('every registered vocabulary has decided whether it is forked', () => {
   //
   // The LIST is pinned, not the exemptions: a future Slack line that starts
   // rendering any of these has to add the fork and its guard together, which
-  // is the whole point of this assertion.
+  // is the whole point of this assertion. Swarm findings are API/UI/MCP
+  // vocabulary and Slack does not render them, so they are explicitly not
+  // forked here.
   assert.deepEqual(Object.keys(DECISION_LABEL_VOCABULARIES).sort(), [
     'failureCategories',
     'frictionNotMeasuredReasons',
@@ -96,6 +98,11 @@ test('every registered vocabulary has decided whether it is forked', () => {
     'stageStates',
     'stages',
     'suspectedConditions',
+    'swarmFindingBases',
+    'swarmFindingCoverageNotes',
+    'swarmFindingDispositions',
+    'swarmFindingScopeLevels',
+    'swarmFindingSummaryKinds',
     'verdictDecisionReasons',
   ]);
 });
