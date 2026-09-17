@@ -35,16 +35,36 @@ function messageFromRecord(value: unknown): string | null {
 }
 
 /**
+ * The code in a CODE POSITION, for a payload too mangled to parse.
+ *
+ * The bare presence of the string is not enough and must not be treated as
+ * enough: `Could not find public function "sign_in_required_probe"` contains
+ * it and is an entirely different failure. Classifying that as a refusal would
+ * draw a sign-in call to action over a real error and — in
+ * `useRunInsights`, which latches `authRefused` on this — suppress
+ * auto-requests for the rest of the session.
+ *
+ * So the code counts only where a code actually appears: as the value of a
+ * `code` key, with or without quotes, in JSON or in a console-style dump.
+ */
+const CODE_IN_CODE_POSITION = new RegExp(
+  `["']?code["']?\\s*[:=]\\s*["']?${SIGN_IN_REQUIRED_CODE}\\b`
+);
+
+/**
  * The refusal's own copy when this error is one, `null` otherwise.
  *
  * Structured `ConvexError.data` first, then the stringified message. The
- * fallback is not defensive padding: `err.data` does not survive every path a
- * rejection takes to a hook (convex-test's function boundary drops it, and
- * Convex prefixes `Server Error` onto mutation rejections), while the
- * serialized payload is still in the text. Matching prose alone would be the
- * wrong fix — it breaks the day someone rewords the one part of a refusal that
- * is meant to change freely — so the code is what is matched, and the message
- * is only ever read out of the payload that carried it.
+ * fallback path is not defensive padding: `err.data` does not survive every
+ * path a rejection takes to a hook (convex-test's function boundary drops it,
+ * and Convex prefixes `Server Error` onto mutation rejections), while the
+ * serialized payload is still in the text.
+ *
+ * What is matched is always the CODE, never the prose — the message is the one
+ * part of a refusal meant to change freely, so keying off it would break on
+ * the next copy edit. And the code is only honoured where a code belongs: a
+ * parsed payload whose `code` is the sentinel, or the sentinel in a code
+ * position. Text that merely mentions it is somebody else's failure.
  */
 export function signInRequiredMessage(error: unknown): string | null {
   if (error instanceof ConvexError) {
@@ -61,10 +81,11 @@ export function signInRequiredMessage(error: unknown): string | null {
       const fromText = messageFromRecord(parsed);
       if (fromText) return fromText;
     } catch {
-      // Not JSON after all — the code matched inside prose. Fall through.
+      // Not JSON after all — fall through to the code-position check, which
+      // is the only other thing that counts.
     }
   }
-  return FALLBACK_MESSAGE;
+  return CODE_IN_CODE_POSITION.test(raw) ? FALLBACK_MESSAGE : null;
 }
 
 /** Convenience predicate for call sites that do not need the copy. */

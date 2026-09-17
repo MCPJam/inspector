@@ -45,6 +45,12 @@ const HOSTS = [
 
 vi.mock("@/hooks/useClients", () => ({
   useHostList: () => ({ hosts: HOSTS, isLoading: false }),
+  // `SwarmLiveStreamPane` resolves the live target's host snapshot through
+  // `useHostSnapshotForHost`, which reads this hook. A partial mock makes the
+  // whole pane throw on access, and the launch step this file asserts never
+  // renders — so the mock has to cover it even though nothing here reads a
+  // host detail.
+  useHost: () => ({ host: null, isLoading: false }),
 }));
 
 vi.mock("@/components/hosts/server-picker", () => ({

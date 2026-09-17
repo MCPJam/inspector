@@ -73,6 +73,10 @@ const { hostsRef, projectServersRef } = vi.hoisted(() => ({
 }));
 
 vi.mock("@/hooks/useClients", () => ({
+  // Same shape as `useConvexAuth` below: the live pane resolves a host
+  // snapshot through this hook now, and a missing export throws rather than
+  // returning undefined.
+  useHost: () => ({ host: null, isLoading: false }),
   useHostList: () => ({
     hosts: hostsRef.current,
     isLoading: false,

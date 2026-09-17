@@ -40,8 +40,24 @@ describe("signInRequiredMessage", () => {
   });
 
   it("falls back to generic copy when the code arrives without a message", () => {
-    const err = new Error(`refused: ${SIGN_IN_REQUIRED_CODE}`);
+    // A payload too mangled to parse, but with the code still in a code
+    // position — which is the only form the fallback accepts.
+    const err = new Error(`Server Error code: ${SIGN_IN_REQUIRED_CODE}, ...`);
     expect(signInRequiredMessage(err)).toBe("Sign in to use this.");
+  });
+
+  it("does not classify prose that merely mentions the code", () => {
+    // The over-match this guards against: the bare presence of the string is
+    // not a refusal. Treating it as one would draw a sign-in call to action
+    // over an unrelated error and — via `useRunInsights`' `authRefused` latch
+    // — suppress auto-requests for the rest of the session.
+    for (const prose of [
+      `Could not find public function "${SIGN_IN_REQUIRED_CODE}_probe"`,
+      `TypeError: ${SIGN_IN_REQUIRED_CODE} is not a function`,
+      `migration ${SIGN_IN_REQUIRED_CODE} applied`,
+    ]) {
+      expect(signInRequiredMessage(new Error(prose)), prose).toBeNull();
+    }
   });
 
   it("is null for every other refusal", () => {
