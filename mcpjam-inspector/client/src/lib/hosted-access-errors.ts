@@ -12,8 +12,29 @@
  * that needed it (`useSharedChatWidgetCapture`).
  */
 export function isStaleHostedAccessError(error: unknown): boolean {
-  if (!error || typeof error !== "object") return false;
+  return hostedErrorCode(error) === "scenario_access_stale";
+}
+
+/**
+ * The opposite of a stale-access rejection: nothing recovers this one.
+ *
+ * A transcript outlives the allowlist. Drop a server from a scenario and the
+ * tool calls it already produced stay in the messages the capture hook sweeps,
+ * so it re-offers that `serverId` forever. `accessVersion` does not catch it —
+ * the client re-redeems, the version matches, and the write is still refused.
+ *
+ * So this must NOT feed the re-redeem path (there is no fresher version to
+ * get) and must not feed the local retry ladder (every attempt lands on the
+ * same rejection). Drop the work instead.
+ */
+export function isServerOutsideScenarioError(error: unknown): boolean {
+  return hostedErrorCode(error) === "server_not_in_scenario_allowlist";
+}
+
+function hostedErrorCode(error: unknown): string | null {
+  if (!error || typeof error !== "object") return null;
   const data = (error as { data?: unknown }).data;
-  if (!data || typeof data !== "object") return false;
-  return (data as { code?: unknown }).code === "scenario_access_stale";
+  if (!data || typeof data !== "object") return null;
+  const code = (data as { code?: unknown }).code;
+  return typeof code === "string" ? code : null;
 }
