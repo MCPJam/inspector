@@ -91,21 +91,6 @@ function StateNote({
   );
 }
 
-const EXCLUSION_WORDS: Record<string, string> = {
-  notTerminal: "still running",
-  cancelled: "cancelled",
-  chainMissing: "with no recorded contract chain",
-  chainUnverified: "without a verified stage chain",
-  chainVersionAhead: "stamped by a newer analyzer than this backend reads",
-  evaluatorErrored: "where the evaluator itself errored",
-  judgePending: "still awaiting a grade",
-  judgeSkipped: "the evaluator skipped",
-};
-
-function humanExclusion(reason: string): string {
-  return EXCLUSION_WORDS[reason] ?? reason;
-}
-
 export function UnifiedFindingsPanel({
   runPending = false,
   analysis,
@@ -113,7 +98,6 @@ export function UnifiedFindingsPanel({
   findings,
   provenance,
   observationState,
-  observationCoverage,
   mode,
   analyze,
   build,
@@ -334,27 +318,6 @@ export function UnifiedFindingsPanel({
                 : "No issue found in the recorded checks."}
         </StateNote>
       )}
-      {observationCoverage &&
-      Object.values(observationCoverage.exclusions ?? {}).some(
-        (count) => count > 0,
-      ) ? (
-        <p
-          className="mt-3 text-xs text-muted-foreground"
-          data-testid="unified-findings-exclusion-summary"
-        >
-          Not analyzed:{" "}
-          {Object.entries(observationCoverage.exclusions ?? {})
-            .filter(([, count]) => count > 0)
-            .map(
-              ([reason, count]) =>
-                `${count} ${
-                  count === 1 ? "iteration" : "iterations"
-                } ${humanExclusion(reason)}`,
-            )
-            .join("; ")}
-          .
-        </p>
-      ) : null}
       <FindingsAllSheet
         open={allOpen}
         onOpenChange={setAllOpen}
