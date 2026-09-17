@@ -17,6 +17,8 @@ const mockState = vi.hoisted(() => ({
     isLoading: false,
   },
   ensureUser: vi.fn().mockResolvedValue(undefined),
+  ensureUserLegacy: vi.fn().mockResolvedValue(undefined),
+  trackGoogleSignUp: vi.fn().mockReturnValue(true),
   getGuestPromotionProof: vi.fn().mockResolvedValue(null),
   revokeGuestSessionAndCookie: vi.fn().mockResolvedValue(false),
   getExistingGuestId: vi.fn().mockResolvedValue(null as string | null),
@@ -29,9 +31,19 @@ const mockState = vi.hoisted(() => ({
   } | null,
 }));
 
+// The hook wires two mutations: `users:ensureUserWithOutcome` (primary,
+// `mockState.ensureUser`) and the bare `users:ensureUser` it falls back to
+// when a deployment lacks the newer one (`mockState.ensureUserLegacy`).
 vi.mock("convex/react", () => ({
   useConvexAuth: () => mockState.convexAuth,
-  useMutation: () => mockState.ensureUser,
+  useMutation: (name: string) =>
+    name === "users:ensureUser"
+      ? mockState.ensureUserLegacy
+      : mockState.ensureUser,
+}));
+
+vi.mock("@/lib/google-tag", () => ({
+  trackGoogleSignUp: mockState.trackGoogleSignUp,
 }));
 
 vi.mock("posthog-js/react", () => ({
@@ -65,6 +77,8 @@ describe("useEnsureDbUser", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockState.ensureUser.mockResolvedValue(undefined);
+    mockState.ensureUserLegacy.mockResolvedValue(undefined);
+    mockState.trackGoogleSignUp.mockReturnValue(true);
     mockState.getGuestPromotionProof.mockResolvedValue(null);
     mockState.revokeGuestSessionAndCookie.mockResolvedValue(false);
     mockState.getExistingGuestId.mockResolvedValue(null);
@@ -660,5 +674,117 @@ describe("useEnsureDbUser", () => {
       await vi.advanceTimersByTimeAsync(30_000);
     });
     expect(mockState.ensureUser).toHaveBeenCalledTimes(2);
+  });
+
+  describe("signup conversion", () => {
+    const signedIn = () => {
+      mockState.auth.user = { id: "workos-user-1", email: "a@b.co" };
+      mockState.actorKey = "workos-user-1";
+    };
+
+    it("reports a created account as a workos sign_up", async () => {
+      signedIn();
+      mockState.ensureUser.mockResolvedValue({
+        userId: "users:1",
+        created: true,
+        promotedFromGuest: false,
+      });
+
+      const { result } = renderHook(() => useEnsureDbUser());
+      await waitFor(() => expect(result.current.isUserReady).toBe(true));
+
+      expect(mockState.trackGoogleSignUp).toHaveBeenCalledTimes(1);
+      expect(mockState.trackGoogleSignUp).toHaveBeenCalledWith({
+        userId: "users:1",
+        method: "workos",
+      });
+      expect(mockState.ensureUserLegacy).not.toHaveBeenCalled();
+    });
+
+    it("reports a promoted guest as a guest_promotion sign_up", async () => {
+      signedIn();
+      mockState.ensureUser.mockResolvedValue({
+        userId: "users:guest",
+        created: false,
+        promotedFromGuest: true,
+      });
+
+      const { result } = renderHook(() => useEnsureDbUser());
+      await waitFor(() => expect(result.current.isUserReady).toBe(true));
+
+      expect(mockState.trackGoogleSignUp).toHaveBeenCalledWith({
+        userId: "users:guest",
+        method: "guest_promotion",
+      });
+    });
+
+    it("does not report a returning user", async () => {
+      signedIn();
+      mockState.ensureUser.mockResolvedValue({
+        userId: "users:1",
+        created: false,
+        promotedFromGuest: false,
+      });
+
+      const { result } = renderHook(() => useEnsureDbUser());
+      await waitFor(() => expect(result.current.isUserReady).toBe(true));
+
+      expect(mockState.trackGoogleSignUp).not.toHaveBeenCalled();
+    });
+
+    it("never reports on the guest branch, whatever the backend returns", async () => {
+      mockState.ensureUser.mockResolvedValue({
+        userId: "users:g",
+        created: true,
+        promotedFromGuest: false,
+      });
+
+      const { result } = renderHook(() => useEnsureDbUser());
+      await waitFor(() => expect(result.current.isUserReady).toBe(true));
+
+      expect(mockState.trackGoogleSignUp).not.toHaveBeenCalled();
+    });
+
+    it("tolerates the old id-only return shape", async () => {
+      signedIn();
+      mockState.ensureUser.mockResolvedValue("users:1");
+
+      const { result } = renderHook(() => useEnsureDbUser());
+      await waitFor(() => expect(result.current.isUserReady).toBe(true));
+
+      expect(mockState.trackGoogleSignUp).not.toHaveBeenCalled();
+    });
+
+    it("falls back to users:ensureUser when the outcome mutation is not deployed", async () => {
+      signedIn();
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      mockState.ensureUser.mockRejectedValue(
+        new Error(
+          "Could not find public function for 'users:ensureUserWithOutcome'. Did you forget to run `npx convex dev` or `npx convex deploy`?"
+        )
+      );
+      mockState.ensureUserLegacy.mockResolvedValue("users:1");
+
+      const { result } = renderHook(() => useEnsureDbUser());
+      await waitFor(() => expect(result.current.isUserReady).toBe(true));
+
+      expect(mockState.ensureUser).toHaveBeenCalledTimes(1);
+      expect(mockState.ensureUserLegacy).toHaveBeenCalledTimes(1);
+      expect(mockState.trackGoogleSignUp).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalled();
+      warn.mockRestore();
+    });
+
+    it("does not fall back for any other failure", async () => {
+      signedIn();
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      mockState.ensureUser.mockRejectedValue(new Error("backend exploded"));
+
+      const { result } = renderHook(() => useEnsureDbUser());
+      await waitFor(() => expect(mockState.ensureUser).toHaveBeenCalled());
+      await waitFor(() => expect(result.current.isUserReady).toBe(false));
+
+      expect(mockState.ensureUserLegacy).not.toHaveBeenCalled();
+    });
   });
 });

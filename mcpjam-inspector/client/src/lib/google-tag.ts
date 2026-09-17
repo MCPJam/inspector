@@ -131,3 +131,69 @@ export function loadGoogleTag({
   doc.head.appendChild(script);
   return true;
 }
+
+export const GOOGLE_SIGN_UP_EVENT = "sign_up";
+
+/** Storage key that remembers a `sign_up` already sent for this account. */
+export function googleSignUpSentKey(userId: string): string {
+  return `mcpjam.google-tag.sign-up.${userId}`;
+}
+
+export type TrackGoogleSignUpOptions = {
+  /** The account the signup created or promoted; dedupes repeat fires. */
+  userId: string;
+  /** GA4's standard `method` parameter for `sign_up`. */
+  method: "workos" | "guest_promotion";
+  win?: GtagWindow;
+  storage?: Pick<Storage, "getItem" | "setItem"> | null;
+};
+
+/**
+ * Report a completed signup to the Google tag as GA4's recommended `sign_up`
+ * event, which is what the Ads account imports as a conversion.
+ *
+ * No-op unless the tag is on the page (`window.gtag` is only ever set by
+ * `loadGoogleTag`, so every surface that never loads the tag never fires
+ * this either). Fires at most once per account per browser: the user
+ * bootstrap that reports the signup can legitimately run more than once for
+ * the same identity (StrictMode, a recovery retry, a second hook instance),
+ * and Google would count each as a conversion.
+ *
+ * Returns whether the event was sent.
+ */
+export function trackGoogleSignUp({
+  userId,
+  method,
+  win = typeof window === "undefined" ? undefined : (window as GtagWindow),
+  storage = typeof window === "undefined" ? null : safeSessionStorage(),
+}: TrackGoogleSignUpOptions): boolean {
+  if (!win || typeof win.gtag !== "function") return false;
+  const key = googleSignUpSentKey(userId);
+  try {
+    if (storage?.getItem(key)) return false;
+  } catch {
+    // Storage denied (private mode, blocked site data): fall through and
+    // send once; without a marker a later re-run may repeat it, which is
+    // the lesser evil next to never counting the signup.
+  }
+  try {
+    win.gtag("event", GOOGLE_SIGN_UP_EVENT, { method });
+  } catch (error) {
+    console.warn("[google-tag] sign_up event failed", error);
+    return false;
+  }
+  try {
+    storage?.setItem(key, String(Date.now()));
+  } catch {
+    // Same as above: the event went out; only the dedupe marker is lost.
+  }
+  return true;
+}
+
+function safeSessionStorage(): Storage | null {
+  try {
+    return window.sessionStorage;
+  } catch {
+    return null;
+  }
+}

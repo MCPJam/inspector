@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   GOOGLE_TAG_SCRIPT_BASE,
+  googleSignUpSentKey,
   loadGoogleTag,
   parseGoogleTagIds,
   shouldLoadGoogleTag,
+  trackGoogleSignUp,
 } from "../google-tag";
 
 type StubWindow = {
@@ -164,5 +166,92 @@ describe("loadGoogleTag", () => {
     expect(injectedScripts(doc)).toHaveLength(0);
     expect(win.dataLayer).toBeUndefined();
     expect(win.gtag).toBeUndefined();
+  });
+});
+
+describe("trackGoogleSignUp", () => {
+  function memoryStorage() {
+    const map = new Map<string, string>();
+    return {
+      getItem: (k: string) => map.get(k) ?? null,
+      setItem: (k: string, v: string) => void map.set(k, v),
+      size: () => map.size,
+    };
+  }
+
+  it("is a no-op when the tag never loaded", () => {
+    const win = makeWindow();
+    const storage = memoryStorage();
+    expect(
+      trackGoogleSignUp({
+        userId: "u1",
+        method: "workos",
+        win: win as unknown as Window,
+        storage,
+      }),
+    ).toBe(false);
+    expect(storage.size()).toBe(0);
+  });
+
+  it("sends GA4's sign_up with the method, once per account", () => {
+    const gtag = vi.fn();
+    const win = makeWindow({ gtag });
+    const storage = memoryStorage();
+    const opts = {
+      userId: "u1",
+      method: "workos" as const,
+      win: win as unknown as Window,
+      storage,
+    };
+
+    expect(trackGoogleSignUp(opts)).toBe(true);
+    expect(gtag).toHaveBeenCalledTimes(1);
+    expect(gtag).toHaveBeenCalledWith("event", "sign_up", {
+      method: "workos",
+    });
+    expect(storage.getItem(googleSignUpSentKey("u1"))).not.toBeNull();
+
+    // A second bootstrap for the same account must not double count.
+    expect(trackGoogleSignUp(opts)).toBe(false);
+    expect(gtag).toHaveBeenCalledTimes(1);
+
+    // A different account in the same browser still fires.
+    expect(
+      trackGoogleSignUp({ ...opts, userId: "u2", method: "guest_promotion" }),
+    ).toBe(true);
+    expect(gtag).toHaveBeenLastCalledWith("event", "sign_up", {
+      method: "guest_promotion",
+    });
+  });
+
+  it("still sends when storage is unavailable", () => {
+    const gtag = vi.fn();
+    const win = makeWindow({ gtag });
+    expect(
+      trackGoogleSignUp({
+        userId: "u1",
+        method: "workos",
+        win: win as unknown as Window,
+        storage: null,
+      }),
+    ).toBe(true);
+    expect(gtag).toHaveBeenCalledTimes(1);
+  });
+
+  it("swallows a throwing gtag", () => {
+    const gtag = vi.fn(() => {
+      throw new Error("blocked");
+    });
+    const win = makeWindow({ gtag });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(
+      trackGoogleSignUp({
+        userId: "u1",
+        method: "workos",
+        win: win as unknown as Window,
+        storage: memoryStorage(),
+      }),
+    ).toBe(false);
+    expect(warn).toHaveBeenCalled();
   });
 });
