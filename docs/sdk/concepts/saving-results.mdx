@@ -220,7 +220,7 @@ await reportEvalResults({
 });
 ```
 
-Pass every turn of a multi-turn case in one call — `promptsToEvalResult([first, second, third], …)` — and the timeline merges them into one iteration. Anything you set in the overrides wins over what it derives, so `error`, `model` and `provider` stay yours to declare.
+Pass every turn of a multi-turn case in one call — `promptsToEvalResult([first, second, third], …)` — and the timeline merges them into one iteration. Anything you set in the overrides wins over what it derives, so `error`, `model` and `provider` stay yours to declare. The trace, `actualToolCalls` and `tokens` are always derived from the prompts and cannot be overridden.
 
 Each iteration records the expected and actual tool calls side by side, along with the model's reasoning trace, so you can pinpoint exactly why a test passed or failed:
 

@@ -686,7 +686,9 @@ steps:
   - uses: actions/checkout@v4
   - run: npm ci
   - name: Start the MCP server
-    run: npm run serve &
+    run: |
+      npm run serve &
+      npx wait-on http://localhost:3000
   - uses: MCPJam/inspector/actions/evals@evals-v1
     with:
       api-key: ${{ secrets.MCPJAM_API_KEY }}
