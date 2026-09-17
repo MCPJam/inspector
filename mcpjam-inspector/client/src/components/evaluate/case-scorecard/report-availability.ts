@@ -2,9 +2,9 @@
  * What the scorecard says about the AI narrative it does not have.
  *
  * Four states a reader can tell apart, because the next step differs in each:
- * nobody has analyzed this run, the read phase has not reached this trial yet,
+ * nobody has analyzed this run, the read phase has not reached this iteration yet,
  * something specific stopped it, or the narrative predates the current grade.
- * Silence used to cover the first three, which is how a 1,000-trial run in
+ * Silence used to cover the first three, which is how a 1,000-iteration run in
  * progress looked identical to one nobody had ever analyzed.
  *
  * Deterministic content — EXPECTED, the recorded ACTUAL, the verdict — never
@@ -25,14 +25,14 @@ const UNAVAILABLE_LABELS: Record<
   PlatformEvalIterationReportUnavailableReason,
   string
 > = {
-  trace_too_large: "This trial's trace was too large to analyze.",
+  trace_too_large: "This iteration's trace was too large to analyze.",
   context_too_large:
-    "This trial's recorded failures were too large to analyze together.",
-  budget: "The analysis budget for this run was spent before this trial.",
-  missing_trace: "Nothing was recorded for this trial to analyze.",
+    "This iteration's recorded failures were too large to analyze together.",
+  budget: "The analysis budget for this run was spent before this iteration.",
+  missing_trace: "Nothing was recorded for this iteration to analyze.",
   extraction_rejected:
-    "The explanation this trial produced could not be traced back to the recorded evidence, so it was discarded.",
-  analysis_unavailable: "AI explanations are unavailable for this trial.",
+    "The explanation this iteration produced could not be traced back to the recorded evidence, so it was discarded.",
+  analysis_unavailable: "AI explanations are unavailable for this iteration.",
 };
 
 export type ReportAvailability =
@@ -46,8 +46,8 @@ export function reportAvailability(
   report: PlatformEvalIterationReport | null | undefined,
   options: { runSettled: boolean },
 ): ReportAvailability {
-  // A running trial is not missing an explanation; it has not finished being
-  // a trial. The scorecard's own in-progress state covers that.
+  // A running iteration is not missing an explanation; it has not finished
+  // running. The scorecard's own in-progress state covers that.
   if (!report)
     return options.runSettled
       ? {
@@ -59,8 +59,8 @@ export function reportAvailability(
     return {
       kind: "pending",
       line: report.progress
-        ? `Reading trials ${report.progress.done} of ${report.progress.total}…`
-        : "Reading this run's trials…",
+        ? `Reading iterations ${report.progress.done} of ${report.progress.total}…`
+        : "Reading this run's iterations…",
     };
   if (report.status === "failed")
     return {

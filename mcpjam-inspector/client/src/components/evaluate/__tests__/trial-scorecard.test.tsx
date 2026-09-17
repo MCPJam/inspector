@@ -582,7 +582,7 @@ describe("what the scorecard says about its AI explanations", () => {
     ],
   };
 
-  it("offers Analyze on a settled trial with no report", () => {
+  it("offers Analyze on a settled iteration with no report", () => {
     renderCard({ chain: verifiedChain });
     expect(screen.getByTestId("report-availability")).toHaveTextContent(
       "Analyze this run to add AI explanations to these rows.",
@@ -603,7 +603,7 @@ describe("what the scorecard says about its AI explanations", () => {
       } as never,
     });
     const line = screen.getByTestId("report-availability");
-    expect(line).toHaveTextContent("Reading trials 4 of 40…");
+    expect(line).toHaveTextContent("Reading iterations 4 of 40…");
     expect(line).toHaveAttribute("aria-live", "polite");
   });
 
@@ -622,7 +622,7 @@ describe("what the scorecard says about its AI explanations", () => {
       } as never,
     });
     expect(screen.getByTestId("report-availability")).toHaveTextContent(
-      "This trial's trace was too large to analyze.",
+      "This iteration's trace was too large to analyze.",
     );
     // The deterministic floor does not depend on the model having run.
     // The tool name renders as code, so assert on the words, not the marks.

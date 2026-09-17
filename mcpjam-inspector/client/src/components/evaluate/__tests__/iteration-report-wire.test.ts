@@ -48,15 +48,15 @@ describe("the iteration report wire", () => {
       reportAvailability(states.failed, { runSettled: true }),
     ).toMatchObject({
       kind: "unavailable",
-      line: "This trial's recorded failures were too large to analyze together.",
+      line: "This iteration's recorded failures were too large to analyze together.",
     });
     expect(
       reportAvailability(states.pending, { runSettled: true }),
-    ).toMatchObject({ kind: "pending", line: "Reading trials 1 of 2…" });
+    ).toMatchObject({ kind: "pending", line: "Reading iterations 1 of 2…" });
   });
 
-  it("says nothing about AI while the trial is still running", () => {
-    // A trial mid-run is not missing an explanation; the scorecard's own
+  it("says nothing about AI while the iteration is still running", () => {
+    // An iteration mid-run is not missing an explanation; the scorecard's own
     // in-progress state covers it, and two notices would contradict.
     expect(reportAvailability(null, { runSettled: false })).toMatchObject({
       kind: "ready",

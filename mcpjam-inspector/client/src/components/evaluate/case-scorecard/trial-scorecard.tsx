@@ -339,7 +339,7 @@ export function TrialScorecard({
   }
 
   // Blind review withholds every narrative, so it must not advertise one
-  // either: a reviewer told "reading trials 4 of 40" knows an explanation is
+  // either: a reviewer told "reading iterations 4 of 40" knows an explanation is
   // coming for the row they are labelling.
   const availability = judgeHidden
     ? { kind: "ready" as const }
