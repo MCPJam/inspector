@@ -1457,44 +1457,62 @@ async function closeInheritedToolCallsWithoutResume(args: {
   const unresolved = listUnresolvedToolCalls(messages, () => "outcome_unknown");
   if (unresolved.length === 0) return [];
 
-  // (1) THE APPROVAL RAIL OWNS THE WHOLE STEP.
+  const protectedIds = new Set<string>();
+
+  // (1) THE APPROVAL RAIL OWNS THE STEP IT ASKED ABOUT — that step, and not
+  // the whole history.
   //
-  // Two ways to tell that it does, and either one stands the guard down:
+  // Two ways to tell that it owns one, and either one protects it:
   //
   //   - the history already carries a `tool-approval-request` for an unresolved
   //     call. The previous turn gated it and is waiting for a human; the
   //     decision can still arrive, and closing the call would destroy a pending
   //     approval the user is looking at;
   //   - an unresolved call needs approval NOW. The engine will re-emit the pill
-  //     and pause again, so nothing here is at risk of running unasked.
+  //     and pause again, so nothing there is at risk of running unasked.
   //
-  // WHOLE-STEP, not per-call, because the pause is whole-step:
-  // `handlePendingApprovals` and the pre-pause drain both operate on the
-  // approval-free SIBLINGS of the gated call, and closing those would strand
-  // the discovery side effect the resumed turn depends on.
+  // WHOLE-STEP, because the pause is whole-step: `handlePendingApprovals` and
+  // the pre-pause drain both operate on the approval-free SIBLINGS of the
+  // gated call, and closing those would strand the discovery side effect the
+  // resumed turn depends on. So the gated call's own assistant message is
+  // protected entire.
   //
-  // The second is asked of the engine's own predicate, with the turn's own
-  // decision cache, so this answer and the pause site's cannot disagree about
-  // the same call.
+  // But ONLY that message. This used to stand the guard down for the entire
+  // history — `return []` on the first approval it found — and that is the
+  // hole: `handlePendingApprovals` hands the WHOLE history to
+  // `executeToolCallsFromMessages` with no filter, so it runs every unresolved
+  // executable call it finds, not only the approved step's. An orphan left by
+  // a stopped turn three messages earlier would execute for real the moment a
+  // human approved something unrelated — a charge nobody asked for, authorized
+  // by a click on a different dialog.
+  //
+  // The second question is asked of the engine's own predicate, with the
+  // turn's own decision cache, so this answer and the pause site's cannot
+  // disagree about the same call.
   const awaitingApprovalIds = toolCallIdsWithApprovalRequests(messages);
   for (const call of unresolved) {
-    if (awaitingApprovalIds.has(call.toolCallId)) return [];
-    const needsApproval = await toolCallNeedsApproval({
-      name: call.toolName,
-      input: findToolCallInput(messages, call.toolCallId),
-      toolCallId: call.toolCallId,
-      tools,
-      messages,
-      decisions,
-    });
-    if (needsApproval) return [];
+    if (protectedIds.has(call.toolCallId)) continue;
+    const owned =
+      awaitingApprovalIds.has(call.toolCallId) ||
+      (await toolCallNeedsApproval({
+        name: call.toolName,
+        input: findToolCallInput(messages, call.toolCallId),
+        toolCallId: call.toolCallId,
+        tools,
+        messages,
+        decisions,
+      }));
+    if (!owned) continue;
+    protectedIds.add(call.toolCallId);
+    for (const sibling of siblingToolCallIds(messages, call.toolCallId)) {
+      protectedIds.add(sibling);
+    }
   }
 
   // (2) A RESUME NAMES ONE CALL, but its siblings ride with it: the MRTR
   // pre-phase pauses when any sibling in the same assistant message is still
   // unresolved, and closing one would make it splice into a step it has
   // already declared finished.
-  const protectedIds = new Set<string>();
   if (resumeToolCallId) {
     protectedIds.add(resumeToolCallId);
     for (const sibling of siblingToolCallIds(messages, resumeToolCallId)) {
@@ -4459,41 +4477,20 @@ export async function runChatEngineLoop(
 
       startHeartbeat();
 
-      // Process any pending approval responses from a previous request.
-      //
-      // UNCONDITIONAL. `handlePendingApprovals` already returns `false` the
-      // moment the history carries no `tool-approval-request`, so an outer
-      // guess about whether this turn COULD have asked buys nothing — and
-      // every version of that guess has been wrong at least once. Gating it on
-      // `requireToolApproval` left a denied destructive `ui_*` call unresolved
-      // with the switch off (denial sends an approval response back; the
-      // approve path ships a tool-result instead), and the turn hung forever.
-      // A history that carries an approval request is the only fact that
-      // matters, and it is a fact this function can read for itself.
-      await handlePendingApprovals(
-        safeWriter,
-        messageHistory,
-        tools,
-        mcpClientManager,
-        traceTurn,
-        effectiveSteps(),
-        abortSignal,
-        modelVisibleMcpToolResults,
-        onToolResult,
-        onToolCall,
-        outcomeBuilder,
-      );
-
       // ── Ingress guard ─────────────────────────────────────────────────────
       // Close inherited tool calls that nothing is coming back for, BEFORE the
       // resume pre-phase and the loop both start reading unresolved calls as
       // work to do. See `closeInheritedToolCallsWithoutResume` for the rule.
       //
-      // AFTER `handlePendingApprovals`, deliberately: that path resolves every
-      // unresolved call on an approval resume, so by here there is normally
-      // nothing of its left open. The guard's own approval check is the
-      // belt-and-braces half — it stands down entirely on a history carrying an
-      // approval response, rather than racing a path that is mid-resume.
+      // BEFORE `handlePendingApprovals`, and that order is the whole point.
+      // That path hands the WHOLE history to `executeToolCallsFromMessages`
+      // with no filter, so it runs every unresolved executable call it finds —
+      // an orphan from a stopped turn three messages back included. Running the
+      // guard after it would be closing the stable door: the guard protects the
+      // approved call's own step (and its approval-free siblings, which that
+      // path needs), and closes the rest before anything can execute them. A
+      // human approving one dialog must not authorize a charge from a turn they
+      // already stopped.
       //
       // Runs regardless of where the history came from — a client that never
       // closed its partial message, a resumed session, a replayed transcript —
@@ -4537,16 +4534,30 @@ export async function runChatEngineLoop(
             toolName: call.toolName,
             input,
           });
-          await onToolCall?.({
-            toolCallId: call.toolCallId,
-            toolName: call.toolName,
-            input,
-            stepIndex: effectiveSteps(),
-            promptIndex: traceTurn.promptIndex,
-            // No server attribution: nothing ran, so there is no origin to
-            // claim. Attaching one would make a closure read as a reply.
-            serverId: undefined,
-          });
+          // Isolated, like every other `onToolCall` site. The callback is the
+          // caller's trace tap; a throw out of it here would abort the turn
+          // AFTER the transcript has already been closed, turning a bookkeeping
+          // failure into a lost turn.
+          try {
+            await onToolCall?.({
+              toolCallId: call.toolCallId,
+              toolName: call.toolName,
+              input,
+              stepIndex: effectiveSteps(),
+              promptIndex: traceTurn.promptIndex,
+              // No server attribution: nothing ran, so there is no origin to
+              // claim. Attaching one would make a closure read as a reply.
+              serverId: undefined,
+            });
+          } catch (error) {
+            logger.warn(
+              "[mcpjam-stream-handler] onToolCall failed for an ingress-closed call",
+              {
+                toolCallId: call.toolCallId,
+                error: error instanceof Error ? error.message : String(error),
+              },
+            );
+          }
         }
         await emitToolResults(
           safeWriter,
@@ -4566,6 +4577,35 @@ export async function runChatEngineLoop(
           onToolResult,
         );
       }
+
+      // Process any pending approval responses from a previous request.
+      //
+      // UNCONDITIONAL. `handlePendingApprovals` already returns `false` the
+      // moment the history carries no `tool-approval-request`, so an outer
+      // guess about whether this turn COULD have asked buys nothing — and
+      // every version of that guess has been wrong at least once. Gating it on
+      // `requireToolApproval` left a denied destructive `ui_*` call unresolved
+      // with the switch off (denial sends an approval response back; the
+      // approve path ships a tool-result instead), and the turn hung forever.
+      // A history that carries an approval request is the only fact that
+      // matters, and it is a fact this function can read for itself.
+      //
+      // Runs AFTER the guard: it executes every unresolved call in the history
+      // it is handed, so what reaches it has to be the approved step and its
+      // siblings — nothing inherited from a turn that ended.
+      await handlePendingApprovals(
+        safeWriter,
+        messageHistory,
+        tools,
+        mcpClientManager,
+        traceTurn,
+        effectiveSteps(),
+        abortSignal,
+        modelVisibleMcpToolResults,
+        onToolResult,
+        onToolCall,
+        outcomeBuilder,
+      );
 
       // ── Hosted MRTR resume pre-phase (§12.5, PR5) ─────────────────────────
       // A fresh request resuming a suspended tool call drives ONE retry leg

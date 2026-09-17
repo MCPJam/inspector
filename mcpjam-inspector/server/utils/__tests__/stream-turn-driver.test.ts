@@ -277,6 +277,23 @@ describe("TurnOutcomeBuilder state machine", () => {
     ]);
   });
 
+  it("FAILURE THEN COMPLETION: the provider's `onFinish` does not undo `onError`", () => {
+    // `streamText` fires `onError` and THEN `onFinish` for a terminal stream
+    // error, so the engine's completion mark genuinely lands on a turn that
+    // already failed. Letting it win would report the most expensive kind of
+    // wrong answer this contract can produce: a turn that broke, filed as one
+    // that worked, with a partial transcript to back it up.
+    const b = makeBuilder();
+    b.markFailed({ errorSource: "model", errorCode: "provider_5xx" });
+    b.markCompleted("stop");
+    const record = b.record();
+    expect(record.lifecycle).toBe("failed");
+    expect(record.termination?.errorCode).toBe("provider_5xx");
+    expect(record.termination?.superseded).toEqual([
+      { mark: "completed", at: expect.any(Number) },
+    ]);
+  });
+
   it("PAUSE THEN CLEANUP FAILURE: a pause whose commit failed is not a pause", () => {
     // The harness approval pause commits its sidecar standalone; if that commit
     // fails the lease is released and the pause is LOST. Still claiming

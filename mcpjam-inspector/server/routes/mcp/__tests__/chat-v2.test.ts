@@ -2686,9 +2686,35 @@ describe("POST /api/mcp/chat-v2", () => {
         hasUnresolvedCallCount++;
         return hasUnresolvedCallCount === 1;
       });
+      // CAPTURED INSIDE THE MOCK, before it mutates. `mock.calls` retains the
+      // SAME array the mock pushes the result onto, so a scan afterwards always
+      // finds the orphan resolved — the assertion would pass whether or not the
+      // call was about to be run. The only honest reading of "was it still open
+      // when execution received it" is taken here.
+      let sawOrphanOpen = false;
       vi.mocked(executeToolCallsFromMessages).mockImplementation((async (
         messages: any[],
       ) => {
+        const orphanIsOpen =
+          messages.some(
+            (message) =>
+              message?.role === "assistant" &&
+              Array.isArray(message.content) &&
+              message.content.some(
+                (part: any) =>
+                  part?.type === "tool-call" &&
+                  part.toolCallId === "orphaned-call-123",
+              ),
+          ) &&
+          !messages.some(
+            (message) =>
+              message?.role === "tool" &&
+              Array.isArray(message.content) &&
+              message.content.some(
+                (part: any) => part?.toolCallId === "orphaned-call-123",
+              ),
+          );
+        if (orphanIsOpen) sawOrphanOpen = true;
         // Simulate adding tool result to messages
         const toolResultMsg = {
           role: "tool",
@@ -2778,31 +2804,9 @@ describe("POST /api/mcp/chat-v2", () => {
         // AND THE CALL WAS NOT RUN. The output above is the closure, not an
         // execution: nothing names this call as a resume, so executing it
         // would be the defect the guard exists to remove.
-        const executedOrphan = vi
-          .mocked(executeToolCallsFromMessages)
-          .mock.calls.some(([messages]) =>
-            (messages as any[]).some(
-              (message) =>
-                message?.role === "assistant" &&
-                Array.isArray(message.content) &&
-                message.content.some(
-                  (part: any) =>
-                    part?.type === "tool-call" &&
-                    part.toolCallId === "orphaned-call-123" &&
-                    // Still open at the time of the call means it was about to
-                    // be run; once closed it is inert.
-                    !(messages as any[]).some(
-                      (m) =>
-                        m?.role === "tool" &&
-                        Array.isArray(m.content) &&
-                        m.content.some(
-                          (p: any) => p?.toolCallId === "orphaned-call-123",
-                        ),
-                    ),
-                ),
-            ),
-          );
-        expect(executedOrphan).toBe(false);
+        // Still open when execution received it means it was about to be run;
+        // once closed it is inert.
+        expect(sawOrphanOpen).toBe(false);
       } finally {
         global.fetch = originalFetch;
       }

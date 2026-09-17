@@ -120,6 +120,7 @@ import {
 import { fetchPluginRuntimeAttribution } from "../../services/environments/plugin-attribution.js";
 import { captureServerEvent } from "../../utils/analytics.js";
 import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
+import { TERMINAL_TURN_RECORDING_ENABLED } from "../../config.js";
 import { resolveWebAuthorizedHarnessStrategy } from "../../utils/harness/harness-proxy-strategy.js";
 import {
   assertHarnessDispatchable,
@@ -1822,17 +1823,25 @@ async function handleTurn(c: Context): Promise<Response> {
         ) as typeof result.turnTrace;
     }
 
-    if (abortController.signal.aborted || !result.turnTrace || lastEngineError) {
+    const abnormalTurn =
+      abortController.signal.aborted || !result.turnTrace || !!lastEngineError;
+    if (abnormalTurn && (browserAttached || TERMINAL_TURN_RECORDING_ENABLED)) {
       // KEEP THE PARTIAL TURN.
       //
-      // This used to be gated on `browserAttached`, on the reasoning that a
-      // browser turn has a shell and uploaded screenshots worth retaining. But
-      // the transcript is worth retaining for the same reason on every turn:
-      // the steps that ran are what a retry has to inspect, and the tool calls
-      // among them were already billed. A caller with no browser was simply
-      // told nothing happened.
+      // This used to be gated on `browserAttached` alone, on the reasoning that
+      // a browser turn has a shell and uploaded screenshots worth retaining.
+      // But the transcript is worth retaining for the same reason on every
+      // turn: the steps that ran are what a retry has to inspect, and the tool
+      // calls among them were already billed. A caller with no browser was
+      // simply told nothing happened.
       //
-      // The engine's own record now says how the turn ended, so the inline
+      // THE NEW HALF IS BEHIND THE SWITCH; the browser half is not, because it
+      // already shipped. That asymmetry is the switch's whole job: until the
+      // control plane stores `outcomeAtTurn`, a partial transcript landing
+      // there is indistinguishable from a complete one, and this is the site
+      // that would put the most of them there.
+      //
+      // The engine's own record says how the turn ended, so the inline
       // `finishReason: "timeout" | "error"` guess below is only the fallback
       // for a turn that produced no trace at all.
       const failed = await persistChatSessionToConvex(

@@ -263,6 +263,70 @@ describe("ingress guard", () => {
     expect(toolResultsFor(result.messageHistory, "call-1")).toHaveLength(0);
   });
 
+  it("BUT ONLY FOR THAT STEP: an orphan in another message is still closed", async () => {
+    // THE HOLE THIS CLOSES. The stand-down used to be whole-HISTORY — the first
+    // approval it found stood the guard down for everything — and
+    // `handlePendingApprovals` hands the WHOLE history to
+    // `executeToolCallsFromMessages` with no filter, so it runs every
+    // unresolved executable call it finds.
+    //
+    // A user stops a turn mid-`charge_card`, then approves something unrelated
+    // two messages later. The approval click would have authorized the charge
+    // they stopped. The stand-down is whole-STEP, which is what the pause
+    // actually is; another assistant message is another step.
+    const messages = [
+      { role: "user", content: "charge it" },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "orphan-1",
+            toolName: "charge_card",
+            input: {},
+          },
+        ],
+      },
+      { role: "user", content: "actually, search instead" },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "gated-1",
+            toolName: "delete_everything",
+            input: {},
+          },
+          {
+            type: "tool-approval-request",
+            approvalId: "approval-1",
+            toolCallId: "gated-1",
+          },
+        ],
+      },
+    ] as unknown as ModelMessage[];
+    const result = await runTurn({
+      messages,
+      tools: {
+        charge_card: runnableTool("charge_card"),
+        delete_everything: runnableTool("delete_everything", true),
+      },
+    });
+    // The approval's own call is untouched — a human is still looking at it.
+    expect(
+      toolResultsFor(result.messageHistory, "gated-1").filter(
+        isInterruptedToolResult,
+      ),
+    ).toHaveLength(0);
+    // The orphan from the stopped turn is CLOSED, so nothing downstream can
+    // read it as work to do.
+    expect(
+      toolResultsFor(result.messageHistory, "orphan-1").filter(
+        isInterruptedToolResult,
+      ),
+    ).toHaveLength(1);
+  });
+
   it("STANDS DOWN for the call a scope step-up resume names, and its siblings", async () => {
     const messages = [
       { role: "user", content: "hi" },

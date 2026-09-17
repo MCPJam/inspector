@@ -1169,7 +1169,18 @@ export function runDirectChatTurn(
         await persistTurn(event, { terminal: true });
         return;
       }
-      outcomeBuilder.markCompleted(event.finishReason);
+      // NOT a completion when `onError` already ran. `streamText` fires
+      // `onError` and THEN `onFinish` for a terminal stream error, so this line
+      // is reached on a turn that failed. The builder refuses the second
+      // terminal mark and files it under `superseded`, so the lifecycle stays
+      // `failed` either way — but saying it here means the guarantee does not
+      // live only in the builder, and a reader of this file can see which
+      // ending the turn is claiming.
+      if (streamError === undefined) {
+        outcomeBuilder.markCompleted(event.finishReason);
+      } else {
+        outcomeBuilder.setFinishReason(event.finishReason);
+      }
 
       patchAiSdkRecordedSpansMessageRangesFromSteps(
         traceContext.recordedSpans,
