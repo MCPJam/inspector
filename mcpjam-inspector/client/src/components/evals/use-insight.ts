@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation } from "convex/react";
 import type { EvalSuiteRun } from "./types";
+import { signInRequiredMessage } from "@/lib/sign-in-required";
 
 export type InsightStatus = "pending" | "completed" | "failed" | undefined;
 
@@ -26,6 +27,16 @@ export interface InsightHookResult<TResult> {
   /** User-facing message for a REQUEST-TIME rejection (e.g. spend-cap). */
   errorMessage: string | null;
   unavailable: boolean;
+  /**
+   * The backend refused because the caller is anonymous. `errorMessage` holds
+   * the refusal's own copy; the surface should render a sign-in call to action
+   * rather than an error, because that is the actual remedy.
+   *
+   * Distinct from `unavailable` on purpose — a surface that hides itself here
+   * would take the explanation away from exactly the person who has never seen
+   * it. Distinct from `error` because this is not a fault.
+   */
+  signInRequired: boolean;
   requested: boolean;
   pending: boolean;
   failedGeneration: boolean;
@@ -88,9 +99,27 @@ export function __resetAutoRequestClaims(): void {
 function classifyInsightError(err: unknown): {
   unavailable: boolean;
   permanent: boolean;
+  /** The caller is anonymous. Render a sign-in call to action, not an error. */
+  signInRequired?: boolean;
   message: string;
 } {
   const raw = err instanceof Error ? err.message : String(err);
+
+  // An anonymous caller on a platform-paid door. FIRST, ahead of the generic
+  // "Server Error" test below, which Convex prefixes onto every thrown
+  // mutation error and which would otherwise latch `unavailable` and hide the
+  // band — telling a trial user the feature does not exist when the truth is
+  // that it is one click away. Not `permanent` either: who is asking can
+  // change within a session; what is deployed cannot.
+  const signInMessage = signInRequiredMessage(err);
+  if (signInMessage) {
+    return {
+      unavailable: false,
+      permanent: false,
+      signInRequired: true,
+      message: signInMessage,
+    };
+  }
 
   // Known structured rejections short-circuit ahead of the generic
   // unavailable/permanent classification. Convex wraps mutation rejections
@@ -137,6 +166,7 @@ export function useInsight<TResult extends { summary?: string }>(
   const autoRequest = options?.autoRequest !== false;
   const [error, setError] = useState<string | null>(null);
   const [unavailable, setUnavailable] = useState(false);
+  const [signInRequired, setSignInRequired] = useState(false);
   const [requested, setRequested] = useState(false);
   const hasAutoAttemptedRef = useRef(false);
   const runIdRef = useRef<string | null>(null);
@@ -145,6 +175,29 @@ export function useInsight<TResult extends { summary?: string }>(
   // the hook's lifetime, so we keep `unavailable` sticky across run switches
   // rather than re-attempting (and flashing the panel) on every navigation.
   const featureMissingRef = useRef(false);
+  /**
+   * Sticky across runs: the backend refused because the viewer is anonymous.
+   *
+   * `hasAutoAttemptedRef` is per-RUN and the run-change effect clears it, so
+   * without this a guest opening run after run fires one doomed auto-request
+   * each time. Who is asking does not change by navigating — the sibling hook
+   * `hooks/use-run-insights.ts` latches the same way, for the same reason.
+   *
+   * Cleared only by an EXPLICIT request: a press is the one event that can
+   * mean the viewer signed in since.
+   */
+  const signInRefusedRef = useRef(false);
+  /**
+   * Bumped by every EXPLICIT request, so a rejection can tell whether it is
+   * still the newest assertion of identity.
+   *
+   * A request that is already in flight when the viewer presses the button
+   * rejects AFTER that press clears the latch, and would otherwise set it
+   * straight back — stranding someone who just signed in with the auto-request
+   * suppressed for the rest of the session. The press is the newer claim, so
+   * an older request loses the right to latch.
+   */
+  const explicitRequestGenerationRef = useRef(0);
   // The result `generatedAt` captured at request time. Lets us clear the
   // optimistic `requested` flag the instant a NEW result lands — even when a
   // reactive update skips an observable `pending` frame — so the controls
@@ -177,7 +230,18 @@ export function useInsight<TResult extends { summary?: string }>(
       if (!run || unavailable) {
         return;
       }
+      // An explicit press asserts a (possibly new) identity; the auto-request
+      // below carries no such assertion and leaves the latch alone.
+      if (!autoClaimedRunId) {
+        signInRefusedRef.current = false;
+        explicitRequestGenerationRef.current += 1;
+      }
+      // Captured at REQUEST time: what this rejection, whenever it lands, is
+      // allowed to speak for. See the two guards in the catch below.
+      const originRunId = run._id;
+      const generationAtRequest = explicitRequestGenerationRef.current;
       setError(null);
+      setSignInRequired(false);
       requestedAtStampRef.current = latestResultStampRef.current;
       setRequested(true);
       requestMut({ suiteRunId: run._id, force, ...extraArgs } as any).catch(
@@ -185,14 +249,34 @@ export function useInsight<TResult extends { summary?: string }>(
           if (autoClaimedRunId) {
             releaseAutoRequest(config.requestMutation, autoClaimedRunId);
           }
-          setRequested(false);
           const classified = classifyInsightError(err);
+          // A missing backend function is a fact about the DEPLOYMENT — not
+          // about this run and not about who was asking — so it stands however
+          // long the request took and wherever the viewer has navigated to.
+          if (classified.unavailable && classified.permanent) {
+            featureMissingRef.current = true;
+            setUnavailable(true);
+          }
+          // The latch answers "who is asking", which navigation cannot change
+          // but an explicit press can. Only the newest assertion sets it.
+          if (
+            classified.signInRequired &&
+            explicitRequestGenerationRef.current === generationAtRequest
+          ) {
+            signInRefusedRef.current = true;
+          }
+          // Everything below is what the viewer SEES. A request for run A can
+          // reject after they have moved to run B, and run B is owed its own
+          // verdict rather than A's — including `requested`, which B may have
+          // set for a request of its own that is still in flight.
+          if (runIdRef.current !== originRunId) {
+            return;
+          }
+          setRequested(false);
           if (classified.unavailable) {
-            if (classified.permanent) {
-              featureMissingRef.current = true;
-            }
             setUnavailable(true);
           } else {
+            setSignInRequired(classified.signInRequired === true);
             setError(classified.message);
           }
         },
@@ -214,6 +298,7 @@ export function useInsight<TResult extends { summary?: string }>(
     if (runIdRef.current !== runKey) {
       runIdRef.current = runKey;
       setError(null);
+      setSignInRequired(false);
       setRequested(false);
       // Re-assess availability per run for run-specific/transient failures
       // (e.g. "Suite run not found") so one bad run doesn't hide the panel for
@@ -256,6 +341,11 @@ export function useInsight<TResult extends { summary?: string }>(
     if (!run || unavailable || hasAutoAttemptedRef.current) {
       return;
     }
+    // Refused for WHO is asking, on some earlier run. Navigating does not
+    // change that, so do not spend another doomed request per run opened.
+    if (signInRefusedRef.current) {
+      return;
+    }
     if (run.status !== "completed") {
       return;
     }
@@ -290,6 +380,7 @@ export function useInsight<TResult extends { summary?: string }>(
     error,
     errorMessage: error,
     unavailable,
+    signInRequired,
     requested,
     requestInsight,
     cancelInsight,

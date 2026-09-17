@@ -1303,6 +1303,37 @@ describe("SwarmsTab — New swarm create flow", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("offers sign-in for a guest refusal instead of carding it", async () => {
+    // The backend refuses an anonymous caller at the door with 403
+    // `sign_in_required`. An `ErrorCard` would state the problem and offer
+    // nothing; the remedy here is a control, so the surface renders
+    // `GuestSignInMessage` and no card.
+    generateSwarmPersonaBatchMock.mockRejectedValue(
+      new SwarmGenerateError(
+        403,
+        "Sign in to generate personas and journeys.",
+        false,
+        true,
+      ),
+    );
+    openDescribe();
+    fillDescribe();
+
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+
+    expect(
+      await screen.findByText("Sign in to generate personas and journeys."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^Sign in$/i }),
+    ).toBeInTheDocument();
+    // The refusal gets ONE surface, not two saying the same thing.
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("new-swarm-proposed-personas"),
+    ).not.toBeInTheDocument();
+  });
+
   it("leaves a model limit to its dialog instead of also carding it", async () => {
     let rejectGenerate: (err: unknown) => void = () => {};
     generateSwarmPersonaBatchMock.mockImplementation(

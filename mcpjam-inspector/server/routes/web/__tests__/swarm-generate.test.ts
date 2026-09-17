@@ -364,6 +364,61 @@ describe("web routes — swarm generation proxy", () => {
     expect(data.details?.canTopUp).toBe(false);
   });
 
+  it("forwards the backend's own 403 code so a client can tell WHICH 403 it is", async () => {
+    // The status alone cannot separate these: 403 covers both "sign in" (one
+    // click away) and "not a member of this project" (not). The backend's own
+    // code is what does, and `upstreamRefusalRouteError` forwards the whole
+    // refusal envelope as `details` so a client can read it.
+    generateSwarmPersonaMock.mockRejectedValue(
+      new SwarmAgentError(
+        403,
+        JSON.stringify({
+          ok: false,
+          code: "sign_in_required",
+          feature: "swarm generation",
+        }),
+        "Sign in to generate personas and journeys."
+      )
+    );
+
+    const response = await postJson(
+      app,
+      "/api/web/swarm/generate/persona",
+      { projectId: "proj-1", serverAttachmentId: "att-1" },
+      token
+    );
+    const { status, data } = await expectJson<{
+      code?: string;
+      message?: string;
+      details?: { code?: string };
+    }>(response);
+    expect(status).toBe(403);
+    // The proxy's HTTP-shaped code, and the backend's own beneath it.
+    expect(data.code).toBe("FORBIDDEN");
+    expect(data.details?.code).toBe("sign_in_required");
+    expect(data.message).toBe("Sign in to generate personas and journeys.");
+  });
+
+  it("does not invent an upstream code when the backend sent none", async () => {
+    // `parseRefusalEnvelope` is shape-gated: a WAF interstitial or a proxy
+    // error page must not land arbitrary text in a field a client reads.
+    generateSwarmPersonaMock.mockRejectedValue(
+      new SwarmAgentError(403, "<html>Forbidden</html>", "Forbidden.")
+    );
+
+    const response = await postJson(
+      app,
+      "/api/web/swarm/generate/persona",
+      { projectId: "proj-1", serverAttachmentId: "att-1" },
+      token
+    );
+    const { status, data } = await expectJson<{
+      details?: Record<string, unknown>;
+    }>(response);
+    expect(status).toBe(403);
+    expect(data.details).toBeUndefined();
+  });
+
   it("maps a backend 5xx onto 500 and keeps the upstream detail out of the body", async () => {
     generateSwarmJourneysMock.mockRejectedValue(
       new SwarmAgentError(502, "", "swarm-generate upstream failed (502)")

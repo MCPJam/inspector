@@ -102,6 +102,7 @@ import type { ClusterTuning } from "@/lib/cluster-tuning";
 import { describeCloudServerBlock } from "@/lib/cloud-server-readiness";
 import { environmentLabel } from "@/lib/environment-label";
 import { ErrorCard } from "@/components/ui/error-card";
+import { GuestSignInMessage } from "@/components/auth/GuestSignInMessage";
 import { WebApiError } from "@/lib/apis/web/base";
 import { useDbUserBootstrapStatus } from "@/contexts/db-user-ready-context";
 import { cn } from "@/lib/utils";
@@ -574,6 +575,15 @@ export function NewSwarmCreateFlow({
       : null,
   );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  /**
+   * The backend refused generation because the visitor is anonymous. Held
+   * separately from `errorMessage` because the remedy is a control, not a
+   * sentence: `ErrorCard` would render "Sign in to generate personas and
+   * journeys." with nothing to press.
+   */
+  const [generateSignInRequired, setGenerateSignInRequired] = useState<
+    string | null
+  >(null);
   // Sync latch: `generating`/`launching` are state, so two fast clicks in one
   // tick would both see the old value and fire twice.
   const inFlightRef = useRef(false);
@@ -982,6 +992,9 @@ export function NewSwarmCreateFlow({
     setGeneratingSince(Date.now());
     setDescribeStepError(null);
     setErrorMessage(null);
+    // Cleared on every attempt: a press is the one event that can mean the
+    // visitor signed in since the last refusal.
+    setGenerateSignInRequired(null);
     track("swarm_create_generate_started", {
       location: "swarms",
       intensity: pushIntensity,
@@ -1058,9 +1071,17 @@ export function NewSwarmCreateFlow({
       // would say the same thing twice with nothing to act on.
       const limitDialogRaised =
         err instanceof SwarmGenerateError && err.limitDialogRaised;
-      setDescribeStepError(limitDialogRaised ? null : err);
+      // Same argument as the limit dialog one line up, for the same reason:
+      // this refusal gets its own affordance below, so repeating it in the
+      // error card would say it twice and offer nothing to act on either time.
+      const signInRefusal =
+        err instanceof SwarmGenerateError && err.signInRequired
+          ? err.message
+          : null;
+      setGenerateSignInRequired(signInRefusal);
+      setDescribeStepError(limitDialogRaised || signInRefusal ? null : err);
       setErrorMessage(
-        limitDialogRaised
+        limitDialogRaised || signInRefusal
           ? null
           : err instanceof SwarmTargetMaterializeError ||
               err instanceof ComposerResolveError ||
@@ -2079,6 +2100,14 @@ export function NewSwarmCreateFlow({
                 runs it through `describeError`, so this still gains the
                 container, icon and details disclosure that make a long backend
                 sentence readable instead of a wall of red text. */}
+            {generateSignInRequired ? (
+              <GuestSignInMessage
+                compact
+                message={generateSignInRequired}
+                location="swarm_create_generate"
+              />
+            ) : null}
+
             {describeStepError || errorMessage ? (
               <ErrorCard error={describeStepError ?? errorMessage} />
             ) : null}

@@ -28,6 +28,7 @@ export function useRunInsights(
     error: hook.error,
     errorMessage: hook.errorMessage,
     unavailable: hook.unavailable,
+    signInRequired: hook.signInRequired,
     requested: hook.requested,
     requestRunInsights: hook.requestInsight,
     cancelRunInsights: hook.cancelInsight,
