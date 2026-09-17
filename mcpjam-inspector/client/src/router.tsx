@@ -1,3 +1,5 @@
+import { LegacyEvalCaseRedirect } from "./components/routing/legacy-eval-case-redirect";
+import { ByokCreditsPage } from "./components/billing/ByokCreditsPage";
 import { CreditUsagePage } from "./components/billing/CreditUsagePage";
 import { createBrowserRouter, RouterProvider, redirect } from "react-router";
 import { RouteErrorScreen } from "./components/RouteErrorScreen";
@@ -253,6 +255,13 @@ const ROUTE_ELEMENTS: Record<
   "client-config": { element: <ServersRedirectRoute /> },
   "organizations/:orgId/members": { element: <OrganizationsRoute /> },
   "organizations/:orgId/sharing": { element: <OrganizationsRoute /> },
+  "organizations/:orgId/billing/byok": {
+    element: (
+      <OrganizationsRoute>
+        <ByokCreditsPage />
+      </OrganizationsRoute>
+    ),
+  },
   "organizations/:orgId/billing/usage": {
     element: (
       <OrganizationsRoute>
@@ -281,8 +290,8 @@ const ROUTE_ELEMENTS: Record<
   "evals/create": { element: <EvalsRoute /> },
   "evals/suite/:suiteId": { element: <EvalsRoute /> },
   "evals/suite/:suiteId/runs/:runId": { element: <EvalsRoute /> },
-  "evals/suite/:suiteId/test/:testId": { element: <EvalsRoute /> },
-  "evals/suite/:suiteId/test/:testId/edit": { element: <EvalsRoute /> },
+  "evals/suite/:suiteId/test/:testId": { element: <LegacyEvalCaseRedirect /> },
+  "evals/suite/:suiteId/test/:testId/edit": { element: <LegacyEvalCaseRedirect /> },
   "evals/suite/:suiteId/edit": { element: <EvalsRoute /> },
   // Runs mode. `mode` comes from the route table rather than sniffing the URL
   // inside the component, so the two lenses stay one route element with one
@@ -295,10 +304,10 @@ const ROUTE_ELEMENTS: Record<
     element: <EvalsRoute mode="runs" />,
   },
   "evals/runs/suite/:suiteId/test/:testId": {
-    element: <EvalsRoute mode="runs" />,
+    element: <LegacyEvalCaseRedirect />,
   },
   "evals/runs/suite/:suiteId/test/:testId/edit": {
-    element: <EvalsRoute mode="runs" />,
+    element: <LegacyEvalCaseRedirect />,
   },
   "evals/runs/suite/:suiteId/edit": { element: <EvalsRoute mode="runs" /> },
   // Evaluate (New). Its own element, so nothing about the shipped Evaluate

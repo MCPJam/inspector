@@ -1,4 +1,5 @@
 import { useQuery } from "convex/react";
+import type { HostSnapshot } from "@/lib/host-snapshot";
 import type {
   EvalTraceBrowserInteractionStepView,
   EvalTraceWidgetRenderObservationView,
@@ -210,7 +211,8 @@ export interface SharedChatThread {
  * hostConfigs table, so even after the host has rotated forward the
  * row this points at is still readable.
  */
-export interface SessionHistoricalHostConfig {
+export interface SessionHistoricalHostConfig
+  extends Omit<HostSnapshot, "hostStyle"> {
   hostConfigId: string;
   hostStyle: string;
   modelId: string;

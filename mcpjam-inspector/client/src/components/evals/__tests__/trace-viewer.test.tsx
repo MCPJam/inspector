@@ -10,6 +10,19 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TraceViewer } from "../trace-viewer";
+import {
+  ScenarioHostStyleProvider,
+  useScenarioHostStyle,
+} from "@/contexts/scenario-client-style-context";
+import {
+  ActiveHostCapsResolverProvider,
+  useActiveHostCapsResolver,
+} from "@/contexts/active-host-client-capabilities-context";
+import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
+
+vi.mock("@/lib/host-compat/use-host-catalog", () => ({
+  useHostCatalog: () => ({ catalog: null }),
+}));
 
 vi.mock("@/components/ui/resizable", () => ({
   ResizablePanelGroup: ({ children }: { children: ReactNode }) => (
@@ -114,6 +127,8 @@ vi.mock("@/components/chat-v2/thread/message-view", () => ({
     return (
       <div
         data-testid="message-view"
+        data-host-style={useScenarioHostStyle() ?? "ambient-null"}
+        data-host-caps={JSON.stringify(useActiveHostCapsResolver()())}
         data-message-id={message.id}
         data-role={message.role}
       >
@@ -398,7 +413,7 @@ class ControlledResizeObserver {
             borderBoxSize: [],
             contentBoxSize: [],
             devicePixelContentBoxSize: [],
-          }) as ResizeObserverEntry,
+          } as ResizeObserverEntry),
       ),
       this as unknown as ResizeObserver,
     );
@@ -614,8 +629,12 @@ describe("TraceViewer", () => {
         isLoading
       />,
     );
-    expect(screen.getByTestId("trace-viewer-tools-compare")).toBeInTheDocument();
-    expect(screen.getByTestId("trace-viewer-actual-loading")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("trace-viewer-tools-compare"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("trace-viewer-actual-loading"),
+    ).toBeInTheDocument();
   });
 
   it("toggles between diff and JSON layouts in tools compare view", async () => {
@@ -632,14 +651,18 @@ describe("TraceViewer", () => {
     expect(
       screen.getByTestId("trace-viewer-tools-layout-diff"),
     ).toBeInTheDocument();
-    expect(screen.getByText("All 1 expected tool call matched.")).toBeInTheDocument();
+    expect(
+      screen.getByText("All 1 expected tool call matched."),
+    ).toBeInTheDocument();
     expect(screen.queryAllByTestId("json-editor")).toHaveLength(0);
 
     fireEvent.click(screen.getByTestId("trace-viewer-tools-layout-json"));
     expect(screen.getAllByTestId("json-editor")).toHaveLength(2);
 
     fireEvent.click(screen.getByTestId("trace-viewer-tools-layout-diff"));
-    expect(screen.getByText("All 1 expected tool call matched.")).toBeInTheDocument();
+    expect(
+      screen.getByText("All 1 expected tool call matched."),
+    ).toBeInTheDocument();
     expect(screen.queryAllByTestId("json-editor")).toHaveLength(0);
   });
 
@@ -1439,9 +1462,7 @@ describe("TraceViewer", () => {
   });
 
   it("keeps trace chat read-only when only onFullscreenChange is provided", () => {
-    render(
-      <TraceViewer trace={toolTrace} onFullscreenChange={vi.fn()} />,
-    );
+    render(<TraceViewer trace={toolTrace} onFullscreenChange={vi.fn()} />);
     openChatTab();
 
     const lastCall = mockMessageView.mock.calls[0][0];
@@ -1504,5 +1525,59 @@ describe("TraceViewer — Replay tab gate", () => {
     );
     fireEvent.click(screen.getByTestId("trace-viewer-browser-tab"));
     expect(screen.getByTestId("browser-replay-video")).toBeTruthy();
+  });
+});
+
+describe("TraceViewer host shell", () => {
+  it("inherits ambient style and edited capabilities when no snapshot is supplied", () => {
+    const caps = { extensions: { "test/outer": {} } };
+    const { container } = render(
+      <ScenarioHostStyleProvider value="claude">
+        <ActiveHostCapsResolverProvider value={() => caps}>
+          <TraceViewer trace={simpleTextTrace} />
+        </ActiveHostCapsResolverProvider>
+      </ScenarioHostStyleProvider>,
+    );
+    expect(container.querySelector(".scenario-host-shell")).toBeNull();
+    for (const message of screen.getAllByTestId("message-view")) {
+      expect(message).toHaveAttribute("data-host-style", "claude");
+      expect(message).toHaveAttribute("data-host-caps", JSON.stringify(caps));
+    }
+  });
+
+  it("shadows ambient presentation with the snapshot without replacing explicit saved capabilities", () => {
+    const caps = { extensions: { "test/saved": {} } };
+    const { container } = render(
+      <ScenarioHostStyleProvider value="claude">
+        <TraceViewer
+          trace={simpleTextTrace}
+          hostSnapshot={{ hostStyle: "chatgpt" }}
+          activeHost={{ clientCapabilities: caps } as HostConfigDtoV2}
+        />
+      </ScenarioHostStyleProvider>,
+    );
+    const shell = container.querySelector(".scenario-host-shell")!;
+    expect(shell).toHaveAttribute("data-host-style", "chatgpt");
+    expect(shell).not.toHaveClass("overflow-hidden");
+    for (const message of screen.getAllByTestId("message-view")) {
+      expect(message).toHaveAttribute("data-host-style", "chatgpt");
+      expect(message).toHaveAttribute("data-host-caps", JSON.stringify(caps));
+    }
+  });
+
+  it("keeps the explicit shell in the flex chain for a bounded live pane", () => {
+    const { container } = render(
+      <TraceViewer
+        trace={simpleTextTrace}
+        hostSnapshot={{ hostStyle: "claude" }}
+        fillContent
+      />,
+    );
+    expect(container.querySelector(".scenario-host-shell")).toHaveClass(
+      "flex",
+      "min-h-0",
+      "flex-1",
+      "flex-col",
+    );
   });
 });

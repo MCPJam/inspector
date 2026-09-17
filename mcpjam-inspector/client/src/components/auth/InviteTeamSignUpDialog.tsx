@@ -89,7 +89,7 @@ export function InviteTeamSignUpDialog({
           <DialogTitle>Invite your team to MCPJam</DialogTitle>
           <DialogDescription>
             Create a free account to share projects and invite teammates to
-            debug, test, and build on MCP servers together.
+            debug, test, and build on MCP servers together. + 500 free eval iterations!
           </DialogDescription>
         </DialogHeader>
         {/* Primary is first in the DOM so Radix's focus scope lands on it —
