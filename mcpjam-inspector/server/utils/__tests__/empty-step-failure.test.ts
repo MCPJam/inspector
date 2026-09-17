@@ -32,11 +32,12 @@ import {
   hasUnresolvedToolCalls,
 } from "@/shared/http-tool-calls";
 import { describeError } from "@mcpjam/sdk";
+import { handleMCPJamFreeChatModel } from "../mcpjam-stream-handler";
 import {
+  createEmptyTurnWatcher,
   describeEmptyStepFailure,
   EMPTY_STEP_SENTINEL,
-  handleMCPJamFreeChatModel,
-} from "../mcpjam-stream-handler";
+} from "../empty-step-failure";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 
 let lastExecution: Promise<void> | null = null;
@@ -222,6 +223,64 @@ describe("an empty model step fails instead of passing as an ok step", () => {
     expect(events[0].message?.startsWith(EMPTY_STEP_SENTINEL)).toBe(true);
   });
 
+  it("names the tool a `length` finish cut off mid-call, instead of claiming there was no tool call", async () => {
+    // Measured on staging: `gpt-5-nano` began a drawing call and hit the
+    // output-token limit before its input was complete. The call never
+    // becomes `tool-input-available`, so it adds no content part.
+    const { events } = await runTurn([
+      {
+        type: "tool-input-start",
+        toolCallId: "call_1",
+        toolName: "create_view",
+      },
+      {
+        type: "tool-input-delta",
+        toolCallId: "call_1",
+        inputTextDelta: '{"elements":[',
+      },
+      {
+        type: "finish",
+        finishReason: "length",
+        messageMetadata: {
+          inputTokens: 900,
+          outputTokens: 8192,
+          totalTokens: 9092,
+        },
+      },
+    ]);
+
+    expect(events).toHaveLength(1);
+    expect(events[0].message?.startsWith(EMPTY_STEP_SENTINEL)).toBe(true);
+    expect(events[0].message).toContain("started a call to `create_view`");
+    expect(events[0].message).toContain(
+      "ran out of output tokens (8192 output tokens)",
+    );
+    expect(events[0].message).not.toContain("no tool call");
+  });
+
+  it("quotes the output tokens a `length` finish spent with nothing visible", async () => {
+    const { events } = await runTurn([
+      {
+        type: "finish",
+        finishReason: "length",
+        messageMetadata: {
+          inputTokens: 900,
+          outputTokens: 8192,
+          totalTokens: 9092,
+        },
+      },
+    ]);
+
+    expect(events).toHaveLength(1);
+    expect(events[0].message).toContain("no tool call (finishReason: length)");
+    expect(events[0].message).toContain(
+      "output-token limit (8192 output tokens)",
+    );
+    expect(events[0].message).toContain(
+      "reasoning the provider does not stream back",
+    );
+  });
+
   it("leaves a step that produced text alone", async () => {
     // The guard is `contentParts.length === 0`, not the finish reason: a turn
     // that said something is a success however the provider labelled it.
@@ -363,7 +422,7 @@ describe("describeEmptyStepFailure", () => {
       describeEmptyStepFailure({ finishReason: "content-filter" }),
     ).toContain("safety filter");
     expect(describeEmptyStepFailure({ finishReason: "length" })).toContain(
-      "output-token ceiling",
+      "output-token limit",
     );
     expect(describeEmptyStepFailure({ finishReason: "stop" })).toContain(
       "clean finish and still returned nothing",
@@ -395,5 +454,133 @@ describe("describeEmptyStepFailure", () => {
         describeEmptyStepFailure({ toolInputErrors: ["bad input"] }),
       ).slug,
     ).toBe("provider/empty_response");
+  });
+});
+
+describe("createEmptyTurnWatcher (direct BYOK turns)", () => {
+  const finish = (finishReason: string) =>
+    ({ type: "finish", finishReason }) as any;
+
+  const watch = (
+    chunks: unknown[],
+    finishReason: string,
+    settledToolBeforeStream = false,
+  ) => {
+    const watcher = createEmptyTurnWatcher({ settledToolBeforeStream });
+    for (const chunk of chunks) watcher.observe(chunk as any);
+    return watcher.failureFor(finish(finishReason));
+  };
+
+  it("fails an empty last step with the same sentence as the hosted engine", () => {
+    const message = watch(
+      [
+        { type: "start" },
+        { type: "start-step" },
+        { type: "finish-step" },
+        { type: "message-metadata", messageMetadata: { outputTokens: 4096 } },
+      ],
+      "length",
+    );
+
+    expect(message).toBe(
+      describeEmptyStepFailure({ finishReason: "length", outputTokens: 4096 }),
+    );
+    expect(describeError(message!).slug).toBe("provider/empty_response");
+  });
+
+  it("names a call the stream cut off", () => {
+    const message = watch(
+      [
+        { type: "start-step" },
+        { type: "tool-input-start", toolCallId: "c1", toolName: "create_view" },
+        { type: "tool-input-delta", toolCallId: "c1", inputTextDelta: "{" },
+        { type: "finish-step" },
+      ],
+      "length",
+    );
+
+    expect(message).toContain("started a call to `create_view`");
+  });
+
+  it("judges only the LAST step, so earlier text does not hide an empty ending", () => {
+    const message = watch(
+      [
+        { type: "start-step" },
+        { type: "text-delta", id: "t", delta: "Let me check." },
+        {
+          type: "tool-input-available",
+          toolCallId: "c1",
+          toolName: "x",
+          input: {},
+        },
+        { type: "tool-output-error", toolCallId: "c1", errorText: "boom" },
+        { type: "finish-step" },
+        { type: "start-step" },
+        { type: "finish-step" },
+      ],
+      "stop",
+    );
+
+    expect(message).toContain("finishReason: stop");
+  });
+
+  it("passes a quiet `stop` after a tool came back, in this stream or before it", () => {
+    expect(
+      watch(
+        [
+          { type: "start-step" },
+          {
+            type: "tool-input-available",
+            toolCallId: "c1",
+            toolName: "x",
+            input: {},
+          },
+          { type: "tool-output-available", toolCallId: "c1", output: {} },
+          { type: "finish-step" },
+          { type: "start-step" },
+          { type: "finish-step" },
+        ],
+        "stop",
+      ),
+    ).toBeUndefined();
+    expect(
+      watch([{ type: "start-step" }, { type: "finish-step" }], "stop", true),
+    ).toBeUndefined();
+    // ...but never a `length`: running out is not choosing to stop.
+    expect(
+      watch([{ type: "start-step" }, { type: "finish-step" }], "length", true),
+    ).toContain("finishReason: length");
+  });
+
+  it("stays quiet for a step with content, a stream that already errored, or one with no step", () => {
+    expect(
+      watch(
+        [{ type: "start-step" }, { type: "text-delta", id: "t", delta: "Hi" }],
+        "stop",
+      ),
+    ).toBeUndefined();
+    expect(
+      watch(
+        [
+          { type: "start-step" },
+          { type: "reasoning-delta", id: "r", delta: "hm" },
+        ],
+        "length",
+      ),
+    ).toBeUndefined();
+    expect(
+      watch(
+        [{ type: "start-step" }, { type: "error", errorText: "x" }],
+        "error",
+      ),
+    ).toBeUndefined();
+    expect(watch([{ type: "start" }], "stop")).toBeUndefined();
+    // A chunk type this does not model counts as content, never as silence.
+    expect(
+      watch(
+        [{ type: "start-step" }, { type: "data-custom", data: {} }],
+        "stop",
+      ),
+    ).toBeUndefined();
   });
 });
