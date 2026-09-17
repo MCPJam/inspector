@@ -70,7 +70,7 @@ jobs:
           fi
 
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # Refuse to promote a SHA whose MCP build inputs haven't been
       # verified on staging. The check is looser than an exact-SHA match
@@ -87,7 +87,7 @@ jobs:
       # deploy-mcp-staging.yml's `paths:` trigger filter, minus the
       # workflow file itself (which isn't a build input).
       - name: Require green staging for current MCP build inputs
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const workflowId = "deploy-mcp-staging.yml";
@@ -164,7 +164,7 @@ jobs:
             );
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -177,7 +177,7 @@ jobs:
 
       - name: Deploy production worker
         id: deploy
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
