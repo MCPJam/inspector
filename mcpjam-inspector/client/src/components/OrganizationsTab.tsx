@@ -976,6 +976,17 @@ function OrganizationPage({
             email ?? activeSeatPaymentIntent?.email ?? "Member"
           } added to the organization.`,
         );
+      } else {
+        track("billing_flow_failed", {
+          location: seatPaymentLocation(surface),
+          flow: "seat_payment",
+          source: surface,
+          failure_kind:
+            result.reason === "seat_payment_canceled"
+              ? "canceled"
+              : "no_payment_pending",
+          current_plan: billingStatus?.plan ?? "unknown",
+        });
       }
     } catch (error) {
       track("billing_flow_failed", {

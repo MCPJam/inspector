@@ -924,6 +924,13 @@ describe("OrganizationsTab billing", () => {
       "billing_flow_succeeded",
       expect.objectContaining({ flow: "seat_payment" }),
     );
+    expect(trackMock).toHaveBeenCalledWith(
+      "billing_flow_failed",
+      expect.objectContaining({
+        flow: "seat_payment",
+        failure_kind: "canceled",
+      }),
+    );
   });
 
   const failedSeatPaymentIntentFixture = () => ({
