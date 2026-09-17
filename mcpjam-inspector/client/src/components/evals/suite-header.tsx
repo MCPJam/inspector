@@ -28,7 +28,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@mcpjam/design-system/popover";
-import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
+import { buildEvaluatePath, navigateApp } from "@/lib/app-navigation";
 import { track } from "@/lib/analytics";
 import {
   formatRunId,
@@ -744,7 +744,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             aria-label="Suite settings"
             onClick={() =>
               navigateApp(
-                buildEvalsPath({
+                buildEvaluatePath({
                   type: "suite-edit",
                   suiteId: suite._id,
                 }),
