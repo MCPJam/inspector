@@ -493,7 +493,7 @@ describe("buildRunCompareLanes", () => {
 
     const [row3, row2] = result.lanes[0].rows;
     expect(row2.pass.delta).toEqual({
-      label: "+10 pts",
+      label: "+10%",
       direction: "up",
       tone: "progress",
     });
