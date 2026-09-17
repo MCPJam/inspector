@@ -1080,7 +1080,9 @@ async function postGenerate<T>(
     // there; the response's TOP-LEVEL `code` is the proxy's HTTP-shaped one —
     // `FORBIDDEN` for every 403, whatever caused it — and "not a member of
     // this project" is a 403 that signing in does not fix.
-    const signInRequired = details?.code === SIGN_IN_REQUIRED_CODE;
+    const signInRequired =
+      typeof details?.code === "string" &&
+      details.code.toLowerCase() === SIGN_IN_REQUIRED_CODE.toLowerCase();
     // Raise the top-up dialog HERE, where the body still carries the route's
     // `code`. `SwarmGenerateError` keeps only status + message, so by the time
     // the create flow catches this the limit is no longer identifiable — and

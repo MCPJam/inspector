@@ -20,7 +20,25 @@ import { ConvexError } from "convex/values";
  *     non-member cannot probe for resource existence, which would tell a guest
  *     their own run does not exist.
  */
-export const SIGN_IN_REQUIRED_CODE = "sign_in_required";
+export const SIGN_IN_REQUIRED_CODE = "SIGN_IN_REQUIRED";
+
+/**
+ * Both spellings, because both have existed.
+ *
+ * The backend settled on `SIGN_IN_REQUIRED` (`convex/lib/signInRequired.ts`).
+ * An earlier revision of this contract used `sign_in_required`, and matching
+ * only one of the two is precisely the failure this module exists to prevent:
+ * a refusal the Inspector cannot classify falls through to the generic branch,
+ * which sets `unavailable` and hides the surface from the one reader who could
+ * fix it in a click. Comparison is case-insensitive rather than a list so a
+ * third capitalization cannot reintroduce it.
+ */
+function isSignInRequiredCode(value: unknown): boolean {
+  return (
+    typeof value === "string" &&
+    value.toLowerCase() === SIGN_IN_REQUIRED_CODE.toLowerCase()
+  );
+}
 
 /** Last-resort copy when the refusal reached us without its own message. */
 const FALLBACK_MESSAGE = "Sign in to use this.";
@@ -37,7 +55,7 @@ function hasCode(value: unknown): boolean {
 function messageFromRecord(value: unknown): string | null {
   if (!value || typeof value !== "object") return null;
   const record = value as { code?: unknown; message?: unknown };
-  if (record.code !== SIGN_IN_REQUIRED_CODE) return null;
+  if (!isSignInRequiredCode(record.code)) return null;
   return typeof record.message === "string" && record.message.length > 0
     ? record.message
     : FALLBACK_MESSAGE;
@@ -57,7 +75,8 @@ function messageFromRecord(value: unknown): string | null {
  * `code` key, with or without quotes, in JSON or in a console-style dump.
  */
 const CODE_IN_CODE_POSITION = new RegExp(
-  `["']?code["']?\\s*[:=]\\s*["']?${SIGN_IN_REQUIRED_CODE}\\b`
+  `["']?code["']?\\s*[:=]\\s*["']?${SIGN_IN_REQUIRED_CODE}\\b`,
+  "i"
 );
 
 /**
@@ -81,7 +100,8 @@ export function signInRequiredMessage(error: unknown): string | null {
     if (fromData) return fromData;
   }
   const raw = error instanceof Error ? error.message : String(error);
-  if (!raw.includes(SIGN_IN_REQUIRED_CODE)) return null;
+  if (!raw.toLowerCase().includes(SIGN_IN_REQUIRED_CODE.toLowerCase()))
+    return null;
   const start = raw.indexOf("{");
   const end = raw.lastIndexOf("}");
   if (start !== -1 && end > start) {

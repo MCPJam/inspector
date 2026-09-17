@@ -71,6 +71,31 @@ describe("signInRequiredMessage", () => {
     }
   });
 
+  it("classifies BOTH spellings of the code", async () => {
+    // The backend settled on `SIGN_IN_REQUIRED`; an earlier revision of this
+    // contract used `sign_in_required`. Matching only one is the failure this
+    // module exists to prevent — an unclassified refusal falls through to the
+    // generic branch, sets `unavailable`, and hides the surface from the one
+    // reader who could fix it in a click.
+    for (const spelling of ["SIGN_IN_REQUIRED", "sign_in_required"]) {
+      const structured = new ConvexError({
+        code: spelling,
+        message: "Sign in to keep going.",
+      });
+      expect(signInRequiredMessage(structured), spelling).toBe(
+        "Sign in to keep going.",
+      );
+      expect(isSignInRequired(structured), spelling).toBe(true);
+
+      // And through the stringified path, which is where `err.data` did not
+      // survive the hop.
+      const serialized = new Error(
+        `Server Error {"code":"${spelling}","message":"Sign in."}`,
+      );
+      expect(signInRequiredMessage(serialized), spelling).toBe("Sign in.");
+    }
+  });
+
   it("is null for every other refusal", () => {
     // The ones that must NOT be mistaken for this: a rate limit is a wait, a
     // permission refusal is about a workspace rather than an account, and a
