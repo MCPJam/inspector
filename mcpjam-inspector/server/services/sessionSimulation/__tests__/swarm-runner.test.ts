@@ -10,7 +10,15 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const setupTurnMock = vi.fn();
+const reportTargetGroundingMock = vi.fn();
 const reportAttemptMock = vi.fn();
+vi.mock("../swarm-setup-turn", async () => ({
+  ...(await vi.importActual<typeof import("../swarm-setup-turn")>(
+    "../swarm-setup-turn",
+  )),
+  runSwarmSetupTurn: (...args: unknown[]) => setupTurnMock(...args),
+}));
 const swarmPersonaNextTurnMock = vi.fn();
 const heartbeatJourneyRunMock = vi.fn();
 const runSyntheticHostSessionMock = vi.fn();
@@ -25,6 +33,7 @@ vi.mock("../../swarm-agent.js", async () => {
   );
   return {
     ...actual,
+    reportTargetGrounding: (...args: unknown[]) => reportTargetGroundingMock(...args),
     reportAttempt: (...args: unknown[]) => reportAttemptMock(...args),
     swarmPersonaNextTurn: (...args: unknown[]) =>
       swarmPersonaNextTurnMock(...args),
@@ -106,6 +115,8 @@ function baseOpts(overrides: Record<string, unknown> = {}) {
 }
 
 beforeEach(() => {
+  setupTurnMock.mockReset();
+  reportTargetGroundingMock.mockReset().mockResolvedValue({});
   // Default: every attempt transition APPLIES (a fresh, uncontended claim/
   // terminal). Duplicate-launch tests override with `applied: false`.
   reportAttemptMock.mockReset().mockResolvedValue({ ok: true, applied: true });
@@ -1403,5 +1414,152 @@ describe("classifyRateLimit — a halt needs a real spend signal", () => {
 
   it("defaults an absent message to the narrower per-host stop", () => {
     expect(classifyRateLimit(undefined)).toBe("provider_rate_limit");
+  });
+});
+
+describe("target setup before claims", () => {
+  const record = {
+    status: "completed",
+    readiness: "not_needed",
+    prefix: "swarm-test-",
+    createdEntities: [],
+    observedCreatedEntityCount: 0,
+    unsupportedClaims: 0,
+    missing: [],
+    toolCalls: [],
+    writeCallsDispatched: 0,
+    retried: false,
+    admittedWriteTools: [],
+    excludedToolCount: 0,
+    startedAt: 0,
+    durationMs: 0,
+    chatSessionId: "setup",
+  };
+  it("finishes setup before the first attempt claim", async () => {
+    const order: string[] = [];
+    setupTurnMock.mockImplementation(async () => {
+      order.push("setup");
+      return record;
+    });
+    reportAttemptMock.mockImplementation(async (_url, _bearer, args) => {
+      order.push(args.status);
+      return { ok: true, applied: true };
+    });
+    await startJourneyRun(
+      baseOpts({
+        hosts: [{ ...HOST, targetId: "t" }],
+        setupWrites: true,
+        sessionsPerTarget: 1,
+      }),
+    );
+    expect(order).toEqual(["setup", "running", "succeeded"]);
+  });
+  it("finishes discovery and grounding for each same-host environment before its first claim", async () => {
+    const order = new Map<string, string[]>([
+      ["a", []],
+      ["b", []],
+    ]);
+    setupTurnMock.mockImplementation(async ({ target }) => {
+      order.get(target.targetId)!.push("setup");
+      return record;
+    });
+    reportTargetGroundingMock.mockImplementation(
+      async (_url, _bearer, body) => {
+        if (body.probes) {
+          await Promise.resolve();
+          order.get(body.targetId)!.push("grounded");
+        }
+        return {};
+      },
+    );
+    reportAttemptMock.mockImplementation(async (_url, _bearer, body) => {
+      order.get(body.targetId)!.push(body.status);
+      return { ok: true, applied: true };
+    });
+    const managerFactory = async (target: { targetId: string }) => ({
+      connectedServerIds: ["s"],
+      dispose: async () => {},
+      manager: {
+        listTools: async () => ({
+          tools: [
+            {
+              name: "list_projects",
+              annotations: { readOnlyHint: true },
+              inputSchema: { type: "object" },
+            },
+          ],
+        }),
+        executeTool: async () => {
+          order.get(target.targetId)!.push("discovery");
+          return { structuredContent: { id: target.targetId } };
+        },
+      },
+    });
+    await startJourneyRun(
+      baseOpts({
+        setupWrites: true,
+        sessionsPerTarget: 1,
+        managerFactory,
+        hosts: ["a", "b"].map((id) => ({
+          ...HOST,
+          targetId: id,
+          environmentRef: { environmentId: id, name: id, revision: 1 },
+          pinnedSkills: [],
+        })),
+      }),
+    );
+    for (const events of order.values())
+      expect(events).toEqual([
+        "setup",
+        "discovery",
+        "grounded",
+        "running",
+        "succeeded",
+      ]);
+    expect(
+      reportTargetGroundingMock.mock.calls
+        .filter((c) => c[2].probes)
+        .map((c) => c[2].targetId)
+        .sort(),
+    ).toEqual(["a", "b"]);
+    expect(
+      new Set(
+        runSyntheticHostSessionMock.mock.calls.map((c) => c[0].chatSessionId),
+      ).size,
+    ).toBe(2);
+  });
+  it("fails only the unavailable target and leaves siblings runnable", async () => {
+    setupTurnMock.mockImplementation(async ({ target }) => ({
+      ...record,
+      ...(target.targetId === "bad"
+        ? { readiness: "unavailable", reason: "model_reported_missing" }
+        : {}),
+    }));
+    await startJourneyRun(
+      baseOpts({
+        hosts: [
+          { ...HOST, targetId: "bad" },
+          { ...HOST_2, targetId: "good" },
+        ],
+        setupWrites: true,
+        sessionsPerTarget: 1,
+      }),
+    );
+    // The existing cleanup sweep claims then fails pending attempts; it never runs a session for the failed target.
+    expect(
+      reportAttemptMock.mock.calls
+        .filter((c) => c[2].targetId === "bad")
+        .map((c) => c[2].status),
+    ).toEqual(["running", "failed"]);
+    expect(reportAttemptMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({
+        targetId: "bad",
+        status: "failed",
+        errorCode: "prerequisites_unavailable",
+      }),
+    );
+    expect(runSyntheticHostSessionMock).toHaveBeenCalledOnce();
   });
 });

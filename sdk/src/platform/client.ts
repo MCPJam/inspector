@@ -4372,6 +4372,7 @@ export class PlatformApiClient {
       personaId: string;
       sessionsPerTarget: number;
       maxTurns: number;
+      setupWrites?: boolean;
       name?: string;
       swarmId?: string;
       environmentIds?: string[];
@@ -4408,6 +4409,7 @@ export class PlatformApiClient {
       hostIds?: string[];
       sessionsPerTarget?: number;
       maxTurns?: number;
+      setupWrites?: boolean;
     },
     options?: RequestOptions
   ): Promise<PlatformJourney> {
@@ -4474,6 +4476,7 @@ export class PlatformApiClient {
       name: string;
       sessionsPerTarget: number;
       maxTurns: number;
+      setupWrites?: boolean;
       description?: string;
       environmentIds?: string[];
     },
@@ -4497,6 +4500,7 @@ export class PlatformApiClient {
       environmentIds?: string[] | null;
       sessionsPerTarget?: number;
       maxTurns?: number;
+      setupWrites?: boolean;
     },
     options?: RequestOptions
   ): Promise<PlatformSwarm> {
