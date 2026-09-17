@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
+import { NO_READ_ONLY_TOOLS_MESSAGE } from "../../../../shared/eval-generation-errors.js";
 const mocks = vi.hoisted(() => ({
   query: vi.fn(),
   fetch: vi.fn(),
@@ -92,5 +93,6 @@ describe("authoring adapter", () => {
 it("reports no read-only tools as a validation error", async () => {
   const response = await post(JSON.stringify({ ...start, input: { ...start.input, options: { toolCoverage: "read-only" } } }));
   expect(response.status).toBe(400);
+  expect(await response.text()).toContain(NO_READ_ONLY_TOOLS_MESSAGE);
   expect(mocks.fetch).not.toHaveBeenCalled();
 });

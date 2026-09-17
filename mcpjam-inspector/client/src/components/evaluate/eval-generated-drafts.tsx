@@ -127,7 +127,11 @@ export function EvalGeneratedDrafts({
       setOpen(true);
     }
   }, [state?.reviewRequestId]);
-  if (!state || !state.drafts.length)
+  // A running or failed authoring job owns the status line and its
+  // cancel/retry control before it has produced a single draft.
+  const authoringVisible =
+    !saveVisibleOnly && Boolean(state?.authoringJobId || state?.error);
+  if (!state || (!state.drafts.length && !authoringVisible))
     return saveVisibleOnly ? (
       <p role="status" className="text-sm">
         All tests in this batch are saved.
@@ -142,7 +146,7 @@ export function EvalGeneratedDrafts({
         All tests in this batch are saved.
       </p>
     );
-  if (!visibleDrafts.length && !state.error) return null;
+  if (!visibleDrafts.length && !authoringVisible) return null;
   const revealing =
     !saveVisibleOnly && visibleDrafts.length < state.drafts.length;
   const saveTargets = saveVisibleOnly ? visibleDrafts : state.drafts;

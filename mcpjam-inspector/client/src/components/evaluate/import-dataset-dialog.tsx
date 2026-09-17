@@ -122,6 +122,9 @@ export function ImportDatasetDialog({
           },
           abort.signal,
         );
+        // The job is started either way, but a response that lost its race
+        // must not close a dialog the user already reopened on another suite.
+        if (current !== generation.current) return;
         void followAuthoringJob({ projectId, suiteId }, result.jobId);
         onOpenChange(false);
         return;

@@ -9702,7 +9702,17 @@ async function completeGeneratedAuthoringJob(
   const cases: EvalCaseBatchItem[] = [];
   const skipped = [];
   for (const value of job.drafts ?? []) {
-    const draft = evalAuthoringDraftSchema.parse(value);
+    const parsed = evalAuthoringDraftSchema.safeParse(value);
+    if (!parsed.success) {
+      // One unreadable draft is a skip, not a reason to drop the whole commit.
+      skipped.push({
+        title: (value as { case?: { title?: string } })?.case?.title ??
+          "Untitled case",
+        error: "This draft could not be read. Retry the failed cases.",
+      });
+      continue;
+    }
+    const draft = parsed.data;
     if (
       draft.additions.length ||
       draft.issues.some((issue) => issue.blocking && !issue.resolution)
