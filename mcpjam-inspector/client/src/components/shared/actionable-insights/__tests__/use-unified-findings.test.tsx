@@ -735,3 +735,45 @@ describe("one Analyze findings action", () => {
     expect(borrowed.requestInsight).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("automatic analysis failures", () => {
+  it.each([
+    ["failed", "enrich", "evidence_changed", false, null, true],
+    ["failed", "enrich", "cancelled", false, null, true],
+    ["pending", "enrich", "evidence_changed", false, null, false],
+    ["failed", "build", "evidence_changed", false, null, false],
+    ["failed", "enrich", "evidence_changed", true, null, false],
+    ["failed", "enrich", "evidence_changed", false, 200, false],
+  ] as const)(
+    "handles %s %s %s pending=%s enrichment=%s",
+    (status, kind, errorCode, pending, generatedAt, visible) => {
+      const envelope = structuredClone(ENVELOPE);
+      envelope.unifiedFindings!.job = {
+        jobId: "auto",
+        kind,
+        status,
+        errorCode,
+        startedAt: 100,
+        updatedAt: 100,
+      };
+      envelope.unifiedFindings!.snapshot!.enrichment =
+        generatedAt === null
+          ? null
+          : { ...ENVELOPE.unifiedFindings!.snapshot!.enrichment!, generatedAt };
+      const { result } = renderHook(() =>
+        useUnifiedFindings({
+          suiteRunId: "run_1",
+          envelope,
+          generation: generation({ pending }),
+        }),
+      );
+      expect(result.current.analysisFailure !== null).toBe(visible);
+      if (visible) {
+        expect(result.current.analyze.error).toBeNull();
+        expect(result.current.analysisFailure?.errorCode).toBe(
+          errorCode === "cancelled" ? undefined : errorCode,
+        );
+      }
+    },
+  );
+});

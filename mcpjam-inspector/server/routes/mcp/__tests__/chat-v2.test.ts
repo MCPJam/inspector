@@ -1206,6 +1206,55 @@ describe("POST /api/mcp/chat-v2", () => {
         ),
       ).toBe(false);
     });
+
+    it("turns an empty last step into an error instead of a blank finished reply", async () => {
+      // A BYOK model that hits its output-token limit mid tool call: the AI
+      // SDK finishes the turn normally, which used to render an empty bubble.
+      const { streamText } = await import("ai");
+      vi.mocked(streamText).mockImplementationOnce((() => ({
+        toUIMessageStream: vi.fn(() =>
+          createAsyncIterable([
+            { type: "start" },
+            { type: "start-step" },
+            {
+              type: "tool-input-start",
+              toolCallId: "call_1",
+              toolName: "create_view",
+            },
+            {
+              type: "tool-input-delta",
+              toolCallId: "call_1",
+              inputTextDelta: "{",
+            },
+            { type: "finish-step" },
+            {
+              type: "message-metadata",
+              messageMetadata: { outputTokens: 8192 },
+            },
+            { type: "finish", finishReason: "length" },
+          ]),
+        ),
+        toUIMessageStreamResponse: vi.fn(),
+      })) as any);
+
+      const res = await postJson(app, "/api/mcp/chat-v2", {
+        messages: [{ role: "user", content: "Draw a fruit bowl" }],
+        model: { id: "gpt-4", provider: "openai" },
+        apiKey: "test-key",
+      });
+
+      expect(res.status).toBe(200);
+      await lastStreamExecution;
+      const errors = capturedStreamEvents.filter(
+        (event) => event?.type === "error",
+      );
+      expect(errors).toHaveLength(1);
+      expect(errors[0].errorText).toContain("started a call to `create_view`");
+      expect(errors[0].errorText).toContain("8192 output tokens");
+      expect(
+        capturedStreamEvents.some((event) => event?.type === "finish"),
+      ).toBe(false);
+    });
   });
 
   describe("multi-turn conversations", () => {

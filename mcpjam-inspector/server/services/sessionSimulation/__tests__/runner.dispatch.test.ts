@@ -88,7 +88,10 @@ function buildHostedEngineStub(captureCalls: unknown[]) {
   return vi.fn(async (opts: any) => {
     captureCalls.push(opts);
     return {
-      messages: opts.messages,
+      messages: [
+        ...opts.messages,
+        { role: "assistant", content: "Hosted reply" },
+      ],
       assistantMessages: [],
       toolCalls: [],
       toolResults: [],
@@ -288,7 +291,7 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
     });
   });
 
-  it("tags the HOSTED engine turn with sourceType:\"swarm\" when the swarm surface drives the turn", async () => {
+  it('tags the HOSTED engine turn with sourceType:"swarm" when the swarm surface drives the turn', async () => {
     // CONTRACT (finding 3): the swarm runner passes `persist.sourceType` =
     // "swarm" into drainAssistantTurn. That must reach the hosted engine's
     // sourceType so hosted usage rows are attributed to the journey surface —
@@ -315,7 +318,7 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
     expect(opts.origin).toBe("scenario");
   });
 
-  it("posts the local-BYOK usage writeback with sourceType:\"swarm\" for the swarm surface", async () => {
+  it('posts the local-BYOK usage writeback with sourceType:"swarm" for the swarm surface', async () => {
     // CONTRACT (finding 3): the local-BYOK usage writeback row must also carry
     // "swarm" so per-journey local spend is attributed correctly.
     const calls: unknown[] = [];
@@ -479,7 +482,9 @@ describe("drainAssistantTurn — engine error surfacing", () => {
     });
 
     await expect(
-      drainAssistantTurn(baseArgs() as Parameters<typeof drainAssistantTurn>[0]),
+      drainAssistantTurn(
+        baseArgs() as Parameters<typeof drainAssistantTurn>[0],
+      ),
     ).rejects.toThrow(/spend cap.*spend_cap_exceeded.*HTTP 429/i);
   });
 
@@ -493,8 +498,10 @@ describe("drainAssistantTurn — engine error surfacing", () => {
     }));
 
     await expect(
-      drainAssistantTurn(baseArgs() as Parameters<typeof drainAssistantTurn>[0]),
-    ).rejects.toThrow(/engine returned no turn trace/i);
+      drainAssistantTurn(
+        baseArgs() as Parameters<typeof drainAssistantTurn>[0],
+      ),
+    ).rejects.toThrow(/engine caught an error mid-turn/i);
   });
 
   it("does not throw on a missing turnTrace when the abort signal fired (cancellation, not failure)", async () => {
@@ -518,7 +525,7 @@ describe("drainAssistantTurn — engine error surfacing", () => {
     expect(result.turnTrace).toBeUndefined();
   });
 
-  it("does not throw when a turnTrace was produced despite a recovered per-step engine error", async () => {
+  it("rejects a hosted error even when the engine returned a turn trace", async () => {
     resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
     runAssistantTurnMock.mockImplementation(async (opts: any) => {
       opts.onEngineError?.({
@@ -535,11 +542,60 @@ describe("drainAssistantTurn — engine error surfacing", () => {
       };
     });
 
-    const result = await drainAssistantTurn(
-      baseArgs() as Parameters<typeof drainAssistantTurn>[0],
-    );
-    expect(result.turnTrace).toEqual(TURN_TRACE);
+    await expect(
+      drainAssistantTurn(
+        baseArgs() as Parameters<typeof drainAssistantTurn>[0],
+      ),
+    ).rejects.toThrow("transient step error");
   });
+
+  it("rejects an empty hosted reply without an engine error callback", async () => {
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+    runAssistantTurnMock.mockImplementation(async (opts: any) => ({
+      messages: opts.messages,
+      turnTrace: TURN_TRACE,
+    }));
+    await expect(
+      drainAssistantTurn(
+        baseArgs() as Parameters<typeof drainAssistantTurn>[0],
+      ),
+    ).rejects.toThrow(/returned no content/);
+  });
+
+  it.each([
+    ["llm", undefined, true],
+    ["tool", "call-1", false],
+    ["step", "call-1", false],
+  ])(
+    "matches eval failure policy for %s error spans (tool=%s)",
+    async (category, toolCallId, fails) => {
+      resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+      runAssistantTurnMock.mockImplementation(async (opts: any) => ({
+        messages: [
+          ...opts.messages,
+          { role: "assistant", content: "Partial reply" },
+        ],
+        turnTrace: {
+          ...TURN_TRACE,
+          spans: [
+            {
+              id: "span",
+              name: "later step",
+              category,
+              status: "error",
+              toolCallId,
+            },
+          ],
+        },
+      }));
+      const reply = drainAssistantTurn(
+        baseArgs() as Parameters<typeof drainAssistantTurn>[0],
+      );
+      if (fails)
+        await expect(reply).rejects.toThrow("Backend step failed mid-turn");
+      else await expect(reply).resolves.toHaveProperty("turnTrace");
+    },
+  );
 
   it("bills the consumed usage on a fatal direct-engine error, THEN throws", async () => {
     const calls: unknown[] = [];
@@ -738,3 +794,16 @@ describe("drainAssistantTurn — engine error surfacing", () => {
     expect(opts.traceEvents?.onToolResultChunk).toBe(onToolResultChunk);
   });
 });
+
+it.each([6, undefined])(
+  "forwards an explicit hosted maxSteps=%s without changing the default",
+  async (maxSteps) => {
+    const calls: unknown[] = [];
+    runAssistantTurnMock.mockImplementation(buildHostedEngineStub(calls));
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+    await drainAssistantTurn(
+      baseArgs({ maxSteps }) as Parameters<typeof drainAssistantTurn>[0],
+    );
+    expect((calls[0] as { maxSteps?: number }).maxSteps).toBe(maxSteps);
+  },
+);

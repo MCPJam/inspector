@@ -39,6 +39,9 @@ import { ScorecardGroupSection } from "./scorecard-group";
 import { TrialChainPanel } from "../trial-chain-panel";
 import { judgeDecidedStage } from "../stage-trial-model";
 import { TrialScorecardRow } from "./trial-scorecard-row";
+import { reportAvailability } from "./report-availability";
+import { stageFloor, type StageFloorTrace } from "./stage-floor";
+import { FindingText } from "@/components/shared/actionable-insights/finding-text";
 
 // Explicit step/case assertions remain added checks, even when their kind is
 // also offered by default. Frozen predicates have no inherited/added origin;
@@ -93,6 +96,7 @@ export function TrialScorecard({
   chain,
   judgeCase,
   envelope,
+  trace,
   liveStepStatusById,
   judgeSlot,
   scoresSection,
@@ -110,6 +114,12 @@ export function TrialScorecard({
   chain?: EvalRunDecisionChain | null;
   judgeCase?: JudgeCase | null;
   envelope?: StepReplayEnvelope | null;
+  /**
+   * The downloaded trace, for the recorded stage floor. The same object
+   * `envelope` narrows; taken separately so the assembler's narrow view and
+   * this reader's stay independent.
+   */
+  trace?: StageFloorTrace | null;
   liveStepStatusById?: Map<string, EvalStepStatus>;
   judgeSlot?: ReactNode;
   scoresSection?: ReactNode | null;
@@ -328,12 +338,33 @@ export function TrialScorecard({
     );
   }
 
+  // Blind review withholds every narrative, so it must not advertise one
+  // either: a reviewer told "reading iterations 4 of 40" knows an explanation is
+  // coming for the row they are labelling.
+  const availability = judgeHidden
+    ? { kind: "ready" as const }
+    : reportAvailability(report, {
+        runSettled: iteration?.status === "completed",
+      });
+
   return (
     <div className="flex flex-col gap-4 p-4" data-testid="trial-scorecard">
       <section
         className="space-y-4"
         aria-label="User value chain — default assertions"
       >
+        {availability.kind !== "ready" && (
+          <p
+            className="text-xs text-muted-foreground"
+            data-testid="report-availability"
+            data-availability={availability.kind}
+            {...(availability.kind === "pending"
+              ? { role: "status", "aria-live": "polite" }
+              : {})}
+          >
+            {availability.line}
+          </p>
+        )}
         {/*
           The rail renders on every trial that has one, blind review included
           — the same component the run page draws, so the two surfaces cannot
@@ -355,18 +386,35 @@ export function TrialScorecard({
               !judgeHidden && report?.status === "ready"
                 ? report.stageNotes?.find((note) => note.stage === stage)
                 : undefined;
-            return selected || note ? (
+            // The recorded sentence only where no explanation exists: two
+            // accounts of one failure read as two failures.
+            const floor =
+              note || judgeHidden ? null : stageFloor(stage, chain, trace);
+            return selected || note || floor ? (
               <ul className="mt-4" aria-label="Recorded assertions">
                 {note && (
                   <li
                     className="border-b border-border/60 py-4 text-sm leading-relaxed"
                     data-narrative-source="ai"
                   >
-                    <p>{note.actual}</p>
+                    <p>
+                      <FindingText text={note.actual} />
+                    </p>
                     <details className="mt-2 text-xs text-muted-foreground">
                       <summary>AI explanation · cited trace evidence</summary>
                       <p>{note.citations.join(" · ")}</p>
                     </details>
+                  </li>
+                )}
+                {floor && (
+                  <li
+                    className="border-b border-border/60 py-4 text-sm leading-relaxed"
+                    data-narrative-source="recorded"
+                    data-testid="stage-floor"
+                  >
+                    <p>
+                      <FindingText text={floor.actual} />
+                    </p>
                   </li>
                 )}
                 {(selected?.rows ?? []).map((row) => (

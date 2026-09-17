@@ -72,6 +72,11 @@ import {
 } from "../../utils/org-model-stream-handler.js";
 import { createRequestStreamFailureReporter } from "../../utils/stream-failure-reporter.js";
 import {
+  createEmptyTurnWatcher,
+  hasSettledToolCallThisPrompt,
+} from "../../utils/empty-step-failure.js";
+import { emitError } from "../../utils/chat-stream-chunks.js";
+import {
   deriveOrgProviderKey,
   isLocalRuntimeEligible,
   resolveHostModelDefinition,
@@ -635,6 +640,14 @@ function streamDirectChatWithLiveTrace(options: {
         traceEvents: buildDirectChatTraceCallbacks(writer),
       });
 
+      // `streamText` finishes an empty last step as if it were a reply, which
+      // left a blank bubble and no record. Same verdict as the hosted engine.
+      const emptyTurn = createEmptyTurnWatcher({
+        settledToolBeforeStream: hasSettledToolCallThisPrompt(
+          turnOptions.messageHistory,
+          handle.traceTurn.promptMessageStartIndex,
+        ),
+      });
       try {
         for await (const chunk of handle.result.toUIMessageStream({
           messageMetadata: ({ part }) => {
@@ -663,6 +676,27 @@ function streamDirectChatWithLiveTrace(options: {
           if (
             isSuspendedScopeStepUpOutputChunk(chunk, suspendedToolCallId?.())
           ) {
+            continue;
+          }
+          emptyTurn.observe(chunk);
+          const emptyTurnMessage =
+            chunk.type === "finish" && !handle.isAborted()
+              ? emptyTurn.failureFor(chunk)
+              : undefined;
+          if (emptyTurnMessage) {
+            // The error REPLACES the finish chunk, as on the hosted engine,
+            // and is written before the report so a reporter throw cannot
+            // swallow it.
+            emitError(writer, emptyTurnMessage);
+            reportRouteFailure(
+              "[mcp/chat-v2] direct step returned no content",
+              new Error(emptyTurnMessage),
+              {
+                source: "mcp.chat-v2.direct-empty-step",
+                hop: "user_server_hop",
+                context: { provider, modelId: handle.modelId },
+              },
+            );
             continue;
           }
           writer.write(
@@ -859,6 +893,9 @@ chatV2.post("/", async (c) => {
           // where the client's `readRouteError` looks. Only the access
           // verdicts carry one; every other status keeps the pre-existing
           // shape.
+          if (runtime.code === "SCENARIO_SIGN_IN_REQUIRED") {
+            return c.json({ error: runtime.error, code: runtime.code }, 401);
+          }
           if (runtime.code === "SCENARIO_ACCESS_STALE") {
             return c.json(
               { error: failClosedMessage, code: "SCENARIO_ACCESS_STALE" },
@@ -927,17 +964,30 @@ chatV2.post("/", async (c) => {
     });
     let localBrowserSettingsUnavailable = false;
     if (!HOSTED_MODE && !isScenarioSession && body.browserEngine === "local") {
-      let enabled = typeof hostRuntimeConfig?.localBrowserEnabled === "boolean"
-        ? hostRuntimeConfig.localBrowserEnabled : undefined;
-      if (!hostRuntimeConfig && typeof body.projectId === "string" && body.projectId && c.req.header("authorization") && !isGuestChatRequest(c.req.header("authorization"))) {
+      let enabled =
+        typeof hostRuntimeConfig?.localBrowserEnabled === "boolean"
+          ? hostRuntimeConfig.localBrowserEnabled
+          : undefined;
+      if (
+        !hostRuntimeConfig &&
+        typeof body.projectId === "string" &&
+        body.projectId &&
+        c.req.header("authorization") &&
+        !isGuestChatRequest(c.req.header("authorization"))
+      ) {
         try {
-          enabled = await readLocalBrowserSetting(await getConvexBearerForRequest(c), body.projectId);
+          enabled = await readLocalBrowserSetting(
+            await getConvexBearerForRequest(c),
+            body.projectId,
+          );
         } catch {
           localBrowserSettingsUnavailable = true;
         }
       }
       resolvedExecution.builtInToolIds = resolveLocalBrowserTools(
-        resolvedExecution.builtInToolIds, enabled, true,
+        resolvedExecution.builtInToolIds,
+        enabled,
+        true,
       );
     }
     // Preserve the per-field warnings the inline code emitted — the
@@ -1368,11 +1418,11 @@ chatV2.post("/", async (c) => {
     });
 
     const localBrowserRequested = body.browserEngine === "local";
-    const browserRollout = !localBrowserSettingsUnavailable && resolvedExecution.builtInToolIds?.includes(
-      BROWSER_BUILT_IN_TOOL_ID,
-    )
-      ? await resolveBrowserRollout(c, localBrowserRequested)
-      : { enabled: false, actor: null };
+    const browserRollout =
+      !localBrowserSettingsUnavailable &&
+      resolvedExecution.builtInToolIds?.includes(BROWSER_BUILT_IN_TOOL_ID)
+        ? await resolveBrowserRollout(c, localBrowserRequested)
+        : { enabled: false, actor: null };
     const localBrowserGuestId =
       localBrowserRequested &&
       browserRollout.enabled &&

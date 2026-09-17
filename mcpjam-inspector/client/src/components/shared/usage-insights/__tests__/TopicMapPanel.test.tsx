@@ -469,8 +469,7 @@ describe("TopicMapPanel", () => {
   // There are two rebuild buttons and they need a test each: this one renders
   // with `snapshot: null`, and the map-header button lives inside a branch that
   // dereferences `snapshot.stats`, so it cannot appear here.
-  it("rebuilds from the empty state with no arguments", async () => {
-    const user = userEvent.setup();
+  it("rebuilds from the empty state with no arguments", () => {
     const onRebuild = vi.fn();
     mockUseScenarioTopicMap.mockReturnValue({
       ...createDefaultScenarioTopicMapHookValue(),
@@ -489,15 +488,15 @@ describe("TopicMapPanel", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: /Rebuild clusters/ }));
-    expect(onRebuild).toHaveBeenCalledTimes(1);
-    expect(onRebuild.mock.calls[0]).toEqual([]);
+    expect(
+      screen.queryByRole("button", { name: /Rebuild clusters/ }),
+    ).not.toBeInTheDocument();
+    expect(onRebuild).not.toHaveBeenCalled();
   });
 
   // The second call site: the rebuild control in the map header, which only
   // renders once a snapshot exists.
-  it("rebuilds from the map header with no arguments", async () => {
-    const user = userEvent.setup();
+  it("rebuilds from the map header with no arguments", () => {
     const onRebuild = vi.fn();
     mockUseScenarioTopicMap.mockReturnValue(
       createDefaultScenarioTopicMapHookValue(),
@@ -513,9 +512,10 @@ describe("TopicMapPanel", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: /Rebuild clusters/ }));
-    expect(onRebuild).toHaveBeenCalledTimes(1);
-    expect(onRebuild.mock.calls[0]).toEqual([]);
+    expect(
+      screen.queryByRole("button", { name: /Rebuild clusters/ }),
+    ).not.toBeInTheDocument();
+    expect(onRebuild).not.toHaveBeenCalled();
   });
 
   it("renders cluster list with summaries in the sidebar", () => {
@@ -539,7 +539,7 @@ describe("TopicMapPanel", () => {
     expect(screen.getByText("Invoice and refund help.")).toBeInTheDocument();
   });
 
-  it("renders Fit view and rebuild controls overlayed on the canvas", () => {
+  it("renders Fit view overlayed on the canvas without a rebuild control", () => {
     render(
       <TopicMapPanel
         scope={{ kind: "scenario", scenarioId: "scenario-1" }}
@@ -550,11 +550,10 @@ describe("TopicMapPanel", () => {
       />
     );
 
-    const fitView = screen.getByRole("button", { name: /fit view/i });
-    const rebuild = screen.getByRole("button", { name: /rebuild clusters/i });
-    expect(fitView.compareDocumentPosition(rebuild)).toBe(
-      Node.DOCUMENT_POSITION_FOLLOWING
-    );
+    expect(screen.getByRole("button", { name: /fit view/i })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /rebuild clusters/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("shows rebuild status in the header while a run is active", () => {

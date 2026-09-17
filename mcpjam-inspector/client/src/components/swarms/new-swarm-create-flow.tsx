@@ -208,7 +208,11 @@ export type CreateSwarmDraft = {
   name: string;
   description?: string;
   environmentIds?: string[];
-  config: { sessionsPerTarget: number; maxTurns: number };
+  config: {
+    sessionsPerTarget: number;
+    maxTurns: number;
+    setupWrites?: boolean;
+  };
   judgeConfig?: GoalJudgeConfig;
   rubric?: ReturnType<typeof serializeRubricForWire>;
   /** The launch wave this swarm names — see `swarmRunGroupId` on the runs. */
@@ -230,7 +234,11 @@ export type CreateJourneyDraft = {
   goal: string;
   hostIds: string[];
   environmentIds: string[];
-  config: { sessionsPerTarget: number; maxTurns: number };
+  config: {
+    sessionsPerTarget: number;
+    maxTurns: number;
+    setupWrites?: boolean;
+  };
   judgeConfig?: GoalJudgeConfig;
   rubric?: ReturnType<typeof serializeRubricForWire>;
   /** Authoring provenance — the swarm this journey is created in. */
@@ -1226,6 +1234,7 @@ export function NewSwarmCreateFlow({
               config: {
                 sessionsPerTarget: DEFAULT_SWARM_ITERATIONS,
                 maxTurns: preset.maxTurns,
+                setupWrites: true,
               },
               ...(payload.judgeConfig
                 ? { judgeConfig: payload.judgeConfig }
@@ -1308,9 +1317,9 @@ export function NewSwarmCreateFlow({
                   err,
                   "A reused goal could not be updated for this swarm.",
                 );
-                // Only grading can fail here now, and grading is advisory: the
-                // run is still the one the user asked for, so it goes ahead
-                // ungraded rather than being dropped. (The environment
+                // Only the grading update can fail here now. The run is still
+                // the one the user asked for, so it goes ahead with the goal's
+                // previous grading rather than being dropped. (The environment
                 // selection can no longer fail at this point — it is applied at
                 // launch, where a rejection fails that launch loudly.)
               }
@@ -1367,6 +1376,7 @@ export function NewSwarmCreateFlow({
                       iterationsByPersona[persona.key] ??
                       DEFAULT_SWARM_ITERATIONS,
                     maxTurns: preset.maxTurns,
+                    setupWrites: true,
                   },
                   ...(payload.judgeConfig
                     ? { judgeConfig: payload.judgeConfig }
@@ -1429,6 +1439,13 @@ export function NewSwarmCreateFlow({
                   envPayload.environmentIds,
                 )
                   ? { environmentIds: envPayload.environmentIds }
+                  : {}),
+                // Iterations chosen on Confirm for a REUSED persona, applied
+                // to this run only. Absent on just-created targets: they are
+                // born with the chosen count, so an override would restate
+                // their own config.
+                ...(target.sessionsPerTarget != null
+                  ? { sessionsPerTarget: target.sessionsPerTarget }
                   : {}),
               });
               if (result.status === "launched") {

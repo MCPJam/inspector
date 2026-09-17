@@ -1,3 +1,4 @@
+import { useFrontierSignInDialogStore } from "@/stores/frontier-sign-in-dialog-store";
 import { describeAsSlug, describeError } from "@mcpjam/sdk/browser";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 import type { MCPJamLimitSurface } from "@/stores/mcpjam-limit-dialog-store";
@@ -342,7 +343,35 @@ export function isMCPJamModelLimitError(args: MCPJamLimitErrorInput): boolean {
   return false;
 }
 
+const hasFrontierSignInCode = (
+  value: unknown,
+  seen = new WeakSet<object>(),
+): boolean => {
+  if (typeof value === "string") {
+    return collectJsonCandidates(value).some((parsed) =>
+      hasFrontierSignInCode(parsed, seen),
+    );
+  }
+  if (!value || typeof value !== "object" || seen.has(value)) return false;
+  seen.add(value);
+
+  if (getStringProperty(value, "code") === "guest_model_not_allowed") return true;
+  return Object.values(value).some((item) => hasFrontierSignInCode(item, seen));
+};
+
 export function notifyMCPJamLimitError(args: MCPJamLimitErrorInput): boolean {
+  // Authentication gating is not credit exhaustion: do not mark the wallet empty.
+  if (
+    hasFrontierSignInCode(args) ||
+    [args.message, ...collectStringValues(args.details)].some(
+      (value) =>
+        typeof value === "string" &&
+        /sign in to use frontier models/i.test(value),
+    )
+  ) {
+    useFrontierSignInDialogStore.getState().open();
+    return true;
+  }
   if (!isMCPJamModelLimitError(args)) return false;
   const period = findMCPJamLimitPeriod(args.message);
   useMCPJamLimitDialogStore.getState().notifyLimitHit({
@@ -380,6 +409,7 @@ export function describeMCPJamLimitMessage(
 
 export async function notifyMCPJamLimitErrorFromResponse(
   response: Response,
+  surface?: MCPJamLimitSurface,
 ): Promise<boolean> {
   let details: unknown;
   let message: string | null = null;
@@ -412,5 +442,6 @@ export async function notifyMCPJamLimitErrorFromResponse(
       limitKind === "total" || limitKind === "concurrency"
         ? limitKind
         : undefined,
+    ...(surface ? { surface } : {}),
   });
 }

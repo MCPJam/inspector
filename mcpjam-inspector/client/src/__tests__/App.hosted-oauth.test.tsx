@@ -368,6 +368,10 @@ vi.mock("../components/ChatTabV2", () => ({
 vi.mock("../components/EvalsTab", () => ({
   EvalsTab: () => <div data-testid="evals-tab">Evals Tab</div>,
 }));
+vi.mock("../components/EvaluateTab", () => ({
+  EvaluateTab: () => <div data-testid="evaluate-tab">Evaluate</div>,
+}));
+
 vi.mock("../components/CiEvalsTab", () => ({
   CiEvalsTab: () => <div data-testid="ci-evals-tab">CI Evals Tab</div>,
 }));
@@ -1949,7 +1953,7 @@ describe("App hosted OAuth callback handling", () => {
 
     await waitFor(() => {
       expect(`${window.location.pathname}${window.location.search}`).toBe(
-        `/p/${currentProjectId}/evals?view=runs`,
+        `/p/${currentProjectId}/evaluate?view=runs`,
       );
       expect(window.location.hash).toBe("#case-3");
     });
@@ -2410,6 +2414,33 @@ describe("App hosted OAuth callback handling", () => {
       ),
     ).toBe(true);
   });
+
+  it.each(["", "?surface=preview"])(
+    "waits for the account before restoring a scenario return: %s",
+    async (query) => {
+      clearHostedOAuthPendingState();
+      clearScenarioSession();
+      sessionStorage.clear();
+      const destination = `/user-testing/demo/token-123${query}`;
+      writeScenarioSignInReturnPath(destination);
+      window.history.replaceState({}, "", "/callback?code=oauth-code");
+      mockConvexAuthState.isAuthenticated = true;
+      mockConvexAuthState.isLoading = false;
+      mockWorkOsAuthState.user = null;
+      mockWorkOsAuthState.isLoading = true;
+      const replaceStateSpy = vi.spyOn(window.history, "replaceState");
+      const view = render(<App />);
+      expect(window.location.pathname).toBe("/callback");
+      expect(readScenarioSignInReturnPath()).toBe(destination);
+      mockWorkOsAuthState.user = { id: "workos-user-1" };
+      mockWorkOsAuthState.isLoading = false;
+      view.rerender(<App />);
+      await waitFor(() => {
+        expect(replaceStateSpy).toHaveBeenCalledWith({}, "", destination);
+      });
+      expect(readScenarioSignInReturnPath()).toBeNull();
+    },
+  );
 
   it("prefers scenario callback restoration over billing callback restoration", async () => {
     clearHostedOAuthPendingState();
@@ -3135,6 +3166,16 @@ describe("App hosted OAuth callback handling", () => {
   it("navigates back to the User Testing tab after callback completion", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
+    // This suite runs as a WorkOS guest by default, and since REEV-6 that
+    // means `/user-testing` renders the gated preview rather than the tab.
+    // The actor here is a project owner who has just authorized a server for
+    // their own scenario — a signed-in action by definition — so give the
+    // test the identity its scenario actually has. The subject under test is
+    // the return-path routing, not the gate.
+    mockUseAuth.mockReturnValue({
+      ...mockWorkOsAuthState,
+      user: { id: "user_owner" },
+    });
     writeHostedOAuthPendingMarker({
       surface: "scenario",
       projectId: "ws_1",
@@ -3599,13 +3640,13 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
-  it("renders Suites mode on /evals", async () => {
+  it("renders legacy Suites mode when enabled", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     window.history.replaceState({}, "", "/evals");
     mockHandleOAuthCallback.mockReset();
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "playground-enabled" || flag === "evaluate-ui",
+      (flag: string) => flag === "playground-enabled" || flag === "evaluate-enabled",
     );
 
     render(<App />);
@@ -3618,16 +3659,13 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("ci-evals-tab")).not.toBeInTheDocument();
   });
 
-  it("renders Runs mode on /evals/runs with no flag gate", async () => {
-    // Runs used to sit behind `evaluate-ci` at its own /ci-evals tab. It is a
-    // mode under Evaluate now and ships to everyone, so there is no flag read,
-    // no "Loading Runs..." spinner, and no redirect back to Suites.
+  it("renders legacy Runs mode when enabled", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     window.history.replaceState({}, "", "/evals/runs");
     mockHandleOAuthCallback.mockReset();
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "playground-enabled" || flag === "evaluate-ui",
+      (flag: string) => flag === "playground-enabled" || flag === "evaluate-enabled",
     );
 
     render(<App />);

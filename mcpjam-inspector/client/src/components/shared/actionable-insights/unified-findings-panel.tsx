@@ -2,6 +2,7 @@
 import { useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
+import { Skeleton } from "@mcpjam/design-system/skeleton";
 import {
   sortFindingsForDisplay,
   type ActionableFinding,
@@ -29,6 +30,7 @@ export type FindingsAnalysisAction = {
   onRun: () => void;
 };
 export type UnifiedFindingsPanelProps = {
+  runPending?: boolean;
   analysis?: UnifiedFindings["analysis"];
   snapshot: UnifiedFindings["snapshot"];
   findings: readonly ActionableFinding[];
@@ -37,6 +39,7 @@ export type UnifiedFindingsPanelProps = {
   observationCoverage: InsightsObservationCoverage | null;
   mode: UnifiedFindingsMode;
   analyze: FindingsAnalysisAction;
+  analysisFailure?: { errorCode?: string } | null;
   /**
    * The FREE deterministic build.
    *
@@ -78,8 +81,8 @@ function StateNote({
         tone === "destructive"
           ? "border-destructive"
           : tone === "warning"
-          ? "border-warning"
-          : "border-border"
+            ? "border-warning"
+            : "border-border"
       }`}
       role={tone === "destructive" ? "alert" : undefined}
       data-testid={testId}
@@ -104,7 +107,18 @@ function humanExclusion(reason: string): string {
   return EXCLUSION_WORDS[reason] ?? reason;
 }
 
+const ANALYSIS_FAILURE_DETAIL: Record<string, string> = {
+  evidence_changed: "The recorded evidence changed during analysis.",
+  superseded: "The analyzer was updated during analysis.",
+  iteration_limit: "This run exceeded the analysis size limit.",
+  no_verified_reports: "No trace reports could be verified.",
+  lease_expired: "The analysis worker stopped responding.",
+  spend_cap_exceeded: "The analysis spend limit was reached.",
+  spend_budget_reached: "The analysis spend limit was reached.",
+};
+
 export function UnifiedFindingsPanel({
+  runPending = false,
   analysis,
   snapshot,
   findings,
@@ -113,6 +127,7 @@ export function UnifiedFindingsPanel({
   observationCoverage,
   mode,
   analyze,
+  analysisFailure,
   build,
   backendUnavailableNote,
   scopeControl,
@@ -130,6 +145,18 @@ export function UnifiedFindingsPanel({
   const provenanceById = useMemo(
     () => new Map(provenance.map((p) => [p.candidateId, p])),
     [provenance],
+  );
+  // Every finding the envelope carries, so a consolidated finding can name
+  // the measured groups it came from even when this view shows only it.
+  const findingsById = useMemo(
+    () =>
+      new Map(
+        [...(snapshot?.deterministicFindings ?? []), ...findings].map((f) => [
+          f.id,
+          f,
+        ]),
+      ),
+    [snapshot?.deterministicFindings, findings],
   );
   const carousel = useFindingsCarousel();
   const current = sorted[carousel.selected] ?? sorted[0];
@@ -175,10 +202,10 @@ export function UnifiedFindingsPanel({
               {analysis?.phase === "reading"
                 ? `Reading iterations ${analysis.progress.done}/${analysis.progress.total}`
                 : analysis?.phase === "grouping"
-                ? "Grouping problems…"
-                : analysis?.phase === "checking"
-                ? "Checking evidence…"
-                : "Analyzing…"}
+                  ? "Grouping problems…"
+                  : analysis?.phase === "checking"
+                    ? "Checking evidence…"
+                    : "Analyzing…"}
             </span>
           ) : null}
           {current ? (
@@ -200,6 +227,20 @@ export function UnifiedFindingsPanel({
             : ""}
         </p>
       )}
+      {analysisFailure ? (
+        <p
+          className="mb-4 text-xs text-muted-foreground"
+          data-testid="unified-findings-analysis-failed"
+          title={analysisFailure.errorCode}
+        >
+          AI analysis did not complete.
+          {analysisFailure.errorCode &&
+          ANALYSIS_FAILURE_DETAIL[analysisFailure.errorCode]
+            ? ` ${ANALYSIS_FAILURE_DETAIL[analysisFailure.errorCode]}`
+            : null}
+        </p>
+      ) : null}
+
       {backendUnavailableNote || analyze.error ? (
         <div className="mb-5 space-y-3">
           {backendUnavailableNote ? (
@@ -221,22 +262,45 @@ export function UnifiedFindingsPanel({
       {enrichment?.status === "stale" ? (
         <div className="mb-5">
           <StateNote tone="warning" testId="unified-findings-stale-enrichment">
-            The evidence changed. Analyze again to update the suggested fixes.
+            The evidence changed after this analysis ran.
           </StateNote>
         </div>
       ) : null}
-      {!snapshot ? (
+      {!current &&
+      !backendUnavailableNote &&
+      !analyze.error &&
+      !build?.error &&
+      (runPending || analyze.pending || build?.pending) ? (
+        <div
+          className="grid divide-y divide-border/40 lg:grid-cols-2 lg:divide-x lg:divide-y-0"
+          role="status"
+          aria-label="Loading findings"
+          data-testid="unified-findings-loading"
+        >
+          {[0, 1].map((column) => (
+            <div
+              key={column}
+              className="min-w-0 space-y-4 py-4 lg:px-6 lg:first:pl-0 lg:last:pr-0"
+              aria-hidden="true"
+            >
+              <Skeleton className="h-3 w-24 rounded-lg" />
+              <Skeleton className="h-4 w-full rounded-lg" />
+              <Skeleton className="h-4 w-4/5 rounded-lg" />
+            </div>
+          ))}
+        </div>
+      ) : !snapshot ? (
         fallback !== undefined && !analyze.pending && !build?.pending ? (
           fallback
         ) : (
           <div className="space-y-2">
-            <StateNote testId="unified-findings-no-snapshot">
-              {analyze.pending || build?.pending
-                ? "Reading this run’s recorded evidence…"
-                : build?.available
-                ? "Findings have not been built for this run yet. Building reads the recorded evidence; it does not call a model."
-                : "Analyze this run to see what broke, suggested fixes, and supporting evidence."}
-            </StateNote>
+            {analyze.pending || build?.pending || build?.available ? (
+              <StateNote testId="unified-findings-no-snapshot">
+                {analyze.pending || build?.pending
+                  ? "Reading this run’s recorded evidence…"
+                  : "Findings have not been built for this run yet. Building reads the recorded evidence; it does not call a model."}
+              </StateNote>
+            ) : null}
             {build?.available && !build.pending && !analyze.pending ? (
               <Button
                 variant="outline"
@@ -267,6 +331,7 @@ export function UnifiedFindingsPanel({
             context={context}
             onOpenEvidence={onOpenEvidence}
             iterationRows={iterationRows}
+            findingsById={findingsById}
             setApi={carousel.setApi}
           />
         </div>
@@ -289,10 +354,10 @@ export function UnifiedFindingsPanel({
           {observationState === "unavailable" && !discovery
             ? "There isn’t enough recorded evidence to explain this run."
             : incomplete
-            ? "No supported finding yet. Evidence is incomplete; this does not mean the run passed."
-            : mode === "ai"
-            ? "Analysis found no supported issue to report. This does not change the run’s results."
-            : "No issue found in the recorded checks."}
+              ? "No supported finding yet. Evidence is incomplete; this does not mean the run passed."
+              : mode === "ai"
+                ? "Analysis found no supported issue to report. This does not change the run’s results."
+                : "No issue found in the recorded checks."}
         </StateNote>
       )}
       {observationCoverage &&
@@ -324,6 +389,7 @@ export function UnifiedFindingsPanel({
         view={mode}
         onOpenEvidence={onOpenEvidence}
         iterationRows={iterationRows}
+        findingsById={findingsById}
         trigger={seeAllTrigger}
       />
     </div>

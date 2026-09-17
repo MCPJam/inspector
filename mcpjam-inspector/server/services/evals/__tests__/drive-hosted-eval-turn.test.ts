@@ -339,3 +339,11 @@ describe("harness execution options reach the engine", () => {
     expect(options.extraHeaders).toBeUndefined();
   });
 });
+
+it("carries hosted request payloads into the authored eval turn", async () => {
+  const params = baseParams({ promptIndex: 3 });
+  const entry = { turnId: "engine-turn", promptIndex: 0, stepIndex: 0, payload: { system: "original", tools: {}, messages: [] } };
+  runAssistantTurnMock.mockImplementationOnce(async () => ({ messages: [], usage: {}, turnTrace: { spans: [], requestPayloads: [entry] } }) as never);
+  await driveHostedEvalTurn(params);
+  expect(params.acc.requestPayloads).toEqual([{ ...entry, promptIndex: 3 }]);
+});

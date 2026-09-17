@@ -30,7 +30,7 @@ import {
 } from "./xaa-connect-failure.js";
 
 /** Matches the `SwarmAgentError` message envelope the runner throws. */
-const AGENT_ERROR_ENVELOPE = /^swarm-agent\s+\S+\s+failed\s+\((\d{3})\):\s*/i;
+const AGENT_ERROR_ENVELOPE = /^(?:swarm-agent\s+\S+\s+failed\s+\((\d{3})\):|Backend stream error:\s*(\d{3}))\s*/i;
 
 /** Belt-and-braces: never let a URL reach a stored/rendered message. */
 const URL_PATTERN = /https?:\/\/\S+/g;
@@ -154,6 +154,13 @@ export function humanizeSwarmAttemptError(
   raw: string | undefined | null,
   errorCode?: string | null
 ): SwarmAttemptErrorInfo {
+  if (errorCode === "stale_runner") {
+    return {
+      code: errorCode,
+      message:
+        "The runner stopped reporting progress, so this run was marked interrupted. Sessions may have run before the interruption; inspect their saved traces. The reason contact was lost was not recorded.",
+    };
+  }
   const sandboxMessage = errorCode
     ? SANDBOX_ERROR_CODE_MESSAGES[errorCode]
     : undefined;
@@ -161,6 +168,19 @@ export function humanizeSwarmAttemptError(
     return { message: sandboxMessage, code: errorCode };
   }
   const input = (raw ?? "").trim();
+  // Older backend failures were truncated JSON envelopes. Recognize this
+  // specific reservation conflict even when the JSON can no longer be parsed.
+  if (
+    errorCode === "spending_reservation_busy" ||
+    (input.includes("streamSpendingReservations") &&
+      input.includes("changed while this mutation was being run"))
+  ) {
+    return {
+      code: "spending_reservation_busy",
+      message:
+        "MCPJam could not reserve spending capacity because concurrent requests kept changing it. This is an internal execution failure. Retry this attempt.",
+    };
+  }
   if (isXaaConnectFailureReason(errorCode)) {
     return {
       message: (scrub(input) || XAA_REASON_FALLBACK_MESSAGES[errorCode]).slice(
@@ -178,7 +198,7 @@ export function humanizeSwarmAttemptError(
 
   const envelope = AGENT_ERROR_ENVELOPE.exec(input);
   if (envelope) {
-    httpStatus = Number(envelope[1]);
+    httpStatus = Number(envelope[1] ?? envelope[2]);
     body = input.slice(envelope[0].length).trim();
   }
 
@@ -248,6 +268,36 @@ export function isAccountLimit(
   message?: string | null,
   code?: string | null,
 ): boolean {
-  if (code && ACCOUNT_LIMIT_CODE.test(code)) return true;
-  return !!message && ACCOUNT_LIMIT_CODE.test(message);
+  if (accountLimitCode(message, code)) return true;
+  return !!message && MCPJAM_MODEL_LIMIT_SENTENCE.test(message);
+}
+
+/**
+ * The backend's own sentence for the free/credit model allowance
+ * (`user_rate_limit` in `convex/stream/routes.ts` and `lib/llmCallShell.ts`).
+ *
+ * Only for rows written before the runner kept the denial code: those stored
+ * this humanized sentence under the generic `rate_limited` code, so the
+ * sentence is the one signal left that MCPJam — not the user's provider —
+ * stopped the session.
+ */
+const MCPJAM_MODEL_LIMIT_SENTENCE =
+  /\b(?:Daily|Monthly) MCPJam model limit reached\b/i;
+
+/**
+ * The account-limit denial code carried by a code or a raw failure message, in
+ * its canonical lowercase spelling — or `undefined` when neither names one.
+ *
+ * The runner stores this as the attempt's `errorCode`. It has to be read off
+ * the RAW message: the humanized sentence it stores beside it has already lost
+ * the code.
+ */
+export function accountLimitCode(
+  message?: string | null,
+  code?: string | null,
+): string | undefined {
+  const match =
+    (code ? ACCOUNT_LIMIT_CODE.exec(code) : null) ??
+    (message ? ACCOUNT_LIMIT_CODE.exec(message) : null);
+  return match?.[0].toLowerCase();
 }

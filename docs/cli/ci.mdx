@@ -367,9 +367,10 @@ uploads reports to GitHub. It sets up Node automatically. It tests the suite's
 saved server; it does not build or deploy your PR's source code.
 
 <Note>
-The action's `evals-v1` tag must be published after its live smoke test passes
-before the example below can be used. The direct CLI integration in the next
-section remains available independently.
+`evals-v1` is published by MCPJam's release workflow, which smoke-tests the
+action live and then moves the tag. Until the first release moves it, pin a full
+commit SHA instead — `uses: MCPJam/inspector/actions/evals@<40-character sha>` —
+or use the direct CLI integration below, which does not depend on the tag.
 </Note>
 
 Save this as `.github/workflows/mcpjam.yml`, then replace the project and suite:
@@ -671,3 +672,32 @@ See [LLM Providers](/sdk/reference/llm-providers) for which models are hosted an
 The SDK automatically attaches available CI metadata on GitHub Actions, GitLab CI, CircleCI, Buildkite, Jenkins, Vercel, and Netlify. You do not need to pass `mcpjam.ci`; an explicit object still replaces detection, and `mcpjam: { ci: {} }` disables it. This SDK behavior is separate from the hosted CLI launch detector, which supports GitHub Actions only.
 
 See [Save Results to MCPJam](/sdk/concepts/saving-results) for auto-save, the manual reporting APIs, CI metadata (branch, commit SHA, run URL), and artifact upload (JUnit XML, Jest/Vitest JSON).
+
+#### Report them on the pull request
+
+Uploading puts the results in the dashboard; it does not put them in front of a reviewer. Hand the same command to the evals action instead of running it yourself, and each pull request gets one comment that is updated in place on every push, plus a checks summary and the reports as artifacts:
+
+```yaml
+permissions:
+  contents: read
+  pull-requests: write
+
+steps:
+  - uses: actions/checkout@v4
+  - run: npm ci
+  - name: Start the MCP server
+    run: |
+      npm run serve &
+      npx wait-on http://localhost:3000
+  - uses: MCPJam/inspector/actions/evals@evals-v1
+    with:
+      api-key: ${{ secrets.MCPJAM_API_KEY }}
+      command: npm run eval
+      comment: true
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+```
+
+`command` replaces `project` and `suite`: the action runs your tests, then reports the runs they uploaded. It finds each run through a receipt the SDK writes, so `@mcpjam/sdk` must be **8.8.0 or newer** — an older SDK uploads normally but writes no receipt, and the step reports that it found no run.
+
+The comment carries the client/model table, the failed cases, and links into MCPJam. The checks summary carries the full report. Without `pull-requests: write` the action warns and leaves the eval verdict alone.

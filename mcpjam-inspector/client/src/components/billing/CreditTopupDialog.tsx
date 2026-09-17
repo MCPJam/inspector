@@ -1,3 +1,4 @@
+import { JamIllustration } from "./JamIllustration";
 import { useCreditTopupPricing } from "@/hooks/useCreditTopupPricing";
 import { useEffect, useRef, useState } from "react";
 import { CreditAmountOption } from "./CreditAmountOption";
@@ -145,6 +146,7 @@ export function CreditTopupDialog({
       }}
     >
       <DialogContent className="sm:max-w-md">
+        {quotePreset.requiresUpgrade && <JamIllustration />}
         <DialogHeader>
           <DialogTitle>Buy credits to keep testing</DialogTitle>
           <DialogDescription>

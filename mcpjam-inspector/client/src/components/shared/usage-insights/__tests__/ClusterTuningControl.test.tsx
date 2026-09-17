@@ -19,6 +19,21 @@ async function open(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("ClusterTuningControl", () => {
+  it("explains swarm goal grouping and exposes the automatic minimum", async () => {
+    const user = userEvent.setup();
+    render(
+      <ClusterTuningControl
+        value={undefined}
+        onApply={vi.fn()}
+        goalGroupsByJourney
+      />,
+    );
+    await open(user);
+    expect(screen.getByText(/Goals group by journey/)).toBeVisible();
+    await user.click(screen.getByText("Advanced"));
+    expect(screen.getByText("Minimum theme size")).toBeVisible();
+    expect(screen.getByText("Auto")).toBeVisible();
+  });
   it("labels the trigger with the preset the last run matches", () => {
     const { rerender } = render(
       <ClusterTuningControl value={undefined} onApply={vi.fn()} />,
@@ -59,7 +74,10 @@ describe("ClusterTuningControl", () => {
     await user.click(screen.getByTestId("cluster-tuning-preset-broad"));
     await user.click(screen.getByTestId("cluster-tuning-apply"));
 
-    expect(onApply).toHaveBeenCalledWith(CLUSTER_TUNING_PRESETS.broad, undefined);
+    expect(onApply).toHaveBeenCalledWith(
+      CLUSTER_TUNING_PRESETS.broad,
+      undefined,
+    );
   });
 
   it("omits linkThreshold for a scope with no topic map", async () => {
@@ -80,6 +98,7 @@ describe("ClusterTuningControl", () => {
     expect(onApply).toHaveBeenCalledWith(
       {
         maxClusters: CLUSTER_TUNING_PRESETS.detailed.maxClusters,
+        minClusterSize: 0,
         minSeparation: CLUSTER_TUNING_PRESETS.detailed.minSeparation,
       },
       undefined,
@@ -165,7 +184,9 @@ describe("ClusterTuningControl", () => {
 
     await open(user);
     await user.click(screen.getByTestId("cluster-tuning-force"));
-    expect(screen.getByText(/4,300 sessions will be re-analyzed/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/4,300 sessions will be re-analyzed/),
+    ).toBeInTheDocument();
     expect(onApply).not.toHaveBeenCalled();
 
     await user.click(screen.getByTestId("cluster-tuning-force-confirm"));
@@ -176,9 +197,7 @@ describe("ClusterTuningControl", () => {
 
   it("disables applying while a rebuild is in flight", async () => {
     const user = userEvent.setup();
-    render(
-      <ClusterTuningControl value={undefined} onApply={vi.fn()} busy />,
-    );
+    render(<ClusterTuningControl value={undefined} onApply={vi.fn()} busy />);
     await open(user);
     expect(screen.getByTestId("cluster-tuning-apply")).toBeDisabled();
   });
@@ -211,6 +230,8 @@ describe("ClusterTuningControl", () => {
     );
     await open(user);
     expect(screen.getByTestId("cluster-tuning-apply")).toBeInTheDocument();
-    expect(screen.queryByTestId("cluster-tuning-force")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("cluster-tuning-force"),
+    ).not.toBeInTheDocument();
   });
 });

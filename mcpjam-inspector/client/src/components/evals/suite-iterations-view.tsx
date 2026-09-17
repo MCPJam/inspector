@@ -384,7 +384,11 @@ export function SuiteIterationsView({
     },
   ) => void | Promise<unknown>;
   onReplayRun?: (suite: EvalSuite, run: EvalSuiteRun) => void;
-  onCancelRun: (runId: string) => void;
+  /**
+   * One id, or every in-progress id of a launch — the run page and the suite
+   * page cancel a whole client-model fan-out in one click.
+   */
+  onCancelRun: (runId: string | readonly string[]) => void;
   onDelete: (suite: EvalSuite) => void;
   onDeleteRun: (runId: string) => void;
   onDirectDeleteRun: (runId: string) => Promise<void>;
@@ -501,7 +505,9 @@ export function SuiteIterationsView({
   /** Observe-first authoring: the spine, Run test, and run-derived checks. */
   evaluateObserveFirst?: boolean;
   /** Passed through to {@link SuiteDetailOverview}; see its prop doc. */
-  onGeneratingChange?: (state: { exit: () => void } | null) => void;
+  onGeneratingChange?: (
+    state: { exit: () => void; label?: string } | null,
+  ) => void;
   /** Playground run detail: show edit affordance on every row that has a test case id. */
   alwaysShowEditIterationRows?: boolean;
   /** Override default test edit navigation (e.g. playground hash navigation). */
@@ -664,7 +670,9 @@ export function SuiteIterationsView({
     route.type === "run-detail"
       ? "run-detail"
       : route.type === "test-detail"
-        ? evaluateCaseEditor ? "test-edit" : "test-detail"
+        ? evaluateCaseEditor
+          ? "test-edit"
+          : "test-detail"
         : route.type === "test-edit" && (!editingDisabled || evaluateCaseEditor)
           ? "test-edit"
           : route.type === "test-edit"
@@ -1883,7 +1891,8 @@ export function SuiteIterationsView({
                   projectServers={projectServers}
                   onExportDraft={handleOpenDraftExport}
                   openCompareFromRoute={
-                    (route.type === "test-edit" && Boolean(route.openCompare)) ||
+                    (route.type === "test-edit" &&
+                      Boolean(route.openCompare)) ||
                     (route.type === "test-detail" && Boolean(route.iteration))
                   }
                   openCompareIterationId={
@@ -1904,7 +1913,9 @@ export function SuiteIterationsView({
                     })
                   }
                   checksPage={
-                    !editingDisabled && route.type === "test-edit" && Boolean(route.checks)
+                    !editingDisabled &&
+                    route.type === "test-edit" &&
+                    Boolean(route.checks)
                   }
                   onOpenCaseChecks={() =>
                     navigation.toTestEdit(suite._id, selectedTestId, {
@@ -2024,6 +2035,8 @@ export function SuiteIterationsView({
                       (rerunningSuiteId ? "A run is already starting." : null),
                   }}
                   run={selectedRunDetails}
+                  onCancelRun={onCancelRun}
+                  cancellingRunId={cancellingRunId}
                   hostNamesById={hostNamesById}
                   iterations={allIterations}
                   otherRuns={runs.filter(
@@ -2130,6 +2143,8 @@ export function SuiteIterationsView({
                   onTestCaseClick={(testCaseId) =>
                     navigation.toTestEdit(suite._id, testCaseId)
                   }
+                  onCancelRun={onCancelRun}
+                  cancellingRunId={cancellingRunId}
                   rerunningSuiteId={rerunningSuiteId}
                   replayingRunId={replayingRunId}
                   runningTestCaseId={runningTestCaseId}

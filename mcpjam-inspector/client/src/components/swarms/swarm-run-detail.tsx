@@ -8,14 +8,9 @@
  * (progress + Stop).
  */
 import { useCallback, useMemo, useState } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useQuery } from "convex/react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@mcpjam/design-system/popover";
 import { DetailPageHeader } from "@/components/shared/detail-page-header";
 import { toast } from "@/lib/toast";
 import {
@@ -32,36 +27,18 @@ import {
   type ThemeRef,
 } from "@/hooks/scenario-usage-filters";
 import { getShareableAppOrigin } from "@/lib/scenario-session";
-import { convexErrMessage } from "@/lib/convex-error";
-
-/**
- * Did `cancelJourneyRun` refuse because the run had already settled?
- *
- * The backend answers `ConvexError({ code: 'CONFLICT' })` for any run whose
- * status is no longer `running`. Matched on the structured `code` rather than
- * on the text: Convex redacts `err.message` for an application error to a
- * Request-ID string, so a message regex would silently never match in prod —
- * the payload on `err.data` is the only reliable carrier.
- */
-export function isRunAlreadySettled(reason: unknown): boolean {
-  if (!reason || typeof reason !== "object" || !("data" in reason)) {
-    return false;
-  }
-  const data = (reason as { data: unknown }).data;
-  return (
-    !!data &&
-    typeof data === "object" &&
-    (data as { code?: unknown }).code === "CONFLICT"
-  );
-}
 import {
-  SWARM_MUTATIONS,
+  StopSwarmRunButton,
+  useStopSwarmRun,
+} from "@/components/swarms/swarm-stop-run";
+import {
   SWARM_QUERIES,
   type SwarmOverview,
   type SwarmOverviewFinding,
   type SwarmWaveSignals,
 } from "@/lib/swarm-api";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
+import { useRunInsights } from "@/hooks/use-run-insights";
 import { SwarmsSessionsPanel } from "@/components/swarms/SwarmsSessionsPanel";
 import { InsightsWorkbench } from "@/components/shared/usage-insights/InsightsWorkbench";
 import {
@@ -76,18 +53,13 @@ import {
   waveSessionTotals,
 } from "@/components/swarms/swarm-overview-panel";
 import { SwarmFindingsTab } from "@/components/swarms/findings/swarm-findings-tab";
+import { narratedWaveSummary } from "@/components/swarms/findings/findings-headline";
 import { NewSwarmRunningStep } from "@/components/swarms/new-swarm-running-step";
 import {
+  DETAIL_TAB_OPTIONS,
   launchedRunsFromWave,
   resolveSwarmRunDetailTab,
 } from "@/components/swarms/swarm-run-detail-model";
-
-const DETAIL_TAB_OPTIONS = [
-  { value: "run" as const, label: "Run" },
-  { value: "findings" as const, label: "Findings" },
-  { value: "insights" as const, label: "Insights" },
-  { value: "sessions" as const, label: "Sessions" },
-] as const;
 
 export interface SwarmRunDetailProps {
   swarmId: string;
@@ -112,7 +84,7 @@ export interface SwarmRunDetailProps {
    * confirmation with no link, never a dead one.
    */
   onRunAgain: (
-    journeyRefIds: string[]
+    journeyRefIds: string[],
   ) => Promise<{ swarmRunGroupId?: string } | void>;
 }
 
@@ -137,41 +109,27 @@ export function SwarmRunDetail({
       if (sessionParam) search.set("session", sessionParam);
       const query = search.toString();
       return query ? `?${query}` : "";
-    })()
+    })(),
   );
   const urlSelection = useMemo(() => parseSelectionParam(selParam), [selParam]);
   const [sessionsPersonaFilter, setSessionsPersonaFilter] = useState<
     string | null
   >(null);
   const [runAgainBusy, setRunAgainBusy] = useState(false);
-  const [stopBusy, setStopBusy] = useState(false);
-  const [stopConfirmOpen, setStopConfirmOpen] = useState(false);
-  /**
-   * This viewer stopped the run, in this visit.
-   *
-   * `getSwarmOverview` projects `status` but not the `error` marker that
-   * separates a deliberate stop from a failure, so the wave read cannot tell
-   * them apart — it will settle on `issues`. Telling the person who just
-   * pressed Stop that their run "Completed with issues" says their action broke
-   * something. This is the one piece of positive evidence available, so it is
-   * used, and only for as long as it is trustworthy: a reload has no memory of
-   * the click and honestly falls back to what the data supports.
-   */
-  const [stoppedHere, setStoppedHere] = useState(false);
 
   const queryable = shouldQueryProjectId(projectId);
   const overview = useQuery(
     SWARM_QUERIES.getSwarmOverview as any,
-    (queryable ? { projectId } : "skip") as any
+    (queryable ? { projectId } : "skip") as any,
   ) as SwarmOverview | undefined;
 
   const waves = useMemo(
     () => groupRunsIntoSwarmWaves(overview?.runs ?? []),
-    [overview]
+    [overview],
   );
   const wave = useMemo(
     () => (overview === undefined ? null : resolveSwarmWave(waves, swarmId)),
-    [overview, waves, swarmId]
+    [overview, waves, swarmId],
   );
   const launchedRuns = useMemo(
     () => (wave ? launchedRunsFromWave(wave.runs, personas) : []),
@@ -196,8 +154,28 @@ export function SwarmRunDetail({
     SWARM_QUERIES.getWaveSignals as any,
     (queryable && waveGroupId
       ? { projectId, swarmRunGroupId: waveGroupId }
-      : "skip") as any
+      : "skip") as any,
   ) as SwarmWaveSignals | null | undefined;
+
+  // Lane A's wave narration, READ-ONLY (`autoRequest: false`). Findings is the
+  // default landing tab, so an auto-request here would bill a generation for
+  // merely opening a swarm. Generation stays where a person asks for it (the
+  // Insights tab) or where the backend schedules it on wave settle
+  // (`insightAutoTrigger.checkWaveTerminalAndRequestInsights`).
+  const waveInsights = useRunInsights(
+    queryable && waveGroupId
+      ? {
+          kind: "swarm",
+          projectId: projectId as string,
+          swarmRunGroupId: waveGroupId,
+        }
+      : null,
+    { autoRequest: false },
+  );
+  const generatedWaveSummary = narratedWaveSummary(
+    waveInsights.status,
+    waveInsights.insights,
+  );
 
   const handleTabChange = useCallback(
     (next: SwarmDetailTab) => {
@@ -206,10 +184,10 @@ export function SwarmRunDetail({
           tab: next,
           sel: selParam ?? undefined,
         }),
-        { replace: true }
+        { replace: true },
       );
     },
-    [navigate, selParam, swarmId]
+    [navigate, selParam, swarmId],
   );
 
   const handleShare = useCallback(async () => {
@@ -234,10 +212,10 @@ export function SwarmRunDetail({
           session: sessionId,
           sel: selParam ?? undefined,
           finding: criterionId,
-        })
+        }),
       );
     },
-    [navigate, selParam, swarmId]
+    [navigate, selParam, swarmId],
   );
 
   const handleOpenFindings = useCallback(() => {
@@ -260,15 +238,19 @@ export function SwarmRunDetail({
   const handleBackToRun = useCallback(() => {
     navigate(
       buildSwarmPath(swarmId, {
-        tab: liveProgress ? "run" : parsedTab === "run" ? "findings" : parsedTab,
+        tab: liveProgress
+          ? "run"
+          : parsedTab === "run"
+            ? "findings"
+            : parsedTab,
         sel: selParam ?? undefined,
-      })
+      }),
     );
   }, [liveProgress, navigate, parsedTab, selParam, swarmId]);
 
   const handleSelectionChange = useCallback(
     (
-      themes: ReadonlyArray<Pick<ThemeRef, "dimension" | "clusterId">> | null
+      themes: ReadonlyArray<Pick<ThemeRef, "dimension" | "clusterId">> | null,
     ) => {
       navigate(
         buildSwarmPath(swarmId, {
@@ -276,17 +258,17 @@ export function SwarmRunDetail({
           session: sessionParam ?? undefined,
           sel: themes ? serializeSelectionParam(themes) : undefined,
         }),
-        { replace: true }
+        { replace: true },
       );
     },
-    [navigate, sessionParam, swarmId, tab]
+    [navigate, sessionParam, swarmId, tab],
   );
 
   const launchableJourneyIds = useMemo(() => {
     if (!wave) return [];
     return [
       ...new Set(
-        wave.runs.filter((r) => !r.journeyArchived).map((r) => r.journeyRefId)
+        wave.runs.filter((r) => !r.journeyArchived).map((r) => r.journeyRefId),
       ),
     ];
   }, [wave]);
@@ -316,16 +298,12 @@ export function SwarmRunDetail({
       );
     } catch (err) {
       toast.error(
-        err instanceof Error ? err.message : "Could not start swarm run"
+        err instanceof Error ? err.message : "Could not start swarm run",
       );
     } finally {
       setRunAgainBusy(false);
     }
   }, [launchableJourneyIds, navigate, onRunAgain]);
-
-  const cancelJourneyRun = useMutation(
-    SWARM_MUTATIONS.cancelJourneyRun as any,
-  );
 
   const runningRunIds = useMemo(() => {
     if (!wave) return [];
@@ -333,74 +311,11 @@ export function SwarmRunDetail({
       .filter((run) => run.status === "running" || run.status === "pending")
       .map((run) => run.runId);
   }, [wave]);
-
-  /**
-   * Stop every still-running goal in this wave.
-   *
-   * A wave is N journey-runs, and the backend cancels ONE run per call, so a
-   * partial outcome is possible: `allSettled` rather than `all`, and the report
-   * names how many actually stopped instead of claiming the whole wave on the
-   * strength of the first success.
-   *
-   * Three outcomes per goal, not two. `cancelJourneyRun` throws `CONFLICT` for
-   * a goal that settled between the click and the call, and that is neither a
-   * success nor a refusal: nothing is running, so it is not a goal that "could
-   * not be stopped", but this viewer did not stop it either. Counting it as a
-   * failure produced an error toast for a run that had, in the viewer's terms,
-   * already done what they asked; counting it as a success would put "Stopped"
-   * over a goal that COMPLETED, which the backend calls materially wrong.
-   */
-  const handleStopRun = useCallback(async () => {
-    if (runningRunIds.length === 0) return;
-    setStopConfirmOpen(false);
-    setStopBusy(true);
-    try {
-      const results = await Promise.allSettled(
-        runningRunIds.map((runId) =>
-          cancelJourneyRun({ journeyRunId: runId } as any),
-        ),
-      );
-      const rejections = results.flatMap((r) =>
-        r.status === "rejected" ? [r.reason] : [],
-      );
-      // A goal that settled between the click and the call answers `CONFLICT`.
-      // That is not a refusal — nothing is running any more, which is what the
-      // viewer asked for — so it must not be counted as a goal that "could not
-      // be stopped". Read off the structured `code`, not the message: for an
-      // application error Convex redacts `err.message` to a Request-ID string,
-      // which is also why the toast below goes through `convexErrMessage`.
-      const refused = rejections.filter(
-        (reason) => !isRunAlreadySettled(reason),
-      );
-      const canceled = results.length - rejections.length;
-
-      // A real refusal outranks the already-settled case. With nothing stopped
-      // and one goal genuinely refused, ordering these the other way reported
-      // "already finished" and buried the failure the viewer has to act on.
-      if (canceled === 0 && refused.length > 0) {
-        toast.error(convexErrMessage(refused[0], "Could not stop the run"));
-        return;
-      }
-      if (canceled === 0) {
-        // Every goal had already finished on its own. Nothing is running, but
-        // this viewer did not stop it — claiming otherwise would be wrong for a
-        // goal that COMPLETED, and would leave the strip reading "Stopped" over
-        // a run that succeeded. So: no `stoppedHere`, and not an error either.
-        toast.info("Run had already finished");
-        return;
-      }
-      setStoppedHere(true);
-      toast.success(
-        refused.length === 0
-          ? "Run stopped"
-          : `Run stopped — ${refused.length} ${
-              refused.length === 1 ? "goal" : "goals"
-            } could not be stopped`,
-      );
-    } finally {
-      setStopBusy(false);
-    }
-  }, [cancelJourneyRun, runningRunIds]);
+  const {
+    stop: handleStopRun,
+    busy: stopBusy,
+    stoppedHere,
+  } = useStopSwarmRun(runningRunIds);
 
   if (overview === undefined) {
     return (
@@ -465,7 +380,7 @@ export function SwarmRunDetail({
   const runIds = wave.runs.map((r) => r.runId);
   const runLabels = new Map(wave.runs.map((r) => [r.runId, r.journeyName]));
   const goalLabels = new Map(
-    wave.runs.map((r) => [r.journeyRefId, r.journeyName])
+    wave.runs.map((r) => [r.journeyRefId, r.journeyName]),
   );
 
   return (
@@ -595,50 +510,13 @@ export function SwarmRunDetail({
             />
           </div>
           {/* Confirmed, because a stop cannot be undone: the sessions still
-              queued never run, so their results never exist. A Popover rather
-              than a modal, so the run stays visible behind the decision. */}
-          <Popover open={stopConfirmOpen} onOpenChange={setStopConfirmOpen}>
-            <PopoverTrigger asChild>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="shrink-0 rounded-lg"
-                disabled={stopBusy || runningRunIds.length === 0}
-                data-testid="swarm-run-detail-stop"
-              >
-                {stopBusy ? (
-                  <Loader2 className="mr-1.5 size-3.5 animate-spin" />
-                ) : null}
-                Stop run
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent align="end" className="w-72 max-w-[90vw] p-3">
-              <p className="text-sm text-foreground">
-                Stop this run? Sessions that have not started yet will not run.
-                Results already collected are kept.
-              </p>
-              <div className="mt-3 flex justify-end gap-2">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => setStopConfirmOpen(false)}
-                >
-                  Keep running
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="destructive"
-                  onClick={() => void handleStopRun()}
-                  data-testid="swarm-run-detail-stop-confirm"
-                >
-                  Stop run
-                </Button>
-              </div>
-            </PopoverContent>
-          </Popover>
+              queued never run, so their results never exist. */}
+          <StopSwarmRunButton
+            runningCount={runningRunIds.length}
+            busy={stopBusy}
+            onConfirm={() => void handleStopRun()}
+            testIdPrefix="swarm-run-detail"
+          />
           {sessionParam ? (
             <Button
               type="button"
@@ -702,6 +580,7 @@ export function SwarmRunDetail({
               personas={personas}
               onOpenSession={handleOpenSession}
               projectId={projectId ?? undefined}
+              generatedSummary={generatedWaveSummary}
             />
           </div>
         ) : null}

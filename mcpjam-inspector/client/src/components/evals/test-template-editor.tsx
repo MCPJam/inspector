@@ -297,6 +297,7 @@ import { parseStepStatusById } from "@/shared/eval-step-replay";
 import { chainForQuickRunIteration } from "../evaluate/simple-case/quick-run-chain";
 import { TrialJudgeReviewPanel } from "./trial-judge-review";
 import { TrialScorecard } from "../evaluate/case-scorecard/trial-scorecard";
+import { IterationReportScorecard } from "../evaluate/case-scorecard/iteration-report-subscriber";
 import { authoredForTrial } from "../evaluate/case-scorecard/trial-authored";
 
 interface TestTemplate {
@@ -4406,21 +4407,32 @@ export function TestTemplateEditor({
                       <span className="inline-flex items-center gap-2">
                         <Button
                           type="button"
+                          variant={isRunningCompare ? "secondary" : "default"}
                           size="sm"
                           className="h-8"
+                          // While the run is going this IS the stop: a disabled
+                          // "Running…" pill spent the one button the eye lands on
+                          // saying what the spinner already said, and pushed the
+                          // only useful action into a second, quieter one.
                           onClick={() =>
-                            useWorkspace
-                              ? setRunSetupOpen(true)
-                              : handlePrimaryRun()
+                            isRunningCompare
+                              ? handleStopCompare()
+                              : useWorkspace
+                                ? setRunSetupOpen(true)
+                                : handlePrimaryRun()
                           }
                           disabled={
-                            useWorkspace ? isRunningCompare : runPrimaryDisabled
+                            isRunningCompare
+                              ? false
+                              : useWorkspace
+                                ? false
+                                : runPrimaryDisabled
                           }
                         >
                           {isRunningCompare ? (
                             <>
-                              <Loader2 className="size-3.5 animate-spin" />
-                              Running…
+                              <Square className="size-3.5" />
+                              Cancel
                             </>
                           ) : (
                             <>
@@ -4433,18 +4445,6 @@ export function TestTemplateEditor({
                             </>
                           )}
                         </Button>
-                        {isRunningCompare ? (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="h-8 px-2.5 text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-                            onClick={handleStopCompare}
-                          >
-                            <Square className="size-3.5 opacity-90" />
-                            Stop
-                          </Button>
-                        ) : null}
                       </span>
                     </TooltipTrigger>
                     <TooltipContent variant="muted" side="top" sideOffset={6}>
@@ -4455,21 +4455,32 @@ export function TestTemplateEditor({
                   <span className="inline-flex items-center gap-2">
                     <Button
                       type="button"
+                      variant={isRunningCompare ? "secondary" : "default"}
                       size="sm"
                       className="h-8"
+                      // While the run is going this IS the stop: a disabled
+                      // "Running…" pill spent the one button the eye lands on
+                      // saying what the spinner already said, and pushed the
+                      // only useful action into a second, quieter one.
                       onClick={() =>
-                        useWorkspace
-                          ? setRunSetupOpen(true)
-                          : handlePrimaryRun()
+                        isRunningCompare
+                          ? handleStopCompare()
+                          : useWorkspace
+                            ? setRunSetupOpen(true)
+                            : handlePrimaryRun()
                       }
                       disabled={
-                        useWorkspace ? isRunningCompare : runPrimaryDisabled
+                        isRunningCompare
+                          ? false
+                          : useWorkspace
+                            ? false
+                            : runPrimaryDisabled
                       }
                     >
                       {isRunningCompare ? (
                         <>
-                          <Loader2 className="size-3.5 animate-spin" />
-                          Running…
+                          <Square className="size-3.5" />
+                          Cancel
                         </>
                       ) : (
                         <>
@@ -4482,18 +4493,6 @@ export function TestTemplateEditor({
                         </>
                       )}
                     </Button>
-                    {isRunningCompare ? (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 px-2.5 text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-                        onClick={handleStopCompare}
-                      >
-                        <Square className="size-3.5 opacity-90" />
-                        Stop
-                      </Button>
-                    ) : null}
                   </span>
                 )}
                 {/* Draft-run estimate: priced against the models the button will
@@ -5123,7 +5122,7 @@ export function TestTemplateEditor({
                         }
                         scorecard={{
                           render: (ctx) => (
-                            <TrialScorecard
+                            <IterationReportScorecard
                               authored={
                                 authoredForTrial({
                                   trial: workspaceSelectedTrial,
@@ -5149,6 +5148,7 @@ export function TestTemplateEditor({
                                 workspacePersistedIteration,
                               )}
                               envelope={ctx.envelope}
+                              trace={ctx.trace}
                               judgeHidden={ctx.reviewActive && ctx.judgeHidden}
                               judgeSlot={
                                 // The tab owns launch-triggered judging; this
@@ -5517,16 +5517,20 @@ export function TestTemplateEditor({
                       <span className="inline-flex shrink-0 items-center gap-2">
                         <Button
                           type="button"
-                          variant="outline"
+                          variant={isRunningCompare ? "secondary" : "outline"}
                           size="sm"
                           className="h-8 shrink-0 text-xs"
-                          onClick={() => handlePrimaryRun()}
-                          disabled={runPrimaryDisabled}
+                          // While the run is going this IS the stop — same as the
+                          // primary Run button.
+                          onClick={() =>
+                            isRunningCompare ? handleStopCompare() : handlePrimaryRun()
+                          }
+                          disabled={isRunningCompare ? false : runPrimaryDisabled}
                         >
                           {isRunningCompare ? (
                             <>
-                              <Loader2 className="size-3.5 animate-spin" />
-                              Running…
+                              <Square className="size-3.5" />
+                              Cancel
                             </>
                           ) : (
                             <>
@@ -5535,18 +5539,6 @@ export function TestTemplateEditor({
                             </>
                           )}
                         </Button>
-                        {isRunningCompare ? (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="h-8 shrink-0 px-2.5 text-xs text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-                            onClick={handleStopCompare}
-                          >
-                            <Square className="size-3.5 opacity-90" />
-                            Stop
-                          </Button>
-                        ) : null}
                       </span>
                     </TooltipTrigger>
                     <TooltipContent
@@ -5561,16 +5553,20 @@ export function TestTemplateEditor({
                   <span className="inline-flex shrink-0 items-center gap-2">
                     <Button
                       type="button"
-                      variant="outline"
+                      variant={isRunningCompare ? "secondary" : "outline"}
                       size="sm"
                       className="h-8 shrink-0 text-xs"
-                      onClick={() => void handleRunCompare()}
-                      disabled={runPrimaryDisabled}
+                      // While the run is going this IS the stop — same as the
+                      // primary Run button.
+                      onClick={() =>
+                        isRunningCompare ? handleStopCompare() : void handleRunCompare()
+                      }
+                      disabled={isRunningCompare ? false : runPrimaryDisabled}
                     >
                       {isRunningCompare ? (
                         <>
-                          <Loader2 className="size-3.5 animate-spin" />
-                          Running…
+                          <Square className="size-3.5" />
+                          Cancel
                         </>
                       ) : (
                         <>
@@ -5579,18 +5575,6 @@ export function TestTemplateEditor({
                         </>
                       )}
                     </Button>
-                    {isRunningCompare ? (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 shrink-0 px-2.5 text-xs text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-                        onClick={handleStopCompare}
-                      >
-                        <Square className="size-3.5 opacity-90" />
-                        Stop
-                      </Button>
-                    ) : null}
                   </span>
                 )
               ) : null}

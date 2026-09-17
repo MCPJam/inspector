@@ -2,11 +2,9 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ShareUsageThreadDetail } from "../ShareUsageThreadDetail";
-import { renderSessionJson } from "../session-json-view";
 
 const {
   mockMessageView,
-  mockReadOnlyTranscript,
   mockAdaptTraceToUiMessages,
   mockRequestJudge,
   mockNavigateApp,
@@ -18,9 +16,10 @@ const {
   mockTurnTracesState,
   mockHostConfigState,
   mockCopyToClipboard,
+  mockScoreState,
 } = vi.hoisted(() => ({
+  mockScoreState: { error: false },
   mockMessageView: vi.fn(),
-  mockReadOnlyTranscript: vi.fn(),
   mockAdaptTraceToUiMessages: vi.fn(),
   mockRequestJudge: vi.fn().mockResolvedValue(null),
   mockNavigateApp: vi.fn(),
@@ -47,7 +46,11 @@ const {
   // a session written before the pin existed.
   mockCopyToClipboard: vi.fn().mockResolvedValue(true),
   mockHostConfigState: {
-    config: null as { hostStyle?: string; currentHostName?: string | null; modelId?: string } | null,
+    config: null as {
+      hostStyle?: string;
+      currentHostName?: string | null;
+      modelId?: string;
+    } | null | undefined,
   },
 }));
 
@@ -77,6 +80,18 @@ vi.mock("@/hooks/useSharedChatThreads", () => ({
       runAttemptStatus: mockThreadState.runAttemptStatus,
       messagesBlobUrl: "https://storage.example.com/thread.json",
       modelId: "openai/gpt-oss-120b",
+      recordedContext: {
+        toolSnapshots: [
+          {
+            hash: "frozen-catalog",
+            snapshot: {
+              servers: [
+                { serverId: "recorded-server", tools: [{ name: "search" }] },
+              ],
+            },
+          },
+        ],
+      },
       visitorDisplayName: "Marcelo Jimenez",
       messageCount: 2,
       startedAt: Date.now() - 1000,
@@ -90,9 +105,10 @@ vi.mock("@/hooks/useSharedChatThreads", () => ({
   // file and rendered the ErrorBoundary fallback instead — green, but not
   // exercising the tree it claims to. The assertions here sit outside that
   // boundary, so nothing was wrong, just unwatched.
-  useSharedChatTurnScores: () => ({
-    scores: [],
-  }),
+  useSharedChatTurnScores: () => {
+    if (mockScoreState.error) throw new Error("scores unavailable");
+    return { scores: [] };
+  },
   useSharedChatTurnTraces: () => ({
     traces: mockTurnTracesState.traces,
   }),
@@ -167,10 +183,7 @@ vi.mock("@/components/chat-v2/thread/message-view", () => ({
 
 vi.mock("@mcpjam/chat-ui", () => ({
   hydrateMessageTimestamps: (messages: unknown[]) => messages,
-  ReadOnlyTranscript: (props: Record<string, unknown>) => {
-    mockReadOnlyTranscript(props);
-    return <div data-testid="read-only-transcript" />;
-  },
+
 }));
 
 vi.mock(
@@ -220,6 +233,7 @@ describe("ShareUsageThreadDetail", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockScoreState.error = false;
     mockThreadState.sourceType = "scenario";
     mockTurnTracesState.traces = [];
     mockHydrateTurnTraceSpans.mockResolvedValue([]);
@@ -227,7 +241,7 @@ describe("ShareUsageThreadDetail", () => {
     mockThreadState.readiness = undefined;
     mockThreadState.goalScore = undefined;
     mockBrowserArtifactsState.artifacts = undefined;
-    mockHostConfigState.config = null;
+    mockHostConfigState.config = { hostStyle: "claude" };
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => [{ role: "assistant", content: [] }],
@@ -254,10 +268,39 @@ describe("ShareUsageThreadDetail", () => {
     global.fetch = originalFetch;
   });
 
+  it("keeps the configured transcript after a ratings failure and retries on session change", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockScoreState.error = true;
+    const { rerender } = render(<ShareUsageThreadDetail threadId="thread-1" />);
+    await waitFor(() => expect(mockTraceViewer).toHaveBeenCalledWith(expect.objectContaining({
+      hostSnapshot: expect.objectContaining({ hostStyle: "claude" }),
+      widgetPolicy: "live", frame: "none", interactive: false,
+    })));
+    expect(mockTraceViewer.mock.lastCall?.[0].renderAssistantTurnFooter).toBeUndefined();
+    mockScoreState.error = false;
+    rerender(<ShareUsageThreadDetail threadId="thread-2" />);
+    await waitFor(() => expect(mockTraceViewer.mock.lastCall?.[0].renderAssistantTurnFooter).toEqual(expect.any(Function)));
+    consoleError.mockRestore();
+  });
+
+  it("waits for the pinned host before mounting Chat and leaves Raw accessible", async () => {
+    mockHostConfigState.config = undefined;
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+    expect(await screen.findByText("Loading host configuration…")).toBeInTheDocument();
+    expect(mockTraceViewer).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Raw" }));
+    await waitFor(() => expect(mockTraceViewer).toHaveBeenCalled());
+  });
+
   it("links a direct session to its Playground conversation", async () => {
     mockThreadState.sourceType = "direct";
     render(<ShareUsageThreadDetail threadId="thread-1" />);
-    expect(await screen.findByRole("link", { name: "Open in Playground" })).toHaveAttribute("href", "/playground?conversation=wire-uuid&project=project-1");
+    expect(
+      await screen.findByRole("link", { name: "Open in Playground" }),
+    ).toHaveAttribute(
+      "href",
+      "/playground?conversation=wire-uuid&project=project-1",
+    );
   });
 
   it("renders formatted share traces with collapsed reasoning", async () => {
@@ -271,10 +314,10 @@ describe("ShareUsageThreadDetail", () => {
           toolResultDisplay: "attached-to-tool",
         }),
       );
-      expect(mockReadOnlyTranscript).toHaveBeenCalledWith(
+      expect(mockTraceViewer).toHaveBeenCalledWith(
         expect.objectContaining({
           reasoningDisplayMode: "collapsible",
-          widgetPolicy: "placeholder",
+          widgetPolicy: "live",
         }),
       );
     });
@@ -298,6 +341,24 @@ describe("ShareUsageThreadDetail", () => {
     });
   });
 
+  it("passes the frozen tool catalog into the shared Raw trace viewer", async () => {
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Raw" }));
+    await waitFor(() =>
+      expect(mockTraceViewer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          trace: expect.objectContaining({
+            recordedContext: expect.objectContaining({
+              toolSnapshots: expect.arrayContaining([
+                expect.objectContaining({ hash: "frozen-catalog" }),
+              ]),
+            }),
+          }),
+        }),
+      ),
+    );
+  });
+
   it("leaves Raw alone on a surface that did not ask for the fade", async () => {
     render(<ShareUsageThreadDetail threadId="thread-1" />);
 
@@ -310,16 +371,12 @@ describe("ShareUsageThreadDetail", () => {
     });
   });
 
-  it("shows tool payloads in the Playground's JSON tree, not a <pre>", async () => {
-    // The wiring half of the change: the transcript has to be HANDED the
-    // renderer, or the package falls back to its own plain block and the
-    // Playground component is reused in name only. What that renderer draws is
-    // asserted in `session-json-view.test.tsx`.
+  it("uses the inspector renderer with the pinned host and live MCP Apps", async () => {
     render(<ShareUsageThreadDetail threadId="thread-1" />);
 
     await waitFor(() => {
-      expect(mockReadOnlyTranscript).toHaveBeenCalledWith(
-        expect.objectContaining({ renderJson: renderSessionJson }),
+      expect(mockTraceViewer).toHaveBeenCalledWith(
+        expect.objectContaining({ frame: "none", widgetPolicy: "live", interactive: false, hostSnapshot: expect.objectContaining({ hostStyle: "claude" }), adaptedTrace: expect.objectContaining({ messages: expect.any(Array) }) }),
       );
     });
   });
@@ -328,7 +385,7 @@ describe("ShareUsageThreadDetail", () => {
     render(<ShareUsageThreadDetail threadId="thread-1" />);
 
     await waitFor(() => {
-      expect(mockReadOnlyTranscript).toHaveBeenCalledWith(
+      expect(mockTraceViewer).toHaveBeenCalledWith(
         expect.objectContaining({
           reasoningDisplayMode: "collapsible",
         }),
@@ -448,7 +505,7 @@ describe("ShareUsageThreadDetail", () => {
     // blob re-fetch on thread switch is async — don't depend on the previous
     // thread's messages state being retained (CodeRabbit, PR 2610).
     expect(
-      await screen.findByTestId("read-only-transcript"),
+      await screen.findByTestId("trace-viewer"),
     ).toBeInTheDocument();
   });
 });

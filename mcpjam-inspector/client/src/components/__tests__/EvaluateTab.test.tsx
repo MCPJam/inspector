@@ -86,8 +86,7 @@ vi.mock("posthog-js", () => ({
   default: { capture: vi.fn() },
 }));
 
-// `useEvaluateEnabled` resolves `evaluate-enabled` here. The canonical
-// decision-summary read rides that same flag, so these specs can flip it.
+// Decision summaries remain enabled regardless of the legacy flag.
 vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: () => mocks.evaluateFlag.enabled,
 }));
@@ -501,21 +500,15 @@ describe("EvaluateTab", () => {
     expect(screen.getByRole("button", { name: /^overview$/i })).toHaveAttribute("aria-current", "page");
   });
 
-  /**
-   * The canonical run decision summary rides `evaluate-enabled` and is
-   * threaded down as a prop, so a flag-off render reaches the shared
-   * `/evals` components with the read switched off — which is what keeps
-   * those components' behaviour on the shipped tab unchanged.
-   */
-  describe("canonical decision summary flag", () => {
-    it("is off for both surfaces while the flag is off", async () => {
+  describe("public decision summaries", () => {
+    it("enables run summaries even when the legacy flag is off", async () => {
       mocks.route.current = { type: "list" };
       const user = userEvent.setup();
       render(<EvaluateTab projectId="ws-1" />);
       await user.click(screen.getByRole("button", { name: /^overview$/i }));
 
       expect(mocks.projectRunsTable.mock.calls.at(-1)?.[0]).toMatchObject({
-        decisionSummaryEnabled: false,
+        decisionSummaryEnabled: true,
       });
     });
 
@@ -543,11 +536,11 @@ describe("EvaluateTab", () => {
       });
     });
 
-    it("leaves the suite surface's read off while the flag is off", () => {
+    it("enables suite summaries even when the legacy flag is off", () => {
       render(<EvaluateTab projectId="ws-1" />);
 
       expect(mocks.suiteIterationsView.mock.calls.at(-1)?.[0]).toMatchObject({
-        evaluateDecisionSummary: false,
+        evaluateDecisionSummary: true,
       });
     });
   });

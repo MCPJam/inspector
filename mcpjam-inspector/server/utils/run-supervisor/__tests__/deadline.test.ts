@@ -215,3 +215,17 @@ describe("withDeadline — teardown", () => {
     expect(remaining).toBe(180_000);
   });
 });
+
+it.each(["setup", "discovery"] as const)(
+  "recognizes the %s clock after its deadline fires",
+  (clock) => {
+    vi.useFakeTimers();
+    const deadline = withDeadline(undefined, 1, clock);
+    vi.advanceTimersByTime(1);
+    expect(deadlineClockOf(deadline.signal.reason)).toBe(clock);
+    expect(
+      deadlineClockOf(new Error("wrapped", { cause: deadline.signal.reason })),
+    ).toBe(clock);
+    deadline.dispose();
+  },
+);

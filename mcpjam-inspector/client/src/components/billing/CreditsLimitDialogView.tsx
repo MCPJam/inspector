@@ -1,3 +1,4 @@
+import { JamIllustration } from "./JamIllustration";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Dialog,
@@ -17,12 +18,12 @@ import {
 
 export interface CreditsLimitDialogViewProps {
   description: string;
+  isFreePlan?: boolean;
   /** Can't buy credits or upgrade. Gets the owner-request path instead. */
   isKnownNonManager: boolean;
   /** Free orgs whose user can manage billing. A paid org gets credits only. */
   showUpgrade: boolean;
-  /** Can buy credits but can't upgrade (admins). They keep the credits path
-   * and get a way to ask an owner, instead of a pitch with no button. */
+  /** Free-plan admins request an owner upgrade and retain BYOK information. */
   showRequestUpgrade?: boolean;
   requestRecipients: UpgradeRequestRecipient[];
   requestAction?: UpgradeRequestAction;
@@ -40,6 +41,7 @@ export interface CreditsLimitDialogViewProps {
   isLoadingPrices?: boolean;
   onUpgrade: () => void;
   onBuyCredits: () => void;
+  onExplorePlans?: () => void;
   onUseOwnKey: () => void;
   onDismiss: () => void;
   /** Dev preview only; see PlanLimitDialogView. Production renders modal. */
@@ -57,6 +59,7 @@ export interface CreditsLimitDialogViewProps {
  */
 export function CreditsLimitDialogView({
   description,
+  isFreePlan = false,
   isKnownNonManager,
   showUpgrade,
   showRequestUpgrade = false,
@@ -76,6 +79,7 @@ export function CreditsLimitDialogView({
   isLoadingPrices = false,
   onUpgrade,
   onBuyCredits,
+  onExplorePlans,
   onUseOwnKey,
   onDismiss,
   modal = true,
@@ -89,6 +93,7 @@ export function CreditsLimitDialogView({
       }}
     >
       <DialogContent className="sm:max-w-md">
+        {isFreePlan && <JamIllustration />}
         <DialogHeader>
           <DialogTitle>Your org is out of credits</DialogTitle>
           <DialogDescription
@@ -98,15 +103,29 @@ export function CreditsLimitDialogView({
             {description}
           </DialogDescription>
         </DialogHeader>
-        {isKnownNonManager ? (
-          <RequestUpgradeButton
-            recipients={requestRecipients}
-            organizationName={organizationName}
-            teamName={teamName}
-            origin="credits"
-            limitKind="credits"
-            requestAction={requestAction}
-          />
+        {isFreePlan && !isKnownNonManager && !showRequestUpgrade ? (
+          <div className="grid grid-cols-2 gap-2">
+            <Button variant="outline" onClick={onUseOwnKey}>
+              Learn more about BYOK
+            </Button>
+            <Button onClick={onExplorePlans}>Explore plans</Button>
+          </div>
+        ) : isKnownNonManager || showRequestUpgrade ? (
+          <>
+            <RequestUpgradeButton
+              recipients={requestRecipients}
+              organizationName={organizationName}
+              teamName={teamName}
+              origin="credits"
+              limitKind="credits"
+              requestAction={requestAction}
+            />
+            {showRequestUpgrade && (
+              <Button variant="link" onClick={onUseOwnKey}>
+                Learn more about BYOK
+              </Button>
+            )}
+          </>
         ) : (
           <>
             {showUpgrade ? (
@@ -125,16 +144,6 @@ export function CreditsLimitDialogView({
                 onUpgrade={onUpgrade}
               />
             ) : null}
-            {showRequestUpgrade ? (
-              <RequestUpgradeButton
-                recipients={requestRecipients}
-                organizationName={organizationName}
-                teamName={teamName}
-                origin="credits"
-                limitKind="credits"
-                requestAction="upgrade"
-              />
-            ) : null}
             <DialogFooter className="sm:justify-between">
               <Button
                 type="button"
@@ -142,7 +151,7 @@ export function CreditsLimitDialogView({
                 className="px-0 text-muted-foreground"
                 onClick={onUseOwnKey}
               >
-                Use your own API key
+                Learn more about BYOK
               </Button>
               <Button type="button" variant="outline" onClick={onBuyCredits}>
                 Buy credits

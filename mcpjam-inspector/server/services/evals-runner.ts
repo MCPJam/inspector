@@ -1,3 +1,4 @@
+import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import { EVAL_SANDBOX_CAPACITY_POLICY } from "../utils/run-supervisor/capacity-retry.js";
 import type { TimeoutMetadata } from "../utils/run-supervisor/deadline.js";
 import { isCredentialFreeGithubExecution } from "./github-checks/credential-policy.js";
@@ -838,6 +839,22 @@ function isIterationBudgetAbort(
     deadlineClockOf(error) === "iteration" ||
     deadlineClockOf(signal?.reason) === "iteration"
   );
+}
+
+/**
+ * Is this unwind a STOP rather than a failure or an expired clock?
+ *
+ * A user cancel, a torn-down socket and an iteration timeout all arrive as a
+ * throw on the same signal. The iteration clock is the one case that must NOT
+ * be recorded as cancelled — `markIterationTimedOut` already owns it, and
+ * calling a timeout a cancellation hides the timeout from the run.
+ */
+function isCancelUnwind(
+  error: unknown,
+  signal: AbortSignal | undefined,
+): boolean {
+  if (isIterationBudgetAbort(error, signal)) return false;
+  return signal?.aborted === true;
 }
 
 const RUN_CANCELLED_ERROR = new EvalRunStoppedError({
@@ -2021,6 +2038,17 @@ type RunIterationBaseParams = {
    */
   precreatedIterationId?: string;
   /**
+   * Fired as soon as the iteration's row id is known.
+   *
+   * The supervisor needs it to write a terminal row when it stops WAITING on
+   * this iteration — a user cancel resolves `runIterationUnderBudget`'s abort
+   * arm and abandons the iteration promise, so whatever the runner would have
+   * returned never arrives. Without this, a stopped trial whose row was
+   * created inside the runner (a quick run of a single iteration — nothing
+   * pre-creates those) stays `running` forever.
+   */
+  onIterationStarted?: (iterationId: string) => void;
+  /**
    * Suite-level resolved compat-runtime flag — propagated from
    * `RunEvalSuiteOptions.suiteInjectOpenAiCompat`. When true, widget
    * snapshots captured during this iteration get the OpenAI Apps SDK
@@ -2422,6 +2450,76 @@ async function markIterationTimedOut(args: {
 }
 
 /**
+ * Record a stopped iteration in its own terminal word instead of leaving the
+ * row behind.
+ *
+ * The pre-created `testIteration` row is claimed before the first turn, so an
+ * abort that writes nothing leaves it `running` forever: the test case history
+ * shows a trial that never ends, and nothing says why it stopped. Mirrors
+ * {@link markIterationTimedOut} — same action, same shape. Never throws: the
+ * caller is already unwinding a stopped run.
+ *
+ * WHICH word comes off the abort reason, not from the call site. `abortRun`
+ * aborts with the `EvalRunStoppedError` precisely so this can be told apart —
+ * a run that blew its own clock reaches the same `isCancelUnwind` path as a
+ * person pressing stop, and hardcoding `cancelled` / `user_cancelled` filed
+ * every run timeout as a user cancellation. That is the one distinction the
+ * row is there to record: "we stopped it" and "you stopped it" are different
+ * stories, and only one of them is a bug worth chasing.
+ *
+ * The iteration clock never arrives here — `isCancelUnwind` sends it to
+ * `markIterationTimedOut`, which owns the `iteration_timeout` reason and its
+ * `timeout.clock` detail.
+ *
+ * Idempotent against `cancelTestSuiteRun`, which may have flipped the same row
+ * a moment earlier: `internalUpdateTestIteration` ignores writes to a row that
+ * is already `cancelled` or `timed_out`.
+ */
+async function markIterationStopped(args: {
+  convexClient: ConvexHttpClient;
+  iterationId: string | undefined;
+  abortSignal?: AbortSignal;
+}): Promise<void> {
+  if (!args.iterationId) return;
+
+  const reason = args.abortSignal?.reason;
+  const stop = isEvalRunStoppedError(reason) ? reason : undefined;
+  const terminal = stop?.terminalStatus ?? "cancelled";
+  const stopReason = stop?.stopReason ?? "user_cancelled";
+  const message =
+    reason instanceof Error && reason.message
+      ? reason.message
+      : "Iteration cancelled";
+  try {
+    await args.convexClient.action("testSuites:updateTestIteration" as any, {
+      iterationId: args.iterationId,
+      status: terminal,
+      result: terminal,
+      actualToolCalls: [],
+      tokensUsed: 0,
+      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      messages: [{ role: "assistant", content: message }],
+      error: message,
+      resultSource: "derived",
+      metadata: {
+        stopReason,
+        // Same `timeout.clock` contract `markIterationTimedOut` writes, so a
+        // reader does not have to know which function recorded the row to
+        // learn which clock ended it.
+        ...(stopReason === "run_timeout"
+          ? { timeout: { clock: "run" as const } }
+          : {}),
+      },
+    });
+  } catch (error) {
+    logger.warn("[evals] Failed to mark stopped iteration", {
+      iterationId: args.iterationId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+/**
  * Run ONE iteration under its own clock.
  *
  * This replaces a `Promise.race` against a bare timer, and the difference is
@@ -2644,7 +2742,11 @@ const executeTestCase = async (params: {
   // Bails immediately if the run was already stopped; on timeout it aborts the
   // whole run (via `abortRun`) and marks the row `timed_out`.
   const runSingleIteration = async <T extends EvalIterationOutcome>(
-    runner: (iterationSignal: AbortSignal, deadlineAt: number) => Promise<T>,
+    runner: (
+      iterationSignal: AbortSignal,
+      deadlineAt: number,
+      onIterationStarted: (iterationId: string) => void,
+    ) => Promise<T>,
     precreatedIterationId: string | undefined,
     runIndex: number,
     timeoutTest: EvalTestCase = normalizedTest,
@@ -2654,17 +2756,71 @@ const executeTestCase = async (params: {
       throw reason instanceof Error ? reason : RUN_CANCELLED_ERROR;
     }
 
+    /**
+     * The row this iteration claimed, as soon as it exists.
+     *
+     * `runIterationUnderBudget` stops WAITING on a cancelled iteration and
+     * abandons its promise, so the runner's own cancel handling may never
+     * produce a value here. Holding the id lets the stop be recorded anyway.
+     */
+    let startedIterationId = precreatedIterationId;
+    const noteIterationStarted = (iterationId: string) => {
+      startedIterationId = iterationId;
+    };
+    /** Persist the stop, once, on the way out. */
+    const recordCancelledIteration = async () =>
+      await markIterationStopped({
+        convexClient,
+        iterationId: startedIterationId,
+        abortSignal,
+      });
+
     if (!isolatedIterationTimeoutEnabled()) {
       // Kill-switch path: the pre-isolation behaviour, kept verbatim for one
       // release. An iteration timeout aborts the WHOLE run and rejects, which
       // is the contract `evals-runner.test.ts` pinned before this change.
+      try {
+        return await runIterationUnderBudget({
+          run: (signal, deadlineAt) =>
+            runner(signal, deadlineAt, noteIterationStarted),
+          runSignal: abortSignal,
+          unitTimeoutMs: budgets.unitTimeoutMs,
+          graceMs: EVAL_ABORT_GRACE_MS,
+          onTimeout: async () => {
+            abortRun?.(iterationTimeoutError(budgets.unitTimeoutMs));
+            await markIterationTimedOut({
+              convexClient,
+              runId,
+              precreatedIterationId,
+              test: timeoutTest,
+              runIndex,
+              budgetMs: budgets.unitTimeoutMs,
+            });
+          },
+          timedOutOutcome: () => {
+            throw iterationTimeoutError(budgets.unitTimeoutMs);
+          },
+        });
+      } catch (error) {
+        if (isCancelUnwind(error, abortSignal)) {
+          await recordCancelledIteration();
+        }
+        throw error;
+      }
+    }
+
+    try {
       return await runIterationUnderBudget({
-        run: runner,
+        run: (signal, deadlineAt) =>
+          runner(signal, deadlineAt, noteIterationStarted),
         runSignal: abortSignal,
         unitTimeoutMs: budgets.unitTimeoutMs,
         graceMs: EVAL_ABORT_GRACE_MS,
-        onTimeout: async () => {
-          abortRun?.(iterationTimeoutError(budgets.unitTimeoutMs));
+        onTimeout: async (elapsedMs) => {
+          // NOTE: no `abortRun`. That is the change — one slow trial used to
+          // kill every sibling trial in the run, discarding evidence that had
+          // already been produced and turning an infrastructure event into a
+          // run-level verdict of `timed_out`.
           await markIterationTimedOut({
             convexClient,
             runId,
@@ -2672,45 +2828,26 @@ const executeTestCase = async (params: {
             test: timeoutTest,
             runIndex,
             budgetMs: budgets.unitTimeoutMs,
+            elapsedMs,
           });
         },
-        timedOutOutcome: () => {
-          throw iterationTimeoutError(budgets.unitTimeoutMs);
-        },
+        // Resolve, never reject: the caller's `for (runIndex…)` loop has no
+        // try/catch, so rejecting here strands this case's remaining iterations
+        // as `pending` and blocks the run's terminal transition.
+        timedOutOutcome: () =>
+          ({
+            evaluation: { passed: false },
+            ...(precreatedIterationId
+              ? { iterationId: precreatedIterationId }
+              : {}),
+          }) as unknown as T,
       });
+    } catch (error) {
+      if (isCancelUnwind(error, abortSignal)) {
+        await recordCancelledIteration();
+      }
+      throw error;
     }
-
-    return await runIterationUnderBudget({
-      run: runner,
-      runSignal: abortSignal,
-      unitTimeoutMs: budgets.unitTimeoutMs,
-      graceMs: EVAL_ABORT_GRACE_MS,
-      onTimeout: async (elapsedMs) => {
-        // NOTE: no `abortRun`. That is the change — one slow trial used to
-        // kill every sibling trial in the run, discarding evidence that had
-        // already been produced and turning an infrastructure event into a
-        // run-level verdict of `timed_out`.
-        await markIterationTimedOut({
-          convexClient,
-          runId,
-          precreatedIterationId,
-          test: timeoutTest,
-          runIndex,
-          budgetMs: budgets.unitTimeoutMs,
-          elapsedMs,
-        });
-      },
-      // Resolve, never reject: the caller's `for (runIndex…)` loop has no
-      // try/catch, so rejecting here strands this case's remaining iterations
-      // as `pending` and blocks the run's terminal transition.
-      timedOutOutcome: () =>
-        ({
-          evaluation: { passed: false },
-          ...(precreatedIterationId
-            ? { iterationId: precreatedIterationId }
-            : {}),
-        }) as unknown as T,
-    });
   };
 
   // Pinned-only case (today's render check): no model turns at all. Run it
@@ -2771,7 +2908,7 @@ const executeTestCase = async (params: {
       };
       outcomes.push(
         await runSingleIteration(
-          (iterationSignal, iterationDeadlineAt) =>
+          (iterationSignal, iterationDeadlineAt, onIterationStarted) =>
             runLocalIteration({
               ...modelFreeParams,
               // The ITERATION's signal, not the run's: this is what makes the
@@ -2779,6 +2916,7 @@ const executeTestCase = async (params: {
               // the wait for it.
               abortSignal: iterationSignal,
               iterationDeadlineAt,
+              onIterationStarted,
               ...(streaming ? { emit: emit! } : {}),
             }),
           undefined,
@@ -2937,11 +3075,12 @@ const executeTestCase = async (params: {
         ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
       };
       const iterationOutcome = await runSingleIteration(
-        (iterationSignal, iterationDeadlineAt) =>
+        (iterationSignal, iterationDeadlineAt, onIterationStarted) =>
           runHostedIteration({
             ...backendParams,
             abortSignal: iterationSignal,
             iterationDeadlineAt,
+            onIterationStarted,
             ...(streaming ? { emit: emit! } : {}),
           }),
         precreatedIterationId,
@@ -3009,11 +3148,12 @@ const executeTestCase = async (params: {
         ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
       };
       const iterationOutcome = await runSingleIteration(
-        (iterationSignal, iterationDeadlineAt) =>
+        (iterationSignal, iterationDeadlineAt, onIterationStarted) =>
           runHostedIteration({
             ...backendParams,
             abortSignal: iterationSignal,
             iterationDeadlineAt,
+            onIterationStarted,
             ...(streaming ? { emit: emit! } : {}),
           }),
         precreatedIterationId,
@@ -3067,11 +3207,12 @@ const executeTestCase = async (params: {
       ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
     };
     const iterationOutcome = await runSingleIteration(
-      (iterationSignal, iterationDeadlineAt) =>
+      (iterationSignal, iterationDeadlineAt, onIterationStarted) =>
         runLocalIteration({
           ...localParams,
           abortSignal: iterationSignal,
           iterationDeadlineAt,
+          onIterationStarted,
           ...(streaming ? { emit: emit! } : {}),
         }),
       precreatedIterationId,
@@ -3805,6 +3946,7 @@ const runLocalIteration = async ({
   compareRunId,
   toolDescriptionOverride,
   precreatedIterationId,
+  onIterationStarted,
   injectOpenAiCompat,
   hostPolicy,
   gradingMode,
@@ -4017,6 +4159,7 @@ const runLocalIteration = async ({
           ...iterationParamsBase,
           testCaseSnapshot,
         });
+  if (iterationId) onIterationStarted?.(iterationId);
 
   // PR2: shared per-iteration accumulator (mirrors the batch runner). The
   // streaming runner threads it through `driveLocalEvalTurn` and reads it
@@ -4027,6 +4170,7 @@ const runLocalIteration = async ({
   const acc: LocalEvalTurnAcc = {
     conversationMessages: [],
     capturedSpans: [],
+    requestPayloads: [],
     accumulatedUsage: {
       inputTokens: 0,
       outputTokens: 0,
@@ -4302,24 +4446,28 @@ const runLocalIteration = async ({
       }
     }
 
-    // PR 5a abort helpers — mirror the non-stream runner's pattern so
-    // a cancellation between consume and check drops the iteration
-    // record without persisting cancelled state.
+    // PR 5a abort helpers — mirror the non-stream runner's pattern. The
+    // iteration row is persisted as `cancelled` before returning, so a stopped
+    // trial reads as stopped rather than sitting `running` forever, and the id
+    // is handed back so the stream route can resolve the terminal row.
     const localIsAborted = () => abortSignal?.aborted === true;
-    const returnLocalCancelled = () => ({
-      // Aborted mid-iteration — never score as passed (a pinned-only case would
-      // otherwise short-circuit to passed:true).
-      evaluation: {
-        ...evaluateMultiTurnResults(
-          promptTurns,
-          acc.toolsCalledByPrompt,
-          test.isNegativeTest,
-          test.matchOptions,
-        ),
-        passed: false,
-      },
-      iterationId: undefined,
-    });
+    const returnLocalCancelled = async () => {
+      await markIterationStopped({ convexClient, iterationId, abortSignal });
+      return {
+        // Aborted mid-iteration — never score as passed (a pinned-only case would
+        // otherwise short-circuit to passed:true).
+        evaluation: {
+          ...evaluateMultiTurnResults(
+            promptTurns,
+            acc.toolsCalledByPrompt,
+            test.isNegativeTest,
+            test.matchOptions,
+          ),
+          passed: false,
+        },
+        iterationId,
+      };
+    };
 
     // Streaming play-by-play, built once and consumed by the executeSteps handlers
     // (per turn). `undefined` in batch mode (no `emit`) → headless. The per-turn
@@ -4505,7 +4653,7 @@ const runLocalIteration = async ({
     }
     if (acc.timeout) iterationMetadataBase.timeout = acc.timeout;
     if (stepOutcome.cancelled || localIsAborted()) {
-      return returnLocalCancelled();
+      return await returnLocalCancelled();
     }
 
     // Widget→host tool calls (a tool a widget invoked, e.g. from an authored
@@ -4687,6 +4835,7 @@ const runLocalIteration = async ({
         ? { systemPrompt: streamEnhancedSystemPromptForPersist }
         : {}),
       spans: acc.capturedSpans,
+      requestPayloads: acc.requestPayloads,
       prompts: promptTraceSummaries,
       ...(widgetSnapshots ? { widgetSnapshots } : {}),
       // PR 9: browser artifacts from the streamed Computer Use path.
@@ -4790,8 +4939,18 @@ const runLocalIteration = async ({
     // `runIterationUnderBudget` is what records that. See
     // `isIterationBudgetAbort`.
     if (isIterationBudgetAbort(error, abortSignal)) throw error;
-    if (error instanceof Error && error.name === "AbortError") {
+    // A stop can surface as a throw rather than a cooperative return: the
+    // consumer rethrows the signal's reason, which is whatever the canceller
+    // passed — an `AbortError` from the platform, or a plain `Error` from the
+    // stream route. Read the SIGNAL, not just the error's name: without that,
+    // a client stop fell through to the generic failure path below and was
+    // recorded as a failed trial, blaming the run for something a person did.
+    if (
+      abortSignal?.aborted === true ||
+      (error instanceof Error && error.name === "AbortError")
+    ) {
       logger.debug("[evals] streaming iteration aborted due to cancellation");
+      await markIterationStopped({ convexClient, iterationId, abortSignal });
       // Force passed:false (see the non-stream runner) so an all-pinned case
       // can't score a pass on abort.
       return {
@@ -4804,7 +4963,7 @@ const runLocalIteration = async ({
           ),
           passed: false,
         },
-        iterationId: undefined,
+        iterationId,
       };
     }
 
@@ -4947,6 +5106,7 @@ const runLocalIteration = async ({
         ? { systemPrompt: streamEnhancedSystemPromptForPersist }
         : {}),
       spans: acc.capturedSpans,
+      requestPayloads: acc.requestPayloads,
       prompts: promptTraceSummaries,
       ...(widgetSnapshots ? { widgetSnapshots } : {}),
       // PR 9: browser artifacts collected before the failure still persist.
@@ -5082,6 +5242,7 @@ const runHostedIterationWithBrowser = async (
     compareRunId,
     toolDescriptionOverride,
     precreatedIterationId,
+    onIterationStarted,
     injectOpenAiCompat,
     hostPolicy,
     gradingMode,
@@ -5258,6 +5419,7 @@ const runHostedIterationWithBrowser = async (
     : recorder
       ? await recorder.startIteration(iterationParams)
       : await createIterationDirectly(convexClient, iterationParams);
+  if (iterationId) onIterationStarted?.(iterationId);
 
   // Adopt the chat-side tool/system/temperature pipeline. Same change as the
   // local-AI-SDK runner: pulls in skill tools, progressive-discovery meta-
@@ -5778,15 +5940,25 @@ const runHostedIterationWithBrowser = async (
   // authoritative cancellation signal, used at the top of each
   // iteration AND after every per-turn call (success or catch).
   const isAborted = () => abortSignal?.aborted === true;
-  const returnCancelled = () => ({
-    evaluation: evaluateMultiTurnResults(
-      promptTurns,
-      toolsCalledByPrompt,
-      test.isNegativeTest,
-      test.matchOptions,
-    ),
-    iterationId: undefined,
-  });
+  const returnCancelled = async () => {
+    await markIterationStopped({ convexClient, iterationId, abortSignal });
+    return {
+      // Aborted mid-iteration — never score as passed (a pinned-only case would
+      // otherwise short-circuit to passed:true). Same guard the local driver
+      // applies in `returnLocalCancelled`: a stopped trial has not met its
+      // assertions, it simply stopped being observed.
+      evaluation: {
+        ...evaluateMultiTurnResults(
+          promptTurns,
+          toolsCalledByPrompt,
+          test.isNegativeTest,
+          test.matchOptions,
+        ),
+        passed: false,
+      },
+      iterationId,
+    };
+  };
 
   let accumulatedUsage: UsageTotals = {
     inputTokens: 0,
@@ -5801,6 +5973,7 @@ const runHostedIterationWithBrowser = async (
     | { source?: "model" | "setup"; code?: string; httpStatus?: number }
     | undefined = undefined;
   const capturedSpans: EvalTraceSpan[] = [];
+  const requestPayloads: LiveChatTraceRequestPayloadEntry[] = [];
   /**
    * Wire results for the friction signals, keyed as the GRADED call array
    * keys its calls. Filled per turn by `drive-hosted-eval-turn`; empty when
@@ -6005,6 +6178,7 @@ const runHostedIterationWithBrowser = async (
       messageHistory,
       traceMessageHistory,
       capturedSpans,
+      requestPayloads,
       evidenceResults,
       evidenceHadHole,
       accumulatedUsage,
@@ -6066,7 +6240,7 @@ const runHostedIterationWithBrowser = async (
     throw abortSignal?.reason;
   }
   // The executor's own report first — see the local runner for why.
-  if (result.cancelled || isAborted()) return returnCancelled();
+  if (result.cancelled || isAborted()) return await returnCancelled();
   if (result.timeout) iterationMetadataBase.timeout = result.timeout;
   if (result.iterationError) {
     iterationError = result.iterationError;
@@ -6239,6 +6413,7 @@ const runHostedIterationWithBrowser = async (
       ? { systemPrompt: backendEnhancedSystemPromptForPersist }
       : {}),
     spans: capturedSpans,
+    requestPayloads,
     prompts: promptTraceSummaries,
     // Where the friction signals read their tool results from. THREE TIERS,
     // and the middle one is the reason this is threaded at all:

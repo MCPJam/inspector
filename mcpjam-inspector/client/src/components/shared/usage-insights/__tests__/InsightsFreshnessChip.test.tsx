@@ -120,10 +120,16 @@ describe("InsightsFreshnessChip", () => {
     ).toBeInTheDocument();
   });
 
-  it("disables Rebuild while a run is in flight", async () => {
+  it("hides Rebuild while a run is in flight", async () => {
     renderChip(run({ status: "running", finishedAt: null }));
     await screen.getByTestId("chip").click();
-    expect(screen.getByTestId("chip-rebuild")).toBeDisabled();
+    expect(screen.queryByTestId("chip-rebuild")).not.toBeInTheDocument();
+  });
+
+  it("hides voluntary Rebuild on a completed run", async () => {
+    renderChip(run({}));
+    await screen.getByTestId("chip").click();
+    expect(screen.queryByTestId("chip-rebuild")).not.toBeInTheDocument();
   });
 
   it("keeps retry available on a stuck run", async () => {

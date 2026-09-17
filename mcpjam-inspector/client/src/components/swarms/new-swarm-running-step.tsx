@@ -10,13 +10,18 @@
  * (`SwarmLiveStreamPane` — same Trace / Chat / Raw surface as Personas).
  *
  * "Open findings" and Leave both exit this watch surface for the swarm's
- * Findings page; the run keeps going. A finished run goes there on its own —
- * see `COMPLETION_TOAST_DWELL_MS`.
+ * Findings page; the run keeps going. "Stop run" is the control that actually
+ * cancels it. A finished (or stopped) run goes to Findings on its own — see
+ * `COMPLETION_TOAST_DWELL_MS`.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePaginatedQuery, useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { toast } from "@/lib/toast";
+import {
+  StopSwarmRunButton,
+  useStopSwarmRun,
+} from "@/components/swarms/swarm-stop-run";
 import { PersonaPixelAvatar } from "@/components/swarms/persona-pixel-avatar";
 import { SwarmRunningHero } from "@/components/swarms/swarm-running-hero";
 import { JourneyHostLogoMark } from "@/components/swarms/journey-host-logo";
@@ -107,6 +112,7 @@ type RunningSelection = SwarmMatrixSelection & {
 type CellView = {
   outcome: SwarmMatrixCellOutcome | "queued";
   headline: string;
+  verdict?: JourneySessionRow["verdict"];
 };
 
 type SessionSlot = {
@@ -124,7 +130,9 @@ type SessionSlot = {
 
 /** Goal text for a cell. `label` is "Persona · Goal" at launch; prefer the
  * dedicated field when present so a name that itself contains " · " stays intact. */
-export function swarmRunGoalLabel(run: Pick<SwarmLaunchedRun, "label" | "goalLabel">): string {
+export function swarmRunGoalLabel(
+  run: Pick<SwarmLaunchedRun, "label" | "goalLabel">,
+): string {
   const dedicated = run.goalLabel?.trim();
   if (dedicated) return dedicated;
   const sep = " · ";
@@ -142,6 +150,8 @@ export function swarmRunningTitle(args: {
   rateLimited: number;
   done: number;
   total: number;
+  /** This viewer pressed Stop run and the wave has settled. */
+  stopped?: boolean;
 }): string {
   // Progress count while anything ran; succeeded-count when the wave produced
   // no session — "failed 15 of 15" would count refusals as sessions.
@@ -149,6 +159,7 @@ export function swarmRunningTitle(args: {
     !args.allTerminal || args.succeeded > 0 ? args.done : args.succeeded;
   const count = args.total > 0 ? ` ${shown} of ${args.total} sessions` : "";
   if (!args.allTerminal) return `Swarm running${count}`;
+  if (args.stopped) return `Swarm stopped${count}`;
   if (args.succeeded > 0) return `Swarm finished${count}`;
   if (args.rateLimited > 0) return `Swarm could not run${count}`;
   return `Swarm failed${count}`;
@@ -160,29 +171,31 @@ export function swarmCellHeadline(args: {
   goal: string;
 }): string {
   const goal = args.goal.trim() || "session";
-  if (
-    args.outcome === "running" ||
-    args.outcome === "queued" ||
-    args.outcome === "pending"
-  ) {
+  if (args.outcome === "queued" || args.outcome === "pending") {
+    return `Pending: ${goal}`;
+  }
+  if (args.outcome === "running") {
     return `Running: ${goal}`;
   }
   if (args.outcome === "succeeded") {
-    return "Run completed: All checks passed";
+    const checks = args.primary.match(/^(\d+)\/(\d+) pass$/);
+    return checks && Number(checks[1]) > 0 && checks[1] === checks[2]
+      ? "Run completed: All evaluators passed"
+      : `Run completed: ${goal}`;
   }
   if (args.outcome === "rate_limited") {
     return /\d+\/\d+ pass/.test(args.primary)
       ? "Run completed: Goal completion had mixed results"
-      : "Run limited: not run";
+      : "Execution limited";
   }
   if (args.outcome === "failed") {
-    return `Run failed: ${goal}`;
+    return `Broke: ${goal}`;
   }
   return goal;
 }
 
 function avatarState(
-  outcome: CellView["outcome"]
+  outcome: CellView["outcome"],
 ): "idle" | "running" | "error" {
   if (outcome === "running" || outcome === "queued") return "running";
   if (outcome === "failed") return "error";
@@ -191,7 +204,7 @@ function avatarState(
 
 function columnsFromRun(
   run: JourneyRun,
-  hostName: (hostId: string) => string | undefined
+  hostName: (hostId: string) => string | undefined,
 ): SwarmRunningColumn[] {
   // snapshot.hosts is the fan-out the runner actually uses — prefer it over
   // hostSummaries, which can lag or key oddly while attempts are in flight.
@@ -227,7 +240,7 @@ function columnsFromRun(
 function attributeSessions(
   run: JourneyRun,
   sessions: JourneySessionRow[],
-  hostName: (hostId: string) => string | undefined
+  hostName: (hostId: string) => string | undefined,
 ): {
   columns: SwarmRunningColumn[];
   targets: SwarmTargetColumn[];
@@ -254,12 +267,12 @@ function attributeSessions(
       if (!byHost.has(session.hostId)) {
         byHost.set(
           session.hostId,
-          hostName(session.hostId) ?? session.hostId.slice(0, 8)
+          hostName(session.hostId) ?? session.hostId.slice(0, 8),
         );
       }
     }
     const fallbackTargets: SwarmTargetColumn[] = Array.from(
-      byHost.entries()
+      byHost.entries(),
     ).map(([key, label]) => ({
       key,
       hostId: key,
@@ -302,7 +315,7 @@ function attributeSessions(
 
 function streamMatchesColumn(
   envelope: { hostId: string; targetId?: string },
-  columnKey: string
+  columnKey: string,
 ): boolean {
   if (summaryTargetKey(envelope) === columnKey) return true;
   if (envelope.targetId === columnKey) return true;
@@ -312,10 +325,12 @@ function streamMatchesColumn(
 
 function RunLiveBridge({
   runId,
+  streamEnabled,
   hostName,
   onSnapshot,
 }: {
   runId: string;
+  streamEnabled: boolean;
   hostName: (hostId: string) => string | undefined;
   onSnapshot: (runId: string, snapshot: RunLiveSnapshot | null) => void;
 }) {
@@ -323,15 +338,21 @@ function RunLiveBridge({
     SWARM_QUERIES.getJourneyRun as any,
     {
       runId,
-    } as any
+    } as any,
   ) as JourneyRun | null | undefined;
   const { results: sessionResults } = usePaginatedQuery(
     SWARM_QUERIES.listSessionsByJourneyRun as any,
     { journeyRunId: runId } as any,
-    { initialNumItems: Math.max(DEFAULT_PAGE_SIZE, 32) }
+    { initialNumItems: Math.max(DEFAULT_PAGE_SIZE, 32) },
   );
   const runStatus = run?.status ?? "running";
-  const stream = useJourneyRunStream(runId, runStatus === "running");
+  // Convex supplies the whole matrix's progress over its shared connection.
+  // Only the selected trace needs SSE: one stream per row exhausts the
+  // browser's HTTP/1.1 connection pool and queues later rows indefinitely.
+  const stream = useJourneyRunStream(
+    runId,
+    streamEnabled && runStatus === "running",
+  );
 
   useEffect(() => {
     if (run === undefined) return;
@@ -366,24 +387,46 @@ function RunLiveBridge({
   return null;
 }
 
-function cellTone(outcome: CellView["outcome"]): string {
-  switch (outcome) {
-    case "succeeded":
-      return "border-emerald-500/30 bg-emerald-500/10";
-    case "failed":
-      return "border-destructive/40 bg-destructive/10";
-    case "rate_limited":
-      return "border-amber-500/40 bg-amber-500/10";
+/**
+ * Goal result owns the chip fill. Execution stays on the headline
+ * (`Running:` / `Broke:`) so a broken-but-passed session reads green and a
+ * completed-but-failed one reads red — without a second "Goal result:" label.
+ */
+export function sessionChipTone(args: {
+  outcome: CellView["outcome"];
+  verdict?: JourneySessionRow["verdict"];
+}): string {
+  const goal = args.verdict?.verdict;
+  if (goal === "passed") return "border-success/40 bg-success/10";
+  if (goal === "failed") return "border-destructive/40 bg-destructive/10";
+  if (goal === "inconclusive") return "border-warning/40 bg-warning/10";
+  if (
+    args.verdict &&
+    (args.verdict.grading.state === "queued" ||
+      args.verdict.grading.state === "running")
+  ) {
+    return "border-pending/40 bg-pending/10";
+  }
+  switch (args.outcome) {
     case "running":
-      return "border-primary/40 bg-primary/5";
     case "queued":
       return "border-primary/40 bg-primary/5";
+    case "rate_limited":
+      return "border-warning/40 bg-warning/10";
+    case "failed":
+      return "border-destructive/40 bg-destructive/10";
     default:
       return "border-border/50 bg-muted/15";
   }
 }
 
-function slotView(args: {
+export function sessionGoalResultAttr(
+  verdict?: JourneySessionRow["verdict"],
+): string {
+  return verdict?.verdict ?? "unknown";
+}
+
+export function slotView(args: {
   liveStatus?: SwarmCellLiveStatus;
   session: JourneySessionRow | null;
   attempt?: SwarmAttemptOutcome | null;
@@ -397,6 +440,28 @@ function slotView(args: {
     attempt,
     runStatus,
   });
+
+  if (session?.verdict) {
+    const verdict = session.verdict;
+    const execution = {
+      pending: "pending",
+      running: "running",
+      ran: "succeeded",
+      broke: "failed",
+      limited: "rate_limited",
+      withdrawn: "failed",
+    } as const;
+    const mapped = execution[verdict.lifecycle];
+    return {
+      outcome: mapped,
+      headline: swarmCellHeadline({
+        outcome: mapped,
+        primary: mapped,
+        goal,
+      }),
+      verdict,
+    };
+  }
 
   if (outcome === "running") {
     return {
@@ -429,11 +494,7 @@ function slotView(args: {
     };
   }
 
-  // A non-success terminal is reported BEFORE the rubric, and never dressed up
-  // as one. A rate-limited attempt never ran, so it has no rubric result to
-  // show — and reusing the `rate_limited` tone for a partial rubric pass (as
-  // the block below still does for its own middle case) must not leak into a
-  // cell that was genuinely refused by the provider.
+  // Execution refusal remains distinct from a measured goal result.
   if (outcome === "rate_limited") {
     return {
       outcome: "rate_limited",
@@ -450,26 +511,6 @@ function slotView(args: {
       headline: swarmCellHeadline({
         outcome: "failed",
         primary: "failed",
-        goal,
-      }),
-    };
-  }
-
-  const criteria = session?.criteria;
-  if (criteria?.status === "completed" && criteria.results?.length) {
-    const checks = criteria.results.length;
-    const passed = criteria.results.filter((result) => result.passed).length;
-    const scored: CellView["outcome"] =
-      passed === checks
-        ? "succeeded"
-        : passed === 0
-          ? "failed"
-          : "rate_limited";
-    return {
-      outcome: scored,
-      headline: swarmCellHeadline({
-        outcome: scored,
-        primary: `${passed}/${checks} pass`,
         goal,
       }),
     };
@@ -524,7 +565,7 @@ function collectSessionSlots(args: {
     }
     attemptByTargetSlot.set(
       `${attemptTargetKey(attempt)}#${attempt.sessionIdx}`,
-      attempt
+      attempt,
     );
   }
 
@@ -532,22 +573,21 @@ function collectSessionSlots(args: {
     const chatSessionId = swarmAttemptChatSessionId(
       run.runId,
       target.identity,
-      index
+      index,
     );
     const direct = snap.stream.cellStatus[swarmCellKey(columnKey, index)] as
-      | SwarmCellLiveStatus
-      | undefined;
+      SwarmCellLiveStatus | undefined;
     const fromEnvelope = Object.values(snap.stream.sessions).find(
       (entry) =>
         entry.envelope.sessionIndex === index &&
-        streamMatchesColumn(entry.envelope, columnKey)
+        streamMatchesColumn(entry.envelope, columnKey),
     );
     const live = direct ?? fromEnvelope?.attemptStatus;
     const session =
       snap.sessions.find(
         (row) =>
           row.chatSessionId === chatSessionId ||
-          row.chatSessionId === fromEnvelope?.envelope.chatSessionId
+          row.chatSessionId === fromEnvelope?.envelope.chatSessionId,
       ) ?? null;
 
     const attempt =
@@ -568,13 +608,13 @@ function collectSessionSlots(args: {
       hostId: target.hostId,
       sessionIndex: index,
       chatSessionId: fromEnvelope?.envelope.chatSessionId ?? chatSessionId,
-        view: slotView({
-          liveStatus: live,
-          session,
-          attempt,
-          runStatus: snap.status,
-          goal,
-        }),
+      view: slotView({
+        liveStatus: live,
+        session,
+        attempt,
+        runStatus: snap.status,
+        goal,
+      }),
     });
   }
 
@@ -582,7 +622,7 @@ function collectSessionSlots(args: {
 }
 
 function mergeStreams(
-  snapshots: Record<string, RunLiveSnapshot>
+  snapshots: Record<string, RunLiveSnapshot>,
 ): JourneyRunStreamState {
   let stream: JourneyRunStreamState = {
     sessions: {},
@@ -641,7 +681,7 @@ export function NewSwarmRunningStep({
   chrome?: "wizard" | "page";
   /**
    * Leave the watch surface for the swarm's Findings page. Does not cancel
-   * the run — "Stop" used to imply that and was a lie.
+   * the run — that is "Stop run", a separate, confirmed control.
    */
   onLeave: () => void;
   /**
@@ -664,19 +704,21 @@ export function NewSwarmRunningStep({
       const host = hostById.get(hostId);
       return host ? clientDisplayName(host) : undefined;
     },
-    [hostById]
+    [hostById],
   );
 
   const clientLabel = useMemo(() => {
     const envById = new Map(
-      environments.map((env) => [env.environmentId, env] as const)
+      environments.map((env) => [env.environmentId, env] as const),
     );
     return (key: string, fallback: string) => {
       if (key.startsWith("environment:")) {
         const env = envById.get(key.slice("environment:".length));
         if (env) {
           const host = hostById.get(env.hostId);
-          return (host ? clientDisplayName(host) : null) ?? env.name ?? fallback;
+          return (
+            (host ? clientDisplayName(host) : null) ?? env.name ?? fallback
+          );
         }
       }
       return hostName(key) ?? fallback;
@@ -684,7 +726,7 @@ export function NewSwarmRunningStep({
   }, [environments, hostById, hostName]);
 
   const [snapshots, setSnapshots] = useState<Record<string, RunLiveSnapshot>>(
-    {}
+    {},
   );
   const [selection, setSelection] = useState<RunningSelection | null>(null);
 
@@ -705,6 +747,19 @@ export function NewSwarmRunningStep({
           prev.status === snapshot.status &&
           prev.summaryDone === snapshot.summaryDone &&
           prev.summaryTotal === snapshot.summaryTotal &&
+          prev.summarySucceeded === snapshot.summarySucceeded &&
+          prev.summaryFailed === snapshot.summaryFailed &&
+          prev.summaryRateLimited === snapshot.summaryRateLimited &&
+          prev.attempts.length === snapshot.attempts.length &&
+          prev.attempts.every((attempt, index) => {
+            const next = snapshot.attempts[index];
+            return (
+              attempt.status === next?.status &&
+              attempt.errorCode === next?.errorCode &&
+              attempt.errorMessage === next?.errorMessage &&
+              attempt.chatSessionId === next?.chatSessionId
+            );
+          }) &&
           prev.sessionsPerTarget === snapshot.sessionsPerTarget &&
           prev.stream === snapshot.stream &&
           prev.columns.length === snapshot.columns.length &&
@@ -712,11 +767,11 @@ export function NewSwarmRunningStep({
             (column, index) =>
               column.key === snapshot.columns[index]?.key &&
               column.hostId === snapshot.columns[index]?.hostId &&
-              column.label === snapshot.columns[index]?.label
+              column.label === snapshot.columns[index]?.label,
           ) &&
           prev.targets.length === snapshot.targets.length &&
           prev.targets.every(
-            (target, index) => target.key === snapshot.targets[index]?.key
+            (target, index) => target.key === snapshot.targets[index]?.key,
           ) &&
           prev.sessions.length === snapshot.sessions.length &&
           prev.sessions.every(
@@ -725,8 +780,12 @@ export function NewSwarmRunningStep({
                 snapshot.sessions[index]?.chatSessionId &&
               session.status === snapshot.sessions[index]?.status &&
               session.messageCount === snapshot.sessions[index]?.messageCount &&
+              JSON.stringify(session.verdict) ===
+                JSON.stringify(snapshot.sessions[index]?.verdict) &&
+              JSON.stringify(session.observations) ===
+                JSON.stringify(snapshot.sessions[index]?.observations) &&
               session.criteria?.status ===
-                snapshot.sessions[index]?.criteria?.status
+                snapshot.sessions[index]?.criteria?.status,
           )
         ) {
           return current;
@@ -734,7 +793,7 @@ export function NewSwarmRunningStep({
         return { ...current, [runId]: snapshot };
       });
     },
-    []
+    [],
   );
 
   // Once any run snapshot has landed, columns come ONLY from those snapshots
@@ -768,7 +827,7 @@ export function NewSwarmRunningStep({
     const snapList = Object.values(snapshots);
     if (snapList.length === 0 || fallbackColumns.length === 0) return [];
     const onRuns = new Set(
-      snapList.flatMap((snap) => snap.columns.map((column) => column.key))
+      snapList.flatMap((snap) => snap.columns.map((column) => column.key)),
     );
     return fallbackColumns.filter((column) => !onRuns.has(column.key));
   }, [fallbackColumns, snapshots]);
@@ -806,6 +865,33 @@ export function NewSwarmRunningStep({
       };
     }, [runs, snapshots]);
 
+  // A launched run with no snapshot yet has not reported a status, so it is
+  // treated as still running — the stop must reach it.
+  const runningRunIds = useMemo(
+    () =>
+      runs
+        .filter((run) => {
+          const status = snapshots[run.runId]?.status;
+          return (
+            status === undefined || status === "running" || status === "pending"
+          );
+        })
+        .map((run) => run.runId),
+    [runs, snapshots],
+  );
+  const {
+    stop: stopRun,
+    busy: stopBusy,
+    stoppedHere,
+  } = useStopSwarmRun(runningRunIds);
+  /**
+   * Set on confirm, before the cancel resolves. Convex can deliver the
+   * now-terminal run rows ahead of the mutation's own result, so waiting for
+   * `stoppedHere` would let "Swarm complete!" fire for a run the viewer
+   * just stopped.
+   */
+  const stopRequestedRef = useRef(false);
+
   // Read through a ref so the effect below depends on `allTerminal` alone:
   // re-running it because a callback's identity changed would clear the
   // pending timer and strand the viewer on a finished run.
@@ -834,7 +920,9 @@ export function NewSwarmRunningStep({
     if (!completionAnnouncedRef.current) {
       completionAnnouncedRef.current = true;
       callbacksRef.current.onRunsComplete?.();
-      toast.success("Swarm complete!");
+      // A stopped wave already said so ("Run stopped"); calling it complete
+      // would contradict the viewer's own action.
+      if (!stopRequestedRef.current) toast.success("Swarm complete!");
     }
     const timer = window.setTimeout(() => {
       callbacksRef.current.onLeave();
@@ -852,10 +940,15 @@ export function NewSwarmRunningStep({
    * envelope.
    */
   const runFailure = useMemo(() => {
-    // Every line of the banner asserts that nothing ran, so one success
-    // silences it: on a mixed run it contradicted the title above it, which
-    // counts the run as finished. Those sessions speak through their own chips.
-    if (!allTerminal || succeeded > 0 || rateLimited + failed === 0) {
+    // This banner summarizes waves without a successful attempt. Failed
+    // attempts may still have recorded conversations and executed tools.
+    // A wave this viewer stopped reads as failed attempts, but nothing broke.
+    if (
+      !allTerminal ||
+      stoppedHere ||
+      succeeded > 0 ||
+      rateLimited + failed === 0
+    ) {
       return null;
     }
     for (const snap of Object.values(snapshots)) {
@@ -876,7 +969,7 @@ export function NewSwarmRunningStep({
       }
     }
     return null;
-  }, [allTerminal, failed, rateLimited, snapshots, succeeded]);
+  }, [allTerminal, failed, rateLimited, snapshots, stoppedHere, succeeded]);
 
   const progress = total > 0 ? Math.min(1, done / total) : allTerminal ? 1 : 0;
 
@@ -887,7 +980,7 @@ export function NewSwarmRunningStep({
     const snap = snapshots[selection.runId];
     return (
       snap?.sessions.find(
-        (session) => session.chatSessionId === selection.chatSessionId
+        (session) => session.chatSessionId === selection.chatSessionId,
       ) ?? null
     );
   }, [selection, snapshots]);
@@ -943,8 +1036,34 @@ export function NewSwarmRunningStep({
     return { count, label: labels.size === 1 ? (only ?? null) : null };
   }, [snapshots]);
 
+  // The other half of that split: sessions MCPJam's own account limit stopped.
+  // Skipping them above is right — no provider throttled anything — but on a
+  // run where other sessions succeeded, the run banner stays silent too, and
+  // the amber chips would be left unexplained.
+  const accountLimit = useMemo(() => {
+    let count = 0;
+    let message: string | null = null;
+    for (const snap of Object.values(snapshots)) {
+      for (const attempt of snap.attempts) {
+        if (attempt.status !== "rate_limited") continue;
+        const info = humanizeSwarmAttemptError(
+          attempt.errorMessage,
+          attempt.errorCode,
+        );
+        if (!isAccountLimit(info.message, attempt.errorCode ?? info.code)) {
+          continue;
+        }
+        count += 1;
+        // The whole-run finalize writes a code and no message; any sibling
+        // that stored the backend's sentence says it better.
+        if (!message && attempt.errorMessage) message = info.message;
+      }
+    }
+    return count === 0 ? null : { count, message };
+  }, [snapshots]);
+
   const selectedRunStatus = selection
-    ? snapshots[selection.runId]?.status ?? "running"
+    ? (snapshots[selection.runId]?.status ?? "running")
     : "running";
 
   const fallbackTrace = useMemo(
@@ -952,13 +1071,14 @@ export function NewSwarmRunningStep({
       selection
         ? liveSessionTrace(mergedStream.sessions[selection.chatSessionId])
         : null,
-    [mergedStream.sessions, selection]
+    [mergedStream.sessions, selection],
   );
 
   const showIntro =
     chrome === "wizard" ||
     missingPlannedClients.length > 0 ||
     providerRateLimit !== null ||
+    accountLimit !== null ||
     runFailure !== null;
 
   return (
@@ -970,6 +1090,7 @@ export function NewSwarmRunningStep({
         <RunLiveBridge
           key={run.runId}
           runId={run.runId}
+          streamEnabled={selection?.runId === run.runId}
           hostName={hostName}
           onSnapshot={onSnapshot}
         />
@@ -983,129 +1104,166 @@ export function NewSwarmRunningStep({
         }
       >
         {showIntro ? (
-        <div className="flex flex-wrap items-start gap-3">
-          <div className="min-w-0 flex-1 space-y-2">
-            {chrome === "wizard" ? (
-              <div className="flex items-start gap-2">
-                <h2
-                  className="mb-0 min-w-0 flex-1 text-xl font-semibold tracking-[-0.02em] text-muted-foreground"
-                  data-testid="new-swarm-running-title"
-                >
-                  {swarmRunningTitle({
-                    allTerminal,
-                    succeeded,
-                    rateLimited,
-                    done,
-                    total,
-                  })}
-                </h2>
-                <div className="flex shrink-0 items-center gap-2">
-                  <Button
-                    type="button"
-                    size="sm"
-                    className="shrink-0"
-                    data-testid="new-swarm-running-open-findings"
-                    onClick={onLeave}
+          <div className="flex flex-wrap items-start gap-3">
+            <div className="min-w-0 flex-1 space-y-2">
+              {chrome === "wizard" ? (
+                <div className="flex items-start gap-2">
+                  <h2
+                    className="mb-0 min-w-0 flex-1 text-xl font-semibold tracking-[-0.02em] text-muted-foreground"
+                    data-testid="new-swarm-running-title"
                   >
-                    Open findings
-                  </Button>
-                </div>
-              </div>
-            ) : null}
-            {missingPlannedClients.length > 0 ? (
-              <p
-                className="text-sm text-amber-700 dark:text-amber-300"
-                data-testid="new-swarm-running-missing-clients"
-                role="status"
-              >
-                Selected at Describe but not on these runs:{" "}
-                {missingPlannedClients
-                  .map((column) => clientLabel(column.key, column.label))
-                  .join(" · ")}
-                . These runs launched without that environment — leave and
-                launch the swarm again to include it.
-              </p>
-            ) : null}
-            {providerRateLimit ? (
-              <div
-                className="rounded-md border border-warning bg-warning/20 px-3 py-2 text-sm text-warning-foreground"
-                data-testid="new-swarm-running-rate-limit"
-                role="status"
-              >
-                <p className="font-medium">
-                  {providerRateLimit.label
-                    ? `${providerRateLimit.label} rate-limited this key.`
-                    : "Your providers rate-limited these keys."}
-                </p>
-                <p className="mt-0.5">
-                  {providerRateLimit.count === 1
-                    ? "1 session stopped."
-                    : `${providerRateLimit.count} sessions stopped.`}{" "}
-                  Retry again later or switch models.
-                </p>
-              </div>
-            ) : null}
-
-            {runFailure ? (
-              <div
-                className={cn(
-                  "rounded-md border px-3 py-2 text-sm",
-                  // Calm (amber) for the two outcomes whose fix is "do it
-                  // again": a provider refusal, and an authorization handshake
-                  // that needs re-running. Destructive red stays for failures
-                  // the user has to go and repair — an expired sign-in in front
-                  // of an XAA-protected server is not an incident.
-                  runFailure.kind === "rate_limited" ||
-                    runFailure.info.rerunnable
-                    ? "border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-200"
-                    : "border-destructive/40 bg-destructive/10 text-destructive"
-                )}
-                data-testid="new-swarm-running-failure"
-                role="status"
-              >
-                <p className="font-medium">
-                  {runFailure.kind === "rate_limited"
-                    ? "No sessions ran — the model provider refused the request."
-                    : runFailure.info.rerunnable
-                    ? "No sessions ran — this run's authorization needs re-running."
-                    : "No sessions ran."}
-                </p>
-                <p className="mt-0.5">{runFailure.info.message}</p>
-                {runFailure.info.canTopUp ? (
-                  <p className="mt-0.5 text-[13px] opacity-90">
-                    Add credit or connect your own provider key (BYOK) to run
-                    now.
-                  </p>
-                ) : null}
-              </div>
-            ) : null}
-            {chrome === "wizard" ? (
-              <>
-                <SwarmRunningHero
-                  className={allTerminal ? "justify-end" : "justify-start"}
-                />
-                <div className="flex items-center gap-3">
-                  <div
-                    className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-muted"
-                    role="progressbar"
-                    aria-valuenow={Math.round(progress * 100)}
-                    aria-valuemin={0}
-                    aria-valuemax={100}
-                    data-testid="new-swarm-running-progress"
-                  >
-                    <div
-                      className="h-full rounded-full bg-primary transition-[width] duration-500"
-                      style={{ width: `${Math.round(progress * 100)}%` }}
-                    />
+                    {swarmRunningTitle({
+                      allTerminal,
+                      succeeded,
+                      rateLimited,
+                      done,
+                      total,
+                      stopped: stoppedHere,
+                    })}
+                  </h2>
+                  <div className="flex shrink-0 items-center gap-2">
+                    {allTerminal ? null : (
+                      <StopSwarmRunButton
+                        runningCount={runningRunIds.length}
+                        busy={stopBusy}
+                        onConfirm={() => {
+                          stopRequestedRef.current = true;
+                          void stopRun().then((outcome) => {
+                            // Nothing stopped: a wave that later finishes on
+                            // its own should still say so.
+                            if (outcome === "refused") {
+                              stopRequestedRef.current = false;
+                            }
+                          });
+                        }}
+                        testIdPrefix="new-swarm-running"
+                      />
+                    )}
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="shrink-0"
+                      data-testid="new-swarm-running-open-findings"
+                      onClick={onLeave}
+                    >
+                      Open findings
+                    </Button>
                   </div>
-                  <span className="shrink-0 text-xs text-foreground">
-                    {`${Math.round(progress * 100)}%`}
-                  </span>
                 </div>
-              </>
-            ) : null}
+              ) : null}
+              {missingPlannedClients.length > 0 ? (
+                <p
+                  className="text-sm text-amber-700 dark:text-amber-300"
+                  data-testid="new-swarm-running-missing-clients"
+                  role="status"
+                >
+                  Selected at Describe but not on these runs:{" "}
+                  {missingPlannedClients
+                    .map((column) => clientLabel(column.key, column.label))
+                    .join(" · ")}
+                  . These runs launched without that environment — leave and
+                  launch the swarm again to include it.
+                </p>
+              ) : null}
+              {providerRateLimit ? (
+                <div
+                  className="rounded-md border border-warning bg-warning/20 px-3 py-2 text-sm text-warning-foreground"
+                  data-testid="new-swarm-running-rate-limit"
+                  role="status"
+                >
+                  <p className="font-medium">
+                    {providerRateLimit.label
+                      ? `${providerRateLimit.label} rate-limited this key.`
+                      : "Your providers rate-limited these keys."}
+                  </p>
+                  <p className="mt-0.5">
+                    {providerRateLimit.count === 1
+                      ? "1 session stopped."
+                      : `${providerRateLimit.count} sessions stopped.`}{" "}
+                    Retry again later or switch models.
+                  </p>
+                </div>
+              ) : null}
+              {/* The run banner already carries this sentence when nothing
+                  succeeded; saying it twice adds nothing. */}
+              {accountLimit && !runFailure ? (
+                <div
+                  className="rounded-md border border-warning bg-warning/20 px-3 py-2 text-sm text-warning-foreground"
+                  data-testid="new-swarm-running-account-limit"
+                  role="status"
+                >
+                  <p className="font-medium">
+                    {accountLimit.count === 1
+                      ? "1 session stopped at your MCPJam model limit."
+                      : `${accountLimit.count} sessions stopped at your MCPJam model limit.`}
+                  </p>
+                  <p className="mt-0.5">
+                    {accountLimit.message ??
+                      "Add credit or connect your own provider key (BYOK) to keep running."}
+                  </p>
+                </div>
+              ) : null}
+
+              {runFailure ? (
+                <div
+                  className={cn(
+                    "rounded-md border px-3 py-2 text-sm",
+                    // Calm (amber) for the two outcomes whose fix is "do it
+                    // again": a provider refusal, and an authorization handshake
+                    // that needs re-running. Destructive red stays for failures
+                    // the user has to go and repair — an expired sign-in in front
+                    // of an XAA-protected server is not an incident.
+                    runFailure.kind === "rate_limited" ||
+                      runFailure.info.rerunnable
+                      ? "border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-200"
+                      : "border-destructive/40 bg-destructive/10 text-destructive",
+                  )}
+                  data-testid="new-swarm-running-failure"
+                  role="status"
+                >
+                  <p className="font-medium">
+                    {runFailure.kind === "rate_limited"
+                      ? "No sessions completed successfully — requests were rate-limited."
+                      : runFailure.info.rerunnable
+                      ? "This run's authorization needs re-running."
+                      : "No sessions completed successfully."}
+                  </p>
+                  <p className="mt-0.5">{runFailure.info.message}</p>
+                  {runFailure.info.canTopUp ? (
+                    <p className="mt-0.5 text-[13px] opacity-90">
+                      Add credit or connect your own provider key (BYOK) to run
+                      now.
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+              {chrome === "wizard" ? (
+                <>
+                  <SwarmRunningHero
+                    className={allTerminal ? "justify-end" : "justify-start"}
+                  />
+                  <div className="flex items-center gap-3">
+                    <div
+                      className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-muted"
+                      role="progressbar"
+                      aria-valuenow={Math.round(progress * 100)}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      data-testid="new-swarm-running-progress"
+                    >
+                      <div
+                        className="h-full rounded-full bg-primary transition-[width] duration-500"
+                        style={{ width: `${Math.round(progress * 100)}%` }}
+                      />
+                    </div>
+                    <span className="shrink-0 text-xs text-foreground">
+                      {`${Math.round(progress * 100)}%`}
+                    </span>
+                  </div>
+                </>
+              ) : null}
+            </div>
           </div>
-        </div>
         ) : null}
 
         {columns.length === 0 ? (
@@ -1113,7 +1271,10 @@ export function NewSwarmRunningStep({
             Waiting for client targets from the launched runs…
           </p>
         ) : (
-          <div className="overflow-x-auto rounded-xl border border-border/50">
+          <div
+            className="overflow-x-auto rounded-xl border border-border/50"
+            data-testid="new-swarm-running-matrix"
+          >
             <table className="w-full min-w-[28rem] border-collapse text-left">
               <thead>
                 <tr className="border-b border-border/40">
@@ -1168,7 +1329,7 @@ export function NewSwarmRunningStep({
                                 aria-label={`Watch ${run.personaName} on ${column.label} session 1`}
                                 className={cn(
                                   "flex items-center gap-1 rounded-lg border px-2.5 py-2",
-                                  cellTone("queued")
+                                  sessionChipTone({ outcome: "queued" }),
                                 )}
                               >
                                 <PersonaPixelAvatar
@@ -1198,10 +1359,15 @@ export function NewSwarmRunningStep({
                                       type="button"
                                       data-testid="new-swarm-running-session"
                                       data-outcome={slot.view.outcome}
+                                      data-goal-result={sessionGoalResultAttr(
+                                        slot.view.verdict,
+                                      )}
                                       aria-pressed={selected}
-                                      aria-label={`Watch ${run.personaName} on ${
-                                        column.label
-                                      } session ${slot.sessionIndex + 1}`}
+                                      aria-label={`Watch ${
+                                        run.personaName
+                                      } on ${column.label} session ${
+                                        slot.sessionIndex + 1
+                                      }`}
                                       onClick={() =>
                                         setSelection({
                                           runId: slot.runId,
@@ -1215,9 +1381,12 @@ export function NewSwarmRunningStep({
                                       className={cn(
                                         "flex items-center gap-1 rounded-lg border px-2.5 py-2 text-left transition-colors",
                                         "hover:brightness-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                                        cellTone(slot.view.outcome),
+                                        sessionChipTone({
+                                          outcome: slot.view.outcome,
+                                          verdict: slot.view.verdict,
+                                        }),
                                         selected &&
-                                          "ring-2 ring-primary ring-offset-1 ring-offset-background"
+                                          "ring-2 ring-primary ring-offset-1 ring-offset-background",
                                       )}
                                     >
                                       <PersonaPixelAvatar
@@ -1258,7 +1427,10 @@ export function NewSwarmRunningStep({
       >
         <SwarmLiveStreamPane
           selection={selection}
-          stream={mergedStream}
+          stream={
+            (selection ? snapshots[selection.runId]?.stream : undefined) ??
+            mergedStream
+          }
           convexSession={selectedConvex}
           attempt={selectedAttempt}
           fallbackTrace={fallbackTrace}

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   PREDICATE_STAGE,
+  STANDARD_CHECK_NAME_BY_KIND,
   USER_VALUE_STAGES,
 } from "@mcpjam/sdk/contract";
 import {
@@ -25,6 +26,7 @@ import {
   buildCaseScorecard,
   caseLibraryKinds,
   deriveRubricSource,
+  expectationOf,
   removeCaseScorer,
   ROUTE_OWNED_KINDS,
   purposeOf,
@@ -492,7 +494,63 @@ describe("labels", () => {
     // it like the whole-run one would claim it checked the entire trial.
     const predicate = { type: "noToolErrors" } as Predicate;
     expect(scorerRowLabel(predicate, "step")).toBe("No tool errors so far");
-    expect(scorerRowLabel(predicate, "case")).toBe("No tool errors");
+  });
+
+  it("titles a standard check by what it evaluates, from the catalog", () => {
+    // The rule that implements it is this row's expectation, not its name.
+    const predicate = { type: "noToolErrors" } as Predicate;
+    expect(scorerRowLabel(predicate, "case")).toBe(
+      STANDARD_CHECK_NAME_BY_KIND.noToolErrors,
+    );
+    expect(scorerRowLabel(predicate, "suite")).toBe("Tool errors (isError)");
+  });
+
+  it("keeps the rule as the title for a check the catalog does not name", () => {
+    const predicate = {
+      type: "responseContains",
+      value: "ORD-48213",
+    } as Predicate;
+    expect(scorerRowLabel(predicate, "case")).toBe(
+      formatCriterion({ predicate }),
+    );
+  });
+});
+
+describe("expectationOf", () => {
+  const judgeRow = (input: CaseScorecardInput) => {
+    const row = allRows(input).find((candidate) => candidate.judge);
+    if (!row) throw new Error("no judge row");
+    return row;
+  };
+
+  it("gives the judge row the case's own expected outcome", () => {
+    // The judge was asked to decide THIS sentence; a generic restatement of
+    // "the configured rubric" tells a reader nothing they cannot already see.
+    const expectedOutput =
+      "Server diagnostics reveal connection status and the run completes.";
+    expect(expectationOf(judgeRow({ ...base, expectedOutput }))).toBe(
+      expectedOutput,
+    );
+  });
+
+  it("names the rubric when the case authored no outcome", () => {
+    expect(expectationOf(judgeRow(base))).toBe(
+      "Satisfy the task according to the configured judge rubric.",
+    );
+    expect(expectationOf(judgeRow({ ...base, expectedOutput: "   " }))).toBe(
+      "Satisfy the task according to the configured judge rubric.",
+    );
+  });
+
+  it("gives a check row the configured rule, not its title", () => {
+    const predicate = { type: "noToolErrors" } as Predicate;
+    const row = allRows({
+      ...base,
+      predicates: { mode: "extend", list: [predicate] },
+    }).find((candidate) => candidate.predicate?.type === "noToolErrors");
+    if (!row) throw new Error("no check row");
+    expect(row.label).toBe("Tool errors (isError)");
+    expect(expectationOf(row)).toBe(formatCriterion({ predicate }));
   });
 });
 

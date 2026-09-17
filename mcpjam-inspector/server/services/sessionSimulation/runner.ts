@@ -32,6 +32,7 @@ import type { MCPJamHandlerOptions } from "../../utils/mcpjam-stream-handler.js"
 import { resolveLocalOrgMaxSteps } from "../../utils/org-model-stream-handler.js";
 import type { DirectChatTurnTraceEvents } from "../../utils/direct-chat-turn.js";
 import type { SwarmStreamPayload } from "../../../shared/swarm-stream-events.js";
+import { getHostedTurnFailure } from "../../utils/hosted-turn-failure.js";
 import { runUnifiedAssistantTurn } from "../../utils/turn-execution.js";
 import {
   resolveTurnRuntime,
@@ -286,6 +287,13 @@ export interface SyntheticHostRuntime {
   modelDefinition: ModelDefinition;
   systemPrompt: string;
   temperature?: number;
+  /**
+   * Tool-step cap for ONE assistant turn. Absent ⇒ the engine's own default
+   * (the Playground's 30). A synthetic persona turn resends every tool result
+   * of the turn on every step, so the cap bounds both wall clock and tokens;
+   * the swarm runner pins its own, the scenario runner keeps the default.
+   */
+  maxSteps?: number;
   requireToolApproval: boolean;
   respectToolVisibility?: boolean;
   progressiveToolDiscovery?: boolean;
@@ -488,6 +496,7 @@ export async function runSyntheticHostSession(
     modelDefinition,
     systemPrompt,
     temperature,
+    maxSteps,
     requireToolApproval,
     respectToolVisibility,
     progressiveToolDiscovery,
@@ -917,16 +926,18 @@ export async function runSyntheticHostSession(
             }
           : { kind: "none" }
         : harness || requireToolApproval || pinnedSkills.length === 0
-          ? { kind: "none" }
-          : {
-              kind: "pinned",
-              skills: pinnedSkills.map((a): PinnableSkill => ({
+        ? { kind: "none" }
+        : {
+            kind: "pinned",
+            skills: pinnedSkills.map(
+              (a): PinnableSkill => ({
                 name: a.name,
                 description: a.description,
                 content: a.content,
                 contentHash: a.contentHash,
-              })),
-            };
+              }),
+            ),
+          };
 
     const prepared = await prepareChatV2({
       mcpClientManager: manager,
@@ -1033,7 +1044,25 @@ export async function runSyntheticHostSession(
 
       const next = await nextPersonaTurn(lastTranscript);
 
-      if (next.endSession) break;
+      if (next.endSession) {
+        if (turn === 0) {
+          throw Object.assign(
+            new Error(
+              "The simulated user ended the session before sending the first message. The assistant was not tested. Re-run this attempt."
+            ),
+            { details: { reason: "persona_ended_before_start" } }
+          );
+        }
+        break;
+      }
+      if (!next.message.trim()) {
+        throw Object.assign(
+          new Error(
+            "The simulated user returned an empty message. No assistant turn was started for that message. Re-run this attempt."
+          ),
+          { details: { reason: "persona_empty_message" } }
+        );
+      }
 
       messageHistory.push({
         role: "user",
@@ -1055,6 +1084,7 @@ export async function runSyntheticHostSession(
         prompt: next.message,
       });
 
+      let failedTurn: RecordedAssistantTurnError | undefined;
       const {
         history: updatedHistory,
         turnTrace,
@@ -1073,6 +1103,7 @@ export async function runSyntheticHostSession(
         sourceType: persist.sourceType,
         systemPrompt: prepared.enhancedSystemPrompt,
         temperature: prepared.resolvedTemperature,
+        ...(maxSteps !== undefined ? { maxSteps } : {}),
         // `computer` / `finish_widget` merge into the advertised set; the
         // prepareAdvertisedTools hook hides them until a widget is mounted.
         tools: { ...prepared.allTools, ...browser.computerWidgetTools },
@@ -1203,6 +1234,12 @@ export async function runSyntheticHostSession(
         // writers can stamp the run id onto llmUsageRecord for per-run spend
         // attribution.
         ...(persist.journeyRunId ? { journeyRunId: persist.journeyRunId } : {}),
+      }).catch((error: unknown) => {
+        if (!(error instanceof RecordedAssistantTurnError)) throw error;
+        // Like evals, save the failed turn's evidence before terminating the
+        // session. Do not ask the persona to react to an absent reply.
+        failedTurn = error;
+        return error.turn;
       });
 
       if (turnDeadline.firedClock() === "turn") {
@@ -1238,6 +1275,7 @@ export async function runSyntheticHostSession(
       lastTranscript.push({ role: "assistant", content: assistantText });
 
       if (!turnTrace) {
+        if (failedTurn) throw failedTurn;
         // No-trace turns skip transcript persistence (today only the aborted
         // local-BYOK path reaches here — failed turns throw above). Their
         // browser artifacts must still leave the context's "new" window now: a
@@ -1366,13 +1404,19 @@ export async function runSyntheticHostSession(
           );
         }
       }
+      if (failedTurn) throw failedTurn;
     }
 
-    // Session ended before any assistant turn completed (persona returned
-    // endSession on turn 0, or every turn aborted). Persist once with no trace
-    // so the chatSessions row exists and the run summary lines up. Kept on the
-    // success path (rather than deferred to the terminal) so a failure to write
-    // it still fails the session, as it always has.
+    // The success path must have exercised the assistant. In particular, an
+    // invalid zero-turn budget must not turn an empty simulation into success.
+    if (messageHistory.length === 0) {
+      throw Object.assign(
+        new Error(
+          "The simulation ended without starting a conversation. The assistant was not tested."
+        ),
+        { details: { reason: "simulation_no_conversation" } }
+      );
+    }
     await ensureSessionPersisted();
 
     emit?.({ type: "session_complete", status: "succeeded" });
@@ -1730,6 +1774,22 @@ export interface DrainAssistantTurnHooks {
   onToolCallChunk?: DirectChatTurnTraceEvents["onToolCallChunk"];
 }
 
+/** A failed hosted turn still owns transcript and trace evidence to persist. */
+class RecordedAssistantTurnError extends Error {
+  constructor(
+    message: string,
+    readonly turn: {
+      history: ModelMessage[];
+      turnTrace: PersistedTurnTrace | undefined;
+      modelSource: SyntheticModelSource;
+      harnessSessionCommit?: HarnessSessionCommitPayload;
+    },
+  ) {
+    super(message);
+    this.name = "RecordedAssistantTurnError";
+  }
+}
+
 /**
  * TEMPORARY COMPATIBILITY ADAPTER (PR 3a). `drainAssistantTurn` is now a thin
  * wrapper over {@link resolveTurnRuntime} + {@link runUnifiedAssistantTurn}: it
@@ -1745,9 +1805,10 @@ export interface DrainAssistantTurnHooks {
  * `synthetic: true`, `personaId`, `journeyRunId`).
  *
  * Error contract (byte-preserved from the pre-facade dispatch): turn failures
- * THROW. Hosted engines signal failure with a MISSING turnTrace on a
- * non-aborted turn (recovered per-step errors keep their trace and succeed);
- * the direct engine always produces a trace, so it signals failure via
+ * THROW. Hosted engines use the same failure inspection as evals: missing
+ * traces, empty replies, and failed model-step spans terminate the session.
+ * Tool-error evidence remains distinct. The direct engine always produces a
+ * trace, so it signals failure via
  * `onEngineError`. Surfacing the failure lets `runOneSession`'s classifier see
  * real spend-cap / rate-limit errors (→ `"rate_limited"`) and genuine provider
  * failures (→ `"failed"`).
@@ -1859,7 +1920,8 @@ export async function drainAssistantTurn(
   // Engine-error signal. Structural type covers both the hosted
   // `MCPJamEngineErrorEvent` and the direct `DirectChatTurnEngineErrorEvent`.
   let lastEngineError:
-    { message: string; code?: string; httpStatus?: number } | undefined;
+    | { message: string; code?: string; httpStatus?: number }
+    | undefined;
   const captureEngineError = (event: {
     message: string;
     code?: string;
@@ -1959,6 +2021,7 @@ export async function drainAssistantTurn(
     runtime: rt.runtime,
     streamSink: "none",
     persistMode: "caller",
+    ...(args.maxSteps !== undefined ? { maxSteps: args.maxSteps } : {}),
     messages: args.messages,
     modelDefinition,
     systemPrompt: args.systemPrompt,
@@ -2024,12 +2087,23 @@ export async function drainAssistantTurn(
     onEngineError: captureEngineError,
   });
 
-  // A produced turnTrace means the turn semantically succeeded (recovered
-  // per-step engine errors keep their trace). A MISSING turnTrace on a
-  // non-aborted turn always means the engine failed — throw even when no
-  // `onEngineError` event was captured, so a failed turn can't silently record
-  // an empty assistant reply and skip persistence.
-  if (!result.turnTrace && !args.abortSignal?.aborted) {
+  // Share evals' failure policy: a hosted engine can return a trace after
+  // a rejected request, or after a later model step failed. Neither is a
+  // successful reply for the persona to react to.
+  const turnFailure = getHostedTurnFailure({
+    turnTrace: result.turnTrace,
+    newMessageCount: result.newMessages.length,
+  });
+  if (turnFailure && !args.abortSignal?.aborted) {
+    const failed = (message: string) =>
+      new RecordedAssistantTurnError(message, {
+        history: result.messages,
+        turnTrace: result.turnTrace,
+        modelSource: rt.modelSource,
+        ...(result.harnessSessionCommit
+          ? { harnessSessionCommit: result.harnessSessionCommit }
+          : {}),
+      });
     if (lastEngineError) {
       const detail = [
         lastEngineError.code,
@@ -2039,15 +2113,13 @@ export async function drainAssistantTurn(
       ]
         .filter(Boolean)
         .join(", ");
-      throw new Error(
+      throw failed(
         detail
           ? `${lastEngineError.message} (${detail})`
           : lastEngineError.message,
       );
     }
-    throw new Error(
-      "Assistant turn failed: the engine returned no turn trace (stream error or empty response)",
-    );
+    throw failed(turnFailure);
   }
 
   await rt.finalizeUsage(result); // no-op for hosted engines

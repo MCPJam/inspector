@@ -1,3 +1,4 @@
+import type { PersistedRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type { ResumeExecutionTarget } from "@/shared/execution-target";
 import type { MintedPageToolRecord } from "@/shared/declared-tools";
 import type { Context } from "hono";
@@ -238,6 +239,7 @@ export function buildDirectHostConfig(input: {
  * Kept in one place so the producer callbacks and the wire body can't drift.
  */
 export interface PersistedTurnTrace {
+  requestPayloads?: PersistedRequestPayloadEntry[];
   turnId: string;
   browserAtTurn?: {
     browserSessionId: string;

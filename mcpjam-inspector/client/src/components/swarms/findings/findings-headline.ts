@@ -25,6 +25,7 @@ import {
 } from "./journey-stages";
 import type {
   GoalFindingsModel,
+  LaunchTotals,
   PersonaFindingsModel,
   SwarmFindingsModel,
 } from "./findings-derivation";
@@ -33,7 +34,7 @@ const LINE_MAX_WORDS = 16;
 const GOAL_TITLE_MAX_WORDS = 4;
 
 function firstFailingGoal(
-  persona: PersonaFindingsModel
+  persona: PersonaFindingsModel,
 ): GoalFindingsModel | undefined {
   return persona.goals.find((goal) => goal.diagnosisStage !== null);
 }
@@ -46,7 +47,7 @@ function firstFailingGoal(
 function diagnosisIsGoalSpecific(goal: GoalFindingsModel): boolean {
   if (goal.diagnosisStage === null) return false;
   return goal.stages[goal.diagnosisStage].evidence.some(
-    (item) => item.tone === "fail" && !item.personaScoped
+    (item) => item.tone === "fail" && !item.personaScoped,
   );
 }
 
@@ -57,18 +58,19 @@ function diagnosisIsGoalSpecific(goal: GoalFindingsModel): boolean {
  */
 function frictionIsGoalSpecific(
   goal: GoalFindingsModel,
-  stage: JourneyStageId
+  stage: JourneyStageId,
 ): boolean {
   return goal.stages[stage].evidence.some(
-    (item) => item.tone === "warn" && !item.personaScoped
+    (item) => item.tone === "warn" && !item.personaScoped,
   );
 }
 
+function plural(n: number, noun: string): string {
+  return `${n} ${noun}${n === 1 ? "" : "s"}`;
+}
+
 export function countWords(text: string): number {
-  return text
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean).length;
+  return text.trim().split(/\s+/).filter(Boolean).length;
 }
 
 /**
@@ -77,10 +79,7 @@ export function countWords(text: string): number {
  * them still read as a summary rather than a report.
  */
 export function limitWords(text: string, max = LINE_MAX_WORDS): string {
-  const words = text
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
+  const words = text.trim().split(/\s+/).filter(Boolean);
   if (words.length <= max) return words.join(" ");
   return `${words.slice(0, max).join(" ")}…`;
 }
@@ -88,20 +87,56 @@ export function limitWords(text: string, max = LINE_MAX_WORDS): string {
 /** Keep quoted goal titles to a few words so a line stays scannable. */
 export function shortenGoalTitle(
   title: string,
-  maxWords = GOAL_TITLE_MAX_WORDS
+  maxWords = GOAL_TITLE_MAX_WORDS,
 ): string {
-  const words = title
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
+  const words = title.trim().split(/\s+/).filter(Boolean);
   if (words.length <= maxWords) return words.join(" ");
   return `${words.slice(0, maxWords).join(" ")}…`;
+}
+
+/**
+ * Lane A's wave summary, only when a model actually narrated something.
+ *
+ * A wave with no mined candidates completes WITHOUT calling a model: the
+ * backend stores fixed prose ("No anomalies concentrated along any dimension
+ * of this wave.") with `candidates: []`. Promoted to the headline, that prose
+ * replaced a deterministic summary saying every graded session failed. Gate on
+ * `candidates`, never on the sentence, which will be reworded.
+ */
+export function narratedWaveSummary(
+  status: string | null | undefined,
+  insights:
+    | { summary?: string | null; candidates?: readonly unknown[] | null }
+    | null
+    | undefined,
+): string | null {
+  if (status !== "completed" || !insights) return null;
+  if ((insights.candidates?.length ?? 0) === 0) return null;
+  return insights.summary?.trim() || null;
 }
 
 function firstSentence(text: string): string {
   const trimmed = text.trim();
   const end = trimmed.search(/[.!?](\s|$)/);
   return end === -1 ? trimmed : trimmed.slice(0, end + 1);
+}
+
+/**
+ * Lane A's narration, cut to something a card can carry.
+ *
+ * The backend stores it `.slice(0, SUMMARY_MAX)` — a hard character cut that
+ * lands mid-word ("…and rejects host"), so the raw string cannot be rendered
+ * as prose. Taking the FIRST SENTENCE sidesteps that: the truncation is almost
+ * always in a later one. A narration with no sentence boundary at all was cut
+ * inside its first, and gets an ellipsis so it never reads as a finished
+ * thought.
+ */
+export function clampNarration(text: string | null | undefined): string | null {
+  const trimmed = (text ?? "").trim();
+  if (trimmed.length === 0) return null;
+  const sentence = firstSentence(trimmed);
+  if (/[.!?]$/.test(sentence)) return sentence;
+  return `${sentence.replace(/[\s,;:]+$/, "")}…`;
 }
 
 /** Detector sentences do not all ship a full stop; the card's do. */
@@ -118,14 +153,22 @@ function endWithStop(text: string): string {
 function diagnosisCause(goal: GoalFindingsModel): string | null {
   if (goal.diagnosisStage === null) return null;
   const hit = goal.stages[goal.diagnosisStage].evidence.find(
-    (item) => item.tone === "fail" && !item.personaScoped
+    (item) => item.tone === "fail" && !item.personaScoped,
   );
   return hit ? endWithStop(limitWords(firstSentence(hit.observation))) : null;
 }
 
-/** Earliest stage on this goal that showed friction without breaking. */
+/**
+ * Earliest stage on this goal that showed friction without breaking.
+ *
+ * Connection is skipped for the reason the derivation skips it everywhere that
+ * aggregates: a launch failure is reporting, not friction in the experience.
+ * Naming it here is what produced "showed friction at connection" for a wave
+ * whose sessions never started.
+ */
 function firstFrictionStage(goal: GoalFindingsModel): JourneyStageId | null {
   for (const stage of JOURNEY_STAGES) {
+    if (stage.id === "connection") continue;
     if (goal.stages[stage.id].state === "warn") return stage.id;
   }
   return null;
@@ -138,29 +181,76 @@ function feelingLine(persona: PersonaFindingsModel): string | null {
 }
 
 /**
- * Branch order is the contract: broken goals outrank friction, friction
- * outranks landed, landed outranks an ungraded run. Each branch names the
- * goal, the persona, the stage and the feeling — that is the whole point of
- * the card.
+ * Which branch spoke. The caller needs this to decide whether a generated
+ * summary may replace the template: `not_launched` is the one answer no model
+ * can improve on, because there is no session for a model to have read.
+ */
+export type FindingsSummaryKind =
+  "not_launched" | "broken" | "friction" | "landed" | "ungraded";
+
+export interface FindingsSummary {
+  lines: string[];
+  kind: FindingsSummaryKind;
+}
+
+/**
+ * Branch order is the contract: a wave that never launched outranks
+ * everything, then broken goals, then friction, then landed, then an ungraded
+ * run. Each branch names the goal, the persona, the stage and the feeling —
+ * that is the whole point of the card.
  */
 export function composeFindingsSummary(
   model: SwarmFindingsModel,
   /** `terminal: null` — a legacy wave with no signals, where neither
    * "finished" nor "still running" can be claimed. */
-  opts: { terminal: boolean | null }
-): string[] {
+  opts: { terminal: boolean | null },
+): FindingsSummary {
+  const composed = composeLines(model, opts);
   // The cap is applied in one place so no branch can smuggle a long sentence
   // past it — an interpolated persona name does that as easily as a goal title.
-  return composeLines(model, opts).map((line) => limitWords(line));
+  return {
+    lines: composed.lines.map((line) => limitWords(line)),
+    kind: composed.kind,
+  };
 }
 
 function composeLines(
   model: SwarmFindingsModel,
-  opts: { terminal: boolean | null }
-): string[] {
+  opts: { terminal: boolean | null },
+): FindingsSummary {
   const lines: string[] = [];
+
+  // ── Nothing launched ──────────────────────────────────────────────────────
+  //
+  // Every session of a settled wave failed to launch. The goals were never
+  // tried, so no count over them means anything: this used to fall through to
+  // the friction branch and report "9 of 9 goals showed friction" about an
+  // experience nobody ever had. Launch outcomes are reporting, and this is the
+  // one place the summary reports them.
+  // The launch-failure EVIDENCE is required, not just the absence of success:
+  // a settled wave with no successes and no failures has sessions that never
+  // resolved, which is an ungraded run, not a wave that failed to connect.
+  const { launch } = model;
+  if (
+    opts.terminal === true &&
+    launch.total > 0 &&
+    model.neverLaunched === true
+  ) {
+    if (launch.failed > 0) {
+      lines.push(
+        `${launch.failed} of ${plural(launch.total, "session")} failed to launch.`,
+      );
+    }
+    if (launch.rateLimited > 0) {
+      lines.push(`${plural(launch.rateLimited, "session")} were rate limited.`);
+    }
+    lines.push("Nothing about the server was tested.");
+    // No feeling line: nothing happened to anyone.
+    return { lines, kind: "not_launched" };
+  }
+
   const failingPersonas = model.personas.filter(
-    (persona) => firstFailingGoal(persona) !== undefined
+    (persona) => firstFailingGoal(persona) !== undefined,
   );
 
   if (failingPersonas.length > 0) {
@@ -171,7 +261,7 @@ function composeLines(
     lines.push(
       diagnosisIsGoalSpecific(goal)
         ? `"${shortenGoalTitle(goal.title)}" broke at ${stage} for ${lead.name}.`
-        : `The ${stage} stage broke for ${lead.name}.`
+        : `The ${stage} stage broke for ${lead.name}.`,
     );
 
     const cause = diagnosisCause(goal);
@@ -183,31 +273,31 @@ function composeLines(
     if (others.length === 1) {
       lines.push(`${others[0]!.name} also had a goal that broke.`);
     } else if (others.length > 1) {
-      lines.push(
-        `${others.length} other personas also had a goal that broke.`
-      );
+      lines.push(`${others.length} other personas also had a goal that broke.`);
     }
 
     const feeling = feelingLine(lead);
     if (feeling) lines.push(feeling);
-    return lines;
+    return { lines, kind: "broken" };
   }
 
   const goals = model.personas.flatMap((persona) => persona.goals);
 
   const frictionPersona = model.personas.find((persona) =>
-    persona.goals.some((goal) => goal.sentiment.tone === "warn")
+    persona.goals.some((goal) => goal.sentiment.tone === "warn"),
   );
   if (frictionPersona) {
     const goal = frictionPersona.goals.find(
-      (candidate) => candidate.sentiment.tone === "warn"
+      (candidate) => candidate.sentiment.tone === "warn",
     )!;
     const frictionGoals = goals.filter((g) => g.sentiment.tone === "warn");
     // Denominator counts measured goals only — an ungraded goal is not
-    // evidence of a goal that held.
-    const measuredGoals = goals.filter((g) => g.sentiment.label !== "Unscored");
+    // evidence of a goal that held, and neither is one that never launched.
+    // Filtered on the TONE, not the label: "Unscored" and "Not run" are both
+    // muted, and a label test silently counted the untried ones.
+    const measuredGoals = goals.filter((g) => g.sentiment.tone !== "muted");
     lines.push(
-      `${frictionGoals.length} of ${measuredGoals.length} goals showed friction. No stage broke outright.`
+      `${frictionGoals.length} of ${measuredGoals.length} goals showed friction. No stage broke outright.`,
     );
 
     // Same rule the broken-goal branch follows: persona-scoped evidence fanned
@@ -222,13 +312,13 @@ function composeLines(
       lines.push(
         frictionIsGoalSpecific(goal, stageId)
           ? `"${title}" showed friction at ${stageWord} for ${frictionPersona.name}.`
-          : `The ${stageWord} stage showed friction for ${frictionPersona.name}.`
+          : `The ${stageWord} stage showed friction for ${frictionPersona.name}.`,
       );
     }
 
     const feeling = feelingLine(frictionPersona);
     if (feeling) lines.push(feeling);
-    return lines;
+    return { lines, kind: "friction" };
   }
 
   const landedGoals = goals.filter((goal) => goal.sentiment.label === "Landed");
@@ -240,14 +330,14 @@ function composeLines(
         landedGoals.length === 1 ? "" : "s"
       } across ${personaCount} persona${
         personaCount === 1 ? "" : "s"
-      }, and no stage broke.`
+      }, and no stage broke.`,
     );
     const relieved = model.personas.find(
-      (persona) => persona.sentiment.tone === "ok"
+      (persona) => persona.sentiment.tone === "ok",
     );
     const feeling = relieved ? feelingLine(relieved) : null;
     if (feeling) lines.push(feeling);
-    return lines;
+    return { lines, kind: "landed" };
   }
 
   // Nothing was graded. A finished run still owes the reader a statement of
@@ -255,16 +345,25 @@ function composeLines(
   const ungradedCaveat =
     "No goal was scored, so nothing here is evidence that the experience held.";
   if (opts.terminal === true) {
-    return ["This run finished with nothing graded.", ungradedCaveat];
+    return {
+      lines: ["This run finished with nothing graded.", ungradedCaveat],
+      kind: "ungraded",
+    };
   }
   if (opts.terminal === false) {
-    return [
-      "Nothing graded yet.",
-      "This run is still going — findings land as sessions are analyzed.",
-    ];
+    return {
+      lines: [
+        "Nothing graded yet.",
+        "This run is still going. Findings land as sessions are analyzed.",
+      ],
+      kind: "ungraded",
+    };
   }
   // Unknown: claim neither ending. The card still says what it knows.
-  return ["Nothing has been graded for this run.", ungradedCaveat];
+  return {
+    lines: ["Nothing has been graded for this run.", ungradedCaveat],
+    kind: "ungraded",
+  };
 }
 
 /**
@@ -275,24 +374,33 @@ export function deriveHonestyFootnotes(args: {
   signals: SwarmWaveSignals | null | undefined;
   /** Whether the wave carries a durable `swarmRunGroupId`. */
   hasGroupId: boolean;
+  /** Wave launch outcomes. Absent on callers that predate the launch chips. */
+  launch?: LaunchTotals;
 }): string[] {
-  const { signals, hasGroupId } = args;
+  const { signals, hasGroupId, launch } = args;
+  const notes: string[] = [];
   if (!signals || !hasGroupId) {
     // Legacy wave (or a backend that has not answered): the deterministic
     // detector lane never ran, so the tab is rubric findings only.
-    return [
-      "Rubric findings only — deterministic signals unavailable for this wave",
-    ];
+    notes.push(
+      "Evaluator findings only — deterministic signals unavailable for this wave",
+    );
+  } else {
+    if (!signals.terminal) {
+      notes.push("This swarm is still running — findings may change");
+    }
+    if (signals.truncated) {
+      notes.push("Session scan hit its cap — counts cover a subset");
+    }
+    if (signals.lowConfidence) {
+      notes.push("Most sessions are unanalyzed — treat counts as partial");
+    }
   }
-  const notes: string[] = [];
-  if (!signals.terminal) {
-    notes.push("This swarm is still running — findings may change");
-  }
-  if (signals.truncated) {
-    notes.push("Session scan hit its cap — counts cover a subset");
-  }
-  if (signals.lowConfidence) {
-    notes.push("Most sessions are unanalyzed — treat counts as partial");
+  // Partial launch. Failed-to-launch counts used to chip here; they repeated
+  // the header tally and are gone. Rate-limits stay — those do not already
+  // have a sentence on the card.
+  if (launch && launch.succeeded > 0 && launch.rateLimited > 0) {
+    notes.push(`${plural(launch.rateLimited, "session")} rate limited`);
   }
   return notes;
 }

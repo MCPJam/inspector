@@ -1,3 +1,6 @@
+import { cloneTraceValue } from "../../utils/live-chat-trace-stream";
+import { buildResolvedModelRequestPayload } from "../../utils/model-request-payload";
+import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type { TimeoutMetadata } from "../../utils/run-supervisor/deadline.js";
 import type { ModelMessage, Tool as AiTool, ToolChoice, ToolSet } from "ai";
 import type { MCPClientManager } from "@mcpjam/sdk";
@@ -35,6 +38,7 @@ import type { UsageTotals } from "./types.js";
 export type LocalEvalTurnAcc = {
   conversationMessages: ModelMessage[];
   capturedSpans: EvalTraceSpan[];
+  requestPayloads?: LiveChatTraceRequestPayloadEntry[];
   accumulatedUsage: UsageTotals;
   toolsCalledByPrompt: ToolCall[][];
   assistantMessageByPrompt: (string | undefined)[];
@@ -384,6 +388,14 @@ export async function driveLocalEvalTurn(
       },
     },
     traceEvents: {
+      onRequestPayload: (request) => {
+        (acc.requestPayloads ??= []).push({
+          turnId: request.turnId,
+          promptIndex,
+          stepIndex: request.stepIndex,
+          payload: cloneTraceValue(buildResolvedModelRequestPayload(request)),
+        });
+      },
       onStepSnapshot: ({ traceHistory, traceTurn }) => {
         acc.activeCompletedStepCount += 1;
         acc.activePartialResponseMessages = traceHistory.slice(

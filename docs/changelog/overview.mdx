@@ -9,6 +9,30 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-09-17 (2)
+
+#### Added
+
+- **Sign-in gate for account-required User Testing links** — User Testing share links that require an account no longer show "Link Unavailable" for signed-out visitors. Instead, a sign-in screen appears with **Sign in** and **Create an account** buttons. After signing in, you are returned to the original scenario link automatically. Previewing a scenario from this gate does not start a test. Signed-in visitors still need the audience permission the scenario owner configured. Guest-permitted scenarios remain accessible without signing in.
+
+- **"Anyone with the link who is signed in" sharing label** — the sharing dialog now distinguishes between guest-permitted and account-required links. When a scenario requires sign-in, the access option reads **Anyone with the link who is signed in** and the note below the link reads "Testers must sign in or create an account to preview and test this scenario." Guest-permitted scenarios continue to show the existing "Anyone with the link (guests included)" label.
+
+- **Switch accounts button on access-denied screens** — when a signed-in user opens a scenario they don't have access to, an additional **Switch accounts** button appears alongside the existing **Sign in** button. Clicking it signs out and returns to the scenario link so you can sign in with a different account.
+
+### 2026-09-17
+
+#### Changed
+
+- **Swarm Run tab session rows are now colored by goal result** — each session chip in the live persona × client matrix is filled by the graded goal result rather than the execution outcome. A passed goal is green even if execution broke; a failed goal is red even if the run completed normally; an inconclusive grade is yellow. A session whose grading is still in progress stays the primary accent color. The chip headline continues to show execution state (`Running:` / `Run completed:` / `Broke:`), so both signals are visible without a second label.
+
+- **Live pane no longer shows goal result, value chain, or advisory copy** — while a run is in progress, the session detail pane no longer displays a `Goal result:` line, a `User value chain` disclosure, or advisory check rows. Chat and Trace sit directly under the session header. The Sessions tab still shows the full `SwarmSessionReport` details for a selected completed thread.
+
+- **"Rebuild clusters" and cluster tuning controls are temporarily hidden** — the voluntary **Rebuild** button and the **Balanced** cluster tuning control are no longer shown in the Session flow and Topic map panels. Analysis still runs automatically for User Testing scenarios, and error recovery (**Retry**) remains available when a run has failed or is stuck. The controls will return in a future release.
+
+- **Shared session threads now render MCP App widgets live** — when viewing a shared usage thread, MCP App tool calls now render as full interactive widgets instead of static placeholders, matching the experience in the Playground and swarm session viewer.
+
+- **Swarm run Sessions tab no longer shows project-wide session metrics** — the session metrics strip (session count, tool error rate, latency, tokens) is hidden when the Sessions tab is scoped to a specific run. The strip continues to appear on the top-level Sessions tab where it reflects the full project or persona scope.
+
 ### 2026-09-16
 
 #### Changed
@@ -53,7 +77,7 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 #### Changed
 
-- **User Testing scenarios analyze themselves** — opening a User Testing scenario's Findings or Insights tab when sessions exist but no analysis has run now starts the analysis automatically. The "Analyze sessions" button and the "These sessions haven't been analyzed yet" state are gone; the tab shows an analyzing banner instead and fills in once the run completes. The cluster tuning control and the freshness chip still require an explicit action. Swarm and Benchmark scopes are unchanged — Swarm already queues analysis when a run settles, and Benchmark flow analysis remains explicitly requested.
+- **User Testing scenarios analyze themselves** — opening a User Testing scenario's Findings or Insights tab when sessions exist but no analysis has run now starts the analysis automatically. The "Analyze sessions" button and the "These sessions haven't been analyzed yet" state are gone; the tab shows an analyzing banner instead and fills in once the run completes. Swarm and Benchmark scopes are unchanged — Swarm already queues analysis when a run settles, and Benchmark flow analysis remains explicitly requested.
 
 ### 2026-09-02
 

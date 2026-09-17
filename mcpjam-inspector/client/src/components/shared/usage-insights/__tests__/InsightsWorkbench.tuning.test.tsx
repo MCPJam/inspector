@@ -1,14 +1,14 @@
 /**
  * Tuning wiring for the swarm Insights view.
  *
- * Swarm rebuilds materialize a topic map, so all three knobs (including
- * `linkThreshold`) must reach the rebuild mutation.
+ * Re-clustering is hidden for now (`SHOW_RECLUSTERING_UI`). The workbench
+ * still knows the topic-map knob exists; it just does not offer a handler
+ * that would start another run.
  */
 import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { InsightsWorkbench } from "../InsightsWorkbench";
-import { CLUSTER_TUNING_PRESETS, type ClusterTuning } from "@/lib/cluster-tuning";
+import type { ClusterTuning } from "@/lib/cluster-tuning";
 
 const { mockUseUsageInsights, mockUseGoalOutcomeDrilldown, toastMock } =
   vi.hoisted(() => ({
@@ -65,18 +65,9 @@ vi.mock("@/components/shared/usage-insights/SessionFlowSankey", () => ({
     <>
       {headerActions}
       <span data-testid="show-link-threshold">{String(showLinkThreshold)}</span>
-      <button
-        type="button"
-        onClick={() =>
-          onApplyTuning?.({
-            maxClusters: CLUSTER_TUNING_PRESETS.broad.maxClusters,
-            minSeparation: CLUSTER_TUNING_PRESETS.broad.minSeparation,
-            linkThreshold: CLUSTER_TUNING_PRESETS.broad.linkThreshold,
-          })
-        }
-      >
-        apply tuning
-      </button>
+      <span data-testid="has-apply-tuning">
+        {String(Boolean(onApplyTuning))}
+      </span>
     </>
   ),
 }));
@@ -140,34 +131,8 @@ describe("InsightsWorkbench tuning", () => {
     );
   });
 
-  it("forwards the applied tuning — including linkThreshold — to the rebuild", async () => {
-    const user = userEvent.setup();
+  it("does not forward a re-clustering handler while the control is hidden", () => {
     renderSwarmWorkbench({ projectId: "proj-1" });
-    await user.click(screen.getByRole("button", { name: "apply tuning" }));
-
-    expect(rebuild).toHaveBeenCalledWith({
-      tuning: {
-        maxClusters: CLUSTER_TUNING_PRESETS.broad.maxClusters,
-        minSeparation: CLUSTER_TUNING_PRESETS.broad.minSeparation,
-        linkThreshold: CLUSTER_TUNING_PRESETS.broad.linkThreshold,
-      },
-    });
-    expect(toastMock.success).toHaveBeenCalledWith("Rebuild queued");
-  });
-
-  it("warns when a differently-tuned rebuild was already running", async () => {
-    const user = userEvent.setup();
-    rebuild.mockResolvedValue({
-      runId: "run-1",
-      status: "running",
-      alreadyRunning: true,
-      tuningMismatch: true,
-    });
-    renderSwarmWorkbench({ projectId: "proj-1" });
-    await user.click(screen.getByRole("button", { name: "apply tuning" }));
-
-    expect(toastMock.warning).toHaveBeenCalledWith(
-      expect.stringMatching(/not applied/i),
-    );
+    expect(screen.getByTestId("has-apply-tuning")).toHaveTextContent("false");
   });
 });

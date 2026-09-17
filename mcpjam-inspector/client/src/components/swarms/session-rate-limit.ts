@@ -8,7 +8,15 @@
  * difference between a guess and an answer. The slug and severity stay the
  * catalog's so the card renders amber like every other quota failure.
  */
-import { describeAsSlug, type NormalizedError } from "@mcpjam/sdk/browser";
+import {
+  humanizeSwarmAttemptError,
+  isAccountLimit,
+} from "@/shared/swarm-attempt-error";
+import {
+  describeError,
+  describeAsSlug,
+  type NormalizedError,
+} from "@mcpjam/sdk/browser";
 import { classifyModelIdProvider } from "@/shared/model-provider";
 import { getProviderDisplayName } from "@/lib/provider-registry";
 
@@ -73,5 +81,37 @@ export function describeProviderRateLimit(
       "Raise the rate limit on your provider's own plan.",
     ],
     rawMessage: oneLine,
+  };
+}
+
+/** Use the producer's humanized meaning, while retaining raw diagnostics. */
+export function describeSwarmAttemptFailure(
+  rawMessage: string | null | undefined,
+  errorCode: string | null | undefined,
+  providerLabel: string,
+): NormalizedError {
+  const info = humanizeSwarmAttemptError(rawMessage, errorCode);
+  const base = describeError(info.message);
+  if (
+    base.slug === "provider/quota" &&
+    !isAccountLimit(info.message, errorCode ?? info.code)
+  ) {
+    return {
+      ...describeProviderRateLimit(providerLabel),
+      rawMessage: rawMessage ?? info.message,
+      rawCode: errorCode ?? info.code,
+    };
+  }
+  return {
+    ...base,
+    slug: "swarm/attempt_failed",
+    title: info.rerunnable ? "Session needs another run" : "Session failed",
+    oneLine: info.message,
+    severity: info.rerunnable ? "info" : base.severity,
+    nextSteps: info.rerunnable
+      ? ["Run the session again to continue."]
+      : base.nextSteps,
+    rawMessage: rawMessage ?? info.message,
+    rawCode: errorCode ?? info.code,
   };
 }

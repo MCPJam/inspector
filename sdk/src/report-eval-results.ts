@@ -210,10 +210,7 @@ export function __resetPrintedRunUrls(): void {
  * project, and then the right suite. One line makes the upload's destination
  * addressable.
  *
- * The route is the UNFLAGGED `/evals/suite/:suiteId/runs/:runId`, not
- * `/ci-evals/…`: the latter sits behind the `evaluate-ci` flag and its
- * redirect drops the run path, so a link there lands flag-less readers on a
- * bare list instead of their run.
+ * Links open the exact uploaded run in the public Evaluate experience.
  *
  * `?project=` prefers the id the BACKEND resolved, falling back to a
  * caller-configured project and omitting the param entirely for the
@@ -258,7 +255,7 @@ export function buildRunUrl(
         // at all. Built through `URL` rather than concatenation so it stays
         // encoded and stays out of the string-building this module retired.
         new URL(
-          `/evals/suite/${encodeURIComponent(
+          `/evaluate/suite/${encodeURIComponent(
             suiteId
           )}/runs/${encodeURIComponent(runId)}`,
           appOrigin

@@ -13,7 +13,7 @@ import {
 import { type InsightsSelection } from "@/hooks/scenario-usage-filters";
 import { ClusterTuningControl } from "@/components/shared/usage-insights/ClusterTuningControl";
 import { FlowSankeyDiagram } from "@/components/shared/usage-insights/flow-sankey-diagram";
-import type { ClusterTuning } from "@/lib/cluster-tuning";
+import { SHOW_RECLUSTERING_UI, type ClusterTuning } from "@/lib/cluster-tuning";
 import {
   STAGE_ORDER,
   STAGE_TITLES,
@@ -35,10 +35,7 @@ interface SessionFlowSankeyProps {
    * control at all — the header is shared with surfaces that only ever want
    * the plain rebuild affordance.
    */
-  onApplyTuning?: (
-    tuning: ClusterTuning,
-    opts?: { force?: boolean },
-  ) => void;
+  onApplyTuning?: (tuning: ClusterTuning, opts?: { force?: boolean }) => void;
   /**
    * This surface starts its own analysis, so a MISSING run means one is being
    * arranged rather than waiting to be asked for (BB-196) — a working state,
@@ -50,6 +47,7 @@ interface SessionFlowSankeyProps {
   analysisIsAutomatic?: boolean;
   /** False for scopes with no topic map, where link distance means nothing. */
   showLinkThreshold?: boolean;
+  goalGroupsByJourney?: boolean;
   /**
    * Per-stage header overrides. Defaults come from `STAGE_TITLES`; callers
    * can rename a column without forking the chart.
@@ -128,6 +126,7 @@ export function SessionFlowSankey({
   onApplyTuning,
   analysisIsAutomatic = false,
   showLinkThreshold,
+  goalGroupsByJourney,
   stageTitles,
   headerActions,
   fillHeight = false,
@@ -166,15 +165,17 @@ export function SessionFlowSankey({
    * flow to look at" hides them precisely when they are most useful. It seeds
    * from the defaults when there is no run to read.
    */
-  const tuningControl = onApplyTuning ? (
-    <ClusterTuningControl
-      value={latestRun?.tuning}
-      onApply={onApplyTuning}
-      busy={rebuildBusy}
-      showLinkThreshold={showLinkThreshold}
-      sessionCount={latestRun?.sessionCount}
-    />
-  ) : null;
+  const tuningControl =
+    SHOW_RECLUSTERING_UI && onApplyTuning ? (
+      <ClusterTuningControl
+        value={latestRun?.tuning}
+        onApply={onApplyTuning}
+        busy={rebuildBusy}
+        showLinkThreshold={showLinkThreshold}
+        goalGroupsByJourney={goalGroupsByJourney}
+        sessionCount={latestRun?.sessionCount}
+      />
+    ) : null;
 
   if (!breakdown) {
     return (
@@ -184,8 +185,8 @@ export function SessionFlowSankey({
           fillHeight
             ? "h-full px-0 py-6"
             : scrollLayout
-              ? "px-0 py-10"
-              : "px-5 py-10",
+            ? "px-0 py-10"
+            : "px-5 py-10",
         )}
       >
         <span className="flex-1 text-center">Loading session flow…</span>
@@ -205,8 +206,8 @@ export function SessionFlowSankey({
           fillHeight
             ? "h-full justify-center px-0 py-6"
             : scrollLayout
-              ? "px-0 py-10"
-              : "px-5 py-10",
+            ? "px-0 py-10"
+            : "px-5 py-10",
         )}
       >
         {analysisInFlight ? (
@@ -221,16 +222,19 @@ export function SessionFlowSankey({
           {analysisInFlight
             ? `Grouping ${goalNoun}s, behaviors, outcomes, and sentiment. This can take a few minutes.`
             : signalsVersion === null
+            ? SHOW_RECLUSTERING_UI
               ? "The last rebuild ran before session signals existed. Rebuild clusters to extract and group goals, behaviors, outcomes, and sentiment."
-              : "Rebuild clusters once there are enough sessions to cluster."}
+              : "The last analysis ran before session signals existed, so goals, behaviors, outcomes, and sentiment are not grouped yet."
+            : SHOW_RECLUSTERING_UI
+            ? "Rebuild clusters once there are enough sessions to cluster."
+            : "Session flow appears once there are enough sessions to cluster."}
         </p>
         <div className="flex items-center gap-2">
           {headerActions}
           {/* An analysis already on its way needs no button to start it — and
               on a self-analyzing surface there is never a resting state where
-              one is required. The tuning control stays: choosing HOW to
-              cluster is still a thing to ask for. */}
-          {analysisInFlight ? null : (
+              one is required. Re-clustering is gated off for now. */}
+          {analysisInFlight || !SHOW_RECLUSTERING_UI ? null : (
             <RebuildButton
               onRebuild={onRebuild}
               busy={rebuildBusy}
@@ -258,13 +262,13 @@ export function SessionFlowSankey({
         fillHeight
           ? "h-full min-h-0 overflow-hidden px-0 py-1"
           : scrollLayout
-            ? // Scroll layout: the diagram bleeds to its already-padded owning
-              // container (no extra px-5) and drops the card border-b, which
-              // belonged to the old locked-viewport chrome.
-              "px-0 py-1"
-            : // Embedded in a document/opt-in card (BenchReport, the
-              // explanatory opt-in): keep the padded, divided card chrome.
-              "border-b px-5 py-4",
+          ? // Scroll layout: the diagram bleeds to its already-padded owning
+            // container (no extra px-5) and drops the card border-b, which
+            // belonged to the old locked-viewport chrome.
+            "px-0 py-1"
+          : // Embedded in a document/opt-in card (BenchReport, the
+            // explanatory opt-in): keep the padded, divided card chrome.
+            "border-b px-5 py-4",
       )}
       data-testid="scenario-insights-sankey"
       data-fill-height={fillHeight ? "true" : undefined}
@@ -363,11 +367,13 @@ export function SessionFlowSankey({
             These sessions were analyzed before every column was clustered, so
             only the goal column has themes.
           </span>
-          <RebuildButton
-            onRebuild={onRebuild}
-            busy={rebuildBusy}
-            label="Rebuild for themes"
-          />
+          {SHOW_RECLUSTERING_UI ? (
+            <RebuildButton
+              onRebuild={onRebuild}
+              busy={rebuildBusy}
+              label="Rebuild for themes"
+            />
+          ) : null}
         </div>
       ) : null}
 

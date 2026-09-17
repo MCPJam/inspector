@@ -1,0 +1,47 @@
+{
+  "ready": {
+    "builtAt": 0,
+    "iterationId": "<iterationId>",
+    "modelUsed": "google/gemini-3.1-flash-lite-preview",
+    "rows": [
+      {
+        "actual": "The assistant answered without saving anything.",
+        "citations": ["m:0"],
+        "joinKey": "judge:goalCompletion",
+        "stage": "userValue",
+        "verdictSeen": "failed"
+      }
+    ],
+    "runRevision": "<revision>",
+    "schemaVersion": 1,
+    "stageNotes": [
+      {
+        "actual": "The user asked for a saved server; the trace does not show a saved result.",
+        "citations": ["m:0"],
+        "stage": "userValue"
+      }
+    ],
+    "status": "ready"
+  },
+  "failed": {
+    "builtAt": 0,
+    "iterationId": "<iterationId>",
+    "modelUsed": "google/gemini-3.1-flash-lite-preview",
+    "reason": "context_too_large",
+    "rows": [],
+    "runRevision": "<revision>",
+    "schemaVersion": 1,
+    "stageNotes": [],
+    "status": "failed"
+  },
+  "pending": {
+    "builtAt": 0,
+    "iterationId": "<iterationId>",
+    "progress": { "done": 1, "total": 2 },
+    "rows": [],
+    "runRevision": "<revision>",
+    "schemaVersion": 1,
+    "stageNotes": [],
+    "status": "pending"
+  }
+}

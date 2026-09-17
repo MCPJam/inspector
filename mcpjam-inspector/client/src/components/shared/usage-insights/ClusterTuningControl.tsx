@@ -38,11 +38,12 @@ interface ClusterTuningControlProps {
   onApply: (tuning: ClusterTuning, opts?: { force?: boolean }) => void;
   busy?: boolean;
   /**
-   * The topic-map knob. False for scopes that build no map (swarm), where the
+   * The topic-map knob. False for scopes that build no map, where the
    * value would be recorded but never read — so it is not offered at all
    * rather than offered and ignored.
    */
   showLinkThreshold?: boolean;
+  goalGroupsByJourney?: boolean;
   /** Session count for the re-analyze confirmation. Absent hides the cost. */
   sessionCount?: number;
   /**
@@ -65,7 +66,7 @@ interface ClusterTuningControlProps {
  * The preset row is the whole control for most people: three words, one click,
  * rebuild. Advanced exists because the same page is read by whoever has to
  * explain why a map looks the way it does, and "Detailed" is not an answer —
- * the raw silhouette floor is. Both write the same three numbers.
+ * the raw silhouette floor is. Both write the same four numbers.
  *
  * The draft is local and only leaves on Apply. A slider that re-clustered on
  * every drag would queue a rebuild per pixel.
@@ -75,6 +76,7 @@ export function ClusterTuningControl({
   onApply,
   busy = false,
   showLinkThreshold = true,
+  goalGroupsByJourney = false,
   sessionCount,
   applyLabel,
   showForce = true,
@@ -82,8 +84,8 @@ export function ClusterTuningControl({
   const knobs = useMemo<ClusterTuningKnob[]>(
     () =>
       showLinkThreshold
-        ? ["maxClusters", "minSeparation", "linkThreshold"]
-        : ["maxClusters", "minSeparation"],
+        ? ["maxClusters", "minSeparation", "minClusterSize", "linkThreshold"]
+        : ["maxClusters", "minSeparation", "minClusterSize"],
     [showLinkThreshold],
   );
 
@@ -137,6 +139,12 @@ export function ClusterTuningControl({
             <p className="mt-0.5 text-[11px] text-muted-foreground">
               Changes apply on the next rebuild.
             </p>
+            {goalGroupsByJourney ? (
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Goals group by journey. Other themes use the project’s sessions;
+                this view shows the current wave.
+              </p>
+            ) : null}
           </div>
 
           <ToggleGroup
@@ -183,7 +191,9 @@ export function ClusterTuningControl({
                 className="flex w-full items-center gap-1 text-[11px] font-medium text-muted-foreground hover:text-foreground"
               >
                 <ChevronDown
-                  className={`h-3 w-3 transition-transform ${advancedOpen ? "" : "-rotate-90"}`}
+                  className={`h-3 w-3 transition-transform ${
+                    advancedOpen ? "" : "-rotate-90"
+                  }`}
                 />
                 Advanced
               </button>
@@ -235,47 +245,49 @@ export function ClusterTuningControl({
           </button>
 
           {showForce ? (
-          <div className="border-t border-border pt-2">
-            {confirmingForce ? (
-              <div className="space-y-2">
-                <p className="text-[11px] text-muted-foreground">
-                  Re-reads and re-summarizes every session with a model. Only
-                  needed when the summaries themselves look wrong — tuning
-                  changes above do not require it.
-                  {sessionCount !== undefined
-                    ? ` ${sessionCount.toLocaleString()} session${sessionCount === 1 ? "" : "s"} will be re-analyzed.`
-                    : ""}
-                </p>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    data-testid="cluster-tuning-force-confirm"
-                    disabled={busy}
-                    onClick={() => apply({ force: true })}
-                    className="flex-1 rounded-md border border-destructive/40 px-2.5 py-1 text-[11px] font-medium text-destructive hover:bg-destructive/10 disabled:opacity-60"
-                  >
-                    Re-analyze
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setConfirmingForce(false)}
-                    className="flex-1 rounded-md border border-border px-2.5 py-1 text-[11px] font-medium hover:bg-muted/50"
-                  >
-                    Cancel
-                  </button>
+            <div className="border-t border-border pt-2">
+              {confirmingForce ? (
+                <div className="space-y-2">
+                  <p className="text-[11px] text-muted-foreground">
+                    Re-reads and re-summarizes every session with a model. Only
+                    needed when the summaries themselves look wrong — tuning
+                    changes above do not require it.
+                    {sessionCount !== undefined
+                      ? ` ${sessionCount.toLocaleString()} session${
+                          sessionCount === 1 ? "" : "s"
+                        } will be re-analyzed.`
+                      : ""}
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      data-testid="cluster-tuning-force-confirm"
+                      disabled={busy}
+                      onClick={() => apply({ force: true })}
+                      className="flex-1 rounded-md border border-destructive/40 px-2.5 py-1 text-[11px] font-medium text-destructive hover:bg-destructive/10 disabled:opacity-60"
+                    >
+                      Re-analyze
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmingForce(false)}
+                      className="flex-1 rounded-md border border-border px-2.5 py-1 text-[11px] font-medium hover:bg-muted/50"
+                    >
+                      Cancel
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ) : (
-              <button
-                type="button"
-                data-testid="cluster-tuning-force"
-                onClick={() => setConfirmingForce(true)}
-                className="text-[11px] text-muted-foreground underline-offset-2 hover:underline"
-              >
-                Re-analyze sessions from scratch…
-              </button>
-            )}
-          </div>
+              ) : (
+                <button
+                  type="button"
+                  data-testid="cluster-tuning-force"
+                  onClick={() => setConfirmingForce(true)}
+                  className="text-[11px] text-muted-foreground underline-offset-2 hover:underline"
+                >
+                  Re-analyze sessions from scratch…
+                </button>
+              )}
+            </div>
           ) : null}
         </div>
       </PopoverContent>

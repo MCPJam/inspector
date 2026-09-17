@@ -477,6 +477,8 @@ export function useUpgradeCheckout({
     // is actually receiving. During a Team trial the persisted billing plan is
     // still Free, while the effective plan (and its limits) is Team.
     effectivePlan,
+    pricingVersion: billingStatus?.pricingVersion ??
+      (billingStatus?.catalogPlanId?.endsWith("_v2") ? "v2" : undefined),
     // Keep the persisted plan separate for real billing/checkout decisions.
     currentPlan,
     organizationName: billingStatus?.organizationName ?? "your organization",

@@ -52,6 +52,7 @@ function goal(states: Partial<Record<JourneyStageId, StageState>>) {
     runId: "cluster-export",
     title: "Export the board",
     sessions: 2,
+    notRun: false,
     sentiment: { label: "Stalled", tone: "fail" },
     stages,
     diagnosisStage: null,

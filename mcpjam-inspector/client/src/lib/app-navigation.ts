@@ -148,15 +148,11 @@ export const routePaths = {
   callback: "/callback",
   billing: "/billing",
   evals: "/evals",
-  /** Runs mode of Evaluate. Legacy `/ci-evals` URLs redirect here. */
+  /** Legacy Runs mode, available behind evaluate-enabled. */
   evalsRuns: "/evals/runs",
   /** Redeem-based read-only share of an eval run. */
   evalsShared: "/evals/shared",
-  /**
-   * Evaluate (New) — the flag-gated redesign of the Evaluate tab. A sibling
-   * route, not a sub-tree of `/evals`, so the two tabs never parse each
-   * other's URLs and the original tab keeps every link it already shipped.
-   */
+  /** Public Evaluate; legacy Evaluate lives at /evals. */
   evaluate: "/evaluate",
   organizations: "/organizations",
 } as const;
@@ -512,50 +508,56 @@ export function buildOrganizationPath(
 }
 
 /**
- * Build an eval route path in Suites mode from a typed EvalRoute.
+ * Build a Suites route; test cases always open Ding Dong.
  */
 export function buildEvalsPath(route: EvalRoute): string {
-  return buildEvalRoutePath(routePaths.evals, route);
+  return buildEvalRoutePath(
+    route.type === "test-edit" || route.type === "test-detail"
+      ? routePaths.evaluate : routePaths.evals, route,
+  );
 }
 
-/** Build the same typed EvalRoute in Runs mode (`/evals/runs/...`). */
+/** Build a Runs route; test cases always open Ding Dong. */
 export function buildEvalsRunsPath(route: EvalRoute): string {
-  return buildEvalRoutePath(routePaths.evalsRuns, route);
+  return buildEvalRoutePath(
+    route.type === "test-edit" || route.type === "test-detail"
+      ? routePaths.evaluate : routePaths.evalsRuns, route,
+  );
 }
 
-/**
- * Build the same typed EvalRoute under Evaluate (New) (`/evaluate/...`).
- *
- * `commit-detail` has no home here — `buildEvalRoutePath` degrades it to this
- * prefix's list, which is right: the commit lens is a Runs-mode view and stays
- * on `/evals/runs`.
- */
+/** Public eval links; retired commit-detail targets open the run table. */
 export function buildEvaluatePath(route: EvalRoute): string {
   return buildEvalRoutePath(routePaths.evaluate, route);
 }
 
-/**
- * Legacy `/ci-evals/*` → `/evals/runs/*`, for the router's redirect loader.
- *
- * A raw-string prefix rewrite rather than a rebuild from route params: the
- * sub-tree is matched with a splat, and the string form preserves commit SHAs
- * and suite ids exactly as they were encoded. Query and hash come along —
- * commit links carry `?suite=&iteration=`, run links carry
- * `?iteration=&case=&compareTo=`, and anything can carry `?project=`.
- *
- * These URLs shipped in CI logs, bookmarks, and the SDK quickstart's
- * post-sign-in return path, so they redirect rather than 404 into the
- * catch-all (which renders Servers — a silently wrong landing page).
- */
-export function legacyCiEvalsPathToRunsPath(
+/** Retired Evaluate URLs preserve artifact context; commits open the plain run table. */
+export function legacyEvalPathToEvaluatePath(
   pathname: string,
   search = "",
   hash = "",
 ): string {
-  return `${pathname.replace(
-    /^\/ci-evals/,
-    routePaths.evalsRuns,
-  )}${search}${hash}`;
+  if (/^\/(?:evals\/runs|ci-evals)\/commit\/[^/]+\/*$/i.test(pathname)) {
+    const params = new URLSearchParams(search);
+    const project = params.get("project");
+    const query = new URLSearchParams();
+    if (project) query.set("project", project);
+    return `${routePaths.evaluate}${query.size ? `?${query}` : ""}`;
+  }
+  const rewritten = pathname.replace(
+    /^\/(?:evals(?:\/runs)?|ci-evals)(?=\/|$)/i,
+    routePaths.evaluate,
+  );
+  return `${rewritten}${search}${hash}`;
+}
+
+/** Old case bookmarks open Ding Dong without dropping subtab or project context. */
+export function legacyEvalCasePathToEvaluatePath(pathname: string, search = "", hash = ""): string {
+  const rewritten = pathname.replace(
+    /^\/evals(?:\/runs)?\/suite\/([^/]+)\/test\/([^/]+)(\/edit)?\/*$/i,
+    (_, suiteId, testId, edit) =>
+      `${routePaths.evaluate}/suite/${suiteId}/test/${testId}${edit ? "/edit" : ""}`,
+  );
+  return `${rewritten}${search}${hash}`;
 }
 
 function buildEvalRoutePath(prefix: EvalRoutePrefix, route: EvalRoute): string {

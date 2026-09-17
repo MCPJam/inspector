@@ -67,7 +67,9 @@ import {
   cancelProjectServerConnectionOperation,
   getProjectServerOperation,
   getServerPromptOperation,
+  describePlatformRefusal,
   isPlatformApiError,
+  platformRefusalHint,
   listScenariosOperation,
   listChatSessionsOperation,
   searchSessionsOperation,
@@ -917,7 +919,18 @@ function errorStructuredContent(
   error: unknown
 ): Record<string, unknown> | undefined {
   if (isPlatformApiError(error)) {
-    return { error: { code: error.code, message: error.message } };
+    // A usage-limit refusal also carries WHEN to come back and whether credits
+    // would help — allowlisted by `describePlatformRefusal`, never the raw
+    // server envelope — so an agent can wait instead of looping or suggesting
+    // a top-up that cannot lift it.
+    const refusal = describePlatformRefusal(error);
+    return {
+      error: {
+        code: error.code,
+        message: error.message,
+        ...(refusal ? { refusal } : {}),
+      },
+    };
   }
   return undefined;
 }
@@ -926,7 +939,12 @@ function describeOperationError(error: unknown): string {
   if (isPlatformApiError(error)) {
     // Wire errors keep their stable code for agent retry logic; synthesized
     // client-side errors (status 0) are already self-explanatory messages.
-    return error.status > 0 ? `${error.code}: ${error.message}` : error.message;
+    const base =
+      error.status > 0 ? `${error.code}: ${error.message}` : error.message;
+    // Hosts vary in whether the model sees `structuredContent`, so the retry
+    // guidance is in the text too.
+    const refusal = describePlatformRefusal(error);
+    return refusal ? `${base} ${platformRefusalHint(refusal)}` : base;
   }
   return error instanceof Error ? error.message : String(error);
 }

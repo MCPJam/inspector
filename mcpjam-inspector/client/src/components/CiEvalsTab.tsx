@@ -312,6 +312,10 @@ export function CiEvalsTab({
     selectedSuiteEntry,
     selectedSuiteId,
     selectedTestId,
+    // Cancel goes through the platform route, which is addressed by project —
+    // without this the Runs lens would be the one surface still cancelling
+    // through the raw Convex mutation.
+    projectId: convexProjectId,
     // Without this the Runs lens can't open the upgrade wall on a server-side
     // cap rejection and falls back to the dead-end toast.
     organizationId,
