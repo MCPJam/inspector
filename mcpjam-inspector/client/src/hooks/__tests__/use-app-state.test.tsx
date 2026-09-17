@@ -430,6 +430,57 @@ describe("useAppState active organization recovery", () => {
     expect(disconnectAllRuntimeServersMock).not.toHaveBeenCalled();
   });
 
+  it("clears runtime servers when the last project disappears after hydration", async () => {
+    let capturedDispatch:
+      | ((action: {
+          type: "CONNECT_SUCCESS";
+          name: string;
+          config: { type: "http"; url: string };
+        }) => void)
+      | undefined;
+    useServerStateMock.mockImplementation((args: any) => {
+      capturedDispatch = args.dispatch;
+      return serverStateValue;
+    });
+    Object.assign(projectStateValue, {
+      effectiveActiveProjectId: "project-1",
+      isLoadingProjects: false,
+      useLocalFallback: false,
+    });
+    const hookProps = {
+      currentUserId: "user-1",
+      currentActorKey: "user-1",
+      routeOrganizationId: undefined,
+      hasOrganizations: true,
+      isLoadingOrganizations: false,
+      validOrganizations: [{ _id: "org-1", myRole: "owner" }],
+    };
+    const { rerender } = renderHook((props) => useAppState(props), {
+      initialProps: hookProps,
+    });
+
+    await waitFor(() => {
+      expect(useProjectStateMock).toHaveBeenCalled();
+    });
+    act(() => {
+      capturedDispatch?.({
+        type: "CONNECT_SUCCESS",
+        name: "demo-server",
+        config: { type: "http", url: "https://example.com/mcp" },
+      });
+    });
+
+    projectStateValue.effectiveActiveProjectId = "none";
+    rerender(hookProps);
+
+    await waitFor(() => {
+      expect(serverStateValue.handleDisconnect).toHaveBeenCalledWith(
+        "demo-server",
+      );
+    });
+    expect(disconnectAllRuntimeServersMock).toHaveBeenCalled();
+  });
+
   // Removed in Slice 5: the legacy `loadAppState` → `patchStateForPendingOAuth`
   // path is gone (Convex hydrates state, the patch helper is deleted), so
   // tests asserting the runtime-server seed via `loadAppStateMock` no longer

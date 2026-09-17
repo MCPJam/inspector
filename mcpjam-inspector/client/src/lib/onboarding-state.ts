@@ -12,6 +12,8 @@ export interface OnboardingPersistedState {
   shownAt?: number;
   completedAt?: number;
   attemptedServerName?: string;
+  connectedServerKind?: "demo" | "personal";
+  connectedToolCount?: number | null;
   playgroundPromptPending?: boolean;
 }
 
@@ -44,6 +46,16 @@ function readPersistedState(
         attemptedServerName:
           typeof parsed.attemptedServerName === "string"
             ? parsed.attemptedServerName
+            : undefined,
+        connectedServerKind:
+          parsed.connectedServerKind === "demo" ||
+          parsed.connectedServerKind === "personal"
+            ? parsed.connectedServerKind
+            : undefined,
+        connectedToolCount:
+          typeof parsed.connectedToolCount === "number" ||
+          parsed.connectedToolCount === null
+            ? parsed.connectedToolCount
             : undefined,
         playgroundPromptPending:
           typeof parsed.playgroundPromptPending === "boolean"
@@ -146,6 +158,8 @@ export function markFirstRunServerChoiceStarted(
     startedAt: current?.startedAt ?? Date.now(),
     shownAt: current?.shownAt,
     attemptedServerName: attemptedServerName ?? current?.attemptedServerName,
+    connectedServerKind: undefined,
+    connectedToolCount: undefined,
     playgroundPromptPending: current?.playgroundPromptPending,
   });
 }
@@ -168,6 +182,8 @@ export function markFirstRunServerChoiceWelcomeShown(): void {
     startedAt: current?.startedAt ?? Date.now(),
     shownAt: Date.now(),
     attemptedServerName: current?.attemptedServerName,
+    connectedServerKind: current?.connectedServerKind,
+    connectedToolCount: current?.connectedToolCount,
     playgroundPromptPending: current?.playgroundPromptPending,
   });
 }
@@ -185,6 +201,25 @@ export function markFirstRunServerChoiceCompleted(): void {
     completedAt: Date.now(),
     shownAt: current?.shownAt ?? Date.now(),
     attemptedServerName: current?.attemptedServerName,
+    connectedServerKind: current?.connectedServerKind,
+    connectedToolCount: current?.connectedToolCount,
+    playgroundPromptPending: current?.playgroundPromptPending,
+  });
+}
+
+/** Keeps the successful handoff resumable until Open Playground is pressed. */
+export function markFirstRunServerChoiceConnected(
+  serverKind: "demo" | "personal",
+  toolCount: number | null,
+): void {
+  const current = readFirstRunServerChoiceState();
+  writeFirstRunServerChoiceState({
+    status: "started",
+    startedAt: current?.startedAt ?? Date.now(),
+    shownAt: current?.shownAt ?? Date.now(),
+    attemptedServerName: current?.attemptedServerName,
+    connectedServerKind: serverKind,
+    connectedToolCount: toolCount,
     playgroundPromptPending: current?.playgroundPromptPending,
   });
 }
@@ -197,6 +232,8 @@ export function markFirstRunPlaygroundPromptPending(): void {
     completedAt: current?.completedAt ?? Date.now(),
     shownAt: current?.shownAt ?? Date.now(),
     attemptedServerName: current?.attemptedServerName,
+    connectedServerKind: current?.connectedServerKind,
+    connectedToolCount: current?.connectedToolCount,
     playgroundPromptPending: true,
   });
 }

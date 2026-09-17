@@ -2126,6 +2126,49 @@ describe("useServerState OAuth callback failures", () => {
     expect(window.location.hash).toBe("");
   });
 
+  it("preserves onboarding toast suppression through an OAuth callback", async () => {
+    localStorage.setItem("mcp-oauth-pending", "demo-server");
+    localStorage.setItem(
+      "mcp-hosted-oauth-pending",
+      JSON.stringify({
+        surface: "project",
+        projectId: "project-1",
+        serverId: "server-1",
+        serverName: "demo-server",
+        serverUrl: "https://example.com/mcp",
+        returnPath: "/home",
+        suppressErrorToast: true,
+        suppressSuccessToast: true,
+        startedAt: Date.now(),
+      }),
+    );
+    handleOAuthCallbackMock.mockResolvedValue({
+      success: true,
+      serverName: "demo-server",
+      serverConfig: {
+        type: "http",
+        url: "https://example.com/mcp",
+      },
+    });
+    window.history.replaceState({}, "", "/oauth/callback?code=test-code");
+
+    const dispatch = vi.fn();
+    renderUseServerState(dispatch);
+
+    await waitFor(() => {
+      expect(dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "CONNECT_SUCCESS",
+          name: "demo-server",
+        }),
+      );
+    });
+    expect(toastSuccess).not.toHaveBeenCalledWith(
+      "OAuth connection successful! Connected to demo-server.",
+    );
+    expect(toastError).not.toHaveBeenCalled();
+  });
+
   it("syncs the hosted OAuth profile against the marker-pinned project, not the ambient active project", async () => {
     // Regression: an OAuth server added in org A duplicated into the user's
     // owned org because the post-callback sync resolved by name against the

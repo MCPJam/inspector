@@ -24,6 +24,8 @@ export interface HostedOAuthPendingMarker {
   accessScope?: "project_member" | "chat_v2";
   scenarioId?: string | null;
   returnPath: string | null;
+  suppressErrorToast?: boolean;
+  suppressSuccessToast?: boolean;
   startedAt: number;
 }
 
@@ -190,6 +192,8 @@ export function readHostedOAuthPendingMarker(): HostedOAuthPendingMarker | null 
           : null,
         parsed.surface
       ),
+      suppressErrorToast: parsed.suppressErrorToast === true,
+      suppressSuccessToast: parsed.suppressSuccessToast === true,
       startedAt: parsed.startedAt,
     };
   } catch {

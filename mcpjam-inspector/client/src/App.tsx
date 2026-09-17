@@ -78,6 +78,7 @@ import {
   markFirstRunPlaygroundPromptConsumed,
   markFirstRunPlaygroundPromptPending,
   markFirstRunServerChoiceCompleted,
+  markFirstRunServerChoiceConnected,
   markFirstRunServerChoiceDismissed,
   markFirstRunServerChoiceStarted,
   markFirstRunServerChoiceWelcomeShown,
@@ -220,7 +221,10 @@ import {
   type CheckoutIntentWithOrganization,
   writeBillingSignInReturnPath,
 } from "./lib/billing-deep-link";
-import { hasProjectDeepLinkParam } from "./lib/project-deep-link";
+import {
+  hasProjectDeepLinkParam,
+  readProjectDeepLinkParam,
+} from "./lib/project-deep-link";
 import {
   buildProjectPath,
   isProjectIdShape,
@@ -820,6 +824,7 @@ function ServersTabBody({
     handleProjectShared,
     handleLeaveProject,
     registryEnabled,
+    suspendRouteAutoConnect,
     handleNavigate,
   } = useAppRouteContext();
 
@@ -848,6 +853,7 @@ function ServersTabBody({
       onNavigateToRegistry={
         registryEnabled === true ? () => handleNavigate("registry") : undefined
       }
+      suspendAutoConnect={suspendRouteAutoConnect}
     />
   );
 }
@@ -2363,6 +2369,7 @@ export function PlaygroundRoute() {
     setFirstRunPlaygroundPrompt,
     setEvalChatHandoff,
     workOsUser,
+    suspendRouteAutoConnect,
   } = useAppRouteContext();
 
   return (
@@ -2391,6 +2398,7 @@ export function PlaygroundRoute() {
         setFirstRunPlaygroundPrompt(null);
         markFirstRunPlaygroundPromptConsumed();
       }}
+      suspendAutoConnect={suspendRouteAutoConnect}
       activeHost={activeHost}
       evalChatHandoff={evalChatHandoff}
       onEvalChatHandoffConsumed={(id) =>
@@ -2628,7 +2636,22 @@ export default function App() {
   const shouldRepairFirstRunStartedState =
     initialFirstRunServerChoiceState?.status === "started";
   const [firstRunConnectionState, setFirstRunConnectionState] =
-    useState<FirstRunConnectionState>({ status: "idle" });
+    useState<FirstRunConnectionState>(() => {
+      if (
+        initialFirstRunServerChoiceState?.status === "started" &&
+        initialFirstRunServerChoiceState.attemptedServerName &&
+        initialFirstRunServerChoiceState.connectedServerKind
+      ) {
+        return {
+          status: "connected",
+          serverName: initialFirstRunServerChoiceState.attemptedServerName,
+          serverKind: initialFirstRunServerChoiceState.connectedServerKind,
+          toolCount:
+            initialFirstRunServerChoiceState.connectedToolCount ?? null,
+        };
+      }
+      return { status: "idle" };
+    });
   const [firstRunPlaygroundPrompt, setFirstRunPlaygroundPrompt] = useState<
     string | null
   >(() =>
@@ -3563,7 +3586,7 @@ export default function App() {
           if (firstRunConnectionAttemptRef.current !== attemptId) return;
           // Persist the real outcome before the user presses the final CTA so
           // a refresh cannot replay onboarding after a successful handshake.
-          markFirstRunServerChoiceCompleted();
+          markFirstRunServerChoiceConnected(serverKind, tools.length);
           setFirstRunConnectionState({
             status: "connected",
             serverName,
@@ -3576,7 +3599,7 @@ export default function App() {
           // Tool discovery is supplemental to the successful MCP handshake.
           // Keep the server connected and let Playground retry discovery
           // rather than presenting a false connection failure.
-          markFirstRunServerChoiceCompleted();
+          markFirstRunServerChoiceConnected(serverKind, null);
           setFirstRunConnectionState({
             status: "connected",
             serverName,
@@ -3668,6 +3691,7 @@ export default function App() {
     setFirstRunConnectionState({ status: "idle" });
     setFirstRunOverlayDismissed(true);
     setFirstRunPlaygroundPrompt(PLAYGROUND_FIRST_RUN_PROMPT);
+    markFirstRunServerChoiceCompleted();
     markFirstRunPlaygroundPromptPending();
     navigateApp(routePaths.playground);
   }, [navigateApp]);
@@ -3764,7 +3788,12 @@ export default function App() {
   // the tools pane and the durable starter prompt do not come back empty.
   useEffect(() => {
     if (activeTab !== "playground" || !areServersHydrated) return;
-    if (initialFirstRunServerChoiceState?.status !== "completed") return;
+    if (
+      initialFirstRunServerChoiceState?.status !== "completed" ||
+      initialFirstRunServerChoiceState.playgroundPromptPending !== true
+    ) {
+      return;
+    }
 
     const serverName = initialFirstRunServerChoiceState.attemptedServerName;
     if (!serverName || !projectServers[serverName]) return;
@@ -4965,7 +4994,8 @@ export default function App() {
     })();
   const requestedFirstRunProjectId =
     typeof window !== "undefined"
-      ? readProjectPathSegment(window.location.pathname)
+      ? readProjectPathSegment(window.location.pathname) ??
+        readProjectDeepLinkParam(window.location.search)
       : null;
   const hasProjectScopedFirstRunDestination =
     typeof window !== "undefined" &&
@@ -5503,6 +5533,7 @@ export default function App() {
     ensureServersReady,
     evalChatHandoff,
     firstRunPlaygroundPrompt,
+    suspendRouteAutoConnect: shouldShowFirstRunOverlay,
     handleCheckoutIntentNavigationStarted,
     handleConnect,
     handleConnectWithTokensFromOAuthFlow,

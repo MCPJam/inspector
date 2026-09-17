@@ -68,8 +68,9 @@ vi.mock("@/hooks/useBrowserEngine", () => ({
     consent: null,
   }),
 }));
+const mockUseAutoConnectProjectServers = vi.hoisted(() => vi.fn());
 vi.mock("@/hooks/useAutoConnectProjectServers", () => ({
-  useAutoConnectProjectServers: () => {},
+  useAutoConnectProjectServers: mockUseAutoConnectProjectServers,
 }));
 vi.mock("@/lib/scenario-client-style", () => ({
   getScenarioShellStyle: () => ({}),
@@ -147,6 +148,15 @@ describe("PlaygroundTab loading branch", () => {
     mockLoadingScreen.mockClear();
     mockPlaygroundCenter.mockClear();
     mockLoadingState.current = { kind: "skeleton" };
+    mockUseAutoConnectProjectServers.mockClear();
+  });
+
+  it("suspends route-level auto-connect while onboarding is open", () => {
+    render(<PlaygroundTab {...baseProps} suspendAutoConnect />);
+
+    expect(mockUseAutoConnectProjectServers).toHaveBeenCalledWith(
+      expect.objectContaining({ suspendAutoConnect: true }),
+    );
   });
 
   it("does not close a persisted panel while conversation metadata is restoring", () => {

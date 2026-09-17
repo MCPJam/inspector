@@ -3477,6 +3477,82 @@ describe("App hosted OAuth callback handling", () => {
     expect(appState.setSelectedMCPConfigs).not.toHaveBeenCalled();
   });
 
+  it("does not restore a consumed onboarding prompt or reconnect its server", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    localStorage.setItem(
+      "mcp-first-run-server-choice-state",
+      JSON.stringify({
+        status: "completed",
+        shownAt: Date.now() - 2_000,
+        completedAt: Date.now() - 1_000,
+        attemptedServerName: "Excalidraw (App)",
+        playgroundPromptPending: false,
+      }),
+    );
+    window.history.replaceState({}, "", "/playground");
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockFreshGuestUser();
+    const appState = createAppStateMock();
+    appState.projectServers = {
+      "Excalidraw (App)": {
+        name: "Excalidraw (App)",
+        connectionStatus: "disconnected",
+        enabled: true,
+        retryCount: 0,
+        lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+        config: {
+          transportType: "http",
+          url: "https://mcp.excalidraw.com/mcp",
+        },
+      },
+    };
+    mockUseAppState.mockReturnValue(appState);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("playground-tab")).toBeInTheDocument();
+    });
+    expect(appState.ensureServersReady).not.toHaveBeenCalled();
+    expect(appState.setSelectedServer).not.toHaveBeenCalled();
+    expect(mockPlaygroundTabProps).toHaveBeenLastCalledWith(
+      expect.objectContaining({ firstRunPrompt: null }),
+    );
+  });
+
+  it("restores the connected handoff until Open Playground is pressed", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    localStorage.setItem(
+      "mcp-first-run-server-choice-state",
+      JSON.stringify({
+        status: "started",
+        startedAt: Date.now() - 2_000,
+        shownAt: Date.now() - 2_000,
+        attemptedServerName: "Excalidraw (App)",
+        connectedServerKind: "demo",
+        connectedToolCount: 6,
+      }),
+    );
+    window.history.replaceState({}, "", "/home");
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockFreshGuestUser();
+    const appState = createAppStateMock();
+    mockUseAppState.mockReturnValue(appState);
+
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", {
+        name: "Connected to Excalidraw (App)",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("6 tools ready to use.")).toBeInTheDocument();
+  });
+
   it("keeps onboarding open when a saved server hydrates after Welcome", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
@@ -3651,6 +3727,41 @@ describe("App hosted OAuth callback handling", () => {
     expect(window.location.pathname).toBe(
       "/p/k57missing000000000000000001/servers",
     );
+  });
+
+  it("does not cover a legacy project query while its project resolves", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState(
+      {},
+      "",
+      "/servers?project=k57missing000000000000000001",
+    );
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockUseQuery.mockImplementation((ref: string) =>
+      ref === "users:getCurrentUser"
+        ? {
+            ...existingConvexUser,
+            _id: "guest-1",
+            externalId: "guest-1",
+            email: "guest@example.com",
+            isAnonymous: true,
+            hasSeenOnboarding: false,
+          }
+        : ref === "projects:getMyProjects"
+          ? []
+          : undefined,
+    );
+
+    render(<App />);
+
+    await screen.findByTestId("app-shell");
+    expect(
+      screen.queryByRole("heading", { name: "Welcome to MCPJam" }),
+    ).not.toBeInTheDocument();
   });
 
   it("routes a fresh Playground visitor through the explicit server-choice flow", async () => {
@@ -3857,7 +3968,13 @@ describe("App hosted OAuth callback handling", () => {
       JSON.parse(
         localStorage.getItem("mcp-first-run-server-choice-state") ?? "{}",
       ),
-    ).toEqual(expect.objectContaining({ status: "completed" }));
+    ).toEqual(
+      expect.objectContaining({
+        status: "started",
+        connectedServerKind: "demo",
+        connectedToolCount: 6,
+      }),
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "Open Playground" }));
 
@@ -3874,7 +3991,12 @@ describe("App hosted OAuth callback handling", () => {
       JSON.parse(
         localStorage.getItem("mcp-first-run-server-choice-state") ?? "{}",
       ),
-    ).toEqual(expect.objectContaining({ status: "completed" }));
+    ).toEqual(
+      expect.objectContaining({
+        status: "completed",
+        playgroundPromptPending: true,
+      }),
+    );
   });
 
   it("uses the same real tool-count success handoff for a personal server", async () => {
@@ -3961,7 +4083,7 @@ describe("App hosted OAuth callback handling", () => {
 
     await screen.findByRole("heading", { name: "Connected to Personal" });
     expect(
-      screen.getByText("Connected — tools can finish loading in Playground."),
+      screen.getByText("Connected. Tools can finish loading in Playground."),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("heading", { name: "Set up your server" }),
@@ -3970,7 +4092,13 @@ describe("App hosted OAuth callback handling", () => {
       JSON.parse(
         localStorage.getItem("mcp-first-run-server-choice-state") ?? "{}",
       ),
-    ).toEqual(expect.objectContaining({ status: "completed" }));
+    ).toEqual(
+      expect.objectContaining({
+        status: "started",
+        connectedServerKind: "personal",
+        connectedToolCount: null,
+      }),
+    );
   });
 
   it("cancels first-run connection progress without completing onboarding", async () => {
@@ -4309,7 +4437,13 @@ describe("App hosted OAuth callback handling", () => {
       JSON.parse(
         localStorage.getItem("mcp-first-run-server-choice-state") ?? "{}",
       ),
-    ).toEqual(expect.objectContaining({ status: "completed" }));
+    ).toEqual(
+      expect.objectContaining({
+        status: "started",
+        connectedServerKind: "personal",
+        connectedToolCount: 1,
+      }),
+    );
   });
 
   it("restores the editable failure form after a denied first-run OAuth callback", async () => {

@@ -14,6 +14,7 @@ import {
   markFirstRunServerChoiceStarted,
   markFirstRunServerChoiceWelcomeShown,
   markFirstRunServerChoiceCompleted,
+  markFirstRunServerChoiceConnected,
   readFirstRunServerChoiceState,
 } from "../onboarding-state";
 
@@ -283,6 +284,21 @@ describe("onboarding-state", () => {
           status: "completed",
           attemptedServerName: "Excalidraw (App)",
           playgroundPromptPending: false,
+        }),
+      );
+    });
+
+    it("keeps a successful connection resumable until completion", () => {
+      markFirstRunServerChoiceWelcomeShown();
+      markFirstRunServerChoiceStarted("Excalidraw (App)");
+      markFirstRunServerChoiceConnected("demo", 6);
+
+      expect(readFirstRunServerChoiceState()).toEqual(
+        expect.objectContaining({
+          status: "started",
+          attemptedServerName: "Excalidraw (App)",
+          connectedServerKind: "demo",
+          connectedToolCount: 6,
         }),
       );
     });

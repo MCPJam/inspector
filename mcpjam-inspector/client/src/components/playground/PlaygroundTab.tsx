@@ -110,6 +110,8 @@ interface PlaygroundTabProps {
   /** One-shot prompt handed off by first-run server connection. */
   firstRunPrompt?: string | null;
   onFirstRunPromptConsumed?: () => void;
+  /** Pauses route-local reconnect work while first-run onboarding owns it. */
+  suspendAutoConnect?: boolean;
 }
 
 /**
@@ -203,6 +205,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     projectId: props.sharedProjectId ?? props.activeProjectId ?? null,
     hostScopeKey: previewedHostId ?? effectiveHostConfig?.id ?? null,
     serverNames: projectServerNames,
+    suspendAutoConnect: props.suspendAutoConnect,
   });
 
   const playgroundState = usePlaygroundState({

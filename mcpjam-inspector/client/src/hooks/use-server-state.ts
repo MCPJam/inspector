@@ -1027,6 +1027,8 @@ export function useServerState({
       serverId?: string | null;
       serverName: string;
       serverUrl?: string | null;
+      suppressErrorToast?: boolean;
+      suppressSuccessToast?: boolean;
     }): boolean => {
       if (
         !isAuthenticated ||
@@ -1050,6 +1052,8 @@ export function useServerState({
         serverUrl: params.serverUrl,
         accessScope: "project_member",
         returnPath,
+        suppressErrorToast: params.suppressErrorToast,
+        suppressSuccessToast: params.suppressSuccessToast,
       });
       if (returnPath) {
         localStorage.setItem("mcp-oauth-return-hash", returnPath);
@@ -2819,6 +2823,10 @@ export function useServerState({
         HOSTED_MODE &&
         isAuthenticated &&
         hostedCallbackContext?.surface === "project";
+      const suppressErrorToast =
+        hostedCallbackContext?.suppressErrorToast === true;
+      const suppressSuccessToast =
+        hostedCallbackContext?.suppressSuccessToast === true;
       const handleLiveOAuthTrace = (oauthTrace: OAuthTrace) => {
         const traceServerName =
           oauthTrace.serverName ??
@@ -2944,7 +2952,10 @@ export function useServerState({
                   serverName,
                   reason: synced.reason,
                 });
-                if (synced.reason === "workspace-name-taken") {
+                if (
+                  synced.reason === "workspace-name-taken" &&
+                  !suppressErrorToast
+                ) {
                   toast.error(
                     `Signed in, but "${serverName}" could not be saved: that name already belongs to another project in this workspace.`
                   );
@@ -2997,9 +3008,11 @@ export function useServerState({
               logger.info("OAuth connection successful", { serverName });
               markPendingChatScopeStepUpReady(serverName);
               markPendingDirectScopeStepUpReplayReady(serverName);
-              toast.success(
-                `OAuth connection successful! Connected to ${serverName}.`
-              );
+              if (!suppressSuccessToast) {
+                toast.success(
+                  `OAuth connection successful! Connected to ${serverName}.`
+                );
+              }
               storeInitInfo(serverName, connectionResult.initInfo).catch(
                 (err) =>
                   logger.warn("Failed to fetch init info", {
@@ -3028,9 +3041,11 @@ export function useServerState({
                 serverName,
                 error: connectionResult.error,
               });
-              toast.error(
-                `OAuth succeeded but connection test failed: ${connectionResult.error}`
-              );
+              if (!suppressErrorToast) {
+                toast.error(
+                  `OAuth succeeded but connection test failed: ${connectionResult.error}`
+                );
+              }
             }
           } catch (connectionError) {
             markPendingChatScopeStepUpCancelled(
@@ -3052,9 +3067,11 @@ export function useServerState({
               serverName,
               error: errorMessage,
             });
-            toast.error(
-              `OAuth succeeded but connection test failed: ${errorMessage}`
-            );
+            if (!suppressErrorToast) {
+              toast.error(
+                `OAuth succeeded but connection test failed: ${errorMessage}`
+              );
+            }
           }
         } else {
           throw {
@@ -3072,7 +3089,9 @@ export function useServerState({
               typeof (error as { message?: unknown }).message === "string"
             ? (error as { message: string }).message
             : "Unknown error";
-        toast.error(`Error completing OAuth flow: ${errorMessage}`);
+        if (!suppressErrorToast) {
+          toast.error(`Error completing OAuth flow: ${errorMessage}`);
+        }
         logger.error("OAuth callback failed", { error: errorMessage });
         const oauthTrace =
           typeof error === "object" && error !== null && "oauthTrace" in error
@@ -3239,7 +3258,9 @@ export function useServerState({
         : error;
       const savedHash = localStorage.getItem("mcp-oauth-return-hash") || "";
 
-      toast.error(`OAuth authorization failed: ${errorMessage}`);
+      if (hostedOAuthCallbackContext?.suppressErrorToast !== true) {
+        toast.error(`OAuth authorization failed: ${errorMessage}`);
+      }
       const failedServerName = failPendingOAuthConnection(errorMessage);
       markPendingChatScopeStepUpCancelled(
         failedServerName ?? undefined,
@@ -3690,6 +3711,8 @@ export function useServerState({
             serverId: hostedServerId,
             serverName: formData.name,
             serverUrl: formData.url,
+            suppressErrorToast: options?.suppressErrorToast,
+            suppressSuccessToast: options?.suppressSuccessToast,
           });
           const oauthResult = await initiateOAuth(oauthOptions);
           if (oauthResult.success) {
@@ -3743,7 +3766,7 @@ export function useServerState({
               // Redirect pending — the marker stays PENDING on purpose; it's
               // what survives the page navigation so the post-callback
               // reconnect doesn't re-prompt.
-              toast.success(
+              showConnectionSuccess(
                 "OAuth flow initiated. You will be redirected to authorize access."
               );
             }

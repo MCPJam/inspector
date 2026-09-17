@@ -383,7 +383,7 @@ describe("FirstRunOnboardingOverlay", () => {
       toolCount: null,
     });
     expect(
-      screen.getByText("Connected — tools can finish loading in Playground."),
+      screen.getByText("Connected. Tools can finish loading in Playground."),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Open Playground" }));
     expect(onOpenPlayground).toHaveBeenCalledOnce();

@@ -463,7 +463,7 @@ export function FirstRunOnboardingOverlay({
                 </DialogTitle>
                 <DialogDescription className="mt-1 text-center text-[12.5px] leading-[1.55] text-muted-foreground">
                   {connectionState.toolCount === null
-                    ? "Connected — tools can finish loading in Playground."
+                    ? "Connected. Tools can finish loading in Playground."
                     : `${connectionState.toolCount} ${
                         connectionState.toolCount === 1 ? "tool" : "tools"
                       } ready to use.`}

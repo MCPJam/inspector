@@ -601,7 +601,6 @@ export function useAppState({
     // scope switch and disconnects the server that startup is restoring.
     if (
       !currentActorKey ||
-      effectiveActiveProjectId === "none" ||
       !hasHydratedStoredActiveOrganization ||
       isLoadingOrganizations ||
       projectState.isLoadingProjects
