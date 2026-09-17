@@ -32,6 +32,7 @@ import {
   proseSourceOf,
   type FindingView,
   verificationLine,
+  recurrenceLine,
 } from "./finding-provenance";
 
 /** Limited inline formatting; recorded/model text never becomes HTML or links. */
@@ -184,6 +185,7 @@ export function FindingDetailsContent({
   const judgeCoverage = judgeCoverageLine(provenance);
   const caveat = mechanismCaveat(provenance);
   const verification = verificationLine(provenance);
+  const recurrence = view === "ai" ? recurrenceLine(provenance) : null;
   const aiWording = provenance?.proseOrigin?.observed === "ai";
   const aiUnproven = view === "ai";
   const notes =
@@ -191,7 +193,8 @@ export function FindingDetailsContent({
     aiUnproven ||
     Boolean(caveat) ||
     Boolean(judgeCoverage) ||
-    Boolean(verification);
+    Boolean(verification) ||
+    Boolean(recurrence);
   const target = finding.target;
   const targetLabel = findingTargetLabel(finding);
   const discovered = view === "ai" && provenance?.groupKind === "ai_discovery";
@@ -335,6 +338,9 @@ export function FindingDetailsContent({
             </p>
           ) : null}
           {caveat ? <p data-testid="unified-finding-caveat">{caveat}</p> : null}
+          {recurrence ? (
+            <p data-testid="unified-finding-recurrence">{recurrence}</p>
+          ) : null}
           {verification ? (
             <p data-testid="unified-finding-verification">{verification}</p>
           ) : null}

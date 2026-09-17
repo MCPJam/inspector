@@ -1125,7 +1125,8 @@ export interface PlatformEvalRunJudgeState {
   threshold: number | null;
 }
 
-export interface PlatformEvalRunGoalCompletionJudge extends PlatformEvalRunJudgeState {
+export interface PlatformEvalRunGoalCompletionJudge
+  extends PlatformEvalRunJudgeState {
   progress?: {
     total: number;
     completed: number;
@@ -1169,7 +1170,8 @@ export interface PlatformEvalRunJudgeCase {
   reason: string | null;
 }
 
-export interface PlatformEvalRunGoalCompletionCase extends PlatformEvalRunJudgeCase {
+export interface PlatformEvalRunGoalCompletionCase
+  extends PlatformEvalRunJudgeCase {
   status?: "scored" | "error" | "skipped";
   gradingKey?: string;
   errorCode?: string;
@@ -1753,7 +1755,8 @@ export interface PlatformEvalSuiteSettingsBase {
 }
 
 /** A suite's settings as vocabulary 1 (no header) spells them. */
-export interface PlatformEvalSuiteSettings extends PlatformEvalSuiteSettingsBase {
+export interface PlatformEvalSuiteSettings
+  extends PlatformEvalSuiteSettingsBase {
   checks: PublicCheck[];
   /**
    * Suite defaults a case inherits under policy 2. Present only with
@@ -4283,7 +4286,9 @@ export interface PlatformActionableFinding {
  * `unavailable`.
  */
 export type PlatformInsightsObservationState =
-  "ready" | "partial" | "unavailable";
+  | "ready"
+  | "partial"
+  | "unavailable";
 
 /** Coverage for `currentFindings`, describing its OWN population. */
 export interface PlatformInsightsObservationCoverage {
@@ -4298,6 +4303,15 @@ export interface PlatformInsightsObservationCoverage {
 
 /** Where a finding's observation came from, and how complete it is. */
 export interface PlatformInsightsFindingProvenance {
+  recurrence?: {
+    claimId: string;
+    occurrences: number;
+    analyzedRuns: number;
+    firstSeenAt: number;
+    firstSourceId: string;
+    previousSourceId?: string;
+    novelty: "measured" | "notMeasured";
+  };
   candidateId: string;
   stage?: import("../contract/chain.js").UserValueStage;
   reason?: import("../contract/stage-derivation.js").StageReason;
@@ -4385,6 +4399,8 @@ export interface PlatformEvalFindingsAnalysis {
   models: string[];
   completeness: {
     iterationReports: number;
+    embedded?: number;
+    unindexed?: number;
     total: number;
     missingTraces: number;
   };
