@@ -44,6 +44,12 @@ const STRIPPED_REQUEST_HEADERS = new Set([
   "content-length",
   "accept-encoding",
   "x-mcp-session-auth",
+  "x-mcpjam-edge-secret",
+  "x-mcpjam-edge-secret-previous",
+  "cf-connecting-ip",
+  "cf-ray",
+  "x-inspector-service-token",
+  "x-mcpjam-guest-ip-hash",
 ]);
 
 // fetch() already decompressed the body, so the upstream encoding headers

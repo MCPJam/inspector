@@ -387,3 +387,9 @@ describe("describeMCPJamLimitMessage", () => {
     ).toBeNull();
   });
 });
+
+
+it.each(["platform_free_budget_exhausted", "account_suspended"])("keeps %s out of the daily-credit modal", code => {
+  expect(isMCPJamModelLimitError({ code, message: "user_rate_limit" })).toBe(false);
+  expect(isMCPJamModelLimitError({ details: JSON.stringify({ code, message: "user_rate_limit" }) })).toBe(false);
+});
