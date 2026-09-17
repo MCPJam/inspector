@@ -264,7 +264,8 @@ export function extractGroundingEvidence(
         kind: 'setup',
         serverId: entity.serverId,
         toolName: entity.tool,
-        ...entity.evidence,
+        callIndex: entity.evidence.callIndex,
+        objectPath: entity.evidence.objectPath,
       },
     })
   );

@@ -1045,6 +1045,11 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
     await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
+    expect(createSwarmMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({ setupWrites: true }),
+      }),
+    );
     expect(createPersonaMock).toHaveBeenCalledTimes(2);
     expect(createPersonaMock.mock.calls[0][0]).toMatchObject({
       projectId: "proj-1",
@@ -2768,6 +2773,7 @@ it("lets the user disable setup for newly created journeys", async () => {
   expect(toggle).not.toBeChecked();
   fireEvent.click(screen.getByTestId("new-swarm-launch"));
   await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
+  expect(createSwarmMock.mock.calls[0][0].config.setupWrites).not.toBe(true);
   expect(
     createJourneyMock.mock.calls.every(
       ([args]) => args.config.setupWrites !== true,

@@ -11,6 +11,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const setupTurnMock = vi.fn();
+const reportTargetGroundingMock = vi.fn();
 const reportAttemptMock = vi.fn();
 vi.mock("../swarm-setup-turn", async () => ({
   ...(await vi.importActual<typeof import("../swarm-setup-turn")>(
@@ -32,7 +33,7 @@ vi.mock("../../swarm-agent.js", async () => {
   );
   return {
     ...actual,
-    reportTargetGrounding: vi.fn(async () => ({})),
+    reportTargetGrounding: (...args: unknown[]) => reportTargetGroundingMock(...args),
     reportAttempt: (...args: unknown[]) => reportAttemptMock(...args),
     swarmPersonaNextTurn: (...args: unknown[]) =>
       swarmPersonaNextTurnMock(...args),
@@ -115,6 +116,7 @@ function baseOpts(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   setupTurnMock.mockReset();
+  reportTargetGroundingMock.mockReset().mockResolvedValue({});
   // Default: every attempt transition APPLIES (a fresh, uncontended claim/
   // terminal). Duplicate-launch tests override with `applied: false`.
   reportAttemptMock.mockReset().mockResolvedValue({ ok: true, applied: true });
@@ -1358,6 +1360,80 @@ describe("target setup before claims", () => {
       }),
     );
     expect(order).toEqual(["setup", "running", "succeeded"]);
+  });
+  it("finishes discovery and grounding for each same-host environment before its first claim", async () => {
+    const order = new Map<string, string[]>([
+      ["a", []],
+      ["b", []],
+    ]);
+    setupTurnMock.mockImplementation(async ({ target }) => {
+      order.get(target.targetId)!.push("setup");
+      return record;
+    });
+    reportTargetGroundingMock.mockImplementation(
+      async (_url, _bearer, body) => {
+        if (body.probes) {
+          await Promise.resolve();
+          order.get(body.targetId)!.push("grounded");
+        }
+        return {};
+      },
+    );
+    reportAttemptMock.mockImplementation(async (_url, _bearer, body) => {
+      order.get(body.targetId)!.push(body.status);
+      return { ok: true, applied: true };
+    });
+    const managerFactory = async (target: { targetId: string }) => ({
+      connectedServerIds: ["s"],
+      dispose: async () => {},
+      manager: {
+        listTools: async () => ({
+          tools: [
+            {
+              name: "list_projects",
+              annotations: { readOnlyHint: true },
+              inputSchema: { type: "object" },
+            },
+          ],
+        }),
+        executeTool: async () => {
+          order.get(target.targetId)!.push("discovery");
+          return { structuredContent: { id: target.targetId } };
+        },
+      },
+    });
+    await startJourneyRun(
+      baseOpts({
+        setupWrites: true,
+        sessionsPerTarget: 1,
+        managerFactory,
+        hosts: ["a", "b"].map((id) => ({
+          ...HOST,
+          targetId: id,
+          environmentRef: { environmentId: id, name: id, revision: 1 },
+          pinnedSkills: [],
+        })),
+      }),
+    );
+    for (const events of order.values())
+      expect(events).toEqual([
+        "setup",
+        "discovery",
+        "grounded",
+        "running",
+        "succeeded",
+      ]);
+    expect(
+      reportTargetGroundingMock.mock.calls
+        .filter((c) => c[2].probes)
+        .map((c) => c[2].targetId)
+        .sort(),
+    ).toEqual(["a", "b"]);
+    expect(
+      new Set(
+        runSyntheticHostSessionMock.mock.calls.map((c) => c[0].chatSessionId),
+      ).size,
+    ).toBe(2);
   });
   it("fails only the unavailable target and leaves siblings runnable", async () => {
     setupTurnMock.mockImplementation(async ({ target }) => ({

@@ -121,6 +121,8 @@ const DEADLINE_CLOCKS: readonly DeadlineClock[] = [
   "turn",
   "toolCall",
   "sandboxCapacity",
+  "setup",
+  "discovery",
 ];
 
 function isDeadlineClock(value: string): value is DeadlineClock {

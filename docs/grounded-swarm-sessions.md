@@ -36,10 +36,3 @@ context exposes the target's grounding for trace review.
 Deploy the companion backend changes before serving this inspector version. The
 inspector tolerates a missing grounding endpoint. Existing stored records need no
 migration. Disabling setup affects future launches, not snapshots already running.
-
-Implementation was validated with the swarm runner, UI, API, SDK and backend tests;
-backend and client typechecks; design checks; and the grounding mirror pin. No live
-billed dev swarm was launched. Before rollout, run the plan's dev smoke scenario
-against a test org and verify returned entity IDs, usage attribution and no setup
-chat-session row. The existing server typecheck errors and four unrelated
-cross-repository mirror mismatches remain outside this change.

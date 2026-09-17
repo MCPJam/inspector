@@ -13895,7 +13895,7 @@ const updateJourneyInput = journeySelectorInput.extend({
     .boolean()
     .optional()
     .describe(
-      "Attempt prerequisite creation with creation-like tools annotated non-destructive; requests prefixed names and leaves created data. Off unless set. Use a test account."
+      "Attempt prerequisite creation with creation-like tools annotated non-destructive; requests prefixed names and leaves created data. Off unless set. Replacing sessionsPerTarget/maxTurns without this field clears it; send its current value to preserve it. Use a test account."
     ),
 });
 
@@ -14135,7 +14135,7 @@ const updateSwarmInput = swarmSelectorInput.extend({
     .boolean()
     .optional()
     .describe(
-      "Attempt prerequisite creation with creation-like tools annotated non-destructive; requests prefixed names and leaves created data. Off unless set. Use a test account."
+      "Attempt prerequisite creation with creation-like tools annotated non-destructive; requests prefixed names and leaves created data. Off unless set. Replacing sessionsPerTarget/maxTurns without this field clears it; send its current value to preserve it. Use a test account."
     ),
 });
 

@@ -1989,6 +1989,7 @@ export async function drainAssistantTurn(
     runtime: rt.runtime,
     streamSink: "none",
     persistMode: "caller",
+    ...(args.maxSteps !== undefined ? { maxSteps: args.maxSteps } : {}),
     messages: args.messages,
     modelDefinition,
     systemPrompt: args.systemPrompt,
