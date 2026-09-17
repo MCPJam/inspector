@@ -162,7 +162,7 @@ export function SwarmFindingsTab({
   return (
     <div className="w-full" data-testid="swarm-findings-tab">
       <ErrorBoundary fallback={null}>{wave.runs.map((run) => <RunFunnelRead key={run.runId} runId={run.runId} onRead={receiveFunnel} />)}</ErrorBoundary>
-      <div className="space-y-2">{wave.runs.map((run) => <SwarmReportPanel key={run.runId} report={run.report} />)}</div>
+      <div className="space-y-2">{wave.runs.map((run) => <SwarmReportPanel key={run.runId} report={run.report} title={`${run.personaName} · ${run.journeyName ?? "Goal"}`} />)}</div>
       <FindingsSummaryCard
         sessionCount={model.sessionCount}
         summary={summary.lines}

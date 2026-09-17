@@ -18,7 +18,7 @@ export function SwarmGoalResult({
 }) {
   const badge = verdictBadge(verdict);
   return (
-    <span className={`text-xs ${badge.tone}`} title={verdict?.reason}>
+    <span className={`text-xs ${badge.tone}`}>
       Goal result: {badge.label}
     </span>
   );
@@ -49,7 +49,7 @@ export function SwarmSessionChain({ sessionId }: { sessionId?: string }) {
     </ErrorBoundary>
   );
 }
-export function SwarmReportPanel({ report }: { report?: SwarmReport }) {
+export function SwarmReportPanel({ report, title }: { report?: SwarmReport; title?: string }) {
   if (!report)
     return (
       <p className="text-xs text-muted-foreground">
@@ -64,6 +64,7 @@ export function SwarmReportPanel({ report }: { report?: SwarmReport }) {
       className="space-y-2 rounded-lg border border-border p-3"
       aria-label="Swarm report"
     >
+      {title && <p className="text-sm font-medium">{title}</p>}
       <p className={`text-sm font-medium ${badge.tone}`}>
         Run decision:{" "}
         {report.undecidedReason === "gradingPending"

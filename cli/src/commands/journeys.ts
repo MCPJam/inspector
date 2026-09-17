@@ -286,8 +286,8 @@ export function registerJourneysCommands(program: Command): Command {
           const verdict = row.verdict;
           const label = verdict?.verdict === "notEstablished"
             ? ["queued", "running"].includes(verdict.grading.state) ? "Grading" : "Not graded"
-            : verdict?.verdict ?? "Not graded";
-          process.stdout.write(`${row.id}\t${row.outcome ?? row.status ?? "unknown"}\t${label}\n`);
+            : verdict?.verdict === "inconclusive" ? "Couldn't grade" : verdict?.verdict === "passed" ? "Passed" : verdict?.verdict === "failed" ? "Failed" : "Not graded";
+          process.stdout.write(`${row.id}\t${verdict?.lifecycle ?? row.outcome ?? "unknown"}\t${label}\n`);
         }
       } else writeResult(result, globalOptions.format);
     }

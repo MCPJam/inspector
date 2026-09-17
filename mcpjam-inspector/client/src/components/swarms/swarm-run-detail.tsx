@@ -771,7 +771,7 @@ export function SwarmRunDetail({
         ) : null}
         {tab === "sessions" && projectId ? (
           <>
-          <div className="space-y-2">{wave.runs.map((run) => <SwarmReportPanel key={run.runId} report={run.report} />)}</div>
+          <div className="space-y-2">{wave.runs.map((run) => <SwarmReportPanel key={run.runId} report={run.report} title={`${run.personaName} · ${run.journeyName ?? "Goal"}`} />)}</div>
           <SwarmRunStageFunnelPanels journeyRunIds={runIds} />
           <SwarmsSessionsPanel
             projectId={projectId}

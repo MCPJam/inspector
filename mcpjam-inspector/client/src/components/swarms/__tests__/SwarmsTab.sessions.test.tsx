@@ -574,3 +574,5 @@ describe("SwarmsTab — top-level Journeys view", () => {
     });
   });
 });
+
+vi.mock("@/hooks/use-host-snapshot", () => ({ useHostSnapshotForHost: () => ({ status: "unavailable" }), useHostSnapshotForSession: () => ({ status: "unavailable" }) }));

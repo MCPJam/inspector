@@ -358,3 +358,5 @@ describe("SwarmsTab — a swarm across two per-client environments", () => {
     expect(launchJourneyRunMock).not.toHaveBeenCalled();
   });
 });
+
+vi.mock("@/hooks/use-host-snapshot", () => ({ useHostSnapshotForHost: () => ({ status: "unavailable" }), useHostSnapshotForSession: () => ({ status: "unavailable" }) }));

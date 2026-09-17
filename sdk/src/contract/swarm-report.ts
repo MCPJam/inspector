@@ -354,30 +354,30 @@ export function assembleSwarmReport(raw: SwarmReportInput): SwarmReport {
   const undecidedReason = !input.executionComplete
     ? "executionPending"
     : goalGrading.waitingForDecisiveGrading > 0 || summary?.status === "pending"
-    ? "gradingPending"
-    : !summary
-    ? "verdictSummaryUnavailable"
-    : summary.status === "integrityFailed"
-    ? "integrityFailed"
-    : summary.status === "notEstablished"
-    ? "gradingNotConfigured"
-    : undefined;
+      ? "gradingPending"
+      : !summary
+        ? "verdictSummaryUnavailable"
+        : summary.status === "integrityFailed"
+          ? "integrityFailed"
+          : summary.status === "notEstablished"
+            ? "gradingNotConfigured"
+            : undefined;
   return swarmReportSchema.parse({
     contractVersion: SWARM_REPORT_CONTRACT_VERSION,
     runId: input.runId,
     ...(undecidedReason
       ? { verdict: "notEstablished", verdictSource: "none", undecidedReason }
       : summary?.status === "decided"
-      ? {
-          verdict: summary.decision.verdict,
-          verdictSource: "policyV2",
-          decision: summary.decision,
-        }
-      : {
-          verdict: "notEstablished",
-          verdictSource: "none",
-          undecidedReason: "verdictSummaryUnavailable",
-        }),
+        ? {
+            verdict: summary.decision.verdict,
+            verdictSource: "policyV2",
+            decision: summary.decision,
+          }
+        : {
+            verdict: "notEstablished",
+            verdictSource: "none",
+            undecidedReason: "verdictSummaryUnavailable",
+          }),
     execution,
     goalGrading,
     observations: [...observations.values()].sort((a, b) =>

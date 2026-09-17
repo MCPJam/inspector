@@ -355,19 +355,10 @@ describe("runSwarmChecks", () => {
     await expect(runSwarmChecks(ARGS)).rejects.toThrow(/completeSwarmChecks/);
   });
 
-  it("grades an EMPTY-transcript session rather than skipping it", async () => {
-    // A failed attempt that never produced a turn is still a graded session:
-    // "no tool errors" holds trivially and "called search" does not, and both
-    // are facts worth having.
+  it("records unavailable grading for a session with no captured conversation", async () => {
     claimSwarmChecksMock.mockResolvedValue(claimResult([]));
-
-    const outcome = await runSwarmChecks(ARGS);
-
-    expect(outcome.status).toBe("completed");
-    const [, , payload] = completeSwarmChecksMock.mock.calls[0];
-    expect(payload.criterionResults).toHaveLength(2);
-    expect(payload.criterionResults[0].passed).toBe(false);
-    // Zero user turns is a real reading, not absence, so `< 3` passes.
-    expect(payload.criterionResults[1].passed).toBe(true);
+    expect(await runSwarmChecks(ARGS)).toMatchObject({ status: "failed", error: "transcript envelope unreadable" });
+    expect(completeSwarmChecksMock).not.toHaveBeenCalled();
+    expect(failSwarmChecksMock).toHaveBeenCalledOnce();
   });
 });
