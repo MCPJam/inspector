@@ -101,7 +101,7 @@ export function TrialScorecard({
   judgeSlot,
   scoresSection,
   nextQuestionSlot,
-  judgeHidden = false,
+  judgeHidden: judgeHiddenRequested = false,
   isRunning = false,
   syncedStepId,
   onSyncStep,
@@ -171,6 +171,25 @@ export function TrialScorecard({
     envelope,
     liveStepStatusById,
   ]);
+
+  /**
+   * Blind review withholds a verdict, so it needs one to withhold. A trial
+   * the judge never graded (the model call failed, or it was never owed) has
+   * nothing to leak, and the label control that lifts the mask only mounts
+   * beside a verdict. Masking it anyway left "hidden until you label" on a
+   * row nobody could label, and hid the stage's own explanation with it.
+   * Every channel the verdict can arrive on counts, so this fails closed.
+   */
+  const judgeHidden =
+    judgeHiddenRequested &&
+    (Boolean(judgeCase) ||
+      judgeDecidedStage(chain) !== null ||
+      groups.some((group) =>
+        group.rows.some(
+          (row) =>
+            row.provenance === "judge" && row.result.state !== "notMeasured",
+        ),
+      ));
 
   const defaultGroups = groups
     .map((group) => ({

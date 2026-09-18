@@ -689,6 +689,10 @@ export {
 
 // ── user-facing words for the closed vocabularies ────────────────────────────
 export {
+  SWARM_FINDING_DISPOSITION_LABELS,
+  SWARM_FINDING_COVERAGE_NOTE_LABELS,
+  SWARM_FINDING_SUMMARY_KIND_LABELS,
+  SWARM_FINDING_BASIS_LABELS,
   DECISION_LABEL_VOCABULARIES,
   DECISION_SUMMARY_FALLBACK_NEXT_ACTION,
   DECISION_SUMMARY_STALE_ANALYZER_DISAGREEMENT_NEXT_ACTION,
@@ -1166,3 +1170,4 @@ export * from "./judge-settings.js";
 export * from "./swarm-session-verdict.js";
 export * from "./swarm-report.js";
 export * from "./eval-authoring.js";
+export * from "./swarm-finding.js";

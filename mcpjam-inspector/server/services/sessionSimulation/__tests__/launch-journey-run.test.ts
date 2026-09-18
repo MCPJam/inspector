@@ -163,8 +163,8 @@ describe("launchJourneyRun", () => {
     ],
     [
       "Convex structured data",
-      '{"code":"ENV_MODEL_REQUIRED","message":"Environment \\"Prod\\" has no model to run."}',
-      'Environment "Prod" has no model to run.',
+      '{"code":"SPEND_CAP","message":"Organization spend cap reached."}',
+      "Organization spend cap reached.",
     ],
   ])(
     "unwraps a structured backend body (%s)",
@@ -179,6 +179,39 @@ describe("launchJourneyRun", () => {
       });
     }
   );
+
+  it("translates a no-model refusal to the same 409 Evals returns", async () => {
+    // The shape the Convex HTTP action actually sends: its blanket catch wraps
+    // the ConvexError data in an `invalid_request` 400. Swarm used to report
+    // that as a VALIDATION_ERROR while Evals — through the same translator —
+    // reports a 409 whose reason a caller can branch on.
+    createRunMock.mockRejectedValue(
+      new SwarmAgentError(
+        400,
+        JSON.stringify({
+          ok: false,
+          code: "invalid_request",
+          error: {
+            code: "ENV_MODEL_REQUIRED",
+            message: 'Environment "Prod" has no model to run.',
+            details: { environmentId: "env-1", hostId: "host-1" },
+          },
+        }),
+        "nope"
+      )
+    );
+    await expect(launchJourneyRun(DEPS, INPUT)).rejects.toMatchObject({
+      status: 409,
+      code: "CONFLICT",
+      message: 'Environment "Prod" has no model to run.',
+      details: {
+        code: "ENV_MODEL_REQUIRED",
+        reason: "environment_model_required",
+        environmentId: "env-1",
+        hostId: "host-1",
+      },
+    });
+  });
 
   it("preserves structured backend details without trusting them as the message", async () => {
     createRunMock.mockRejectedValue(

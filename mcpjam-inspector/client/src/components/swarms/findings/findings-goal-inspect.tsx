@@ -21,6 +21,7 @@ import {
   type FindingsSessionScope,
   type FindingsStageNarrowing,
 } from "./findings-goal-sessions";
+import { FindingText } from "@/components/shared/actionable-insights/finding-text";
 
 export const EMPTY_STAGE_COPY =
   "No finding landed on this stage. This is not evidence that the stage passed.";
@@ -304,7 +305,7 @@ export function FindingsGoalInspect({
                       data-testid="findings-evidence-row"
                     >
                       <p className="text-sm font-semibold leading-relaxed text-zinc-50">
-                        {evidence.observation}
+                        <FindingText text={evidence.observation} />
                       </p>
                       {sessionsAreExpandable ? (
                         <button
