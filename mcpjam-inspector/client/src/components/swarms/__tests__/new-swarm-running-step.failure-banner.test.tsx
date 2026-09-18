@@ -260,6 +260,55 @@ describe("NewSwarmRunningStep — XAA failure banner", () => {
     ).toHaveTextContent("Swarm finished 2 of 2 sessions");
     expect(screen.queryByTestId("new-swarm-running-failure")).toBeNull();
   });
+
+  it("counts both failure causes once and uses the most severe tone", async () => {
+    mutableRun.summary = {
+      total: 20,
+      succeeded: 0,
+      failed: 10,
+      rateLimited: 10,
+    };
+    mutableRun.hostSummaries = [
+      {
+        hostId: "host-1",
+        targetId: "environment:env-1",
+        ...mutableRun.summary,
+      },
+    ];
+    mutableRun.snapshot.sessionsPerTarget = 20;
+    mutableRun.attempts = Array.from({ length: 20 }, (_, sessionIdx) => ({
+      ...attempt,
+      sessionIdx,
+      status: sessionIdx < 10 ? "failed" : "rate_limited",
+      errorCode: sessionIdx < 10 ? "session_failed" : "user_rate_limit",
+      errorMessage:
+        sessionIdx < 10
+          ? "Protocol mismatch"
+          : "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
+    }));
+    streamState.cellStatus = Object.fromEntries(
+      Array.from({ length: 20 }, (_, i) => [
+        `environment:env-1:${i}`,
+        i < 10 ? "failed" : "rate_limited",
+      ]),
+    );
+    renderStep();
+    // Each cause is stated exactly once: the server failure in the banner, the
+    // model limit in its own callout (which carries the top-up path).
+    const banner = await screen.findByTestId("new-swarm-running-failure");
+    expect(banner).toHaveTextContent("10 sessions: Protocol mismatch");
+    expect(banner).not.toHaveTextContent("Daily MCPJam model limit");
+    expect(banner.className).toContain("destructive");
+    expect(
+      screen.getByTestId("new-swarm-running-account-limit"),
+    ).toHaveTextContent("10 stopped at the MCPJam model limit");
+  });
+
+  it("does not invent a cause for an attempt without error metadata", async () => {
+    renderStep();
+    await screen.findByTestId("new-swarm-running-title");
+    expect(screen.queryByTestId("new-swarm-running-failure")).toBeNull();
+  });
 });
 
 vi.mock("@/hooks/use-host-snapshot", () => ({

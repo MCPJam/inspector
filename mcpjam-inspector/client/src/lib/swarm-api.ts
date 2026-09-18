@@ -911,7 +911,13 @@ export class LaunchJourneyRunError extends Error {
   /** A model limit the dialog took over. The caller must not also render this
    * message inline — the modal already carries it, with the actions. */
   readonly limitDialogRaised: boolean;
-  constructor(status: number, message: string, limitDialogRaised = false) {
+  constructor(
+    status: number,
+    message: string,
+    limitDialogRaised = false,
+    readonly code?: string,
+    readonly details?: unknown,
+  ) {
     super(message);
     this.name = "LaunchJourneyRunError";
     this.status = status;
@@ -987,6 +993,11 @@ export async function launchJourneyRun(
       response.status,
       message,
       limitDialogRaised,
+      typeof (parsed?.details as Record<string, unknown> | undefined)?.code ===
+      "string"
+        ? (parsed!.details as { code: string }).code
+        : code ?? undefined,
+      parsed?.details,
     );
   }
 
@@ -1026,7 +1037,13 @@ export class SwarmGenerateError extends Error {
   /** A model limit the dialog took over. The caller must not also render this
    * message inline — the modal already carries it, with the actions. */
   readonly limitDialogRaised: boolean;
-  constructor(status: number, message: string, limitDialogRaised = false) {
+  constructor(
+    status: number,
+    message: string,
+    limitDialogRaised = false,
+    readonly code?: string,
+    readonly details?: unknown,
+  ) {
     super(message);
     this.name = "SwarmGenerateError";
     this.status = status;

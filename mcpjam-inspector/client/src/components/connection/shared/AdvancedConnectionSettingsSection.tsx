@@ -24,7 +24,7 @@ import type { McpProtocolVersion } from "@/lib/client-config-v2";
  *   - "november" → `"2025-11-25"`, explicit stateful pin.
  *   - "latest"   → `"2026-07-28"`, the newest stateless preview client.
  */
-type DropdownValue = "inherit" | "november" | "latest";
+type DropdownValue = "inherit" | "november" | "latest" | McpProtocolVersion;
 
 const MCP_PROTOCOL_OPTIONS: Array<{
   value: DropdownValue;
@@ -205,7 +205,16 @@ export function AdvancedConnectionSettingsSection({
       ? "latest"
       : mcpProtocolVersionOverride === "2025-11-25"
       ? "november"
-      : "inherit";
+      : mcpProtocolVersionOverride ?? "inherit";
+
+  if (
+    !visibleOptions.some((option) => option.value === selectedDropdownValue)
+  ) {
+    visibleOptions.push({
+      value: selectedDropdownValue,
+      label: `Pinned (${selectedDropdownValue})`,
+    });
+  }
 
   return (
     <div className="space-y-2">
@@ -429,7 +438,9 @@ export function AdvancedConnectionSettingsSection({
                         ? "2026-07-28"
                         : next === "november"
                         ? "2025-11-25"
-                        : undefined,
+                        : next === "inherit"
+                        ? undefined
+                        : (next as McpProtocolVersion),
                     );
                   }}
                 >

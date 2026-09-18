@@ -744,16 +744,15 @@ export function ProtocolTab({
   );
   const protocolOptionsRestricted =
     protocolOptions.length < HOST_PROTOCOL_OPTIONS.length;
-  // A stored STATEFUL pin outside the advertised list — a legacy row, or one
+  // A stored pin outside the advertised list — a legacy row, or one
   // hand-edited in the JSON. Its option is force-kept (see the helper), which
   // can pad the list back to full length, so this must be detected directly
   // rather than inferred from the option count. Saving such a draft throws
-  // `ConflictingProtocolVersionPin`; warn before Save does. A stateless pin
-  // skips `initialize` entirely, so both canonicalizers accept it outside the
-  // accept-list — warning there would promise a failure that never comes.
+  // `ConflictingProtocolVersionPin`; warn before Save does. Stateless pins
+  // still require the server to speak that revision and have no legacy
+  // fallback, so they must receive the same warning.
   const selectedPinUnadvertised =
     selectedDropdownValue !== "auto" &&
-    !isStatelessProtocolVersion(selectedDropdownValue) &&
     advertisedProtocolVersions !== undefined &&
     advertisedProtocolVersions.length > 0 &&
     !advertisedProtocolVersions.includes(selectedDropdownValue);
@@ -1056,9 +1055,19 @@ export function ProtocolTab({
         {selectedPinUnadvertised && (
           <p className="mt-1.5 text-[11px] leading-snug text-destructive">
             Pinned to {selectedDropdownValue}, which this client does not
-            advertise ({(advertisedProtocolVersions ?? []).join(", ")}). Saving
-            will fail — pick an advertised version, or add it to{" "}
-            <code>supportedProtocolVersions</code> in the JSON below.
+            advertise ({(advertisedProtocolVersions ?? []).join(", ")}).{" "}
+            {isStatelessProtocolVersion(selectedDropdownValue) ? (
+              <>
+                This pin requires servers that offer this revision and has no
+                legacy fallback. Pick Automatic unless you intend to test that
+                revision.
+              </>
+            ) : (
+              <>
+                Saving will fail — pick an advertised version, or add it to{" "}
+                <code>supportedProtocolVersions</code> in the JSON below.
+              </>
+            )}
           </p>
         )}
         <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">

@@ -72,6 +72,11 @@ export const EVALS_COMPOSER_SLOTS: ComposerSlot[] = [
   "models",
 ];
 
+export const SWARM_COMPOSER_SLOTS: ComposerSlot[] = [
+  ...DEFAULT_COMPOSER_SLOTS,
+  "models",
+];
+
 export function EnvironmentComposer({
   projectId,
   environments,
@@ -101,8 +106,8 @@ export function EnvironmentComposer({
   disabled?: boolean;
   /**
    * Which pills to offer. `models` stays out of the default and is opted
-   * into by evals. Swarm / User Testing omit it so a model-bearing env
-   * cannot silently shed its override.
+   * into by Evals and Swarms. Surfaces without it lock model-bearing stacks
+   * so they cannot silently shed their override.
    */
   slots?: readonly ComposerSlot[];
   /**
