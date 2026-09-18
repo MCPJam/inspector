@@ -527,8 +527,7 @@ export function NewSwarmCreateFlow({
   const [personaPickerOpen, setPersonaPickerOpen] = useState(false);
   // Sizes GENERATION only — how many personas and goals the Describe step
   // asks for. Confirm no longer picks it: iterations is the control there.
-  const pushIntensity =
-    restoredDraft?.pushIntensity ?? DEFAULT_SWARM_INTENSITY;
+  const pushIntensity = restoredDraft?.pushIntensity ?? DEFAULT_SWARM_INTENSITY;
   // One entry per persona, keyed by its proposal key. Absent means the
   // default: a persona the user has not touched costs nothing to store,
   // and a regenerated slate mints new keys rather than inheriting numbers
@@ -1065,11 +1064,11 @@ export function NewSwarmCreateFlow({
         limitDialogRaised
           ? null
           : err instanceof SwarmTargetMaterializeError ||
-              err instanceof ComposerResolveError ||
-              err instanceof SwarmGenerateError ||
-              err instanceof WebApiError
-            ? err.message
-            : errorMessageOf(err, "Failed to generate personas."),
+            err instanceof ComposerResolveError ||
+            err instanceof SwarmGenerateError ||
+            err instanceof WebApiError
+          ? err.message
+          : errorMessageOf(err, "Failed to generate personas."),
       );
     } finally {
       inFlightRef.current = false;
@@ -1730,10 +1729,7 @@ export function NewSwarmCreateFlow({
 
   const leaveRunning = useCallback(() => {
     clearNewSwarmFlowDraft();
-    onDone(
-      launchedRunLabelsRef.current,
-      persistedRunGroupIdRef.current,
-    );
+    onDone(launchedRunLabelsRef.current, persistedRunGroupIdRef.current);
   }, [onDone]);
 
   // Labels ride along exactly as they do on `leaveRunning`: this is a leave

@@ -53,7 +53,7 @@ interface AdvancedConnectionSettingsSectionProps {
   onUpdateHeader?: (
     index: number,
     field: "key" | "value",
-    value: string
+    value: string,
   ) => void;
   hasStoredHeaders?: boolean;
   isRevealingHeaders?: boolean;
@@ -94,7 +94,7 @@ interface AdvancedConnectionSettingsSectionProps {
    */
   mcpProtocolVersionOverride?: McpProtocolVersion;
   onMcpProtocolVersionOverrideChange?: (
-    version: McpProtocolVersion | undefined
+    version: McpProtocolVersion | undefined,
   ) => void;
   /**
    * Transport kind of this server. MCPJam's current stateless preview
@@ -167,7 +167,7 @@ export function AdvancedConnectionSettingsSection({
   useEffect(() => {
     if (!pendingRevealKey) return;
     const index = (customHeaders ?? []).findIndex(
-      (header) => header.key === pendingRevealKey
+      (header) => header.key === pendingRevealKey,
     );
     if (index === -1) return;
     maskedHeaders.show(index);
@@ -335,7 +335,9 @@ export function AdvancedConnectionSettingsSection({
                               onUpdateHeader(index, "value", value)
                             }
                             visible={maskedHeaders.isVisible(index)}
-                            onToggleVisibility={() => maskedHeaders.toggle(index)}
+                            onToggleVisibility={() =>
+                              maskedHeaders.toggle(index)
+                            }
                             inputLabel={`Header ${index + 1} value`}
                             subject={label}
                             className="flex-[1.4]"
@@ -427,7 +429,7 @@ export function AdvancedConnectionSettingsSection({
                         ? "2026-07-28"
                         : next === "november"
                         ? "2025-11-25"
-                        : undefined
+                        : undefined,
                     );
                   }}
                 >

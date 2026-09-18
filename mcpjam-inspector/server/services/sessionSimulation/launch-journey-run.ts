@@ -135,7 +135,7 @@ export function launchFailureMessage(err: SwarmAgentError): string {
       const envelope = parsed.error;
       if (envelope && typeof envelope === "object") {
         const unwrapped = showableReason(
-          (envelope as { message?: unknown }).message
+          (envelope as { message?: unknown }).message,
         );
         if (unwrapped) return unwrapped;
       }
@@ -176,7 +176,7 @@ function showableReason(value: unknown): string | null {
 
 /** Preserve structured billing/environment metadata across the WebRouteError boundary. */
 function launchFailureDetails(
-  err: SwarmAgentError
+  err: SwarmAgentError,
 ): Record<string, unknown> | undefined {
   const raw = err.bodyText?.trim();
   if (!raw?.startsWith("{")) return undefined;
@@ -219,7 +219,7 @@ function requireConvexHttpUrl(): string {
     throw new WebRouteError(
       500,
       ErrorCode.INTERNAL_ERROR,
-      "Server missing CONVEX_HTTP_URL configuration"
+      "Server missing CONVEX_HTTP_URL configuration",
     );
   }
   return url;
@@ -235,7 +235,7 @@ function requireConvexHttpUrl(): string {
  */
 export async function launchJourneyRun(
   deps: LaunchJourneyRunDeps,
-  input: LaunchJourneyRunInput
+  input: LaunchJourneyRunInput,
 ): Promise<LaunchJourneyRunResult> {
   const convexHttpUrl = requireConvexHttpUrl();
 
@@ -293,7 +293,7 @@ export async function launchJourneyRun(
         err.status,
         code,
         launchFailureMessage(err),
-        launchFailureDetails(err)
+        launchFailureDetails(err),
       );
       // The wave fan-out and every generic client read `Retry-After` to decide
       // WHEN to come back; the 429 alone only says "not now". The backend's
@@ -334,7 +334,7 @@ export async function launchJourneyRun(
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "This journey has no pinned hosts to run"
+      "This journey has no pinned hosts to run",
     );
   }
   const hosts = snapshot.hosts;
@@ -395,13 +395,13 @@ export async function launchJourneyRun(
             runId,
             targetId: host.targetId,
             snapshotPluginServerIds: host.pluginServerIds,
-          }
+          },
         );
         // Deduped union: the backend keeps plugin ids out of `serverIds`,
         // but an overlap would double-connect rather than fail, so guard it.
         const hostServerIds = new Set(host.serverIds);
         const pluginOnlyServerIds = pluginServerIds.filter(
-          (id) => !hostServerIds.has(id)
+          (id) => !hostServerIds.has(id),
         );
         const serverIds =
           pluginOnlyServerIds.length > 0
@@ -452,7 +452,7 @@ export async function launchJourneyRun(
                   requestTimeoutByServerId: connection.requestTimeoutByServerId,
                 }
               : {}),
-          }
+          },
         );
         // `MCPClientManager` starts eager connections in the background. Do
         // not hand that manager to a session while its servers are still only
@@ -468,7 +468,7 @@ export async function launchJourneyRun(
         // is disposed only after the session finishes.
         try {
           await Promise.all(
-            serverIds.map((serverId) => manager.listTools(serverId))
+            serverIds.map((serverId) => manager.listTools(serverId)),
           );
         } catch (error) {
           // The factory has not returned yet, so the runner cannot call its

@@ -455,7 +455,12 @@ export interface SwarmWaveSignalCandidate {
   /** Identity component (toolName / criterionId / environmentId / hostId /
    * personaRefId / journeyRefId) — stable across waves; never a label. */
   subjectKind:
-    "tool" | "criterion" | "environment" | "host" | "persona" | "journey";
+    | "tool"
+    | "criterion"
+    | "environment"
+    | "host"
+    | "persona"
+    | "journey";
   subjectId: string;
   /** Display-only. */
   subjectLabel: string;
@@ -674,7 +679,7 @@ export interface SwarmSessionMetrics {
  */
 export function journeySessionRowToThread(
   row: JourneySessionRow,
-  fallbackPersonaName?: string
+  fallbackPersonaName?: string,
 ): SharedChatThread {
   const displayName =
     row.visitorDisplayName ??
@@ -711,7 +716,7 @@ export type SwarmSessionRunGroup = {
 
 function groupSwarmSessionsByKey(
   rows: JourneySessionRow[],
-  keyFor: (row: JourneySessionRow) => string | null | undefined
+  keyFor: (row: JourneySessionRow) => string | null | undefined,
 ): SwarmSessionRunGroup[] {
   const byKey = new Map<string | null, JourneySessionRow[]>();
   for (const row of rows) {
@@ -725,13 +730,13 @@ function groupSwarmSessionsByKey(
     .map(([runId, groupRows]) => {
       const sorted = [...groupRows].sort(
         (a, b) =>
-          (b.lastActivityAt ?? b.startedAt) - (a.lastActivityAt ?? a.startedAt)
+          (b.lastActivityAt ?? b.startedAt) - (a.lastActivityAt ?? a.startedAt),
       );
       return {
         runId,
         rows: sorted,
         latestActivityAt: Math.max(
-          ...sorted.map((row) => row.lastActivityAt ?? row.startedAt)
+          ...sorted.map((row) => row.lastActivityAt ?? row.startedAt),
         ),
       };
     })
@@ -740,14 +745,14 @@ function groupSwarmSessionsByKey(
 
 /** Cluster flat session pages by parent journey run (newest run first). */
 export function groupSwarmSessionsByRun(
-  rows: JourneySessionRow[]
+  rows: JourneySessionRow[],
 ): SwarmSessionRunGroup[] {
   return groupSwarmSessionsByKey(rows, (row) => row.journeyRunId);
 }
 
 /** Cluster flat session pages by goal (`journeyRefId`, newest group first). */
 export function groupSwarmSessionsByGoal(
-  rows: JourneySessionRow[]
+  rows: JourneySessionRow[],
 ): SwarmSessionRunGroup[] {
   return groupSwarmSessionsByKey(rows, (row) => row.journeyRefId);
 }
@@ -920,7 +925,7 @@ export class LaunchJourneyRunError extends Error {
  * caller can branch on `.status`.
  */
 export async function launchJourneyRun(
-  args: LaunchJourneyRunArgs
+  args: LaunchJourneyRunArgs,
 ): Promise<LaunchJourneyRunResult> {
   const response = await authFetch(
     `/api/web/swarm/journeys/${encodeURIComponent(args.journeyId)}/runs`,
@@ -940,7 +945,7 @@ export async function launchJourneyRun(
           ? { sessionsPerTarget: args.sessionsPerTarget }
           : {}),
       }),
-    }
+    },
   );
 
   let body: unknown = undefined;
@@ -967,8 +972,8 @@ export async function launchJourneyRun(
       typeof parsed?.code === "string"
         ? parsed.code
         : typeof parsed?.error === "string"
-          ? parsed.error
-          : null;
+        ? parsed.error
+        : null;
     // Raise the wall HERE, while the body still carries the route's `code` —
     // same reasoning as `postGenerate`. Launching a goal run spends model
     // budget like every other action that already shows this dialog.
@@ -981,7 +986,7 @@ export async function launchJourneyRun(
     throw new LaunchJourneyRunError(
       response.status,
       message,
-      limitDialogRaised
+      limitDialogRaised,
     );
   }
 
@@ -992,7 +997,7 @@ export async function launchJourneyRun(
   if (typeof runId !== "string" || runId.length === 0) {
     throw new LaunchJourneyRunError(
       response.status,
-      "Launch accepted but the backend returned no run id"
+      "Launch accepted but the backend returned no run id",
     );
   }
   return { runId };
@@ -1032,7 +1037,7 @@ export class SwarmGenerateError extends Error {
 async function postGenerate<T>(
   path: string,
   body: unknown,
-  fallbackMessage: string
+  fallbackMessage: string,
 ): Promise<T> {
   const response = await authFetch(path, {
     method: "POST",
@@ -1059,8 +1064,8 @@ async function postGenerate<T>(
       typeof body?.code === "string"
         ? body.code
         : typeof body?.error === "string"
-          ? body.error
-          : null;
+        ? body.error
+        : null;
     const normalized = isNormalizedError(body?.normalized)
       ? (body.normalized as NormalizedError)
       : undefined;
@@ -1115,7 +1120,7 @@ export async function generateSwarmPersona(
   args: {
     projectId: string;
     journeyCount: number;
-  } & SwarmGenerationGrounding
+  } & SwarmGenerationGrounding,
 ): Promise<{
   persona: SwarmGeneratedPersona;
   journeys: SwarmGeneratedJourney[];
@@ -1123,7 +1128,7 @@ export async function generateSwarmPersona(
   return postGenerate(
     "/api/web/swarm/generate/persona",
     args,
-    "Failed to generate persona"
+    "Failed to generate persona",
   );
 }
 
@@ -1148,7 +1153,7 @@ export async function generateSwarmPersonaBatch(
     journeyCount: number;
     description?: string;
     existingPersonas?: { name: string; role: string }[];
-  } & SwarmGenerationGrounding
+  } & SwarmGenerationGrounding,
 ): Promise<{
   personas: {
     persona: SwarmGeneratedPersona;
@@ -1158,7 +1163,7 @@ export async function generateSwarmPersonaBatch(
   return postGenerate(
     "/api/web/swarm/generate/persona",
     args,
-    "Failed to generate personas"
+    "Failed to generate personas",
   );
 }
 
@@ -1169,12 +1174,12 @@ export async function generateSwarmJourneys(
     swarmRefId?: string;
     journeyCount: number;
     persona: SwarmGeneratedPersona;
-  } & SwarmGenerationGrounding
+  } & SwarmGenerationGrounding,
 ): Promise<{ journeys: SwarmGeneratedJourney[] }> {
   return postGenerate(
     "/api/web/swarm/generate/journeys",
     args,
-    "Failed to generate goals"
+    "Failed to generate goals",
   );
 }
 
@@ -1186,7 +1191,7 @@ export async function generateSwarmJourneys(
 export async function streamJourneyRun(
   runId: string,
   onEvent: (event: SwarmStreamEvent) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
 ): Promise<void> {
   const response = await authFetch(
     `/api/web/swarm/runs/${encodeURIComponent(runId)}/stream`,
@@ -1194,7 +1199,7 @@ export async function streamJourneyRun(
       method: "GET",
       headers: { Accept: "text/event-stream" },
       signal,
-    }
+    },
   );
 
   if (!response.ok) {

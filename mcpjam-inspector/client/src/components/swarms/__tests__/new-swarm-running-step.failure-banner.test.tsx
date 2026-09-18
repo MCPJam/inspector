@@ -153,7 +153,7 @@ function renderStep() {
         onLeave={vi.fn()}
         onOpenSession={vi.fn()}
       />
-    </div>
+    </div>,
   );
 }
 
@@ -187,7 +187,7 @@ describe("NewSwarmRunningStep — XAA failure banner", () => {
 
     const banner = await screen.findByTestId("new-swarm-running-failure");
     expect(banner).toHaveTextContent(
-      "This run's authorization needs re-running."
+      "This run's authorization needs re-running.",
     );
     expect(banner).toHaveTextContent("Billing MCP");
     expect(banner).toHaveTextContent("sign in again");
@@ -215,8 +215,12 @@ describe("NewSwarmRunningStep — XAA failure banner", () => {
     renderStep();
     const banner = await screen.findByTestId("new-swarm-running-failure");
     expect(banner).toHaveTextContent("No sessions completed successfully.");
-    expect(banner).toHaveTextContent("Sessions may have run before the interruption");
-    expect(banner).toHaveTextContent("reason contact was lost was not recorded");
+    expect(banner).toHaveTextContent(
+      "Sessions may have run before the interruption",
+    );
+    expect(banner).toHaveTextContent(
+      "reason contact was lost was not recorded",
+    );
     expect(banner).not.toHaveTextContent("No sessions ran");
   });
 
@@ -251,18 +255,20 @@ describe("NewSwarmRunningStep — XAA failure banner", () => {
 
     renderStep();
 
-    expect(await screen.findByTestId("new-swarm-running-title")).toHaveTextContent(
-      "Swarm finished 2 of 2 sessions",
-    );
+    expect(
+      await screen.findByTestId("new-swarm-running-title"),
+    ).toHaveTextContent("Swarm finished 2 of 2 sessions");
     expect(screen.queryByTestId("new-swarm-running-failure")).toBeNull();
   });
 });
 
 vi.mock("@/hooks/use-host-snapshot", () => ({
   useHostSnapshotForSession: () => ({
-    status: "ready", snapshot: { hostStyle: "mcpjam" },
+    status: "ready",
+    snapshot: { hostStyle: "mcpjam" },
   }),
   useHostSnapshotForHost: () => ({
-    status: "ready", snapshot: { hostStyle: "mcpjam" },
+    status: "ready",
+    snapshot: { hostStyle: "mcpjam" },
   }),
 }));
