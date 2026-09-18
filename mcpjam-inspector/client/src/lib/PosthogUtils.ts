@@ -1,5 +1,6 @@
 import { getCachedGuestSession } from "./guest-session";
 import { HOSTED_MODE } from "./config";
+import { getLastFailedRequest } from "./failed-request-tracker";
 
 export const VITE_PUBLIC_POSTHOG_KEY =
   "phc_dTOPniyUNU2kD8Jx8yHMXSqiZHM8I91uWopTMX6EBE9";
@@ -85,14 +86,51 @@ export function scrubSensitiveUrl(value: string): string {
   return out;
 }
 
+// What browsers say when a request never got a response.
+const NETWORK_FAILURE_MESSAGES = [
+  "Load failed", // Safari
+  "Failed to fetch", // Chrome
+  "NetworkError when attempting to fetch resource", // Firefox
+];
+
+// The exception fires right after the request fails; anything older is
+// probably a different request.
+const FAILED_REQUEST_MAX_AGE_MS = 10_000;
+
+// Name the request behind a bare "Load failed" exception. See
+// lib/failed-request-tracker.ts.
+function attachFailedRequest(properties: Record<string, any>): void {
+  const exceptions = properties.$exception_list;
+  const isNetworkFailure =
+    Array.isArray(exceptions) &&
+    exceptions.some(
+      (exception) =>
+        typeof exception?.value === "string" &&
+        NETWORK_FAILURE_MESSAGES.some((message) =>
+          exception.value.includes(message),
+        ),
+    );
+  if (!isNetworkFailure) return;
+
+  const failed = getLastFailedRequest();
+  if (!failed) return;
+  const ageMs = Date.now() - failed.at;
+  if (ageMs > FAILED_REQUEST_MAX_AGE_MS) return;
+
+  properties.failed_request = `${failed.method} ${scrubSensitiveUrl(failed.target)}`;
+  properties.failed_request_age_ms = ageMs;
+}
+
 function sanitizeAnalyticsProperties(
   properties: Record<string, any>,
+  eventName?: string,
 ): Record<string, any> {
   for (const key of ["$current_url", "$referrer", "$pathname"]) {
     if (typeof properties[key] === "string") {
       properties[key] = scrubSensitiveUrl(properties[key]);
     }
   }
+  if (eventName === "$exception") attachFailedRequest(properties);
   return properties;
 }
 

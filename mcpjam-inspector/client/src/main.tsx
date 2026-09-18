@@ -1,3 +1,5 @@
+// Must stay the first import; see the module comment.
+import "./lib/install-failed-request-tracker";
 import { StrictMode, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { AppRouterProvider } from "./router";
