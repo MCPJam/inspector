@@ -91,7 +91,7 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 #### Changed
 
-- **User Testing scenarios analyze themselves** — opening a User Testing scenario's Findings or Insights tab when sessions exist but no analysis has run now starts the analysis automatically. The "Analyze sessions" button and the "These sessions haven't been analyzed yet" state are gone; the tab shows an analyzing banner instead and fills in once the run completes. Swarm and Benchmark scopes are unchanged — Swarm already queues analysis when a run settles, and Benchmark flow analysis remains explicitly requested.
+- **User Testing scenarios no longer auto-analyze on open** — opening a User Testing scenario's Findings or Insights tab when sessions exist but no analysis has run now shows "No session has been analyzed yet." instead of starting analysis automatically. To trigger analysis, use the **Re-analyze** button in the freshness chip's popover. Swarm and Benchmark scopes are unchanged.
 
 ### 2026-09-02
 
