@@ -295,7 +295,7 @@ export function SwarmsTab({
   const environments = useProjectEnvironmentsList(effectiveProjectId);
   const [runningPersonaIds, setRunningPersonaIds] = useState<string[]>([]);
   const [personaSidebarWidth, setPersonaSidebarWidth] = useState(
-    PERSONA_SIDEBAR_DEFAULT_WIDTH
+    PERSONA_SIDEBAR_DEFAULT_WIDTH,
   );
   const [isResizingPersonaSidebar, setIsResizingPersonaSidebar] =
     useState(false);
@@ -351,10 +351,6 @@ export function SwarmsTab({
   /** Authoring container written once per New-swarm run (see `swarms.ts`). */
   const createSwarm = useMutation("swarms:createSwarm" as any);
   const updateJourney = useMutation("journeys:updateJourney" as any);
-  /** Project-wide clustering settings, saved before anything has clustered. */
-  const setInsightsTuning = useMutation(
-    "chatSessions:setSwarmInsightsTuning" as any,
-  );
   const createEnvironment = useCreateProjectEnvironment();
   const hostNameById = useCallback(
     (hostId: string) =>
@@ -674,8 +670,8 @@ export function SwarmsTab({
             err instanceof LaunchJourneyRunError
               ? err.message
               : err instanceof Error
-                ? err.message
-                : "Launch failed",
+              ? err.message
+              : "Launch failed",
           );
         }
       }
@@ -1034,9 +1030,6 @@ export function SwarmsTab({
           onSaveExistingPersona={async (personaRefId, patch) => {
             await updatePersona({ personaRefId, ...patch } as any);
           }}
-          onSetInsightsTuning={async (tuning) => {
-            await setInsightsTuning({ projectId, tuning } as any);
-          }}
         />
       </div>
     );
@@ -1275,7 +1268,7 @@ export function SwarmsTab({
               tabIndex={0}
               className={cn(
                 "relative z-10 -ml-px w-1 shrink-0 cursor-col-resize touch-none select-none border-r border-transparent transition-colors hover:border-primary/40",
-                isResizingPersonaSidebar && "border-primary/60"
+                isResizingPersonaSidebar && "border-primary/60",
               )}
               onPointerDown={(event) => {
                 event.currentTarget.setPointerCapture(event.pointerId);
@@ -1288,11 +1281,8 @@ export function SwarmsTab({
                 setPersonaSidebarWidth(
                   Math.min(
                     PERSONA_SIDEBAR_MAX_WIDTH,
-                    Math.max(
-                      PERSONA_SIDEBAR_MIN_WIDTH,
-                      event.clientX - left
-                    )
-                  )
+                    Math.max(PERSONA_SIDEBAR_MIN_WIDTH, event.clientX - left),
+                  ),
                 );
               }}
               onPointerUp={(event) => {
@@ -1309,8 +1299,8 @@ export function SwarmsTab({
                 setPersonaSidebarWidth((width) =>
                   Math.min(
                     PERSONA_SIDEBAR_MAX_WIDTH,
-                    Math.max(PERSONA_SIDEBAR_MIN_WIDTH, width + delta)
-                  )
+                    Math.max(PERSONA_SIDEBAR_MIN_WIDTH, width + delta),
+                  ),
                 );
               }}
               data-testid="persona-sidebar-resizer"

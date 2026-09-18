@@ -258,42 +258,6 @@ describe("SessionFlowSankey", () => {
     expect(other.getAttribute("aria-label")).toMatch(/not selectable/);
   });
 
-  it("offers a rebuild when the last run predates session signals", () => {
-    const { onRebuild } = renderSankey({
-      breakdown: breakdown({
-        sankey: { nodes: [], links: [], foldedGoalCount: 0, foldedByStage: {} },
-        latestRun: run({ signalsVersion: null }),
-      }),
-    });
-
-    expect(
-      screen.getByText(/before session signals existed/),
-    ).toBeInTheDocument();
-    // Re-clustering is hidden for now; the empty state explains why, it
-    // does not start another run.
-    expect(
-      screen.queryByRole("button", { name: /Rebuild clusters/ }),
-    ).not.toBeInTheDocument();
-    expect(onRebuild).not.toHaveBeenCalled();
-  });
-
-  it("draws what exists and prompts a rebuild when only goals were clustered", () => {
-    // A version-2 run produced the goal column, so the honest thing is to draw
-    // it and explain the empty ones — not replace the panel with a blank state.
-    const { onRebuild } = renderSankey({
-      breakdown: breakdown({ latestRun: run({ signalsVersion: 2 }) }),
-    });
-
-    expect(screen.getByText("Session flow")).toBeInTheDocument();
-    expect(
-      screen.getByText(/before every column was clustered/),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: /Rebuild for themes/ }),
-    ).not.toBeInTheDocument();
-    expect(onRebuild).not.toHaveBeenCalled();
-  });
-
   it("does not prompt once every column is clustered", () => {
     renderSankey();
     expect(
@@ -332,24 +296,6 @@ describe("SessionFlowSankey", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("treats a missing run as work in progress on a self-analyzing surface", () => {
-    // BB-196: User Testing starts its own analysis, so "no run yet" is a run
-    // being arranged. Offering a button here is offering to do the thing that
-    // is already happening.
-    renderSankey({
-      breakdown: breakdown({ latestRun: null }),
-      analysisIsAutomatic: true,
-    });
-
-    expect(screen.getByText(/Analyzing sessions/)).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: /Analyze sessions/ }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByText(/haven.t been analyzed yet/),
-    ).not.toBeInTheDocument();
-  });
-
   it("keeps offering to analyze on a surface that waits to be asked", () => {
     // The same state WITHOUT the promise. The benchmark diagram is the paid
     // one and deliberately waits, so the default must not change.
@@ -357,26 +303,6 @@ describe("SessionFlowSankey", () => {
     expect(
       screen.getByRole("button", { name: /Analyze sessions/ }),
     ).toBeInTheDocument();
-  });
-
-  it("reads an empty flow as building rather than as a prompt to build it", () => {
-    renderSankey({
-      breakdown: breakdown({
-        sankey: { nodes: [], links: [], foldedGoalCount: 0, foldedByStage: {} },
-        latestRun: null,
-      }),
-      analysisIsAutomatic: true,
-      onApplyTuning: vi.fn(),
-    });
-
-    expect(screen.getByText(/Analyzing sessions/)).toBeInTheDocument();
-    expect(screen.queryByText("No session flow yet")).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: /Rebuild clusters/ }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByTestId("cluster-tuning-trigger"),
-    ).not.toBeInTheDocument();
   });
 
   it("stops advertising a rebuild while one is already running", () => {
@@ -395,9 +321,10 @@ describe("SessionFlowSankey", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("still offers a rebuild on an empty flow a completed analysis produced", () => {
-    // Re-clustering is hidden for now, so a finished run that clustered
-    // nothing is explained rather than given a rebuild button.
+  it("offers no voluntary rebuild on an empty flow a completed analysis produced", () => {
+    // Voluntary re-analysis is gated off (#5277): analysis runs on its own as
+    // sessions settle, and the one place to ask for it again is the freshness
+    // chip's popover. The empty state must not grow a second door.
     const { onRebuild } = renderSankey({
       breakdown: breakdown({
         sankey: { nodes: [], links: [], foldedGoalCount: 0, foldedByStage: {} },
@@ -408,7 +335,7 @@ describe("SessionFlowSankey", () => {
 
     expect(screen.getByText("No session flow yet")).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /Rebuild clusters/ }),
+      screen.queryByRole("button", { name: /rebuild clusters/i }),
     ).not.toBeInTheDocument();
     expect(onRebuild).not.toHaveBeenCalled();
   });

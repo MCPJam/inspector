@@ -98,7 +98,6 @@ import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import type { GoalJudgeConfig } from "@/components/shared/session-quality/judge-config";
 import { track } from "@/lib/analytics";
 import { toast } from "@/lib/toast";
-import type { ClusterTuning } from "@/lib/cluster-tuning";
 import { describeCloudServerBlock } from "@/lib/cloud-server-readiness";
 import { environmentLabel } from "@/lib/environment-label";
 import { ErrorCard } from "@/components/ui/error-card";
@@ -367,7 +366,6 @@ export function NewSwarmCreateFlow({
   onDone,
   onOpenSession,
   onSaveExistingPersona,
-  onSetInsightsTuning: _onSetInsightsTuning,
 }: {
   projectId: string;
   organizationId?: string;
@@ -451,7 +449,6 @@ export function NewSwarmCreateFlow({
    * a surface on an older backend renders the flow unchanged rather than
    * offering a control whose mutation would be rejected.
    */
-  onSetInsightsTuning?: (tuning: ClusterTuning) => Promise<void>;
 }) {
   const skillsEnabled = useSkillsEnabled();
   const computersEnabled = useComputersEnabled();

@@ -253,8 +253,8 @@ export function SwarmRunDetail({
         tab: liveProgress
           ? "run"
           : parsedTab === "run"
-            ? "findings"
-            : parsedTab,
+          ? "findings"
+          : parsedTab,
         sel: selParam ?? undefined,
       }),
     );
@@ -629,7 +629,6 @@ export function SwarmRunDetail({
                 onOpenSessionsTab={() => handleTabChange("sessions")}
                 urlSelection={urlSelection}
                 onSelectionChange={handleSelectionChange}
-                autoBackfillTopicMap
                 bodyLayout="scroll"
                 emptyState={
                   <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
