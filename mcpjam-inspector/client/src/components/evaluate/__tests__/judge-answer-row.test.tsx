@@ -223,8 +223,25 @@ describe("blind review", () => {
         hidden: true,
         skippedForCase: true,
         judgeEnabledOnSuite: false,
+        judgeCase: scored(),
       }).kind,
     ).toBe("withheld");
+  });
+
+  it("withholds nothing when the judge never graded the trial", () => {
+    // No verdict to leak, and the label control that lifts the mask only
+    // mounts beside one — so "hidden until you label" would never clear.
+    expect(
+      judgeAnswerState({
+        ...base,
+        hidden: true,
+        runJudgeStatus: "failed",
+        judgeCase: null,
+      }).kind,
+    ).toBe("failed");
+    expect(
+      judgeAnswerState({ ...base, hidden: true, judgeCase: null }).kind,
+    ).toBe("notRun");
   });
 
   it("prints no score when withheld", () => {
