@@ -4,6 +4,7 @@ import { AppRouterProvider } from "./router";
 import "./index.css";
 import { getPostHogKey, getPostHogOptions } from "./lib/PosthogUtils.js";
 import { preloadPosthogBundledExtensions } from "./lib/posthog-bundled-extensions";
+import { loadGoogleTag } from "./lib/google-tag";
 import { PostHogProvider } from "posthog-js/react";
 import { AuthKitProvider } from "@workos-inc/authkit-react";
 import { ConvexReactClient } from "convex/react";
@@ -458,6 +459,13 @@ if (isInIframe) {
     // that Railway's edge blocks on hosted — see lib/posthog-bundled-extensions.ts.
     // No-op (and no chunk download) off the error-capture surfaces.
     await preloadPosthogBundledExtensions();
+
+    // Google tag (GA4 + Ads) for hosted signup attribution. No-op unless the
+    // build carries VITE_GOOGLE_TAG_IDS and this is the hosted web surface —
+    // see lib/google-tag.ts. On the app-proper branch only: the iframe guard,
+    // the connection handoff, and the OAuth popups above never mount it, and
+    // none of them is a page a visitor arrives at from an ad.
+    loadGoogleTag();
 
     root.render(
       <StrictMode>
