@@ -39,6 +39,38 @@ import { resolveTargetPluginServerIds } from "../journeys/plugin-servers.js";
 import { createConvexClient } from "../evals/route-helpers.js";
 import { buildHostConnectionPins } from "../host-connection-pins.js";
 import { logger } from "../../utils/logger.js";
+import { rolloutEnabled } from "../../utils/computers/browser-rollout.js";
+import type { PinnedHostExecutionSpec } from "../swarm-agent.js";
+
+const BROWSER_TOOL_ID = "browser";
+
+/**
+ * Drop `browser` from every pinned host unless the launching member is in the
+ * `hosted-browser-enabled` rollout — the same server-side check chat makes
+ * before advertising it. The flag used to be read only by the client, so a
+ * member outside the rollout whose client still had `browser` saved got a
+ * swarm that either provisioned a desktop for it or told them, on every
+ * session, why a tool they cannot see was not advertised.
+ */
+export async function withoutBrowserOutsideRollout(
+  hosts: PinnedHostExecutionSpec[],
+  workosUserId: string | undefined,
+): Promise<PinnedHostExecutionSpec[]> {
+  const wantsBrowser = (host: PinnedHostExecutionSpec) =>
+    (host.builtInToolIds ?? []).includes(BROWSER_TOOL_ID);
+  if (!hosts.some(wantsBrowser)) return hosts;
+  if (workosUserId && (await rolloutEnabled(false, workosUserId))) return hosts;
+  return hosts.map((host) =>
+    wantsBrowser(host)
+      ? {
+          ...host,
+          builtInToolIds: (host.builtInToolIds ?? []).filter(
+            (id) => id !== BROWSER_TOOL_ID,
+          ),
+        }
+      : host,
+  );
+}
 
 /** The request-derived values a launch needs, resolved by the calling route. */
 export interface LaunchJourneyRunDeps {
@@ -358,11 +390,16 @@ export async function launchJourneyRun(
   const getPluginRegateClient = async () =>
     createConvexClient(await deps.getRunBearer());
 
-  setImmediate(() => {
+  setImmediate(async () => {
+    // Never rejects: the rollout read treats every failure as "not enrolled".
+    const runHosts = await withoutBrowserOutsideRollout(
+      hosts,
+      deps.callerContext.workosUserId,
+    );
     startJourneyRun({
       runId,
       projectId,
-      hosts,
+      hosts: runHosts,
       personaSnapshot: snapshot.personaSnapshot,
       sessionsPerTarget: snapshot.sessionsPerTarget,
       maxTurns: snapshot.maxTurns,
