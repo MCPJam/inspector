@@ -692,10 +692,18 @@ export function TopicMapPanel({
   );
   const analysis = snapshot?.analysis;
   // Transitional local shape for button helpers; no legacy run is queried.
+  // "failed" is what earns the header its retry (#5277 keeps failed-run
+  // recovery and hides voluntary rebuilds): sessions whose analysis or map
+  // projection failed, with nothing still in flight.
   const latestRun: ClusterRunState | null = analysis
     ? {
         _id: scopeKey,
-        status: analysis.pending + analysis.running > 0 ? "running" : "done",
+        status:
+          analysis.pending + analysis.running > 0
+            ? "running"
+            : analysis.failed + analysis.projectionFailed > 0
+              ? "failed"
+              : "done",
         startedAt: 0,
         finishedAt: analysis.lastAnalyzedAt,
         sessionCount: analysis.analyzed,
@@ -1450,15 +1458,9 @@ export function TopicMapPanel({
             <p className="text-sm font-medium">{emptyTitle}</p>
             <p className="mt-1 text-xs text-muted-foreground">{emptyBody}</p>
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            disabled={rebuildDisabled(latestRun) || rebuildBusy}
-            onClick={() => onRebuild()}
-          >
-            <RefreshCw className="mr-2 h-3.5 w-3.5" />
-            {rebuildButtonLabel(latestRun)}
-          </Button>
+          {/* No voluntary rebuild here (#5277): before the first map read
+              there is no analysis state to retry from, and the one place to
+              ask for a re-analysis is the freshness chip's popover. */}
         </div>
       </div>
     );
@@ -1622,57 +1624,35 @@ export function TopicMapPanel({
                 Fit view
               </TooltipContent>
             </Tooltip>
-            <Tooltip delayDuration={200}>
-              <TooltipTrigger asChild>
-                <Button
-                  type="button"
-                  variant={
-                    latestRun?.isStale ||
-                    (snapshot.stats.unmappedSessionCount > 0 &&
-                      latestRun?.status === "done")
-                      ? "default"
-                      : "outline"
-                  }
-                  size="icon"
-                  className={cn(
-                    "relative",
-                    (latestRun?.isStale ||
-                      (snapshot.stats.unmappedSessionCount > 0 &&
-                        latestRun?.status === "done")) &&
-                      "bg-warning text-warning-foreground hover:bg-warning/90",
-                  )}
-                  aria-label={rebuildButtonLabel(
+            {/* Recovery only (#5277): the header keeps a retry for a failed
+                analysis. The voluntary Re-analyze lives in the freshness
+                chip's popover. */}
+            {latestRun?.status === "failed" ? (
+              <Tooltip delayDuration={200}>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="relative"
+                    aria-label={rebuildButtonLabel(
+                      latestRun,
+                      snapshot.stats.unmappedSessionCount,
+                    )}
+                    disabled={rebuildDisabled(latestRun) || rebuildBusy}
+                    onClick={() => onRebuild()}
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="top" sideOffset={6}>
+                  {rebuildButtonLabel(
                     latestRun,
                     snapshot.stats.unmappedSessionCount,
                   )}
-                  disabled={rebuildDisabled(latestRun) || rebuildBusy}
-                  onClick={() => onRebuild()}
-                >
-                  <RefreshCw
-                    className={cn(
-                      "h-3.5 w-3.5",
-                      latestRun?.status === "running" && !latestRun.isStale
-                        ? "animate-spin"
-                        : "",
-                    )}
-                  />
-                  {(latestRun?.isStale ||
-                    (snapshot.stats.unmappedSessionCount > 0 &&
-                      latestRun?.status === "done")) && (
-                    <span className="absolute -right-1 -top-1 flex h-2.5 w-2.5">
-                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-warning opacity-75" />
-                      <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-warning ring-2 ring-background" />
-                    </span>
-                  )}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="top" sideOffset={6}>
-                {rebuildButtonLabel(
-                  latestRun,
-                  snapshot.stats.unmappedSessionCount,
-                )}
-              </TooltipContent>
-            </Tooltip>
+                </TooltipContent>
+              </Tooltip>
+            ) : null}
           </div>
         </div>
 

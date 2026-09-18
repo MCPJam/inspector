@@ -468,12 +468,11 @@ describe("TopicMapPanel", () => {
   // spread into the Convex payload, throwing "Converting circular structure to
   // JSON" so the rebuild never ran.
   //
-  // There are two rebuild buttons and they need a test each: this one renders
-  // with `snapshot: null`, and the map-header button lives inside a branch that
-  // dereferences `snapshot.stats`, so it cannot appear here.
-  it("rebuilds from the empty state with no arguments", async () => {
-    const user = userEvent.setup();
-    const onRebuild = vi.fn();
+  // Voluntary re-analysis is gated off here (#5277): the one place to ask for
+  // it is the freshness chip's popover. What survives in the panel is the
+  // failed-analysis retry in the map header; the `snapshot: null` empty state
+  // has no analysis to read a failure from, so it offers nothing.
+  it("offers no rebuild from an empty state that has not failed", () => {
     mockUseScenarioTopicMap.mockReturnValue({
       ...createDefaultScenarioTopicMapHookValue(),
       latestRun: null,
@@ -487,23 +486,67 @@ describe("TopicMapPanel", () => {
         filter={EMPTY_FILTER}
         onToggleChip={vi.fn()}
         onClearChip={vi.fn()}
-        onRebuild={onRebuild}
+        onRebuild={vi.fn()}
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: /Rebuild clusters/ }));
-    expect(onRebuild).toHaveBeenCalledTimes(1);
-    expect(onRebuild.mock.calls[0]).toEqual([]);
+    expect(
+      screen.queryByRole("button", { name: /rebuild clusters/i }),
+    ).not.toBeInTheDocument();
   });
 
-  // The second call site: the rebuild control in the map header, which only
-  // renders once a snapshot exists.
-  it("rebuilds from the map header with no arguments", async () => {
-    const user = userEvent.setup();
-    const onRebuild = vi.fn();
+  // The map header, which only renders once a snapshot exists. Same rule:
+  // nothing for a healthy map, a retry once the analysis reports failures.
+  it("offers no rebuild from the header of a healthy map", () => {
     mockUseScenarioTopicMap.mockReturnValue(
       createDefaultScenarioTopicMapHookValue(),
     );
+
+    render(
+      <TopicMapPanel
+        scenarioId="scenario-1"
+        filter={EMPTY_FILTER}
+        onToggleChip={vi.fn()}
+        onClearChip={vi.fn()}
+        onRebuild={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: /rebuild clusters/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("retries a failed analysis from the map header with no arguments", async () => {
+    const user = userEvent.setup();
+    const onRebuild = vi.fn();
+    const base = createDefaultScenarioTopicMapHookValue();
+    mockUseScenarioTopicMap.mockReturnValue({
+      ...base,
+      snapshot: {
+        ...base.snapshot,
+        analysis: {
+          total: 2,
+          analyzed: 1,
+          pending: 0,
+          running: 0,
+          failed: 1,
+          skipped: 0,
+          deferred: 0,
+          awaitingTaxonomy: 0,
+          unassigned: 0,
+          staleAssignments: 0,
+          projectionPending: 0,
+          projectionFailed: 0,
+          deferredUntil: null,
+          lastAnalyzedAt: 1,
+          failures: { provider_error: 1 },
+          skips: {},
+          sampled: false,
+          taxonomies: [],
+        },
+      },
+    });
 
     render(
       <TopicMapPanel
@@ -515,7 +558,9 @@ describe("TopicMapPanel", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: /Rebuild clusters/ }));
+    await user.click(
+      screen.getByRole("button", { name: /retry rebuild clusters/i }),
+    );
     expect(onRebuild).toHaveBeenCalledTimes(1);
     expect(onRebuild.mock.calls[0]).toEqual([]);
   });
@@ -541,7 +586,7 @@ describe("TopicMapPanel", () => {
     expect(screen.getByText("Invoice and refund help.")).toBeInTheDocument();
   });
 
-  it("renders Fit view and rebuild controls overlayed on the canvas", () => {
+  it("renders Fit view overlayed on the canvas, with no voluntary rebuild", () => {
     render(
       <TopicMapPanel
         scope={{ kind: "scenario", scenarioId: "scenario-1" }}
@@ -552,11 +597,14 @@ describe("TopicMapPanel", () => {
       />,
     );
 
-    const fitView = screen.getByRole("button", { name: /fit view/i });
-    const rebuild = screen.getByRole("button", { name: /rebuild clusters/i });
-    expect(fitView.compareDocumentPosition(rebuild)).toBe(
-      Node.DOCUMENT_POSITION_FOLLOWING,
-    );
+    expect(
+      screen.getByRole("button", { name: /fit view/i }),
+    ).toBeInTheDocument();
+    // Voluntary re-analysis is gated off (#5277); only a failed analysis
+    // earns a retry here.
+    expect(
+      screen.queryByRole("button", { name: /rebuild clusters/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("lets operators toggle a community chip from the sidebar", async () => {

@@ -202,17 +202,10 @@ export function SessionFlowSankey({
         </p>
         <div className="flex items-center gap-2">
           {headerActions}
-          {/* An analysis already on its way needs no button to start it — and
-              on a self-analyzing surface there is never a resting state where
-              one is required. The tuning control stays: choosing HOW to
-              cluster is still a thing to ask for. */}
-          {analysisInFlight ? null : (
-            <RebuildButton
-              onRebuild={onRebuild}
-              busy={rebuildBusy}
-              label="Rebuild clusters"
-            />
-          )}
+          {/* No voluntary rebuild here (#5277). Analysis runs on its own as
+              sessions settle; the one place to ask for a re-analysis is the
+              freshness chip's popover, so this empty state does not grow a
+              second door. */}
         </div>
       </div>
     );

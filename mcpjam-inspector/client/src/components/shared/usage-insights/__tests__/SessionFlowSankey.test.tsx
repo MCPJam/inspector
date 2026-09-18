@@ -321,11 +321,10 @@ describe("SessionFlowSankey", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("still offers a rebuild on an empty flow a completed analysis produced", async () => {
-    // A finished run that clustered nothing IS a dead end a rebuild can move,
-    // so the affordance has to survive. Removing it as "required" must not
-    // remove it as available.
-    const user = userEvent.setup();
+  it("offers no voluntary rebuild on an empty flow a completed analysis produced", () => {
+    // Voluntary re-analysis is gated off (#5277): analysis runs on its own as
+    // sessions settle, and the one place to ask for it again is the freshness
+    // chip's popover. The empty state must not grow a second door.
     const { onRebuild } = renderSankey({
       breakdown: breakdown({
         sankey: { nodes: [], links: [], foldedGoalCount: 0, foldedByStage: {} },
@@ -335,8 +334,10 @@ describe("SessionFlowSankey", () => {
     });
 
     expect(screen.getByText("No session flow yet")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /Rebuild clusters/ }));
-    expect(onRebuild).toHaveBeenCalledTimes(1);
+    expect(
+      screen.queryByRole("button", { name: /rebuild clusters/i }),
+    ).not.toBeInTheDocument();
+    expect(onRebuild).not.toHaveBeenCalled();
   });
 
   it("draws each column header at its own column's x", () => {
