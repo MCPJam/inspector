@@ -400,10 +400,6 @@ export function TrialScorecard({
                     <p>
                       <FindingText text={note.actual} />
                     </p>
-                    <details className="mt-2 text-xs text-muted-foreground">
-                      <summary>AI explanation · cited trace evidence</summary>
-                      <p>{note.citations.join(" · ")}</p>
-                    </details>
                   </li>
                 )}
                 {floor && (

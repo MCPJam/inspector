@@ -315,3 +315,23 @@ describe("SidebarCredits", () => {
     );
   });
 });
+
+it("shows daily credits for a v2 free org", () => {
+  billingStatusState = { effectivePlan: "free", pricingVersion: "v2" };
+  isLoadingState = false;
+  balanceState = {
+    paidCreditsRemaining: 330,
+    hasPurchaseHistory: false,
+    freeDailyPercentUsed: 25,
+    freeDailyResetAt: Date.now() + 86400000,
+    freeDailyCreditsRemaining: 150,
+    freeDailyCreditsTotal: 200,
+    walletLocked: false,
+    billingModel: "daily",
+  };
+  renderCredits();
+  expect(screen.getByTestId("sidebar-usage-daily")).toHaveTextContent(
+    "150 / 200",
+  );
+  expect(screen.queryByTestId("sidebar-usage-monthly")).not.toBeInTheDocument();
+});

@@ -306,3 +306,27 @@ it.each(["platform_free_budget_exhausted", "account_suspended", "guest_model_not
   const info = humanizeSwarmAttemptError(JSON.stringify({ code, error: "Admission refused" }));
   expect(isAccountLimit(info.message, info.code)).toBe(true);
 });
+
+it("keeps transient admission metadata from persona refusals", () => {
+  const result = humanizeSwarmAttemptError(
+    'swarm-agent https://example.test/persona failed (429): {"code":"user_rate_limit","error":"MCPJam model limit reached for the moment.","refusalReason":"holds_committed","isRetryable":true,"retryAfter":15000,"outstandingHolds":2}',
+  );
+  expect(result).toMatchObject({
+    refusalReason: "holds_committed",
+    isRetryable: true,
+    retryAfterMs: 15000,
+    outstandingHolds: 2,
+  });
+});
+it.each([
+  "<!DOCTYPE html><html>Cloudflare",
+  "<!-- proxy --><html><head>502",
+  "<html>truncated",
+])("scrubs HTML error pages: %s", (body) => {
+  const result = humanizeSwarmAttemptError(
+    `swarm-agent https://example.test/persona failed (502): ${body}`,
+  );
+  expect(result.code).toBe("upstream_error_page");
+  expect(result.message).toContain("HTTP 502");
+  expect(result.message).not.toMatch(/<|Cloudflare/);
+});

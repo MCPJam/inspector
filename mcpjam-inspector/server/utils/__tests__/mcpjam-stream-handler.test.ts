@@ -3787,7 +3787,9 @@ describe("mcpjam-stream-handler", () => {
         ok: false,
         code: "user_rate_limit",
         isRetryable: true,
-        retryAfter: 60,
+        retryAfter: 15000,
+        refusalReason: "holds_committed",
+        outstandingHolds: 2,
       });
       global.fetch = vi.fn().mockResolvedValue(
         new Response(spendPrecheckBody, {
@@ -3825,6 +3827,12 @@ describe("mcpjam-stream-handler", () => {
       expect(event.message.length).toBeGreaterThan(0);
       expect(event.httpStatus).toBe(200);
       expect(event.rawText).toBe(spendPrecheckBody);
+      expect(event).toMatchObject({
+        retryAfterMs: 15000,
+        refusalReason: "holds_committed",
+        outstandingHolds: 2,
+        isRetryable: true,
+      });
       // Correlation fields must be present.
       expect(event.promptIndex).toBe(0);
       expect(event.stepIndex).toBe(0);
