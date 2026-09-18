@@ -776,4 +776,44 @@ describe("automatic analysis failures", () => {
       }
     },
   );
+
+  it("says nothing about a green run whose analysis found nothing", () => {
+    // An all-pass run is now analyzed like any other: every iteration gets a
+    // report, and the reasoning half legitimately proposes no mechanism. That
+    // is a COMPLETED job with an empty findings list — never "AI analysis did
+    // not complete", which would read as a failure of a job that succeeded.
+    const envelope = structuredClone(ENVELOPE);
+    envelope.currentFindings = [];
+    envelope.unifiedFindings!.snapshot!.deterministicFindings = [];
+    envelope.unifiedFindings!.snapshot!.provenance = [];
+    envelope.unifiedFindings!.snapshot!.enrichment = {
+      ...ENVELOPE.unifiedFindings!.snapshot!.enrichment!,
+      discovery: {
+        reviewedIterations: 8,
+        totalIterations: 8,
+        reviewedFailedIterations: 0,
+        totalFailedIterations: 0,
+        missingTraces: 0,
+        truncatedTraces: 0,
+        omittedEvidence: 0,
+      },
+    };
+    envelope.unifiedFindings!.job = {
+      jobId: "auto",
+      kind: "enrich",
+      status: "completed",
+      startedAt: 100,
+      updatedAt: 100,
+    };
+    const { result } = renderHook(() =>
+      useUnifiedFindings({
+        suiteRunId: "run_1",
+        envelope,
+        generation: generation(),
+      }),
+    );
+    expect(result.current.analysisFailure).toBeNull();
+    expect(result.current.analyze.error).toBeNull();
+    expect(result.current.findings).toEqual([]);
+  });
 });
