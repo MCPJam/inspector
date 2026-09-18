@@ -4,25 +4,11 @@
       "releases": [
         {
           "name": "@mcpjam/inspector",
-          "type": "minor"
-        }
-      ],
-      "summary": "Display automatic, manual, off, paused and unresolved grading states from the backend policy. Preserve explicit manual/off configuration. Mounting a run no longer requests paid grading.\n\n**Data-egress change:** once the paired backend automatic default is activated, inherited suites send complete recorded traces, tool definitions, runtime context and supported media through OpenRouter to the selected model provider without a separate Run judge click. Existing credential redaction applies. Keep the backend inherited-default override enabled until this client release, data/provider review, platform-paid budget decision and deployment smoke are complete.",
-      "id": "automatic-full-evidence-grading"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "patch"
-        },
-        {
-          "name": "@mcpjam/inspector",
           "type": "patch"
         }
       ],
-      "summary": "Error surface: classify the OAuth consent state, and restyle the error card.\n\nA server that needs OAuth consent rendered as \"Unknown error\" with the advice to file an issue. The client's OAuth orchestrator returned a hand-written sentence for its `reauth_required` result, the server-state hook dispatched that bare string, and the describer matched nothing in it, so an expected one-click state fell into the `internal/unknown` bucket and displayed copy written for MCPJam engineers.\n\nThe SDK gains an `auth/consent_required` catalog entry, at `warning` severity with a `user_config` origin, plus a message fallback matching MCPJam's own consent and reauthenticate wording so strings already persisted in client state classify too. The orchestrator now attaches the typed block to `reauth_required` and the hook forwards it through the connect-failure dispatch, so a live consent state never depends on the wording at all. The server card offers a Reconnect button for it.\n\n`ErrorCard` is restyled across all of its call sites. Severity is carried by one accent — the icon and a hairline left rule — over a neutral surface, replacing the filled colour panel. The collapsed face keeps the title, the one-line explanation, the fix, and Copy; \"Learn more\" moves into the details panel with the rest of the evidence. Inside that panel a single likely cause renders as a sentence rather than a one-item bullet, the raw-error row is dropped when it only repeats the headline, a raw code shows as a chip, and long raw text wraps on word boundaries instead of mid-word. For `internal/unknown` only, the catalog's developer-facing causes and next steps are suppressed and the title reads \"Connection error\" whenever raw text is present.\n\nThe server connection card drops the red \"Error\" pill, which was the fourth red element announcing one failure and only toggled a disclosure the card already owns. \"Failed (0)\" now reads \"Failed\" until something has actually been retried, the OAuth step-failure line is no longer red, and the generic \"Check troubleshooting\" footer is hidden when an error card is present, since that card carries a docs link aimed at the specific error.",
-      "id": "error-card-premium-consent"
+      "summary": "Every finding on a stage can now reach the sessions it is about, in Findings on a Swarm run and in Findings on a User Testing scenario.\n\nA stage that failed two rubric checks over the same session showed the first one with its session list underneath and the second as plain text with nothing to click. That is what \"none of the sessions link to anything\" looked like on the report that opened this: `Rubric check \"Final message non-empty\" failed` had a session under it, and `Rubric check \"Calls create_view\" failed`, directly below, had none.\n\nThe cause was a rule written for the empty-stage footer — one session is a link rather than something to expand — reused for the evidence rows, where it collapses to \"only row 0 renders the list\". With several findings over one session, every row after the first lost its only way in.\n\nSeveral findings now earn the toggle even over a single session. A lone finding over a lone session still shows its session directly, with no toggle, and the empty-stage footer is untouched: it only renders when a stage has no evidence at all.\n\nOne visible change where the list used to be permanent. With several findings over one session, the first row's session list was rendered with no control to collapse it. It is now a toggle that starts open, so the first paint is unchanged, and because the panel opens one finding at a time, opening the second finding closes the first.",
+      "id": "findings-every-row-reaches-its-sessions"
     },
     {
       "releases": [
@@ -31,100 +17,8 @@
           "type": "patch"
         }
       ],
-      "summary": "Start a fresh Describe chat after Undo and simplify evaluator headings, tooltips, and required-rule indicators.",
-      "id": "fresh-describe-evaluators"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/cli",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/evaluators",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        }
-      ],
-      "summary": "Use one versioned goal-completion judge contract across hosted evals and the SDK, with complete recorded traces, tool catalogs, runtime context and supported captured media. Add optional grading instructions, unscored evidence errors, durable per-iteration recovery, provenance and failed-only retries. Preserve custom judge definitions and existing explicit manual/off settings.\n\nExpose bounded judge backtests through the SDK, CLI and MCP, with draft/source-bound continuation and cached page retries. Deploy the paired optional backend schema and handlers before publishing writers or enabling automatic grading. Grading is controlled by the suite's own settings.\n\n**Data-egress change:** hosted v4 grading sends full recorded conversations and traces, tool schemas, runtime context and supported media bytes through OpenRouter to the selected model provider, with existing credential redaction. Review provider/data policies before enabling; explicit manual/off settings remain available on every suite.",
-      "id": "full-evidence-judge"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        }
-      ],
-      "summary": "Ground swarm personas in observed workspace entities and add optional prerequisite setup. Both run in the background with no UI: journeys created in the app enable setup, and API callers opt in with `setupWrites`. Setup evidence and readiness are recorded on the run, separately from graded sessions.",
-      "id": "grounded-swarm-sessions"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        }
-      ],
-      "summary": "Drop the goal-completion judge's two operator deployment controls. Grading is on by default and is turned off through a suite's own judge settings, which every caller can already read and write.\n\n`GoalJudgePolicy` no longer reports `executionPaused`, the resolved judge on a suite response no longer carries that field, and `judge_execution_paused` leaves the judge error code contract. Both were produced only by backend environment variables that were never set on any deployment, so no stored verdict or suite carries either value. Readers that treated the field as optional need no change.",
-      "id": "judge-suite-settings-only"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        }
-      ],
-      "summary": "Add a `mcpjam/…` model provider so an eval can run on MCPJam-hosted inference\nwith no provider key: `model: \"mcpjam/anthropic/claude-sonnet-4.5\"` bills the\norganization's credits and needs only `MCPJAM_API_KEY`. Exports\n`releaseMcpjamModelLeases` for suites built by hand; `EvalSuite.run` already\ncalls it at teardown.",
-      "id": "mcpjam-hosted-inference"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/cli",
-          "type": "patch"
-        },
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Say generation and insights are included with MCPJam, not billed to the customer.\n\nEight operations run a model whose cost is MCPJam's, not the organization's —\neval-case generation, the description-rewrite proposal, persona and journey\ndrafting, swarm wave insights, user-testing insights, and the two directory\nreadiness starts with `includeLlmObservations`. Every surface told the customer\notherwise: the MCP tool descriptions carried \"COSTS MONEY\", the CLI said\n\"spends credits\", the approval cards warned about money, and the docs said\n\"SPENDS ORG CREDITS\". For swarm wave insights and session clustering that copy\nwas already wrong today.\n\n`risk` on those operations moves from `\"spend\"` to `\"none\"`, which is the single\nlever for the MCP tool surface (`operationDescription` appends its spend warning\noff that facet). What they actually consume is a bounded daily REQUEST quota —\n`insightsPerDay` for the insight operations, a per-project generation quota for\nthe rest — so the copy now says \"Included with MCPJam — no credits are consumed\"\nand names the quota instead.\n\nThey all stay GATED on the agent surface rather than deriving `direct` from the\nnew risk: the quota is shared across the organization, and an agent that\nexhausts today's slice on its own initiative has taken something a person was\ngoing to use. Each is a named `TIER_EXCEPTIONS` entry with its reason, and\n`confirmSeverity` drops to `\"none\"` so no approval card claims a charge.\n\nStill customer-paid and unchanged: eval suite/case runs, `request_eval_run_judge`,\nthe judge backtest, `start_eval_description_experiment`, journey launches and\nchat.",
-      "id": "platform-paid-generation-copy"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        },
-        {
-          "name": "@mcpjam/sdk",
-          "type": "patch"
-        }
-      ],
-      "summary": "Make the redesigned Evaluate experience public and use evaluate-enabled only for legacy Evaluate access. SDK links open the exact suite, case, or run in the new experience. Old commit links open the unfiltered project run table, while other legacy links preserve their artifact context.",
-      "id": "public-evaluate-default"
+      "summary": "Drop the \"AI explanation · cited trace evidence\" disclosure from evaluation scorecards. It only showed raw internal ids like `m:0 · tc:toolu_…`, which mean nothing to a reader.",
+      "id": "hide-trace-citation-ids"
     },
     {
       "releases": [
@@ -141,161 +35,61 @@
           "type": "patch"
         }
       ],
-      "summary": "Cut a release of `@mcpjam/inspector`, `@mcpjam/cli`, and `@mcpjam/sdk` so the\nwork already merged into main reaches npm. Version bump only — no code changes.",
-      "id": "release-inspector-cli-sdk-evaluate"
+      "summary": "Keep a miscited Markdown case from failing the whole import, and give imported drafts their own review surface instead of listing them beside cases already in the suite. A blocked draft now names the missing field in a badge on its title, and importing clears a stale generation error that pointed at a setting import does not offer.",
+      "id": "imported-draft-review-surface"
     },
     {
       "releases": [
         {
           "name": "@mcpjam/inspector",
           "type": "patch"
-        },
-        {
-          "name": "@mcpjam/cli",
-          "type": "patch"
-        },
+        }
+      ],
+      "summary": "A reused persona's iterations can be set for the run you are about to launch.\n\nConfirm showed reused goals as read-only text — \"5 goals at the iterations already saved = 25 conversations\" — so bringing a persona in meant taking whatever its owner had saved. One in the recording arrives at 25 conversations with no way to bring it down, which is the opposite of what someone reusing a persona for a quick run wants, and it spends model quota that is already rate-limited.\n\nReused cards now carry the same iterations stepper the authored ones do. The control starts at what the persona's goals already hold, so leaving it alone launches the size it always did; goals that disagree, or carry nothing saved, start at the default instead, because there is no single saved value to show and picking one would misreport the others.\n\nThe number is sent as a per-run override and the shared journey is not rewritten, which was the reason the control was withheld in the first place. A persona reused across swarms keeps its own saved size for everyone else.\n\nThe launch quote follows the same number, so what Confirm promises and what the run fans out to cannot disagree.",
+      "id": "reused-persona-iterations"
+    },
+    {
+      "releases": [
         {
           "name": "@mcpjam/sdk",
           "type": "patch"
         }
       ],
-      "summary": "Cut a release of `@mcpjam/inspector`, `@mcpjam/cli`, and `@mcpjam/sdk` so the\nwork already merged into main reaches npm. Version bump only — no code changes.",
-      "id": "release-inspector-cli-sdk"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        }
-      ],
-      "summary": "Export `assertCallToolResult` and `isCallToolResult` so a TypeScript caller can\nnarrow what `executeTool` returns, and fix the README's first example, which did\nnot type-check and asserted a result the everything server never sends.",
-      "id": "sdk-readme-tool-result-guards"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        }
-      ],
-      "summary": "Export `STANDARD_CHECK_NAME_BY_KIND`, the name a reader recognises each standard\ncheck by, keyed by the predicate kind that implements it. Derived from the\ncatalog rather than restated beside it, so a renamed check cannot leave a stale\ntitle behind.",
-      "id": "sdk-standard-check-names"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Desktop: stop showing an Update button that cannot install anything. When a download is announced and then never lands, the button is retired instead of being left clickable, and a repeated failure turns it into a \"Download update\" link to the releases page — on the second failed download, or on the first one if the user had already selected Update and was waiting on it. A slow download is no longer mistaken for a failed one: the 10-minute update poll gets refused while a download is in flight, on macOS and on Windows, and that refusal is now ignored instead of retiring the download. A download that hangs without ever reporting an error still ends at the \"Download update\" link rather than at no button at all, and once that link is showing the app stops repeating the \"Update failed\" toast on every poll. Selecting Update no longer leaves a spinner that never ends: a staged build that Squirrel accepts and then never installs now turns into the \"Download update\" link after 30 seconds instead of spinning for the life of the app, and the wait after selecting Update on a download that goes quiet drops from five minutes to 30 seconds.",
-      "id": "shiny-pugs-repeat"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Swarm persona turns now send the session identity the backend bills them against, so swarm runs execute again.\n\nEvery swarm session had been dying at its first persona turn. The backend mints a per-turn fee key from the wire identity and refuses the turn when it cannot, and it validates the index with `Number.isInteger(body.sessionIdx)` — but the persona turn sent `{projectId, runId, hostId, transcriptSoFar}` and no `sessionIdx` at all. The route answered `400 invalid_request` \"Invalid journey session identity\", every session failed before its first message, and the run surfaced \"No sessions ran.\" with zero transcripts.\n\nEverything downstream reads as a product finding rather than an outage, which is what made it hard to place: the rubric \"Final message non-empty\" fails against a transcript that was never written, clustering leaves every session \"Not analyzed\", and the journey diagnostic reports friction at connection. None of that came from the server under test.\n\nThe body now also carries `targetId`. Matching on `hostId` alone finds two candidates whenever two environments resolve to the same host, and the guard refuses that as ambiguous — the case `journeyRuns.ts` already names in `'Ambiguous journey attempt: multiple targets share this host; a targetId is required'`. A legacy run, whose hosts are unique, still sends none.\n\n`sessionIdx` is bound per attempt rather than read from the loop counter. The counter is hoisted to the worker scope so the worker-level catch can finalize the attempts a target left behind, so a callback that fires later in the session reads whichever index the loop has since advanced to — session 0's turns would have been billed and validated as session 1's. `sessionBearer` already exists for exactly this reason, and `attemptSessionIdx` follows it.",
-      "id": "swarm-persona-turn-session-identity"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "The Run tab sits last on a swarm run page, after Findings, Insights and Sessions.\n\nIt had led the strip since the live matrix moved onto the run URL, so opening a finished wave put the watch surface first on a page that is almost always read after the fact. Findings is what a reader wants from a settled run, and it leads again.\n\nNothing about landing changes. A live wave with no explicit tab still opens Run, through the same resolver as before; `?tab=` still wins; a `?session=` deep-link still opens Sessions. The order is presentation only.\n\n`DETAIL_TAB_OPTIONS` moves into `swarm-run-detail-model.ts` alongside the tab resolver it belongs with, so the order is covered by that module's tests rather than living inline in the page.",
-      "id": "swarm-run-tab-last"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Stop turning backend generation refusals into 500s.\n\nThe eval-generation adapters read a non-ok backend response as\n`throw new Error(\"Failed to generate test cases: \" + body)`, flattening the\nupstream status AND the refusal `code` into a message string. All the runtime\nclassifier then had was prose, and its fallback is `500 INTERNAL_ERROR` — so a\ncustomer who hit their own daily allowance got an MCPJam outage, the public\n`/api/v1` surface answered 500 where its own contract documents `RateLimited`,\nand the 5xx monitors counted it as an MCPJam fault and paged.\n\nOne shared reader (`server/services/upstream-refusal.ts`) now turns a 4xx from\nMCPJam's own backend into a `WebRouteError` that keeps the status, maps it onto\nthe code a client can branch on (429 → `RATE_LIMITED`), forwards the backend's\nrefusal envelope in `details`, and carries `Retry-After` — from the upstream\nheader, or derived from `retryAfterMs` when only the field is sent. A 5xx keeps\nexactly the treatment it had, masking included. The swarm generation route's\nown 4xx table folds into the same helper, so it now forwards the refusal `code`\nas well as the status, and the local MCP surface forwards `Retry-After` too.\n\nThis lands ahead of two new backend refusals — `platform_capacity` (MCPJam's own\ndaily budget for the feature; retryable, nothing to buy) and\n`generation_rate_limited` (a request-count cap) — and neither opens the top-up\ndialog.",
-      "id": "upstream-refusal-passthrough"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "User Testing: the Grading card is removed from a study's Settings. That takes out the Grading header and enable/disable toggle, its description, the session sample percentage field and the whole Checks list. Sharing permissions, Ratings and Delete stay where they were, so Ratings now sits directly above Delete. The client-side pieces that only served that card are removed with it: the `ScenarioGradingSection` component and its tests, the `setProductionScoring` mutation binding, and the `productionScoring` field and `ProductionScoringSettings` type on the client's scenario settings shape.\n\nThis is a UI removal only. The backend production-grading pipeline is unchanged: the backend `setProductionScoring` mutation, the idle-triggered enqueue, stored `productionScoring` configs on existing studies, and the Inspector's production-checks worker are all as before, and the pipeline remains gated by the backend's `PRODUCTION_CHECKS_ENABLED` flag. Grading in Evals and Swarms is unchanged.",
-      "id": "user-testing-remove-grading"
+      "summary": "Widget evidence too large to send inline now goes to storage, so an MCP Apps server can report its evals.\n\nReporting a run embedded each widget snapshot's HTML in the request. A snapshot is a whole built app — a single-file bundle is commonly over half a megabyte — so one test case whose tool ran twice put more than 1MB on the wire and the upload failed with \"Request body exceeds 1MB limit\". Chunking could not save it: it splits between results, never inside one.\n\nSmall widgets still ride along inline, in the one request they always did, because that is what lets a retry resend identical bytes. Only a result that would not fit offloads its HTML to blob storage first and sends the id instead. The offload happens once, before the retry loop, so retries stay byte-identical either way.\n\nThe upload URL this path follows must now be https, or loopback — `npx convex dev` and a self-hosted deployment hand out `http://127.0.0.1`, and those still work. Anything else is refused rather than putting a built app on a cleartext wire.",
+      "id": "widget-snapshot-offload"
     }
   ],
   "releases": [
     {
       "name": "@mcpjam/inspector",
-      "type": "minor",
-      "oldVersion": "3.6.0",
+      "type": "patch",
+      "oldVersion": "3.7.1",
       "changesets": [
-        "automatic-full-evidence-grading",
-        "error-card-premium-consent",
-        "fresh-describe-evaluators",
-        "full-evidence-judge",
-        "grounded-swarm-sessions",
-        "judge-suite-settings-only",
-        "platform-paid-generation-copy",
-        "public-evaluate-default",
-        "release-inspector-cli-sdk-evaluate",
-        "release-inspector-cli-sdk",
-        "shiny-pugs-repeat",
-        "swarm-persona-turn-session-identity",
-        "swarm-run-tab-last",
-        "upstream-refusal-passthrough",
-        "user-testing-remove-grading"
+        "findings-every-row-reaches-its-sessions",
+        "hide-trace-citation-ids",
+        "imported-draft-review-surface",
+        "reused-persona-iterations"
       ],
-      "newVersion": "3.7.0"
-    },
-    {
-      "name": "@mcpjam/sdk",
-      "type": "minor",
-      "oldVersion": "8.8.0",
-      "changesets": [
-        "error-card-premium-consent",
-        "full-evidence-judge",
-        "grounded-swarm-sessions",
-        "judge-suite-settings-only",
-        "mcpjam-hosted-inference",
-        "platform-paid-generation-copy",
-        "public-evaluate-default",
-        "release-inspector-cli-sdk-evaluate",
-        "release-inspector-cli-sdk",
-        "sdk-readme-tool-result-guards",
-        "sdk-standard-check-names"
-      ],
-      "newVersion": "8.9.0"
+      "newVersion": "3.7.2"
     },
     {
       "name": "@mcpjam/cli",
-      "type": "minor",
-      "oldVersion": "5.8.0",
+      "type": "patch",
+      "oldVersion": "5.10.0",
       "changesets": [
-        "full-evidence-judge",
-        "platform-paid-generation-copy",
-        "release-inspector-cli-sdk-evaluate",
-        "release-inspector-cli-sdk"
+        "imported-draft-review-surface"
       ],
-      "newVersion": "5.9.0"
+      "newVersion": "5.10.1"
     },
     {
-      "name": "@mcpjam/evaluators",
-      "type": "minor",
-      "oldVersion": "0.2.0",
+      "name": "@mcpjam/sdk",
+      "type": "patch",
+      "oldVersion": "8.10.0",
       "changesets": [
-        "full-evidence-judge"
+        "imported-draft-review-surface",
+        "widget-snapshot-offload"
       ],
-      "newVersion": "0.3.0"
+      "newVersion": "8.10.1"
     },
     {
       "name": "@mcpjam/mcp",

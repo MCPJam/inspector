@@ -50,8 +50,37 @@ describe("fetchRuntimeServerSecrets", () => {
     });
   });
 
+  it("requires service authentication for scenario secrets and preserves the viewer bearer", async () => {
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) =>
+      Response.json({ success: true, headers: { Authorization: "synthetic" } }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const args = {
+      bearerToken: "tester-token",
+      projectId: "project-1",
+      serverId: "server-1",
+      scenarioId: "scenario-1",
+      accessScope: "chat_v2" as const,
+    };
+    delete process.env.INSPECTOR_SERVICE_TOKEN;
+    await expect(fetchRuntimeServerSecrets(args)).rejects.toMatchObject({
+      status: 500,
+      code: "INTERNAL_ERROR",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    process.env.INSPECTOR_SERVICE_TOKEN = "service-token";
+    await expect(fetchRuntimeServerSecrets(args)).resolves.toMatchObject({
+      headers: { Authorization: "synthetic" },
+    });
+    expect(fetchMock.mock.calls[0]?.[1].headers).toMatchObject({
+      Authorization: "Bearer tester-token",
+      "x-inspector-service-token": "service-token",
+    });
+  });
+
   it("requires and unconditionally forwards the service token for DCR", async () => {
-    const fetchMock = vi.fn(async () =>
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) =>
       new Response(JSON.stringify({ success: true }), {
         status: 200,
         headers: { "Content-Type": "application/json" },

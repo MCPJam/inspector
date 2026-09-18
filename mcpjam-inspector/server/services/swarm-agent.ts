@@ -453,6 +453,8 @@ export async function createJourneyRun(
     swarmRunGroupId?: string;
     /** Per-run environment fan-out, overriding the journey's stored list. */
     environmentIds?: string[];
+    /** Iterations for THIS run, overriding the journey's stored fan-out. */
+    sessionsPerTarget?: number;
   },
 ): Promise<CreateJourneyRunResult> {
   const data = await postJson<{
@@ -479,6 +481,9 @@ export async function createJourneyRun(
         : {}),
       ...(args.environmentIds?.length
         ? { environmentIds: args.environmentIds }
+        : {}),
+      ...(args.sessionsPerTarget !== undefined
+        ? { sessionsPerTarget: args.sessionsPerTarget }
         : {}),
       // Asserted by this process, never a caller: the runner is the only
       // honest source for what it can execute.

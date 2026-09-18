@@ -1,7 +1,3 @@
-import {
-  SWARM_FINDING_COVERAGE_NOTE_LABELS,
-  type SwarmJourneyFindings,
-} from "@mcpjam/sdk/contract";
 /**
  * Deterministic summary sentences + honesty footnotes for the Findings card.
  *
@@ -21,6 +17,10 @@ import {
  * Chen left frustrated"); a persona never fails.
  */
 
+import {
+  SWARM_FINDING_COVERAGE_NOTE_LABELS,
+  type SwarmJourneyFindings,
+} from "@mcpjam/sdk/contract";
 import type { SwarmWaveSignals } from "@/lib/swarm-api";
 import {
   JOURNEY_STAGES,
@@ -96,6 +96,27 @@ export function shortenGoalTitle(
   const words = title.trim().split(/\s+/).filter(Boolean);
   if (words.length <= maxWords) return words.join(" ");
   return `${words.slice(0, maxWords).join(" ")}…`;
+}
+
+/**
+ * Lane A's wave summary, only when a model actually narrated something.
+ *
+ * A wave with no mined candidates completes WITHOUT calling a model: the
+ * backend stores fixed prose ("No anomalies concentrated along any dimension
+ * of this wave.") with `candidates: []`. Promoted to the headline, that prose
+ * replaced a deterministic summary saying every graded session failed. Gate on
+ * `candidates`, never on the sentence, which will be reworded.
+ */
+export function narratedWaveSummary(
+  status: string | null | undefined,
+  insights:
+    | { summary?: string | null; candidates?: readonly unknown[] | null }
+    | null
+    | undefined,
+): string | null {
+  if (status !== "completed" || !insights) return null;
+  if ((insights.candidates?.length ?? 0) === 0) return null;
+  return insights.summary?.trim() || null;
 }
 
 function firstSentence(text: string): string {
@@ -403,24 +424,29 @@ export type SwarmNarration = {
   sessionCount: number;
   unanalyzedSessionCount: number;
 };
-export function promoteLaneANarration(wave: {
-  status: string | null;
-  insights?: {
-    summary?: string;
-    candidates?: unknown[];
-    sessionCount: number;
-    unanalyzedSessionCount: number;
-  } | null;
-}): { summary: string | null; narration: SwarmNarration } {
-  const modelRan =
-    wave.status === "completed" && (wave.insights?.candidates?.length ?? 0) > 0;
+/**
+ * What the footnote needs to know about Lane A. `modelRan` uses the SAME gate
+ * as {@link narratedWaveSummary}, so the headline and the footnote can never
+ * disagree about whether a model wrote anything. Undefined until the analysis
+ * completes: a pending or failed analysis is not evidence that no model ran.
+ */
+export function waveNarration(
+  status: string | null | undefined,
+  insights:
+    | {
+        summary?: string | null;
+        candidates?: readonly unknown[] | null;
+        sessionCount?: number;
+        unanalyzedSessionCount?: number;
+      }
+    | null
+    | undefined,
+): SwarmNarration | undefined {
+  if (status !== "completed" || !insights) return undefined;
   return {
-    summary: modelRan ? wave.insights?.summary?.trim() || null : null,
-    narration: {
-      modelRan,
-      sessionCount: wave.insights?.sessionCount ?? 0,
-      unanalyzedSessionCount: wave.insights?.unanalyzedSessionCount ?? 0,
-    },
+    modelRan: narratedWaveSummary(status, insights) !== null,
+    sessionCount: insights.sessionCount ?? 0,
+    unanalyzedSessionCount: insights.unanalyzedSessionCount ?? 0,
   };
 }
 export function composeWireFindingsSummary(

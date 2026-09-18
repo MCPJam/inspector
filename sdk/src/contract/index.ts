@@ -1169,5 +1169,5 @@ export * from "./goal-completion.js";
 export * from "./judge-settings.js";
 export * from "./swarm-session-verdict.js";
 export * from "./swarm-report.js";
-
+export * from "./eval-authoring.js";
 export * from "./swarm-finding.js";

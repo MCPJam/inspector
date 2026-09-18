@@ -8,6 +8,7 @@ import {
   composeFindingsSummary,
   countWords,
   deriveHonestyFootnotes,
+  narratedWaveSummary,
   shortenGoalTitle,
 } from "../findings/findings-headline";
 
@@ -491,21 +492,35 @@ describe("deriveHonestyFootnotes", () => {
   });
 });
 
-it("does not promote a detector-only summary into model narration", async () => {
-  const { promoteLaneANarration } =
-    await import("../findings/findings-headline");
-  expect(
-    promoteLaneANarration({
-      status: "completed",
-      insights: {
-        summary: "No anomalies",
+describe("narratedWaveSummary", () => {
+  it("drops the fixed prose a zero-candidate wave stores without a model", () => {
+    // Real prod row: 3 graded sessions all failed, 2 rate limited, no mined
+    // candidates. This sentence replaced the deterministic headline.
+    expect(
+      narratedWaveSummary("completed", {
+        summary:
+          "No anomalies concentrated along any dimension of this wave. Nothing to act on from the deterministic signals.",
         candidates: [],
-        sessionCount: 5,
-        unanalyzedSessionCount: 5,
-      },
-    }),
-  ).toEqual({
-    summary: null,
-    narration: { modelRan: false, sessionCount: 5, unanalyzedSessionCount: 5 },
+      }),
+    ).toBeNull();
+  });
+
+  it("keeps the summary when a model narrated candidates", () => {
+    expect(
+      narratedWaveSummary("completed", {
+        summary: "  Resolve the saved server first.  ",
+        candidates: [{}],
+      }),
+    ).toBe("Resolve the saved server first.");
+  });
+
+  it("is null until the analysis completes, or when it has no summary", () => {
+    expect(
+      narratedWaveSummary("pending", { summary: "x", candidates: [{}] }),
+    ).toBeNull();
+    expect(narratedWaveSummary("completed", null)).toBeNull();
+    expect(
+      narratedWaveSummary("completed", { summary: "  ", candidates: [{}] }),
+    ).toBeNull();
   });
 });

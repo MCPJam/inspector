@@ -110,7 +110,7 @@ describe("latest saved client SDK runs", () => {
     });
   });
 
-  it("applies the saved empty prompt and tool visibility policy", async () => {
+  it("falls back from a saved empty prompt, and applies tool visibility policy", async () => {
     const saved = detail();
     saved.config.systemPrompt = "";
     saved.config.respectToolVisibility = false;
@@ -120,7 +120,9 @@ describe("latest saved client SDK runs", () => {
       options,
       new AbortController().signal
     );
-    expect(executor.getSystemPrompt()).toBe("");
+    // Anthropic refuses an empty system block with a 400, so a client saved
+    // without a system prompt has to run on the default one.
+    expect(executor.getSystemPrompt()).toBe("You are a helpful assistant.");
     expect(options.manager.getToolsForAiSdk).toHaveBeenCalledWith(
       ["local-server"],
       expect.objectContaining({ includeAppOnly: true })

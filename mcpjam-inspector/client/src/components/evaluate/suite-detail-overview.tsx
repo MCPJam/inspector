@@ -27,7 +27,7 @@ import { GenerateCasesDialog } from "./generate-cases-dialog";
 import type { GenerateCasesConfig } from "@/lib/evals/eval-generation-config";
 import { EvalGenerationWorkspace } from "./eval-generation-workspace";
 import { EvalGeneratedDrafts } from "./eval-generated-drafts";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Code2,
   FileUp,
@@ -208,7 +208,9 @@ export function SuiteDetailOverview({
    * the page changed under it, and its "Generate test cases" crumb would have
    * nothing to return to.
    */
-  onGeneratingChange?: (state: { exit: () => void } | null) => void;
+  onGeneratingChange?: (
+    state: { exit: () => void; label?: string } | null,
+  ) => void;
 }) {
   const projectEnvironmentsEnabled = useProjectEnvironmentsEnabled();
   const [clientFilter, setClientFilter] = useState(ALL_EVAL_FILTER_VALUES);
@@ -395,6 +397,35 @@ export function SuiteDetailOverview({
     Boolean(generation?.drafts.length) || generation?.status === "running";
   const showEmptyCasesHero = !hasCases && !hasGeneratedContent;
 
+  /**
+   * Imported drafts get their OWN surface, the way generation does. They are
+   * not in the suite and cannot run, so listing them beside real cases invited
+   * exactly one reading: that the import had already landed.
+   */
+  const importedDrafts =
+    generation?.drafts.filter((draft) => draft.markdownImport) ?? [];
+  const [importReviewClosed, setImportReviewClosed] = useState(false);
+  const hadImportedDrafts = useRef(importedDrafts.length > 0);
+  useEffect(() => {
+    // A fresh import reopens the review; leaving it closed would strand the
+    // drafts with no way back to them.
+    if (importedDrafts.length && !hadImportedDrafts.current)
+      setImportReviewClosed(false);
+    hadImportedDrafts.current = importedDrafts.length > 0;
+  }, [importedDrafts.length]);
+  const reviewingImport = Boolean(
+    projectId && importedDrafts.length && !importReviewClosed,
+  );
+  const exitImportReview = useCallback(() => setImportReviewClosed(true), []);
+  useEffect(() => {
+    if (!reviewingImport) return;
+    onGeneratingChange?.({
+      exit: exitImportReview,
+      label: "Import test cases",
+    });
+    return () => onGeneratingChange?.(null);
+  }, [reviewingImport, exitImportReview, onGeneratingChange]);
+
   const [generationOpen, setGenerationOpen] = useState(false);
   const [generationConfig, setGenerationConfig] =
     useState<GenerateCasesConfig>();
@@ -475,6 +506,23 @@ export function SuiteDetailOverview({
         onChangeSettings={changeGenerationSettings}
         onDone={exitGeneration}
       />
+    );
+
+  if (reviewingImport && projectId)
+    return (
+      <div
+        className="min-h-0 min-w-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6 lg:px-8 lg:py-8"
+        data-testid="suite-import-review"
+      >
+        <div className="mx-auto w-full max-w-5xl">
+          <EvalGeneratedDrafts
+            key={`${projectId}:${suite._id}:import`}
+            projectId={projectId}
+            suiteId={suite._id}
+            suiteName={suite.name}
+          />
+        </div>
+      </div>
     );
 
   return (
@@ -589,15 +637,6 @@ export function SuiteDetailOverview({
         </div>
       </div>
 
-      {projectId && !readOnlyConfig && (
-        <EvalGeneratedDrafts
-          key={`${projectId}:${suite._id}`}
-          defaultOpen={false}
-          projectId={projectId}
-          suiteId={suite._id}
-          suiteName={suite.name}
-        />
-      )}
       {showRunHistory ? (
         <section
           className={runHistorySurfaceClass}

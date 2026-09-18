@@ -1,5 +1,3 @@
-import { promoteLaneANarration } from "./findings/findings-headline";
-import { useInsightsEnvelope } from "@/components/shared/actionable-insights/use-insights-envelope";
 /**
  * Dedicated Swarm Run (wave) detail at `/swarms/:swarmId`.
  *
@@ -55,6 +53,11 @@ import {
   waveSessionTotals,
 } from "@/components/swarms/swarm-overview-panel";
 import { SwarmFindingsTab } from "@/components/swarms/findings/swarm-findings-tab";
+import {
+  narratedWaveSummary,
+  waveNarration,
+} from "@/components/swarms/findings/findings-headline";
+import { useInsightsEnvelope } from "@/components/shared/actionable-insights/use-insights-envelope";
 import { NewSwarmRunningStep } from "@/components/swarms/new-swarm-running-step";
 import {
   DETAIL_TAB_OPTIONS,
@@ -173,8 +176,11 @@ export function SwarmRunDetail({
       : null,
     { autoRequest: false },
   );
-  const { summary: generatedWaveSummary, narration } =
-    promoteLaneANarration(waveInsights);
+  const generatedWaveSummary = narratedWaveSummary(
+    waveInsights.status,
+    waveInsights.insights,
+  );
+  const narration = waveNarration(waveInsights.status, waveInsights.insights);
   const findingsEnvelope = useInsightsEnvelope({
     kind: "journey_run",
     projectId,
