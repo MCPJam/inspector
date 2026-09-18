@@ -14,6 +14,7 @@ import {
 } from "@/shared/swarm-attempt-error";
 import {
   describeError,
+  mcpjamLimitSlugForMessage,
   describeAsSlug,
   type NormalizedError,
 } from "@mcpjam/sdk/browser";
@@ -91,6 +92,22 @@ export function describeSwarmAttemptFailure(
   providerLabel: string,
 ): NormalizedError {
   const info = humanizeSwarmAttemptError(rawMessage, errorCode);
+  const code = errorCode ?? info.code;
+  const limitSlug = mcpjamLimitSlugForMessage(info.message);
+  if (
+    isAccountLimit(info.message, code) &&
+    (limitSlug ||
+      ["user_rate_limit", "org_rate_limit", "billing_limit_reached"].includes(
+        code ?? "",
+      ))
+  ) {
+    return {
+      ...describeAsSlug(limitSlug ?? "provider/mcpjam_limit"),
+      oneLine: info.message,
+      rawMessage: rawMessage ?? info.message,
+      rawCode: code,
+    };
+  }
   const base = describeError(info.message);
   if (
     base.slug === "provider/quota" &&
