@@ -186,7 +186,7 @@ export function generationProgressLine(args: {
       : "";
   const patience =
     elapsedSeconds >= SLOW_GENERATION_SECONDS
-      ? " Still waiting on the generator — nothing is saved until you launch, so leaving and coming back costs nothing."
+      ? " Still generating. Nothing is saved until you launch."
       : "";
   return `${what}${elapsed}.${patience}`;
 }
@@ -346,6 +346,7 @@ function errorMessageOf(err: unknown, fallback: string): string {
 }
 
 export function NewSwarmCreateFlow({
+  organizationId,
   projectId,
   environments,
   hostNameById,
@@ -363,6 +364,7 @@ export function NewSwarmCreateFlow({
   onSetInsightsTuning: _onSetInsightsTuning,
 }: {
   projectId: string;
+  organizationId?: string;
   environments: ProjectEnvironmentView[] | undefined;
   /** Host id → display name for auto-naming materialized envs. */
   hostNameById: (hostId: string) => string;
@@ -1898,6 +1900,7 @@ export function NewSwarmCreateFlow({
       >
         {step === "running" ? (
           <NewSwarmRunningStep
+            organizationId={organizationId}
             projectId={projectId}
             runs={launchedRuns}
             fallbackColumns={runningFallbackColumns}

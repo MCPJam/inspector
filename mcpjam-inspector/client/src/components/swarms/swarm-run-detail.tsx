@@ -66,6 +66,7 @@ import {
 } from "@/components/swarms/swarm-run-detail-model";
 
 export interface SwarmRunDetailProps {
+  organizationId?: string;
   swarmId: string;
   projectId: string | null;
   /** Avatar-look fields are optional pass-through: SwarmsTab already hands
@@ -93,6 +94,7 @@ export interface SwarmRunDetailProps {
 }
 
 export function SwarmRunDetail({
+  organizationId,
   swarmId,
   projectId,
   personas,
@@ -373,9 +375,9 @@ export function SwarmRunDetail({
    * to no banner rather than to a stale sentence.
    */
   const followedFinding: SwarmOverviewFinding | null = findingParam
-    ? (wave.runs
+    ? wave.runs
         .flatMap((run) => run.findings)
-        .find((finding) => finding.criterionId === findingParam) ?? null)
+        .find((finding) => finding.criterionId === findingParam) ?? null
     : null;
   // 0% until the fan-out is known — a live run with no session total yet is
   // starting, not complete.
@@ -568,6 +570,7 @@ export function SwarmRunDetail({
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {tab === "run" && projectId ? (
           <NewSwarmRunningStep
+            organizationId={organizationId}
             projectId={projectId}
             runs={launchedRuns}
             fallbackColumns={[]}
