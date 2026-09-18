@@ -644,6 +644,16 @@ that renews with the billing period. The error card names the one you hit.
   not lift this limit for a swarm.
 </Warning>
 
+<Note>
+  **Transient holds during swarm runs** — When multiple sessions run in
+  parallel, in-flight requests can temporarily commit the remaining credits
+  before a new session starts. MCPJam automatically retries these transient
+  holds with jitter for up to five minutes per session, so a brief capacity
+  contention does not abort the run. If the account's allowance is genuinely
+  exhausted (not just held by concurrent sessions), the run stops and completed
+  results are preserved.
+</Note>
+
 ---
 
 ## Environment errors
