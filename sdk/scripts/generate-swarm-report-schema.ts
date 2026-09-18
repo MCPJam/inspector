@@ -1,9 +1,3 @@
-import { STAGE_STATE_LABELS } from "../src/contract/decision-labels.js";
-import {
-  swarmJourneyFindingSchema,
-  swarmJourneyFindingsSchema,
-  swarmJourneyFindingsJobSchema,
-} from "../src/contract/swarm-finding.js";
 /** OpenAPI components are generated from the shared wire contract. */
 import { readFileSync, writeFileSync } from "node:fs";
 import { z } from "zod";
@@ -13,6 +7,12 @@ import {
   journeyRunVerdictSummarySchema,
 } from "../src/contract/swarm-report.js";
 import { evalVerdictDecisionSchema } from "../src/contract/verdict-policy.js";
+import { STAGE_STATE_LABELS } from "../src/contract/decision-labels.js";
+import {
+  swarmJourneyFindingSchema,
+  swarmJourneyFindingsSchema,
+  swarmJourneyFindingsJobSchema,
+} from "../src/contract/swarm-finding.js";
 const path = new URL("../../docs/reference/openapi.json", import.meta.url);
 const original = readFileSync(path, "utf8");
 const document = JSON.parse(original);

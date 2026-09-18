@@ -97,6 +97,19 @@ const coverageNotes = z.array(
     .describe(vocabulary(SWARM_FINDING_COVERAGE_NOTES))
 );
 const citations = z.array(z.string().regex(/^[^/]+\/.+$/)).max(30);
+/**
+ * A row's tone is a function of its disposition, never a free field: a
+ * producer that sent `goalMet` with `fail` would render a green feeling word
+ * on a red row.
+ */
+const toneMatchesDisposition = (row: {
+  disposition: SwarmFindingDisposition;
+  tone: SwarmFindingTone;
+}) => row.tone === SWARM_FINDING_TONE_OF_DISPOSITION[row.disposition];
+const toneMismatch = {
+  message: "tone must equal SWARM_FINDING_TONE_OF_DISPOSITION[disposition]",
+  path: ["tone"],
+};
 export const swarmJourneyFindingSchema = z
   .object({
     id: z.string().min(1),
@@ -155,7 +168,8 @@ export const swarmJourneyFindingSchema = z
       .nullable(),
     mechanismId: z.string().nullable(),
   })
-  .strict();
+  .strict()
+  .refine(toneMatchesDisposition, toneMismatch);
 export const swarmJourneyFindingsSchema = z
   .object({
     contractVersion: z.literal(SWARM_FINDING_CONTRACT_VERSION),
@@ -195,6 +209,7 @@ export const swarmJourneyFindingsSchema = z
           goalRunIds: z.array(z.string()),
         })
         .strict()
+        .refine(toneMatchesDisposition, toneMismatch)
     ),
     findings: z.array(swarmJourneyFindingSchema).max(200),
   })

@@ -252,6 +252,8 @@ export type {
   PlatformSwarmFinding,
   PlatformSwarmJourneyFinding,
   PlatformSwarmJourneyFindings,
+  PlatformSwarmJourneyFindingsJob,
+  SwarmJourneyFindingsJob,
   PlatformSwarmOverview,
   PlatformSwarmOverviewRun,
   PlatformSwarmOverviewFinding,

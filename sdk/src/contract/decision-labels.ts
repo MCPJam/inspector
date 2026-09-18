@@ -1,14 +1,3 @@
-import {
-  SWARM_FINDING_DISPOSITIONS,
-  SWARM_FINDING_COVERAGE_NOTES,
-  SWARM_FINDING_SUMMARY_KINDS,
-  SWARM_FINDING_BASES,
-  SWARM_FINDING_SCOPE_LEVELS,
-  type SwarmFindingDisposition,
-  type SwarmFindingCoverageNote,
-  type SwarmFindingSummaryKind,
-  type SwarmFindingBasis,
-} from "./swarm-finding.js";
 /**
  * The user-facing words for the eval contract's closed vocabularies.
  *
@@ -59,6 +48,17 @@ import {
   type SuspectedConditionConfidence,
 } from "./friction-signals.js";
 import type { EvalStageCoverageDetail } from "./stage-analytics.js";
+import {
+  SWARM_FINDING_DISPOSITIONS,
+  SWARM_FINDING_COVERAGE_NOTES,
+  SWARM_FINDING_SUMMARY_KINDS,
+  SWARM_FINDING_BASES,
+  SWARM_FINDING_SCOPE_LEVELS,
+  type SwarmFindingDisposition,
+  type SwarmFindingCoverageNote,
+  type SwarmFindingSummaryKind,
+  type SwarmFindingBasis,
+} from "./swarm-finding.js";
 import {
   EVAL_VERDICT_DECISION_REASONS,
   type EvalVerdictDecisionReason,

@@ -5,6 +5,7 @@ import {
   swarmJourneyFindingsSchema,
   SWARM_FINDING_DISPOSITIONS,
   SWARM_FINDING_TONE_OF_DISPOSITION,
+  SWARM_FINDING_TONES,
 } from "../src/contract/swarm-finding.js";
 import {
   SWARM_FINDING_DISPOSITION_LABELS,
@@ -83,4 +84,56 @@ describe("swarm findings wire contract", () => {
 
 it("accepts the actual backend shared-pipeline publication", () => {
   expect(swarmJourneyFindingsSchema.parse(wire)).toEqual(wire);
+});
+
+describe("tone follows disposition", () => {
+  it("accepts every disposition with its own tone and rejects any other", () => {
+    for (const disposition of SWARM_FINDING_DISPOSITIONS) {
+      const tone = SWARM_FINDING_TONE_OF_DISPOSITION[disposition];
+      expect(
+        swarmJourneyFindingSchema.safeParse({ ...finding, disposition, tone })
+          .success
+      ).toBe(true);
+      for (const other of SWARM_FINDING_TONES.filter((t) => t !== tone)) {
+        const result = swarmJourneyFindingSchema.safeParse({
+          ...finding,
+          disposition,
+          tone: other,
+        });
+        expect(result.success).toBe(false);
+        expect(result.error?.issues[0]?.path).toEqual(["tone"]);
+      }
+    }
+  });
+
+  it("holds for persona rollup rows too", () => {
+    const parsed = swarmJourneyFindingsSchema.parse(wire);
+    const persona = {
+      persona: { personaRefId: null, name: "Ana" },
+      disposition: "goalMet",
+      goalRunIds: ["run"],
+    };
+    expect(
+      swarmJourneyFindingsSchema.safeParse({
+        ...parsed,
+        personas: [{ ...persona, tone: "fail" }],
+      }).success
+    ).toBe(false);
+    expect(
+      swarmJourneyFindingsSchema.safeParse({
+        ...parsed,
+        personas: [{ ...persona, tone: "ok" }],
+      }).success
+    ).toBe(true);
+  });
+
+  it("accepts the backend fixture as published", () => {
+    for (const row of [...wire.findings, ...wire.personas]) {
+      expect(row.tone).toBe(
+        SWARM_FINDING_TONE_OF_DISPOSITION[
+          row.disposition as keyof typeof SWARM_FINDING_TONE_OF_DISPOSITION
+        ]
+      );
+    }
+  });
 });
