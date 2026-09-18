@@ -13,6 +13,10 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 #### Changed
 
+- **Analysis coverage chip replaces the "Built X ago" timestamp** — the freshness chip in the Session flow and Topic map panels now shows **Analyzed N of M** (for example, "Analyzed 9 of 10 · 1 analyzing") instead of a run timestamp. Opening the chip's popover shows a full coverage breakdown: deferred sessions, failure reasons, taxonomy status, and map projection progress. The **Re-analyze** button in the popover is the one place to request a fresh analysis pass; voluntary rebuild buttons no longer appear elsewhere in the panels.
+
+- **User Testing studies no longer start analysis automatically on open** — opening a study's Findings or Insights tab when sessions exist but no analysis has run now shows "No session has been analyzed yet." instead of queuing analysis silently. Use **Re-analyze** in the freshness chip's popover to start one.
+
 - **Swarms can now pick models** — the Describe step's environment composer now includes a **Models** slot, matching the Evals composer. Selecting clients × models creates one target per pair (unnamed and deduplicated), and the existing target cap still applies.
 
 - **Targets are validated before persona generation** — clicking **Continue** in the swarm wizard now checks each resolved target against the same launch rules used at run time, before any persona generation or durable writes. If a client has no model configured, the wizard blocks with an **Edit client** link that opens the client inside the project so the draft is preserved. Other launch-blocking conditions (unavailable plugins, stale configs) are caught the same way.
