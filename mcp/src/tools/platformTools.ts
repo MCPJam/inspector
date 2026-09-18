@@ -1,4 +1,3 @@
-import type { SwarmJourneyFindings } from "@mcpjam/sdk/contract";
 /**
  * MCP tools over the shared platform operation catalog. Each tool is a thin
  * adapter: parse args with the operation's schema, call the Platform API
@@ -8,6 +7,10 @@ import type { SwarmJourneyFindings } from "@mcpjam/sdk/contract";
  * widget-backed `show_servers` tool lives in `showServers.ts` and reuses the
  * helpers here.
  */
+import type {
+  SwarmJourneyFinding,
+  SwarmJourneyFindings,
+} from "@mcpjam/sdk/contract";
 import {
   callServerToolOperation,
   renderServerWidgetOperation,
@@ -596,21 +599,18 @@ export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
 };
 
 const catalogOperationNames = new Set(
-  PLATFORM_CATALOG_OPERATIONS.map((operation) => operation.name),
+  PLATFORM_CATALOG_OPERATIONS.map((operation) => operation.name)
 );
 const allOperationNames = new Set(
-  ALL_OPERATIONS.map((operation) => operation.name),
+  ALL_OPERATIONS.map((operation) => operation.name)
 );
 const staleCatalogExclusions = Object.keys(EXCLUDED_FROM_CATALOG).filter(
-  (name) => !allOperationNames.has(name),
+  (name) => !allOperationNames.has(name)
 );
 const uncoveredCatalogOperations = ALL_OPERATIONS.filter(
   (operation) =>
     !catalogOperationNames.has(operation.name) &&
-    !Object.prototype.hasOwnProperty.call(
-      EXCLUDED_FROM_CATALOG,
-      operation.name,
-    ),
+    !Object.prototype.hasOwnProperty.call(EXCLUDED_FROM_CATALOG, operation.name)
 );
 if (
   staleCatalogExclusions.length > 0 ||
@@ -618,10 +618,10 @@ if (
 ) {
   throw new Error(
     `Platform MCP catalog partition drift: stale=${staleCatalogExclusions.join(
-      ",",
+      ","
     )}; uncovered=${uncoveredCatalogOperations
       .map((operation) => operation.name)
-      .join(",")}`,
+      .join(",")}`
   );
 }
 
@@ -665,8 +665,8 @@ const DESTRUCTIVE_OPERATION_NAMES: ReadonlySet<string> = new Set(
   ALL_OPERATIONS.filter(
     (operation) =>
       operation.risk === "destructive" ||
-      LEGACY_DESTRUCTIVE_NAMES.has(operation.name),
-  ).map((operation) => operation.name),
+      LEGACY_DESTRUCTIVE_NAMES.has(operation.name)
+  ).map((operation) => operation.name)
 );
 
 /**
@@ -742,7 +742,7 @@ export const PLATFORM_TOOL_WIDGET_VIEWS: Readonly<
 
 export function registerPlatformCatalogTools(
   registrar: SessionToolRegistrar,
-  context: PlatformToolContext,
+  context: PlatformToolContext
 ): void {
   for (const operation of PLATFORM_CATALOG_OPERATIONS) {
     const view = PLATFORM_TOOL_WIDGET_VIEWS[operation.name];
@@ -755,7 +755,7 @@ export function registerPlatformCatalogTools(
         annotations: operationAnnotations(operation),
       },
       async (input) => runPlatformOperation(context, operation, input),
-      view ? platformWidgetUi(context, operation, view) : undefined,
+      view ? platformWidgetUi(context, operation, view) : undefined
     );
   }
 }
@@ -770,7 +770,7 @@ export function registerPlatformCatalogTools(
 export function platformWidgetUi(
   context: PlatformToolContext,
   operation: PlatformOperation<any, any>,
-  view: PlatformWidgetView,
+  view: PlatformWidgetView
 ) {
   return {
     resourceUri: PLATFORM_WIDGET_RESOURCE_URIS[view],
@@ -783,13 +783,13 @@ export function platformWidgetUi(
     },
     callback: async (input: unknown) =>
       runPlatformOperation(context, operation, input, (payload) =>
-        tagPlatformWidgetPayload(view, payload),
+        tagPlatformWidgetPayload(view, payload)
       ),
   };
 }
 
 export function operationAnnotations(
-  operation: PlatformOperation<unknown, unknown>,
+  operation: PlatformOperation<unknown, unknown>
 ): ToolAnnotations {
   if (operation.readOnly) {
     return { readOnlyHint: true };
@@ -837,7 +837,7 @@ export function operationAnnotations(
  * before the call, not from the invoice.
  */
 export function operationDescription(
-  operation: PlatformOperation<unknown, unknown>,
+  operation: PlatformOperation<unknown, unknown>
 ): string {
   return operation.risk === "spend"
     ? `${operation.description} COSTS MONEY: this consumes the organization's credits or configured provider keys.`
@@ -848,7 +848,7 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
   context: PlatformToolContext,
   operation: PlatformOperation<TInput, TOutput>,
   input: TInput,
-  transformPayload?: (payload: TOutput) => object,
+  transformPayload?: (payload: TOutput) => object
 ) {
   // Resolve the bearer: the verified token for an authed session, or a
   // lazily-minted guest token for an anonymous one. Minting happens here (on
@@ -894,22 +894,22 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
         onError: (error, operationName) => {
           console.error(
             `[platform-tools] could not build a permalink for ${operationName}:`,
-            error instanceof Error ? error.message : String(error),
+            error instanceof Error ? error.message : String(error)
           );
         },
-      },
+      }
     );
     return toolSuccess(
       withPermalinkEnvelope(
         transformPayload ? transformPayload(result) : result,
-        permalinks,
+        permalinks
       ),
-      permalinks,
+      permalinks
     );
   } catch (error) {
     return toolError(
       describeOperationError(error),
-      errorStructuredContent(error),
+      errorStructuredContent(error)
     );
   }
 }
@@ -920,7 +920,7 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
 // calmly instead of with the alarming destructive styling. The model/CLI still
 // see `isError` plus the human-readable text message.
 function errorStructuredContent(
-  error: unknown,
+  error: unknown
 ): Record<string, unknown> | undefined {
   if (isPlatformApiError(error)) {
     // A usage-limit refusal also carries WHEN to come back and whether credits
@@ -999,41 +999,78 @@ function isInsightsEnvelope(value: unknown): value is EnvelopeLike {
   );
 }
 
+export const MODEL_MAX_SESSION_IDS_PER_FINDING = 5;
+export const MODEL_EXCERPT_CAP = 400;
+export const MODEL_PHRASE_CAP = 240;
+
+/**
+ * Cut `text` to at most `cap` characters, ellipsis included, preferring the
+ * last word boundary. Text with no space to cut at is hard-cut rather than
+ * collapsed to a bare ellipsis.
+ */
+export function clampAtWord(text: string, cap: number): string {
+  if (text.length <= cap) return text;
+  const head = text.slice(0, cap - 1);
+  const space = head.lastIndexOf(" ");
+  return (space > 0 ? head.slice(0, space) : head).trimEnd() + "…";
+}
+
+const JOURNEY_BASIS_RANK: Record<SwarmJourneyFinding["basis"], number> = {
+  verifiedMechanism: 0,
+  populationFact: 1,
+  sessionReport: 2,
+};
+
+/**
+ * Compact a swarm run's `journeyFindings` the way {@link compactEnvelope}
+ * compacts the envelope's own findings: verified mechanisms first, a head
+ * slice, evidence capped per finding, model phrases clamped. Personas and
+ * populations are never touched: they are the counts every sentence rests on.
+ */
 export function compactJourneyFindings(value: SwarmJourneyFindings) {
-  const rank = { verifiedMechanism: 0, populationFact: 1, sessionReport: 2 };
   let omittedEvidence = 0;
   let contractTruncated = false;
+  const clampPhrase = (phrase: string | null, cap: number) => {
+    if (phrase === null || phrase.length <= cap) return phrase;
+    contractTruncated = true;
+    return clampAtWord(phrase, cap);
+  };
   const findings = [...value.findings]
-    .sort((a, b) => rank[a.basis] - rank[b.basis])
+    .sort((a, b) => JOURNEY_BASIS_RANK[a.basis] - JOURNEY_BASIS_RANK[b.basis])
     .slice(0, MODEL_MAX_FINDINGS)
     .map((finding) => {
       omittedEvidence += Math.max(
         0,
-        finding.citations.length - MODEL_MAX_EVIDENCE_PER_FINDING,
+        finding.citations.length - MODEL_MAX_EVIDENCE_PER_FINDING
+      );
+      omittedEvidence += Math.max(
+        0,
+        finding.sessionIds.length - MODEL_MAX_SESSION_IDS_PER_FINDING
       );
       let reportExcerpt = finding.reportExcerpt;
       if (reportExcerpt) {
         omittedEvidence += Math.max(
           0,
-          reportExcerpt.citations.length - MODEL_MAX_EVIDENCE_PER_FINDING,
+          reportExcerpt.citations.length - MODEL_MAX_EVIDENCE_PER_FINDING
         );
-        let actual = reportExcerpt.actual;
-        if (actual.length > 400) {
-          const head = actual.slice(0, 399);
-          actual = head.slice(0, Math.max(0, head.lastIndexOf(" "))) + "…";
-          contractTruncated = true;
-        }
         reportExcerpt = {
-          actual,
+          actual: clampPhrase(reportExcerpt.actual, MODEL_EXCERPT_CAP)!,
           citations: reportExcerpt.citations.slice(
             0,
-            MODEL_MAX_EVIDENCE_PER_FINDING,
+            MODEL_MAX_EVIDENCE_PER_FINDING
           ),
         };
       }
       return {
         ...finding,
+        sessionIds: finding.sessionIds.slice(
+          0,
+          MODEL_MAX_SESSION_IDS_PER_FINDING
+        ),
         citations: finding.citations.slice(0, MODEL_MAX_EVIDENCE_PER_FINDING),
+        outcomePhrase: clampPhrase(finding.outcomePhrase, MODEL_PHRASE_CAP),
+        mechanismPhrase: clampPhrase(finding.mechanismPhrase, MODEL_PHRASE_CAP),
+        fixPhrase: clampPhrase(finding.fixPhrase, MODEL_PHRASE_CAP),
         reportExcerpt,
       };
     });
@@ -1165,7 +1202,7 @@ function toolSuccess(payload: object, permalinks: PlatformPermalink[] = []) {
 
 function toolError(
   message: string,
-  structuredContent?: Record<string, unknown>,
+  structuredContent?: Record<string, unknown>
 ) {
   return {
     isError: true,
