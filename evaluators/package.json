@@ -36,8 +36,8 @@
   },
   "dependencies": {
     "@cfworker/json-schema": "^4.1.1",
-    "@noble/hashes": "^2.3.0",
-    "zod": "^4.2.0"
+    "@noble/hashes": "^2.4.0",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "tsup": "^8.0.1",
