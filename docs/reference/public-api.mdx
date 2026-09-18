@@ -425,6 +425,11 @@ aggregates them, and wave insights run a model.
 | `POST .../waves/{waveId}/insights` | Request them. `202` — scheduled, not done |
 | `DELETE .../waves/{waveId}/insights` | Cancel a generation still `pending` |
 
+The insights envelope on a journey run (`GET .../journey-runs/{runId}`) carries two optional swarm-specific fields when the backend has produced them:
+
+- **`journeyFindings`** (`SwarmJourneyFindings | null`) — versioned, evidence-backed findings for each persona and goal: disposition, chain-stage evidence, population counts, coverage notes, and model phrases for verified mechanisms. `null` means the analysis has not produced output yet; absence means the deployment predates this field.
+- **`journeyFindingsJob`** (`SwarmJourneyFindingsJob | null`) — the status (`pending`, `completed`, `failed`, `skipped`) of the analysis job that produced `journeyFindings`, so a refusal never renders as a completed analysis. `null` when no job has run.
+
 Two arithmetic traps worth naming, because both produce numbers that look
 plausible and are wrong:
 
