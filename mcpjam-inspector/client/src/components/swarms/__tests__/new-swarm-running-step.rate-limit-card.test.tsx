@@ -555,7 +555,11 @@ it("shows cause counts and billing links for mixed server failures and exhausted
     "href",
     "/organizations/org-1/plans",
   );
-  expect(screen.getByText("Server tool failed.")).toBeInTheDocument();
+  // The banner states the non-limit cause with its count; the limit itself is
+  // the callout's to state, so the banner does not repeat it.
+  const failure = screen.getByTestId("new-swarm-running-failure");
+  expect(failure).toHaveTextContent("1 session: Server tool failed.");
+  expect(failure).not.toHaveTextContent("Daily MCPJam model limit");
   fireEvent.click(screen.getByRole("link", { name: "Add credits" }));
   expect(appNavigate).toHaveBeenCalledWith(
     "/organizations/org-1/billing?topup=open",

@@ -935,15 +935,7 @@ export function NewSwarmRunningStep({
     return () => window.clearTimeout(timer);
   }, [allTerminal, chrome]);
 
-  /**
-   * The first non-success terminal, humanized — what the run banner explains.
-   *
-   * Every attempt of a rate-limited run carries the same provider refusal, so
-   * showing one is showing all of them. Rendered through the shared humanizer
-   * rather than raw, because rows written before the runner started
-   * sanitizing still hold the full `swarm-agent <url> failed (429): {...}`
-   * envelope.
-   */
+  /** Every terminal failure cause, including limits alongside other failures. */
   const runFailure = useMemo(() => {
     // This banner summarizes waves without a successful attempt. Failed
     // attempts may still have recorded conversations and executed tools.
@@ -956,24 +948,43 @@ export function NewSwarmRunningStep({
     ) {
       return null;
     }
+    const groups = new Map<
+      string,
+      {
+        kind: string;
+        code: string | null | undefined;
+        info: ReturnType<typeof humanizeSwarmAttemptError>;
+        count: number;
+      }
+    >();
     for (const snap of Object.values(snapshots)) {
       for (const attempt of snap.attempts) {
         if (attempt.status !== "rate_limited" && attempt.status !== "failed") {
           continue;
         }
-        // A structured code alone is enough — the humanizer maps recognized
-        // sandbox codes without any stored message.
         if (!attempt.errorMessage && !attempt.errorCode) continue;
-        return {
-          kind: attempt.status,
-          info: humanizeSwarmAttemptError(
-            attempt.errorMessage,
-            attempt.errorCode,
-          ),
-        };
+        const info = humanizeSwarmAttemptError(
+          attempt.errorMessage,
+          attempt.errorCode,
+        );
+        const key = attempt.errorCode || `${attempt.status}:${info.message}`;
+        const group = groups.get(key);
+        if (group) group.count++;
+        else
+          groups.set(key, {
+            kind: attempt.status,
+            code: attempt.errorCode,
+            info,
+            count: 1,
+          });
       }
     }
-    return null;
+    const causes = [...groups.values()];
+    if (!causes.length) return null;
+    const severe = causes.find(
+      (cause) => cause.kind !== "rate_limited" && !cause.info.rerunnable,
+    );
+    return { ...(severe ?? causes[0]), causes };
   }, [allTerminal, failed, rateLimited, snapshots, stoppedHere, succeeded]);
 
   const progress = total > 0 ? Math.min(1, done / total) : allTerminal ? 1 : 0;
@@ -1079,6 +1090,25 @@ export function NewSwarmRunningStep({
     }
     return count === 0 ? null : { count, message, exhausted };
   }, [snapshots]);
+
+  // The account-limit callout owns its cause — count, breakdown and the top-up
+  // links — so the grouped banner states every OTHER cause, once. A run whose
+  // only cause is the limit shows the callout alone.
+  const bannerFailure = useMemo(() => {
+    if (!runFailure) return null;
+    const causes = accountLimit
+      ? runFailure.causes.filter(
+          (cause) =>
+            !isAccountLimit(cause.info.message, cause.code ?? cause.info.code),
+        )
+      : runFailure.causes;
+    if (!causes.length) return null;
+    const lead =
+      causes.find(
+        (cause) => cause.kind !== "rate_limited" && !cause.info.rerunnable,
+      ) ?? causes[0];
+    return { ...lead, causes };
+  }, [accountLimit, runFailure]);
 
   const selectedRunStatus = selection
     ? snapshots[selection.runId]?.status ?? "running"
@@ -1282,12 +1312,7 @@ export function NewSwarmRunningStep({
                 </div>
               ) : null}
 
-              {runFailure &&
-              (!accountLimit ||
-                !isAccountLimit(
-                  runFailure.info.message,
-                  runFailure.info.code,
-                )) ? (
+              {bannerFailure ? (
                 <div
                   className={cn(
                     "rounded-md border px-3 py-2 text-sm",
@@ -1296,8 +1321,8 @@ export function NewSwarmRunningStep({
                     // that needs re-running. Destructive red stays for failures
                     // the user has to go and repair — an expired sign-in in front
                     // of an XAA-protected server is not an incident.
-                    runFailure.kind === "rate_limited" ||
-                      runFailure.info.rerunnable
+                    bannerFailure.kind === "rate_limited" ||
+                      bannerFailure.info.rerunnable
                       ? "border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-200"
                       : "border-destructive/40 bg-destructive/10 text-destructive",
                   )}
@@ -1305,14 +1330,19 @@ export function NewSwarmRunningStep({
                   role="status"
                 >
                   <p className="font-medium">
-                    {runFailure.kind === "rate_limited"
+                    {bannerFailure.kind === "rate_limited"
                       ? "No sessions completed successfully — requests were rate-limited."
-                      : runFailure.info.rerunnable
+                      : bannerFailure.info.rerunnable
                       ? "This run's authorization needs re-running."
                       : "No sessions completed successfully."}
                   </p>
-                  <p className="mt-0.5">{runFailure.info.message}</p>
-                  {runFailure.info.canTopUp ? (
+                  {bannerFailure.causes.map((cause, index) => (
+                    <p className="mt-0.5" key={index}>
+                      {cause.count} {cause.count === 1 ? "session" : "sessions"}
+                      : {cause.info.message}
+                    </p>
+                  ))}
+                  {bannerFailure.causes.some((cause) => cause.info.canTopUp) ? (
                     <p className="mt-0.5 text-[13px] opacity-90">
                       Add credit or connect your own provider key (BYOK) to run
                       now.
