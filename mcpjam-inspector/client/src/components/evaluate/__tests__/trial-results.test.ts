@@ -717,7 +717,11 @@ describe("the trace narrative join", () => {
       {
         ...authored,
         steps: scopedSteps,
-        predicates: { mode: "extend", list: [] },
+        // The SAME check authored at case level too, so the whole-run scorer
+        // this test is named for is actually on the card. Without it the card
+        // holds only turn-scoped rows and a regression that conflated a scoped
+        // criterion with its unscoped twin would still pass.
+        predicates: { mode: "extend", list: [noToolErrors] },
       },
       {
         iteration: iteration({
@@ -733,6 +737,11 @@ describe("the trace narrative join", () => {
               scope: { kind: "turn", promptIndex: 1 },
               passed: false,
               reason: "turn 1 errored",
+            },
+            {
+              predicate: noToolErrors,
+              passed: false,
+              reason: "one turn errored over the whole run",
             },
           ],
         }),
@@ -756,6 +765,15 @@ describe("the trace narrative join", () => {
     expect(rowByKey(rows, "step:a1").result).toMatchObject({
       state: "passed",
       reason: "turn 0 clean",
+    });
+    // The whole-run scorer sees the same predicate and the same failure, and
+    // still gets no narrative: the turn-1 note was written about one turn.
+    const wholeRun = rowByKey(rows, "case:0");
+    expect(wholeRun.narrative).toBeUndefined();
+    expect(wholeRun.result).toMatchObject({
+      state: "failed",
+      source: "predicateResult",
+      reason: "one turn errored over the whole run",
     });
   });
 
