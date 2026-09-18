@@ -1,113 +1,25 @@
-diff --git a/.changeset/findings-every-row-reaches-its-sessions.md b/.changeset/findings-every-row-reaches-its-sessions.md
+diff --git a/.changeset/swarm-shared-findings.md b/.changeset/swarm-shared-findings.md
 deleted file mode 100644
-index f0625105b..000000000
---- a/.changeset/findings-every-row-reaches-its-sessions.md
+index 50807f04a..000000000
+--- a/.changeset/swarm-shared-findings.md
 +++ /dev/null
-@@ -1,13 +0,0 @@
+@@ -1,6 +0,0 @@
 ----
--"@mcpjam/inspector": patch
-----
--
--Every finding on a stage can now reach the sessions it is about, in Findings on a Swarm run and in Findings on a User Testing scenario.
--
--A stage that failed two rubric checks over the same session showed the first one with its session list underneath and the second as plain text with nothing to click. That is what "none of the sessions link to anything" looked like on the report that opened this: `Rubric check "Final message non-empty" failed` had a session under it, and `Rubric check "Calls create_view" failed`, directly below, had none.
--
--The cause was a rule written for the empty-stage footer — one session is a link rather than something to expand — reused for the evidence rows, where it collapses to "only row 0 renders the list". With several findings over one session, every row after the first lost its only way in.
--
--Several findings now earn the toggle even over a single session. A lone finding over a lone session still shows its session directly, with no toggle, and the empty-stage footer is untouched: it only renders when a stage has no evidence at all.
--
--One visible change where the list used to be permanent. With several findings over one session, the first row's session list was rendered with no control to collapse it. It is now a toggle that starts open, so the first paint is unchanged, and because the panel opens one finding at a time, opening the second finding closes the first.
-diff --git a/.changeset/hide-trace-citation-ids.md b/.changeset/hide-trace-citation-ids.md
-deleted file mode 100644
-index 787883709..000000000
---- a/.changeset/hide-trace-citation-ids.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": patch
+-"@mcpjam/sdk": minor
+-"@mcpjam/inspector": minor
 ----
 -
--Drop the "AI explanation · cited trace evidence" disclosure from evaluation scorecards. It only showed raw internal ids like `m:0 · tc:toolu_…`, which mean nothing to a reader.
-diff --git a/.changeset/imported-draft-review-surface.md b/.changeset/imported-draft-review-surface.md
-deleted file mode 100644
-index e4d52413e..000000000
---- a/.changeset/imported-draft-review-surface.md
-+++ /dev/null
-@@ -1,7 +0,0 @@
-----
--"@mcpjam/inspector": patch
--"@mcpjam/cli": patch
--"@mcpjam/sdk": patch
-----
--
--Keep a miscited Markdown case from failing the whole import, and give imported drafts their own review surface instead of listing them beside cases already in the suite. A blocked draft now names the missing field in a badge on its title, and importing clears a stale generation error that pointed at a setting import does not offer.
-diff --git a/.changeset/reused-persona-iterations.md b/.changeset/reused-persona-iterations.md
-deleted file mode 100644
-index 7a1e4c64e..000000000
---- a/.changeset/reused-persona-iterations.md
-+++ /dev/null
-@@ -1,13 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--A reused persona's iterations can be set for the run you are about to launch.
--
--Confirm showed reused goals as read-only text — "5 goals at the iterations already saved = 25 conversations" — so bringing a persona in meant taking whatever its owner had saved. One in the recording arrives at 25 conversations with no way to bring it down, which is the opposite of what someone reusing a persona for a quick run wants, and it spends model quota that is already rate-limited.
--
--Reused cards now carry the same iterations stepper the authored ones do. The control starts at what the persona's goals already hold, so leaving it alone launches the size it always did; goals that disagree, or carry nothing saved, start at the default instead, because there is no single saved value to show and picking one would misreport the others.
--
--The number is sent as a per-run override and the shared journey is not rewritten, which was the reason the control was withheld in the first place. A persona reused across swarms keeps its own saved size for everyone else.
--
--The launch quote follows the same number, so what Confirm promises and what the run fans out to cannot disagree.
-diff --git a/.changeset/widget-snapshot-offload.md b/.changeset/widget-snapshot-offload.md
-deleted file mode 100644
-index fa0e69724..000000000
---- a/.changeset/widget-snapshot-offload.md
-+++ /dev/null
-@@ -1,11 +0,0 @@
-----
--"@mcpjam/sdk": patch
-----
--
--Widget evidence too large to send inline now goes to storage, so an MCP Apps server can report its evals.
--
--Reporting a run embedded each widget snapshot's HTML in the request. A snapshot is a whole built app — a single-file bundle is commonly over half a megabyte — so one test case whose tool ran twice put more than 1MB on the wire and the upload failed with "Request body exceeds 1MB limit". Chunking could not save it: it splits between results, never inside one.
--
--Small widgets still ride along inline, in the one request they always did, because that is what lets a retry resend identical bytes. Only a result that would not fit offloads its HTML to blob storage first and sends the id instead. The offload happens once, before the retry loop, so retries stay byte-identical either way.
--
--The upload URL this path follows must now be https, or loopback — `npx convex dev` and a self-hosted deployment hand out `http://127.0.0.1`, and those still work. Anything else is refused rather than putting a built app on a cleartext wire.
-diff --git a/cli/package.json b/cli/package.json
-index c70fd0bc2..19f14eee0 100644
---- a/cli/package.json
-+++ b/cli/package.json
-@@ -1,6 +1,6 @@
- {
-   "name": "@mcpjam/cli",
--  "version": "5.10.0",
-+  "version": "5.10.1",
-   "description": "Test, debug, and validate MCP servers — health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI",
-   "type": "module",
-   "main": "dist/index.js",
-@@ -20,7 +20,7 @@
-     "prepublishOnly": "npm run build"
-   },
-   "dependencies": {
--    "@mcpjam/sdk": "^8.10.0",
-+    "@mcpjam/sdk": "^8.10.1",
-     "@modelcontextprotocol/server": "2.0.0",
-     "commander": "^14.0.3",
-     "posthog-node": "^5.24.10",
+-Expose versioned, evidence-backed swarm journey findings through the SDK and API contract. Render persona and goal findings from the shared analysis output, disclose unread sessions, and avoid reassuring summaries when no model analysis ran.
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index 79268506a..6ef091abc 100644
+index 5f1246326..03558faf5 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "3.7.1",
-+  "version": "3.7.2",
+-  "version": "3.7.2",
++  "version": "3.8.0",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
@@ -115,33 +27,21 @@ index 79268506a..6ef091abc 100644
      "@hookform/resolvers": "^3.10.0",
      "@lezer/highlight": "^1.2.3",
      "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^8.10.0",
-+    "@mcpjam/sdk": "^8.10.1",
+-    "@mcpjam/sdk": "^8.10.1",
++    "@mcpjam/sdk": "^8.11.0",
      "@modelcontextprotocol/client": "2.0.0",
      "@modelcontextprotocol/ext-apps": "^1.7.4",
      "@novnc/novnc": "^1.7.0",
 diff --git a/package-lock.json b/package-lock.json
-index 3b72a3528..07dd02646 100644
+index 16faa817b..00ae09596 100644
 --- a/package-lock.json
 +++ b/package-lock.json
-@@ -64,9 +64,9 @@
-     },
-     "cli": {
-       "name": "@mcpjam/cli",
--      "version": "5.10.0",
-+      "version": "5.10.1",
-       "dependencies": {
--        "@mcpjam/sdk": "^8.10.0",
-+        "@mcpjam/sdk": "^8.10.1",
-         "@modelcontextprotocol/server": "2.0.0",
-         "commander": "^14.0.3",
-         "posthog-node": "^5.24.10",
 @@ -426,7 +426,7 @@
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "3.7.1",
-+      "version": "3.7.2",
+-      "version": "3.7.2",
++      "version": "3.8.0",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^4.0.116",
@@ -149,53 +49,45 @@ index 3b72a3528..07dd02646 100644
          "@hookform/resolvers": "^3.10.0",
          "@lezer/highlight": "^1.2.3",
          "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^8.10.0",
-+        "@mcpjam/sdk": "^8.10.1",
+-        "@mcpjam/sdk": "^8.10.1",
++        "@mcpjam/sdk": "^8.11.0",
          "@modelcontextprotocol/client": "2.0.0",
          "@modelcontextprotocol/ext-apps": "^1.7.4",
          "@novnc/novnc": "^1.7.0",
-@@ -39229,7 +39229,7 @@
+@@ -39230,7 +39230,7 @@
      },
      "sdk": {
        "name": "@mcpjam/sdk",
--      "version": "8.10.0",
-+      "version": "8.10.1",
+-      "version": "8.10.1",
++      "version": "8.11.0",
        "license": "MIT",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^3.0.101",
 diff --git a/sdk/CHANGELOG.md b/sdk/CHANGELOG.md
-index 12c91ccef..d5acbf326 100644
+index d5acbf326..5a57500a2 100644
 --- a/sdk/CHANGELOG.md
 +++ b/sdk/CHANGELOG.md
-@@ -1,5 +1,19 @@
+@@ -1,5 +1,11 @@
  # `@mcpjam/sdk` changelog
  
-+## 8.10.1
++## 8.11.0
 +
-+### Patch Changes
++### Minor Changes
 +
-+- [#5290](https://github.com/MCPJam/inspector/pull/5290) [`dc212eb`](https://github.com/MCPJam/inspector/commit/dc212eb1b040c44e488203e2ef1a2bc8174e2876) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Keep a miscited Markdown case from failing the whole import, and give imported drafts their own review surface instead of listing them beside cases already in the suite. A blocked draft now names the missing field in a badge on its title, and importing clears a stale generation error that pointed at a setting import does not offer.
++- [#5281](https://github.com/MCPJam/inspector/pull/5281) [`4311e1f`](https://github.com/MCPJam/inspector/commit/4311e1f0b008b28bb02405e9bc87ac5accd5cb6e) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Expose versioned, evidence-backed swarm journey findings through the SDK and API contract. Render persona and goal findings from the shared analysis output, disclose unread sessions, and avoid reassuring summaries when no model analysis ran.
 +
-+- [#5298](https://github.com/MCPJam/inspector/pull/5298) [`7032855`](https://github.com/MCPJam/inspector/commit/703285536746b2e05bc49e45dacabb3582e374e8) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Widget evidence too large to send inline now goes to storage, so an MCP Apps server can report its evals.
-+
-+  Reporting a run embedded each widget snapshot's HTML in the request. A snapshot is a whole built app — a single-file bundle is commonly over half a megabyte — so one test case whose tool ran twice put more than 1MB on the wire and the upload failed with "Request body exceeds 1MB limit". Chunking could not save it: it splits between results, never inside one.
-+
-+  Small widgets still ride along inline, in the one request they always did, because that is what lets a retry resend identical bytes. Only a result that would not fit offloads its HTML to blob storage first and sends the id instead. The offload happens once, before the retry loop, so retries stay byte-identical either way.
-+
-+  The upload URL this path follows must now be https, or loopback — `npx convex dev` and a self-hosted deployment hand out `http://127.0.0.1`, and those still work. Anything else is refused rather than putting a built app on a cleartext wire.
-+
- ## 8.10.0
+ ## 8.10.1
  
- ### Minor Changes
+ ### Patch Changes
 diff --git a/sdk/package.json b/sdk/package.json
-index dac8b2190..e01972603 100644
+index e01972603..f99083fc9 100644
 --- a/sdk/package.json
 +++ b/sdk/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/sdk",
--  "version": "8.10.0",
-+  "version": "8.10.1",
+-  "version": "8.10.1",
++  "version": "8.11.0",
    "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
    "type": "module",
    "main": "dist/index.js",
