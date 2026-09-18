@@ -20,7 +20,10 @@ import {
 const buildSsePayload = (events: unknown[]) =>
   `${events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join("")}data: [DONE]\n\n`;
 
-const createSseResponse = (events: unknown[]) =>
+const createSseResponse = (
+  events: unknown[],
+  opts: { confirmPlatformPaid?: string | null } = {},
+) =>
   new Response(
     new ReadableStream<Uint8Array>({
       start(controller) {
@@ -28,17 +31,38 @@ const createSseResponse = (events: unknown[]) =>
         controller.close();
       },
     }),
-    { status: 200, headers: { "Content-Type": "text/plain; charset=utf-8" } },
+    {
+      status: 200,
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+        // A real Convex that honours the claim stamps this. `null` models a
+        // deployment that predates `billingFeature` and silently ignored it.
+        ...(opts.confirmPlatformPaid === null
+          ? {}
+          : {
+              "x-mcpjam-platform-paid":
+                opts.confirmPlatformPaid ?? "mcpjam_agent",
+            }),
+      },
+    },
   );
 
 let lastExecution: Promise<void> | null = null;
+let writtenParts: unknown[] = [];
+
+/** Everything the handler wrote this turn, flattened for substring matching. */
+const writtenText = () => JSON.stringify(writtenParts);
 
 vi.mock("ai", async () => {
   const actual = await vi.importActual<typeof import("ai")>("ai");
   return {
     ...actual,
     createUIMessageStream: vi.fn(({ execute, onFinish }: any) => {
-      const writer = { write: vi.fn() };
+      const writer = {
+        write: vi.fn((part: unknown) => {
+          writtenParts.push(part);
+        }),
+      };
       lastExecution = Promise.resolve(execute({ writer })).then(async () => {
         await onFinish?.();
       });
@@ -95,6 +119,7 @@ describe("Ask MCPJam billing claim on the wire", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     lastExecution = null;
+    writtenParts = [];
     process.env.CONVEX_HTTP_URL = "https://test-convex.example.com";
     vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "inspector-secret");
     global.fetch = vi.fn().mockResolvedValue(
@@ -112,6 +137,72 @@ describe("Ask MCPJam billing claim on the wire", () => {
     global.fetch = originalFetch;
     delete process.env.CONVEX_HTTP_URL;
     vi.unstubAllEnvs();
+  });
+
+  it("refuses a turn the backend did not confirm as platform-paid", async () => {
+    // The failure this guards: a backend that predates `billingFeature`
+    // ignores it as an unknown body field, bills the customer's org, and
+    // answers a perfectly ordinary 200. Sending the claim is not the same as
+    // having it honoured, and a silent charge for a feature the product calls
+    // free is the one outcome this whole feature exists to prevent.
+    global.fetch = vi.fn().mockResolvedValue(
+      createSseResponse(
+        [
+          {
+            type: "finish",
+            finishReason: "stop",
+            totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          },
+        ],
+        { confirmPlatformPaid: null },
+      ),
+    );
+    await runTurn({ billingFeature: "mcpjam_agent" });
+    expect(writtenText()).toContain("agent_billing_rejected");
+  });
+
+  it("refuses when the backend confirms a DIFFERENT feature", async () => {
+    // Not merely "a header is present". A confirmation for some other
+    // platform-paid feature is not a confirmation for this turn.
+    global.fetch = vi.fn().mockResolvedValue(
+      createSseResponse(
+        [
+          {
+            type: "finish",
+            finishReason: "stop",
+            totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          },
+        ],
+        { confirmPlatformPaid: "mcpjam_insights" },
+      ),
+    );
+    await runTurn({ billingFeature: "mcpjam_agent" });
+    expect(writtenText()).toContain("agent_billing_rejected");
+  });
+
+  it("proceeds when the backend confirms the claim", async () => {
+    // The other half: the guard must not refuse the turns it exists to allow.
+    await runTurn({ billingFeature: "mcpjam_agent" });
+    expect(writtenText()).not.toContain("agent_billing_rejected");
+  });
+
+  it("leaves an unclaimed turn alone, confirmation or not", async () => {
+    // Today's Playground sends no claim, so it is billed to the customer on
+    // purpose and must never be gated on a header it never asked for.
+    global.fetch = vi.fn().mockResolvedValue(
+      createSseResponse(
+        [
+          {
+            type: "finish",
+            finishReason: "stop",
+            totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          },
+        ],
+        { confirmPlatformPaid: null },
+      ),
+    );
+    await runTurn();
+    expect(writtenText()).not.toContain("agent_billing_rejected");
   });
 
   it("sends the claim with the service token, with no client IP in play", async () => {

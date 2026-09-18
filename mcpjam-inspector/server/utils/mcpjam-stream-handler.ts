@@ -3125,6 +3125,45 @@ async function processOneStep(
       transient: true,
     });
   }
+  // A claimed turn must come back CONFIRMED platform-paid.
+  //
+  // Sending the claim is not the same as having it honoured. A backend that
+  // predates `billingFeature` ignores it as an unknown body field, bills the
+  // customer's org for the turn, and answers 200 — indistinguishable from
+  // success from here. That is a silent charge for a feature the product calls
+  // free, which is the single outcome this feature exists to prevent, so the
+  // absence of the confirmation is a REFUSAL, not a warning: the same call this
+  // file already makes for a missing service token, and the same call the exa
+  // tool makes when it cannot attest.
+  //
+  // Swapping in a synthetic denial rather than hand-rolling the failure here
+  // keeps one failure path: the branch below already writes the spans, fires
+  // `onEngineError` and classifies the code, and `agent_billing_rejected` is
+  // already the code for "the claim did not hold" and already renders as "Ask
+  // MCPJam is temporarily unavailable." The body is cancelled unread — it is a
+  // real model stream, so draining it would only put noise in the log.
+  if (
+    billingFeature !== undefined &&
+    res.ok &&
+    res.headers?.get("x-mcpjam-platform-paid") !== billingFeature
+  ) {
+    try {
+      await res.body?.cancel();
+    } catch {
+      // Already closed or never a real stream; nothing to release.
+    }
+    res = new Response(
+      JSON.stringify({
+        ok: false,
+        code: "agent_billing_rejected",
+        error:
+          "This MCPJam deployment could not confirm that the turn would be " +
+          "billed to MCPJam, so it was stopped rather than charged to your " +
+          "organization. This usually means the backend is still rolling out.",
+      }),
+      { status: 503, headers: { "content-type": "application/json" } },
+    );
+  }
   const isJsonDenial =
     res.ok &&
     !!res.body &&
