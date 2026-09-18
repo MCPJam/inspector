@@ -309,24 +309,75 @@ function table(headers, rows) {
   ].join("\n");
 }
 
-function renderBundle(bundle, full, outcome) {
-  const cases = buildCaseRows(bundle);
+// The run names the client it executed: a saved MCPJam client, or the
+// synthetic "SDK harness" when the test code owned the model. `environment`
+// is a project environment, not a client, and is the weaker label of the two.
+// Truthiness, not nullish: an empty name is no name, and must not shadow the
+// environment the run does carry.
+const clientOf = (bundle) => bundle.run.client?.name || bundle.run.environment?.name;
+
+const runLink = (bundle) => {
+  // Open the exact run in the public Evaluate experience.
+  const link = new URL(
+    `/evaluate/suite/${encodeURIComponent(bundle.receipt.suiteId)}/runs/${encodeURIComponent(bundle.receipt.runId)}`,
+    bundle.receipt.baseUrl,
+  );
+  link.searchParams.set("project", bundle.receipt.projectId);
+  return link;
+};
+
+// One verdict for sibling runs read together: any failure fails the group, and
+// anything short of a pass keeps the group from passing.
+const groupResult = (bundles) => {
+  const results = bundles.map((bundle) => bundle.run.result);
+  if (results.includes("failed")) return "failed";
+  return results.find((result) => result !== "passed") ?? "passed";
+};
+
+/**
+ * Sibling runs launched together (one multi-client launch) share a
+ * `runGroupId`; they read as one report with a row per client/model. A run
+ * with no group is its own group, so a single run renders as it always did.
+ */
+export function groupBundles(bundles) {
+  const groups = new Map();
+  for (const bundle of bundles) {
+    const id = bundle.run.runGroupId;
+    const key =
+      typeof id === "string" && id ? `group:${id}` : `run:${bundle.receipt.runId}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(bundle);
+  }
+  return [...groups.values()].map((group) =>
+    group.length > 1
+      ? [...group].sort((a, b) =>
+          String(clientOf(a) ?? "").localeCompare(String(clientOf(b) ?? "")),
+        )
+      : group,
+  );
+}
+
+function renderGroup(bundles, full, outcome) {
+  const grouped = bundles.length > 1;
+  // Each row remembers its run, so two clients on the same model stay two
+  // rows rather than merging into one.
+  const cases = bundles.flatMap((bundle, index) =>
+    buildCaseRows(bundle).map((row) => ({
+      ...row,
+      client: clientOf(bundle),
+      variant: `${index}\0${variantKey(row.provider, row.model)}`,
+    })),
+  );
   const variants = [
     ...new Map(
       cases.map((row) => [
-        variantKey(row.provider, row.model),
-        { key: variantKey(row.provider, row.model), provider: row.provider, model: row.model },
+        row.variant,
+        { key: row.variant, client: row.client, model: row.model },
       ]),
     ).values(),
   ];
-  // The run names the client it executed: a saved MCPJam client, or the
-  // synthetic "SDK harness" when the test code owned the model. `environment`
-  // is a project environment, not a client, and is the weaker label of the two.
-  // Truthiness, not nullish: an empty name is no name, and must not shadow the
-  // environment the run does carry.
-  const client = bundle.run.client?.name || bundle.run.environment?.name;
   const variantRows = variants.map((variant) => {
-    const rows = cases.filter((row) => variantKey(row.provider, row.model) === variant.key);
+    const rows = cases.filter((row) => row.variant === variant.key);
     const passedCases = rows.filter((row) => row.verdict === "passed").length;
     const eligible = rows.reduce((sum, row) => sum + row.eligible, 0);
     const passed = rows.reduce((sum, row) => sum + row.passed, 0);
@@ -337,7 +388,7 @@ function renderBundle(bundle, full, outcome) {
         ? "inconclusive"
         : "passed";
     return [
-      variantLabel(client, variant.model),
+      variantLabel(variant.client, variant.model),
       `${statusIcon(verdict)} ${verdict[0].toUpperCase()}${verdict.slice(1)}`,
       `${passedCases}/${rows.length}`,
       pct(passed, eligible),
@@ -352,9 +403,7 @@ function renderBundle(bundle, full, outcome) {
     cases.find((row) => row.caseKey === caseKey)?.title ?? caseKey,
     ...variants.map((variant) => {
       const row = cases.find(
-        (item) =>
-          item.caseKey === caseKey &&
-          variantKey(item.provider, item.model) === variant.key,
+        (item) => item.caseKey === caseKey && item.variant === variant.key,
       );
       return row
         ? `${statusIcon(row.verdict)} ${pct(row.passed, row.eligible)}`
@@ -364,25 +413,28 @@ function renderBundle(bundle, full, outcome) {
   const caseCount = new Set(cases.map((row) => row.caseKey)).size;
   const total = cases.reduce((sum, row) => sum + row.eligible, 0);
   const passed = cases.reduce((sum, row) => sum + row.passed, 0);
-  const runNumber = bundle.run.runNumber ? `Run #${bundle.run.runNumber}` : `Run ${bundle.run.id}`;
+  // Siblings share a run number; name each only if they somehow do not.
+  const numbers = [...new Set(bundles.map((bundle) => bundle.run.runNumber))];
+  const first = bundles[0];
+  const runNumber =
+    numbers.length === 1 && numbers[0]
+      ? `Run #${numbers[0]}`
+      : grouped
+        ? `Runs ${bundles.map((bundle) => (bundle.run.runNumber ? `#${bundle.run.runNumber}` : bundle.run.id)).join(", ")}`
+        : `Run ${first.run.id}`;
   const threshold = cases.find((row) => Number.isFinite(row.threshold))?.threshold;
-  // Open the exact run in the public Evaluate experience.
-  const link = new URL(
-    `/evaluate/suite/${encodeURIComponent(bundle.receipt.suiteId)}/runs/${encodeURIComponent(bundle.receipt.runId)}`,
-    bundle.receipt.baseUrl,
-  );
-  link.searchParams.set("project", bundle.receipt.projectId);
+  const result = groupResult(bundles);
   // The headline is the ACTION's verdict when it has one. The run's own result
   // is one input to it — a waived gate passes a failed run, a command that
   // exits non-zero fails a passed one — so reporting the run result as the
   // outcome contradicts the check the reader is looking at.
-  const headline = outcome?.result ?? bundle.run.result;
+  const headline = outcome?.result ?? result;
   const lines = [
     `## ${statusIcon(headline)} MCPJam Evals — ${resultLabel(headline)}`,
     "",
     ...(outcome?.message ? [`${escapeCell(outcome.message)}  `] : []),
-    `**${escapeCell(bundle.receipt.suiteName)} · ${runNumber}**  `,
-    `Run result: ${statusIcon(bundle.run.result)} ${resultLabel(bundle.run.result)}  `,
+    `**${escapeCell(first.receipt.suiteName)} · ${runNumber}**  `,
+    `Run result: ${statusIcon(result)} ${resultLabel(result)}  `,
     `${caseCount} cases · ${passed}/${total} eligible iterations passed · ${variants.length} client/model combination${variants.length === 1 ? "" : "s"}  `,
     ...(Number.isFinite(threshold)
       ? [`**Requirement:** Each case must pass ≥${Math.round(threshold * 100)}% of its eligible iterations.`, ""]
@@ -399,31 +451,43 @@ function renderBundle(bundle, full, outcome) {
           "Each cell shows the recorded pass rate over eligible iterations.",
           "",
           table(
-            ["Case", ...variants.map((row) => variantLabel(client, row.model))],
+            ["Case", ...variants.map((variant) => variantLabel(variant.client, variant.model))],
             failedRows,
           ),
         ]
       : ["No failed or inconclusive cases."]),
     "",
   ];
+  // Each sibling is its own run with its own page.
+  const links = grouped
+    ? bundles.map(
+        (bundle) =>
+          `[View run in MCPJam — ${escapeCell(clientOf(bundle) || bundle.receipt.runId)}](${runLink(bundle)})`,
+      )
+    : [`[View full run in MCPJam](${runLink(first)})`];
 
-  const comment = [...lines, `[View full run in MCPJam](${link})`].join("\n");
+  const comment = [...lines, ...links].join("\n");
   if (!full) return comment;
 
   const passing = cases.filter((row) => row.verdict === "passed");
   const errors = failedCases.flatMap((row) =>
-    row.errors.length ? row.errors.map((error) => [row.title, error]) : [],
+    row.errors.length
+      ? row.errors.map((error) => [
+          grouped ? `${row.title} (${variantLabel(row.client, row.model)})` : row.title,
+          error,
+        ])
+      : [],
   );
   const usageRows = variants.map((variant) => {
     const items = cases
-      .filter((row) => variantKey(row.provider, row.model) === variant.key)
+      .filter((row) => row.variant === variant.key)
       .flatMap((row) => row.iterations);
     const times = items.map((item) => item.durationMs);
     const tokens = items.reduce((sum, item) => sum + (item.usage?.totalTokens ?? item.tokensUsed ?? 0), 0);
     const costs = items.map((item) => item.usage?.estimatedCostUsd).filter(Number.isFinite);
     const tools = items.reduce((sum, item) => sum + (item.actualToolCalls?.length ?? 0), 0);
     return [
-      variantLabel(client, variant.model),
+      variantLabel(variant.client, variant.model),
       duration(percentile(times, 0.5)),
       duration(percentile(times, 0.95)),
       tokens || "—",
@@ -431,15 +495,16 @@ function renderBundle(bundle, full, outcome) {
       tools,
     ];
   });
-  const completed = bundle.iterations.filter((row) =>
+  const iterations = bundles.flatMap((bundle) => bundle.iterations);
+  const completed = iterations.filter((row) =>
     ["completed", "failed", "setup_failed", "timed_out", "skipped", "cancelled"].includes(row.status),
   ).length;
-  const executionErrors = bundle.iterations.filter((row) =>
+  const executionErrors = iterations.filter((row) =>
     ["failed", "setup_failed", "timed_out"].includes(row.status),
   ).length;
-  const skipped = bundle.iterations.filter((row) => row.status === "skipped").length;
-  const cancelled = bundle.iterations.filter((row) => row.status === "cancelled").length;
-  const commit = bundle.run.ciMetadata?.commitSha;
+  const skipped = iterations.filter((row) => row.status === "skipped").length;
+  const cancelled = iterations.filter((row) => row.status === "cancelled").length;
+  const commit = first.run.ciMetadata?.commitSha;
   return [
     ...lines,
     ...(errors.length
@@ -453,7 +518,7 @@ function renderBundle(bundle, full, outcome) {
             ["Case", "Client / Model", "Pass rate"],
             passing.map((row) => [
               row.title,
-              variantLabel(client, row.model),
+              variantLabel(row.client, row.model),
               pct(row.passed, row.eligible),
             ]),
           ),
@@ -476,9 +541,9 @@ function renderBundle(bundle, full, outcome) {
     table(
       ["Setting", "Value"],
       [
-        ["Suite", bundle.receipt.suiteName],
+        ["Suite", first.receipt.suiteName],
         ["Commit", commit ? `\`${commit.slice(0, 7)}\`` : "—"],
-        ["Completed iterations", `${completed}/${bundle.iterations.length}`],
+        ["Completed iterations", `${completed}/${iterations.length}`],
         ["Execution errors", executionErrors],
         ["Skipped / cancelled", `${skipped} / ${cancelled}`],
       ],
@@ -486,17 +551,18 @@ function renderBundle(bundle, full, outcome) {
     "",
     "</details>",
     "",
-    `[View full run in MCPJam](${link})`,
+    ...links,
   ].join("\n");
 }
 
 export function renderReports(bundles, outcome) {
+  const groups = groupBundles(bundles);
   return {
-    summary: bundles
-      .map((bundle) => renderBundle(bundle, true, outcome))
+    summary: groups
+      .map((group) => renderGroup(group, true, outcome))
       .join("\n\n---\n\n"),
-    comment: bundles
-      .map((bundle) => renderBundle(bundle, false, outcome))
+    comment: groups
+      .map((group) => renderGroup(group, false, outcome))
       .join("\n\n---\n\n"),
   };
 }
