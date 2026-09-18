@@ -41,7 +41,7 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 - **Live pane no longer shows goal result, value chain, or advisory copy** — while a run is in progress, the session detail pane no longer displays a `Goal result:` line, a `User value chain` disclosure, or advisory check rows. Chat and Trace sit directly under the session header. The Sessions tab still shows the full `SwarmSessionReport` details for a selected completed thread.
 
-- **"Rebuild clusters" and cluster tuning controls are temporarily hidden** — the voluntary **Rebuild** button and the **Balanced** cluster tuning control are no longer shown in the Session flow and Topic map panels. Analysis still runs automatically for User Testing scenarios, and error recovery (**Retry**) remains available when a run has failed or is stuck. The controls will return in a future release.
+- **Cluster tuning controls removed** — the **Balanced** cluster tuning control and the voluntary **Rebuild clusters** button have been removed from the Session flow and Topic map panels. Error recovery (**Re-analyze**) remains available in the freshness chip's popover when sessions or projections have failed.
 
 - **Shared session threads now render MCP App widgets live** — when viewing a shared usage thread, MCP App tool calls now render as full interactive widgets instead of static placeholders, matching the experience in the Playground and swarm session viewer.
 
