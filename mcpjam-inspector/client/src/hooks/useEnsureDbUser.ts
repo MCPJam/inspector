@@ -10,6 +10,7 @@ import {
   revokeGuestSessionAndCookie,
 } from "@/lib/guest-session";
 import { useActorKey } from "@/hooks/use-actor-key";
+import { trackGoogleSignUp } from "@/lib/google-tag";
 
 // Fallback substring used when Convex doesn't surface a structured error
 // code for write-conflicts. Update if Convex changes the wording — without
@@ -43,8 +44,40 @@ type EnsureUserArgs = {
 
 type EnsureUserMutation = (args: EnsureUserArgs) => Promise<unknown>;
 
+/**
+ * What `users:ensureUserWithOutcome` reports back. `created` and
+ * `promotedFromGuest` are the backend's two shapes of a signup and are
+ * exactly the cases that emit `signup_completed` server-side; a returning
+ * user, an email re-link, and every guest call carry neither.
+ */
+type EnsureUserOutcome = {
+  userId: string;
+  created: boolean;
+  promotedFromGuest: boolean;
+};
+
+// Convex's message when a client calls a function the deployment does not
+// have. `ensureUserWithOutcome` is newer than `ensureUser`; a client that
+// reaches a backend from before it (a rollback, a stale preview) must still
+// bootstrap, so that one failure falls back to the older mutation.
+const CONVEX_MISSING_FUNCTION_MESSAGE = "Could not find public function";
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function parseEnsureUserOutcome(value: unknown): EnsureUserOutcome | null {
+  if (!isRecord(value) || typeof value.userId !== "string") return null;
+  return {
+    userId: value.userId,
+    created: value.created === true,
+    promotedFromGuest: value.promotedFromGuest === true,
+  };
+}
+
+function isConvexMissingFunctionError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return message.includes(CONVEX_MISSING_FUNCTION_MESSAGE);
 }
 
 /**
@@ -100,13 +133,12 @@ async function ensureUserWithRetry(
   ensureUser: EnsureUserMutation,
   args: EnsureUserArgs,
   shouldContinue: () => boolean
-) {
+): Promise<unknown> {
   for (let attempt = 0; ; attempt++) {
-    if (!shouldContinue()) return;
+    if (!shouldContinue()) return undefined;
 
     try {
-      await ensureUser(args);
-      return;
+      return await ensureUser(args);
     } catch (err) {
       if (
         !shouldContinue() ||
@@ -117,8 +149,31 @@ async function ensureUserWithRetry(
       }
 
       await delay(retryDelayMs(attempt));
-      if (!shouldContinue()) return;
+      if (!shouldContinue()) return undefined;
     }
+  }
+}
+
+/**
+ * `ensureUserWithOutcome` first, `ensureUser` if the deployment lacks it.
+ * Only a missing-function error falls back; anything else (a conflict, an
+ * auth edge, a backend throw) surfaces from the primary call as before.
+ */
+async function ensureUserPreferringOutcome(
+  primary: EnsureUserMutation,
+  legacy: EnsureUserMutation,
+  args: EnsureUserArgs,
+  shouldContinue: () => boolean
+): Promise<unknown> {
+  try {
+    return await ensureUserWithRetry(primary, args, shouldContinue);
+  } catch (err) {
+    if (!isConvexMissingFunctionError(err)) throw err;
+    // eslint-disable-next-line no-console
+    console.warn(
+      "[auth] users:ensureUserWithOutcome is not deployed; falling back to users:ensureUser"
+    );
+    return await ensureUserWithRetry(legacy, args, shouldContinue);
   }
 }
 
@@ -141,6 +196,13 @@ export function useEnsureDbUser() {
   const posthog = usePostHog();
   const { isAuthenticated, isLoading } = useConvexAuth();
   const actorKey = useActorKey();
+  // The outcome-reporting mutation is the one this hook wants: it is how a
+  // first sign-in becomes a browser-side `sign_up` conversion (see
+  // `trackGoogleSignUp`). The bare `ensureUser` stays wired for the fallback
+  // in `ensureUserPreferringOutcome`.
+  const ensureUserWithOutcome = useMutation(
+    "users:ensureUserWithOutcome" as any
+  ) as EnsureUserMutation;
   const ensureUser = useMutation(
     "users:ensureUser" as any
   ) as EnsureUserMutation;
@@ -167,7 +229,7 @@ export function useEnsureDbUser() {
   const activeEnsureIdentityRef = useRef<string | null>(null);
   const inFlightEnsureRef = useRef<{
     identityKey: string;
-    promise: Promise<void>;
+    promise: Promise<unknown>;
   } | null>(null);
   const [isEnsuringUser, setIsEnsuringUser] = useState(false);
   const [ensuredIdentityKey, setEnsuredIdentityKey] = useState<string | null>(
@@ -362,9 +424,12 @@ export function useEnsureDbUser() {
       };
       let ensurePromise = inFlightEnsureRef.current?.promise;
       if (inFlightEnsureRef.current?.identityKey !== identityKey) {
-        ensurePromise = ensureUserWithRetry(ensureUser, ensureArgs, () => {
-          return activeEnsureIdentityRef.current === identityKey;
-        });
+        ensurePromise = ensureUserPreferringOutcome(
+          ensureUserWithOutcome,
+          ensureUser,
+          ensureArgs,
+          () => activeEnsureIdentityRef.current === identityKey
+        );
         inFlightEnsureRef.current = {
           identityKey,
           promise: ensurePromise,
@@ -377,8 +442,9 @@ export function useEnsureDbUser() {
         ensurePromise.then(clearInFlight, clearInFlight);
       }
 
+      let ensureResult: unknown;
       try {
-        await ensurePromise;
+        ensureResult = await ensurePromise;
       } catch (err) {
         if (!cancelled) {
           // eslint-disable-next-line no-console
@@ -401,6 +467,21 @@ export function useEnsureDbUser() {
       lastEnsuredIdentityRef.current = identityKey;
       setEnsuredIdentityKey(identityKey);
       recoveryStateRef.current = null;
+
+      // A first sign-in is the conversion Google Ads is asked to optimize
+      // for, and it can only be reported from the browser that holds the
+      // ad-click cookies. Best-effort and never on the guest branch: the
+      // backend reports both flags false for guests, and a guest row is a
+      // session, not an account. `trackGoogleSignUp` is a no-op wherever
+      // the tag never loaded, and dedupes a repeat bootstrap of the same
+      // account.
+      const outcome = isWorkOsAuth ? parseEnsureUserOutcome(ensureResult) : null;
+      if (outcome && (outcome.created || outcome.promotedFromGuest)) {
+        trackGoogleSignUp({
+          userId: outcome.userId,
+          method: outcome.promotedFromGuest ? "guest_promotion" : "workos",
+        });
+      }
 
       // If we just authenticated as a WorkOS user and a guest cookie was
       // in play, retire it. Safe to call unconditionally — if no cookie
@@ -436,6 +517,7 @@ export function useEnsureDbUser() {
     isAuthenticated,
     isLoading,
     workosUserId,
+    ensureUserWithOutcome,
     ensureUser,
     posthog,
     ensureRecoveryToken,
