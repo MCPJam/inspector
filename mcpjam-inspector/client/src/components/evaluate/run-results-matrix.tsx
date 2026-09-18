@@ -907,7 +907,11 @@ function IterationDrawer({
           · {formatRunId(iteration._id)}
         </SheetDescription>
       </SheetHeader>
-      <div className="min-h-0 flex-1 overflow-y-auto p-6">
+      {/* Must be a flex column: `layoutMode="full"` makes IterationDetails and
+          its TraceViewer (fillContent) flex-1 items. Without a flex parent the
+          nested flex-1 / min-h-0 inside TraceTimeline collapses to 0 and the
+          Trace tab paints only its resize handle. */}
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-6">
         <IterationDetails
           hostSnapshot={hostSnapshotFromStyle(
             runClientIdentity(target.run).hostStyle,
