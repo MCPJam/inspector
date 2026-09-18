@@ -128,6 +128,26 @@ export function buildExaWebSearchTool(
         if (!res.ok) {
           return { error: `Web search failed (${res.status}).` };
         }
+        // A claimed search must come back CONFIRMED platform-paid.
+        //
+        // Refusing before `fetch` on a missing token (above) only covers OUR
+        // half. A deployment that does not know `billingFeature` ignores it,
+        // runs the search on the CUSTOMER's allowance and answers an ordinary
+        // 200 with results — so without this check the model would get its
+        // answer and the organization would get the bill, for a feature the
+        // product calls free. Same contract the model call enforces via the
+        // same header.
+        //
+        // This cannot un-charge THIS search: by the time a response exists,
+        // the backend has already run and billed it. What it does is stop the
+        // NEXT one and surface the mismatch instead of hiding it, turning an
+        // unbounded silent spend into one search and a visible refusal.
+        if (
+          opts.billingFeature &&
+          res.headers?.get("x-mcpjam-platform-paid") !== opts.billingFeature
+        ) {
+          return { error: "Web search is temporarily unavailable." };
+        }
         const data = (await res.json()) as {
           results?: ExaWebSearchResult[];
         };

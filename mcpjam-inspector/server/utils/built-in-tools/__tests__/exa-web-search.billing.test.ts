@@ -13,6 +13,16 @@ import { buildExaWebSearchTool } from "../exa-web-search";
 
 const BILLING_FEATURE = "mcpjam_agent";
 
+/**
+ * A Convex answer. `confirm` is the `x-mcpjam-platform-paid` value a backend
+ * that honoured the claim stamps; `null` models one that ignored it.
+ */
+const exaResponse = (confirm: string | null = BILLING_FEATURE) =>
+  new Response(JSON.stringify({ results: [{ title: "t", url: "u" }] }), {
+    status: 200,
+    headers: confirm === null ? {} : { "x-mcpjam-platform-paid": confirm },
+  });
+
 function runSearch(opts: {
   billingFeature?: string;
 }): Promise<{ error?: string; results?: unknown[] }> {
@@ -36,11 +46,7 @@ describe("exa web search — platform billing attestation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.CONVEX_HTTP_URL = "https://test-convex.example.com";
-    global.fetch = vi
-      .fn()
-      .mockResolvedValue(
-        new Response(JSON.stringify({ results: [] }), { status: 200 }),
-      );
+    global.fetch = vi.fn().mockResolvedValue(exaResponse());
   });
 
   afterEach(() => {
@@ -69,6 +75,43 @@ describe("exa web search — platform billing attestation", () => {
     expect(JSON.parse(call?.[1]?.body as string).billingFeature).toBe(
       BILLING_FEATURE,
     );
+  });
+
+  it("refuses results the backend did not confirm as platform-paid", async () => {
+    // Refusing on a missing token covers OUR half only. A backend that
+    // predates the claim ignores it, runs the search on the CUSTOMER's
+    // allowance and answers an ordinary 200 with results — so without this
+    // the model gets its answer and the organization gets the bill.
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "inspector-secret");
+    global.fetch = vi.fn().mockResolvedValue(exaResponse(null));
+    const result = await runSearch({ billingFeature: BILLING_FEATURE });
+    expect(result.error).toBe("Web search is temporarily unavailable.");
+    expect(result.results).toBeUndefined();
+  });
+
+  it("refuses when the backend confirms a DIFFERENT feature", async () => {
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "inspector-secret");
+    global.fetch = vi.fn().mockResolvedValue(exaResponse("mcpjam_insights"));
+    const result = await runSearch({ billingFeature: BILLING_FEATURE });
+    expect(result.error).toBe("Web search is temporarily unavailable.");
+  });
+
+  it("returns results when the backend confirms the claim", async () => {
+    // The guard must not refuse the searches it exists to allow.
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "inspector-secret");
+    const result = await runSearch({ billingFeature: BILLING_FEATURE });
+    expect(result.error).toBeUndefined();
+    expect(result.results).toHaveLength(1);
+  });
+
+  it("returns results for an unclaimed search with no confirmation", async () => {
+    // The Playground is customer-paid on purpose and must never be gated on
+    // a header it never asked for.
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
+    global.fetch = vi.fn().mockResolvedValue(exaResponse(null));
+    const result = await runSearch({});
+    expect(result.error).toBeUndefined();
+    expect(result.results).toHaveLength(1);
   });
 
   it("leaves an unclaimed search alone, token or no token", async () => {
