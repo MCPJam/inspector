@@ -89,15 +89,12 @@ export function ScenarioFindingsTab({
    * flash "analyzing" at a study that has simply never been analyzed and never
    * will be.
    */
-  const latestRun = breakdown?.latestRun ?? null;
   const analysisInFlight =
-    latestRun?.status === "queued" ||
-    latestRun?.status === "running" ||
-    (!!breakdown?.analysis &&
-      breakdown.analysis.pending +
-        breakdown.analysis.running -
-        breakdown.analysis.deferred >
-        0);
+    !!breakdown?.analysis &&
+    breakdown.analysis.pending +
+      breakdown.analysis.running -
+      breakdown.analysis.deferred >
+      0;
 
   const model = useMemo(
     () =>

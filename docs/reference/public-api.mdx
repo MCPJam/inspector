@@ -505,6 +505,25 @@ deterministic and free; the insights request runs a model.
 | `POST .../user-testing/scenarios/{scenarioId}/findings/{findingId}/dismiss` | Dismiss a finding. Keyed on its stable id, so it stays dismissed when insights regenerate |
 | `POST .../user-testing/scenarios/{scenarioId}/findings/{findingId}/undismiss` | Undo that |
 
+The `usage` response includes an `analysis` summary: `total`, `analyzed`,
+`pending`, `running`, `failed`, `skipped`, and `deferred` describe session
+coverage. Failure/skip reasons and `deferredUntil` explain incomplete work;
+`awaitingTaxonomy`, `unassigned`, and `staleAssignments` distinguish catalog
+coverage from extraction. `projectionPending` and `projectionFailed` describe
+the map independently. Reading this response never starts analysis.
+
+Taxonomy entries carry the published version and discovery status. Theme ids
+remain stable across additions and cosmetic renames. An older assignment
+version can still be valid when its theme is unchanged; a retired or replaced
+membership remains visible while cached reassignment completes. These are
+current views with version provenance, not historical traffic snapshots.
+
+Check `scan.truncated` and `analysis.sampled` before interpreting coverage as a
+whole-scope total. Map reads separately expose displayed counts, scope totals,
+sampling, and freshness; a wave's displayed counts cover only its requested
+journey runs. A pending projection contributes to the unmapped count rather
+than a fabricated map node.
+
 The five analytics shapes above are documented as **open objects** on purpose.
 Their upstream projections grow with the product and the SDK types them the
 same way, so pinning a field list would turn every new metric into a spec

@@ -234,7 +234,6 @@ const LEGACY_EM_DASH_COPY = new Map<string, number>([
   ["components/shared/actionable-insights/finding-prompts.ts", 7],
   ["components/shared/session-quality/judge-presentation.tsx", 1],
   ["components/shared/session-quality/session-goal-score-badge.tsx", 1],
-  ["components/shared/usage-insights/run-insights.tsx", 4],
   ["components/shared/usage-insights/SessionFlowSankey.tsx", 3],
   ["components/shared/user-value-chain/SessionUserValueChain.tsx", 2],
   ["components/sharing/ShareSection.tsx", 3],

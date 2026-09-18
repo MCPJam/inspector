@@ -491,7 +491,7 @@ describe("TopicMapPanel", () => {
     );
 
     expect(
-      screen.queryByRole("button", { name: /rebuild clusters/i }),
+      screen.queryByRole("button", { name: /re-analyze|retry analysis/i }),
     ).not.toBeInTheDocument();
   });
 
@@ -558,11 +558,9 @@ describe("TopicMapPanel", () => {
       />,
     );
 
-    await user.click(
-      screen.getByRole("button", { name: /retry rebuild clusters/i }),
-    );
+    await user.click(screen.getByRole("button", { name: /retry analysis/i }));
     expect(onRebuild).toHaveBeenCalledTimes(1);
-    expect(onRebuild.mock.calls[0]).toEqual([]);
+    expect(onRebuild.mock.calls[0]).toEqual([{ force: true }]);
   });
 
   it("renders cluster list with summaries in the sidebar", () => {
@@ -603,7 +601,7 @@ describe("TopicMapPanel", () => {
     // Voluntary re-analysis is gated off (#5277); only a failed analysis
     // earns a retry here.
     expect(
-      screen.queryByRole("button", { name: /rebuild clusters/i }),
+      screen.queryByRole("button", { name: /re-analyze|retry analysis/i }),
     ).not.toBeInTheDocument();
   });
 

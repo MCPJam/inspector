@@ -8,7 +8,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { SessionFlowSankey } from "../SessionFlowSankey";
 import type {
-  ClusterRunState,
+  InsightsAnalysisSummary,
   InsightsSankey,
   UsageBreakdown,
 } from "@/hooks/useUsageInsights";
@@ -68,17 +68,28 @@ const SANKEY: InsightsSankey = {
   foldedByStage: {},
 };
 
-function run(overrides: Partial<ClusterRunState> = {}): ClusterRunState {
+function analysis(
+  overrides: Partial<InsightsAnalysisSummary> = {},
+): InsightsAnalysisSummary {
   return {
-    _id: "run-1",
-    status: "done",
-    startedAt: 0,
-    finishedAt: 1,
-    sessionCount: 4,
-    clusterCount: 1,
-    errorMessage: null,
-    signalsVersion: 3,
-    isStale: false,
+    total: 4,
+    analyzed: 4,
+    pending: 0,
+    running: 0,
+    failed: 0,
+    skipped: 0,
+    deferred: 0,
+    awaitingTaxonomy: 0,
+    unassigned: 0,
+    staleAssignments: 0,
+    projectionPending: 0,
+    projectionFailed: 0,
+    deferredUntil: null,
+    lastAnalyzedAt: 1,
+    failures: {},
+    skips: {},
+    sampled: false,
+    taxonomies: [],
     ...overrides,
   };
 }
@@ -98,7 +109,7 @@ function breakdown(overrides: Partial<UsageBreakdown> = {}): UsageBreakdown {
     labeledOutcomeCount: 4,
     outcomeFeedbackCalibration: [],
     totalSessions: 4,
-    latestRun: run(),
+    analysis: analysis(),
     ...overrides,
   };
 }
@@ -270,7 +281,7 @@ describe("SessionFlowSankey", () => {
     // diagram — it must not swallow the only affordance that fills it in.
     const user = userEvent.setup();
     const { onRebuild } = renderSankey({
-      breakdown: breakdown({ latestRun: null }),
+      breakdown: breakdown({ analysis: undefined }),
       stageTitles: { goal: "Journey" },
     });
 
@@ -288,7 +299,7 @@ describe("SessionFlowSankey", () => {
 
   it("reports an analysis in flight instead of offering to start one", () => {
     renderSankey({
-      breakdown: breakdown({ latestRun: run({ status: "queued" }) }),
+      breakdown: breakdown({ analysis: analysis({ pending: 4 }) }),
     });
     expect(screen.getByText(/Analyzing sessions/)).toBeInTheDocument();
     expect(
@@ -299,7 +310,7 @@ describe("SessionFlowSankey", () => {
   it("keeps offering to analyze on a surface that waits to be asked", () => {
     // The same state WITHOUT the promise. The benchmark diagram is the paid
     // one and deliberately waits, so the default must not change.
-    renderSankey({ breakdown: breakdown({ latestRun: null }) });
+    renderSankey({ breakdown: breakdown({ analysis: undefined }) });
     expect(
       screen.getByRole("button", { name: /Analyze sessions/ }),
     ).toBeInTheDocument();
@@ -311,7 +322,7 @@ describe("SessionFlowSankey", () => {
     renderSankey({
       breakdown: breakdown({
         sankey: { nodes: [], links: [], foldedGoalCount: 0, foldedByStage: {} },
-        latestRun: run({ status: "running" }),
+        analysis: analysis({ running: 4 }),
       }),
     });
 
@@ -328,7 +339,7 @@ describe("SessionFlowSankey", () => {
     const { onRebuild } = renderSankey({
       breakdown: breakdown({
         sankey: { nodes: [], links: [], foldedGoalCount: 0, foldedByStage: {} },
-        latestRun: run(),
+        analysis: analysis(),
       }),
       analysisIsAutomatic: true,
     });
