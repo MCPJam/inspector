@@ -10,6 +10,7 @@
  */
 
 import { SectionLabel } from "@/components/shared/section-label";
+import { FindingText } from "@/components/shared/actionable-insights/finding-text";
 
 export function FindingsSummaryCard({
   sessionCount,
@@ -66,7 +67,7 @@ export function FindingsSummaryCard({
             className="mt-1.5 text-pretty text-2xl font-semibold leading-[1.25] tracking-[-0.02em] text-foreground"
             data-testid="findings-headline"
           >
-            {headline}
+            <FindingText text={headline} />
           </p>
         </div>
         {footnotes.length > 0 ? (

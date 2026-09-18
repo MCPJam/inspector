@@ -1,13 +1,3 @@
-import type {
-  SwarmJourneyFindings,
-  SwarmJourneyFindingsJob,
-} from "@mcpjam/sdk/contract";
-import { ActionableFindings } from "@/components/shared/actionable-insights/actionable-findings";
-import {
-  composeWireFindingsSummary,
-  wireFindingsFootnotes,
-  type SwarmNarration,
-} from "./findings-headline";
 /**
  * The Findings tab on `/swarms/:swarmId` — the persona-journey narrative over
  * the wave. The model derives from the `wave`, `waveSignals`, and `personas`
@@ -33,6 +23,11 @@ import { useQuery } from "convex/react";
 import { useEffect, useCallback } from "react";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import type { ChatSessionStageFunnel } from "@/components/shared/user-value-chain/user-value-chain-types";
+import type {
+  SwarmJourneyFindings,
+  SwarmJourneyFindingsJob,
+} from "@mcpjam/sdk/contract";
+import { ActionableFindings } from "@/components/shared/actionable-insights/actionable-findings";
 
 import { useMemo, useState } from "react";
 import type { SwarmWaveSignals } from "@/lib/swarm-api";
@@ -41,12 +36,16 @@ import {
   deriveSwarmFindingsModel,
   deriveSwarmFindingsModelFromWire,
   runIsTerminal,
+  wireRecommendation,
   type FindingsPersonaDoc,
 } from "./findings-derivation";
 import {
   clampNarration,
   composeFindingsSummary,
+  composeWireFindingsSummary,
   deriveHonestyFootnotes,
+  wireFindingsFootnotes,
+  type SwarmNarration,
 } from "./findings-headline";
 import type { JourneyStageId } from "./journey-stages";
 import { SectionLabel } from "@/components/shared/section-label";
@@ -105,16 +104,15 @@ export function SwarmFindingsTab({
   );
   // Signals carry the authoritative answer. A legacy wave has none, so fall
   // back to the runs themselves rather than hiding that the run finished.
+  const terminal = waveSignals
+    ? waveSignals.terminal
+    : wave.runs.every(runIsTerminal);
   const summary = useMemo(
     () =>
       journeyFindings
-        ? composeWireFindingsSummary(journeyFindings)
-        : composeFindingsSummary(model, {
-            terminal: waveSignals
-              ? waveSignals.terminal
-              : wave.runs.every(runIsTerminal),
-          }),
-    [model, waveSignals, wave.runs, journeyFindings],
+        ? composeWireFindingsSummary(journeyFindings, model, { terminal })
+        : composeFindingsSummary(model, { terminal }),
+    [model, terminal, journeyFindings],
   );
   // Swarm keys a goal by its run, so the scope is just the project. Memoized
   // because it reaches a query's arguments through the goal inspect panel.
@@ -127,10 +125,14 @@ export function SwarmFindingsTab({
   // whose ten runs all failed to launch — "No anomalies concentrated along any
   // dimension of this wave. Nothing to act on." is exactly the reassurance the
   // reader must not be given.
+  // On the shared-findings path the fix comes from the top verified
+  // mechanism, never from Lane A's wave prose.
   const recommendation =
-    journeyFindings || summary.kind === "not_launched"
+    summary.kind === "not_launched"
       ? null
-      : clampNarration(generatedSummary);
+      : journeyFindings
+        ? wireRecommendation(journeyFindings)
+        : clampNarration(generatedSummary);
   const footnotes = useMemo(
     () =>
       journeyFindings
@@ -191,7 +193,21 @@ export function SwarmFindingsTab({
       </p>
     );
 
-  if (!persona)
+  if (!persona) {
+    // No persona to show. With a wire payload the summary card still has
+    // something true to say (e.g. "No sessions launched."); without one there
+    // is genuinely nothing here, and an empty card would read as a finding.
+    if (!journeyFindings) {
+      return (
+        <div
+          className="flex h-full flex-col items-center justify-center text-sm text-muted-foreground"
+          data-testid="findings-empty"
+        >
+          {jobStatus}
+          No sessions in this swarm run.
+        </div>
+      );
+    }
     return (
       <div data-testid="swarm-findings-tab">
         {jobStatus}
@@ -203,6 +219,7 @@ export function SwarmFindingsTab({
         />
       </div>
     );
+  }
 
   return (
     <div className="w-full" data-testid="swarm-findings-tab">

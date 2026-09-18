@@ -1,4 +1,3 @@
-import swarmFindingsWire from "../../../../../sdk/tests/fixtures/swarm-findings-wire.json";
 /**
  * The common insights envelope on the v1 surface: detail embeds, the eval
  * retry, and — security-critical — the guest boundary. Share-link guests must
@@ -41,6 +40,7 @@ import evals from "../evals.js";
 import journeys from "../journeys.js";
 import { v1OnError } from "../envelope.js";
 import { isGuestAllowedV1Request } from "../guest-allowed-paths.js";
+import swarmFindingsWire from "../../../../../sdk/tests/fixtures/swarm-findings-wire.json";
 
 // Id-SHAPED, like `RUN` below, and for the same reason the run/suite fixtures
 // were reshaped: `proj_a` is a value production cannot produce, and fixtures
@@ -507,23 +507,14 @@ describe("eval-run detail — judges envelope", () => {
           cases: [
             ...GRADED_RUN.goalCompletion.cases,
             {
-              caseKey: "ui_error",
-              iterationId: "it_2",
-              status: "error",
-              errorCode: "judge_evidence_unavailable",
-              score: 0.9,
-              passed: false,
-              reason: "Evidence unavailable",
-              rubricHits: [],
+              caseKey: "ui_error", iterationId: "it_2", status: "error",
+              errorCode: "judge_evidence_unavailable", score: 0.9,
+              passed: false, reason: "Evidence unavailable", rubricHits: [],
               ...provenance,
             },
             {
-              caseKey: "ui_skipped",
-              iterationId: "it_3",
-              status: "skipped",
-              passed: false,
-              reason: "Case judge disabled",
-              rubricHits: [],
+              caseKey: "ui_skipped", iterationId: "it_3", status: "skipped",
+              passed: false, reason: "Case judge disabled", rubricHits: [],
             },
           ],
         },
@@ -535,31 +526,19 @@ describe("eval-run detail — judges envelope", () => {
     );
     const body = (await res.json()) as any;
     expect(body.judges.goalCompletion).toMatchObject({
-      status: "failed",
-      judgeTemplateVersion: 4,
-      judgeTemplateHash: "template-hash",
+      status: "failed", judgeTemplateVersion: 4, judgeTemplateHash: "template-hash",
     });
     expect(body.judges.goalCompletion.cases).toEqual([
       { ...GRADED_RUN.goalCompletion.cases[0], status: "scored" },
       {
-        caseKey: "ui_error",
-        iterationId: "it_2",
-        status: "error",
-        errorCode: "judge_evidence_unavailable",
-        score: null,
-        passed: false,
-        reason: "Evidence unavailable",
-        rubricHits: [],
+        caseKey: "ui_error", iterationId: "it_2", status: "error",
+        errorCode: "judge_evidence_unavailable", score: null,
+        passed: false, reason: "Evidence unavailable", rubricHits: [],
         ...provenance,
       },
       {
-        caseKey: "ui_skipped",
-        iterationId: "it_3",
-        status: "skipped",
-        score: null,
-        passed: false,
-        reason: "Case judge disabled",
-        rubricHits: [],
+        caseKey: "ui_skipped", iterationId: "it_3", status: "skipped",
+        score: null, passed: false, reason: "Case judge disabled", rubricHits: [],
       },
     ]);
   });
@@ -747,9 +726,7 @@ describe("eval-run judge request", () => {
     // never move off `null`.
     vi.clearAllMocks();
     answerQueries({ getTestSuiteRun: RUN_ROW });
-    mutationMock.mockRejectedValue(
-      new Error("Suite not found or unauthorized"),
-    );
+    mutationMock.mockRejectedValue(new Error("Suite not found or unauthorized"));
     const res = await makeApp(evals).request(
       `/api/v1/projects/${PROJECT}/eval-runs/${RUN}/judge`,
       { method: "POST" },

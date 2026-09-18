@@ -330,7 +330,9 @@ function composeLines(
     return { lines, kind: "friction" };
   }
 
-  const landedGoals = goals.filter((goal) => goal.sentiment.label === "Landed");
+  // Tone, not the label: the legacy derivation says "Landed" and the shared
+  // contract says "Relieved" for the same met goal.
+  const landedGoals = goals.filter((goal) => goal.sentiment.tone === "ok");
   if (landedGoals.length > 0) {
     const personaCount = model.personas.length;
     lines.push("Every graded goal landed.");
@@ -449,22 +451,74 @@ export function waveNarration(
     unanalyzedSessionCount: insights.unanalyzedSessionCount ?? 0,
   };
 }
+const WIRE_SUMMARY_KIND: Record<
+  SwarmJourneyFindings["summaryKind"],
+  FindingsSummaryKind
+> = {
+  notLaunched: "not_launched",
+  broken: "broken",
+  friction: "friction",
+  landed: "landed",
+  ungraded: "ungraded",
+  unread: "unread",
+};
+
+function genericWireLine(wire: SwarmJourneyFindings): string {
+  switch (wire.summaryKind) {
+    case "notLaunched":
+      return "No sessions launched.";
+    case "broken":
+      return "Some goals were blocked.";
+    case "friction":
+      return "Goals were met with friction.";
+    case "landed":
+      return "The measured goals were met.";
+    case "ungraded":
+      return "No graded outcome is available.";
+    case "unread":
+      return `${wire.population.read} of ${wire.population.started} sessions were read.`;
+  }
+}
+
+/**
+ * The summary for a run the shared findings pipeline published. The KIND is
+ * the producer's; the SENTENCES come from the same composer the legacy path
+ * uses, fed the wire-derived model, so both paths name the goal, the persona
+ * and the stage. When that composer lands on a different kind (a blocked goal
+ * the chain never located, say) the goal and persona are still named from the
+ * wire, and only a model with no personas falls back to a generic sentence.
+ */
 export function composeWireFindingsSummary(
   wire: SwarmJourneyFindings,
+  model: SwarmFindingsModel,
+  opts: { terminal: boolean | null },
 ): FindingsSummary {
-  const lines: Record<SwarmJourneyFindings["summaryKind"], string> = {
-    notLaunched: "No sessions launched.",
-    broken: "Some goals were blocked.",
-    friction: "Goals were met with friction.",
-    landed: "The measured goals were met.",
-    ungraded: "No graded outcome is available.",
-    unread: `${wire.population.read} of ${wire.population.started} sessions were read.`,
-  };
-  return {
-    kind:
-      wire.summaryKind === "notLaunched" ? "not_launched" : wire.summaryKind,
-    lines: [lines[wire.summaryKind]],
-  };
+  const kind = WIRE_SUMMARY_KIND[wire.summaryKind];
+  // Unread: the counts ARE the finding. The coverage notes ride as footnotes.
+  if (kind === "unread" || model.personas.length === 0) {
+    return { kind, lines: [genericWireLine(wire)] };
+  }
+  const composed = composeFindingsSummary(model, {
+    terminal: kind === "not_launched" ? true : opts.terminal,
+  });
+  if (composed.kind === kind) return composed;
+  if (kind === "broken" || kind === "friction") {
+    const tone = kind === "broken" ? "fail" : "warn";
+    for (const persona of model.personas) {
+      const goal = persona.goals.find((g) => g.sentiment.tone === tone);
+      if (!goal) continue;
+      const title = shortenGoalTitle(goal.title);
+      const lines = [
+        kind === "broken"
+          ? `"${title}" broke for ${persona.name}.`
+          : `"${title}" showed friction for ${persona.name}.`,
+      ];
+      const feeling = feelingLine(persona);
+      if (feeling) lines.push(feeling);
+      return { kind, lines: lines.map((line) => limitWords(line)) };
+    }
+  }
+  return { kind, lines: [genericWireLine(wire)] };
 }
 export function wireFindingsFootnotes(wire: SwarmJourneyFindings): string[] {
   return wire.coverageNotes.map(
