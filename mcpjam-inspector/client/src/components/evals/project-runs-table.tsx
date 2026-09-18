@@ -25,6 +25,7 @@ import {
   isEphemeralCheckServerName,
 } from "./github-check-server-name";
 import { getEffectiveSuiteServers, runClientIdentity } from "./helpers";
+import { normalizeRunPassRatePercent } from "./ai-triage-helpers";
 import { MetricStrip } from "./metric-strip";
 import {
   buildSuiteMetricStripData,
@@ -1581,7 +1582,7 @@ function ProjectRunTableRow({
           ) : row.summary ? (
             <span className="flex flex-col leading-tight">
               <span>
-                {Math.round(row.summary.passRate)}%{" "}
+                {normalizeRunPassRatePercent(row.summary.passRate)}%{" "}
                 <span className="text-[10px]">
                   ({row.summary.passed}/{row.summary.total})
                 </span>
