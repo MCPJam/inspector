@@ -3,6 +3,7 @@ import { useCreditTopupPricing } from "@/hooks/useCreditTopupPricing";
 import { useEffect, useRef, useState } from "react";
 import { CreditAmountOption } from "./CreditAmountOption";
 import { toast } from "@/lib/toast";
+import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Dialog,
@@ -139,11 +140,12 @@ export function CreditTopupDialog({
           : {}),
       });
     } catch (err) {
-      const message =
-        err instanceof Error
-          ? err.message
-          : "Could not start checkout. Please try again.";
-      toast.error(message);
+      toast.error(
+        getBillingErrorMessage(
+          err,
+          "Could not start checkout. Please try again.",
+        ),
+      );
     }
   };
 

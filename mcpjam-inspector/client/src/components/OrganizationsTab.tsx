@@ -895,9 +895,11 @@ function OrganizationPage({
       }
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Payment was not completed. The member was not added.",
+        getBillingErrorMessage(
+          error,
+          "Payment was not completed. The member was not added.",
+          billingStatus?.canManageBilling ?? false,
+        ),
       );
     }
   };
@@ -918,9 +920,11 @@ function OrganizationPage({
       }
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Payment was not completed. The member was not added.",
+        getBillingErrorMessage(
+          error,
+          "Payment was not completed. The member was not added.",
+          billingStatus?.canManageBilling ?? false,
+        ),
       );
     }
   };
@@ -967,9 +971,11 @@ function OrganizationPage({
       }
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Failed to cancel pending seat payment",
+        getBillingErrorMessage(
+          error,
+          "Failed to cancel pending seat payment",
+          billingStatus?.canManageBilling ?? false,
+        ),
       );
     } finally {
       if (isInviteRemoval) {
@@ -1135,9 +1141,11 @@ function OrganizationPage({
       openBillingUrl(billingUrl);
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Failed to open billing portal",
+        getBillingErrorMessage(
+          error,
+          "Failed to open billing portal",
+          billingStatus?.canManageBilling ?? false,
+        ),
       );
     }
   };
@@ -1153,9 +1161,11 @@ function OrganizationPage({
       openBillingUrl(billingUrl);
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Failed to open billing interval change",
+        getBillingErrorMessage(
+          error,
+          "Failed to open billing interval change",
+          billingStatus?.canManageBilling ?? false,
+        ),
       );
     }
   };
@@ -1201,9 +1211,11 @@ function OrganizationPage({
       toast.success(scheduledBillingChangeCancellation.successMessage);
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Failed to cancel scheduled billing change",
+        getBillingErrorMessage(
+          error,
+          "Failed to cancel scheduled billing change",
+          billingStatus?.canManageBilling ?? false,
+        ),
       );
     }
   };
@@ -1219,7 +1231,11 @@ function OrganizationPage({
       setPendingDowngradeConfirmation(null);
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to change plan",
+        getBillingErrorMessage(
+          error,
+          "Failed to change plan",
+          billingStatus?.canManageBilling ?? false,
+        ),
       );
     }
   };
@@ -1257,7 +1273,11 @@ function OrganizationPage({
       openBillingUrl(billingUrl, options.navigation);
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to change plan",
+        getBillingErrorMessage(
+          error,
+          "Failed to change plan",
+          billingStatus?.canManageBilling ?? false,
+        ),
       );
     }
   };
@@ -1322,7 +1342,11 @@ function OrganizationPage({
           )
         ) {
           toast.error(
-            error instanceof Error ? error.message : "Failed to change plan",
+            getBillingErrorMessage(
+              error,
+              "Failed to change plan",
+              billingStatus?.canManageBilling ?? false,
+            ),
           );
         }
         throw error;
