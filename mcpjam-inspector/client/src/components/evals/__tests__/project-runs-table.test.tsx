@@ -256,6 +256,29 @@ describe("ProjectRunsTable", () => {
     expect(table.queryByText("Accuracy")).not.toBeNull();
   });
 
+  // `summary.passRate` reaches this column as a 0-1 fraction from a stored run
+  // summary but as an already-scaled percent from the history feed, so the
+  // cell has to read both. Rounding the fraction unscaled printed every run
+  // in the table as 0% or 1%.
+  it("renders both fractional and pre-scaled pass rates as percentages", () => {
+    setRows([
+      makeRow({
+        _id: "run_fraction",
+        summary: { total: 3, passed: 2, failed: 1, passRate: 0.6667 },
+      }),
+      makeRow({
+        _id: "run_scaled",
+        summary: { total: 4, passed: 3, failed: 1, passRate: 75 },
+      }),
+    ]);
+
+    render(<ProjectRunsTable projectId="proj_1" onSelectRun={vi.fn()} />);
+
+    const table = screen.getByRole("table");
+    expect(table.textContent).toContain("67%");
+    expect(table.textContent).toContain("75%");
+  });
+
   it("filters loaded origins without changing the feed", async () => {
     const user = userEvent.setup();
     setRows([
