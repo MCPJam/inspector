@@ -3589,10 +3589,22 @@ describe("App hosted OAuth callback handling", () => {
     mockUnseenOnboardingState();
     window.history.replaceState({}, "", "/");
     mockHandleOAuthCallback.mockReset();
-    mockHostedShellGateState.value = "ready";
     mockConvexAuthState.isAuthenticated = false;
-    mockConvexAuthState.isLoading = false;
+    mockConvexAuthState.isLoading = true;
     mockWorkOsAuthState.user = { id: "workos-user-1" };
+    // Derive the gate from the real resolver so this state is one production
+    // can actually reach, not a hand-picked "ready".
+    const { resolveHostedShellGateState } = await vi.importActual<
+      typeof import("../components/hosted/hosted-shell-gate-state")
+    >("../components/hosted/hosted-shell-gate-state");
+    mockHostedShellGateState.value = resolveHostedShellGateState({
+      hostedMode: true,
+      isConvexAuthLoading: mockConvexAuthState.isLoading,
+      isConvexAuthenticated: mockConvexAuthState.isAuthenticated,
+      isWorkOsLoading: mockWorkOsAuthState.isLoading,
+      hasWorkOsUser: !!mockWorkOsAuthState.user,
+    });
+    expect(mockHostedShellGateState.value).toBe("auth-loading");
 
     render(<App />);
 
