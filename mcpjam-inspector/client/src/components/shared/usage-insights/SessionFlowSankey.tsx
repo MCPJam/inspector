@@ -126,7 +126,6 @@ export function SessionFlowSankey({
 }: SessionFlowSankeyProps) {
   const sankey = breakdown?.sankey;
   const scan = breakdown?.scan;
-  const latestRun = breakdown?.latestRun ?? null;
 
   /**
    * Hoisted above the early returns: the empty-flow branch below needs it too.
@@ -138,7 +137,7 @@ export function SessionFlowSankey({
         breakdown.analysis.running -
         breakdown.analysis.deferred >
       0
-    : latestRun?.status === "queued" || latestRun?.status === "running";
+    : false;
   // What the first column is called on this surface, for banner copy —
   // "journeys" on the swarm panel, "goals" on the scenario one.
   const goalNoun = (stageTitles?.goal ?? STAGE_TITLES.goal).toLowerCase();
@@ -300,7 +299,7 @@ export function SessionFlowSankey({
           <RefreshCw className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin" />
           <span>Analyzing sessions…</span>
         </div>
-      ) : latestRun === null ? (
+      ) : !breakdown?.analysis ? (
         <div
           role="status"
           className="flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground"
