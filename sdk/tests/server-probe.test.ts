@@ -731,4 +731,96 @@ describe("probeMcpServer", () => {
       expect(requestedUrls(fetchFn)).not.toContain(loopback);
     });
   });
+  describe("stored credentials", () => {
+    it("does not send stored credential headers to a metadata host the target named", async () => {
+      // Regression for #5000. The probe used to strip exactly `Authorization`
+      // before dialling discovery, so any other stored header went to a host
+      // named by the *target's* own challenge rather than by the user.
+      const serverUrl = "https://mcp.example.com/mcp";
+      const attackerMetadataUrl = "https://collect.attacker.test/prm";
+      const seen: Record<string, Record<string, string>> = {};
+
+      const fetchFn: typeof fetch = jest.fn(async (input, init) => {
+        const url = String(input);
+        seen[url] = Object.fromEntries(
+          Object.entries((init?.headers ?? {}) as Record<string, string>).map(
+            ([key, value]) => [key.toLowerCase(), value]
+          )
+        );
+
+        if (url === serverUrl) {
+          return jsonResponse({ error: "unauthorized" }, 401, {
+            "WWW-Authenticate": `Bearer resource_metadata="${attackerMetadataUrl}"`,
+          });
+        }
+
+        return jsonResponse({ error: "missing" }, 404);
+      }) as typeof fetch;
+
+      await probeMcpServer({
+        url: serverUrl,
+        accessToken: "live-access-token",
+        headers: {
+          "X-Api-Key": "vendor-api-key",
+          "X-Auth-Token": "vendor-session",
+          "X-Trace-Id": "not-a-credential",
+        },
+        fetchFn,
+      });
+
+      const metadataRequest = seen[attackerMetadataUrl];
+      expect(metadataRequest).toBeDefined();
+      expect(metadataRequest).not.toHaveProperty("authorization");
+      expect(metadataRequest).not.toHaveProperty("x-api-key");
+      expect(metadataRequest).not.toHaveProperty("x-auth-token");
+      // Non-credential headers are still useful for diagnosing the dial and
+      // are deliberately left alone.
+      expect(metadataRequest?.["x-trace-id"]).toBe("not-a-credential");
+    });
+
+    it("redacts credential headers out of the attempts it returns", async () => {
+      // Regression for #5001. `attempts[].request.headers` is the object the
+      // probe hands to fetch, and it ships to the caller — so the stored
+      // bearer was echoed back into a JSON response body.
+      const serverUrl = "https://mcp.example.com/mcp";
+      const accessToken = "live-access-token";
+
+      const fetchFn: typeof fetch = jest.fn(async (input) => {
+        if (String(input) === serverUrl) {
+          return jsonResponse({
+            jsonrpc: "2.0",
+            result: {
+              protocolVersion: "2025-11-25",
+              serverInfo: { name: "mock-server", version: "1.0.0" },
+              capabilities: { tools: {} },
+            },
+          });
+        }
+        return jsonResponse({ error: "missing" }, 404);
+      }) as typeof fetch;
+
+      const result = await probeMcpServer({
+        url: serverUrl,
+        accessToken,
+        headers: { "X-Api-Key": "vendor-api-key" },
+        fetchFn,
+      });
+
+      expect(result.status).toBe("ready");
+      const serialized = JSON.stringify(result.transport.attempts);
+      expect(serialized).not.toContain(accessToken);
+      expect(serialized).not.toContain("vendor-api-key");
+
+      const initialize = result.transport.attempts.find(
+        (attempt) => attempt.name === "streamable_initialize"
+      );
+      // The header is still recorded — the request shape is the diagnostic
+      // value, the secret is not.
+      expect(initialize?.request.headers).toHaveProperty("Authorization");
+      expect(initialize?.request.headers.Authorization).toContain("[redacted]");
+      expect(initialize?.request.headers["Content-Type"]).toBe(
+        "application/json"
+      );
+    });
+  });
 });
