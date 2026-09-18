@@ -29,7 +29,10 @@ import {
   notRequestedReceipt,
 } from "./eval-reporting-receipt.js";
 import { McpjamModelLeaseScope } from "./mcpjam-model-lease.js";
-import { suiteTestResultsToEvalResultInputs } from "./eval-result-mapping.js";
+import {
+  suiteTestResultsToEvalResultInputs,
+  variantFromExecutor,
+} from "./eval-result-mapping.js";
 import { aggregateEvaluationConfigHash } from "./contract/derive.js";
 import { resolveServerReplayConfigs } from "./server-replay-configs.js";
 import { buildHostSnapshotMetadata } from "./host-config/internal.js";
@@ -546,7 +549,12 @@ export class EvalSuite {
           hostSnapshot as unknown as Record<string, unknown>
         )
       : undefined;
-    const results = this.buildEvalResultInputs(testResults, config, hostExtras);
+    const results = this.buildEvalResultInputs(
+      testResults,
+      config,
+      hostExtras,
+      variantFromExecutor(executor)
+    );
     if (results.length === 0) {
       return;
     }
@@ -606,7 +614,8 @@ export class EvalSuite {
   private buildEvalResultInputs(
     testResults: Map<string, EvalRunResult>,
     reporting?: MCPJamReportingConfig,
-    hostExtras?: Record<string, string | number | boolean>
+    hostExtras?: Record<string, string | number | boolean>,
+    variant?: { provider?: string; model?: string }
   ): EvalResultInput[] {
     // Null prototype on ALL FOUR of these: they are keyed by test NAME in the
     // same loop, so a test called `__proto__` would run the prototype setter
@@ -672,7 +681,8 @@ export class EvalSuite {
       matchOptionsByTest,
       Object.keys(caseIdentityByTest).length > 0
         ? caseIdentityByTest
-        : undefined
+        : undefined,
+      variant
     );
   }
 
