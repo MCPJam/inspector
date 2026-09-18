@@ -689,3 +689,22 @@ describe("CreditBalanceCard", () => {
     });
   });
 });
+
+it("shows daily credits for a v2 free org with granted credits", () => {
+  isLoadingState = false;
+  balanceState = {
+    paidCreditsRemaining: 330,
+    hasPurchaseHistory: false,
+    freeDailyPercentUsed: 25,
+    freeDailyResetAt: Date.now() + 86400000,
+    freeDailyCreditsRemaining: 150,
+    freeDailyCreditsTotal: 200,
+    walletLocked: false,
+    billingModel: "daily",
+    topUpEligible: false,
+  };
+  render(<CreditBalanceCard pricingVersion="v2" />);
+  expect(screen.getByText("Free daily credits")).toBeInTheDocument();
+  expect(screen.getByTestId("usage-daily")).toHaveTextContent("150 / 200");
+  expect(screen.queryByTestId("usage-monthly")).not.toBeInTheDocument();
+});

@@ -25,6 +25,7 @@ import {
 } from "@/components/swarms/persona-pixel-avatar";
 import {
   DEFAULT_SWARM_ITERATIONS,
+  reusedIterationsSeed,
   estimateLaunchSessions,
   MAX_SWARM_ITERATIONS,
   MIN_SWARM_ITERATIONS,
@@ -759,21 +760,24 @@ function ReusedPersonaCard({
   onSelect,
   onRemove,
   resolved,
+  iterations,
+  disabled,
+  onIterationsChange,
 }: {
   persona: ReusedPersona;
   muted?: boolean;
   onSelect: () => void;
   onRemove: () => void;
   resolved: ReusedResolved | undefined;
+  iterations: number;
+  disabled: boolean;
+  onIterationsChange: (value: number) => void;
 }) {
   const goalCount = resolved?.goals.length;
-  // Launch never rewrites a shared journey's config, so these are read-only:
-  // each goal is priced at the sessions its owner already saved.
+  // Set for THIS run, not written back: the journey belongs to whoever
+  // authored the persona, and resizing one launch must not resize every
+  // future run of a shared definition. Launch sends it as an override.
   const targets = resolved?.targets ?? null;
-  const reusedConversations = targets?.reduce(
-    (sum, target) => sum + (target.sessionsPerTarget ?? DEFAULT_SWARM_ITERATIONS),
-    0,
-  );
   const meta =
     resolved == null || resolved.targets === null
       ? "Loading goals…"
@@ -800,21 +804,14 @@ function ReusedPersonaCard({
       avatarShape={persona.avatarShape}
       avatarPalette={persona.avatarPalette}
       footer={
-        targets != null && reusedConversations != null ? (
-          <p
-            className="text-sm text-muted-foreground"
-            data-testid="new-swarm-persona-subtotal"
-          >
-            <strong className="font-semibold tabular-nums text-foreground">
-              {targets.length}
-            </strong>{" "}
-            {targets.length === 1 ? "goal" : "goals"} at the iterations
-            already saved ={" "}
-            <strong className="font-semibold tabular-nums text-foreground">
-              {reusedConversations}
-            </strong>{" "}
-            {reusedConversations === 1 ? "conversation" : "conversations"}
-          </p>
+        targets != null ? (
+          <PersonaIterationsRow
+            goalCount={targets.length}
+            iterations={iterations}
+            personaName={persona.name}
+            disabled={disabled}
+            onChange={onIterationsChange}
+          />
         ) : null
       }
     />
@@ -982,8 +979,21 @@ export function NewSwarmConfirmStep({
   const reusedPending = reusedPersonas.some(
     (persona) => (reusedResolved[persona._id]?.targets ?? null) === null
   );
-  const activeReusedTargets = reusedPersonas.flatMap(
-    (persona) => reusedResolved[persona._id]?.targets ?? []
+  // A reused persona starts at what its goals already carry rather than at
+  // the default, so leaving the control alone launches the same size it
+  // always did.
+  const reusedIterationsFor = (personaId: string) =>
+    iterationsByPersona[personaId] ??
+    reusedIterationsSeed(
+      (reusedResolved[personaId]?.targets ?? []).map(
+        (target) => target.sessionsPerTarget ?? null,
+      ),
+    );
+  const activeReusedTargets = reusedPersonas.flatMap((persona) =>
+    (reusedResolved[persona._id]?.targets ?? []).map((target) => ({
+      ...target,
+      sessionsPerTarget: reusedIterationsFor(persona._id),
+    }))
   );
   const iterationsFor = (personaKey: string) =>
     iterationsByPersona[personaKey] ?? DEFAULT_SWARM_ITERATIONS;
@@ -1001,8 +1011,8 @@ export function NewSwarmConfirmStep({
   const journeyCount = newJourneyCount + activeReusedTargets.length;
   // Every journey this launch fans out, not just the newly authored ones —
   // a reuse-heavy swarm was under-reporting its own session count. Reused
-  // journeys are counted at THEIR OWN sessions, which is what launch runs
-  // them at; the counter only sizes the journeys this swarm creates.
+  // journeys are counted at the iterations chosen for THIS run, which is
+  // what launch sends as an override, so the quote and the run agree.
   const launchSessionEstimate = estimateLaunchSessions({
     personas: authoredPersonas,
     reusedSessionsPerTarget: activeReusedTargets.map(
@@ -1369,6 +1379,11 @@ export function NewSwarmConfirmStep({
                     }
                     onRemove={() => removeReused(persona._id)}
                     resolved={reusedResolved[persona._id]}
+                    iterations={reusedIterationsFor(persona._id)}
+                    disabled={launching}
+                    onIterationsChange={(value) =>
+                      onIterationsChange(persona._id, value)
+                    }
                   />
                 );
               })}

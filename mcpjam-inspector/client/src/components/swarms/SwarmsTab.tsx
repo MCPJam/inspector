@@ -183,6 +183,7 @@ type HostItem = {
 };
 
 interface SwarmsTabProps {
+  organizationId?: string;
   projectId: string | null;
   isAuthenticated: boolean;
   /**
@@ -277,6 +278,7 @@ function RunningPersonasSubscriber({
 
 export function SwarmsTab({
   projectId,
+  organizationId,
   isAuthenticated,
   swarmId: swarmIdProp = null,
   createFlow = false,
@@ -583,7 +585,12 @@ export function SwarmsTab({
        * id — each of those launches exactly one journey, so a wave of one is
        * the correct grouping, and it retires the time heuristic for them too.
        */
-      opts?: { swarmRunGroupId?: string; environmentIds?: string[] },
+      opts?: {
+        swarmRunGroupId?: string;
+        environmentIds?: string[];
+        /** Iterations for THIS run; leaves the journey's own config alone. */
+        sessionsPerTarget?: number;
+      },
     ): Promise<
       | { status: "launched"; runId?: string; swarmRunGroupId?: string }
       | { status: "already_launching" }
@@ -616,6 +623,9 @@ export function SwarmsTab({
           // a replayed launchKey returns the existing run and ignores it.
           ...(opts?.environmentIds?.length
             ? { environmentIds: opts.environmentIds }
+            : {}),
+          ...(opts?.sessionsPerTarget !== undefined
+            ? { sessionsPerTarget: opts.sessionsPerTarget }
             : {}),
         });
         launchKeysRef.current.delete(journeyId); // confirmed 2xx
@@ -946,6 +956,7 @@ export function SwarmsTab({
           />
         </ErrorBoundary>
         <NewSwarmCreateFlow
+          organizationId={organizationId}
           projectId={projectId}
           environments={environments}
           hostNameById={hostNameById}
@@ -1034,6 +1045,7 @@ export function SwarmsTab({
           />
         </ErrorBoundary>
         <SwarmRunDetail
+          organizationId={organizationId}
           // Remount per wave. Every piece of state in here is about the wave
           // being looked at — the persona filter, the stop confirmation, and
           // `stoppedHere` above all. Without a key, "Run again" → "View run"

@@ -9,6 +9,30 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-09-18
+
+#### Changed
+
+- **Swarms can now pick models** — the Describe step's environment composer now includes a **Models** slot, matching the Evals composer. Selecting clients × models creates one target per pair (unnamed and deduplicated), and the existing target cap still applies.
+
+- **Targets are validated before persona generation** — clicking **Continue** in the swarm wizard now checks each resolved target against the same launch rules used at run time, before any persona generation or durable writes. If a client has no model configured, the wizard blocks with an **Edit client** link that opens the client inside the project so the draft is preserved. Other launch-blocking conditions (unavailable plugins, stale configs) are caught the same way.
+
+- **Run failure banner shows one line per cause** — when a swarm run ends with multiple failure causes, the banner now lists each cause once with a session count (`10 sessions: Protocol mismatch`). The banner's tone (amber for rate-limited or retriable, red for hard failures) is set by the most serious cause. Account-limit sessions continue to appear in the existing limit callout rather than the banner, so each cause is stated exactly once.
+
+- **Protocol tab warns on unadvertised stateless pins** — pinning a client to `2026-07-28` when none of its servers advertise that version now shows a warning noting that the pin requires servers that offer this revision and has no legacy fallback. Previously, this pin was silently accepted with no warning. The warning for unadvertised stateful pins (which fail at save) is unchanged.
+
+- **Per-server protocol override shows unknown stored pins correctly** — if a server has a stored protocol override that is not one of the named dropdown options, the picker now shows it as `Pinned (…)` instead of displaying it as **Client default**.
+
+### 2026-09-17 (2)
+
+#### Added
+
+- **Sign-in gate for account-required User Testing links** — User Testing share links that require an account no longer show "Link Unavailable" for signed-out visitors. Instead, a sign-in screen appears with **Sign in** and **Create an account** buttons. After signing in, you are returned to the original scenario link automatically. Previewing a scenario from this gate does not start a test. Signed-in visitors still need the audience permission the scenario owner configured. Guest-permitted scenarios remain accessible without signing in.
+
+- **"Anyone with the link who is signed in" sharing label** — the sharing dialog now distinguishes between guest-permitted and account-required links. When a scenario requires sign-in, the access option reads **Anyone with the link who is signed in** and the note below the link reads "Testers must sign in or create an account to preview and test this scenario." Guest-permitted scenarios continue to show the existing "Anyone with the link (guests included)" label.
+
+- **Switch accounts button on access-denied screens** — when a signed-in user opens a scenario they don't have access to, an additional **Switch accounts** button appears alongside the existing **Sign in** button. Clicking it signs out and returns to the scenario link so you can sign in with a different account.
+
 ### 2026-09-17
 
 #### Changed

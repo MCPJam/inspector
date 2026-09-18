@@ -31,6 +31,7 @@ const sortedOrganizationsState: Array<{
   _id: string;
   myRole?: string;
   isCreator?: boolean;
+  seatPending?: boolean;
 }> = [];
 
 const upgradeState = {
@@ -703,6 +704,10 @@ describe("MCPJamLimitDialog", () => {
     const user = userEvent.setup();
     authState.user = { id: "user-1" };
     localStorage.setItem("active-organization-id:user-1", "org-active");
+    sortedOrganizationsState.push(
+      { _id: "org-active", myRole: "owner" },
+      { _id: "org-billed", myRole: "owner" },
+    );
     useMCPJamLimitDialogStore.setState({
       isOpen: true,
       intent: "topup",
@@ -831,7 +836,10 @@ describe("MCPJamLimitDialog", () => {
     const user = userEvent.setup();
     authState.user = { id: "user-1" };
     localStorage.setItem("active-organization-id:user-1", "org-active");
-    sortedOrganizationsState.push({ _id: "org-fallback" });
+    sortedOrganizationsState.push(
+      { _id: "org-fallback" },
+      { _id: "org-active", myRole: "owner" },
+    );
     useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "topup" });
     render(<MCPJamLimitDialog />);
 
@@ -893,6 +901,91 @@ describe("MCPJamLimitDialog", () => {
     // click again and be routed correctly.
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
     expect(window.location.hash).toBe("");
+  });
+
+  it("ignores a stored org the user is no longer a member of", async () => {
+    upgradeState.effectivePlan = "team";
+    const user = userEvent.setup();
+    authState.user = { id: "user-1" };
+    localStorage.setItem("active-organization-id:user-1", "org-left");
+    sortedOrganizationsState.push({ _id: "org-mine", myRole: "owner" });
+    useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "topup" });
+    render(<MCPJamLimitDialog />);
+
+    // The billing query for an org the user isn't in throws server-side and
+    // takes down the page, so the stale id must never reach the hooks.
+    expect(upgradeHookOrganizationIdMock).not.toHaveBeenCalledWith("org-left");
+    expect(upgradeHookOrganizationIdMock).toHaveBeenLastCalledWith("org-mine");
+    await user.click(screen.getByRole("button", { name: /^buy credits$/i }));
+    expect(window.location.pathname).toBe("/organizations/org-mine/billing");
+  });
+
+  it("does not query billing when no candidate org is one the user can open", () => {
+    authState.user = { id: "user-1" };
+    localStorage.setItem("active-organization-id:user-1", "org-left");
+    sortedOrganizationsState.push({
+      _id: "org-unpaid-seat",
+      seatPending: true,
+    });
+    useMCPJamLimitDialogStore.setState({
+      isOpen: true,
+      intent: "topup",
+      organizationId: "org-not-mine",
+    });
+    render(<MCPJamLimitDialog />);
+
+    expect(upgradeHookOrganizationIdMock).toHaveBeenCalled();
+    expect(
+      upgradeHookOrganizationIdMock.mock.calls.every(([id]) => id === null),
+    ).toBe(true);
+    expect(
+      recipientHookOrganizationIdMock.mock.calls.every(([id]) => id === null),
+    ).toBe(true);
+  });
+
+  it("tells a signed-in tester the scenario owner is out of credits, without billing", () => {
+    authState.user = { id: "user-1" };
+    localStorage.setItem("active-organization-id:user-1", "org-mine");
+    sortedOrganizationsState.push({ _id: "org-mine", myRole: "owner" });
+    useMCPJamLimitDialogStore.setState({
+      isOpen: true,
+      intent: "topup",
+      surface: "scenario",
+    });
+    render(<MCPJamLimitDialog />);
+
+    expect(
+      screen.getByRole("heading", { name: /this test is paused/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("limit-dialog-description")).toHaveTextContent(
+      /owner of this test is out of MCPJam credits/i,
+    );
+    // The tester's own org doesn't pay for this turn: nothing to buy or plan.
+    expect(
+      screen.queryByRole("button", { name: /buy|explore plans/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      upgradeHookOrganizationIdMock.mock.calls.every(([id]) => id === null),
+    ).toBe(true);
+  });
+
+  it("shows a guest tester the owner notice instead of the sign-in wall", async () => {
+    const user = userEvent.setup();
+    useMCPJamLimitDialogStore.setState({
+      isOpen: true,
+      intent: "guest",
+      surface: "scenario",
+    });
+    render(<MCPJamLimitDialog />);
+
+    expect(
+      screen.getByRole("heading", { name: /this test is paused/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /sign in/i }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^ok$/i }));
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
   });
 
   it("renders nothing for signed-in users when no intent is set", () => {

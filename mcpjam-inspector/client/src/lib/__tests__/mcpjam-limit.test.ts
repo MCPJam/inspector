@@ -331,6 +331,32 @@ describe("isMCPJamModelLimitError", () => {
     );
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
   });
+
+  it("tags the wall with the surface the caller passes", async () => {
+    useMCPJamLimitDialogStore.setState({
+      authStatus: "signedIn",
+      hasPendingLimit: false,
+      isOpen: false,
+      intent: null,
+      surface: null,
+      pendingInput: null,
+    });
+
+    const response = new Response(
+      JSON.stringify({
+        code: "user_rate_limit",
+        error:
+          "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
+        limitKind: "total",
+      }),
+      { status: 429 },
+    );
+
+    await expect(
+      notifyMCPJamLimitErrorFromResponse(response, "scenario"),
+    ).resolves.toBe(true);
+    expect(useMCPJamLimitDialogStore.getState().surface).toBe("scenario");
+  });
 });
 
 describe("isSpendBudgetReachedCode", () => {

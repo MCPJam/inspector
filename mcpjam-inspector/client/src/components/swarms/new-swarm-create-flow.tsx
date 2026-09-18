@@ -10,7 +10,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
-import { useConvexAuth, useQuery } from "convex/react";
+import { useConvex, useConvexAuth, useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { Label } from "@mcpjam/design-system/label";
 import { Textarea } from "@mcpjam/design-system/textarea";
@@ -104,6 +104,12 @@ import { ErrorCard } from "@/components/ui/error-card";
 import { WebApiError } from "@/lib/apis/web/base";
 import { useDbUserBootstrapStatus } from "@/contexts/db-user-ready-context";
 import { cn } from "@/lib/utils";
+import { buildHostsPath, useAppNavigate } from "@/lib/app-navigation";
+import {
+  preflightSwarmTargets,
+  missingSwarmModelMessage,
+  SwarmTargetPreflightError,
+} from "./swarm-target-preflight";
 
 /**
  * The authoring rail. Findings is a state of a finished swarm, not a fourth
@@ -185,7 +191,7 @@ export function generationProgressLine(args: {
       : "";
   const patience =
     elapsedSeconds >= SLOW_GENERATION_SECONDS
-      ? " Still waiting on the generator — nothing is saved until you launch, so leaving and coming back costs nothing."
+      ? " Still generating. Nothing is saved until you launch."
       : "";
   return `${what}${elapsed}.${patience}`;
 }
@@ -345,6 +351,7 @@ function errorMessageOf(err: unknown, fallback: string): string {
 }
 
 export function NewSwarmCreateFlow({
+  organizationId,
   projectId,
   environments,
   hostNameById,
@@ -361,6 +368,7 @@ export function NewSwarmCreateFlow({
   onSaveExistingPersona,
 }: {
   projectId: string;
+  organizationId?: string;
   environments: ProjectEnvironmentView[] | undefined;
   /** Host id → display name for auto-naming materialized envs. */
   hostNameById: (hostId: string) => string;
@@ -445,6 +453,10 @@ export function NewSwarmCreateFlow({
   const skillsEnabled = useSkillsEnabled();
   const computersEnabled = useComputersEnabled();
   const environmentsEnabled = useProjectEnvironmentsEnabled();
+  const convex = useConvex();
+  const navigate = useAppNavigate();
+  const [preflightModelFailure, setPreflightModelFailure] =
+    useState<SwarmTargetPreflightError | null>(null);
   const resolveComposerTargets = useComposerResolver(projectId);
   const { user: workOsUser } = useAuth();
   const { isAuthenticated } = useConvexAuth();
@@ -777,6 +789,38 @@ export function NewSwarmCreateFlow({
     environments: envList,
   });
   const serverBlock = describeCloudServerBlock(serverReadiness);
+  // An explicit override can run a legacy client without a default, but an
+  // inherit cell still needs that client's model (even alongside overrides).
+  const missingModelHost = composeMode
+    ? hosts.find(
+        (host) =>
+          targetState.stack.hostIds.includes(host.hostId) &&
+          host.modelId !== undefined &&
+          !host.modelId.trim() &&
+          (
+            targetState.stack.modelSelectionsByHost?.[host.hostId] ??
+            targetState.stack.modelSelection
+          )?.includeClientDefaults !== false,
+      )
+    : hosts.find(
+        (host) =>
+          host.modelId !== undefined &&
+          !host.modelId.trim() &&
+          envList.some(
+            (env) =>
+              targetState.environmentIds.includes(env.environmentId) &&
+              env.hostId === host.hostId &&
+              !env.modelId?.trim(),
+          ),
+      );
+  const modelBlock = missingModelHost
+    ? missingSwarmModelMessage(missingModelHost.name)
+    : null;
+  useEffect(() => {
+    setPreflightModelFailure(null);
+  }, [targetState]);
+  const modelRepairHostId =
+    missingModelHost?.hostId ?? preflightModelFailure?.hostId;
 
   // Generating and reusing are two independent doors into Confirm, and they
   // compose. Writing anything in the box asks for a generation (which needs
@@ -792,7 +836,11 @@ export function NewSwarmCreateFlow({
     !materializing;
   const hasSwarmName = swarmName.trim().length > 0;
   const canContinue =
-    generating || materializing || serverBlock !== null || !hasSwarmName
+    generating ||
+    materializing ||
+    serverBlock !== null ||
+    modelBlock !== null ||
+    !hasSwarmName
       ? false
       : wantsGenerate
       ? canGenerate
@@ -805,6 +853,7 @@ export function NewSwarmCreateFlow({
       // The notice above carries the finding and the fix; repeating it here
       // would put the same two sentences on screen twice.
       if (serverBlock) return "Pick a server to continue.";
+      if (modelBlock) return modelBlock;
       if (!hasSwarmName) return "This swarm needs a name to continue.";
       if (wantsGenerate) {
         if (!workOsUser) {
@@ -949,6 +998,29 @@ export function NewSwarmCreateFlow({
     }
 
     if (!resolved) return null;
+    // Runs before generation and again before persisting personas/goals. The
+    // launch mutation remains authoritative if the client changes afterwards.
+    try {
+      setPreflightModelFailure(null);
+      await preflightSwarmTargets({
+        environmentIds: resolved.environmentIds,
+        targets: resolved.environments,
+        hosts,
+        resolve: (environmentId) =>
+          convex.query(
+            "projectEnvironments:resolveEnvironmentForLaunch" as any,
+            { projectId, environmentId },
+          ),
+      });
+    } catch (error) {
+      if (
+        error instanceof SwarmTargetPreflightError &&
+        error.code === "ENV_MODEL_REQUIRED"
+      ) {
+        setPreflightModelFailure(error);
+      }
+      throw error;
+    }
     setResolvedEnvironmentIds(resolved.environmentIds);
     setResolvedEnvironments(resolved.environments);
     if (resolved.materialized?.createdIds.length) {
@@ -963,6 +1035,9 @@ export function NewSwarmCreateFlow({
     }
     return resolved;
   }, [
+    convex,
+    hosts,
+    projectId,
     composeMode,
     createdEnvOverlay,
     envList,
@@ -1436,6 +1511,13 @@ export function NewSwarmCreateFlow({
                 )
                   ? { environmentIds: envPayload.environmentIds }
                   : {}),
+                // Iterations chosen on Confirm for a REUSED persona, applied
+                // to this run only. Absent on just-created targets: they are
+                // born with the chosen count, so an override would restate
+                // their own config.
+                ...(target.sessionsPerTarget != null
+                  ? { sessionsPerTarget: target.sessionsPerTarget }
+                  : {}),
               });
               if (result.status === "launched") {
                 launched += 1;
@@ -1884,6 +1966,7 @@ export function NewSwarmCreateFlow({
       >
         {step === "running" ? (
           <NewSwarmRunningStep
+            organizationId={organizationId}
             projectId={projectId}
             runs={launchedRuns}
             fallbackColumns={runningFallbackColumns}
@@ -2074,6 +2157,15 @@ export function NewSwarmCreateFlow({
                 sentence readable instead of a wall of red text. */}
             {describeStepError || errorMessage ? (
               <ErrorCard error={describeStepError ?? errorMessage} />
+            ) : null}
+            {modelRepairHostId ? (
+              <Button
+                type="button"
+                variant="link"
+                onClick={() => navigate(buildHostsPath(modelRepairHostId))}
+              >
+                Edit client
+              </Button>
             ) : null}
 
             <div className="flex flex-wrap items-center justify-end gap-3 pt-4">

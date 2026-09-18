@@ -409,6 +409,7 @@ export function describeMCPJamLimitMessage(
 
 export async function notifyMCPJamLimitErrorFromResponse(
   response: Response,
+  surface?: MCPJamLimitSurface,
 ): Promise<boolean> {
   let details: unknown;
   let message: string | null = null;
@@ -441,5 +442,6 @@ export async function notifyMCPJamLimitErrorFromResponse(
       limitKind === "total" || limitKind === "concurrency"
         ? limitKind
         : undefined,
+    ...(surface ? { surface } : {}),
   });
 }

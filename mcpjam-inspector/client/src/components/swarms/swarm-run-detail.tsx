@@ -53,6 +53,11 @@ import {
   waveSessionTotals,
 } from "@/components/swarms/swarm-overview-panel";
 import { SwarmFindingsTab } from "@/components/swarms/findings/swarm-findings-tab";
+import {
+  narratedWaveSummary,
+  waveNarration,
+} from "@/components/swarms/findings/findings-headline";
+import { useInsightsEnvelope } from "@/components/shared/actionable-insights/use-insights-envelope";
 import { NewSwarmRunningStep } from "@/components/swarms/new-swarm-running-step";
 import {
   DETAIL_TAB_OPTIONS,
@@ -61,6 +66,7 @@ import {
 } from "@/components/swarms/swarm-run-detail-model";
 
 export interface SwarmRunDetailProps {
+  organizationId?: string;
   swarmId: string;
   projectId: string | null;
   /** Avatar-look fields are optional pass-through: SwarmsTab already hands
@@ -88,6 +94,7 @@ export interface SwarmRunDetailProps {
 }
 
 export function SwarmRunDetail({
+  organizationId,
   swarmId,
   projectId,
   personas,
@@ -171,11 +178,16 @@ export function SwarmRunDetail({
       : null,
     { autoRequest: false },
   );
-  const generatedWaveSummary =
-    waveInsights.status === "completed" &&
-    waveInsights.insights?.summary?.trim()
-      ? waveInsights.insights.summary.trim()
-      : null;
+  const generatedWaveSummary = narratedWaveSummary(
+    waveInsights.status,
+    waveInsights.insights,
+  );
+  const narration = waveNarration(waveInsights.status, waveInsights.insights);
+  const findingsEnvelope = useInsightsEnvelope({
+    kind: "journey_run",
+    projectId,
+    runId: wave?.anchor.runId,
+  });
 
   const handleTabChange = useCallback(
     (next: SwarmDetailTab) => {
@@ -558,6 +570,7 @@ export function SwarmRunDetail({
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {tab === "run" && projectId ? (
           <NewSwarmRunningStep
+            organizationId={organizationId}
             projectId={projectId}
             runs={launchedRuns}
             fallbackColumns={[]}
@@ -581,6 +594,9 @@ export function SwarmRunDetail({
               onOpenSession={handleOpenSession}
               projectId={projectId ?? undefined}
               generatedSummary={generatedWaveSummary}
+              narration={narration}
+              journeyFindings={findingsEnvelope?.journeyFindings}
+              journeyFindingsJob={findingsEnvelope?.journeyFindingsJob}
             />
           </div>
         ) : null}

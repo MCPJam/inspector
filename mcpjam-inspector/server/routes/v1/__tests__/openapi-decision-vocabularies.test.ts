@@ -72,6 +72,47 @@ const spec = JSON.parse(readFileSync(SPEC_PATH, "utf8")) as {
  * exact shape of the bug this file was written for.
  */
 const SITES = [
+  { schema: "SwarmJourneyFinding", path: ["chainStage"], vocabulary: "stages" },
+  {
+    schema: "SwarmJourneyFinding",
+    path: ["chainStageState"],
+    vocabulary: "stageStates",
+  },
+  {
+    schema: "SwarmJourneyFinding",
+    path: ["disposition"],
+    vocabulary: "swarmFindingDispositions",
+  },
+  {
+    schema: "SwarmJourneyFinding",
+    path: ["basis"],
+    vocabulary: "swarmFindingBases",
+  },
+  {
+    schema: "SwarmJourneyFinding",
+    path: ["scopeLevel"],
+    vocabulary: "swarmFindingScopeLevels",
+  },
+  {
+    schema: "SwarmJourneyFinding",
+    path: ["coverageNotes", "items"],
+    vocabulary: "swarmFindingCoverageNotes",
+  },
+  {
+    schema: "SwarmJourneyFindings",
+    path: ["summaryKind"],
+    vocabulary: "swarmFindingSummaryKinds",
+  },
+  {
+    schema: "SwarmJourneyFindings",
+    path: ["coverageNotes", "items"],
+    vocabulary: "swarmFindingCoverageNotes",
+  },
+  {
+    schema: "SwarmJourneyFindings",
+    path: ["personas", "items", "disposition"],
+    vocabulary: "swarmFindingDispositions",
+  },
   { schema: "EvalIteration", path: ["firstFailedStage"], vocabulary: "stages" },
   {
     schema: "EvalIteration",

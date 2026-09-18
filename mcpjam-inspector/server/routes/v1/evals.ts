@@ -1,4 +1,9 @@
 import {
+  captureToolSnapshotForEvalAuthoring,
+  requireConvexHttpUrl,
+} from "../../services/evals/route-helpers.js";
+import { mintCaseId, evalAuthoringDraftSchema } from "@mcpjam/sdk/contract";
+import {
   suiteJudgeSettingsSchema,
   caseJudgeSettingsSchema,
   judgeRubricSchema,
@@ -1401,7 +1406,7 @@ async function assertEphemeralEnvironmentLaunchable(
   }
 }
 
-async function selectSuiteEnvironmentId(params: {
+export async function selectSuiteEnvironmentId(params: {
   convexAuthToken: string;
   projectId: string;
   suite: SuiteDoc;
@@ -1743,10 +1748,10 @@ function toRunJudgesDto(run: RunDoc) {
         ...(row.status === undefined
           ? { status: "scored" as const }
           : row.status === "scored" ||
-              row.status === "error" ||
-              row.status === "skipped"
-            ? { status: row.status }
-            : {}),
+            row.status === "error" ||
+            row.status === "skipped"
+          ? { status: row.status }
+          : {}),
         ...(typeof row.gradingKey === "string"
           ? { gradingKey: row.gradingKey }
           : {}),
@@ -3441,14 +3446,11 @@ function updateSuiteRefine(
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["revisionNote"],
-      message:
-        "revisionNote is required when settings.qualityGate is present.",
+      message: "revisionNote is required when settings.qualityGate is present.",
     });
   }
   if (body.settings.qualityGate !== null) {
-    const parsed = parseSuiteGatePolicyForAuthoring(
-      body.settings.qualityGate,
-    );
+    const parsed = parseSuiteGatePolicyForAuthoring(body.settings.qualityGate);
     if (!parsed.ok) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -3465,7 +3467,10 @@ export const updateSuiteSchema = z
 
 /** The vocabulary-2 twin: the same body with the vocabulary-2 settings object. */
 const updateSuiteSchemaV2 = z
-  .strictObject({ ...updateSuiteShape, settings: suiteSettingsSchemaV2.optional() })
+  .strictObject({
+    ...updateSuiteShape,
+    settings: suiteSettingsSchemaV2.optional(),
+  })
   .superRefine(updateSuiteRefine);
 
 /**
@@ -9177,6 +9182,109 @@ evals.post(
       body.caseModels?.map(toPersistedModelEntry) ??
       (await defaultCaseModels(readClient, suiteId));
 
+    if (process.env.EVAL_AUTHORING_GENERATION_V1_ENABLED === "true") {
+      const { manager } = await createAuthorizedManager(
+        callerContextFromHono(c),
+        token,
+        projectId,
+        serverIds,
+        WEB_CALL_TIMEOUT_MS,
+        undefined,
+        undefined,
+        { serverNames, xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE) },
+      );
+      let toolSnapshot;
+      try {
+        ({ toolSnapshot } = await captureToolSnapshotForEvalAuthoring(
+          manager,
+          serverIds ?? [],
+        ));
+      } finally {
+        await manager.disconnectAllServers();
+      }
+      const response = await fetch(
+        `${requireConvexHttpUrl()}/eval-authoring/v1/jobs`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+            "x-inspector-service-token":
+              process.env.INSPECTOR_SERVICE_TOKEN ?? "",
+          },
+          body: JSON.stringify({
+            version: 1,
+            ...(c.get("workosApiKeyId")
+              ? { apiKeyId: c.get("workosApiKeyId") }
+              : {}),
+            source: "generation",
+            projectId,
+            suiteId,
+            requestKey: idempotencyKey ?? randomUUID(),
+            instructions: "Generate cases for the suite's authorized tools.",
+            toolSnapshot,
+            options: {
+              mode,
+              caseModels,
+              caseMix: body.caseMix,
+              varyUserStyles: body.varyUserStyles,
+            },
+          }),
+          signal: AbortSignal.timeout(30_000),
+        },
+      );
+      let job;
+      try {
+        job = JSON.parse(await response.text());
+      } catch {
+        throw new WebRouteError(
+          502,
+          ErrorCode.SERVER_UNREACHABLE,
+          "The case authoring service returned an invalid response.",
+        );
+      }
+      if (!response.ok)
+        throw new WebRouteError(
+          response.status as any,
+          ErrorCode.SERVER_UNREACHABLE,
+          job.error ?? "Could not start generation.",
+        );
+      // Compatibility callers may wait briefly; their disconnect never cancels the job.
+      const waitUntil = Date.now() + 15_000;
+      while (!c.req.raw.signal.aborted && Date.now() < waitUntil) {
+        const status = await readClient.query(
+          "evalAuthoringState:status" as any,
+          { jobId: job.jobId },
+        );
+        if (!status)
+          throw new WebRouteError(
+            404,
+            ErrorCode.NOT_FOUND,
+            "Authoring job not found.",
+          );
+        if (status.status !== "pending") {
+          const { convexClient } = createConvexClients(token);
+          return completeGeneratedAuthoringJob(
+            c,
+            convexClient,
+            status,
+            suiteId,
+          );
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+      return v1Resource(
+        c,
+        {
+          ...job,
+          generationModel: "anthropic/claude-haiku-4.5",
+          created: [],
+          counts: { normal: 0, negative: 0 },
+        },
+        202,
+      );
+    }
+
     // A caseMix only counts when it requests at least one case (a bucket > 0).
     // An empty `{}` OR a zero-sum mix (`{ negative: 0 }`, all zeros) is treated
     // as absent — matching backend #589, which reverts a zero-sum mix to the
@@ -9532,5 +9640,141 @@ evals.post(
     });
   },
 );
+
+// Versioned authoring jobs retain full steps. A read never commits drafts.
+evals.get(
+  "/projects/:projectId/eval-suites/:suiteId/authoring/:jobId",
+  async (c) => {
+    const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+    const job = await convex.query("evalAuthoringState:status" as any, {
+      jobId: evalIdParam(c, "jobId", "Authoring job"),
+    });
+    if (
+      !job ||
+      job.projectId !== c.req.param("projectId") ||
+      job.suiteId !== c.req.param("suiteId")
+    )
+      throw new WebRouteError(
+        404,
+        ErrorCode.NOT_FOUND,
+        "Authoring job not found.",
+      );
+    return v1Resource(c, job);
+  },
+);
+evals.post(
+  "/projects/:projectId/eval-suites/:suiteId/authoring/:jobId/commit",
+  async (c) => {
+    const { convexClient: convex } = createConvexClients(
+      await getConvexBearerForRequest(c),
+    );
+    const job = await convex.query("evalAuthoringState:status" as any, {
+      jobId: evalIdParam(c, "jobId", "Authoring job"),
+    });
+    const suiteId = c.req.param("suiteId");
+    if (
+      !job ||
+      job.projectId !== c.req.param("projectId") ||
+      job.suiteId !== suiteId ||
+      job.source === "markdown"
+    )
+      throw new WebRouteError(
+        404,
+        ErrorCode.NOT_FOUND,
+        "Generated authoring job not found.",
+      );
+    return completeGeneratedAuthoringJob(c, convex, job, suiteId);
+  },
+);
+
+async function completeGeneratedAuthoringJob(
+  c: Context,
+  convex: ReturnType<typeof createConvexClients>["convexClient"],
+  job: any,
+  suiteId: string,
+) {
+  if (job.status !== "completed")
+    return v1Resource(c, {
+      jobId: job.jobId,
+      status: job.status,
+      ...(job.error ? { error: job.error } : {}),
+    });
+  const cases: EvalCaseBatchItem[] = [];
+  const skipped = [];
+  for (const value of job.drafts ?? []) {
+    const parsed = evalAuthoringDraftSchema.safeParse(value);
+    if (!parsed.success) {
+      // One unreadable draft is a skip, not a reason to drop the whole commit.
+      skipped.push({
+        title: (value as { case?: { title?: string } })?.case?.title ??
+          "Untitled case",
+        error: "This draft could not be read. Retry the failed cases.",
+      });
+      continue;
+    }
+    const draft = parsed.data;
+    if (
+      draft.additions.length ||
+      draft.issues.some((issue) => issue.blocking && !issue.resolution)
+    ) {
+      skipped.push({
+        title: draft.case.title,
+        error:
+          "Review this draft's issues and proposed additions in the suite.",
+      });
+      continue;
+    }
+    await convex.mutation("evalAuthoringState:acceptDraft" as any, {
+      draftId: draft.draftId,
+      revision: draft.revision,
+      acceptedAdditionIds: [],
+    });
+    cases.push(
+      await convex.mutation("evalAuthoringState:prepareCommit" as any, {
+        draftId: draft.draftId,
+        revision: draft.revision,
+        caseId: mintCaseId(),
+      }),
+    );
+  }
+  const saved = cases.length
+    ? await createEvalCasesInBatches(convex, { suiteId, cases })
+    : { committed: [], failed: [] };
+  const ids = [
+    ...new Set<string>([
+      ...(job.committedCaseIds ?? []),
+      ...saved.committed.map((entry) => entry.testCaseId),
+    ]),
+  ];
+  const reads = await Promise.allSettled(
+    ids.map((testCaseId) =>
+      convex.query("testSuites:getTestCase" as any, { testCaseId }),
+    ),
+  );
+  const docs = reads.flatMap((read) =>
+    read.status === "fulfilled" && read.value ? [read.value] : [],
+  );
+  const vocabulary = vocabularyOf(c);
+  return v1Resource(c, {
+    jobId: job.jobId,
+    status: job.status,
+    generationModel: "anthropic/claude-haiku-4.5",
+    created: docs.map((doc) =>
+      projectCaseDto(toCaseDto(doc, vocabulary), vocabulary),
+    ),
+    counts: {
+      normal: docs.filter((doc) => !doc.isNegativeTest).length,
+      negative: docs.filter((doc) => doc.isNegativeTest).length,
+    },
+    skipped: [
+      ...skipped,
+      ...saved.failed.map((failure) => ({
+        title: failure.title ?? cases[failure.index]?.title ?? "Untitled case",
+        error: failure.message,
+      })),
+    ],
+    ...(job.error ? { error: job.error } : {}),
+  });
+}
 
 export default evals;

@@ -1797,7 +1797,7 @@ function SwarmsRouteContent() {
   // longer a per-host scenario tab. Keeps the same billing gate as the scenario
   // product surface, and re-mounts per project so selection state can't leak
   // across a project switch.
-  const { convexProjectId, isAuthenticated } = useAppRouteContext();
+  const { convexProjectId, isAuthenticated, activeProject } = useAppRouteContext();
   // WorkOS identity is the membership match key for the *invitee guest*
   // notice. Convex `isAuthenticated` is also true for anonymous sessions,
   // which never get a WorkOS `user.email` — but those actors still own a
@@ -1921,6 +1921,7 @@ function SwarmsRouteContent() {
     <SwarmsTab
       key={convexProjectId ?? "no-project"}
       projectId={convexProjectId}
+      organizationId={activeProject?.organizationId}
       isAuthenticated={isAuthenticated}
       swarmId={swarmId}
       createFlow={createFlow}
@@ -3068,7 +3069,11 @@ export default function App() {
       !!readPersistedCheckoutIntent() &&
       !!readBillingSignInReturnPath() &&
       !workOsUser;
-    if (isBillingReturnWaitingForWorkOs) return;
+    // Convex can still be authenticated as a guest while AuthKit settles.
+    // Preserve the scenario destination until the account sign-in completes.
+    const isScenarioReturnWaitingForWorkOs =
+      !!readScenarioSignInReturnPath() && (!workOsUser || isWorkOsLoading);
+    if (isBillingReturnWaitingForWorkOs || isScenarioReturnWaitingForWorkOs) return;
 
     // Select the return exactly once after AuthKit + Convex auth settle. A
     // project-scoped return stays on `/callback` until the database user and
