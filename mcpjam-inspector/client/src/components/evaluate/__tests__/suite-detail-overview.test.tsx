@@ -1169,6 +1169,9 @@ describe("SuiteDetailOverview cancel", () => {
       onCancelRun: vi.fn(),
     });
 
+    expect(
+      screen.getByRole("button", { name: "Open run #1" }),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Cancel run #1" })).toBeNull();
   });
 
