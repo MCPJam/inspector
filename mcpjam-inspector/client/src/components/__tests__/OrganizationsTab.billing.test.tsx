@@ -570,6 +570,17 @@ describe("OrganizationsTab billing", () => {
     expect(within(ssoRow).getAllByRole("cell")[3]).toHaveTextContent(
       "Not included",
     );
+    // Section headers split their span so the Team column stays unbroken; a
+    // miscounted split shows up as a malformed row rather than a failure.
+    const usageHeaderCells = within(
+      screen.getByRole("row", { name: "Usage" }),
+    ).getAllByRole("cell");
+    expect(
+      usageHeaderCells.reduce(
+        (columns, cell) => columns + (cell as HTMLTableCellElement).colSpan,
+        0,
+      ),
+    ).toBe(Object.keys(catalog.plans).length + 1);
     expect(
       within(getPlanColumn("Team")).queryByText("Legacy"),
     ).not.toBeInTheDocument();

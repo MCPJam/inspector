@@ -70,11 +70,21 @@ import { useCreditTopupReturnFlowBilling } from "@/hooks/useCreditTopupReturnFlo
 /** Column highlighted as the recommended tier (matches common pricing-page “Popular”). */
 const POPULAR_PLAN: OrganizationPlan = "team";
 
-/** Tint applied to every cell of the recommended column so it reads as one band. */
-const POPULAR_COLUMN_CLASS = "border-x border-primary/35 bg-primary/[0.06]";
+/** Edges of the recommended column, which every cell in it carries. */
+const POPULAR_COLUMN_BORDER = "border-x border-primary/35";
 
-/** Share of the table left to the plan columns; the label column takes the rest. */
+/**
+ * Tint of the recommended column. On a cell that already has a background it
+ * goes on an overlay instead: both are backgrounds, so tailwind-merge keeps
+ * only the later one and the row's own background would be dropped.
+ */
+const POPULAR_COLUMN_TINT = "bg-primary/[0.06]";
+
+const POPULAR_COLUMN_CLASS = `${POPULAR_COLUMN_BORDER} ${POPULAR_COLUMN_TINT}`;
+
+/** The two column widths the table splits under `table-fixed`. */
 const PLAN_COLUMNS_WIDTH_PCT = 74;
+const LABEL_COLUMN_WIDTH_PCT = 100 - PLAN_COLUMNS_WIDTH_PCT;
 
 /** Defines org as the billed scope for plans and limits (vs projects). */
 const ORG_COMPARE_PLANS_NOTE = "Your organization is the billed unit.";
@@ -443,7 +453,12 @@ function FullWidthRowCells({
       <TableCell colSpan={popularIndex + 1} className={className}>
         {children}
       </TableCell>
-      <TableCell className={cn(className, POPULAR_COLUMN_CLASS)} />
+      <TableCell className={cn(className, "relative", POPULAR_COLUMN_BORDER)}>
+        <span
+          aria-hidden
+          className={cn("pointer-events-none absolute inset-0", POPULAR_COLUMN_TINT)}
+        />
+      </TableCell>
       {trailing > 0 ? (
         <TableCell colSpan={trailing} className={className} />
       ) : null}
@@ -1224,7 +1239,10 @@ export function OrganizationBillingSection({
                     <Table className="table-fixed">
                       <TableHeader>
                         <TableRow className="border-b hover:bg-transparent [&_th]:align-top [&_th]:h-full">
-                          <TableHead className="sticky left-0 z-20 h-full min-h-0 w-[26%] min-w-[11rem] whitespace-normal bg-card text-left shadow-[1px_0_0_0_hsl(var(--border))] px-4 pt-5 pb-4 align-top">
+                          <TableHead
+                            style={{ width: `${LABEL_COLUMN_WIDTH_PCT}%` }}
+                            className="sticky left-0 z-20 h-full min-h-0 min-w-[11rem] whitespace-normal bg-card text-left shadow-[1px_0_0_0_hsl(var(--border))] px-4 pt-5 pb-4 align-top"
+                          >
                             <div className="flex h-full min-h-[11rem] flex-col">
                               <div className="flex min-h-0 flex-1 flex-col">
                                 <div className="space-y-1 pr-1">
