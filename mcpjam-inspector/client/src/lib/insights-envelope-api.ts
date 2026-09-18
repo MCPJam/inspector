@@ -22,6 +22,10 @@
  * "fix your MCP server".
  */
 
+export type {
+  PlatformSwarmJourneyFinding as SwarmJourneyFinding,
+  PlatformSwarmJourneyFindings as SwarmJourneyFindings,
+} from "@mcpjam/sdk/platform";
 import type {
   PlatformActionableFinding,
   PlatformActionableFindingEvidence,
