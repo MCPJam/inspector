@@ -96,11 +96,18 @@ const NETWORK_FAILURE_MESSAGES = new Set([
 
 // posthog-js reports error-like objects that aren't real Errors as
 // "'TypeError' captured as exception with message: 'Load failed'".
-const POSTHOG_WRAPPED_MESSAGE =
-  /^'[^']*' captured as exception with message: '([\s\S]*)'$/;
+const POSTHOG_WRAPPED_TYPE_ERROR =
+  /^'TypeError' captured as exception with message: '([\s\S]*)'$/;
 
-function isNetworkFailureMessage(value: string): boolean {
-  const message = POSTHOG_WRAPPED_MESSAGE.exec(value)?.[1] ?? value;
+// fetch only ever fails with a TypeError, so other error types never count.
+function isNetworkFailure(exception: { type?: unknown; value: string }) {
+  const wrapped = POSTHOG_WRAPPED_TYPE_ERROR.exec(exception.value);
+  const message = wrapped
+    ? wrapped[1]
+    : exception.type === "TypeError"
+      ? exception.value
+      : undefined;
+  if (message === undefined) return false;
   return (
     NETWORK_FAILURE_MESSAGES.has(message) ||
     // Newer Chrome adds the host: "Failed to fetch (example.com)".
@@ -116,14 +123,13 @@ const FAILED_REQUEST_MAX_AGE_MS = 10_000;
 // lib/failed-request-tracker.ts.
 function attachFailedRequest(properties: Record<string, any>): void {
   const exceptions = properties.$exception_list;
-  const isNetworkFailure =
+  const hasNetworkFailure =
     Array.isArray(exceptions) &&
     exceptions.some(
       (exception) =>
-        typeof exception?.value === "string" &&
-        isNetworkFailureMessage(exception.value),
+        typeof exception?.value === "string" && isNetworkFailure(exception),
     );
-  if (!isNetworkFailure) return;
+  if (!hasNetworkFailure) return;
 
   const failed = getLastFailedRequest();
   if (!failed) return;

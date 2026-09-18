@@ -144,10 +144,20 @@ describe("PostHog $exception enrichment", () => {
     "Failed to fetch tools",
     "Failed to fetch chat transcript (500)",
     "'Error' captured as exception with message: 'Load failed to parse'",
+    "'Error' captured as exception with message: 'Load failed'",
   ])("does not match our own look-alike message %j", (value) => {
     expect(
       sanitize({ $exception_list: [{ type: "Error", value }] }, "$exception")
         .failed_request,
+    ).toBeUndefined();
+  });
+
+  it("skips a plain Error even with a network message", () => {
+    expect(
+      sanitize(
+        { $exception_list: [{ type: "Error", value: "Failed to fetch" }] },
+        "$exception",
+      ).failed_request,
     ).toBeUndefined();
   });
 
