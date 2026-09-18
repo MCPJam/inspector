@@ -331,7 +331,10 @@ const runLink = (bundle) => {
 const groupResult = (bundles) => {
   const results = bundles.map((bundle) => bundle.run.result);
   if (results.includes("failed")) return "failed";
-  return results.find((result) => result !== "passed") ?? "passed";
+  // By index, not value: a missing result is itself the finding, and `??`
+  // would turn it into a pass.
+  const index = results.findIndex((result) => result !== "passed");
+  return index === -1 ? "passed" : results[index];
 };
 
 /**

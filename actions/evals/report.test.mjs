@@ -513,3 +513,14 @@ test("keeps runs with different or absent group ids in separate sections", () =>
   // A group of one keeps the single-run link text.
   assert.equal(comment.match(/\[View full run in MCPJam\]/g)?.length, 3);
 });
+
+test("does not pass a group whose sibling has no recorded result", () => {
+  const unknown = sibling("run-b", "B", "openai", "openai/gpt-5", [["s", "S", "passed"]]);
+  unknown.run.result = null;
+  const { comment } = renderReports([
+    sibling("run-a", "A", "openai", "openai/gpt-5", [["s", "S", "passed"]]),
+    unknown,
+  ]);
+  assert.doesNotMatch(comment, /Run result: ✅ Passed/);
+  assert.match(comment, /Run result: ⚠️ Unknown/);
+});
