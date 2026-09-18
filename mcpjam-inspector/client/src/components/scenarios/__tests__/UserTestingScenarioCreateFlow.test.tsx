@@ -27,6 +27,7 @@ const {
   environmentsState,
   flagState,
   hostListState,
+  projectRoleState,
   saveSeedMock,
   toastSuccess,
   toastError,
@@ -36,6 +37,10 @@ const {
     value: undefined as ProjectEnvironmentView[] | undefined,
   },
   flagState: { environments: true },
+  // The backend's `canManageProjectMembers`, which is what publishing a study
+  // takes. Admin by default: every pre-existing case here is about the form,
+  // not about the role.
+  projectRoleState: { canManageMembers: true, isLoading: false },
   hostListState: {
     hosts: [] as Array<Partial<HostListItem>>,
     isLoading: false,
@@ -66,6 +71,12 @@ vi.mock("@/hooks/useComputersEnabled", () => ({
 }));
 vi.mock("@/hooks/useClients", () => ({
   useHostList: () => hostListState,
+}));
+// Partial: the composer's model-matrix hook imports `shouldQueryProjectId`
+// from this same module, so a full replacement takes out the strip.
+vi.mock("@/hooks/useProjects", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/hooks/useProjects")>()),
+  useProjectMembers: () => projectRoleState,
 }));
 vi.mock("@/components/hosts/server-picker", () => ({
   ServerPicker: () => <div data-testid="server-group-picker" />,
@@ -196,6 +207,8 @@ beforeEach(() => {
     { hostId: "host-2", name: "Cursor", serverCount: 1 },
   ];
   hostListState.isLoading = false;
+  projectRoleState.canManageMembers = true;
+  projectRoleState.isLoading = false;
   ensureAdhocMock.mockImplementation(
     async (args: { stacks: Array<{ hostId: string }> }) =>
       args.stacks.map((stack) => ({
@@ -411,6 +424,78 @@ describe("UserTestingScenarioCreateFlow", () => {
     });
     // Recoverable — the form is usable again rather than stuck mid-save.
     expect(screen.getByTestId("user-testing-create-save")).not.toBeDisabled();
+  });
+
+  it("reads the refusal off `data`, the only field a production deployment keeps", async () => {
+    // THE PRODUCTION SHAPE, and the reason the case above passed while the
+    // screen shipped broken. Convex redacts the `message` of every throw on a
+    // production deployment — `ConvexError` included — to the request-id
+    // banner, and forwards the payload on `data`. A test that rejects with a
+    // readable `message` is therefore vacuous for this bug: it asserts copy
+    // that only a dev deployment produces.
+    const refusal = Object.assign(
+      new Error(
+        "[CONVEX M(scenarios:publishEnvironmentScenario)] " +
+          "[Request ID: 837e8ce9409d0385] Server Error",
+      ),
+      {
+        data: {
+          code: "FORBIDDEN",
+          message:
+            "Publishing an environment scenario requires project admin (shared execution config).",
+        },
+      },
+    );
+    renderFlow(vi.fn().mockRejectedValue(refusal));
+
+    fireEvent.change(screen.getByTestId("user-testing-create-environment"), {
+      target: { value: "env-1" },
+    });
+    createStudy();
+
+    await waitFor(() => {
+      expect(toastError).toHaveBeenCalledWith(
+        "Publishing an environment scenario requires project admin (shared execution config).",
+      );
+    });
+    expect(toastError).not.toHaveBeenCalledWith(
+      expect.stringContaining("Server Error"),
+    );
+  });
+
+  it("says up front that publishing needs admin, instead of after the task list", () => {
+    // The refusal is knowable on arrival and no control here can change it, so
+    // it is not held back for a press the way "no client picked" is.
+    projectRoleState.canManageMembers = false;
+    renderFlow();
+
+    expect(
+      screen.getByTestId("user-testing-create-admin-required"),
+    ).toBeInTheDocument();
+
+    // And step 1 does not carry: the whole point is not to collect a study
+    // nobody is allowed to create.
+    fireEvent.change(screen.getByTestId("user-testing-create-environment"), {
+      target: { value: "env-1" },
+    });
+    goToTasks();
+    expect(onTasksStep()).toBe(false);
+  });
+
+  it("does not call an admin a non-admin while the role is in flight", () => {
+    projectRoleState.canManageMembers = false;
+    projectRoleState.isLoading = true;
+    renderFlow();
+
+    expect(
+      screen.queryByTestId("user-testing-create-admin-required"),
+    ).toBeNull();
+    // Still fails closed: nothing advances until the answer lands.
+    fireEvent.change(screen.getByTestId("user-testing-create-environment"), {
+      target: { value: "env-1" },
+    });
+    goToTasks();
+    expect(onTasksStep()).toBe(false);
   });
 
   it("hands off to the Environments editor instead of creating one here", () => {

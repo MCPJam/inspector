@@ -18,6 +18,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { usePaginatedQuery, useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { toast } from "@/lib/toast";
+import { useAppNavigate } from "@/lib/app-navigation";
 import {
   StopSwarmRunButton,
   useStopSwarmRun,
@@ -576,7 +577,8 @@ function collectSessionSlots(args: {
       index,
     );
     const direct = snap.stream.cellStatus[swarmCellKey(columnKey, index)] as
-      SwarmCellLiveStatus | undefined;
+      | SwarmCellLiveStatus
+      | undefined;
     const fromEnvelope = Object.values(snap.stream.sessions).find(
       (entry) =>
         entry.envelope.sessionIndex === index &&
@@ -653,6 +655,7 @@ function mergeStreams(
 const COMPLETION_TOAST_DWELL_MS = 1800;
 
 export function NewSwarmRunningStep({
+  organizationId,
   runs,
   fallbackColumns,
   environments = [],
@@ -663,6 +666,7 @@ export function NewSwarmRunningStep({
   onRunsComplete,
 }: {
   projectId: string;
+  organizationId?: string;
   runs: SwarmLaunchedRun[];
   /** Columns from the Describe-step environments — always shown. */
   fallbackColumns: SwarmRunningColumn[];
@@ -696,6 +700,7 @@ export function NewSwarmRunningStep({
    */
   onRunsComplete?: () => void;
 }) {
+  const appNavigate = useAppNavigate();
   const hostById = useMemo(() => {
     return new Map(hosts.map((host) => [host.hostId, host] as const));
   }, [hosts]);
@@ -1033,7 +1038,7 @@ export function NewSwarmRunningStep({
     // Two providers throttling in the same run name neither: the banner would
     // otherwise blame whichever attempt was read first for both.
     const [only] = labels;
-    return { count, label: labels.size === 1 ? (only ?? null) : null };
+    return { count, label: labels.size === 1 ? only ?? null : null };
   }, [snapshots]);
 
   // The other half of that split: sessions MCPJam's own account limit stopped.
@@ -1043,9 +1048,11 @@ export function NewSwarmRunningStep({
   const accountLimit = useMemo(() => {
     let count = 0;
     let message: string | null = null;
+    let exhausted = 0;
     for (const snap of Object.values(snapshots)) {
       for (const attempt of snap.attempts) {
-        if (attempt.status !== "rate_limited") continue;
+        if (attempt.status !== "rate_limited" && attempt.status !== "failed")
+          continue;
         const info = humanizeSwarmAttemptError(
           attempt.errorMessage,
           attempt.errorCode,
@@ -1054,16 +1061,27 @@ export function NewSwarmRunningStep({
           continue;
         }
         count += 1;
+        const code = attempt.errorCode ?? info.code;
+        if (
+          [
+            "user_rate_limit",
+            "org_rate_limit",
+            "billing_limit_reached",
+            "spend_cap_exceeded",
+          ].includes(code ?? "") &&
+          !/in-flight|hold the remaining credits/i.test(info.message)
+        )
+          exhausted += 1;
         // The whole-run finalize writes a code and no message; any sibling
         // that stored the backend's sentence says it better.
         if (!message && attempt.errorMessage) message = info.message;
       }
     }
-    return count === 0 ? null : { count, message };
+    return count === 0 ? null : { count, message, exhausted };
   }, [snapshots]);
 
   const selectedRunStatus = selection
-    ? (snapshots[selection.runId]?.status ?? "running")
+    ? snapshots[selection.runId]?.status ?? "running"
     : "running";
 
   const fallbackTrace = useMemo(
@@ -1184,27 +1202,92 @@ export function NewSwarmRunningStep({
                   </p>
                 </div>
               ) : null}
-              {/* The run banner already carries this sentence when nothing
-                  succeeded; saying it twice adds nothing. */}
-              {accountLimit && !runFailure ? (
+              {/* Account limits remain visible even when another cause failed. */}
+              {accountLimit ? (
                 <div
                   className="rounded-md border border-warning bg-warning/20 px-3 py-2 text-sm text-warning-foreground"
                   data-testid="new-swarm-running-account-limit"
                   role="status"
                 >
                   <p className="font-medium">
-                    {accountLimit.count === 1
-                      ? "1 session stopped at your MCPJam model limit."
-                      : `${accountLimit.count} sessions stopped at your MCPJam model limit.`}
+                    {accountLimit.exhausted > 0 && allTerminal
+                      ? `Stopped: this organization's MCPJam credits ran out after ${succeeded} of ${total} sessions.`
+                      : "Sessions stopped at the MCPJam model limit."}
+                  </p>
+                  <p className="mt-0.5">
+                    {`${succeeded} completed, ${Math.max(
+                      0,
+                      failed +
+                        rateLimited -
+                        accountLimit.count -
+                        (providerRateLimit?.count ?? 0),
+                    )} failed, ${
+                      accountLimit.count
+                    } stopped at the MCPJam model limit${
+                      providerRateLimit
+                        ? `, ${providerRateLimit.count} stopped at a provider limit`
+                        : ""
+                    }.`}
                   </p>
                   <p className="mt-0.5">
                     {accountLimit.message ??
                       "Add credit or connect your own provider key (BYOK) to keep running."}
                   </p>
+                  {organizationId ? (
+                    <p className="mt-1 flex gap-3">
+                      <a
+                        className="underline underline-offset-4"
+                        onClick={(event) => {
+                          if (
+                            event.metaKey ||
+                            event.ctrlKey ||
+                            event.shiftKey ||
+                            event.altKey
+                          )
+                            return;
+                          event.preventDefault();
+                          appNavigate(
+                            event.currentTarget.getAttribute("href")!,
+                          );
+                        }}
+                        href={`/organizations/${encodeURIComponent(
+                          organizationId,
+                        )}/billing?topup=open`}
+                      >
+                        Add credits
+                      </a>
+                      <a
+                        className="underline underline-offset-4"
+                        onClick={(event) => {
+                          if (
+                            event.metaKey ||
+                            event.ctrlKey ||
+                            event.shiftKey ||
+                            event.altKey
+                          )
+                            return;
+                          event.preventDefault();
+                          appNavigate(
+                            event.currentTarget.getAttribute("href")!,
+                          );
+                        }}
+                        href={`/organizations/${encodeURIComponent(
+                          organizationId,
+                        )}/plans`}
+                      >
+                        View plan
+                      </a>
+                    </p>
+                  ) : null}
                 </div>
               ) : null}
 
-              {runFailure ? (
+              {runFailure &&
+              (!accountLimit ||
+                !isAccountLimit(
+                  runFailure.info.message,
+                  runFailure.info.code,
+                )) ? (
                 <div
                   className={cn(
                     "rounded-md border px-3 py-2 text-sm",

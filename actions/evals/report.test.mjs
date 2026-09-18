@@ -120,11 +120,35 @@ test("renders the client summary and failed-case tables from stored results", ()
     },
   ]);
   assert.match(reports.comment, /Client \/ Model.*Cases passed.*P50 \/ P95/);
-  assert.match(reports.comment, /vitest \/ gpt-5.*1\/2.*83% \(5\/6\)/);
+  // No saved client on this run, so the cell is the model alone — "vitest" is
+  // the test framework, and naming it under "Client" invents a client.
+  assert.match(reports.comment, /\| gpt-5 \|.*1\/2.*83% \(5\/6\)/);
   assert.match(reports.comment, /Failed cases[\s\S]*Add to cart[\s\S]*67% \(2\/3\)/);
   assert.doesNotMatch(reports.comment, /Expected one item/);
   assert.match(reports.summary, /Recorded failures[\s\S]*Expected one item/);
   assert.match(reports.summary, /Usage and performance/);
+});
+
+test("names the saved client the run executed", () => {
+  const reports = renderReports([
+    {
+      receipt,
+      run: {
+        id: "run1",
+        status: "completed",
+        result: "passed",
+        client: { id: "cl_1", name: "Claude", source: "saved" },
+        environment: { name: "Staging" },
+        verdictSummary: {
+          cases: [verdict("d_search", "mcpjam", "anthropic/claude-haiku-4.5", 3, 3, "passed")],
+        },
+      },
+      iterations: [iteration("search", "Search", "passed", 900)],
+    },
+  ]);
+  // The client the run names wins over the project environment it ran in.
+  assert.match(reports.comment, /Claude \/ anthropic\/claude-haiku-4\.5/);
+  assert.doesNotMatch(reports.comment, /Staging \/ /);
 });
 
 test("deep-links the run into the Evaluate tab, not the tab it replaces", () => {
