@@ -754,6 +754,62 @@ describe("stepResults on reported iterations", () => {
     ]);
   });
 
+  it("spends each missing or mismatched call on one expectation only", () => {
+    const twice = [
+      { toolName: "show-squad", arguments: { team: "PSG" } },
+      { toolName: "show-squad", arguments: { team: "PSG" } },
+    ];
+    const results = run(
+      {
+        passed: false,
+        prompts: [makePrompt({ toolCalls: [twice[0]] })],
+        toolMatch: {
+          ...noMatch,
+          passed: false,
+          // One call was made; the matcher reports the second expectation missing.
+          missing: [twice[1]],
+        },
+      },
+      twice
+    );
+
+    // Only one row may cash in the single missing entry. The other is not
+    // individually implicated, so it takes the shared verdict instead.
+    const rows = stepsOf(results[0]) as { stepId: string; reason?: string }[];
+    expect(rows.filter((row) => row.reason === "not called")).toHaveLength(1);
+  });
+
+  it("matches an argument mismatch by expected arguments, not tool name alone", () => {
+    const expectations = [
+      { toolName: "show-squad", arguments: { team: "PSG" } },
+      { toolName: "show-squad", arguments: { team: "Inter" } },
+    ];
+    const results = run(
+      {
+        passed: false,
+        prompts: [makePrompt({})],
+        toolMatch: {
+          ...noMatch,
+          passed: false,
+          argumentMismatches: [
+            {
+              toolName: "show-squad",
+              expectedArgs: { team: "Inter" },
+              actualArgs: { team: "Milan" },
+            },
+          ],
+        },
+      },
+      expectations
+    );
+
+    const rows = stepsOf(results[0]) as { stepId: string; reason?: string }[];
+    const differed = rows.filter((row) =>
+      row.reason?.startsWith("arguments differed")
+    );
+    expect(differed.map((row) => row.stepId)).toEqual(["step-expect-1"]);
+  });
+
   it("blames the expectation the matcher reported missing", () => {
     const results = run({
       passed: false,

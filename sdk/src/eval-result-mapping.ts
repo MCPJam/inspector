@@ -961,20 +961,32 @@ function stepResultsForIteration(args: {
 
   const match = iteration.toolMatch;
   // The matcher returns one aggregate verdict with diff buckets, not a row per
-  // expectation, so each expectation is re-attributed from those buckets.
+  // expectation, so each expectation is re-attributed from those buckets. Each
+  // bucket entry answers for one expectation only: two expectations of the
+  // same tool must not both be blamed by a single missing or mismatched call.
+  const remainingMissing = [...(match?.missing ?? [])];
+  const remainingMismatches = [...(match?.argumentMismatches ?? [])];
   const blame = expectedToolCalls.map((expected): string | undefined => {
     if (!match || match.passed) return undefined;
     if (args.isNegativeTest) {
       const called = toolNames(match.extra);
       return called ? `tool was called: ${called}` : "tool was called";
     }
-    if (match.missing.some((call) => sameToolCall(call, expected))) {
+    const missingAt = remainingMissing.findIndex((call) =>
+      sameToolCall(call, expected)
+    );
+    if (missingAt !== -1) {
+      remainingMissing.splice(missingAt, 1);
       return "not called";
     }
-    const mismatch = match.argumentMismatches.find(
-      (entry) => entry.toolName === expected.toolName
+    const mismatchAt = remainingMismatches.findIndex(
+      (entry) =>
+        entry.toolName === expected.toolName &&
+        stableStringify(entry.expectedArgs) ===
+          stableStringify(expected.arguments)
     );
-    if (mismatch) {
+    if (mismatchAt !== -1) {
+      const [mismatch] = remainingMismatches.splice(mismatchAt, 1);
       return `arguments differed: expected ${briefly(
         mismatch.expectedArgs
       )}, got ${briefly(mismatch.actualArgs)}`;
