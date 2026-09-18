@@ -491,6 +491,10 @@ export interface MCPJamStepFinishEvent {
  *     only (anything else that escaped the per-step handlers).
  */
 export interface MCPJamEngineErrorEvent {
+  retryAfterMs?: number;
+  isRetryable?: boolean;
+  refusalReason?: string;
+  outstandingHolds?: number;
   /**
    * Human-readable display message. For site (1) when the body
    * parsed structured, this is `"<error> <details>"`; otherwise the
@@ -1868,27 +1872,50 @@ function attachedFailureCode(error: unknown): string | undefined {
 function parseEngineErrorBody(
   status: number | undefined,
   bodyText: string,
-): { message: string; code?: string; details?: string } {
-  let code: string | undefined;
+): Pick<
+  MCPJamEngineErrorEvent,
+  | "message"
+  | "code"
+  | "details"
+  | "retryAfterMs"
+  | "isRetryable"
+  | "refusalReason"
+  | "outstandingHolds"
+> {
   try {
     const body = JSON.parse(bodyText) as {
       code?: string;
       error?: string;
       details?: string;
+      retryAfter?: number;
+      isRetryable?: boolean;
+      refusalReason?: string;
+      outstandingHolds?: number;
     };
-    if (body?.error) {
+    if (body && typeof body === "object") {
       return {
-        message: body.details ? `${body.error} ${body.details}` : body.error,
+        message: body.error
+          ? body.details
+            ? `${body.error} ${body.details}`
+            : body.error
+          : `Backend stream error: ${status} ${bodyText}`,
         ...(body.code ? { code: body.code } : {}),
         ...(body.details ? { details: body.details } : {}),
+        ...(typeof body.retryAfter === "number" &&
+        Number.isFinite(body.retryAfter)
+          ? { retryAfterMs: body.retryAfter }
+          : {}),
+        ...(typeof body.isRetryable === "boolean"
+          ? { isRetryable: body.isRetryable }
+          : {}),
+        ...(typeof body.refusalReason === "string"
+          ? { refusalReason: body.refusalReason }
+          : {}),
+        ...(typeof body.outstandingHolds === "number"
+          ? { outstandingHolds: body.outstandingHolds }
+          : {}),
       };
     }
-    // Bodies without an `error` field can still carry a machine-readable
-    // `code` — the spend-precheck denial is `{ok:false, code:"user_rate_limit",
-    // isRetryable, retryAfter}` (issue #3708). Surface it alongside the
-    // generic message so consumers (agent route's rate-limit mapping) can
-    // branch on `code` instead of regexing the raw body text.
-    code = typeof body?.code === "string" ? body.code : undefined;
   } catch {
     // body wasn't JSON — fall through to generic shape
   }
@@ -1897,7 +1924,6 @@ function parseEngineErrorBody(
       status !== undefined
         ? `Backend stream error: ${status} ${bodyText}`
         : bodyText,
-    ...(code ? { code } : {}),
   };
 }
 
@@ -3149,7 +3175,7 @@ async function processOneStep(
       });
     }
     safelyEmitEngineError(onEngineError, {
-      message: parsed.message,
+      ...parsed,
       ...(parsed.code ? { code: parsed.code } : {}),
       ...(parsed.details ? { details: parsed.details } : {}),
       httpStatus: res.status,

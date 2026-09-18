@@ -1,3 +1,4 @@
+import { looksLikeErrorPage } from "./error-page.js";
 /**
  * Turning a swarm attempt's raw failure into something a developer can act on.
  *
@@ -35,6 +36,21 @@ const AGENT_ERROR_ENVELOPE = /^(?:swarm-agent\s+\S+\s+failed\s+\((\d{3})\):|Back
 /** Belt-and-braces: never let a URL reach a stored/rendered message. */
 const URL_PATTERN = /https?:\/\/\S+/g;
 
+export const SPEND_REFUSAL_REASONS = [
+  "holds_committed",
+  "wallet_locked",
+  "budget_reached",
+  "allowance_exhausted",
+  "admission_invalid",
+] as const;
+
+export function isTransientSpendRefusal(
+  code?: string,
+  refusalReason?: string,
+): boolean {
+  return code === "user_rate_limit" && refusalReason === "holds_committed";
+}
+
 export const MAX_ATTEMPT_ERROR_CHARS = 500;
 
 export type SwarmAttemptErrorInfo = {
@@ -52,6 +68,9 @@ export type SwarmAttemptErrorInfo = {
   retryAfterMs?: number;
   /** The user can lift this themselves by purchasing credit. */
   canTopUp?: boolean;
+  refusalReason?: string;
+  isRetryable?: boolean;
+  outstandingHolds?: number;
   /** HTTP status from the failing call, when the envelope carried one. */
   httpStatus?: number;
 };
@@ -202,6 +221,15 @@ export function humanizeSwarmAttemptError(
     body = input.slice(envelope[0].length).trim();
   }
 
+  if (looksLikeErrorPage(body)) {
+    return {
+      code: "upstream_error_page",
+      message: `The request was answered with an HTML error page instead of a response${
+        httpStatus ? ` (HTTP ${httpStatus})` : ""
+      }. This usually means a proxy or CDN blocked it.`,
+      ...(httpStatus !== undefined ? { httpStatus } : {}),
+    };
+  }
   const parsed = parseJsonObject(body);
   if (!parsed) {
     const cleaned = scrub(body) || scrub(input);
@@ -227,6 +255,15 @@ export function humanizeSwarmAttemptError(
       MAX_ATTEMPT_ERROR_CHARS
     ),
     ...(code ? { code } : {}),
+    ...(str(parsed.refusalReason)
+      ? { refusalReason: str(parsed.refusalReason) }
+      : {}),
+    ...(typeof parsed.isRetryable === "boolean"
+      ? { isRetryable: parsed.isRetryable }
+      : {}),
+    ...(num(parsed.outstandingHolds) !== undefined
+      ? { outstandingHolds: num(parsed.outstandingHolds) }
+      : {}),
     ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
     ...(canTopUp ? { canTopUp } : {}),
     ...(httpStatus !== undefined ? { httpStatus } : {}),

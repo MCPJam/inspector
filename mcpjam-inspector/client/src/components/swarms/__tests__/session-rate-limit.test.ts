@@ -87,3 +87,25 @@ describe("describeSwarmAttemptFailure", () => {
     expect(error.rawCode).toBe("execution_failed");
   });
 });
+
+it.each([
+  ["Daily MCPJam model limit reached.", "provider/mcpjam_limit_daily"],
+  ["Available spending capacity is committed.", "provider/mcpjam_limit"],
+  [
+    "MCPJam model limit reached for the moment: 2 in-flight requests hold the remaining credits.",
+    "provider/mcpjam_limit",
+  ],
+])(
+  "maps MCPJam allowance refusals without provider advice: %s",
+  (message, slug) => {
+    const result = describeSwarmAttemptFailure(
+      message,
+      "user_rate_limit",
+      "Anthropic",
+    );
+    expect(result.slug).toBe(slug);
+    expect(result.nextSteps.join(" ")).not.toContain(
+      "Upgrade your provider plan",
+    );
+  },
+);

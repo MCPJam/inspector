@@ -75,7 +75,6 @@ export function SidebarCredits({
   }
 
   const showMonthly =
-    isV2 ||
     balance?.billingModel === "monthly_per_seat" ||
     balance?.billingModel === "monthly_flat";
   const monthlyTotal = balance?.monthlyAllowanceTotal ?? 0;

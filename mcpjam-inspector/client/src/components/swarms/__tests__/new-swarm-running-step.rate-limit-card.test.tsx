@@ -10,6 +10,8 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { JourneyRun } from "@/lib/swarm-api";
+const appNavigate = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/app-navigation", () => ({ useAppNavigate: () => appNavigate }));
 
 const streamState = {
   sessions: {} as Record<string, unknown>,
@@ -161,6 +163,7 @@ function renderStep(
   return render(
     <div className="h-[40rem]">
       <NewSwarmRunningStep
+        organizationId="org-1"
         projectId="proj-1"
         runs={[
           {
@@ -260,7 +263,8 @@ describe("NewSwarmRunningStep — provider rate-limit card", () => {
     // so the provider copy would send the user to the wrong place. The attempt
     // row carries the denial, which is what both surfaces have to read: the
     // live stream text alone leaves the run banner naming a provider.
-    const accountLimit = "Daily credit limit reached. (user_rate_limit, HTTP 429)";
+    const accountLimit =
+      "Daily credit limit reached. (user_rate_limit, HTTP 429)";
     attempt.errorMessage = accountLimit;
     attempt.errorCode = "user_rate_limit";
     (
@@ -311,11 +315,9 @@ describe("NewSwarmRunningStep — provider rate-limit card", () => {
     runFixture.summary = { total: 2, succeeded: 1, failed: 0, rateLimited: 1 };
     renderStep();
 
-    const banner = await screen.findByTestId(
-      "new-swarm-running-account-limit",
-    );
+    const banner = await screen.findByTestId("new-swarm-running-account-limit");
     expect(banner).toHaveTextContent(
-      "1 session stopped at your MCPJam model limit.",
+      "1 completed, 0 failed, 1 stopped at the MCPJam model limit.",
     );
     expect(banner).toHaveTextContent(
       "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
@@ -328,16 +330,21 @@ describe("NewSwarmRunningStep — provider rate-limit card", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("leaves an all-limited run to the run banner rather than saying it twice", async () => {
+  it("shows the credit callout for an all-limited run", async () => {
     attempt.errorCode = "user_rate_limit";
     attempt.errorMessage =
       "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.";
     renderStep();
 
-    const failure = await screen.findByTestId("new-swarm-running-failure");
+    const failure = await screen.findByTestId(
+      "new-swarm-running-account-limit",
+    );
     expect(failure).toHaveTextContent("Daily MCPJam model limit reached.");
+    expect(failure).toHaveTextContent(
+      "MCPJam credits ran out after 0 of 1 sessions",
+    );
     expect(
-      screen.queryByTestId("new-swarm-running-account-limit"),
+      screen.queryByTestId("new-swarm-running-failure"),
     ).not.toBeInTheDocument();
   });
 
@@ -512,9 +519,45 @@ describe("NewSwarmRunningStep — provider rate-limit card", () => {
 
 vi.mock("@/hooks/use-host-snapshot", () => ({
   useHostSnapshotForSession: () => ({
-    status: "ready", snapshot: { hostStyle: "mcpjam" },
+    status: "ready",
+    snapshot: { hostStyle: "mcpjam" },
   }),
   useHostSnapshotForHost: () => ({
-    status: "ready", snapshot: { hostStyle: "mcpjam" },
+    status: "ready",
+    snapshot: { hostStyle: "mcpjam" },
   }),
 }));
+
+it("shows cause counts and billing links for mixed server failures and exhausted credits", async () => {
+  attempt.errorCode = "user_rate_limit";
+  attempt.errorMessage = "Daily MCPJam model limit reached.";
+  attempts = [
+    {
+      ...attempt,
+      sessionIdx: 1,
+      status: "failed",
+      errorCode: "session_failed",
+      errorMessage: "Server tool failed.",
+    },
+    attempt,
+  ];
+  runFixture.summary = { total: 2, succeeded: 0, failed: 1, rateLimited: 1 };
+  renderStep();
+  const banner = await screen.findByTestId("new-swarm-running-account-limit");
+  expect(banner).toHaveTextContent(
+    "0 completed, 1 failed, 1 stopped at the MCPJam model limit",
+  );
+  expect(screen.getByRole("link", { name: "Add credits" })).toHaveAttribute(
+    "href",
+    "/organizations/org-1/billing?topup=open",
+  );
+  expect(screen.getByRole("link", { name: "View plan" })).toHaveAttribute(
+    "href",
+    "/organizations/org-1/plans",
+  );
+  expect(screen.getByText("Server tool failed.")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("link", { name: "Add credits" }));
+  expect(appNavigate).toHaveBeenCalledWith(
+    "/organizations/org-1/billing?topup=open",
+  );
+});

@@ -360,8 +360,10 @@ function oauthResponseErrorCode(error: unknown): string | undefined {
 }
 
 function pickOauthBody(
-  error: unknown,
-): { error?: unknown; error_code?: unknown; error_description?: unknown } | undefined {
+  error: unknown
+):
+  | { error?: unknown; error_code?: unknown; error_description?: unknown }
+  | undefined {
   if (!error || typeof error !== "object") return undefined;
   // Some sources stash the body under `.body` or `.data`.
   const body =
@@ -452,7 +454,10 @@ function resolveSlug(error: unknown): {
   rawCode?: number | string;
 } {
   const message = getErrorMessage(error);
-  const record = error && typeof error === "object" ? error as { code?: unknown; data?: { code?: unknown } } : null;
+  const record =
+    error && typeof error === "object"
+      ? (error as { code?: unknown; data?: { code?: unknown } })
+      : null;
   const platformCode = record?.data?.code ?? record?.code;
   if (platformCode === "platform_free_budget_exhausted") return { slug: "provider/mcpjam_platform_budget", rawCode: platformCode };
   if (platformCode === "account_suspended") return { slug: "account/suspended", rawCode: platformCode };
@@ -528,20 +533,8 @@ function resolveSlug(error: unknown): {
   // The gap is bounded because `[\w\s-]` matches "mcpjam" too: unbounded, a
   // message of repeated "mcpjam" with no "model limit" backtracks quadratically,
   // and this message comes off the wire. Real copy puts one space here.
-  const limitPeriod = /\b(daily|monthly)\s+mcpjam[\w\s-]{0,40}model limit/i.exec(
-    message,
-  );
-  if (limitPeriod) {
-    return {
-      slug:
-        limitPeriod[1]!.toLowerCase() === "monthly"
-          ? "provider/mcpjam_limit_monthly"
-          : "provider/mcpjam_limit_daily",
-    };
-  }
-  if (/mcpjam[\w\s-]{0,40}model limit/i.test(message)) {
-    return { slug: "provider/mcpjam_limit" };
-  }
+  const limitSlug = mcpjamLimitSlugForMessage(message);
+  if (limitSlug) return { slug: limitSlug };
 
   // (e) HTTP status field (`statusCode` / `status`).
   const httpStatus = getHttpStatus(error);
@@ -902,4 +895,24 @@ function crashFallback(error: unknown, emptyPlaceholder: string): NormalizedErro
     ...maybePromoteRawMessage(fallback, "internal/unknown", rawMessage),
     rawMessage,
   };
+}
+
+export function mcpjamLimitSlugForMessage(
+  message: string
+):
+  | "provider/mcpjam_limit"
+  | "provider/mcpjam_limit_daily"
+  | "provider/mcpjam_limit_monthly"
+  | undefined {
+  const limitPeriod =
+    /\b(daily|monthly)\s+mcpjam[\w\s-]{0,40}model limit/i.exec(message);
+  if (limitPeriod) {
+    return limitPeriod[1]!.toLowerCase() === "monthly"
+      ? "provider/mcpjam_limit_monthly"
+      : "provider/mcpjam_limit_daily";
+  }
+  if (/mcpjam[\w\s-]{0,40}model limit/i.test(message)) {
+    return "provider/mcpjam_limit";
+  }
+  return undefined;
 }

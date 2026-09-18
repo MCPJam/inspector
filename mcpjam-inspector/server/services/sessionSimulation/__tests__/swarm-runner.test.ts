@@ -805,6 +805,37 @@ describe("swarm fan-out runner — spend-cap abort reclassification (finding 5)"
     serverIds: ["server-3"],
   };
 
+  it("does not stop other targets when temporary admission retries are exhausted", async () => {
+    const message =
+      'swarm-agent https://example.test/turn failed (429): {"code":"user_rate_limit","refusalReason":"holds_committed","error":"MCPJam model limit reached for the moment: 2 in-flight requests hold the remaining credits."}';
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) =>
+      adapter.persist.hostId === "host-1"
+        ? { outcome: "rate_limited", errorMessage: message }
+        : { outcome: "succeeded" },
+    );
+    await startJourneyRun(
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 }),
+    );
+    const terminals = reportAttemptMock.mock.calls
+      .map((c) => c[2] as any)
+      .filter((a) => a.status !== "running");
+    expect(
+      terminals.filter(
+        (t) => t.hostId === "host-2" && t.status === "succeeded",
+      ),
+    ).toHaveLength(2);
+    expect(
+      terminals.find((t) => t.hostId === "host-1" && t.sessionIdx === 1),
+    ).toMatchObject({
+      errorCode: "user_rate_limit",
+      errorMessage: expect.stringContaining("in-flight"),
+    });
+    expect(
+      finalizePendingAttemptsMock.mock.calls.some(
+        (c) => c[2].errorCode === "spend_cap_exceeded",
+      ),
+    ).toBe(false);
+  });
   it("reports an in-flight session that the spend-cap abort cancelled as rate_limited/spend_cap_exceeded (NOT session_failed), while a genuinely-succeeded session keeps its outcome", async () => {
     // Concurrent barrier: host-1 trips the org spend cap while host-2 has a
     // session PARKED in-flight. The cap's `runStop.abort()` cancels host-2's
@@ -1411,6 +1442,26 @@ describe("swarm fan-out runner — bearer re-resolution", () => {
 });
 
 describe("classifyRateLimit — a halt needs a real spend signal", () => {
+  it("keeps transient holds scoped to one target", () => {
+    expect(
+      classifyRateLimit(
+        'swarm-agent https://example.test/turn failed (429): {"code":"user_rate_limit","refusalReason":"holds_committed","isRetryable":true,"error":"MCPJam model limit reached for the moment."}',
+      ),
+    ).toBe("transient_capacity");
+    expect(
+      classifyRateLimit("MCPJam model limit", {
+        code: "user_rate_limit",
+        refusalReason: "holds_committed",
+      }),
+    ).toBe("transient_capacity");
+    expect(
+      classifyRateLimit("user_rate_limit", {
+        code: "user_rate_limit",
+        refusalReason: "allowance_exhausted",
+      }),
+    ).toBe("org_spend_cap");
+  });
+
   // `cap`/`quota`/`budget` were word-anchored from the start so "capacity",
   // "recap" and "escape" could not escalate one host's rate limit into a
   // whole-run stop. `spend` was not, and "suspended" contains it.

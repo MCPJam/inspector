@@ -108,7 +108,6 @@ export function CreditBalanceCard({
   // daily free bucket. Paid top-ups are shown separately and spent only after
   // the allowance runs out.
   const showMonthly =
-    isV2 ||
     balance?.billingModel === "monthly_per_seat" ||
     balance?.billingModel === "monthly_flat";
   const monthlyTotal = balance?.monthlyAllowanceTotal ?? 0;
@@ -403,8 +402,12 @@ export function CreditBalanceCard({
                     organizationId,
                   )}/plans`}
                 >
-                  Upgrade to Pro to buy credits
+                  {paidRemaining > 0
+                    ? "Upgrade to Pro to buy more credits"
+                    : "Upgrade to Pro to buy credits"}
                 </a>
+              ) : paidRemaining > 0 ? (
+                "Upgrade to Pro to buy more credits"
               ) : (
                 "Upgrade to Pro to buy credits"
               )}

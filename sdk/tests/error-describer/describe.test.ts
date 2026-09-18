@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   describeAsSlug,
+  mcpjamLimitSlugForMessage,
   describeError,
   ERROR_CATALOG,
   extractNodeErrno,
@@ -843,4 +844,17 @@ describe("MCPJam containment refusals", () => {
     expect(describeError({ code, message: "Forbidden" }).slug).toBe(slug);
     expect(describeError({ data: { code }, message: "Forbidden" }).slug).toBe(slug);
   });
+});
+
+it.each([
+  ["Daily MCPJam model limit reached.", "provider/mcpjam_limit_daily"],
+  ["Monthly MCPJam model limit reached.", "provider/mcpjam_limit_monthly"],
+  [
+    "MCPJam model limit reached for the moment: 2 in-flight requests hold the remaining credits.",
+    "provider/mcpjam_limit",
+  ],
+  ["Provider rate limit", undefined],
+])("classifies MCPJam limit markers: %s", (message, slug) => {
+  expect(mcpjamLimitSlugForMessage(message)).toBe(slug);
+  if (slug) expect(describeError(new Error(message)).slug).toBe(slug);
 });

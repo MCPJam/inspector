@@ -1,3 +1,4 @@
+import { spendRefusalOf } from "../admission-retry";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ModelDefinition } from "@/shared/types";
@@ -805,5 +806,47 @@ it.each([6, undefined])(
       baseArgs({ maxSteps }) as Parameters<typeof drainAssistantTurn>[0],
     );
     expect((calls[0] as { maxSteps?: number }).maxSteps).toBe(maxSteps);
+  },
+);
+
+it.each([false, true])(
+  "only attaches replayable admission when no new messages exist (hasMessages=%s)",
+  async (hasMessages) => {
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+    runAssistantTurnMock.mockImplementation(async (opts: any) => {
+      opts.onEngineError?.({
+        message: "MCPJam model limit reached for the moment.",
+        code: "user_rate_limit",
+        refusalReason: "holds_committed",
+        retryAfterMs: 15000,
+        httpStatus: 429,
+        stepIndex: hasMessages ? 1 : 0,
+      });
+      return {
+        messages: hasMessages
+          ? [
+              ...opts.messages,
+              { role: "assistant", content: "Tool already executed." },
+            ]
+          : opts.messages,
+        assistantMessages: [],
+        toolCalls: [],
+        toolResults: [],
+      };
+    });
+    const error = await drainAssistantTurn(
+      baseArgs() as Parameters<typeof drainAssistantTurn>[0],
+    ).catch((error) => error);
+    expect(error).toBeInstanceOf(Error);
+    expect(error.errorRefusal).toMatchObject({
+      code: "user_rate_limit",
+      refusalReason: "holds_committed",
+    });
+    if (hasMessages) expect(spendRefusalOf(error)).toBeUndefined();
+    else
+      expect(spendRefusalOf(error)).toMatchObject({
+        retryAfterMs: 15000,
+        stepIndex: 0,
+      });
   },
 );

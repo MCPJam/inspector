@@ -324,6 +324,7 @@ export { redactForTelemetry as redactSensitiveValue } from "./telemetry-redactio
 export {
   describeError,
   describeAsSlug,
+  mcpjamLimitSlugForMessage,
   isNormalizedError,
   originOf,
   ERROR_CATALOG,
