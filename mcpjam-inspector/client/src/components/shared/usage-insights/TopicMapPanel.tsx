@@ -651,6 +651,12 @@ export function TopicMapPanel({
       (analysis?.running ?? 0) -
       (analysis?.deferred ?? 0) >
     0;
+  // What earns the header its retry (#5277 keeps failed-run recovery and
+  // hides voluntary rebuilds): sessions whose analysis or map projection
+  // failed, with nothing still in flight.
+  const analysisFailed =
+    !analyzing &&
+    (analysis?.failed ?? 0) + (analysis?.projectionFailed ?? 0) > 0;
   const isSwarmScope = topicMapScope?.kind === "swarm";
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
@@ -1378,15 +1384,9 @@ export function TopicMapPanel({
             <p className="text-sm font-medium">{emptyTitle}</p>
             <p className="mt-1 text-xs text-muted-foreground">{emptyBody}</p>
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            disabled={rebuildBusy}
-            onClick={() => onRebuild({ force: true })}
-          >
-            <RefreshCw className="mr-2 h-3.5 w-3.5" />
-            Re-analyze
-          </Button>
+          {/* No voluntary rebuild here (#5277): before the first map read
+              there is no analysis state to retry from, and the one place to
+              ask for a re-analysis is the freshness chip's popover. */}
         </div>
       </div>
     );
@@ -1513,25 +1513,28 @@ export function TopicMapPanel({
                 Fit view
               </TooltipContent>
             </Tooltip>
-            <Tooltip delayDuration={200}>
-              <TooltipTrigger asChild>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  aria-label="Re-analyze"
-                  disabled={rebuildBusy}
-                  onClick={() => onRebuild({ force: true })}
-                >
-                  <RefreshCw
-                    className={cn("h-3.5 w-3.5", analyzing && "animate-spin")}
-                  />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="top" sideOffset={6}>
-                Re-analyze
-              </TooltipContent>
-            </Tooltip>
+            {/* Recovery only (#5277): the header keeps a retry for a failed
+                analysis. The voluntary Re-analyze lives in the freshness
+                chip's popover. */}
+            {analysisFailed ? (
+              <Tooltip delayDuration={200}>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    aria-label="Retry analysis"
+                    disabled={rebuildBusy}
+                    onClick={() => onRebuild({ force: true })}
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="top" sideOffset={6}>
+                  Retry analysis
+                </TooltipContent>
+              </Tooltip>
+            ) : null}
           </div>
         </div>
 
