@@ -712,8 +712,16 @@ This environment's server group is gone.
 The model request ended without usable content, so the turn could not complete.
 The recorded error names the provider's finish reason where one was reported.
 
-Rerun the affected cases. If the error recurs on an MCPJam model, report it with
-those run details. For BYOK, check the recorded provider error and account configuration.
+**Likely causes**
+- The model reached its output-token limit before producing any visible text, tool call, or reasoning. This is common with reasoning models that spend most of their token budget on hidden chain-of-thought.
+- The provider returned an empty stream or a stream with no content blocks.
+
+**Next steps**
+- Check the session card's failure message for the provider's `finishReason` (for example, `length` means the output-token limit was reached).
+- Rerun the affected sessions. If the error recurs on an MCPJam model, report it with those run details.
+- For BYOK, check the recorded provider error and your account's token-limit configuration.
+
+> **Not a rate limit** — A session that fails with this error is classified as **failed**, not rate-limited. If you previously saw a provider rate-limit banner for sessions that actually hit a token limit, that misclassification is fixed.
 
 ## Unknown error
 
