@@ -125,6 +125,32 @@ describe("PostHog $exception enrichment", () => {
     expect(properties.failed_request_age_ms).toBeGreaterThanOrEqual(0);
   });
 
+  it.each([
+    "Load failed",
+    "Failed to fetch",
+    "Failed to fetch (app.mcpjam.com)",
+    "NetworkError when attempting to fetch resource.",
+    "'TypeError' captured as exception with message: 'Failed to fetch'",
+  ])("matches the exact browser message %j", (value) => {
+    expect(
+      sanitize(
+        { $exception_list: [{ type: "TypeError", value }] },
+        "$exception",
+      ).failed_request,
+    ).toBe("GET /api/servers");
+  });
+
+  it.each([
+    "Failed to fetch tools",
+    "Failed to fetch chat transcript (500)",
+    "'Error' captured as exception with message: 'Load failed to parse'",
+  ])("does not match our own look-alike message %j", (value) => {
+    expect(
+      sanitize({ $exception_list: [{ type: "Error", value }] }, "$exception")
+        .failed_request,
+    ).toBeUndefined();
+  });
+
   it("skips other exceptions and other events", () => {
     expect(
       sanitize(

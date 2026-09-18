@@ -86,12 +86,27 @@ export function scrubSensitiveUrl(value: string): string {
   return out;
 }
 
-// What browsers say when a request never got a response.
-const NETWORK_FAILURE_MESSAGES = [
+// What browsers say when a request never got a response. Matched exactly so
+// our own errors like "Failed to fetch tools" don't get tagged.
+const NETWORK_FAILURE_MESSAGES = new Set([
   "Load failed", // Safari
   "Failed to fetch", // Chrome
-  "NetworkError when attempting to fetch resource", // Firefox
-];
+  "NetworkError when attempting to fetch resource.", // Firefox
+]);
+
+// posthog-js reports error-like objects that aren't real Errors as
+// "'TypeError' captured as exception with message: 'Load failed'".
+const POSTHOG_WRAPPED_MESSAGE =
+  /^'[^']*' captured as exception with message: '([\s\S]*)'$/;
+
+function isNetworkFailureMessage(value: string): boolean {
+  const message = POSTHOG_WRAPPED_MESSAGE.exec(value)?.[1] ?? value;
+  return (
+    NETWORK_FAILURE_MESSAGES.has(message) ||
+    // Newer Chrome adds the host: "Failed to fetch (example.com)".
+    (message.startsWith("Failed to fetch (") && message.endsWith(")"))
+  );
+}
 
 // The exception fires right after the request fails; anything older is
 // probably a different request.
@@ -106,9 +121,7 @@ function attachFailedRequest(properties: Record<string, any>): void {
     exceptions.some(
       (exception) =>
         typeof exception?.value === "string" &&
-        NETWORK_FAILURE_MESSAGES.some((message) =>
-          exception.value.includes(message),
-        ),
+        isNetworkFailureMessage(exception.value),
     );
   if (!isNetworkFailure) return;
 
