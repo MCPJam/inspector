@@ -9,6 +9,7 @@ import {
   BrowserSessionService,
   BrowserSessionServiceError,
 } from "../../services/browserd/session-service.js";
+import { BrowserProtocolMismatchError } from "../../services/browserd/browser-session.js";
 import {
   parseSessionPolicy,
   policyRefusalFor,
@@ -278,7 +279,12 @@ for (const op of [
               : refusedResult({
                   commandId,
                   ledger,
-                  code: "browser_unavailable",
+                  // A wire mismatch fails every retry until the daemon is
+                  // replaced, unlike the transient `browser_unavailable`.
+                  code:
+                    error instanceof BrowserProtocolMismatchError
+                      ? "protocol_mismatch"
+                      : "browser_unavailable",
                   message:
                     error instanceof Error
                       ? error.message

@@ -259,8 +259,8 @@ export function CreateSuitePage({
     if (!composerReady) return "Loading this project's clients…";
     if (attachmentsRequired && !hasServer) {
       return target.stack.hostIds.length === 0
-        ? "Pick a server group and a client first."
-        : "Pick a server group first.";
+        ? "Pick a server or group and a client first."
+        : "Pick a server or group first.";
     }
     if (attachmentsRequired && target.stack.hostIds.length === 0) {
       return "Choose a client first.";
@@ -337,7 +337,7 @@ export function CreateSuitePage({
         );
         const fallbackServerAttachmentId =
           resolvedGroups.size === 1
-            ? [...resolvedGroups][0] ?? undefined
+            ? ([...resolvedGroups][0] ?? undefined)
             : undefined;
         payload = {
           name: name.trim(),
@@ -469,8 +469,11 @@ export function CreateSuitePage({
                     disabled={isSaving}
                     testIdPrefix="create-suite-servers"
                     slots={EVALS_CREATE_SERVER_SLOTS}
-                    emptyServerLabel="No server group · pick one"
-                    serverInfoText="A named set of MCP servers this suite runs against."
+                    // Not the composer's "Servers · client default": the
+                    // server is REQUIRED here (`serverOptional={false}`), so
+                    // there is no client default to fall back to.
+                    emptyServerLabel="Pick a server or group"
+                    serverOptional={false}
                     environmentsVocabulary="client"
                   />
                 </div>

@@ -1600,3 +1600,47 @@ it("shares discovery budgets across tabs in the local session", async () => {
   b.dispose();
   expect(localBudget.entries.size).toBe(0);
 });
+
+describe("attachedFrameSessions", () => {
+  it("lists attached frames with their sessions, and NEVER the page's own", async () => {
+    // The accessibility reader needs exactly this set: a document's AX tree
+    // does not descend into child documents, so without these no iframe
+    // content is visible to the model at all. It must never include the
+    // page's session under a frame id — the caller already has that one, and
+    // handing it back here would invite a reader to treat the main document
+    // as a child of itself.
+    const main = fakeCdp();
+    const bridge = await started(main);
+    const child = fakeCdp();
+    await bridge.addSession("frame-sub", child.cdp);
+    expect(bridge.attachedFrameSessions()).toEqual([
+      { frameId: "frame-sub", cdp: child.cdp },
+    ]);
+  });
+
+  it("is empty on a page with no attached frames", async () => {
+    const bridge = await started(fakeCdp());
+    expect(bridge.attachedFrameSessions()).toEqual([]);
+  });
+
+  it("drops a frame whose session was removed", async () => {
+    const bridge = await started(fakeCdp());
+    const child = fakeCdp();
+    const key = await bridge.addSession("frame-sub", child.cdp);
+    bridge.removeSession(key);
+    expect(bridge.attachedFrameSessions()).toEqual([]);
+  });
+
+  it("reports the REPLACEMENT session after a frame re-attaches", async () => {
+    // `addSession` retires the previous attachment for the same frame, so a
+    // reader must never be handed a session nobody is listening on.
+    const bridge = await started(fakeCdp());
+    const first = fakeCdp();
+    const second = fakeCdp();
+    await bridge.addSession("frame-sub", first.cdp);
+    await bridge.addSession("frame-sub", second.cdp);
+    expect(bridge.attachedFrameSessions()).toEqual([
+      { frameId: "frame-sub", cdp: second.cdp },
+    ]);
+  });
+});

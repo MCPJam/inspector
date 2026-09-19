@@ -157,6 +157,12 @@ const TRACE_PROPAGATION_TARGETS: (string | RegExp)[] = [
   // `https://x.convex.cloud.evil/`. Either way Sentry would attach trace +
   // baggage headers to an origin we do not control.
   /^https?:\/\/(?:[A-Za-z0-9-]+\.)+convex\.(?:cloud|site)(?::\d+)?(?:[/?#]|$)/,
+  // The production deployment is also reachable on first-party custom domains
+  // routed through our own Cloudflare zone: `rt.mcpjam.com` (Convex API) and
+  // `rt-http.mcpjam.com` (HTTP actions). Same anchoring as above — the host is
+  // matched exactly, so `rt.mcpjam.com.evil`, `x.rt.mcpjam.com` and userinfo
+  // tricks all fall outside it.
+  /^https?:\/\/rt(?:-http)?\.mcpjam\.com(?::\d+)?(?:[/?#]|$)/,
 ];
 
 /**
