@@ -1,3 +1,8 @@
+import { useAvailableModels } from "@/hooks/use-available-models";
+import { RunIterationControl } from "./run-iteration-control";
+import { EvalModelChoices } from "./eval-target-matrix";
+import type { GeneratedDraft } from "@/lib/mcpjam-agent/eval-workspace";
+import { resolveAuthoringIssue } from "@/lib/mcpjam-agent/eval-workspace";
 import { ImportedDraftEditor } from "./imported-draft-editor";
 import { EVAL_DESCRIBE_ONLY_AGENT } from "@/shared/eval-agent-scope";
 import { useEffect, useRef, useState } from "react";
@@ -17,6 +22,7 @@ import {
   evalSurfaceHeaderClass,
 } from "../evals/eval-surface-chrome";
 import { Button } from "@mcpjam/design-system/button";
+import { Badge } from "@mcpjam/design-system/badge";
 import { Input } from "@mcpjam/design-system/input";
 import { CaseSpine } from "./case-spine/case-spine";
 import { caseViewModel } from "./case-workspace/case-view-model";
@@ -27,8 +33,59 @@ import {
   saveGeneratedDraft,
   removeGeneratedDraft,
   importedDraftBlockedReason,
+  importedDraftBlockedBadge,
+  followAuthoringJob,
+  acceptAuthoringAddition,
+  controlAuthoringJob,
 } from "@/lib/mcpjam-agent/eval-workspace";
 import type { EvalAgentScope } from "@/shared/eval-agent-scope";
+import { describeMCPJamLimitMessage } from "@/lib/mcpjam-limit";
+
+/**
+ * Convex rejects a mutation with `OptimisticConcurrencyControlFailure` when two
+ * writers touch the same document at once — here, two draft saves landing on
+ * the same suite. The raw message is a JSON blob whose readable text sits one
+ * level down, so match the whole string rather than a parsed field.
+ */
+export function isWriteConflictMessage(message: string): boolean {
+  return /OptimisticConcurrencyControlFailure/i.test(message);
+}
+
+/** Named the retry, because retrying is the entire fix. */
+const WRITE_CONFLICT_MESSAGE =
+  "Another change to this suite landed first. Try adding it again.";
+
+/**
+ * The one place a stored draft/generation error becomes user-facing copy. The
+ * store keeps the wire message verbatim on purpose, so the shaping happens at
+ * render: a model limit gets the catalog sentence, a write conflict gets the
+ * retry line, and anything else is shown as-is.
+ */
+export function describeEvalDraftError(message: string): string {
+  return (
+    describeMCPJamLimitMessage(message) ??
+    (isWriteConflictMessage(message) ? WRITE_CONFLICT_MESSAGE : message)
+  );
+}
+
+/**
+ * Save drafts ONE AT A TIME. Every `saveGeneratedDraft` ends in a mutation that
+ * reads and writes the same `testSuite` document, so firing them together loses
+ * the optimistic-concurrency check and all but one fail. Serializing removes
+ * the collision at its source — no retry needed.
+ *
+ * Keeps going after a failure: `saveGeneratedDraft` swallows its own error onto
+ * the draft, so the failures stay in the list and the successes drop out, the
+ * same as before.
+ */
+async function saveDraftsSequentially(
+  scope: EvalAgentScope,
+  drafts: ReadonlyArray<{ id: string }>,
+): Promise<void> {
+  for (const draft of drafts) {
+    await saveGeneratedDraft(scope, draft.id);
+  }
+}
 
 export function EvalGeneratedDrafts({
   projectId,
@@ -57,6 +114,10 @@ export function EvalGeneratedDrafts({
   };
   const [reviewing, setReviewing] = useState<string | null>(null);
   const state = useEvalGeneration((s) => s.suites[evalSuiteKey(scope)]);
+  useEffect(() => {
+    if (state?.authoringJobId)
+      void followAuthoringJob({ projectId, suiteId }, state.authoringJobId);
+  }, [projectId, suiteId, state?.authoringJobId]);
   const [open, setOpen] = useState(defaultOpen);
   const initialReviewRequest = useRef(state?.reviewRequestId);
   useEffect(() => {
@@ -68,7 +129,14 @@ export function EvalGeneratedDrafts({
       setOpen(true);
     }
   }, [state?.reviewRequestId]);
-  if (!state || !state.drafts.length)
+  // A running or failed authoring job owns the status line and its
+  // cancel/retry control before it has produced a single draft. A bare
+  // `error` does NOT: generation writes its failures to the same per-suite
+  // store, and the generation workspace already renders them — opening this
+  // panel for one put the identical message on screen twice and revived an
+  // empty draft section after a failed generation.
+  const authoringVisible = !saveVisibleOnly && Boolean(state?.authoringJobId);
+  if (!state || (!state.drafts.length && !authoringVisible))
     return saveVisibleOnly ? (
       <p role="status" className="text-sm">
         All tests in this batch are saved.
@@ -83,7 +151,7 @@ export function EvalGeneratedDrafts({
         All tests in this batch are saved.
       </p>
     );
-  if (!visibleDrafts.length && !state.error) return null;
+  if (!visibleDrafts.length && !authoringVisible) return null;
   const revealing =
     !saveVisibleOnly && visibleDrafts.length < state.drafts.length;
   const saveTargets = saveVisibleOnly ? visibleDrafts : state.drafts;
@@ -119,17 +187,22 @@ export function EvalGeneratedDrafts({
               </Button>
             </CollapsibleTrigger>
           </h3>
+          {state.authoringJobId && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                void controlAuthoringJob(scope, running ? "cancel" : "retry")
+              }
+            >
+              {running ? "Cancel drafting" : "Retry failed cases"}
+            </Button>
+          )}
           {state.drafts.length > 0 && (
             <Button
               size="sm"
               disabled={saving || running || revealing || !readyTargets.length}
-              onClick={() =>
-                void Promise.all(
-                  readyTargets.map((draft) =>
-                    saveGeneratedDraft(scope, draft.id),
-                  ),
-                )
-              }
+              onClick={() => void saveDraftsSequentially(scope, readyTargets)}
             >
               {saving
                 ? "Adding cases…"
@@ -147,16 +220,23 @@ export function EvalGeneratedDrafts({
             below, then add individual cases or add them all to make them
             available to Run.
           </p>
+          {/* Reaching here means there ARE drafts or an authoring job — the
+              early return above handles the bare-error case, which belongs to
+              the generation workspace. */}
           {!saveVisibleOnly && state.error && (
             <p role="alert" className="text-sm text-destructive">
-              {state.error}
+              {describeEvalDraftError(state.error)}
             </p>
           )}
           {visibleDrafts.map((draft) => {
             const expanded = reviewing === draft.id;
             const blockedReason = importedDraftBlockedReason(draft);
+            const blockedBadge = importedDraftBlockedBadge(draft);
             const locked =
-              draft.saving || Boolean(draft.markdownImport?.prepared);
+              draft.saving ||
+              Boolean(
+                draft.markdownImport?.prepared || draft.authoringPrepared,
+              );
             const prompt = draft.input.steps?.find(
               (step) => step.kind === "prompt",
             );
@@ -170,9 +250,15 @@ export function EvalGeneratedDrafts({
                 )}
               >
                 <header className="flex items-start gap-3">
-                  <h4 className="min-w-0 flex-1 break-words text-sm font-semibold">
+                  <h4 className="min-w-0 break-words text-sm font-semibold">
                     {draft.input.title || "Untitled draft"}
                   </h4>
+                  {blockedBadge && (
+                    <Badge variant="destructive" title={blockedReason}>
+                      {blockedBadge}
+                    </Badge>
+                  )}
+                  <span className="flex-1" />
                   <Button
                     type="button"
                     variant="ghost"
@@ -208,6 +294,13 @@ export function EvalGeneratedDrafts({
                         }
                       />
                     </label>
+                    {draft.authoring && (
+                      <AuthoringDraftSettings
+                        scope={scope}
+                        draft={draft}
+                        disabled={locked}
+                      />
+                    )}
                     {draft.markdownImport ? (
                       <ImportedDraftEditor scope={scope} draft={draft} />
                     ) : (
@@ -231,10 +324,10 @@ export function EvalGeneratedDrafts({
                             predicates,
                           })
                         }
-                        availableTools={[]}
-                        suiteServers={[]}
+                        availableTools={state?.availableTools ?? []}
+                        suiteServers={state?.suiteServers ?? []}
                         evalValidationBorderClass="border-border"
-                        readOnly={draft.saving}
+                        readOnly={locked}
                         onStepsChange={(steps) =>
                           editGeneratedDraft(scope, draft.id, draft.revision, {
                             steps,
@@ -251,14 +344,87 @@ export function EvalGeneratedDrafts({
                     <p className="line-clamp-2 text-[13px] leading-relaxed">
                       {prompt?.kind === "prompt" && prompt.prompt.trim()
                         ? prompt.prompt
-                        : "Open this draft to review its steps and checks."}
+                        : "Open this draft to review its steps and assertions."}
                     </p>
                   </div>
                 )}
-                {blockedReason && (
-                  <p className="text-xs text-muted-foreground">
-                    {blockedReason}
-                  </p>
+                {draft.authoring && (
+                  <div className="space-y-3 text-sm">
+                    {draft.authoring.source && (
+                      <details>
+                        <summary>
+                          Source: {draft.authoring.source.fileName}, lines{" "}
+                          {draft.authoring.source.startLine}–
+                          {draft.authoring.source.endLine}
+                        </summary>
+                        <pre className="whitespace-pre-wrap rounded bg-muted p-3">
+                          {draft.authoring.source.excerpt}
+                        </pre>
+                      </details>
+                    )}
+                    {draft.authoring.issues.map((issue, index) => (
+                      <div key={index}>
+                        <p
+                          className={
+                            issue.blocking && !issue.resolution
+                              ? "text-destructive"
+                              : "text-muted-foreground"
+                          }
+                        >
+                          {issue.stepId ? `${issue.stepId}: ` : ""}
+                          {issue.message}
+                        </p>
+                        {issue.blocking && (
+                          <textarea
+                            aria-label={`Resolution for ${issue.message}`}
+                            placeholder="Explain the evidence or edits that resolve this issue (at least 10 characters)."
+                            className="w-full rounded-md border bg-background p-2"
+                            value={
+                              draft.issueResolutions?.[index] ??
+                              issue.resolution ??
+                              ""
+                            }
+                            disabled={locked}
+                            onChange={(event) =>
+                              resolveAuthoringIssue(
+                                scope,
+                                draft.id,
+                                index,
+                                event.target.value,
+                              )
+                            }
+                          />
+                        )}
+                      </div>
+                    ))}
+                    {draft.authoring.additions.map((addition) => (
+                      <label
+                        key={addition.id}
+                        className="flex items-start gap-2"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={
+                            draft.acceptedAdditionIds?.includes(addition.id) ??
+                            false
+                          }
+                          disabled={locked}
+                          onChange={(event) =>
+                            acceptAuthoringAddition(
+                              scope,
+                              draft.id,
+                              addition.id,
+                              event.target.checked,
+                            )
+                          }
+                        />
+                        <span>
+                          Accept proposed addition at {addition.path}:{" "}
+                          {addition.explanation}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
                 )}
                 <footer className="flex flex-wrap items-center gap-2">
                   <Button
@@ -273,7 +439,8 @@ export function EvalGeneratedDrafts({
                   >
                     {draft.saving
                       ? "Adding…"
-                      : draft.markdownImport?.prepared
+                      : draft.markdownImport?.prepared ||
+                          draft.authoringPrepared
                         ? "Retry save"
                         : "Add to suite"}
                   </Button>
@@ -304,7 +471,7 @@ export function EvalGeneratedDrafts({
                             sessionId,
                             `Read the generated draft titled ${JSON.stringify(
                               draft.input.title,
-                            )} and suggest a focused improvement to its steps and checks. Do not save it or generate more cases.`,
+                            )} and suggest a focused improvement to its steps and assertions. Do not save it or generate more cases.`,
                           );
                       }}
                     >
@@ -314,7 +481,7 @@ export function EvalGeneratedDrafts({
                 </footer>
                 {draft.error && (
                   <p role="alert" className="mt-3 text-xs text-destructive">
-                    {draft.error}
+                    {describeEvalDraftError(draft.error)}
                   </p>
                 )}
               </article>
@@ -323,5 +490,69 @@ export function EvalGeneratedDrafts({
         </CollapsibleContent>
       </section>
     </Collapsible>
+  );
+}
+
+function AuthoringDraftSettings({
+  scope,
+  draft,
+  disabled,
+}: {
+  scope: EvalAgentScope;
+  draft: GeneratedDraft;
+  disabled: boolean;
+}) {
+  const { availableModels } = useAvailableModels({
+    projectId: scope.projectId,
+  });
+  return (
+    <div className="space-y-4">
+      <RunIterationControl
+        value={String(draft.input.runs ?? 5)}
+        disabled={disabled}
+        onChange={(value) =>
+          editGeneratedDraft(scope, draft.id, draft.revision, {
+            runs: Number(value),
+          })
+        }
+      />
+      <label className="flex items-center gap-2 text-sm">
+        <input
+          type="checkbox"
+          disabled={disabled}
+          checked={draft.input.isNegativeTest ?? false}
+          onChange={(event) =>
+            editGeneratedDraft(scope, draft.id, draft.revision, {
+              isNegativeTest: event.target.checked,
+            })
+          }
+        />
+        Negative test
+      </label>
+      <p className="text-sm text-muted-foreground">
+        No model override uses the suite models.
+      </p>
+      <EvalModelChoices
+        testId="authoring-models"
+        disabled={disabled}
+        availableModels={availableModels}
+        value={{
+          includeClientDefaults: false,
+          explicitModelIds: draft.input.models.map((model) => model.model),
+        }}
+        onChange={(value) =>
+          editGeneratedDraft(scope, draft.id, draft.revision, {
+            models: value.explicitModelIds.flatMap((id) => {
+              const model = availableModels.find(
+                (model) => String(model.id) === id,
+              );
+              return model
+                ? [{ model: id, provider: String(model.provider) }]
+                : draft.input.models.filter((model) => model.model === id);
+            }),
+          })
+        }
+      />
+    </div>
   );
 }

@@ -48,6 +48,12 @@ vi.mock("@/lib/session-token", () => ({
   authFetch: vi.fn(),
 }));
 
+const limitMocks = vi.hoisted(() => ({
+  notifyMCPJamLimitError: vi.fn(),
+  notifyMCPJamLimitErrorFromResponse: vi.fn(),
+}));
+vi.mock("@/lib/mcpjam-limit", () => limitMocks);
+
 const { trackMock } = vi.hoisted(() => ({ trackMock: vi.fn() }));
 vi.mock("@/lib/analytics", () => ({
   track: trackMock,
@@ -77,6 +83,7 @@ import {
   useUiToolsRegistry,
   type UiToolDefinition,
 } from "@/lib/webmcp/ui-tools-registry";
+import { authFetch } from "@/lib/session-token";
 
 function registerTool(extra?: Partial<UiToolDefinition>): UiToolDefinition {
   const def: UiToolDefinition = {
@@ -121,6 +128,42 @@ describe("agent-chat-instances", () => {
     expect(a).toBe(b);
     expect(a).not.toBe(c);
     expect(mockState.chatInstances).toHaveLength(2);
+  });
+
+  it("raises the limit dialog for a pre-stream refusal and passes the response through", async () => {
+    getOrCreateAgentChat("s1");
+    const refused = { ok: false, status: 429 } as Response;
+    vi.mocked(authFetch).mockResolvedValueOnce(refused);
+    await expect(
+      mockState.lastTransportOptions.fetch("/api/web/mcpjam-agent", {
+        method: "POST",
+      }),
+    ).resolves.toBe(refused);
+    expect(limitMocks.notifyMCPJamLimitErrorFromResponse).toHaveBeenCalledWith(
+      refused,
+    );
+
+    const okResponse = { ok: true, status: 200 } as Response;
+    vi.mocked(authFetch).mockResolvedValueOnce(okResponse);
+    await expect(
+      mockState.lastTransportOptions.fetch("/api/web/mcpjam-agent", {
+        method: "POST",
+      }),
+    ).resolves.toBe(okResponse);
+    expect(limitMocks.notifyMCPJamLimitErrorFromResponse).toHaveBeenCalledTimes(
+      1,
+    );
+  });
+
+  it("raises the limit dialog for a refusal streamed as an error", () => {
+    getOrCreateAgentChat("s1");
+    const error = new Error(
+      '{"code":"user_rate_limit","limitKind":"total","error":"Daily MCPJam model limit reached."}',
+    );
+    mockState.chatInstances[0].init.onError(error);
+    expect(limitMocks.notifyMCPJamLimitError).toHaveBeenCalledWith({
+      message: error.message,
+    });
   });
 
   it("transport body reads the mutable config at POST time", () => {

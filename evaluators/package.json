@@ -1,0 +1,51 @@
+{
+  "name": "@mcpjam/evaluators",
+  "version": "0.3.0",
+  "description": "Pure evaluator contracts, assertions and trajectory matching",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./assertions": {
+      "types": "./dist/predicates/index.d.ts",
+      "import": "./dist/predicates/index.js"
+    },
+    "./matchers": {
+      "types": "./dist/matchers.d.ts",
+      "import": "./dist/matchers.js"
+    },
+    "./internal/*": {
+      "types": "./dist/*.d.ts",
+      "import": "./dist/*.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "test:packaging": "npm run build && node scripts/pack-smoke.mjs",
+    "test:packaging:all": "npm run test:clean-build && npm run build && node scripts/pack-smoke.mjs --pnpm",
+    "test:clean-build": "node scripts/clean-build-smoke.mjs"
+  },
+  "dependencies": {
+    "@cfworker/json-schema": "^4.1.1",
+    "@noble/hashes": "^2.3.0",
+    "zod": "^4.2.0"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.1",
+    "typescript": "^5.3.3",
+    "vitest": "^3.2.7"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "license": "MIT"
+}

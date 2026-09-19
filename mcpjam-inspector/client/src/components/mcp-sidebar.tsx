@@ -19,6 +19,7 @@ import {
   Users,
   ShieldCheck,
   Loader2,
+  ExternalLink,
   Layers,
   Cable,
   MessagesSquare,
@@ -52,7 +53,7 @@ import { consumePendingInviteDialog } from "@/lib/pending-invite-dialog";
 import { SidebarContextSwitcher } from "@/components/sidebar/sidebar-context-switcher";
 import { SidebarTrialCountdown } from "@/components/sidebar/sidebar-trial-countdown";
 import { SidebarCredits } from "@/components/sidebar/sidebar-credits";
-import { ShareProjectDialog } from "@/components/project/ShareProjectDialog";
+import { InviteTeamMembersDialog } from "@/components/organization/InviteTeamMembersDialog";
 import { useUpdateNotification } from "@/hooks/useUpdateNotification";
 import { Button } from "@mcpjam/design-system/button";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
@@ -250,35 +251,43 @@ export const navigationSections: NavSection[] = [
     id: "measure",
     label: "Measure",
     items: [
-      {
-        title: "User Testing",
-        url: "/user-testing",
-        icon: Users,
-        featureFlag: "sandboxes-enabled",
-        billingFeature: "scenarios",
-      },
+      // Both are behind `sandboxes-enabled`, which is the rollout control.
+      // The flag is NOT combined with sign-in (REEV-6): when it is on, a
+      // signed-out visitor sees the items too, and the route decides what they
+      // get — a signed-out visitor gets the preview, a member the real tab.
+      //
+      // Swarms before User Testing (Vig): less set-up is required to get value
+      // out of it, so it is the better first stop.
       {
         title: "Swarms",
         url: "/swarms",
         icon: Network,
         featureFlag: "sandboxes-enabled",
+        // Same pill XAA Debugger carries. It marks a NEW feature, not an
+        // access state: the earlier LOG IN / UPGRADE markers described who the
+        // reader was, and there is no longer a plan to report on.
+        badge: "New",
         billingFeature: "scenarios",
       },
       {
-        title: "Evaluate",
+        title: "User Testing",
+        url: "/user-testing",
+        icon: Users,
+        featureFlag: "sandboxes-enabled",
+        badge: "New",
+        billingFeature: "scenarios",
+      },
+      {
+        title: "Evaluate (Legacy)",
         url: "/evals",
+        featureFlag: "evaluate-enabled",
         icon: FlaskConical,
         billingFeature: "evals",
       },
       {
-        // The redesigned Evaluate tab, shown ALONGSIDE the original while it
-        // is dogfooded — the point of a second tab is being able to compare
-        // them. When the redesign wins, this item takes the "Evaluate" name
-        // and the one above is deleted.
-        title: "Ding Dong",
+        title: "Evaluate",
         url: "/evaluate",
         icon: FlaskConical,
-        featureFlag: "evaluate-enabled",
         billingFeature: "evals",
       },
       {
@@ -306,7 +315,6 @@ export const navigationSections: NavSection[] = [
         title: "XAA Debugger",
         url: "/xaa-flow",
         icon: ShieldCheck,
-        badge: "New",
         featureFlag: "xaa",
       },
       {
@@ -361,6 +369,7 @@ export const navigationSections: NavSection[] = [
         title: "WebMCP",
         url: "/webmcp",
         icon: Globe,
+        badge: "New",
         featureFlag: WEBMCP_INSPECTOR_FEATURE_FLAG,
       },
     ],
@@ -385,7 +394,7 @@ export const navigationSections: NavSection[] = [
 const signedOutUtilityItems: NavItem[] = [
   {
     title: "Support",
-    url: "/support",
+    url: "/settings/support",
     icon: MessageCircleQuestionIcon,
   },
   {
@@ -499,7 +508,6 @@ export function MCPSidebar({
   activeOrganizationId,
   activeOrganizationName,
   onSwitchOrganization,
-  onProjectShared,
   billingGateDenied = {},
   billingGateEnforcementActive = false,
   billingUiEnabled = false,
@@ -538,18 +546,31 @@ export function MCPSidebar({
   const {
     status: updateStatus,
     restartRequested,
+    downloadManually,
     restartAndInstall,
   } = useUpdateNotification();
   const showUpdateButton =
-    updateStatus.kind === "pending" || updateStatus.kind === "downloaded";
+    updateStatus.kind === "pending" ||
+    updateStatus.kind === "downloaded" ||
+    updateStatus.kind === "manual";
+  // Auto-update announced a build it then failed to install. The pill has to
+  // stay — there IS a newer version — but it must stop offering an in-app
+  // install that has already proven it cannot happen, or the user is back to
+  // clicking a control that does nothing.
+  const updateIsManual = updateStatus.kind === "manual";
   // Two ways to be mid-install, and both must disable the button: waiting on a
   // download that was asked to install when it finishes, and waiting on the
   // app to quit for one already downloaded. The second is the one a repeat
   // click used to get through.
   const updateInstalling =
-    restartRequested ||
-    (updateStatus.kind === "pending" && updateStatus.installRequested);
+    !updateIsManual &&
+    (restartRequested ||
+      (updateStatus.kind === "pending" && updateStatus.installRequested));
   const handleUpdateClick = () => {
+    if (updateIsManual) {
+      downloadManually();
+      return;
+    }
     if (!updateInstalling) {
       restartAndInstall();
     }
@@ -560,19 +581,8 @@ export function MCPSidebar({
   const appNavigate = useAppNavigate();
   const { state, isMobile } = useSidebar();
   const activeProject = projects[activeProjectId];
-  const inviteableProjects = useMemo(() => {
-    if (!activeProject?.organizationId) {
-      return projects;
-    }
-
-    return Object.fromEntries(
-      Object.entries(projects).filter(
-        ([, project]) =>
-          project.organizationId === activeProject.organizationId,
-      ),
-    );
-  }, [activeProject?.organizationId, projects]);
-  const canOpenInviteDialog = isAuthenticated && !!user && !!activeProject;
+  const canOpenInviteDialog =
+    isAuthenticated && !!user && !!activeOrganizationId;
   // Guests get the CTA too (hosted only — a local/self-hosted install has no
   // WorkOS to sign up through). The click opens a sign-up nudge instead of the
   // share dialog, and the nudge's marker reopens it after the round trip.
@@ -616,7 +626,9 @@ export function MCPSidebar({
   const featureFlags = useMemo(
     () => ({
       "mcpjam-learning": !!learningEnabled,
-      "sandboxes-enabled": !!sandboxesEnabled && isAuthenticated,
+      // Flag only, not `&& isAuthenticated`: a signed-out visitor is meant to
+      // reach the REEV-6 preview once the flag is on.
+      "sandboxes-enabled": sandboxesEnabled === true,
       "registry-enabled": registryEnabled === true,
       "mcpjam-conformance": conformanceEnabled === true,
       "mcpjam-compatibility": compatibilityEnabled === true,
@@ -797,7 +809,14 @@ export function MCPSidebar({
                 {updateInstalling && (
                   <Loader2 className="size-2.5 animate-spin" aria-hidden />
                 )}
-                {updateInstalling ? "Updating…" : "Update"}
+                {updateIsManual && (
+                  <ExternalLink className="size-2.5" aria-hidden />
+                )}
+                {updateIsManual
+                  ? "Download update"
+                  : updateInstalling
+                  ? "Updating…"
+                  : "Update"}
               </Button>
             </div>
           )}
@@ -857,6 +876,17 @@ export function MCPSidebar({
               ))}
             </div>
           ) : null}
+          {isAuthenticated && user && activeOrganizationId ? (
+            <SidebarCredits
+              organizationId={activeOrganizationId}
+              billingUiEnabled={billingUiEnabled}
+              onExplorePlans={() =>
+                appNavigate(
+                  buildOrganizationPath(activeOrganizationId, "billing"),
+                )
+              }
+            />
+          ) : null}
           {shouldShowInviteCta ? (
             <SidebarMenu>
               <SidebarMenuItem>
@@ -884,34 +914,15 @@ export function MCPSidebar({
               className="mt-1"
             />
           ) : null}
-          {isAuthenticated && user && activeOrganizationId ? (
-            <SidebarCredits
-              organizationId={activeOrganizationId}
-              billingUiEnabled={billingUiEnabled}
-              onExplorePlans={() =>
-                appNavigate(
-                  buildOrganizationPath(activeOrganizationId, "billing"),
-                )
-              }
-            />
-          ) : null}
           <SidebarUser onBeforeSignOut={onBeforeSignOut} />
         </SidebarFooter>
       </Sidebar>
-      {canOpenInviteDialog && user && activeProject ? (
-        <ShareProjectDialog
-          isOpen={showInviteDialog}
-          onClose={() => setShowInviteDialog(false)}
-          projectName={activeProject.name}
-          projectServers={activeProject.servers}
-          sharedProjectId={activeProject.sharedProjectId}
-          organizationId={activeProject.organizationId}
-          visibility={activeProject.visibility}
+      {canOpenInviteDialog && showInviteDialog && activeOrganizationId ? (
+        <InviteTeamMembersDialog
+          key={activeOrganizationId}
+          organizationId={activeOrganizationId}
           organizationName={activeOrganizationName}
-          currentUser={user}
-          onProjectShared={onProjectShared}
-          availableProjects={inviteableProjects}
-          activeProjectId={activeProjectId}
+          onClose={() => setShowInviteDialog(false)}
         />
       ) : null}
       {showGuestInviteCta ? (

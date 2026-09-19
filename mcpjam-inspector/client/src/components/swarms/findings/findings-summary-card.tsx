@@ -1,25 +1,38 @@
 /**
- * The summary card at the top of the Findings tab: kicker, the deterministic
- * summary, then honesty footnote chips. Layout matches the Paper findings mock
- * — a light card with accent orbs on the right. The orbs use the `primary`
- * role token; literal hex is forbidden by AGENTS.md.
+ * The summary card at the top of the Findings tab: kicker, one headline, then
+ * honesty footnote chips. Layout matches the Paper findings mock — a light
+ * card with accent orbs on the right. The orbs use the `primary` role token;
+ * literal hex is forbidden by AGENTS.md.
  *
- * The summary arrives as lines, not one headline: the reader needs the goal,
- * the persona, the stage and the feeling, and that does not fit on one line.
- * The first line leads at display size; the rest support it.
+ * The template arrives as SENTENCES and joins into ONE PARAGRAPH. Lane A's
+ * suggested fix, when present, takes that headline slot — the template is
+ * what the card says when there is no model line to promote.
  */
+
+import { SectionLabel } from "@/components/shared/section-label";
+import { FindingText } from "@/components/shared/actionable-insights/finding-text";
 
 export function FindingsSummaryCard({
   sessionCount,
   summary,
+  recommendation,
   footnotes,
 }: {
   sessionCount: number;
-  /** 1–4 short lines. The first is the lead. */
+  /** 1–4 sentences, joined into one paragraph here. */
   summary: readonly string[];
+  /** Lane A's suggested fix. When set, it is the headline. */
+  recommendation?: string | null;
   footnotes: readonly string[];
 }) {
-  const [lead, ...rest] = summary;
+  // Filtered before joining so an empty or whitespace-only sentence cannot
+  // leave a double space mid-paragraph. The composers do not emit one today;
+  // this costs nothing and means they never have to promise not to.
+  const paragraph = summary
+    .map((sentence) => sentence.trim())
+    .filter(Boolean)
+    .join(" ");
+  const headline = recommendation?.trim() || paragraph;
 
   return (
     <section
@@ -36,30 +49,26 @@ export function FindingsSummaryCard({
         className="pointer-events-none absolute right-24 -top-8 size-32 rounded-full bg-primary opacity-40"
       />
       <div className="relative">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+        {/* The card's LABEL, and what `aria-labelledby` on the section points
+            at. A named <section> is a region landmark, so this string is
+            announced on entry and listed in the landmark menu — it has to be a
+            short name. The summary below is prose and was doing that job
+            badly: three sentences read as the region's label, then again as a
+            heading, before any content. */}
+        <SectionLabel id="swarm-findings-headline">
           Finding summary · {sessionCount} session
           {sessionCount === 1 ? "" : "s"}
-        </p>
+        </SectionLabel>
         <div className="max-w-md" data-testid="findings-summary">
-          <h2
-            id="swarm-findings-headline"
+          {/* A <p>, not an <h2>. It reads at the size a headline does, but a
+              paragraph is what it is, and `H` navigation should not land on
+              22 words of prose. */}
+          <p
             className="mt-1.5 text-pretty text-2xl font-semibold leading-[1.25] tracking-[-0.02em] text-foreground"
             data-testid="findings-headline"
           >
-            {lead}
-          </h2>
-          {rest.length > 0 ? (
-            <div className="mt-2 space-y-1">
-              {rest.map((line) => (
-                <p
-                  key={line}
-                  className="text-pretty text-base leading-snug text-muted-foreground"
-                >
-                  {line}
-                </p>
-              ))}
-            </div>
-          ) : null}
+            <FindingText text={headline} />
+          </p>
         </div>
         {footnotes.length > 0 ? (
           <div

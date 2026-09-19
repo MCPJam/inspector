@@ -81,6 +81,9 @@ describe("useCreditBalance", () => {
 
     expect(mocks.useQuery).toHaveBeenCalledWith("billing:getCreditBalance", {});
     expect(result.current.balance).toEqual({
+      platformPaidFallback: false,
+      platformFreeBudgetExhausted: false,
+      platformFreeBudgetResetAt: null,
       paidCreditsRemaining: 0,
       hasPurchaseHistory: false,
       freeDailyPercentUsed: 65,

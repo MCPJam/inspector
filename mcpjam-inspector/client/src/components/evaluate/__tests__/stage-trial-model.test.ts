@@ -26,6 +26,7 @@ import {
   deriveTrialStageChip,
   summarizeTrialChain,
   toTrialCardViews,
+  judgeDecidedStage,
 } from "../stage-trial-model";
 
 function row(overrides: Partial<StageResultRow> = {}): StageResultRow {
@@ -247,6 +248,43 @@ describe("defaultSelectedTrialStage", () => {
     ).toBeNull();
     expect(
       defaultSelectedTrialStage({ status: "absent" } as EvalRunDecisionChain),
+    ).toBeNull();
+  });
+});
+
+describe("judgeDecidedStage", () => {
+  const chainWith = (userValue: Record<string, unknown>) =>
+    ({
+      status: "verified",
+      stages: [
+        { stage: "selection", state: "passed", reason: "observed" },
+        { stage: "userValue", ...userValue },
+      ],
+    }) as never;
+
+  it.each(["judgeObserved", "judgePartial", "judgeFailed", "judgePending"])(
+    "names User value when its reason is %s",
+    (reason) => {
+      expect(judgeDecidedStage(chainWith({ state: "failed", reason }))).toBe(
+        "userValue",
+      );
+    },
+  );
+
+  it.each(["observed", "predicateFailed", "noEvidenceCaptured", undefined])(
+    "is null when User value was decided by %s — nothing of the judge's to leak",
+    (reason) => {
+      expect(
+        judgeDecidedStage(chainWith({ state: "failed", reason })),
+      ).toBeNull();
+    },
+  );
+
+  it("is null without a verified chain", () => {
+    expect(judgeDecidedStage(null)).toBeNull();
+    expect(judgeDecidedStage(undefined)).toBeNull();
+    expect(
+      judgeDecidedStage({ status: "absent", stages: [] } as never),
     ).toBeNull();
   });
 });
