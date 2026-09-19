@@ -1,5 +1,19 @@
 # Adding agent tools for a surface
 
+Three things share the word "WebMCP" in this repo; the tools you are about to
+add are the first:
+
+1. **MCPJam's own `ui_*` tools** — this document. Actions that drive the
+   inspector, resolved in the page. Two agents reach them: Ask MCPJam over
+   MCPJam's transport, and a browser-native agent over `document.modelContext`
+   (see [`docs/webmcp-native-tools.md`](../../../../docs/webmcp-native-tools.md)).
+2. **Native publishing** — the mirror of (1) onto the browser's WebMCP API.
+   You decide per tool whether yours is published; see "Native publication"
+   below. It is a field on the definition, not a separate registration.
+3. **The WebMCP Inspector** — the opposite direction entirely: a managed
+   browser pointed at somebody else's page, listing the `page_*` tools THAT
+   page registers. Nothing you add here goes near it.
+
 Every screen manifest in `shared/app-surfaces.ts` carries a REQUIRED
 `agentTools` decision, so a new surface cannot ship without one — the client
 typecheck fails on a missing field, and `agent-tool-coverage.test.ts` fails
@@ -62,20 +76,73 @@ replace the pill; both apply. Read-only tools never gate — so they must
 genuinely be side-effect-free (`ui_snapshot_app` errors rather than
 auto-opening a surface).
 
+### Native publication
+
+Every definition states whether a browser-native WebMCP agent gets it, using
+the helpers in `groups/shared.ts`:
+
+```ts
+nativePublication: PUBLISH_NATIVE,            // an ordinary inspector action
+nativePublication: PUBLISH_NATIVE_UNTRUSTED,  // …whose RESULT quotes a third party
+nativePublication: nativeInternal("why not"), // Ask MCPJam only
+```
+
+Default is internal, so a tool that says nothing is simply invisible to
+external agents — which is why the coverage test insists you say. Publish
+unless the tool cannot mean anything without an MCPJam conversation: the two
+exceptions today are `ui_ask_user` (paints a card into a transcript and parks
+that turn) and the eval-authoring group (reads a scope pinned to one
+conversation). "It is destructive" is NOT a reason to withhold a tool — the
+hints below are how that gets handled.
+
+Pick `PUBLISH_NATIVE_UNTRUSTED` when the result can carry bytes MCPJam did not
+author: an MCP server's tool output, a registry listing, an OAuth server's
+metadata, a snapshot of a screen showing any of those. It becomes WebMCP's
+`untrustedContentHint`, telling the agent to treat the payload as data rather
+than instructions. Over-claiming costs nothing; under-claiming is the mistake
+that matters.
+
+`consequentialHint` is normally derived from the annotations above
+(destructive, or mutating-and-open-world), so the two cannot drift: get the
+annotations right and the native hint follows. The exception is real, though,
+because the two hints ask different questions — MCP's `destructiveHint` is
+about irreversibility, Chrome's `consequentialHint` is about whether a browser
+agent should confirm first. A tool that only CREATES can still commit the
+organization to something. Say so outright there, with the reason at the call
+site:
+
+```ts
+// `access: "link_guests"` opens this to signed-out visitors, funded by the org.
+nativePublication: publishNativeConsequential({ untrustedContent: false }),
+```
+
+That widens only what the browser is told; the MCP annotations and Ask
+MCPJam's approval behaviour stay as they are. It is not a way around getting
+`destructiveHint` right — if an action really is irreversible, annotate it
+destructive.
+
 ### Billing gates
 
 Handlers must call the SAME gated callbacks the buttons use — eval quota,
 swarm 402 handling, the computer daily cap, the `assertMayCreateServer`
 precedent on the Connect screen. An agent tool that bypasses a billing gate
-is a billing bug, not a convenience.
+is a billing bug, not a convenience. This is load bearing for published tools:
+an external agent's approval flow belongs to its browser, so the handler's own
+gates and confirmations are the only ones MCPJam still controls.
 
 ### Transcript safety
 
-Tool inputs, tool outputs, and snapshots all land in the chat transcript
-(and cross to the server). No secrets or credentials in input schemas — the
-server-draft tools take no env/headers for exactly this reason (the
-no-env/no-headers precedent). Snapshot providers report STATE, not payloads,
-and redact tokens, keys, and PII.
+Whatever a tool takes and returns leaves your control, by one of two routes.
+An **Ask MCPJam** call lands in that conversation's transcript and crosses to
+the server with it. A **native** call touches neither: it creates no
+conversation, and is executed in the page and answered straight to a browser
+agent MCPJam does not control.
+
+The rule is the same either way, because both ends are outside this app. No
+secrets or credentials in input schemas — the server-draft tools take no
+env/headers for exactly this reason (the no-env/no-headers precedent).
+Snapshot providers report STATE, not payloads, and redact tokens, keys, and
+PII.
 
 ### Prefill over commit
 

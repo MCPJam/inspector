@@ -135,7 +135,7 @@ describe("IterationDetails blind scores", () => {
     );
     const region = screen.getByTestId("iteration-scores-section");
     expect(screen.getByTestId("score-row-hidden").textContent).toBe(
-      "Judge score hidden until you label this trial",
+      "Judge score hidden until you label this iteration",
     );
     expect(region.textContent).not.toContain("0.42");
     expect(region.textContent).not.toContain("The answer never named the file.");

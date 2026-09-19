@@ -57,8 +57,8 @@ vi.mock("convex/react", () => ({
     query: vi.fn(async () => ({ modelMatrix: false })),
   }),
 }));
-vi.mock("@/components/hosts/ServerGroupPicker", () => ({
-  ServerGroupPicker: () => <div data-testid="server-group-picker" />,
+vi.mock("@/components/hosts/server-picker", () => ({
+  ServerPicker: () => <div data-testid="server-group-picker" />,
 }));
 vi.mock("@/components/project-environments/environment-picker", () => ({
   EnvironmentPicker: ({
@@ -112,6 +112,7 @@ vi.mock("@/lib/toast", () => ({
 }));
 
 import { SwarmTargetComposer } from "../swarm-target-composer";
+import { severityStyles } from "@/components/ui/error-card";
 import { listTentativeCastles } from "@/lib/tentative-castle-drafts";
 
 function Harness({
@@ -450,5 +451,61 @@ describe("SwarmTargetComposer — the block's way out", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Connect a server" }));
     expect(navigateAppMock).toHaveBeenCalledWith("/servers");
+  });
+});
+
+describe("SwarmTargetComposer — BB-234's production notice", () => {
+  it("stands on the page, unprompted, above the pickers", () => {
+    // The point of the move: it is visible when the section loads, with no
+    // dropdown opened. Previously it only existed inside the popover.
+    render(<Harness />);
+
+    const notice = screen.getByTestId("new-swarm-production-notice");
+    expect(notice).toBeVisible();
+    // "writing AND deleting" as one phrase: matching only the delete half
+    // would let the write claim be dropped, and writing is the half that
+    // surprises people about a run that looks read-only.
+    expect(notice).toHaveTextContent(/real actions/i);
+    expect(notice).toHaveTextContent(/writing and\s+deleting data/i);
+    expect(notice).toHaveTextContent(
+      /Use a development or staging server for Swarms/i
+    );
+
+    // Document order, since "near the server dropdown" was the ask.
+    const composer = screen.getByTestId("new-swarm-clients-picker");
+    expect(
+      notice.compareDocumentPosition(composer) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+  });
+
+  it("wears ErrorCard's info treatment, and none of its warning or error one", () => {
+    // Vig linked the design system's ErrorCard node (119-2) and asked for its
+    // blue informational variant rather than the yellow warning: the band
+    // loads every time the feature does, so amber would read as an alarm on a
+    // healthy screen. Asserted against `severityStyles("info")` itself, not
+    // against copied class strings, so a palette change in the design system
+    // moves this surface with it instead of silently diverging.
+    render(<Harness />);
+
+    const notice = screen.getByTestId("new-swarm-production-notice");
+    const info = severityStyles("info");
+    for (const cls of info.container.split(/\s+/)) {
+      expect(notice.className).toContain(cls);
+    }
+    expect(notice.className).not.toMatch(/amber|destructive/);
+
+    // The glyph is the other half of "reads as a warning", and it lives
+    // outside the container's className this assertion reads: an amber
+    // `AlertTriangle` inside the blue band would pass everything above while
+    // the surface still reads as the alarm the thread asked to remove.
+    const icon = notice.querySelector("svg");
+    expect(icon?.getAttribute("class")).toMatch(/lucide-info/);
+    expect(icon?.getAttribute("class")).not.toMatch(/triangle|amber/i);
+
+    // Treatment borrowed, semantics not: nothing has failed here, so the
+    // standing notice must not announce itself as a live alert the way
+    // ErrorCard does.
+    expect(notice.getAttribute("role")).not.toBe("alert");
   });
 });

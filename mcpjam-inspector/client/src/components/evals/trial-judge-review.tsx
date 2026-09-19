@@ -45,7 +45,7 @@ export function reviewErrorMessage(error: unknown): string {
     // Also the outage case: a gating run whose judge errored carries a
     // non-answer, and there is nothing for a reviewer to agree or disagree
     // with until it has actually graded.
-    return "The judge has not graded this trial yet.";
+    return "The judge has not graded this iteration yet.";
   }
   if (message.includes("JUDGE_REVIEW_NO_RUN")) {
     return "Only iterations from a suite run can be labelled.";

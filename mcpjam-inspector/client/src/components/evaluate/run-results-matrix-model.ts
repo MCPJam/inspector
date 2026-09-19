@@ -1,6 +1,11 @@
 import { compactModelIdTail } from "@/lib/environment-label";
 import { computeIterationResult } from "../evals/pass-criteria";
-import { iterationLatencyP95, sumIterationCost } from "../evals/helpers";
+import {
+  iterationLatencyP95,
+  sumIterationCost,
+  runClientIdentity,
+  snapshotTestModels,
+} from "../evals/helpers";
 import type { EvalIteration, EvalSuiteRun } from "../evals/types";
 
 export function launchRuns(run: EvalSuiteRun, runs: readonly EvalSuiteRun[]) {
@@ -31,6 +36,16 @@ export function resultCounts(iterations: readonly EvalIteration[]) {
     else counts.pending++;
   }
   return counts;
+}
+
+/** Match the overall result displayed for a case/client/model cell. */
+export function cellResult(iterations: readonly EvalIteration[]) {
+  if (!iterations.length) return null;
+  const counts = resultCounts(iterations);
+  if (counts.pending) return "pending";
+  if (counts.failed) return "failed";
+  if (counts.cancelled) return "cancelled";
+  return "passed";
 }
 
 export function matrixCaseKey(iteration: EvalIteration): string {
@@ -77,9 +92,14 @@ export function buildRunResultsMatrix({
         testCaseId: iteration.testCaseId,
       });
     }
-    // A queued run already knows its cases from the launch snapshot, even
-    // before the recorder has created its iteration rows.
-    for (const test of targetRun.configSnapshot?.tests ?? []) {
+    // The launch snapshot knows every case the run intends to execute, so it
+    // is the case list for a QUEUED run and still the case list for one in
+    // flight — a case the recorder has not reached yet belongs on screen as an
+    // empty cell, not missing until its first iteration lands.
+    const snapshotTests = targetRun.configSnapshot?.tests ?? [];
+    for (const test of snapshotTests) {
+      // Key onto the recorded iteration when this case HAS started, so it does
+      // not also render as a second, title-keyed row.
       const recorded = targetIterations.find(
         (item) => item.testCaseSnapshot?.title === test.title,
       );
@@ -88,19 +108,30 @@ export function buildRunResultsMatrix({
         (recorded ? matrixCaseKey(recorded) : `title:${test.title}`);
       if (!cases.has(key))
         cases.set(key, { key, title: test.title, testCaseId: test.testCaseId });
-      const model =
-        targetRun.effectiveModelId ?? test.model ?? "Client default";
-      if (!models.has(model)) models.set(model, []);
+    }
+    // Models are NOT seeded the same way. Once a target has produced
+    // iterations they are the truth about what it ran, and a snapshot model it
+    // never used would mint a phantom empty column beside the real one.
+    if (targetIterations.length === 0) {
+      for (const test of snapshotTests) {
+        const snapshotModels = snapshotTestModels(test).map(
+          (entry) => entry.model,
+        );
+        for (const model of targetRun.effectiveModelId
+          ? [targetRun.effectiveModelId]
+          : snapshotModels.length
+            ? snapshotModels
+            : ["Client default"]) {
+          if (!models.has(model)) models.set(model, []);
+        }
+      }
     }
     if (!models.size)
       models.set(targetRun.effectiveModelId ?? "Client default", []);
     return [...models].map(([model, items]) => ({
       key: JSON.stringify([targetRun._id, model]),
       run: targetRun,
-      client: targetRun.namedHostId
-        ? hostNamesById.get(targetRun.namedHostId) ??
-          `Client …${targetRun.namedHostId.slice(-6)}`
-        : "Suite client",
+      client: runClientIdentity(targetRun, hostNamesById).name,
       modelId: model,
       model: compactModelIdTail(model),
       iterations: items,

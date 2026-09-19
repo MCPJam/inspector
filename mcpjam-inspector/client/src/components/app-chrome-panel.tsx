@@ -19,13 +19,15 @@ import { cn } from "@/lib/utils";
 
 export function AppChromePanel({
   headerHidden,
+  settings = false,
   children,
 }: {
   headerHidden: boolean;
+  settings?: boolean;
   children: ReactNode;
 }) {
   const { isMobile } = useSidebar();
-  const headerVisible = !headerHidden || isMobile;
+  const headerVisible = !settings && (!headerHidden || isMobile);
 
   return (
     <div
@@ -38,7 +40,7 @@ export function AppChromePanel({
         // The lift is --shadow-chrome-panel rather than an arbitrary value:
         // AGENTS.md forbids a literal hex in a component, and the tuning
         // (why the depth is in the blur) belongs next to the other shadows.
-        headerVisible && "rounded-t-2xl shadow-chrome-panel"
+        headerVisible && "rounded-t-2xl shadow-chrome-panel",
       )}
     >
       {children}

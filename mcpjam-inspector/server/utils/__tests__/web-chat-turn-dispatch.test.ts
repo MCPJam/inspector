@@ -63,6 +63,7 @@ function args(modelDefinition: {
   id: string;
   provider: string;
   name?: string;
+  hosted?: boolean;
 }) {
   const c = {
     req: {
@@ -123,6 +124,17 @@ describe("streamWebChatTurn model dispatch", () => {
       unknown
     >;
     expect(opts.harness).toBe("claude-code");
+  });
+
+  // The SAME `(id, provider)` pair as the bare hosted case above, but sent from
+  // the picker's "Your providers" row: the user chose their own OpenAI key.
+  // Only the explicit `hosted: false` stamp tells the two apart.
+  it("routes a bare id the picker stamped hosted: false to the org-BYOK path", async () => {
+    await streamWebChatTurn(
+      args({ id: "gpt-5-nano", provider: "openai", hosted: false }) as never,
+    );
+    expect(handlers.hostedOrg).toHaveBeenCalledTimes(1);
+    expect(handlers.mcpjamFree).not.toHaveBeenCalled();
   });
 
   it("routes a prefixed MCPJam id to the MCPJam path (sanity)", async () => {
