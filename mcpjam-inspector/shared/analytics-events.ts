@@ -385,6 +385,14 @@ export const ANALYTICS_EVENTS = {
   // sign-in vs create-account conversion across control and treatment.
   plan_limit_create_account_clicked: { source: "client" },
   plan_limit_see_plans_clicked: { source: "client" },
+  // --- Plan confirmation step on the organization plans page ---
+  // The modal that stands between an Upgrade/Change plan card and Stripe.
+  // `shown` vs `submitted` measures how many confirmations are abandoned, and
+  // `interval_selected` says how often the cycle is changed at the last step.
+  plans_upgrade_confirm_shown: { source: "client" },
+  plans_upgrade_confirm_interval_selected: { source: "client" },
+  plans_upgrade_confirm_submitted: { source: "client" },
+  plans_upgrade_confirm_dismissed: { source: "client" },
   credit_topup_dialog_shown: { source: "client" },
   credit_topup_package_selected: { source: "client" },
   credit_topup_dialog_dismissed: { source: "client" },
