@@ -155,6 +155,28 @@ describe("SwarmsTab — Run journey launch", () => {
     );
   });
 
+  /**
+   * The limit dialog already carries this sentence plus the actions that clear
+   * it. The inline banner under the goal would repeat it with nothing to act
+   * on, so the launch handler skips it on the flag.
+   */
+  it("leaves the message to the dialog when the limit wall was raised", async () => {
+    launchJourneyRunMock.mockRejectedValue(
+      new LaunchJourneyRunError(
+        429,
+        "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
+        true
+      )
+    );
+
+    const runBtn = selectPersonaAndRun();
+    fireEvent.click(runBtn);
+
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(runBtn).toBeEnabled());
+    expect(screen.queryByText(/MCPJam (model )?limit reached\./)).toBeNull();
+  });
+
   it("reuses the SAME launchKey on retry after a 5xx/network failure, and only clears it after a confirmed 2xx", async () => {
     // A 5xx or dropped connection can land AFTER the backend created the run, so
     // the key MUST survive to keep the retry idempotent (no duplicate run/spend).

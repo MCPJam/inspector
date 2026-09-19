@@ -1,3 +1,4 @@
+import { ConvexError } from "convex/values";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 import {
@@ -195,4 +196,24 @@ describe("the composite path carries everything", () => {
     });
     expect(mocks.updateTestSuite).not.toHaveBeenCalled();
   });
+});
+
+it("toasts a plan denial without retrying or reporting a successful save", async () => {
+  mocks.applySuiteSettings.mockRejectedValueOnce(
+    new ConvexError({ code: "COLLABORATIVE_EDITING_REQUIRED" }),
+  );
+  const { result } = renderHook(() => useSuiteSettingsCommit());
+  await act(async () => {
+    expect(
+      await result.current.commit({
+        draft: draftWithNameAndRubric(),
+        suiteId: "suite-a",
+      }),
+    ).toMatchObject({ status: "failed" });
+  });
+  expect(mocks.toastError).toHaveBeenCalledWith(
+    "Editing another member's work requires Team or Enterprise.",
+  );
+  expect(mocks.updateTestSuite).not.toHaveBeenCalled();
+  expect(mocks.toastSuccess).not.toHaveBeenCalled();
 });

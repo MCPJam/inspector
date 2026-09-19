@@ -6,25 +6,23 @@ import {
   SheetTitle,
   SheetDescription,
 } from "@mcpjam/design-system/sheet";
-import { formatRunId, runHostLabel } from "@/components/evals/helpers";
+import {
+  average,
+  compactMetric,
+  formatRunId,
+  formatRelativeTime,
+  iterationLatencyP50,
+  iterationLatencyP95,
+  runHostLabel,
+} from "@/components/evals/helpers";
+import { formatRunCaseLatencyMs } from "@/components/evals/run-case-groups";
 import { compactModelIdTail } from "@/lib/environment-label";
 import { cn } from "@mcpjam/design-system/cn";
 import { computeIterationResult } from "@/components/evals/pass-criteria";
 import type { EvalIteration, EvalSuiteRun } from "@/components/evals/types";
 
-import {
-  EvalListFilter,
-  ALL_EVAL_FILTER_VALUES,
-} from "../../evals/eval-list-filter";
-
 const modelName = (it: EvalIteration) =>
   it.testCaseSnapshot?.model || "Unknown model";
-const duration = (it: EvalIteration) =>
-  it.startedAt != null && it.updatedAt != null
-    ? Math.max(0, it.updatedAt - it.startedAt)
-    : null;
-const seconds = (ms: number | null) =>
-  ms == null ? "—" : `${(ms / 1000).toFixed(1)}s`;
 const age = (ts: number) => {
   const minutes = Math.max(0, Math.floor((Date.now() - ts) / 60000));
   return minutes < 1
@@ -65,8 +63,7 @@ export function CaseRunTimeline({
   onSelectLive?: () => void;
   children: ReactNode;
 }) {
-  const [model, setModel] = useState(ALL_EVAL_FILTER_VALUES);
-  const [client, setClient] = useState(ALL_EVAL_FILTER_VALUES);
+  const [targetKey, setTargetKey] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   useEffect(() => {
     if (live) setDrawerOpen(true);
@@ -85,45 +82,94 @@ export function CaseRunTimeline({
               model: run?.effectiveModelId || modelName(it),
               client:
                 (run ? runHostLabel(run, hostNamesById) : null) ||
-                "Unknown client",
+                "Suite default",
             },
           ];
         }),
       ),
     [iterations, suiteRuns, hostNamesById],
   );
-  const models = [
-    ...new Set(
-      [...runMetadata.values()]
-        .map((item) => item.model)
-        .concat(pendingRun ? [pendingRun.model] : []),
-    ),
-  ].sort();
-  const clients = [
-    ...new Set(
-      [...runMetadata.values()]
-        .map((item) => item.client)
-        .concat(pendingRun ? [pendingRun.client ?? "Unknown client"] : []),
-    ),
-  ].sort();
+  const latestLaunchIterations = useMemo(() => {
+    const represented = suiteRuns.filter((run) =>
+      iterations.some((iteration) => iteration.suiteRunId === run._id),
+    );
+    const latest = [...represented].sort(
+      (a, b) =>
+        (b.runNumber ?? 0) - (a.runNumber ?? 0) ||
+        (b.createdAt ?? 0) - (a.createdAt ?? 0),
+    )[0];
+    if (!latest?.runGroupId) return iterations;
+    const launchRunIds = new Set(
+      suiteRuns
+        .filter((run) => run.runGroupId === latest.runGroupId)
+        .map((run) => run._id),
+    );
+    return iterations.filter(
+      (iteration) =>
+        !iteration.suiteRunId || launchRunIds.has(iteration.suiteRunId),
+    );
+  }, [iterations, suiteRuns]);
+  const targets = useMemo(() => {
+    const grouped = new Map<
+      string,
+      {
+        key: string;
+        client: string;
+        model: string;
+        iterations: EvalIteration[];
+      }
+    >();
+    for (const iteration of latestLaunchIterations) {
+      const metadata = runMetadata.get(iteration._id)!;
+      const key = `${metadata.client}\u0000${metadata.model}`;
+      const target = grouped.get(key) ?? {
+        key,
+        client: metadata.client,
+        model: metadata.model,
+        iterations: [],
+      };
+      target.iterations.push(iteration);
+      grouped.set(key, target);
+    }
+    if (pendingRun) {
+      const client = pendingRun.client ?? "Suite default";
+      const key = `${client}\u0000${pendingRun.model}`;
+      if (!grouped.has(key))
+        grouped.set(key, {
+          key,
+          client,
+          model: pendingRun.model,
+          iterations: [],
+        });
+    }
+    return [...grouped.values()];
+  }, [latestLaunchIterations, pendingRun, runMetadata]);
+  const pendingKey = pendingRun
+    ? `${pendingRun.client ?? "Suite default"}\u0000${pendingRun.model}`
+    : null;
+  // Until the reader picks a target, default to the one the LIVE run is on.
+  // Falling straight through to `targets[0]` left a run launched against a
+  // client/model the case has no history for invisible — its target is
+  // appended last, so `showPendingRun` below was false and the row the user
+  // just triggered never appeared.
+  const selectedTarget =
+    targets.find((target) => target.key === targetKey) ??
+    (pendingKey
+      ? targets.find((target) => target.key === pendingKey)
+      : undefined) ??
+    targets[0];
+  const selectedTargetKey = selectedTarget?.key ?? null;
   const filtered = useMemo(
     () =>
-      iterations
-        .filter((it) => {
-          const metadata = runMetadata.get(it._id)!;
-          return (
-            (model === ALL_EVAL_FILTER_VALUES || metadata.model === model) &&
-            (client === ALL_EVAL_FILTER_VALUES || metadata.client === client)
-          );
-        })
-        .sort((a, b) => b.createdAt - a.createdAt),
-    [iterations, model, client, runMetadata],
+      [...(selectedTarget?.iterations ?? [])].sort(
+        (a, b) =>
+          (a.iterationNumber ?? 0) - (b.iterationNumber ?? 0) ||
+          a.createdAt - b.createdAt,
+      ),
+    [selectedTarget],
   );
   const showPendingRun = Boolean(
-    pendingRun &&
-    (model === ALL_EVAL_FILTER_VALUES || model === pendingRun.model) &&
-    (client === ALL_EVAL_FILTER_VALUES ||
-      client === (pendingRun.client ?? "Unknown client")),
+    pendingRun && pendingKey === selectedTargetKey,
   );
   const completed = filtered.filter((it) =>
     ["passed", "failed", "timed_out"].includes(computeIterationResult(it)),
@@ -131,23 +177,22 @@ export function CaseRunTimeline({
   const passed = completed.filter(
     (it) => computeIterationResult(it) === "passed",
   ).length;
-  const durations = completed
-    .map(duration)
-    .filter((value): value is number => value !== null)
-    .sort((a, b) => a - b);
-  const median = durations.length
-    ? (durations[Math.floor((durations.length - 1) / 2)] +
-        durations[Math.floor(durations.length / 2)]) /
-      2
-    : null;
-  const calls = completed.length
-    ? (
-        completed.reduce(
-          (sum, it) => sum + (it.actualToolCalls?.length ?? 0),
-          0,
-        ) / completed.length
-      ).toFixed(1)
-    : "—";
+  const hasFailures = completed.some((it) =>
+    ["failed", "timed_out"].includes(computeIterationResult(it)),
+  );
+  const tokenAverage = average(
+    completed.flatMap((it) =>
+      typeof it.tokensUsed === "number" ? [it.tokensUsed] : [],
+    ),
+  );
+  // An iteration that recorded NO tool-call list did not make zero calls — it
+  // measured nothing. Excluding it matches the same average in the run matrix;
+  // counting it as 0 dragged this one down against the other.
+  const callAverage = average(
+    completed.flatMap((it) =>
+      it.actualToolCalls ? [it.actualToolCalls.length] : [],
+    ),
+  );
   const selected = iterations.find((it) => it._id === selectedIterationId);
   const result = selected ? computeIterationResult(selected) : null;
   const verdict =
@@ -198,169 +243,187 @@ export function CaseRunTimeline({
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-          Runs
+          Test case averages
         </h3>
         <div className="ml-auto flex min-w-0 flex-wrap justify-end gap-1.5">
-          <EvalListFilter
-            label="Client"
-            value={client}
-            options={clients}
-            onChange={setClient}
-            className={cn(
-              "min-w-0 max-w-36",
-              client !== ALL_EVAL_FILTER_VALUES &&
-                "border-primary/40 ring-1 ring-primary/15",
-            )}
-          />
-          <EvalListFilter
-            label="Model"
-            value={model}
-            options={models}
-            onChange={setModel}
-            formatOption={compactModelIdTail}
-            className={cn(
-              "min-w-0 max-w-36",
-              model !== ALL_EVAL_FILTER_VALUES &&
-                "border-primary/40 ring-1 ring-primary/15",
-            )}
-          />
+          {targets.map((target) => (
+            <button
+              key={target.key}
+              type="button"
+              aria-pressed={target.key === selectedTargetKey}
+              onClick={() => setTargetKey(target.key)}
+              className={cn(
+                "h-7 rounded-full border px-2.5 text-xs transition-colors",
+                target.key === selectedTargetKey
+                  ? "border-border bg-muted font-medium text-foreground"
+                  : "border-border bg-background text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {target.client} · {compactModelIdTail(target.model)}
+            </button>
+          ))}
         </div>
       </div>
-      <div className="grid grid-cols-3 divide-x divide-border rounded-lg border border-border bg-popover text-popover-foreground">
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,5rem),1fr))] gap-x-2 gap-y-4 rounded-xl border border-border bg-background px-4 py-4 text-foreground"
+        data-testid="case-run-averages">
         {[
           {
-            label: "Pass rate",
-            value: completed.length
-              ? `${Math.round((passed / completed.length) * 100)}%`
-              : "—",
-            detail: `${passed}/${completed.length}`,
+            label: "Passed",
+            value: `${passed}/${filtered.length + (showPendingRun ? 1 : 0)}`,
+            tone: hasFailures
+              ? "text-destructive"
+              : showPendingRun
+                ? "text-warning"
+                : completed.length > 0 && passed === completed.length
+                  ? "text-success"
+                  : "text-muted-foreground",
           },
           {
-            label: "Latency p50",
-            value: seconds(median),
-            detail: durations.length
-              ? `p95 ${seconds(
-                  durations[Math.ceil(durations.length * 0.95) - 1],
-                )}`
-              : "",
+            label: "P50",
+            value: formatRunCaseLatencyMs(iterationLatencyP50(completed)),
           },
-          { label: "Tool calls", value: calls, detail: "per run" },
+          {
+            label: "P95",
+            value: formatRunCaseLatencyMs(iterationLatencyP95(completed)),
+          },
+          {
+            label: "Tokens",
+            value: tokenAverage === null ? "—" : compactMetric(tokenAverage),
+          },
+          {
+            label: "Calls",
+            value: callAverage === null ? "—" : compactMetric(callAverage),
+          },
         ].map((metric) => (
-          <div key={metric.label} className="min-w-0 px-3 py-3">
-            <p className="text-[9px] uppercase tracking-widest text-muted-foreground">
+          <div key={metric.label} className="min-w-0 px-2">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
               {metric.label}
             </p>
-            <div className="mt-1 flex flex-wrap items-baseline gap-x-1.5">
-              <strong className="text-lg tabular-nums">{metric.value}</strong>
-              <span className="text-[10px] text-muted-foreground">
-                {metric.detail}
-              </span>
-            </div>
+            <strong
+              className={cn(
+                "mt-1 block text-[28px] leading-8 tracking-tight tabular-nums",
+                metric.tone,
+              )}
+            >
+              {metric.value}
+            </strong>
           </div>
         ))}
       </div>
-      <div className="min-h-48 flex-1 rounded-lg border border-border bg-popover text-popover-foreground">
-        <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,.8fr)_3.5rem_3rem] gap-2 border-b border-border bg-muted/20 px-3 py-2 text-[9px] uppercase tracking-widest text-muted-foreground">
-          <span>Run</span>
-          <span>Client / Model</span>
-          <span>Result</span>
-          <span className="text-right">Time</span>
-        </div>
-        {(showPendingRun ? [null, ...filtered] : filtered).map((it) => {
-          const result = it ? computeIterationResult(it) : "pending";
-          const { client, model: recordedModel } = it
-            ? runMetadata.get(it._id)!
-            : {
-                client: pendingRun?.client ?? "Unknown client",
-                model: pendingRun!.model,
-              };
-          const open =
-            drawerOpen &&
-            (it ? selectedIterationId === it._id : !selectedIterationId);
-          return (
-            <div
-              key={it?._id ?? "pending-run"}
-              className="border-b border-border/60 last:border-b-0"
-            >
-              <button
-                type="button"
-                data-testid="case-run-row"
-                aria-haspopup="dialog"
-                aria-expanded={open}
-                onClick={() => {
-                  if (it) onSelect(it);
-                  else onSelectLive?.();
-                  setDrawerOpen(true);
-                }}
-                className="grid w-full grid-cols-[minmax(0,1fr)_minmax(0,.8fr)_3.5rem_3rem] items-center gap-2 px-3 py-2.5 text-left text-[11px] hover:bg-muted/30"
+      <div className="overflow-x-auto rounded-lg border border-border bg-background text-foreground">
+        <div className="min-w-[620px]">
+          <div className="grid grid-cols-[minmax(110px,.8fr)_minmax(150px,1fr)_80px_80px_80px_52px] gap-2 border-b border-border bg-muted px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <span>Iteration</span>
+            <span>Client / Model</span>
+            <span>Result</span>
+            <span>Latency</span>
+            <span>Tokens</span>
+            <span>Calls</span>
+          </div>
+          {(showPendingRun ? [null, ...filtered] : filtered).map((it) => {
+            const result = it ? computeIterationResult(it) : "pending";
+            const { client, model: recordedModel } = it
+              ? runMetadata.get(it._id)!
+              : {
+                  client: pendingRun?.client ?? "Suite default",
+                  model: pendingRun!.model,
+                };
+            const open =
+              drawerOpen &&
+              (it ? selectedIterationId === it._id : !selectedIterationId);
+            return (
+              <div
+                key={it?._id ?? "pending-run"}
+                className="border-b border-border/60 last:border-b-0"
               >
-                <span className="flex min-w-0 items-center gap-1.5">
+                <button
+                  type="button"
+                  data-testid="case-run-row"
+                  aria-haspopup="dialog"
+                  aria-expanded={open}
+                  onClick={() => {
+                    if (it) onSelect(it);
+                    else onSelectLive?.();
+                    setDrawerOpen(true);
+                  }}
+                  className="grid w-full grid-cols-[minmax(110px,.8fr)_minmax(150px,1fr)_80px_80px_80px_52px] items-center gap-2 px-3 py-2.5 text-left text-xs hover:bg-muted/30"
+                >
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <span
+                      className={cn(
+                        "size-1.5 shrink-0 rounded-full",
+                        result === "passed"
+                          ? "bg-success"
+                          : result === "failed" || result === "timed_out"
+                            ? "bg-destructive"
+                            : "bg-warning",
+                      )}
+                    />
+                    <span className="truncate font-medium">
+                      #
+                      {it?.iterationNumber ??
+                        (it ? filtered.indexOf(it) + 1 : filtered.length + 1)}
+                    </span>
+                    <span className="truncate text-muted-foreground">
+                      {it ? formatRelativeTime(it.createdAt) : "just now"}
+                    </span>
+                  </span>
+                  <span
+                    className="min-w-0"
+                    title={`${client ?? "Suite default"} · ${recordedModel}`}
+                  >
+                    <span className="block truncate">
+                      {client ?? "Suite default"}
+                    </span>
+                    <span className="block truncate text-muted-foreground">
+                      {compactModelIdTail(recordedModel)}
+                    </span>
+                  </span>
                   <span
                     className={cn(
-                      "size-1.5 shrink-0 rounded-full",
+                      "truncate",
                       result === "passed"
-                        ? "bg-success"
+                        ? "text-success"
                         : result === "failed" || result === "timed_out"
-                          ? "bg-destructive"
-                          : "bg-warning",
+                          ? "text-destructive"
+                          : "text-muted-foreground",
                     )}
-                  />
-                  <span
-                    className="truncate font-medium"
-                    title={runLabel(it ?? undefined)}
                   >
-                    {runLabel(it ?? undefined)}
+                    {result === "passed"
+                      ? "Passed"
+                      : result === "failed"
+                        ? "Failed"
+                        : result === "timed_out"
+                          ? "Timeout"
+                          : result === "cancelled"
+                            ? "Stopped"
+                            : "Running"}
                   </span>
-                  <span className="truncate text-muted-foreground">
-                    {it ? age(it.createdAt) : "just now"}
+                  <span className="tabular-nums text-muted-foreground">
+                    {/* Same reading the P50/P95 cards above are built from,
+                        and the same one the run matrix shows per iteration —
+                        `duration()` reported a latency for iterations the
+                        cards excluded, so a row and the header disagreed. */}
+                    {it ? formatRunCaseLatencyMs(iterationLatencyP95([it])) : "—"}
                   </span>
-                </span>
-                <span
-                  className="min-w-0"
-                  title={`${client ?? "Unknown client"} · ${recordedModel}`}
-                >
-                  <span className="block truncate">
-                    {client ?? "Unknown client"}
+                  <span className="tabular-nums text-muted-foreground">
+                    {it && typeof it.tokensUsed === "number"
+                      ? compactMetric(it.tokensUsed)
+                      : "—"}
                   </span>
-                  <span className="block truncate text-muted-foreground">
-                    {compactModelIdTail(recordedModel)}
+                  <span className="tabular-nums text-muted-foreground">
+                    {it ? (it.actualToolCalls?.length ?? "—") : "—"}
                   </span>
-                </span>
-                <span
-                  className={cn(
-                    "truncate",
-                    result === "passed"
-                      ? "text-success"
-                      : result === "failed" || result === "timed_out"
-                        ? "text-destructive"
-                        : "text-muted-foreground",
-                  )}
-                >
-                  {result === "passed"
-                    ? "Passed"
-                    : result === "failed"
-                      ? "Failed"
-                      : result === "timed_out"
-                        ? "Timeout"
-                        : result === "cancelled"
-                          ? "Stopped"
-                          : "Running"}
-                </span>
-                <span className="text-right tabular-nums text-muted-foreground">
-                  {seconds(it ? duration(it) : null)}
-                </span>
-              </button>
-            </div>
-          );
-        })}
-        {filtered.length === 0 && !showPendingRun ? (
-          <p className="p-4 text-xs text-muted-foreground">
-            {model !== ALL_EVAL_FILTER_VALUES ||
-            client !== ALL_EVAL_FILTER_VALUES
-              ? "No runs match these filters."
-              : "Run this case to see its results here."}
-          </p>
-        ) : null}
+                </button>
+              </div>
+            );
+          })}
+          {filtered.length === 0 && !showPendingRun ? (
+            <p className="p-4 text-xs text-muted-foreground">
+              Run this case to see its results here.
+            </p>
+          ) : null}
+        </div>
       </div>
       <Sheet open={drawerOpen} onOpenChange={setDrawerOpen}>
         <SheetContent
@@ -369,6 +432,7 @@ export function CaseRunTimeline({
         >
           <SheetHeader className="shrink-0 border-b border-border pr-12">
             <div className="flex flex-wrap items-center gap-2">
+              <SheetTitle>{runLabel(selected)}</SheetTitle>
               <span
                 data-testid="case-run-status"
                 className={cn(
@@ -384,14 +448,13 @@ export function CaseRunTimeline({
               >
                 {verdict}
               </span>
-              <SheetTitle>{runLabel(selected)}</SheetTitle>
             </div>
             <SheetDescription>
               {selected
                 ? `Run ${formatRunId(selected.suiteRunId ?? selected._id)} · ${modelName(
                     selected,
                   )} · ${age(selected.createdAt)}`
-                : "Conversation, checks, tool calls, trace, and replay."}
+                : "Conversation, assertions, tool calls, trace, and replay."}
             </SheetDescription>
           </SheetHeader>
           <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-4">
