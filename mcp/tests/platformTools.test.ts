@@ -209,6 +209,8 @@ const PLAIN_TOOLS = [
   "get_eval_gate_waiver",
   "get_eval_run_steps",
   "cancel_eval_run",
+  "backtest_eval_run",
+  "backtest_eval_run_judge",
   "request_eval_run_judge",
   // The description-rewrite experiment: agent-oriented payloads (a diff and
   // two arm counts), no widget view.
@@ -472,6 +474,8 @@ describe("platform tool registration", () => {
       "get_eval_iteration_trace",
       "get_eval_run_steps",
       "cancel_eval_run",
+      "backtest_eval_run",
+      "backtest_eval_run_judge",
       "request_eval_run_judge",
       "propose_eval_description_rewrite",
       "start_eval_description_experiment",
@@ -495,8 +499,8 @@ describe("platform tool registration", () => {
       "list_chat_sessions",
       "search_sessions",
       "send_chat_message",
-  "drive_chat_session_browser",
-  "observe_chat_session_browser",
+      "drive_chat_session_browser",
+      "observe_chat_session_browser",
       "get_chat_session",
       "get_chat_session_trace",
       "get_capabilities",
@@ -632,6 +636,8 @@ describe("platform tool registration", () => {
       "generate_eval_cases",
       // Grading SPENDS but writes only an advisory result onto the run — the
       // deterministic verdict stays authoritative, so nothing is destroyed.
+      "backtest_eval_run",
+      "backtest_eval_run_judge",
       "request_eval_run_judge",
       // Proposing SPENDS one model call and starting SPENDS trials, but both
       // only ever create rows: the proposal and two replay runs. The source
@@ -1017,6 +1023,53 @@ describe("runPlatformOperation", () => {
 
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toBe("FORBIDDEN: Denied");
+  });
+
+  it("tells the model when a usage-limit refusal lifts, in both channels", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json(
+          {
+            code: "RATE_LIMITED",
+            message: "MCPJam's daily budget for this feature is used up.",
+            details: {
+              ok: false,
+              code: "platform_capacity",
+              canTopUp: false,
+              isRetryable: true,
+              retryAfterMs: 3_600_000,
+              error: "not forwarded as a refusal field",
+            },
+          },
+          { status: 429, headers: { "Retry-After": "3600" } }
+        )
+      )
+    );
+
+    const result = (await runPlatformOperation(
+      fakeToolContext({ bearerToken: "user-jwt" }),
+      listProjectsOperation,
+      {}
+    )) as ToolResult;
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toBe(
+      "RATE_LIMITED: MCPJam's daily budget for this feature is used up. " +
+        "Retry after 3600s, not sooner. This is a usage limit: topping up credits does not lift it."
+    );
+    expect(result.structuredContent?.error).toEqual({
+      code: "RATE_LIMITED",
+      message: "MCPJam's daily budget for this feature is used up.",
+      refusal: {
+        status: 429,
+        code: "RATE_LIMITED",
+        reason: "platform_capacity",
+        canTopUp: false,
+        retryable: true,
+        retryAfterSeconds: 3600,
+      },
+    });
   });
 
   it("carries the error code in structuredContent so the widget can branch", async () => {

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   hasUnresolvedToolCalls,
+  hasUnresolvedApprovalResponses,
   executeToolCallsFromMessages,
 } from "../http-tool-calls.js";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
@@ -1790,5 +1791,19 @@ describe("executeToolCallsFromMessages — toModelOutput (browser-render PR 14)"
       ],
     });
     expect(readLinkedResource).not.toHaveBeenCalled();
+  });
+});
+
+describe("approval recovery", () => {
+  it.each([true, false])("reconciles an unresolved approval response (%s) before raw tool replay", (approved) => {
+    const messages = [
+      { role: "assistant", content: [{ type: "tool-call", toolCallId: "call", toolName: "search", input: {} }, { type: "tool-approval-request", approvalId: "approval", toolCallId: "call" }] },
+      { role: "tool", content: [{ type: "tool-approval-response", approvalId: "approval", approved }] },
+    ] as ModelMessage[];
+    expect(hasUnresolvedToolCalls(messages)).toBe(true);
+    expect(hasUnresolvedApprovalResponses(messages)).toBe(true);
+    messages.push({ role: "tool", content: [{ type: "tool-result", toolCallId: "call", toolName: "search", output: { type: "text", value: "resolved" } }] });
+    expect(hasUnresolvedApprovalResponses(messages)).toBe(false);
+    expect(hasUnresolvedToolCalls(messages)).toBe(false);
   });
 });

@@ -9,6 +9,8 @@ import { EvaluateRunPage } from "../evaluate-run-page";
 import { buildRunVerdictHero } from "../run-verdict-hero-model";
 import type { EvalSuiteRun, EvalIteration } from "../../evals/types";
 import type { ProjectRunHistoryDetail } from "../../evals/use-project-run-history";
+import type { UnifiedFindingsSectionProps } from "../unified-findings-section";
+import { UnifiedFindingsPanel } from "../../shared/actionable-insights/unified-findings-panel";
 
 const mocks = vi.hoisted(() => ({
   history: {
@@ -18,6 +20,70 @@ const mocks = vi.hoisted(() => ({
     retry: vi.fn(),
   },
   decision: vi.fn(),
+  generation: vi.fn(),
+  requestInsight: vi.fn(),
+}));
+vi.mock("../../evals/use-server-quality", () => ({
+  useServerQuality: (run: EvalSuiteRun, options: unknown) => {
+    mocks.generation(run._id, options);
+    return {
+      pending: false,
+      failedGeneration: false,
+      error: null,
+      unavailable: false,
+      canRequest: true,
+      requestServerQuality: (...args: unknown[]) =>
+        mocks.requestInsight(run._id, ...args),
+    };
+  },
+}));
+vi.mock("../unified-findings-section", () => ({
+  UnifiedFindingsSection: ({
+    suiteRunId,
+    iterations = [],
+    generation,
+    onOpenIteration,
+    scopeControl,
+    fallback,
+  }: UnifiedFindingsSectionProps) => (
+    <section
+      data-testid="findings-section"
+      data-run-id={suiteRunId}
+      data-iteration-ids={iterations.map((row) => row._id).join(",")}
+    >
+      {scopeControl}
+      <UnifiedFindingsPanel
+        snapshot={{
+          builtAt: 1,
+          sourceRevision: "r1",
+          minerVersion: 1,
+          omittedGroups: 0,
+          deterministicFindings: [],
+          provenance: [],
+          enrichment: null,
+        }}
+        findings={[]}
+        provenance={[]}
+        observationState="partial"
+        observationCoverage={null}
+        mode="deterministic"
+        analyze={{
+          available: false,
+          pending: false,
+          error: null,
+          onRun: vi.fn(),
+        }}
+        fallback={fallback}
+      />
+      <button onClick={() => onOpenIteration?.("a")}>Open evidence A</button>
+      <button onClick={() => onOpenIteration?.("c")}>Open evidence C</button>
+      <button
+        onClick={() => generation.requestInsight(true, { mode: "findings" })}
+      >
+        Add AI explanation
+      </button>
+    </section>
+  ),
 }));
 vi.mock("../../evals/use-project-run-history", () => ({
   useProjectRunHistory: () => mocks.history,
@@ -25,8 +91,13 @@ vi.mock("../../evals/use-project-run-history", () => ({
 vi.mock("@/hooks/use-eval-run-decision-summary", () => ({
   // Fresh empty arrays reproduce the loading/absent response from the real hook.
   useEvalRunDecisionDetail: (args: unknown) => {
-    mocks.decision(args);
-    return { status: "ready", summary: null, diagnostics: [] };
+    return (
+      mocks.decision(args) ?? {
+        status: "ready",
+        summary: null,
+        diagnostics: [],
+      }
+    );
   },
 }));
 vi.mock("@/hooks/use-eval-run-iteration-chains", () => ({
@@ -110,10 +181,220 @@ beforeEach(() => {
   );
   mocks.history.loading = false;
   mocks.history.errorCount = 0;
-  mocks.decision.mockClear();
+  mocks.decision.mockReset();
+  mocks.generation.mockClear();
+  mocks.requestInsight.mockClear();
 });
 
 describe("combined run report", () => {
+  it("narrows client and model choices by the selected case status", async () => {
+    const user = userEvent.setup();
+    render(<CombinedRunContent {...props} />);
+    await user.click(
+      await screen.findByRole("combobox", { name: "Filter by status" }),
+    );
+    await user.click(
+      screen.getByRole("option", { name: "Passed", exact: true }),
+    );
+    await user.click(
+      screen.getByRole("combobox", { name: "Filter by client" }),
+    );
+    expect(
+      screen.getByRole("option", { name: "Cursor", exact: true }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("option", { name: "ChatGPT", exact: true }),
+    ).toBeNull();
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("combobox", { name: "Filter by model" }));
+    expect(
+      screen.queryByRole("option", { name: "gpt-5.1", exact: true }),
+    ).toBeNull();
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Clear filters" }));
+    await user.click(
+      screen.getByRole("combobox", { name: "Filter by client" }),
+    );
+    expect(
+      screen.getByRole("option", { name: "ChatGPT", exact: true }),
+    ).toBeVisible();
+  });
+
+  it("shows findings by default without requesting AI", () => {
+    render(<CombinedRunContent {...props} />);
+    expect(screen.getByTestId("combined-run-findings")).toBeVisible();
+    expect(screen.getByTestId("findings-section")).toHaveAttribute(
+      "data-iteration-ids",
+      "c",
+    );
+    expect(mocks.generation).toHaveBeenCalledWith("3", { autoRequest: false });
+    expect(mocks.requestInsight).not.toHaveBeenCalled();
+  });
+
+  it("automatically restores the recorded problem and fix, scoped to the selected run", async () => {
+    mocks.decision.mockImplementation(({ runId }: { runId: string }) => ({
+      status: "ready",
+      summary:
+        runId === "2"
+          ? {
+              schemaVersion: 1,
+              runId,
+              runStatus: "completed",
+              verdict: "failed",
+              verdictSource: "legacy",
+              counts: {
+                measurementUnit: "trial",
+                total: 1,
+                passed: 0,
+                failed: 1,
+              },
+              diagnostics: { items: [], complete: true, scannedIterations: 1 },
+            }
+          : null,
+      diagnostics:
+        runId === "2"
+          ? [
+              {
+                iterationId: "b",
+                iterationNumber: 1,
+                testCaseId: "case",
+                title: "Read a record",
+                status: "completed",
+                result: "failed",
+                chain: {
+                  status: "verified",
+                  analyzerVersion: 8,
+                  firstFailedStage: "selection",
+                  failureCategory: "selection",
+                  stages: [
+                    { stage: "connection", state: "passed" },
+                    { stage: "discovery", state: "passed" },
+                    {
+                      stage: "selection",
+                      state: "failed",
+                      reason: "missingToolCall",
+                    },
+                    { stage: "call", state: "notReached" },
+                    { stage: "response", state: "notReached" },
+                    { stage: "userValue", state: "notMeasured" },
+                  ],
+                },
+                expected: { toolNames: ["read_record"] },
+                observed: { toolNames: [] },
+                evidence: {
+                  runId: "2",
+                  iterationId: "b",
+                  stage: "selection",
+                  tracePath: "/trace",
+                },
+                nextAction: "review tool selection and the tool catalog",
+              },
+            ]
+          : [],
+    }));
+    const user = userEvent.setup();
+    render(<CombinedRunContent {...props} run={runs[1]} />);
+    expect(screen.getByRole("heading", { name: "What broke" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "How to fix" })).toBeVisible();
+    expect(screen.getByTestId("run-verdict-sentence")).toHaveTextContent(
+      "an expected tool call was never made",
+    );
+    expect(screen.getAllByTestId("run-verdict-insights")).toHaveLength(1);
+    expect(mocks.requestInsight).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("combobox", { name: "Findings for" }));
+    await user.click(screen.getByRole("option", { name: "ChatGPT · gpt-5.1" }));
+    expect(screen.queryByRole("heading", { name: "What broke" })).toBeNull();
+    expect(
+      screen.getByText(
+        "No supported finding yet. Evidence is incomplete; this does not mean the run passed.",
+      ),
+    ).toBeVisible();
+    expect(mocks.requestInsight).not.toHaveBeenCalled();
+  });
+
+  it("scopes findings, evidence navigation and explicit AI requests to the selected run", async () => {
+    const user = userEvent.setup();
+    const onOpenIteration = vi.fn();
+    render(<CombinedRunContent {...props} onOpenIteration={onOpenIteration} />);
+
+    expect(screen.getAllByTestId("findings-section")).toHaveLength(1);
+    expect(screen.getByTestId("findings-section")).toHaveAttribute(
+      "data-run-id",
+      "3",
+    );
+    expect(screen.queryByTestId("run-verdict-insights")).toBeNull();
+    expect(screen.getAllByTestId("run-verdict-pairing")).toHaveLength(3);
+    expect(mocks.requestInsight).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Open evidence A" }));
+    expect(onOpenIteration).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Open evidence C" }));
+    expect(onOpenIteration).toHaveBeenLastCalledWith({
+      testCaseId: "case",
+      iterationId: "c",
+    });
+
+    await user.click(screen.getByRole("combobox", { name: "Findings for" }));
+    await user.click(
+      screen.getByRole("option", { name: "Cursor · sonnet", exact: true }),
+    );
+    expect(screen.getAllByTestId("findings-section")).toHaveLength(1);
+    expect(screen.getByTestId("findings-section")).toHaveAttribute(
+      "data-run-id",
+      "1",
+    );
+    expect(screen.getByTestId("findings-section")).toHaveAttribute(
+      "data-iteration-ids",
+      "a",
+    );
+    expect(mocks.requestInsight).not.toHaveBeenCalled();
+    expect(
+      mocks.generation.mock.calls.every(
+        ([, options]) => options.autoRequest === false,
+      ),
+    ).toBe(true);
+    await user.click(screen.getByRole("button", { name: "Open evidence C" }));
+    expect(onOpenIteration).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: "Open evidence A" }));
+    expect(onOpenIteration).toHaveBeenLastCalledWith({
+      testCaseId: "case",
+      iterationId: "a",
+    });
+    await user.click(
+      screen.getByRole("button", { name: "Add AI explanation" }),
+    );
+    expect(mocks.requestInsight).toHaveBeenCalledExactlyOnceWith("1", true, {
+      mode: "findings",
+    });
+  });
+
+  it("selects a visible run when pairing filters exclude the current findings run", async () => {
+    const user = userEvent.setup();
+    render(<CombinedRunContent {...props} />);
+    await user.click(
+      screen.getByRole("combobox", { name: "Filter by client" }),
+    );
+    await user.click(
+      screen.getByRole("option", { name: "Cursor", exact: true }),
+    );
+    expect(screen.getByTestId("findings-section")).toHaveAttribute(
+      "data-run-id",
+      "1",
+    );
+    await user.click(screen.getByRole("combobox", { name: "Filter by model" }));
+    await user.click(
+      screen.getByRole("option", { name: "gpt-5.1", exact: true }),
+    );
+    expect(screen.getByTestId("findings-section")).toHaveAttribute(
+      "data-run-id",
+      "2",
+    );
+    expect(
+      screen.getByRole("combobox", { name: "Findings for" }),
+    ).toHaveTextContent("Cursor · gpt-5.1");
+    expect(mocks.requestInsight).not.toHaveBeenCalled();
+  });
+
   it("opens all pairings from any member and filters metrics and columns without changing reports", async () => {
     const user = userEvent.setup();
     render(
@@ -160,36 +441,35 @@ describe("combined run report", () => {
     expect(within(hero).queryByTestId("run-verdict-stat-delta")).toBeNull();
     expect(screen.queryByTestId("run-verdict-word")).toBeNull();
     expect(screen.queryByTestId("run-header-verdict")).toBeNull();
-    const pairingDecisions = screen
-      .getAllByTestId("run-header-pairing-decision")
-      .map((node) => node.textContent);
-    expect(pairingDecisions).toEqual(["SHIP"]);
-    const shipPill = screen.getByTestId("run-header-decision-pill");
-    expect(shipPill).toHaveAttribute("data-decision", "ship");
-    expect(within(shipPill).getAllByLabelText(/ · /)).toHaveLength(3);
+    expect(screen.queryByTestId("run-header-pairing-decision")).toBeNull();
+    expect(screen.queryByTestId("run-header-decision-pill")).toBeNull();
     const pairingRows = within(hero).getAllByTestId("run-verdict-pairing");
     expect(pairingRows).toHaveLength(3);
+    const rateOf = (row: HTMLElement) =>
+      within(row).getByTestId("run-verdict-pairing-rate").textContent;
     expect(pairingRows[0]).toHaveTextContent("Cursor");
-    expect(pairingRows[0]).toHaveTextContent("1 passed");
-    expect(pairingRows[0]).toHaveTextContent("0 failed");
-    expect(within(pairingRows[0]).getByTestId("result-count-bar")).toBeVisible();
-    expect(pairingRows[1]).toHaveTextContent("0 passed");
-    expect(pairingRows[1]).toHaveTextContent("1 failed");
+    expect(rateOf(pairingRows[0])).toBe("100%");
+    expect(rateOf(pairingRows[1])).toBe("0%");
     expect(pairingRows[2]).toHaveTextContent("ChatGPT");
-    expect(pairingRows[2]).toHaveTextContent("0 passed");
-    expect(pairingRows[2]).toHaveTextContent("1 failed");
+    expect(rateOf(pairingRows[2])).toBe("0%");
+    for (const row of pairingRows) {
+      expect(within(row).getByText("Passed")).toBeVisible();
+      expect(within(row).getByText("Failed")).toBeVisible();
+    }
     expect(within(hero).queryByText("1 of 3")).toBeNull();
     expect(within(hero).queryByText(/ of /)).toBeNull();
+    // Each row carries its own measurements; there is no rolled-up strip that
+    // would report one latency for three different clients.
+    expect(within(hero).queryByTestId("run-verdict-stats")).toBeNull();
     expect(
-      within(hero).getByTestId("run-verdict-stats").textContent,
-    ).not.toMatch(/Passed/i);
-    expect(
-      pairingRows[0].compareDocumentPosition(
-        within(hero).getByTestId("run-verdict-stats"),
-      ),
-    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+      within(pairingRows[0])
+        .getAllByTestId("run-verdict-pairing-stat")
+        .map((stat) => stat.textContent),
+    ).toEqual(expect.arrayContaining([expect.stringContaining("P50")]));
     expect(screen.getAllByRole("columnheader")).toHaveLength(4);
-    expect(screen.getByRole("heading", { name: /Test cases/ })).toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: /^\d+ Test cases?$/ }),
+    ).toBeVisible();
     expect(screen.queryByText("Run results")).toBeNull();
     expect(
       screen.queryByText(
@@ -220,18 +500,11 @@ describe("combined run report", () => {
       screen.getByRole("option", { name: "gpt-5.1", exact: true }),
     );
     const filteredPairing = within(hero).getByTestId("run-verdict-pairing");
-    expect(filteredPairing).toHaveTextContent("0 passed");
-    expect(filteredPairing).toHaveTextContent("1 failed");
     expect(
-      screen
-        .getAllByTestId("run-header-pairing-decision")
-        .map((node) => node.textContent),
-    ).toEqual(pairingDecisions);
-    expect(
-      within(screen.getByTestId("run-header-decision-pill")).getAllByLabelText(
-        / · /,
-      ),
-    ).toHaveLength(3);
+      within(filteredPairing).getByTestId("run-verdict-pairing-rate"),
+    ).toHaveTextContent("0%");
+    expect(screen.queryByTestId("run-header-pairing-decision")).toBeNull();
+    expect(screen.queryByTestId("run-header-decision-pill")).toBeNull();
     expect(
       screen.queryByRole("heading", { name: "Filtered results" }),
     ).toBeNull();
@@ -311,17 +584,32 @@ describe("combined run report", () => {
     );
     const hero = screen.getByTestId("run-verdict-hero");
     const pairingRows = within(hero).getAllByTestId("run-verdict-pairing");
-    expect(within(pairingRows[0]).queryByTestId("run-verdict-stat-delta")).toBeNull();
+    const rateDeltaOf = (row: HTMLElement) =>
+      within(within(row).getByTestId("run-verdict-pairing-rate")).queryByTestId(
+        "run-verdict-stat-delta",
+      );
+    // A pairing that held its rate stays silent rather than printing an equals.
+    expect(rateDeltaOf(pairingRows[0])).toBeNull();
     expect(within(pairingRows[0]).queryByText("=")).toBeNull();
-    const pairingDeltas = pairingRows.flatMap((row) =>
-      within(row).queryAllByTestId("run-verdict-stat-delta"),
-    );
-    expect(pairingDeltas.map((node) => node.textContent)).toEqual([
-      "−1",
-      "−1",
-    ]);
-    expect(pairingDeltas[0]).toHaveClass("text-destructive");
-    expect(pairingDeltas[1]).toHaveClass("text-destructive");
+    // Each regressed pairing reports its own rate drop and the count behind it.
+    for (const row of [pairingRows[1], pairingRows[2]]) {
+      const rate = rateDeltaOf(row);
+      expect(rate).toHaveTextContent("−100%");
+      expect(rate).toHaveClass("text-destructive");
+      expect(
+        within(row)
+          .getAllByTestId("run-verdict-stat-delta")
+          .map((delta) => delta.textContent),
+      ).toContain("−1");
+    }
+    // Latency and tokens are compared per pairing, so the row whose pass count
+    // did not move still reports how much slower it got.
+    expect(
+      within(pairingRows[0])
+        .getAllByTestId("run-verdict-stat-delta")
+        .map((delta) => delta.textContent),
+    ).toEqual(["+1.5s", "+1.5s", "+900"]);
+    // Never one rolled-up figure standing in for three different pairings.
     expect(within(hero).queryByLabelText("−2 vs previous run")).toBeNull();
   });
 

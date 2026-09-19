@@ -84,6 +84,13 @@ import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 import { hostedMcpBaseFetch } from "../../utils/hosted-mcp-base-fetch.js";
 import { parseWithSchema } from "../web/errors.js";
 import { getSelfFetch } from "../../utils/self-app.js";
+import { createConvexClient } from "../../services/evals/route-helpers.js";
+import { isAuthorizedInternalServiceRequest } from "../../middleware/internal-service-auth.js";
+import {
+  executeToolCallsFromMessages,
+  hasUnresolvedToolCalls,
+  hasUnresolvedApprovalResponses,
+} from "@/shared/http-tool-calls";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { requireVerifiedAuth } from "../../middleware/require-verified-auth.js";
 import {
@@ -140,7 +147,11 @@ export type CreatedResource = {
 export const MAX_AGENT_ACTION_ID_LENGTH = 100;
 
 export function isValidAgentActionId(actionId: string): boolean {
-  return typeof actionId === "string" && actionId.length > 0 && actionId.length <= MAX_AGENT_ACTION_ID_LENGTH;
+  return (
+    typeof actionId === "string" &&
+    actionId.length > 0 &&
+    actionId.length <= MAX_AGENT_ACTION_ID_LENGTH
+  );
 }
 
 /**
@@ -198,7 +209,7 @@ function permalinksFor(
   operation: AnyPlatformOperation,
   result: unknown,
   input: unknown,
-  projectId: string
+  projectId: string,
 ): PlatformPermalink[] {
   return derivePermalinksFor(
     operation,
@@ -213,7 +224,7 @@ function permalinksFor(
         operation: operationName,
         error: error instanceof Error ? error.message : String(error),
       });
-    }
+    },
   );
 }
 
@@ -259,12 +270,12 @@ function alreadyExisted(result: unknown, resourceId: string): boolean {
 function createdResourcesFrom(
   operation: AnyPlatformOperation,
   permalinks: readonly PlatformPermalink[],
-  result: unknown
+  result: unknown,
 ): CreatedResource[] {
   if (
     operation.readOnly ||
     !CREATE_OPERATION_PREFIXES.some((prefix) =>
-      operation.name.startsWith(prefix)
+      operation.name.startsWith(prefix),
     )
   ) {
     return [];
@@ -443,7 +454,7 @@ async function persistProposal(opts: {
     return unpinnableError;
   }
   const missingPins = meta.requiredFrozenKeys.filter(
-    (key) => input[key] === undefined
+    (key) => input[key] === undefined,
   );
   if (missingPins.length > 0) {
     // Belt to the throw's braces: a normalizer that RETURNED without its pins
@@ -463,7 +474,7 @@ async function persistProposal(opts: {
     ? deriveOperationIdempotencyKey(
         opts.turnIdempotencyKey,
         `proposal:${operation.name}`,
-        meta.hashInput(input)
+        meta.hashInput(input),
       )
     : randomUUID();
   if (!isValidAgentActionId(actionId)) {
@@ -566,7 +577,8 @@ async function offerRunsForCreatedSuites(opts: {
       (existing) =>
         existing.operation === runEvalSuiteOperation.name &&
         (existing.input.suite === resource.id ||
-          (resource.name !== undefined && existing.input.suite === resource.name))
+          (resource.name !== undefined &&
+            existing.input.suite === resource.name)),
     );
     if (alreadyOffered) continue;
 
@@ -651,7 +663,7 @@ function buildGatedProposalTools(opts: {
         "confirm. Say that you have proposed it — never that it has run or " +
         "started.",
       inputSchema: relaxProjectRequirement(
-        operation.inputSchema
+        operation.inputSchema,
       ) as typeof operation.inputSchema,
       execute: async (input: Record<string, unknown>, { abortSignal }) => {
         if (abortSignal?.aborted) {
@@ -672,7 +684,8 @@ function buildGatedProposalTools(opts: {
           const issues = parsed.error.issues
             .slice(0, 5)
             .map(
-              (issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`
+              (issue) =>
+                `${issue.path.join(".") || "(root)"}: ${issue.message}`,
             )
             .join("; ");
           return {
@@ -749,7 +762,7 @@ export function buildAgentApiToolSet(opts: {
    * be applied to another's write.
    */
   clientWithHeaders?: (
-    extraHeaders: Record<string, string>
+    extraHeaders: Record<string, string>,
   ) => PlatformApiClient;
   /**
    * Operations the org has switched off. Same rule as the gated tier: omitted,
@@ -765,7 +778,7 @@ export function buildAgentApiToolSet(opts: {
     tools[operation.name] = tool({
       description: `${operation.description} (Scoped to the current project automatically.)`,
       inputSchema: relaxProjectRequirement(
-        operation.inputSchema
+        operation.inputSchema,
       ) as typeof operation.inputSchema,
       execute: async (input: Record<string, unknown>, { abortSignal }) => {
         if (abortSignal?.aborted) {
@@ -792,7 +805,8 @@ export function buildAgentApiToolSet(opts: {
           const issues = parsed.error.issues
             .slice(0, 5)
             .map(
-              (issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`
+              (issue) =>
+                `${issue.path.join(".") || "(root)"}: ${issue.message}`,
             )
             .join("; ");
           return {
@@ -813,7 +827,7 @@ export function buildAgentApiToolSet(opts: {
             [IDEMPOTENCY_KEY_HEADER]: deriveOperationIdempotencyKey(
               opts.turnIdempotencyKey,
               operation.name,
-              parsed.data
+              parsed.data,
             ),
           });
         }
@@ -829,10 +843,10 @@ export function buildAgentApiToolSet(opts: {
             operation,
             result,
             parsed.data,
-            opts.projectId
+            opts.projectId,
           );
           opts.created.push(
-            ...createdResourcesFrom(operation, permalinks, result)
+            ...createdResourcesFrom(operation, permalinks, result),
           );
           // The MODEL sees them too, which is what the system prompt's
           // "hand the user that url" rule refers to. Without this the rule
@@ -850,7 +864,7 @@ export function buildAgentApiToolSet(opts: {
           if (permalinks.length === 0) return capped;
           return withPermalinkEnvelope(
             capped,
-            permalinks.slice(0, MAX_MODEL_PERMALINKS)
+            permalinks.slice(0, MAX_MODEL_PERMALINKS),
           );
         } catch (error) {
           if (abortSignal?.aborted) {
@@ -905,6 +919,7 @@ const AGENT_API_BASE_PROMPT_LINES: readonly string[] = [
   "- NEVER invent server names or ids. Call `list_project_servers` first and use exactly what it returns. If no server matches what the user described, ask which server they mean — do not guess and do not fabricate placeholders.",
   "- Before authoring tool-call assertions, check the server's real tool names with `list_server_tools`.",
   "- Author cases as `steps` arrays; prefer a `prompt` step plus `toolCalledWith`-style assertions on the tools the conversation showed. Set `expectedOutput` when the user stated one.",
+  "- For new AI-authored cases, use generate_eval_cases and its spend approval flow. Use create/update case tools only for explicit user payloads or already reviewed drafts. Keep each full workflow as ordered steps.",
   `- When creating a suite, set the suite \`model\` explicitly to \`${DEFAULT_SUITE_MODEL}\` unless the user asks for a different model.`,
   "- Some actions SPEND the user's quota or credits (running a suite or a case, generating cases, cancelling a run). Calling those tools does NOT perform them: it PROPOSES the action and returns an approval id, and a person must click to confirm. Say that you've proposed it and what it will do. NEVER say it has started, is running, or has been cancelled.",
   "- If a proposal tool is not available to you, you cannot run anything at all. Say so plainly and report the ids the user needs — do not imply you started something.",
@@ -962,9 +977,9 @@ const agentTurnSchema = z.object({
           // limit is 4x bypassable with multibyte text.
           .refine(
             (value) => Buffer.byteLength(value, "utf8") <= MAX_MESSAGE_BYTES,
-            { message: `Message exceeds ${MAX_MESSAGE_BYTES} bytes` }
+            { message: `Message exceeds ${MAX_MESSAGE_BYTES} bytes` },
           ),
-      })
+      }),
     )
     .min(1)
     .max(MAX_MESSAGES)
@@ -973,11 +988,11 @@ const agentTurnSchema = z.object({
         messages.reduce(
           (total, message) =>
             total + Buffer.byteLength(message.content, "utf8"),
-          0
+          0,
         ) <= MAX_TOTAL_MESSAGE_BYTES,
       {
         message: `Message history exceeds ${MAX_TOTAL_MESSAGE_BYTES} total bytes`,
-      }
+      },
     ),
   /**
    * Caller's stable identity for THIS turn — the Slack bot sends
@@ -1015,6 +1030,14 @@ const agentTurnSchema = z.object({
    * another is sending `conversationId`. `conversationId` wins when both
    * arrive.
    */
+  replyHandle: z
+    .object({
+      channel: z.string().min(1).max(256),
+      ts: z.string().regex(/^\d+\.\d+$/),
+    })
+    .strict()
+    .optional(),
+  threadId: z.string().max(256).optional(),
   slackChannelId: z.string().min(1).max(256).optional(),
 });
 
@@ -1041,7 +1064,7 @@ const DEFAULT_DOCS_URL = "https://docs.mcpjam.com/mcp";
 const DOCS_PREFLIGHT_TIMEOUT_MS = 5_000;
 
 function extractAssistantText(
-  assistantMessages: Array<{ content: unknown }>
+  assistantMessages: Array<{ content: unknown }>,
 ): string {
   const parts: string[] = [];
   for (const message of assistantMessages) {
@@ -1090,6 +1113,39 @@ agent.get("/agent-ops", async (c) => {
   return v1Resource(c, { operations: listAgentOpCatalog() });
 });
 
+agent.get("/projects/:projectId/agent/jobs/:jobId", async (c) => {
+  if (!process.env.CONVEX_URL)
+    return v1Error(
+      c,
+      "FEATURE_NOT_SUPPORTED",
+      "The agent endpoint requires a hosted MCPJam deployment.",
+    );
+  const convex = createConvexClient(await getConvexBearerForRequest(c));
+  const result = await convex.query("agentTurnState:status" as any, {
+    jobId: c.req.param("jobId"),
+  });
+  if (!result || result.projectId !== c.req.param("projectId"))
+    return v1Error(c, "NOT_FOUND", "Agent job not found.");
+  return v1Resource(c, result);
+});
+agent.post("/projects/:projectId/agent/jobs/:jobId/cancel", async (c) => {
+  if (!process.env.CONVEX_URL)
+    return v1Error(
+      c,
+      "FEATURE_NOT_SUPPORTED",
+      "The agent endpoint requires a hosted MCPJam deployment.",
+    );
+  const convex = createConvexClient(await getConvexBearerForRequest(c));
+  const status = await convex.query("agentTurnState:status" as any, {
+    jobId: c.req.param("jobId"),
+  });
+  if (!status || status.projectId !== c.req.param("projectId"))
+    return v1Error(c, "NOT_FOUND", "Agent job not found.");
+  await convex.mutation("agentTurnState:cancel" as any, {
+    jobId: c.req.param("jobId"),
+  });
+  return v1Resource(c, { cancelled: true });
+});
 agent.post("/projects/:projectId/agent", async (c) => {
   const projectId = c.req.param("projectId");
 
@@ -1099,7 +1155,7 @@ agent.post("/projects/:projectId/agent", async (c) => {
     return v1Error(
       c,
       "FEATURE_NOT_SUPPORTED",
-      "The agent endpoint requires a hosted MCPJam deployment."
+      "The agent endpoint requires a hosted MCPJam deployment.",
     );
   }
 
@@ -1107,7 +1163,7 @@ agent.post("/projects/:projectId/agent", async (c) => {
     return v1Error(
       c,
       "FEATURE_NOT_SUPPORTED",
-      "The agent endpoint's hosted model is unavailable on this deployment."
+      "The agent endpoint's hosted model is unavailable on this deployment.",
     );
   }
 
@@ -1115,8 +1171,95 @@ agent.post("/projects/:projectId/agent", async (c) => {
     agentTurnSchema,
     await c.req.json().catch(() => {
       return {};
-    })
+    }),
   );
+
+  const durableJobId = c.req.header("x-mcpjam-agent-job");
+  const durableLease = c.req.header("x-mcpjam-agent-lease");
+  const hasDurableHeaders =
+    durableJobId !== undefined || durableLease !== undefined;
+  if (
+    hasDurableHeaders &&
+    (!isAuthorizedInternalServiceRequest(c) || !durableJobId || !durableLease)
+  )
+    return v1Error(
+      c,
+      "FORBIDDEN",
+      "Agent job and owned lease are required together.",
+    );
+  const durableClient =
+    durableJobId || process.env.DURABLE_AGENT_TURNS_ENABLED === "true"
+      ? createConvexClient(await getConvexBearerForRequest(c))
+      : undefined;
+  const durable =
+    durableJobId && durableLease
+      ? await durableClient!.query("agentTurnState:resumeContext" as any, {
+          jobId: durableJobId,
+          token: durableLease,
+        })
+      : undefined;
+  if (durableJobId && !durable)
+    return v1Error(c, "FORBIDDEN", "Agent job lease is not owned.");
+  if (durable && durable.projectId !== projectId)
+    return v1Error(c, "FORBIDDEN", "Agent job belongs to another project.");
+  if (
+    durable &&
+    (durable.phase === "complete" ||
+      (durable.phase === "tools" && !hasUnresolvedToolCalls(durable.messages)))
+  ) {
+    const lastAssistant = [...durable.messages]
+      .reverse()
+      .find((message: any) => message.role === "assistant");
+    return v1Resource(c, {
+      durableContinuation: false,
+      reply: extractAssistantText(lastAssistant ? [lastAssistant] : []),
+      toolCalls: [],
+      createdResources: durable.resources,
+      proposedActions: durable.proposals.map(toWireProposal),
+      usage: { inputTokens: 0, outputTokens: 0 },
+    });
+  }
+  if (durableClient && !durableJobId) {
+    const requestKey = body.idempotencyKey ?? crypto.randomUUID();
+    const surface = resolveProposalSurface(c, body);
+    const started = await fetch(
+      `${process.env.CONVEX_HTTP_URL}/internal/v1/agent-turns/start`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${await getConvexBearerForRequest(c)}`,
+          "x-inspector-service-token": process.env.INSPECTOR_SERVICE_TOKEN!,
+        },
+        body: JSON.stringify({
+          projectId,
+          requestKey,
+          conversationKey: surface
+            ? `${surface.surfaceKind}:${surface.tenantId}:${
+                surface.conversationId
+              }:${body.threadId ?? "root"}`
+            : `${projectId}:${body.conversationId ?? requestKey}`,
+          input: { ...body, idempotencyKey: requestKey },
+          ...(surface ? { surface } : {}),
+          ...(surface?.surfaceKind === "slack" && body.replyHandle
+            ? { replyHandle: body.replyHandle }
+            : {}),
+          ...(c.get("workosApiKeyId")
+            ? { apiKeyId: c.get("workosApiKeyId") }
+            : {}),
+        }),
+        signal: AbortSignal.timeout(15_000),
+      },
+    );
+    if (!started.ok)
+      return v1Error(
+        c,
+        "INTERNAL_ERROR",
+        "Could not start the durable agent turn.",
+      );
+    const { jobId } = await started.json();
+    return c.json({ jobId, status: "pending" }, 202);
+  }
 
   // sk_ callers get their org id from bearer auth; JWT callers reach this
   // route with neither var set (their bearer is validated at Convex), so
@@ -1126,11 +1269,11 @@ agent.post("/projects/:projectId/agent", async (c) => {
     c.get("mcpjamOrganizationId") ??
     c.get("workosUserId") ??
     `project:${projectId}`;
-  if (!acquireTurnSlot(orgKey)) {
+  if (!durable && !acquireTurnSlot(orgKey)) {
     return v1Error(
       c,
       "RATE_LIMITED",
-      `Too many concurrent agent turns for this organization (max ${MAX_CONCURRENT_TURNS_PER_ORG}).`
+      `Too many concurrent agent turns for this organization (max ${MAX_CONCURRENT_TURNS_PER_ORG}).`,
     );
   }
 
@@ -1139,7 +1282,7 @@ agent.post("/projects/:projectId/agent", async (c) => {
   const abortController = new AbortController();
   const wallClock = setTimeout(
     () => abortController.abort(),
-    TURN_WALL_CLOCK_MS
+    TURN_WALL_CLOCK_MS,
   );
   // Caller disconnects (Slack gave up, network drop) must also stop the
   // turn — an abandoned request should not keep consuming model capacity.
@@ -1162,7 +1305,7 @@ agent.post("/projects/:projectId/agent", async (c) => {
       return v1Error(
         c,
         "INTERNAL_ERROR",
-        "In-process /api/v1 dispatch is not registered."
+        "In-process /api/v1 dispatch is not registered.",
       );
     }
     // NOTE: self-dispatched requests re-enter bearer auth carrying the
@@ -1188,15 +1331,15 @@ agent.post("/projects/:projectId/agent", async (c) => {
       });
     const client = makeClient();
 
-    const created: CreatedResource[] = [];
-    const proposed: ProposedAction[] = [];
+    const created: CreatedResource[] = durable?.resources ?? [];
+    const proposed: ProposedAction[] = durable?.proposals ?? [];
     // Proposals need a surface to render the control on AND an org to
     // attribute the spend to. Both come from the auth context, resolved by a
     // single helper so no route re-implements "which chat product is this".
     // Callers with neither get the read/write tiers only — the gated tools are
     // omitted entirely rather than offered and then refused, so the model
     // never plans around an action it cannot take.
-    const proposalSurface = resolveProposalSurface(c, body);
+    const proposalSurface = durable?.surface ?? resolveProposalSurface(c, body);
 
     // The org's capability policy, keyed off the AUTH CONTEXT's organization
     // — not the proposal surface, which is undefined for `sk_`/JWT callers who
@@ -1204,7 +1347,7 @@ agent.post("/projects/:projectId/agent", async (c) => {
     // Fails open (see `org-agent-policy.ts`): a Convex blip must not strip
     // every tool from every turn.
     const disabledOperations = await getOrgAgentPolicyCached(
-      c.get("mcpjamOrganizationId")
+      durable?.organizationId ?? c.get("mcpjamOrganizationId"),
     );
 
     const builtInTools = {
@@ -1249,7 +1392,7 @@ agent.post("/projects/:projectId/agent", async (c) => {
         // boot rather than trusted here.
         baseFetch: hostedMcpBaseFetch(),
         retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
-      }
+      },
     );
     // The preflight must stay inside the turn's wall clock: the docs
     // client's own 30 s connect timeout would otherwise stack ON TOP of
@@ -1267,7 +1410,7 @@ agent.post("/projects/:projectId/agent", async (c) => {
             error: reason instanceof Error ? reason.message : String(reason),
           });
           return false;
-        }
+        },
       ),
       new Promise<boolean>((resolve) => {
         preflightDeadline = setTimeout(() => {
@@ -1314,7 +1457,7 @@ agent.post("/projects/:projectId/agent", async (c) => {
       return v1Error(
         c,
         "INTERNAL_ERROR",
-        "Agent turn resolved to an unexpected runtime."
+        "Agent turn resolved to an unexpected runtime.",
       );
     }
 
@@ -1322,12 +1465,74 @@ agent.post("/projects/:projectId/agent", async (c) => {
       | { message: string; code?: string; httpStatus?: number }
       | undefined;
 
+    let turnMessages = durable?.messages ?? body.messages;
+    if (durable) {
+      for (const [name, definition] of Object.entries(prepared.allTools)) {
+        const execute = definition.execute;
+        if (!execute) continue;
+        definition.execute = async (input: any, options: any) => {
+          const callId = options.toolCallId;
+          if (!callId) throw new Error("Durable tool call has no identity.");
+          const replayable =
+            WRITE_OPERATION_NAMES.has(name) ||
+            AGENT_API_GATED_OPERATIONS.some((op) => op.name === name) ||
+            AGENT_API_OPERATIONS.some(
+              (op) => op.name === name && op.readOnly,
+            ) ||
+            name.startsWith("search_") ||
+            name.startsWith("load_");
+          const prior = await durableClient!.mutation(
+            "agentTurnState:beginCall" as any,
+            {
+              jobId: durableJobId,
+              token: durableLease,
+              callId,
+              operation: name,
+              input,
+              replayable,
+            },
+          );
+          if (prior.replay) return prior.result;
+          const result = await execute(input, options);
+          await durableClient!.mutation("agentTurnState:finishCall" as any, {
+            jobId: durableJobId,
+            token: durableLease,
+            callId,
+            result: result ?? null,
+            resources: created,
+            proposals: proposed,
+          });
+          return result;
+        };
+      }
+      if (
+        durable.phase === "tools" &&
+        !hasUnresolvedApprovalResponses(turnMessages)
+      ) {
+        const results = await executeToolCallsFromMessages(turnMessages, {
+          tools: prepared.allTools,
+          skipNonExecutableTools: true,
+          abortSignal: abortController.signal,
+        });
+        turnMessages = [...turnMessages, ...results];
+        await durableClient!.mutation("agentTurnState:checkpoint" as any, {
+          jobId: durableJobId,
+          token: durableLease,
+          phase: "ready",
+          messages: turnMessages,
+          step: durable.step + 1,
+          resources: created,
+          proposals: proposed,
+        });
+      }
+    }
+
     const result = await runUnifiedAssistantTurn({
       runtime: rt.runtime,
       streamSink: "none",
       persistMode: "caller",
       approvalMode: "auto-deny",
-      messages: body.messages,
+      messages: turnMessages,
       modelDefinition: AGENT_API_MODEL,
       systemPrompt: prepared.enhancedSystemPrompt,
       tools: prepared.allTools,
@@ -1336,6 +1541,33 @@ agent.post("/projects/:projectId/agent", async (c) => {
       sourceType: "direct",
       origin: "mcpjam_agent",
       maxSteps: MAX_STEPS,
+      ...(durable
+        ? {
+            yieldAfterStep: true,
+            durableCheckpoint: async ({
+              phase,
+              messages,
+              step,
+            }: {
+              phase: "model" | "tools" | "ready" | "complete";
+              messages: any[];
+              step: number;
+            }) => {
+              await durableClient!.mutation(
+                "agentTurnState:checkpoint" as any,
+                {
+                  jobId: durableJobId,
+                  token: durableLease,
+                  phase,
+                  messages,
+                  step,
+                  resources: created,
+                  proposals: proposed,
+                },
+              );
+            },
+          }
+        : {}),
       projectId,
       chatSessionId,
       abortSignal: abortController.signal,
@@ -1363,7 +1595,14 @@ agent.post("/projects/:projectId/agent", async (c) => {
     // Skipped on ABORT, matching the gated tools: persisting a proposal for a
     // turn that answered with a timeout leaves a control behind for an
     // exchange the user never saw finish.
-    if (proposalSurface && !abortController.signal.aborted) {
+    const durableContinuation = Boolean(
+      durable && result.messages.at(-1)?.role === "tool",
+    );
+    if (
+      proposalSurface &&
+      !abortController.signal.aborted &&
+      !durableContinuation
+    ) {
       await offerRunsForCreatedSuites({
         created,
         proposed,
@@ -1403,7 +1642,7 @@ agent.post("/projects/:projectId/agent", async (c) => {
         c,
         "TIMEOUT",
         `Agent turn exceeded the ${TURN_WALL_CLOCK_MS / 1000}s limit.`,
-        errorDetails()
+        errorDetails(),
       );
     }
 
@@ -1436,7 +1675,7 @@ agent.post("/projects/:projectId/agent", async (c) => {
         c,
         rateLimited ? "RATE_LIMITED" : "INTERNAL_ERROR",
         message,
-        errorDetails()
+        errorDetails(),
       );
     }
 
@@ -1450,6 +1689,7 @@ agent.post("/projects/:projectId/agent", async (c) => {
     });
 
     return v1Resource(c, {
+      ...(durable ? { durableContinuation } : {}),
       reply,
       toolCalls: result.toolCalls.map((call) => ({
         operation: call.toolName,
@@ -1470,7 +1710,7 @@ agent.post("/projects/:projectId/agent", async (c) => {
   } finally {
     clearTimeout(wallClock);
     requestSignal.removeEventListener("abort", onRequestAbort);
-    releaseTurnSlot(orgKey);
+    if (!durable) releaseTurnSlot(orgKey);
     // Cleanup must never clobber or delay the response — guard against a
     // SYNC throw too (a bare call would escape the finally and discard a
     // computed 200). Detached rather than awaited, but observably so: a
@@ -1502,7 +1742,7 @@ function captureTurnEvent(
     toolCallCount: number;
     opNames?: string[];
     createdCount?: number;
-  }
+  },
 ): void {
   // API-key callers never pass the Convex authorize exchange that normally
   // fills `userExternalId`; the WorkOS user id from bearer auth IS the

@@ -65,6 +65,9 @@ export type RunCiMetadata = {
   pipelineId?: string;
   jobId?: string;
   runUrl?: string;
+  repositoryUrl?: string;
+  prUrl?: string;
+  branchUrl?: string;
   branch?: string;
   commitSha?: string;
 };
@@ -168,6 +171,9 @@ export function parseCiHeader(
     ...pick("pipelineId", parsed.pipelineId ?? parsed.runId),
     ...pick("jobId", parsed.jobId ?? parsed.job),
     ...pick("runUrl", httpUrlOnly(parsed.runUrl)),
+    ...pick("repositoryUrl", httpUrlOnly(parsed.repositoryUrl)),
+    ...pick("prUrl", httpUrlOnly(parsed.prUrl)),
+    ...pick("branchUrl", httpUrlOnly(parsed.branchUrl)),
     ...pick("branch", parsed.branch),
     ...pick("commitSha", parsed.commitSha),
   };
