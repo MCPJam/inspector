@@ -1,4 +1,4 @@
-import { Box, Loader2, Pencil } from "lucide-react";
+import { Box, Loader2 } from "lucide-react";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
 import type {
@@ -7,11 +7,12 @@ import type {
   PlanCatalog,
 } from "@/hooks/useOrganizationBilling";
 import { formatPlanName } from "@/lib/billing-entitlements";
+import { isLegacyTeamEntry } from "@/lib/pricing-catalog";
 
 function formatCurrency(
   amount: number,
   currency: string,
-  maximumFractionDigits: number
+  maximumFractionDigits: number,
 ): string {
   return new Intl.NumberFormat(undefined, {
     style: "currency",
@@ -34,7 +35,7 @@ function formatBillingDate(timestampMs: number | null): string {
 }
 
 function getScheduledCancellationDateMs(
-  billingStatus: OrganizationBillingStatus
+  billingStatus: OrganizationBillingStatus,
 ): number | null {
   if (!billingStatus.stripeCancelAtPeriodEnd) {
     return null;
@@ -44,7 +45,7 @@ function getScheduledCancellationDateMs(
 }
 
 function getScheduledChangeDateMs(
-  billingStatus: OrganizationBillingStatus
+  billingStatus: OrganizationBillingStatus,
 ): number | null {
   if (
     billingStatus.stripeScheduledPlan == null ||
@@ -60,7 +61,7 @@ export function getCurrentPlanRenewalLine(
   billingStatus: OrganizationBillingStatus,
   formattedPeriodEnd: string,
   formattedCancellationDate: string,
-  formattedScheduledChangeDate: string
+  formattedScheduledChangeDate: string,
 ): string {
   if (billingStatus.stripeCancelAtPeriodEnd) {
     return formattedCancellationDate === "Not available"
@@ -95,7 +96,7 @@ export function getCurrentPlanRenewalLine(
 
 function getScheduledCancellationDetailLine(
   billingStatus: OrganizationBillingStatus,
-  formattedCancellationDate: string
+  formattedCancellationDate: string,
 ): string | null {
   if (!billingStatus.stripeCancelAtPeriodEnd) {
     return null;
@@ -110,7 +111,7 @@ function getScheduledCancellationDetailLine(
 
 function getScheduledChangeDetailLine(
   billingStatus: OrganizationBillingStatus,
-  formattedScheduledChangeDate: string
+  formattedScheduledChangeDate: string,
 ): string | null {
   const scheduledPlan = billingStatus.stripeScheduledPlan;
   const scheduledBillingInterval = billingStatus.stripeScheduledBillingInterval;
@@ -126,7 +127,7 @@ function getScheduledChangeDetailLine(
   const currentIntervalLabel =
     billingStatus.billingInterval === "annual" ? "annual" : "monthly";
   const currentPlanDescriptor = `${formatPlanName(
-    billingStatus.plan
+    billingStatus.plan,
   )} ${currentIntervalLabel}`;
   const cadenceLabel =
     scheduledBillingInterval === "annual"
@@ -149,14 +150,14 @@ function getScheduledChangeDetailLine(
 
 function formatCurrentPlanBillingDetailLine(
   billingStatus: OrganizationBillingStatus,
-  planCatalog: PlanCatalog
+  planCatalog: PlanCatalog,
 ): string | null {
   if (billingStatus.source === "trial") {
     const rawDays =
       billingStatus.trialStartedAt != null && billingStatus.trialEndsAt != null
         ? Math.round(
             (billingStatus.trialEndsAt - billingStatus.trialStartedAt) /
-              (24 * 60 * 60 * 1000)
+              (24 * 60 * 60 * 1000),
           )
         : null;
     const totalDays = rawDays != null && rawDays > 0 ? rawDays : null;
@@ -172,8 +173,8 @@ function formatCurrentPlanBillingDetailLine(
   const plan = billingStatus.plan ?? "free";
   const interval = billingStatus.billingInterval ?? "monthly";
   const entry = planCatalog.plans[plan];
-  if (!entry) {
-    return null;
+  if (!entry || entry.catalogPlanId !== billingStatus.catalogPlanId) {
+    return "Your existing subscription terms apply. View billing details for your price.";
   }
   if (plan === "free" || entry.billingModel === "free") {
     return "No credit card required";
@@ -206,7 +207,7 @@ export interface OrganizationCurrentPlanPanelProps {
   planCatalog: PlanCatalog | undefined;
   isLoadingPlanCatalog: boolean;
   onChangeBillingInterval: (
-    targetBillingInterval: BillingInterval
+    targetBillingInterval: BillingInterval,
   ) => Promise<void>;
   onCancelScheduledBillingChange?: () => void;
   cancelScheduledBillingChangeLabel?: string | null;
@@ -227,6 +228,18 @@ export function OrganizationCurrentPlanPanel({
   const currentPlan = billingStatus.plan ?? "free";
   const isTrial = billingStatus.source === "trial";
   const isSimulation = billingStatus.source === "simulation";
+  const currentEntry = planCatalog?.plans[currentPlan];
+  const isLegacyTeam =
+    currentPlan === "team" &&
+    !isTrial &&
+    !isSimulation &&
+    (billingStatus.pricingVersion === "v1" ||
+      billingStatus.catalogPlanId === "team_v1" ||
+      billingStatus.priceModel === "per_seat" ||
+      (!billingStatus.catalogPlanId &&
+        !billingStatus.pricingVersion &&
+        currentEntry != null &&
+        isLegacyTeamEntry(currentEntry)));
   const displayPlan = isTrial
     ? billingStatus.trialPlan ?? billingStatus.effectivePlan
     : isSimulation
@@ -235,17 +248,14 @@ export function OrganizationCurrentPlanPanel({
   const billingConfigured = billingStatus.billingConfigured ?? false;
   const canManageBilling = billingStatus.canManageBilling ?? false;
   const formattedPeriodEnd = formatBillingDate(
-    billingStatus.stripeCurrentPeriodEnd
+    billingStatus.stripeCurrentPeriodEnd,
   );
   const scheduledCancellationDate = formatBillingDate(
-    getScheduledCancellationDateMs(billingStatus)
+    getScheduledCancellationDateMs(billingStatus),
   );
   const scheduledChangeDate = formatBillingDate(
-    getScheduledChangeDateMs(billingStatus)
+    getScheduledChangeDateMs(billingStatus),
   );
-  const subscriptionStatusLabel = billingStatus.subscriptionStatus
-    ? billingStatus.subscriptionStatus.replace(/_/g, " ")
-    : "Not subscribed";
   const formattedTrialEnd = formatBillingDate(billingStatus.trialEndsAt);
 
   const effectiveBillingInterval = billingStatus.billingInterval ?? "monthly";
@@ -256,27 +266,27 @@ export function OrganizationCurrentPlanPanel({
     : null;
   const scheduledCancellationDetailLine = getScheduledCancellationDetailLine(
     billingStatus,
-    scheduledCancellationDate
+    scheduledCancellationDate,
   );
   const scheduledChangeDetailLine = getScheduledChangeDetailLine(
     billingStatus,
-    scheduledChangeDate
+    scheduledChangeDate,
   );
   const simulationBanner = isSimulation
     ? `Simulation active. Limits and access use ${formatPlanName(
-        displayPlan
+        displayPlan,
       )}, while billing remains on ${formatPlanName(currentPlan)}.`
     : null;
   const isPastDue = billingStatus.paymentState === "past_due";
   const paymentGraceEndsLabel = formatBillingDate(
-    billingStatus.paymentGraceEndsAt ?? null
+    billingStatus.paymentGraceEndsAt ?? null,
   );
 
   const showIntervalPortalLink =
     billingConfigured &&
     canManageBilling &&
     !isTrial &&
-    currentPlan === "team" &&
+    (currentPlan === "team" || currentPlan === "pro") &&
     billingStatus.billingInterval != null &&
     scheduledChangeDetailLine == null &&
     !billingStatus.stripeCancelAtPeriodEnd;
@@ -289,45 +299,8 @@ export function OrganizationCurrentPlanPanel({
   return (
     <div
       data-testid="current-plan-panel"
-      className="flex flex-col gap-4 rounded-xl border border-border/70 bg-muted/20 p-5 md:p-6"
+      className="flex flex-col gap-3 rounded-xl border border-border/70 p-4"
     >
-      <p className="text-xs text-muted-foreground">
-        {isTrial ? (
-          <>
-            <span className="font-medium text-foreground/80">Trial status</span>{" "}
-            <span className="capitalize">{billingStatus.trialStatus}</span>
-            <span className="text-muted-foreground/70"> · </span>
-            <span className="font-medium text-foreground/80">
-              Billing cycle
-            </span>{" "}
-            <span>No subscription</span>
-          </>
-        ) : currentPlan === "free" ? (
-          <>
-            <span className="font-medium text-foreground/80">
-              Billing cycle
-            </span>{" "}
-            <span className="capitalize">
-              {billingStatus.billingInterval ?? "No subscription"}
-            </span>
-          </>
-        ) : (
-          <>
-            <span className="font-medium text-foreground/80">
-              Subscription status
-            </span>{" "}
-            <span className="capitalize">{subscriptionStatusLabel}</span>
-            <span className="text-muted-foreground/70"> · </span>
-            <span className="font-medium text-foreground/80">
-              Billing cycle
-            </span>{" "}
-            <span className="capitalize">
-              {billingStatus.billingInterval ?? "No subscription"}
-            </span>
-          </>
-        )}
-      </p>
-
       {isSimulation ? (
         <div
           className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-950 dark:text-amber-100"
@@ -375,10 +348,15 @@ export function OrganizationCurrentPlanPanel({
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <Badge
           variant="secondary"
-          className="rounded-md px-2.5 py-0.5 text-xs font-medium"
+          className="rounded-md px-2.5 py-0.5 text-xs font-medium capitalize"
         >
-          Current
+          {isTrial ? "Trial" : "Current"}
         </Badge>
+        {isLegacyTeam ? (
+          <Badge variant="outline" data-testid="current-plan-legacy-badge">
+            Legacy
+          </Badge>
+        ) : null}
         {billingStatus.stripeCancelAtPeriodEnd ? (
           <Badge
             variant="outline"
@@ -388,19 +366,21 @@ export function OrganizationCurrentPlanPanel({
             Will not renew
           </Badge>
         ) : null}
-        <span
-          className="text-sm text-muted-foreground"
-          data-testid="current-plan-renewal"
-        >
-          {isTrial
-            ? `Trial ends ${formattedTrialEnd}`
-            : getCurrentPlanRenewalLine(
-                billingStatus,
-                formattedPeriodEnd,
-                scheduledCancellationDate,
-                scheduledChangeDate
-              )}
-        </span>
+        {displayPlan !== "free" || isTrial ? (
+          <span
+            className="text-sm text-muted-foreground"
+            data-testid="current-plan-renewal"
+          >
+            {isTrial
+              ? `Trial ends ${formattedTrialEnd}`
+              : getCurrentPlanRenewalLine(
+                  billingStatus,
+                  formattedPeriodEnd,
+                  scheduledCancellationDate,
+                  scheduledChangeDate,
+                )}
+          </span>
+        ) : null}
       </div>
 
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
@@ -412,9 +392,11 @@ export function OrganizationCurrentPlanPanel({
             <Box className="size-6 text-primary" />
           </div>
           <div className="min-w-0 space-y-1.5">
-            <p className="text-2xl font-semibold tracking-tight text-foreground">
+            <p className="text-xl font-semibold tracking-tight text-foreground">
               {isTrial
                 ? `${formatPlanName(displayPlan)} Trial`
+                : formatPlanName(displayPlan) === "current"
+                ? "Paid plan"
                 : formatPlanName(displayPlan)}
             </p>
             {displayPlan === "free" && !isTrial ? (
@@ -422,7 +404,7 @@ export function OrganizationCurrentPlanPanel({
                 Limited functionality
               </p>
             ) : null}
-            {billingDetailLine ? (
+            {billingDetailLine && (displayPlan !== "free" || isTrial) ? (
               <p className="text-sm text-muted-foreground">
                 {billingDetailLine}
                 {showIntervalPortalLink ? (
@@ -444,32 +426,7 @@ export function OrganizationCurrentPlanPanel({
                 ) : null}
               </p>
             ) : null}
-            {scheduledCancellationDetailLine ? (
-              <p
-                className="text-xs font-medium text-amber-900 dark:text-amber-100"
-                data-testid="current-plan-scheduled-cancel"
-              >
-                {scheduledCancellationDetailLine}
-              </p>
-            ) : scheduledChangeDetailLine ? (
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                <p
-                  className="text-xs font-medium text-muted-foreground"
-                  data-testid="current-plan-scheduled-change"
-                >
-                  {scheduledChangeDetailLine}
-                </p>
-                {showCancelScheduledBillingChangeLink ? (
-                  <button
-                    type="button"
-                    className="text-xs font-medium text-primary underline-offset-4 hover:underline"
-                    onClick={() => onCancelScheduledBillingChange?.()}
-                  >
-                    {cancelScheduledBillingChangeLabel}
-                  </button>
-                ) : null}
-              </div>
-            ) : isLoadingPlanCatalog ? (
+            {isLoadingPlanCatalog ? (
               <p className="text-sm text-muted-foreground">
                 Loading plan details…
               </p>
@@ -483,8 +440,9 @@ export function OrganizationCurrentPlanPanel({
 
         {currentPlan !== "free" && canManageBilling ? (
           <Button
-            variant="outline"
-            className="shrink-0 gap-2 self-start sm:self-center"
+            variant="ghost"
+            size="sm"
+            className="shrink-0 gap-2 self-start text-xs font-normal text-muted-foreground sm:self-center"
             onClick={() => void onManageBilling()}
             disabled={!billingConfigured || isOpeningPortal}
           >
@@ -494,14 +452,41 @@ export function OrganizationCurrentPlanPanel({
                 Loading...
               </>
             ) : (
-              <>
-                <Pencil className="size-4" />
-                Manage plan
-              </>
+              <>Manage plan</>
             )}
           </Button>
         ) : null}
       </div>
+      {scheduledCancellationDetailLine || scheduledChangeDetailLine ? (
+        <div className="rounded-lg border border-border bg-muted/40 p-3">
+          {scheduledCancellationDetailLine ? (
+            <p
+              className="text-xs font-medium text-amber-900 dark:text-amber-100"
+              data-testid="current-plan-scheduled-cancel"
+            >
+              {scheduledCancellationDetailLine}
+            </p>
+          ) : scheduledChangeDetailLine ? (
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <p
+                className="text-xs font-medium text-muted-foreground"
+                data-testid="current-plan-scheduled-change"
+              >
+                {scheduledChangeDetailLine}
+              </p>
+              {showCancelScheduledBillingChangeLink ? (
+                <button
+                  type="button"
+                  className="text-xs font-medium text-primary underline-offset-4 hover:underline"
+                  onClick={() => onCancelScheduledBillingChange?.()}
+                >
+                  {cancelScheduledBillingChangeLabel}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
