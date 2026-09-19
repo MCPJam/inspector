@@ -162,6 +162,7 @@ describe("parity corpus manifest", () => {
       "attribution",
       "egressVerified",
       "spanIds",
+      "reasons",
       "toolSignals",
       "toolsTotalBefore",
       "toolsExposed",
@@ -216,7 +217,13 @@ describe("parity corpus manifest", () => {
   });
 
   it("declares the analyzer version it was recorded under", () => {
-    expect(manifest.stageAnalyzerVersion).toBe(STAGE_ANALYZER_VERSION);
+    // Pinned by hand rather than to STAGE_ANALYZER_VERSION on purpose: the
+    // corpus is immutable v11 evidence, and v12 changed only discovery-stage
+    // assertion routing, which no v11 record exercises. The per-record test
+    // below proves every row still derives identically under v12; only the
+    // stamped version moves.
+    expect(manifest.stageAnalyzerVersion).toBe(11);
+    expect(STAGE_ANALYZER_VERSION).toBe(12);
     expect(manifest.origin).toBe("synthetic");
   });
 });
@@ -236,9 +243,9 @@ describe("historical parity: recorded rows are reproduced exactly", () => {
       expect(derivation.failureCategory).toEqual(
         record.recorded.failureCategory
       );
-      expect(derivation.stageAnalyzerVersion).toBe(
-        record.recorded.stageAnalyzerVersion
-      );
+      // The v11 corpus remains immutable; v12 changes only discovery assertions, absent here.
+      expect(record.recorded.stageAnalyzerVersion).toBe(11);
+      expect(derivation.stageAnalyzerVersion).toBe(12);
     });
   }
 });

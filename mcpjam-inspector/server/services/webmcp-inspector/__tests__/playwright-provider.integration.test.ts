@@ -481,24 +481,24 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
       timeout: 15_000,
     });
 
-    // WHILE STREAMING: the replay buffer holds exactly ONE frame, however many
-    // hundreds were published into it — and every timeline entry is still
-    // there beside it. That is the whole point of the coalesced slot.
+    // WHILE STREAMING: the event hub carries NO pixels at all, however many
+    // hundreds the page painted — they travel on their own one-slot channel,
+    // which retains exactly the CURRENT paint. Every timeline entry is still
+    // there beside it.
     //
     // Polled rather than read once: the reload above clears the retained frame
-    // (`onNavigated` → `hub.clearFrame()`), and a frame delivered just BEFORE
+    // (`onNavigated` → `frames.clear()`), and a frame delivered just BEFORE
     // that event leaves the slot empty for as long as it takes the page to
     // paint again — which on a loaded runner is longer than the counter this
-    // waits on suggests. Polling keeps the claim exactly as strong (a slot
-    // that settled at two frames still fails) without racing the repaint.
-    await vi.waitFor(
-      () =>
-        expect(
-          runtime.hub.buffered().filter((event) => event.type === "frame"),
-        ).toHaveLength(1),
-      { timeout: 15_000 },
-    );
+    // waits on suggests. Polling keeps the claim exactly as strong without
+    // racing the repaint.
+    await vi.waitFor(() => expect(runtime.frames.latest()).toBeDefined(), {
+      timeout: 15_000,
+    });
     const streaming = runtime.hub.buffered();
+    expect(
+      streaming.filter((event) => (event as { type: string }).type === "frame"),
+    ).toHaveLength(0);
     const streamingActivity = streaming.filter(
       (event) => event.type === "activity",
     );
@@ -516,11 +516,11 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     await new Promise((resolve) => setTimeout(resolve, 750));
     expect(frames.length).toBe(afterStop);
 
-    // AFTER STOPPING: no frame at all. Replay promises a reconnecting client
-    // the CURRENT paint, and once the stream is withdrawn there is none — a
-    // retained one would be handed over as though it were live.
+    // AFTER STOPPING: no retained frame at all. The channel hands a watcher
+    // that arrives late the CURRENT paint, and once the stream is withdrawn
+    // there is none — a retained one would go over as though it were live.
+    expect(runtime.frames.latest()).toBeUndefined();
     const stopped = runtime.hub.buffered();
-    expect(stopped.filter((event) => event.type === "frame")).toHaveLength(0);
     // The timeline is untouched by any of it: every entry that was there
     // before the stop is still there, in the same order.
     //

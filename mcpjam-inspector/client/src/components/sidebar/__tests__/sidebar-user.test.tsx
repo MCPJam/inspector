@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
+import { MemoryRouter, Route, Routes } from "react-router";
 import {
   isSignOutInProgress,
   resetSignOutLatchForTests,
@@ -96,6 +97,25 @@ vi.mock("@/components/ui/sidebar", () => ({
 import { SidebarUser } from "../sidebar-user";
 
 describe("SidebarUser", () => {
+  it("opens Support in Settings from the account menu", async () => {
+    authState.user = { email: "owner@example.com", firstName: "Owner" };
+    render(
+      <MemoryRouter initialEntries={["/home"]}>
+        <SidebarUser />
+        <Routes>
+          <Route path="/home" element={null} />
+          <Route
+            path="/settings/support"
+            element={<h1>Support settings page</h1>}
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByText("Support"));
+    expect(
+      await screen.findByRole("heading", { name: "Support settings page" }),
+    ).toBeInTheDocument();
+  });
   beforeEach(() => {
     authState.user = null;
     authState.signInMock.mockClear();
@@ -194,7 +214,7 @@ describe("SidebarUser", () => {
       });
     });
     expect(onBeforeSignOut.mock.invocationCallOrder[0]).toBeLessThan(
-      authState.signOutMock.mock.invocationCallOrder[0]
+      authState.signOutMock.mock.invocationCallOrder[0],
     );
   });
 

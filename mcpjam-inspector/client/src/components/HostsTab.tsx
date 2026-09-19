@@ -1,3 +1,4 @@
+import { HostCanvasSelector } from "./hosts/redesigned/HostCanvasSelector";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, LayoutGroup, motion } from "framer-motion";
 import { HostBuilderView } from "./hosts/HostBuilderView";
@@ -483,6 +484,14 @@ export function HostsTab({
                 >
                   <ConnectViewHeader
                     value="servers"
+                    leftSlot={
+                      <HostCanvasSelector
+                        projectId={projectId}
+                        activeHostId={previewedHostId}
+                        navigateOnSwitch={false}
+                        showAddClient={false}
+                      />
+                    }
                     previewedHostId={previewedHostId}
                     onChange={(next) => {
                       // `onSelectHost` is wired to `handleSelectHost` in

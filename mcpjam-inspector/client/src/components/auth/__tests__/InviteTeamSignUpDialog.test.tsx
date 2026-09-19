@@ -42,6 +42,9 @@ describe("InviteTeamSignUpDialog", () => {
   it("Create free account marks the pending invite, remembers the page, and starts WorkOS sign-up", () => {
     render(<InviteTeamSignUpDialog isOpen onClose={vi.fn()} />);
 
+    expect(screen.getByText(/500 free eval iterations/)).toHaveTextContent(
+      "+ 500 free eval iterations!",
+    );
     screen.getByRole("button", { name: "Create free account" }).click();
 
     expect(signUpMock).toHaveBeenCalledTimes(1);
