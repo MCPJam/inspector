@@ -701,8 +701,6 @@ export function SuiteDetailOverview({
                         historyRows={rowMap}
                         hostNamesById={hostNamesById}
                         onOpen={() => onRunClick(representative._id)}
-                        onCancelRun={onCancelRun}
-                        cancellingRunId={cancellingRunId}
                       />
                     );
                   })}

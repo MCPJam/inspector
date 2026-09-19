@@ -420,3 +420,107 @@ function markerFor(env) {
     .digest("hex")
     .slice(0, 20);
 }
+
+function sibling(runId, clientName, provider, model, rows, overrides = {}) {
+  return {
+    receipt: { ...receipt, runId },
+    run: {
+      id: runId,
+      runNumber: 7,
+      runGroupId: "g1",
+      status: "completed",
+      result: rows.some(([, , result]) => result === "failed") ? "failed" : "passed",
+      client: { name: clientName },
+      ...overrides,
+    },
+    iterations: rows.map(([caseId, title, result]) => ({
+      ...iteration(caseId, title, result, 1000),
+      provider,
+      model,
+    })),
+  };
+}
+
+test("renders sibling runs of one group as one table with a row per client", () => {
+  const { comment } = renderReports([
+    sibling("run-opus", "Claude Opus", "anthropic", "anthropic/claude-opus-4.5", [
+      ["search", "Search coffee", "passed"],
+      ["cart", "Add to cart", "passed"],
+    ]),
+    sibling("run-astra", "chatGPT Astra", "openai", "openai/gpt-5", [
+      ["search", "Search coffee", "passed"],
+      ["cart", "Add to cart", "failed"],
+    ]),
+  ]);
+
+  assert.equal(comment.match(/^## /gm)?.length, 1, "one section, not one per run");
+  assert.doesNotMatch(comment, /\n---\n/);
+  assert.match(comment, /Amazon smoke · Run #7/);
+  // One failed sibling fails the group.
+  assert.match(comment, /Run result: ❌ Failed/);
+  assert.match(comment, /2 client\/model combinations/);
+  assert.match(comment, /\| chatGPT Astra \/ openai\/gpt-5 \| ❌ Failed \| 1\/2 \|/);
+  assert.match(comment, /\| Claude Opus \/ anthropic\/claude-opus-4\.5 \| ✅ Passed \| 2\/2 \|/);
+  // Failed cases: one column per sibling, and the passing sibling's cell is filled.
+  assert.match(
+    comment,
+    /\| Case \| chatGPT Astra \/ openai\/gpt-5 \| Claude Opus \/ anthropic\/claude-opus-4\.5 \|/,
+  );
+  assert.match(comment, /\| Add to cart \| ❌ 0% \(0\/1\) \| ✅ 100% \(1\/1\) \|/);
+  // Each sibling keeps its own run page.
+  assert.match(comment, /\[View run in MCPJam — Claude Opus\]\([^)]*runs\/run-opus/);
+  assert.match(comment, /\[View run in MCPJam — chatGPT Astra\]\([^)]*runs\/run-astra/);
+});
+
+test("keeps two clients on the same model as two rows", () => {
+  const { comment } = renderReports([
+    sibling("run-a", "Claude", "anthropic", "anthropic/claude-haiku-4.5", [
+      ["search", "Search", "passed"],
+    ]),
+    sibling("run-b", "Claude strict", "anthropic", "anthropic/claude-haiku-4.5", [
+      ["search", "Search", "passed"],
+    ]),
+  ]);
+  assert.match(comment, /\| Claude \/ anthropic\/claude-haiku-4\.5 \|/);
+  assert.match(comment, /\| Claude strict \/ anthropic\/claude-haiku-4\.5 \|/);
+});
+
+test("names each sibling in recorded failures and sums run details", () => {
+  const failing = sibling("run-astra", "chatGPT Astra", "openai", "openai/gpt-5", [
+    ["cart", "Add to cart", "failed"],
+  ]);
+  failing.iterations[0].error = "Expected one item";
+  const { summary } = renderReports([
+    sibling("run-opus", "Claude Opus", "anthropic", "anthropic/claude-opus-4.5", [
+      ["cart", "Add to cart", "passed"],
+    ]),
+    failing,
+  ]);
+  assert.match(
+    summary,
+    /\| Add to cart \(chatGPT Astra \/ openai\/gpt-5\) \| Expected one item \|/,
+  );
+  assert.match(summary, /\| Completed iterations \| 2\/2 \|/);
+});
+
+test("keeps runs with different or absent group ids in separate sections", () => {
+  const { comment } = renderReports([
+    sibling("run-1", "A", "openai", "openai/gpt-5", [["s", "S", "passed"]], { runGroupId: "g1" }),
+    sibling("run-2", "B", "openai", "openai/gpt-5", [["s", "S", "passed"]], { runGroupId: "g2" }),
+    sibling("run-3", "C", "openai", "openai/gpt-5", [["s", "S", "passed"]], { runGroupId: undefined }),
+  ]);
+  assert.equal(comment.split("\n\n---\n\n").length, 3);
+  // A group of one keeps the single-run link text.
+  assert.equal(comment.match(/\[View full run in MCPJam\]/g)?.length, 3);
+});
+
+test("does not pass a group whose sibling has no recorded result", () => {
+  const unknown = sibling("run-b", "B", "openai", "openai/gpt-5", [["s", "S", "passed"]]);
+  unknown.run.result = null;
+  const { comment } = renderReports([
+    sibling("run-a", "A", "openai", "openai/gpt-5", [["s", "S", "passed"]]),
+    unknown,
+  ]);
+  assert.doesNotMatch(comment, /Run result: ✅ Passed/);
+  assert.match(comment, /Run result: ⚠️ Unknown/);
+});
