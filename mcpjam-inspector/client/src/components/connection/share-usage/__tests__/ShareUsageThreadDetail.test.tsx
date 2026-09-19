@@ -274,7 +274,7 @@ describe("ShareUsageThreadDetail", () => {
     const { rerender } = render(<ShareUsageThreadDetail threadId="thread-1" />);
     await waitFor(() => expect(mockTraceViewer).toHaveBeenCalledWith(expect.objectContaining({
       hostSnapshot: expect.objectContaining({ hostStyle: "claude" }),
-      widgetPolicy: "placeholder", frame: "none", interactive: false,
+      widgetPolicy: "live", frame: "none", interactive: false,
     })));
     expect(mockTraceViewer.mock.lastCall?.[0].renderAssistantTurnFooter).toBeUndefined();
     mockScoreState.error = false;
@@ -317,7 +317,7 @@ describe("ShareUsageThreadDetail", () => {
       expect(mockTraceViewer).toHaveBeenCalledWith(
         expect.objectContaining({
           reasoningDisplayMode: "collapsible",
-          widgetPolicy: "placeholder",
+          widgetPolicy: "live",
         }),
       );
     });
@@ -371,12 +371,12 @@ describe("ShareUsageThreadDetail", () => {
     });
   });
 
-  it("uses the inspector renderer with the pinned host and read-only widgets", async () => {
+  it("uses the inspector renderer with the pinned host and live MCP Apps", async () => {
     render(<ShareUsageThreadDetail threadId="thread-1" />);
 
     await waitFor(() => {
       expect(mockTraceViewer).toHaveBeenCalledWith(
-        expect.objectContaining({ frame: "none", widgetPolicy: "placeholder", interactive: false, hostSnapshot: expect.objectContaining({ hostStyle: "claude" }), adaptedTrace: expect.objectContaining({ messages: expect.any(Array) }) }),
+        expect.objectContaining({ frame: "none", widgetPolicy: "live", interactive: false, hostSnapshot: expect.objectContaining({ hostStyle: "claude" }), adaptedTrace: expect.objectContaining({ messages: expect.any(Array) }) }),
       );
     });
   });

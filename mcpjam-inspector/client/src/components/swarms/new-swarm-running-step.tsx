@@ -18,6 +18,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { usePaginatedQuery, useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { toast } from "@/lib/toast";
+import { useAppNavigate } from "@/lib/app-navigation";
 import {
   StopSwarmRunButton,
   useStopSwarmRun,
@@ -576,7 +577,8 @@ function collectSessionSlots(args: {
       index,
     );
     const direct = snap.stream.cellStatus[swarmCellKey(columnKey, index)] as
-      SwarmCellLiveStatus | undefined;
+      | SwarmCellLiveStatus
+      | undefined;
     const fromEnvelope = Object.values(snap.stream.sessions).find(
       (entry) =>
         entry.envelope.sessionIndex === index &&
@@ -653,6 +655,7 @@ function mergeStreams(
 const COMPLETION_TOAST_DWELL_MS = 1800;
 
 export function NewSwarmRunningStep({
+  organizationId,
   runs,
   fallbackColumns,
   environments = [],
@@ -663,6 +666,7 @@ export function NewSwarmRunningStep({
   onRunsComplete,
 }: {
   projectId: string;
+  organizationId?: string;
   runs: SwarmLaunchedRun[];
   /** Columns from the Describe-step environments — always shown. */
   fallbackColumns: SwarmRunningColumn[];
@@ -696,6 +700,7 @@ export function NewSwarmRunningStep({
    */
   onRunsComplete?: () => void;
 }) {
+  const appNavigate = useAppNavigate();
   const hostById = useMemo(() => {
     return new Map(hosts.map((host) => [host.hostId, host] as const));
   }, [hosts]);
@@ -930,15 +935,7 @@ export function NewSwarmRunningStep({
     return () => window.clearTimeout(timer);
   }, [allTerminal, chrome]);
 
-  /**
-   * The first non-success terminal, humanized — what the run banner explains.
-   *
-   * Every attempt of a rate-limited run carries the same provider refusal, so
-   * showing one is showing all of them. Rendered through the shared humanizer
-   * rather than raw, because rows written before the runner started
-   * sanitizing still hold the full `swarm-agent <url> failed (429): {...}`
-   * envelope.
-   */
+  /** Every terminal failure cause, including limits alongside other failures. */
   const runFailure = useMemo(() => {
     // This banner summarizes waves without a successful attempt. Failed
     // attempts may still have recorded conversations and executed tools.
@@ -951,24 +948,43 @@ export function NewSwarmRunningStep({
     ) {
       return null;
     }
+    const groups = new Map<
+      string,
+      {
+        kind: string;
+        code: string | null | undefined;
+        info: ReturnType<typeof humanizeSwarmAttemptError>;
+        count: number;
+      }
+    >();
     for (const snap of Object.values(snapshots)) {
       for (const attempt of snap.attempts) {
         if (attempt.status !== "rate_limited" && attempt.status !== "failed") {
           continue;
         }
-        // A structured code alone is enough — the humanizer maps recognized
-        // sandbox codes without any stored message.
         if (!attempt.errorMessage && !attempt.errorCode) continue;
-        return {
-          kind: attempt.status,
-          info: humanizeSwarmAttemptError(
-            attempt.errorMessage,
-            attempt.errorCode,
-          ),
-        };
+        const info = humanizeSwarmAttemptError(
+          attempt.errorMessage,
+          attempt.errorCode,
+        );
+        const key = attempt.errorCode || `${attempt.status}:${info.message}`;
+        const group = groups.get(key);
+        if (group) group.count++;
+        else
+          groups.set(key, {
+            kind: attempt.status,
+            code: attempt.errorCode,
+            info,
+            count: 1,
+          });
       }
     }
-    return null;
+    const causes = [...groups.values()];
+    if (!causes.length) return null;
+    const severe = causes.find(
+      (cause) => cause.kind !== "rate_limited" && !cause.info.rerunnable,
+    );
+    return { ...(severe ?? causes[0]), causes };
   }, [allTerminal, failed, rateLimited, snapshots, stoppedHere, succeeded]);
 
   const progress = total > 0 ? Math.min(1, done / total) : allTerminal ? 1 : 0;
@@ -1033,11 +1049,69 @@ export function NewSwarmRunningStep({
     // Two providers throttling in the same run name neither: the banner would
     // otherwise blame whichever attempt was read first for both.
     const [only] = labels;
-    return { count, label: labels.size === 1 ? (only ?? null) : null };
+    return { count, label: labels.size === 1 ? only ?? null : null };
   }, [snapshots]);
 
+  // The other half of that split: sessions MCPJam's own account limit stopped.
+  // Skipping them above is right — no provider throttled anything — but on a
+  // run where other sessions succeeded, the run banner stays silent too, and
+  // the amber chips would be left unexplained.
+  const accountLimit = useMemo(() => {
+    let count = 0;
+    let message: string | null = null;
+    let exhausted = 0;
+    for (const snap of Object.values(snapshots)) {
+      for (const attempt of snap.attempts) {
+        if (attempt.status !== "rate_limited" && attempt.status !== "failed")
+          continue;
+        const info = humanizeSwarmAttemptError(
+          attempt.errorMessage,
+          attempt.errorCode,
+        );
+        if (!isAccountLimit(info.message, attempt.errorCode ?? info.code)) {
+          continue;
+        }
+        count += 1;
+        const code = attempt.errorCode ?? info.code;
+        if (
+          [
+            "user_rate_limit",
+            "org_rate_limit",
+            "billing_limit_reached",
+            "spend_cap_exceeded",
+          ].includes(code ?? "") &&
+          !/in-flight|hold the remaining credits/i.test(info.message)
+        )
+          exhausted += 1;
+        // The whole-run finalize writes a code and no message; any sibling
+        // that stored the backend's sentence says it better.
+        if (!message && attempt.errorMessage) message = info.message;
+      }
+    }
+    return count === 0 ? null : { count, message, exhausted };
+  }, [snapshots]);
+
+  // The account-limit callout owns its cause — count, breakdown and the top-up
+  // links — so the grouped banner states every OTHER cause, once. A run whose
+  // only cause is the limit shows the callout alone.
+  const bannerFailure = useMemo(() => {
+    if (!runFailure) return null;
+    const causes = accountLimit
+      ? runFailure.causes.filter(
+          (cause) =>
+            !isAccountLimit(cause.info.message, cause.code ?? cause.info.code),
+        )
+      : runFailure.causes;
+    if (!causes.length) return null;
+    const lead =
+      causes.find(
+        (cause) => cause.kind !== "rate_limited" && !cause.info.rerunnable,
+      ) ?? causes[0];
+    return { ...lead, causes };
+  }, [accountLimit, runFailure]);
+
   const selectedRunStatus = selection
-    ? (snapshots[selection.runId]?.status ?? "running")
+    ? snapshots[selection.runId]?.status ?? "running"
     : "running";
 
   const fallbackTrace = useMemo(
@@ -1052,6 +1126,7 @@ export function NewSwarmRunningStep({
     chrome === "wizard" ||
     missingPlannedClients.length > 0 ||
     providerRateLimit !== null ||
+    accountLimit !== null ||
     runFailure !== null;
 
   return (
@@ -1157,8 +1232,87 @@ export function NewSwarmRunningStep({
                   </p>
                 </div>
               ) : null}
+              {/* Account limits remain visible even when another cause failed. */}
+              {accountLimit ? (
+                <div
+                  className="rounded-md border border-warning bg-warning/20 px-3 py-2 text-sm text-warning-foreground"
+                  data-testid="new-swarm-running-account-limit"
+                  role="status"
+                >
+                  <p className="font-medium">
+                    {accountLimit.exhausted > 0 && allTerminal
+                      ? `Stopped: this organization's MCPJam credits ran out after ${succeeded} of ${total} sessions.`
+                      : "Sessions stopped at the MCPJam model limit."}
+                  </p>
+                  <p className="mt-0.5">
+                    {`${succeeded} completed, ${Math.max(
+                      0,
+                      failed +
+                        rateLimited -
+                        accountLimit.count -
+                        (providerRateLimit?.count ?? 0),
+                    )} failed, ${
+                      accountLimit.count
+                    } stopped at the MCPJam model limit${
+                      providerRateLimit
+                        ? `, ${providerRateLimit.count} stopped at a provider limit`
+                        : ""
+                    }.`}
+                  </p>
+                  <p className="mt-0.5">
+                    {accountLimit.message ??
+                      "Add credit or connect your own provider key (BYOK) to keep running."}
+                  </p>
+                  {organizationId ? (
+                    <p className="mt-1 flex gap-3">
+                      <a
+                        className="underline underline-offset-4"
+                        onClick={(event) => {
+                          if (
+                            event.metaKey ||
+                            event.ctrlKey ||
+                            event.shiftKey ||
+                            event.altKey
+                          )
+                            return;
+                          event.preventDefault();
+                          appNavigate(
+                            event.currentTarget.getAttribute("href")!,
+                          );
+                        }}
+                        href={`/organizations/${encodeURIComponent(
+                          organizationId,
+                        )}/billing?topup=open`}
+                      >
+                        Add credits
+                      </a>
+                      <a
+                        className="underline underline-offset-4"
+                        onClick={(event) => {
+                          if (
+                            event.metaKey ||
+                            event.ctrlKey ||
+                            event.shiftKey ||
+                            event.altKey
+                          )
+                            return;
+                          event.preventDefault();
+                          appNavigate(
+                            event.currentTarget.getAttribute("href")!,
+                          );
+                        }}
+                        href={`/organizations/${encodeURIComponent(
+                          organizationId,
+                        )}/plans`}
+                      >
+                        View plan
+                      </a>
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
 
-              {runFailure ? (
+              {bannerFailure ? (
                 <div
                   className={cn(
                     "rounded-md border px-3 py-2 text-sm",
@@ -1167,8 +1321,8 @@ export function NewSwarmRunningStep({
                     // that needs re-running. Destructive red stays for failures
                     // the user has to go and repair — an expired sign-in in front
                     // of an XAA-protected server is not an incident.
-                    runFailure.kind === "rate_limited" ||
-                      runFailure.info.rerunnable
+                    bannerFailure.kind === "rate_limited" ||
+                      bannerFailure.info.rerunnable
                       ? "border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-200"
                       : "border-destructive/40 bg-destructive/10 text-destructive",
                   )}
@@ -1176,14 +1330,19 @@ export function NewSwarmRunningStep({
                   role="status"
                 >
                   <p className="font-medium">
-                    {runFailure.kind === "rate_limited"
+                    {bannerFailure.kind === "rate_limited"
                       ? "No sessions completed successfully — requests were rate-limited."
-                      : runFailure.info.rerunnable
+                      : bannerFailure.info.rerunnable
                       ? "This run's authorization needs re-running."
                       : "No sessions completed successfully."}
                   </p>
-                  <p className="mt-0.5">{runFailure.info.message}</p>
-                  {runFailure.info.canTopUp ? (
+                  {bannerFailure.causes.map((cause, index) => (
+                    <p className="mt-0.5" key={index}>
+                      {cause.count} {cause.count === 1 ? "session" : "sessions"}
+                      : {cause.info.message}
+                    </p>
+                  ))}
+                  {bannerFailure.causes.some((cause) => cause.info.canTopUp) ? (
                     <p className="mt-0.5 text-[13px] opacity-90">
                       Add credit or connect your own provider key (BYOK) to run
                       now.

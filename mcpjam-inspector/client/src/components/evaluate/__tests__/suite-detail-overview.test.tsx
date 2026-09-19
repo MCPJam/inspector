@@ -783,7 +783,7 @@ describe("SuiteDetailOverview", () => {
 });
 
 beforeEach(() => useEvalGeneration.setState({ suites: {} }));
-it("shows generated drafts and explains why they cannot run yet", async () => {
+it("keeps draft review out of the suite, but still warns drafts are waiting", async () => {
   useEvalGeneration.setState({
     suites: {
       [evalSuiteKey({ projectId: "project-1", suiteId: "suite-1" })]: {
@@ -822,23 +822,19 @@ it("shows generated drafts and explains why they cannot run yet", async () => {
       rerunningSuiteId={null}
     />,
   );
+  // Draft review belongs to the tab that produced the drafts. The suite page
+  // shows only cases that are actually in the suite, so neither the panel nor
+  // any draft body may appear here.
   expect(screen.queryByText("Generated flowchart case")).toBeNull();
   expect(
-    screen.getByRole("button", { name: "Review Draft Cases" }),
-  ).toHaveAttribute("aria-expanded", "false");
-  await userEvent
-    .setup()
-    .click(screen.getByRole("button", { name: "Review Draft Cases" }));
-  expect(screen.getByText("Generated flowchart case")).toBeVisible();
-  expect(screen.queryByText("No cases yet")).toBeNull();
-  expect(screen.queryByTestId("suite-detail-test-cases")).toBeNull();
-  expect(
-    screen.getByRole("button", { name: "Describe another case" }),
-  ).toBeVisible();
+    screen.queryByRole("button", { name: "Review Draft Cases" }),
+  ).toBeNull();
   expect(
     screen.getByRole("button", { name: "Generate", exact: true }),
   ).toBeVisible();
   expect(screen.getByRole("button", { name: "Import cases" })).toBeVisible();
+  // The run button still says drafts are waiting — that is the pointer back to
+  // the generate tab, and the only place the suite page mentions them.
   await userEvent
     .setup()
     .hover(
@@ -847,6 +843,56 @@ it("shows generated drafts and explains why they cannot run yet", async () => {
     );
   expect(await screen.findByRole("tooltip")).toHaveTextContent(
     "1 generated draft is waiting to be added",
+  );
+});
+
+it("gives imported drafts their own surface with a way back to the suite", async () => {
+  const onGeneratingChange = vi.fn();
+  useEvalGeneration.setState({
+    suites: {
+      [evalSuiteKey({ projectId: "project-1", suiteId: "suite-1" })]: {
+        status: "ready",
+        drafts: [
+          {
+            id: "draft-1",
+            revision: "r1",
+            markdownImport: { source: { fileName: "cases.md" } },
+            input: {
+              suiteId: "suite-1",
+              title: "Imported grocery case",
+              query: "Browse the Grocery category.",
+              expectedOutput: "The grocery list renders.",
+              steps: [],
+            },
+          },
+        ],
+      } as never,
+    },
+  });
+  renderWithProviders(
+    <SuiteDetailOverview
+      projectId="project-1"
+      suite={makeSuite()}
+      cases={[makeCase({ _id: "case-1" })]}
+      runs={[]}
+      runsLoading={false}
+      allIterations={[]}
+      hostNamesById={hostNamesById}
+      onRerun={vi.fn()}
+      onEditSuite={vi.fn()}
+      onRunClick={vi.fn()}
+      onTestCaseClick={vi.fn()}
+      onGeneratingChange={onGeneratingChange}
+      rerunningSuiteId={null}
+    />,
+  );
+  // The import surface replaces the suite page, so real cases are not beside
+  // drafts that are not in the suite yet.
+  expect(screen.getByTestId("suite-import-review")).toBeVisible();
+  expect(screen.queryByTestId("suite-detail-test-cases")).toBeNull();
+  // The breadcrumb is the way back, and it must not say "Generate".
+  expect(onGeneratingChange).toHaveBeenCalledWith(
+    expect.objectContaining({ label: "Import test cases" }),
   );
 });
 
@@ -1117,35 +1163,19 @@ describe("SuiteDetailOverview cancel", () => {
     expect(screen.queryByTestId("suite-detail-cancel")).toBeNull();
   });
 
-  it("cancels a launch from its history row without opening the run", async () => {
-    const user = userEvent.setup();
-    const onCancelRun = vi.fn();
-    const onRunClick = vi.fn();
+  it("offers no cancel on a running history row", () => {
     renderSuite({
-      runs: [
-        runningRun({
-          _id: "run-1",
-          runNumber: 1,
-          runGroupId: "together",
-          namedHostId: "host-1",
-        }),
-        runningRun({
-          _id: "run-2",
-          runNumber: 1,
-          runGroupId: "together",
-          namedHostId: "host-2",
-        }),
-      ],
-      onCancelRun,
-      onRunClick,
+      runs: [runningRun({ _id: "run-1", runNumber: 1 })],
+      onCancelRun: vi.fn(),
     });
 
-    await user.click(screen.getByTestId("suite-run-row-cancel"));
-    expect(onCancelRun).toHaveBeenCalledWith(["run-1", "run-2"]);
-    expect(onRunClick).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("button", { name: "Open run #1" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cancel run #1" })).toBeNull();
   });
 
-  it("disables both cancels while one is in flight", () => {
+  it("disables the header cancel while one is in flight", () => {
     renderSuite({
       runs: [runningRun({ _id: "run-1", runNumber: 1 })],
       onCancelRun: vi.fn(),
@@ -1153,6 +1183,5 @@ describe("SuiteDetailOverview cancel", () => {
     });
 
     expect(screen.getByTestId("suite-detail-cancel")).toBeDisabled();
-    expect(screen.getByTestId("suite-run-row-cancel")).toBeDisabled();
   });
 });

@@ -432,9 +432,36 @@ describe("the chain lives inside the Scorecard", () => {
 });
 
 describe("blind review hides the judge row's own output", () => {
+  const judgeCase = {
+    status: "completed",
+    passed: false,
+    score: 0.2,
+    reason: "Private judge rationale",
+  } as never;
+
   it("withholds the score and the reason", () => {
-    renderCard({ judgeHidden: true });
+    renderCard({ judgeHidden: true, judgeCase });
     expect(screen.getByTestId("judge-result-withheld")).toBeTruthy();
+    expect(screen.queryByText("Private judge rationale")).toBeNull();
+  });
+
+  it("withholds nothing when the judge never graded the trial", () => {
+    // The model call failed, so there is no verdict to leak and no label
+    // control to lift the mask. The stage's own explanation must show.
+    const providerFailed = {
+      status: "verified",
+      stages: [
+        { stage: "connection", state: "passed", reason: "observed" },
+        { stage: "discovery", state: "passed", reason: "observed" },
+        { stage: "selection", state: "passed", reason: "observed" },
+        { stage: "call", state: "passed", reason: "observed" },
+        { stage: "response", state: "notMeasured", reason: "providerError" },
+        { stage: "userValue", state: "notMeasured", reason: "providerError" },
+      ],
+    } as never;
+    renderCard({ chain: providerFailed, judgeHidden: true, judgeCase: null });
+    expect(screen.queryByTestId("judge-result-withheld")).toBeNull();
+    expect(screen.queryByTestId("trial-stage-masked")).toBeNull();
   });
 
   it("shows them once the reviewer has revealed", () => {
@@ -673,6 +700,11 @@ describe("what the scorecard says about its AI explanations", () => {
       chain: verifiedChain,
       trace: toolErrorTrace,
       judgeHidden: true,
+      judgeCase: {
+        status: "completed",
+        passed: false,
+        score: 0.2,
+      } as never,
       report: {
         schemaVersion: 1,
         iterationId: "it1",

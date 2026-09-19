@@ -2874,7 +2874,10 @@ export function useChatSession(
       };
 
       if (!response.ok) {
-        await notifyMCPJamLimitErrorFromResponse(response);
+        await notifyMCPJamLimitErrorFromResponse(
+          response,
+          hostedScenarioId ? "scenario" : undefined,
+        );
         if (isHostedTransport) {
           await ingestHostedRpcLogsFromResponse(response);
         }
@@ -2915,8 +2918,12 @@ export function useChatSession(
         // not JSON; ignore
       }
     }
-    notifyMCPJamLimitError({ message: chatError.message, limitKind });
-  }, []);
+    notifyMCPJamLimitError({
+      message: chatError.message,
+      limitKind,
+      ...(hostedScenarioId ? { surface: "scenario" as const } : {}),
+    });
+  }, [hostedScenarioId]);
 
   // Create transport
   const pendingWidgetModelContextRef = useRef<

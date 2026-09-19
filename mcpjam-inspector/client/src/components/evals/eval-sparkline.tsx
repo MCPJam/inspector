@@ -131,7 +131,7 @@ export function EvalSparkline({
   tooltipValues,
   testId,
   height = 24,
-  strokeClassName = "text-muted-foreground/60",
+  strokeClassName = "text-primary",
   tooltipPlacement = "below",
   bars = false,
 }: {
@@ -220,14 +220,24 @@ export function EvalSparkline({
             );
           })}
         {!bars && (
-          <polyline
-            points={geometry.map((point) => `${point.x},${point.y}`).join(" ")}
-            fill="none"
-            stroke="currentColor"
-            strokeWidth={1.5}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
+          <>
+            <polygon
+              points={[
+                `${geometry[0].x},${h - pad}`,
+                ...geometry.map((point) => `${point.x},${point.y}`),
+                `${geometry[geometry.length - 1].x},${h - pad}`,
+              ].join(" ")}
+              className="fill-current opacity-15"
+            />
+            <polyline
+              points={geometry.map((point) => `${point.x},${point.y}`).join(" ")}
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={1.5}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </>
         )}
         {hoverIndex != null && active ? (
           <>
@@ -391,7 +401,7 @@ export function EvalDualSparkline({
               .map((point) => `${point.x},${point.y}`)
               .join(" ")}
             fill="none"
-            className="stroke-muted-foreground/45"
+            className="stroke-primary/45"
             strokeWidth={1.5}
             strokeLinecap="round"
             strokeLinejoin="round"
@@ -403,7 +413,7 @@ export function EvalDualSparkline({
               .map((point) => `${point.x},${point.y}`)
               .join(" ")}
             fill="none"
-            className="stroke-foreground/60"
+            className="stroke-primary"
             strokeWidth={1.5}
             strokeLinecap="round"
             strokeLinejoin="round"
@@ -424,7 +434,7 @@ export function EvalDualSparkline({
               cx={activePrimary.x}
               cy={activePrimary.y}
               r={3}
-              className="fill-background stroke-muted-foreground/60"
+              className="fill-background stroke-primary/60"
               strokeWidth={1.5}
             />
             {activeSecondary ? (
@@ -432,7 +442,7 @@ export function EvalDualSparkline({
                 cx={activeSecondary.x}
                 cy={activeSecondary.y}
                 r={3}
-                className="fill-background stroke-foreground/70"
+                className="fill-background stroke-primary"
                 strokeWidth={1.5}
               />
             ) : null}
@@ -444,7 +454,7 @@ export function EvalDualSparkline({
                 cx={activePrimary.x}
                 cy={activePrimary.y}
                 r={2}
-                className="fill-muted-foreground/60"
+                className="fill-primary/60"
               />
             ) : null}
             {activeSecondary ? (
@@ -452,7 +462,7 @@ export function EvalDualSparkline({
                 cx={activeSecondary.x}
                 cy={activeSecondary.y}
                 r={2}
-                className="fill-foreground/70"
+                className="fill-primary"
               />
             ) : null}
           </>

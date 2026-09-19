@@ -1,171 +1,16 @@
-diff --git a/.changeset/automatic-full-evidence-grading.md b/.changeset/automatic-full-evidence-grading.md
+diff --git a/.changeset/eval-suite-iteration-model.md b/.changeset/eval-suite-iteration-model.md
 deleted file mode 100644
-index cc8bee5c7..000000000
---- a/.changeset/automatic-full-evidence-grading.md
+index f5ff1a894..000000000
+--- a/.changeset/eval-suite-iteration-model.md
 +++ /dev/null
 @@ -1,7 +0,0 @@
 ----
--"@mcpjam/inspector": minor
-----
--
--Display automatic, manual, off, paused and unresolved grading states from the backend policy. Preserve explicit manual/off configuration. Mounting a run no longer requests paid grading.
--
--**Data-egress change:** once the paired backend automatic default is activated, inherited suites send complete recorded traces, tool definitions, runtime context and supported media through OpenRouter to the selected model provider without a separate Run judge click. Existing credential redaction applies. Keep the backend inherited-default override enabled until this client release, data/provider review, platform-paid budget decision and deployment smoke are complete.
-diff --git a/.changeset/error-card-premium-consent.md b/.changeset/error-card-premium-consent.md
-deleted file mode 100644
-index 38880d169..000000000
---- a/.changeset/error-card-premium-consent.md
-+++ /dev/null
-@@ -1,14 +0,0 @@
-----
--"@mcpjam/sdk": patch
--"@mcpjam/inspector": patch
-----
--
--Error surface: classify the OAuth consent state, and restyle the error card.
--
--A server that needs OAuth consent rendered as "Unknown error" with the advice to file an issue. The client's OAuth orchestrator returned a hand-written sentence for its `reauth_required` result, the server-state hook dispatched that bare string, and the describer matched nothing in it, so an expected one-click state fell into the `internal/unknown` bucket and displayed copy written for MCPJam engineers.
--
--The SDK gains an `auth/consent_required` catalog entry, at `warning` severity with a `user_config` origin, plus a message fallback matching MCPJam's own consent and reauthenticate wording so strings already persisted in client state classify too. The orchestrator now attaches the typed block to `reauth_required` and the hook forwards it through the connect-failure dispatch, so a live consent state never depends on the wording at all. The server card offers a Reconnect button for it.
--
--`ErrorCard` is restyled across all of its call sites. Severity is carried by one accent — the icon and a hairline left rule — over a neutral surface, replacing the filled colour panel. The collapsed face keeps the title, the one-line explanation, the fix, and Copy; "Learn more" moves into the details panel with the rest of the evidence. Inside that panel a single likely cause renders as a sentence rather than a one-item bullet, the raw-error row is dropped when it only repeats the headline, a raw code shows as a chip, and long raw text wraps on word boundaries instead of mid-word. For `internal/unknown` only, the catalog's developer-facing causes and next steps are suppressed and the title reads "Connection error" whenever raw text is present.
--
--The server connection card drops the red "Error" pill, which was the fourth red element announcing one failure and only toggled a disclosure the card already owns. "Failed (0)" now reads "Failed" until something has actually been retried, the OAuth step-failure line is no longer red, and the generic "Check troubleshooting" footer is hidden when an error card is present, since that card carries a docs link aimed at the specific error.
-diff --git a/.changeset/fresh-describe-evaluators.md b/.changeset/fresh-describe-evaluators.md
-deleted file mode 100644
-index 98858cc7a..000000000
---- a/.changeset/fresh-describe-evaluators.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Start a fresh Describe chat after Undo and simplify evaluator headings, tooltips, and required-rule indicators.
-diff --git a/.changeset/full-evidence-judge.md b/.changeset/full-evidence-judge.md
-deleted file mode 100644
-index 7c4fa2003..000000000
---- a/.changeset/full-evidence-judge.md
-+++ /dev/null
-@@ -1,12 +0,0 @@
-----
--"@mcpjam/sdk": minor
--"@mcpjam/cli": minor
--"@mcpjam/evaluators": minor
--"@mcpjam/inspector": minor
-----
--
--Use one versioned goal-completion judge contract across hosted evals and the SDK, with complete recorded traces, tool catalogs, runtime context and supported captured media. Add optional grading instructions, unscored evidence errors, durable per-iteration recovery, provenance and failed-only retries. Preserve custom judge definitions and existing explicit manual/off settings.
--
--Expose bounded judge backtests through the SDK, CLI and MCP, with draft/source-bound continuation and cached page retries. Deploy the paired optional backend schema and handlers before publishing writers or enabling automatic grading. Grading is controlled by the suite's own settings.
--
--**Data-egress change:** hosted v4 grading sends full recorded conversations and traces, tool schemas, runtime context and supported media bytes through OpenRouter to the selected model provider, with existing credential redaction. Review provider/data policies before enabling; explicit manual/off settings remain available on every suite.
-diff --git a/.changeset/grounded-swarm-sessions.md b/.changeset/grounded-swarm-sessions.md
-deleted file mode 100644
-index 2cbc95340..000000000
---- a/.changeset/grounded-swarm-sessions.md
-+++ /dev/null
-@@ -1,6 +0,0 @@
-----
--"@mcpjam/sdk": minor
--"@mcpjam/inspector": minor
-----
--
--Ground swarm personas in observed workspace entities and add optional prerequisite setup. Both run in the background with no UI: journeys created in the app enable setup, and API callers opt in with `setupWrites`. Setup evidence and readiness are recorded on the run, separately from graded sessions.
-diff --git a/.changeset/judge-suite-settings-only.md b/.changeset/judge-suite-settings-only.md
-deleted file mode 100644
-index 63cbe40f8..000000000
---- a/.changeset/judge-suite-settings-only.md
-+++ /dev/null
-@@ -1,8 +0,0 @@
-----
--"@mcpjam/sdk": minor
--"@mcpjam/inspector": minor
-----
--
--Drop the goal-completion judge's two operator deployment controls. Grading is on by default and is turned off through a suite's own judge settings, which every caller can already read and write.
--
--`GoalJudgePolicy` no longer reports `executionPaused`, the resolved judge on a suite response no longer carries that field, and `judge_execution_paused` leaves the judge error code contract. Both were produced only by backend environment variables that were never set on any deployment, so no stored verdict or suite carries either value. Readers that treated the field as optional need no change.
-diff --git a/.changeset/mcpjam-hosted-inference.md b/.changeset/mcpjam-hosted-inference.md
-deleted file mode 100644
-index b655109e7..000000000
---- a/.changeset/mcpjam-hosted-inference.md
-+++ /dev/null
-@@ -1,9 +0,0 @@
-----
--"@mcpjam/sdk": minor
-----
--
--Add a `mcpjam/…` model provider so an eval can run on MCPJam-hosted inference
--with no provider key: `model: "mcpjam/anthropic/claude-sonnet-4.5"` bills the
--organization's credits and needs only `MCPJAM_API_KEY`. Exports
--`releaseMcpjamModelLeases` for suites built by hand; `EvalSuite.run` already
--calls it at teardown.
-diff --git a/.changeset/platform-paid-generation-copy.md b/.changeset/platform-paid-generation-copy.md
-deleted file mode 100644
-index d4f4b8b1f..000000000
---- a/.changeset/platform-paid-generation-copy.md
-+++ /dev/null
-@@ -1,33 +0,0 @@
-----
--"@mcpjam/sdk": minor
--"@mcpjam/cli": patch
--"@mcpjam/inspector": patch
-----
--
--Say generation and insights are included with MCPJam, not billed to the customer.
--
--Eight operations run a model whose cost is MCPJam's, not the organization's —
--eval-case generation, the description-rewrite proposal, persona and journey
--drafting, swarm wave insights, user-testing insights, and the two directory
--readiness starts with `includeLlmObservations`. Every surface told the customer
--otherwise: the MCP tool descriptions carried "COSTS MONEY", the CLI said
--"spends credits", the approval cards warned about money, and the docs said
--"SPENDS ORG CREDITS". For swarm wave insights and session clustering that copy
--was already wrong today.
--
--`risk` on those operations moves from `"spend"` to `"none"`, which is the single
--lever for the MCP tool surface (`operationDescription` appends its spend warning
--off that facet). What they actually consume is a bounded daily REQUEST quota —
--`insightsPerDay` for the insight operations, a per-project generation quota for
--the rest — so the copy now says "Included with MCPJam — no credits are consumed"
--and names the quota instead.
--
--They all stay GATED on the agent surface rather than deriving `direct` from the
--new risk: the quota is shared across the organization, and an agent that
--exhausts today's slice on its own initiative has taken something a person was
--going to use. Each is a named `TIER_EXCEPTIONS` entry with its reason, and
--`confirmSeverity` drops to `"none"` so no approval card claims a charge.
--
--Still customer-paid and unchanged: eval suite/case runs, `request_eval_run_judge`,
--the judge backtest, `start_eval_description_experiment`, journey launches and
--chat.
-diff --git a/.changeset/public-evaluate-default.md b/.changeset/public-evaluate-default.md
-deleted file mode 100644
-index 62a7d871a..000000000
---- a/.changeset/public-evaluate-default.md
-+++ /dev/null
-@@ -1,6 +0,0 @@
-----
--"@mcpjam/inspector": patch
 -"@mcpjam/sdk": patch
 ----
 -
--Make the redesigned Evaluate experience public and use evaluate-enabled only for legacy Evaluate access. SDK links open the exact suite, case, or run in the new experience. Old commit links open the unfiltered project run table, while other legacy links preserve their artifact context.
-diff --git a/.changeset/release-inspector-cli-sdk-evaluate.md b/.changeset/release-inspector-cli-sdk-evaluate.md
-deleted file mode 100644
-index 8a8502011..000000000
---- a/.changeset/release-inspector-cli-sdk-evaluate.md
-+++ /dev/null
-@@ -1,8 +0,0 @@
-----
--"@mcpjam/inspector": patch
--"@mcpjam/cli": patch
--"@mcpjam/sdk": patch
-----
+-Report the model on every iteration an `EvalSuite` or `EvalTest` run uploads. A run started with `runWithClient` showed an empty MODEL column, because only the `promptsToEvalResult` path stamped the provider and model that the run had already recorded. When a case fails in setup and never reaches the model, the run now names the model it was configured with — the saved client's, for a `runWithClient` run.
 -
--Cut a release of `@mcpjam/inspector`, `@mcpjam/cli`, and `@mcpjam/sdk` so the
--work already merged into main reaches npm. Version bump only — no code changes.
+-Report per-step verdicts too (`metadata.stepResults`), the same rows the hosted runner writes. An SDK case whose tool call matched still read "0 of 1 assertion passed" on the Steps tab, with a grey unknown icon, because no step ever carried a verdict.
 diff --git a/.changeset/release-inspector-cli-sdk.md b/.changeset/release-inspector-cli-sdk.md
 deleted file mode 100644
 index 8a8502011..000000000
@@ -180,135 +25,15 @@ index 8a8502011..000000000
 -
 -Cut a release of `@mcpjam/inspector`, `@mcpjam/cli`, and `@mcpjam/sdk` so the
 -work already merged into main reaches npm. Version bump only — no code changes.
-diff --git a/.changeset/sdk-readme-tool-result-guards.md b/.changeset/sdk-readme-tool-result-guards.md
-deleted file mode 100644
-index 5c10e3adb..000000000
---- a/.changeset/sdk-readme-tool-result-guards.md
-+++ /dev/null
-@@ -1,7 +0,0 @@
-----
--"@mcpjam/sdk": minor
-----
--
--Export `assertCallToolResult` and `isCallToolResult` so a TypeScript caller can
--narrow what `executeTool` returns, and fix the README's first example, which did
--not type-check and asserted a result the everything server never sends.
-diff --git a/.changeset/sdk-standard-check-names.md b/.changeset/sdk-standard-check-names.md
-deleted file mode 100644
-index a4eded07a..000000000
---- a/.changeset/sdk-standard-check-names.md
-+++ /dev/null
-@@ -1,8 +0,0 @@
-----
--"@mcpjam/sdk": minor
-----
--
--Export `STANDARD_CHECK_NAME_BY_KIND`, the name a reader recognises each standard
--check by, keyed by the predicate kind that implements it. Derived from the
--catalog rather than restated beside it, so a renamed check cannot leave a stale
--title behind.
-diff --git a/.changeset/shiny-pugs-repeat.md b/.changeset/shiny-pugs-repeat.md
-deleted file mode 100644
-index 760882171..000000000
---- a/.changeset/shiny-pugs-repeat.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Desktop: stop showing an Update button that cannot install anything. When a download is announced and then never lands, the button is retired instead of being left clickable, and a repeated failure turns it into a "Download update" link to the releases page — on the second failed download, or on the first one if the user had already selected Update and was waiting on it. A slow download is no longer mistaken for a failed one: the 10-minute update poll gets refused while a download is in flight, on macOS and on Windows, and that refusal is now ignored instead of retiring the download. A download that hangs without ever reporting an error still ends at the "Download update" link rather than at no button at all, and once that link is showing the app stops repeating the "Update failed" toast on every poll. Selecting Update no longer leaves a spinner that never ends: a staged build that Squirrel accepts and then never installs now turns into the "Download update" link after 30 seconds instead of spinning for the life of the app, and the wait after selecting Update on a download that goes quiet drops from five minutes to 30 seconds.
-diff --git a/.changeset/swarm-persona-turn-session-identity.md b/.changeset/swarm-persona-turn-session-identity.md
-deleted file mode 100644
-index 7360c2c82..000000000
---- a/.changeset/swarm-persona-turn-session-identity.md
-+++ /dev/null
-@@ -1,13 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Swarm persona turns now send the session identity the backend bills them against, so swarm runs execute again.
--
--Every swarm session had been dying at its first persona turn. The backend mints a per-turn fee key from the wire identity and refuses the turn when it cannot, and it validates the index with `Number.isInteger(body.sessionIdx)` — but the persona turn sent `{projectId, runId, hostId, transcriptSoFar}` and no `sessionIdx` at all. The route answered `400 invalid_request` "Invalid journey session identity", every session failed before its first message, and the run surfaced "No sessions ran." with zero transcripts.
--
--Everything downstream reads as a product finding rather than an outage, which is what made it hard to place: the rubric "Final message non-empty" fails against a transcript that was never written, clustering leaves every session "Not analyzed", and the journey diagnostic reports friction at connection. None of that came from the server under test.
--
--The body now also carries `targetId`. Matching on `hostId` alone finds two candidates whenever two environments resolve to the same host, and the guard refuses that as ambiguous — the case `journeyRuns.ts` already names in `'Ambiguous journey attempt: multiple targets share this host; a targetId is required'`. A legacy run, whose hosts are unique, still sends none.
--
--`sessionIdx` is bound per attempt rather than read from the loop counter. The counter is hoisted to the worker scope so the worker-level catch can finalize the attempts a target left behind, so a callback that fires later in the session reads whichever index the loop has since advanced to — session 0's turns would have been billed and validated as session 1's. `sessionBearer` already exists for exactly this reason, and `attemptSessionIdx` follows it.
-diff --git a/.changeset/swarm-run-tab-last.md b/.changeset/swarm-run-tab-last.md
-deleted file mode 100644
-index d2ff2868d..000000000
---- a/.changeset/swarm-run-tab-last.md
-+++ /dev/null
-@@ -1,11 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--The Run tab sits last on a swarm run page, after Findings, Insights and Sessions.
--
--It had led the strip since the live matrix moved onto the run URL, so opening a finished wave put the watch surface first on a page that is almost always read after the fact. Findings is what a reader wants from a settled run, and it leads again.
--
--Nothing about landing changes. A live wave with no explicit tab still opens Run, through the same resolver as before; `?tab=` still wins; a `?session=` deep-link still opens Sessions. The order is presentation only.
--
--`DETAIL_TAB_OPTIONS` moves into `swarm-run-detail-model.ts` alongside the tab resolver it belongs with, so the order is covered by that module's tests rather than living inline in the page.
-diff --git a/.changeset/upstream-refusal-passthrough.md b/.changeset/upstream-refusal-passthrough.md
-deleted file mode 100644
-index 2572263ef..000000000
---- a/.changeset/upstream-refusal-passthrough.md
-+++ /dev/null
-@@ -1,27 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Stop turning backend generation refusals into 500s.
--
--The eval-generation adapters read a non-ok backend response as
--`throw new Error("Failed to generate test cases: " + body)`, flattening the
--upstream status AND the refusal `code` into a message string. All the runtime
--classifier then had was prose, and its fallback is `500 INTERNAL_ERROR` — so a
--customer who hit their own daily allowance got an MCPJam outage, the public
--`/api/v1` surface answered 500 where its own contract documents `RateLimited`,
--and the 5xx monitors counted it as an MCPJam fault and paged.
--
--One shared reader (`server/services/upstream-refusal.ts`) now turns a 4xx from
--MCPJam's own backend into a `WebRouteError` that keeps the status, maps it onto
--the code a client can branch on (429 → `RATE_LIMITED`), forwards the backend's
--refusal envelope in `details`, and carries `Retry-After` — from the upstream
--header, or derived from `retryAfterMs` when only the field is sent. A 5xx keeps
--exactly the treatment it had, masking included. The swarm generation route's
--own 4xx table folds into the same helper, so it now forwards the refusal `code`
--as well as the status, and the local MCP surface forwards `Retry-After` too.
--
--This lands ahead of two new backend refusals — `platform_capacity` (MCPJam's own
--daily budget for the feature; retryable, nothing to buy) and
--`generation_rate_limited` (a request-count cap) — and neither opens the top-up
--dialog.
-diff --git a/.changeset/user-testing-remove-grading.md b/.changeset/user-testing-remove-grading.md
-deleted file mode 100644
-index fdedeb33a..000000000
---- a/.changeset/user-testing-remove-grading.md
-+++ /dev/null
-@@ -1,7 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--User Testing: the Grading card is removed from a study's Settings. That takes out the Grading header and enable/disable toggle, its description, the session sample percentage field and the whole Checks list. Sharing permissions, Ratings and Delete stay where they were, so Ratings now sits directly above Delete. The client-side pieces that only served that card are removed with it: the `ScenarioGradingSection` component and its tests, the `setProductionScoring` mutation binding, and the `productionScoring` field and `ProductionScoringSettings` type on the client's scenario settings shape.
--
--This is a UI removal only. The backend production-grading pipeline is unchanged: the backend `setProductionScoring` mutation, the idle-triggered enqueue, stored `productionScoring` configs on existing studies, and the Inspector's production-checks worker are all as before, and the pipeline remains gated by the backend's `PRODUCTION_CHECKS_ENABLED` flag. Grading in Evals and Swarms is unchanged.
 diff --git a/cli/package.json b/cli/package.json
-index 46a2cbfcc..f3bacaec5 100644
+index 19f14eee0..38ebf293b 100644
 --- a/cli/package.json
 +++ b/cli/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/cli",
--  "version": "5.8.0",
-+  "version": "5.9.0",
+-  "version": "5.10.1",
++  "version": "5.10.2",
    "description": "Test, debug, and validate MCP servers — health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI",
    "type": "module",
    "main": "dist/index.js",
@@ -316,76 +41,55 @@ index 46a2cbfcc..f3bacaec5 100644
      "prepublishOnly": "npm run build"
    },
    "dependencies": {
--    "@mcpjam/sdk": "^8.8.0",
-+    "@mcpjam/sdk": "^8.9.0",
+-    "@mcpjam/sdk": "^8.10.1",
++    "@mcpjam/sdk": "^8.11.1",
      "@modelcontextprotocol/server": "2.0.0",
      "commander": "^14.0.3",
      "posthog-node": "^5.24.10",
-diff --git a/evaluators/package.json b/evaluators/package.json
-index 7d4d287db..9f505fd41 100644
---- a/evaluators/package.json
-+++ b/evaluators/package.json
-@@ -1,6 +1,6 @@
- {
-   "name": "@mcpjam/evaluators",
--  "version": "0.2.0",
-+  "version": "0.3.0",
-   "description": "Pure evaluator contracts, assertions and trajectory matching",
-   "type": "module",
-   "main": "./dist/index.js",
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index 4af1e589a..d5efada30 100644
+index 03558faf5..c7b754fad 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "3.6.0",
-+  "version": "3.7.0",
+-  "version": "3.8.0",
++  "version": "3.8.1",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
-@@ -146,7 +146,7 @@
+@@ -147,7 +147,7 @@
      "@hookform/resolvers": "^3.10.0",
      "@lezer/highlight": "^1.2.3",
      "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^8.8.0",
-+    "@mcpjam/sdk": "^8.9.0",
+-    "@mcpjam/sdk": "^8.11.0",
++    "@mcpjam/sdk": "^8.11.1",
      "@modelcontextprotocol/client": "2.0.0",
      "@modelcontextprotocol/ext-apps": "^1.7.4",
      "@novnc/novnc": "^1.7.0",
 diff --git a/package-lock.json b/package-lock.json
-index 42c9439e5..629832fca 100644
+index 00ae09596..8bf110326 100644
 --- a/package-lock.json
 +++ b/package-lock.json
 @@ -64,9 +64,9 @@
      },
      "cli": {
        "name": "@mcpjam/cli",
--      "version": "5.8.0",
-+      "version": "5.9.0",
+-      "version": "5.10.1",
++      "version": "5.10.2",
        "dependencies": {
--        "@mcpjam/sdk": "^8.8.0",
-+        "@mcpjam/sdk": "^8.9.0",
+-        "@mcpjam/sdk": "^8.10.1",
++        "@mcpjam/sdk": "^8.11.1",
          "@modelcontextprotocol/server": "2.0.0",
          "commander": "^14.0.3",
          "posthog-node": "^5.24.10",
-@@ -205,7 +205,7 @@
-     },
-     "evaluators": {
-       "name": "@mcpjam/evaluators",
--      "version": "0.2.0",
-+      "version": "0.3.0",
-       "license": "MIT",
-       "dependencies": {
-         "@cfworker/json-schema": "^4.1.1",
 @@ -426,7 +426,7 @@
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "3.6.0",
-+      "version": "3.7.0",
+-      "version": "3.8.0",
++      "version": "3.8.1",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^4.0.116",
@@ -393,138 +97,50 @@ index 42c9439e5..629832fca 100644
          "@hookform/resolvers": "^3.10.0",
          "@lezer/highlight": "^1.2.3",
          "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^8.8.0",
-+        "@mcpjam/sdk": "^8.9.0",
+-        "@mcpjam/sdk": "^8.11.0",
++        "@mcpjam/sdk": "^8.11.1",
          "@modelcontextprotocol/client": "2.0.0",
          "@modelcontextprotocol/ext-apps": "^1.7.4",
          "@novnc/novnc": "^1.7.0",
-@@ -39229,7 +39229,7 @@
+@@ -39230,7 +39230,7 @@
      },
      "sdk": {
        "name": "@mcpjam/sdk",
--      "version": "8.8.0",
-+      "version": "8.9.0",
+-      "version": "8.11.0",
++      "version": "8.11.1",
        "license": "MIT",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^3.0.101",
-@@ -39241,7 +39241,7 @@
-         "@ai-sdk/openai": "^2.0.32",
-         "@ai-sdk/xai": "^2.0.29",
-         "@cfworker/json-schema": "^4.1.1",
--        "@mcpjam/evaluators": "^0.2.0",
-+        "@mcpjam/evaluators": "^0.3.0",
-         "@modelcontextprotocol/client": "2.0.0",
-         "@modelcontextprotocol/ext-apps": "^1.7.4",
-         "@noble/hashes": "^2.3.0",
 diff --git a/sdk/CHANGELOG.md b/sdk/CHANGELOG.md
-index f9cb51db1..75f83f1f9 100644
+index 5a57500a2..5c655f327 100644
 --- a/sdk/CHANGELOG.md
 +++ b/sdk/CHANGELOG.md
-@@ -1,5 +1,86 @@
+@@ -1,5 +1,16 @@
  # `@mcpjam/sdk` changelog
  
-+## 8.9.0
-+
-+### Minor Changes
-+
-+- [#5102](https://github.com/MCPJam/inspector/pull/5102) [`930c5c8`](https://github.com/MCPJam/inspector/commit/930c5c8e6e17aa000e4c0eb99923b3447165000f) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Use one versioned goal-completion judge contract across hosted evals and the SDK, with complete recorded traces, tool catalogs, runtime context and supported captured media. Add optional grading instructions, unscored evidence errors, durable per-iteration recovery, provenance and failed-only retries. Preserve custom judge definitions and existing explicit manual/off settings.
-+
-+  Expose bounded judge backtests through the SDK, CLI and MCP, with draft/source-bound continuation and cached page retries. Deploy the paired optional backend schema and handlers before publishing writers or enabling automatic grading. Grading is controlled by the suite's own settings.
-+
-+  **Data-egress change:** hosted v4 grading sends full recorded conversations and traces, tool schemas, runtime context and supported media bytes through OpenRouter to the selected model provider, with existing credential redaction. Review provider/data policies before enabling; explicit manual/off settings remain available on every suite.
-+
-+- [#5216](https://github.com/MCPJam/inspector/pull/5216) [`755ab24`](https://github.com/MCPJam/inspector/commit/755ab2472b34973441a1352f4e57e93e51d6d0db) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Ground swarm personas in observed workspace entities and add optional prerequisite setup. Both run in the background with no UI: journeys created in the app enable setup, and API callers opt in with `setupWrites`. Setup evidence and readiness are recorded on the run, separately from graded sessions.
-+
-+- [#5182](https://github.com/MCPJam/inspector/pull/5182) [`b5a74d7`](https://github.com/MCPJam/inspector/commit/b5a74d7f023a81d93d79622424d3c2af764269a8) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Drop the goal-completion judge's two operator deployment controls. Grading is on by default and is turned off through a suite's own judge settings, which every caller can already read and write.
-+
-+  `GoalJudgePolicy` no longer reports `executionPaused`, the resolved judge on a suite response no longer carries that field, and `judge_execution_paused` leaves the judge error code contract. Both were produced only by backend environment variables that were never set on any deployment, so no stored verdict or suite carries either value. Readers that treated the field as optional need no change.
-+
-+- [#5166](https://github.com/MCPJam/inspector/pull/5166) [`92d52c6`](https://github.com/MCPJam/inspector/commit/92d52c62b4f1e4b2c58cebd28a6bdd2a247cdc6f) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Add a `mcpjam/…` model provider so an eval can run on MCPJam-hosted inference
-+  with no provider key: `model: "mcpjam/anthropic/claude-sonnet-4.5"` bills the
-+  organization's credits and needs only `MCPJAM_API_KEY`. Exports
-+  `releaseMcpjamModelLeases` for suites built by hand; `EvalSuite.run` already
-+  calls it at teardown.
-+
-+- [#5183](https://github.com/MCPJam/inspector/pull/5183) [`e2f341a`](https://github.com/MCPJam/inspector/commit/e2f341a76eb7c0cf07d409407c47922ea182827c) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Say generation and insights are included with MCPJam, not billed to the customer.
-+
-+  Eight operations run a model whose cost is MCPJam's, not the organization's —
-+  eval-case generation, the description-rewrite proposal, persona and journey
-+  drafting, swarm wave insights, user-testing insights, and the two directory
-+  readiness starts with `includeLlmObservations`. Every surface told the customer
-+  otherwise: the MCP tool descriptions carried "COSTS MONEY", the CLI said
-+  "spends credits", the approval cards warned about money, and the docs said
-+  "SPENDS ORG CREDITS". For swarm wave insights and session clustering that copy
-+  was already wrong today.
-+
-+  `risk` on those operations moves from `"spend"` to `"none"`, which is the single
-+  lever for the MCP tool surface (`operationDescription` appends its spend warning
-+  off that facet). What they actually consume is a bounded daily REQUEST quota —
-+  `insightsPerDay` for the insight operations, a per-project generation quota for
-+  the rest — so the copy now says "Included with MCPJam — no credits are consumed"
-+  and names the quota instead.
-+
-+  They all stay GATED on the agent surface rather than deriving `direct` from the
-+  new risk: the quota is shared across the organization, and an agent that
-+  exhausts today's slice on its own initiative has taken something a person was
-+  going to use. Each is a named `TIER_EXCEPTIONS` entry with its reason, and
-+  `confirmSeverity` drops to `"none"` so no approval card claims a charge.
-+
-+  Still customer-paid and unchanged: eval suite/case runs, `request_eval_run_judge`,
-+  the judge backtest, `start_eval_description_experiment`, journey launches and
-+  chat.
-+
-+- [#5144](https://github.com/MCPJam/inspector/pull/5144) [`f702e88`](https://github.com/MCPJam/inspector/commit/f702e88d9f33ef57cba7873890e8fffa6f360a1c) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Export `assertCallToolResult` and `isCallToolResult` so a TypeScript caller can
-+  narrow what `executeTool` returns, and fix the README's first example, which did
-+  not type-check and asserted a result the everything server never sends.
-+
-+- [#5171](https://github.com/MCPJam/inspector/pull/5171) [`8441b80`](https://github.com/MCPJam/inspector/commit/8441b80d2d6274e4bc60710c3738d3e8c8b96ef8) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Export `STANDARD_CHECK_NAME_BY_KIND`, the name a reader recognises each standard
-+  check by, keyed by the predicate kind that implements it. Derived from the
-+  catalog rather than restated beside it, so a renamed check cannot leave a stale
-+  title behind.
++## 8.11.1
 +
 +### Patch Changes
 +
-+- [#5141](https://github.com/MCPJam/inspector/pull/5141) [`3edb6c1`](https://github.com/MCPJam/inspector/commit/3edb6c142c3389530f149f24d40b8faec6228e86) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Error surface: classify the OAuth consent state, and restyle the error card.
++- [#5300](https://github.com/MCPJam/inspector/pull/5300) [`42c058f`](https://github.com/MCPJam/inspector/commit/42c058f0cd41078ee28533f0589bd0af3c7cbf7e) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Report the model on every iteration an `EvalSuite` or `EvalTest` run uploads. A run started with `runWithClient` showed an empty MODEL column, because only the `promptsToEvalResult` path stamped the provider and model that the run had already recorded. When a case fails in setup and never reaches the model, the run now names the model it was configured with — the saved client's, for a `runWithClient` run.
 +
-+  A server that needs OAuth consent rendered as "Unknown error" with the advice to file an issue. The client's OAuth orchestrator returned a hand-written sentence for its `reauth_required` result, the server-state hook dispatched that bare string, and the describer matched nothing in it, so an expected one-click state fell into the `internal/unknown` bucket and displayed copy written for MCPJam engineers.
++  Report per-step verdicts too (`metadata.stepResults`), the same rows the hosted runner writes. An SDK case whose tool call matched still read "0 of 1 assertion passed" on the Steps tab, with a grey unknown icon, because no step ever carried a verdict.
 +
-+  The SDK gains an `auth/consent_required` catalog entry, at `warning` severity with a `user_config` origin, plus a message fallback matching MCPJam's own consent and reauthenticate wording so strings already persisted in client state classify too. The orchestrator now attaches the typed block to `reauth_required` and the hook forwards it through the connect-failure dispatch, so a live consent state never depends on the wording at all. The server card offers a Reconnect button for it.
-+
-+  `ErrorCard` is restyled across all of its call sites. Severity is carried by one accent — the icon and a hairline left rule — over a neutral surface, replacing the filled colour panel. The collapsed face keeps the title, the one-line explanation, the fix, and Copy; "Learn more" moves into the details panel with the rest of the evidence. Inside that panel a single likely cause renders as a sentence rather than a one-item bullet, the raw-error row is dropped when it only repeats the headline, a raw code shows as a chip, and long raw text wraps on word boundaries instead of mid-word. For `internal/unknown` only, the catalog's developer-facing causes and next steps are suppressed and the title reads "Connection error" whenever raw text is present.
-+
-+  The server connection card drops the red "Error" pill, which was the fourth red element announcing one failure and only toggled a disclosure the card already owns. "Failed (0)" now reads "Failed" until something has actually been retried, the OAuth step-failure line is no longer red, and the generic "Check troubleshooting" footer is hidden when an error card is present, since that card carries a docs link aimed at the specific error.
-+
-+- [#5240](https://github.com/MCPJam/inspector/pull/5240) [`0c3472a`](https://github.com/MCPJam/inspector/commit/0c3472adaa04293c4480cdde1bbeb2c74020d180) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Make the redesigned Evaluate experience public and use evaluate-enabled only for legacy Evaluate access. SDK links open the exact suite, case, or run in the new experience. Old commit links open the unfiltered project run table, while other legacy links preserve their artifact context.
-+
-+- [#5254](https://github.com/MCPJam/inspector/pull/5254) [`5dc148d`](https://github.com/MCPJam/inspector/commit/5dc148d2559f67332e6bb60cdd6f3f8f0da66275) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Cut a release of `@mcpjam/inspector`, `@mcpjam/cli`, and `@mcpjam/sdk` so the
++- [#5330](https://github.com/MCPJam/inspector/pull/5330) [`1ad2342`](https://github.com/MCPJam/inspector/commit/1ad2342d2c7bd7ec9ff4051ad1536dba1a37466f) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Cut a release of `@mcpjam/inspector`, `@mcpjam/cli`, and `@mcpjam/sdk` so the
 +  work already merged into main reaches npm. Version bump only — no code changes.
 +
-+- [#5245](https://github.com/MCPJam/inspector/pull/5245) [`318f5f5`](https://github.com/MCPJam/inspector/commit/318f5f590b59d18a74ce2403ba7ea6ae51693515) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Cut a release of `@mcpjam/inspector`, `@mcpjam/cli`, and `@mcpjam/sdk` so the
-+  work already merged into main reaches npm. Version bump only — no code changes.
-+- Updated dependencies [[`930c5c8`](https://github.com/MCPJam/inspector/commit/930c5c8e6e17aa000e4c0eb99923b3447165000f)]:
-+  - @mcpjam/evaluators@0.3.0
-+
- ## 8.8.0
+ ## 8.11.0
  
  ### Minor Changes
 diff --git a/sdk/package.json b/sdk/package.json
-index 2348997a9..a5f8d5a2a 100644
+index f99083fc9..5e2bc9398 100644
 --- a/sdk/package.json
 +++ b/sdk/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/sdk",
--  "version": "8.8.0",
-+  "version": "8.9.0",
+-  "version": "8.11.0",
++  "version": "8.11.1",
    "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
    "type": "module",
    "main": "dist/index.js",
-@@ -202,7 +202,7 @@
-     "xpath": "^0.0.34",
-     "yaml": "^2.9.0",
-     "zod": "^4.2.0",
--    "@mcpjam/evaluators": "^0.2.0"
-+    "@mcpjam/evaluators": "^0.3.0"
-   },
-   "peerDependencies": {
-     "@sentry/node": "^8.55.0"

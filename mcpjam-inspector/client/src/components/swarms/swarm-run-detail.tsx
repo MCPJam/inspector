@@ -7,8 +7,6 @@
  * settled. The live strip under the header is only for work in flight
  * (progress + Stop).
  */
-import { SwarmReportPanel } from "./swarm-report-panel";
-import { SwarmRunStageFunnelPanels } from "@/components/shared/user-value-chain/StageFunnelPanels";
 import { useCallback, useMemo, useState } from "react";
 import { useQuery } from "convex/react";
 import { Loader2 } from "lucide-react";
@@ -55,6 +53,11 @@ import {
   waveSessionTotals,
 } from "@/components/swarms/swarm-overview-panel";
 import { SwarmFindingsTab } from "@/components/swarms/findings/swarm-findings-tab";
+import {
+  narratedWaveSummary,
+  waveNarration,
+} from "@/components/swarms/findings/findings-headline";
+import { useInsightsEnvelope } from "@/components/shared/actionable-insights/use-insights-envelope";
 import { NewSwarmRunningStep } from "@/components/swarms/new-swarm-running-step";
 import {
   DETAIL_TAB_OPTIONS,
@@ -63,6 +66,7 @@ import {
 } from "@/components/swarms/swarm-run-detail-model";
 
 export interface SwarmRunDetailProps {
+  organizationId?: string;
   swarmId: string;
   projectId: string | null;
   /** Avatar-look fields are optional pass-through: SwarmsTab already hands
@@ -90,6 +94,7 @@ export interface SwarmRunDetailProps {
 }
 
 export function SwarmRunDetail({
+  organizationId,
   swarmId,
   projectId,
   personas,
@@ -173,11 +178,16 @@ export function SwarmRunDetail({
       : null,
     { autoRequest: false },
   );
-  const generatedWaveSummary =
-    waveInsights.status === "completed" &&
-    waveInsights.insights?.summary?.trim()
-      ? waveInsights.insights.summary.trim()
-      : null;
+  const generatedWaveSummary = narratedWaveSummary(
+    waveInsights.status,
+    waveInsights.insights,
+  );
+  const narration = waveNarration(waveInsights.status, waveInsights.insights);
+  const findingsEnvelope = useInsightsEnvelope({
+    kind: "journey_run",
+    projectId,
+    runId: wave?.anchor.runId,
+  });
 
   const handleTabChange = useCallback(
     (next: SwarmDetailTab) => {
@@ -243,8 +253,8 @@ export function SwarmRunDetail({
         tab: liveProgress
           ? "run"
           : parsedTab === "run"
-            ? "findings"
-            : parsedTab,
+          ? "findings"
+          : parsedTab,
         sel: selParam ?? undefined,
       }),
     );
@@ -365,9 +375,9 @@ export function SwarmRunDetail({
    * to no banner rather than to a stale sentence.
    */
   const followedFinding: SwarmOverviewFinding | null = findingParam
-    ? (wave.runs
+    ? wave.runs
         .flatMap((run) => run.findings)
-        .find((finding) => finding.criterionId === findingParam) ?? null)
+        .find((finding) => finding.criterionId === findingParam) ?? null
     : null;
   // 0% until the fan-out is known — a live run with no session total yet is
   // starting, not complete.
@@ -560,6 +570,7 @@ export function SwarmRunDetail({
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {tab === "run" && projectId ? (
           <NewSwarmRunningStep
+            organizationId={organizationId}
             projectId={projectId}
             runs={launchedRuns}
             fallbackColumns={[]}
@@ -583,6 +594,9 @@ export function SwarmRunDetail({
               onOpenSession={handleOpenSession}
               projectId={projectId ?? undefined}
               generatedSummary={generatedWaveSummary}
+              narration={narration}
+              journeyFindings={findingsEnvelope?.journeyFindings}
+              journeyFindingsJob={findingsEnvelope?.journeyFindingsJob}
             />
           </div>
         ) : null}
@@ -615,7 +629,6 @@ export function SwarmRunDetail({
                 onOpenSessionsTab={() => handleTabChange("sessions")}
                 urlSelection={urlSelection}
                 onSelectionChange={handleSelectionChange}
-                autoBackfillTopicMap
                 bodyLayout="scroll"
                 emptyState={
                   <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
@@ -630,29 +643,17 @@ export function SwarmRunDetail({
           </div>
         ) : null}
         {tab === "sessions" && projectId ? (
-          <>
-            <div className="space-y-2">
-              {wave.runs.map((run) => (
-                <SwarmReportPanel
-                  key={run.runId}
-                  report={run.report}
-                  title={`${run.personaName} · ${run.journeyName ?? "Goal"}`}
-                />
-              ))}
-            </div>
-            <SwarmRunStageFunnelPanels journeyRunIds={runIds} />
-            <SwarmsSessionsPanel
-              projectId={projectId}
-              personas={personas}
-              hosts={hosts}
-              personaRefId={sessionsPersonaFilter}
-              onPersonaRefIdChange={setSessionsPersonaFilter}
-              initialThreadId={sessionParam}
-              runLabels={runLabels}
-              goalLabels={goalLabels}
-              journeyRunIds={runIds}
-            />
-          </>
+          <SwarmsSessionsPanel
+            projectId={projectId}
+            personas={personas}
+            hosts={hosts}
+            personaRefId={sessionsPersonaFilter}
+            onPersonaRefIdChange={setSessionsPersonaFilter}
+            initialThreadId={sessionParam}
+            runLabels={runLabels}
+            goalLabels={goalLabels}
+            journeyRunIds={runIds}
+          />
         ) : null}
         {tab === "sessions" && !projectId ? (
           <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">

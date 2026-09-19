@@ -1,3 +1,4 @@
+import { looksLikeErrorPage } from "./error-page.js";
 /**
  * Turning a swarm attempt's raw failure into something a developer can act on.
  *
@@ -35,6 +36,21 @@ const AGENT_ERROR_ENVELOPE = /^(?:swarm-agent\s+\S+\s+failed\s+\((\d{3})\):|Back
 /** Belt-and-braces: never let a URL reach a stored/rendered message. */
 const URL_PATTERN = /https?:\/\/\S+/g;
 
+export const SPEND_REFUSAL_REASONS = [
+  "holds_committed",
+  "wallet_locked",
+  "budget_reached",
+  "allowance_exhausted",
+  "admission_invalid",
+] as const;
+
+export function isTransientSpendRefusal(
+  code?: string,
+  refusalReason?: string,
+): boolean {
+  return code === "user_rate_limit" && refusalReason === "holds_committed";
+}
+
 export const MAX_ATTEMPT_ERROR_CHARS = 500;
 
 export type SwarmAttemptErrorInfo = {
@@ -52,6 +68,9 @@ export type SwarmAttemptErrorInfo = {
   retryAfterMs?: number;
   /** The user can lift this themselves by purchasing credit. */
   canTopUp?: boolean;
+  refusalReason?: string;
+  isRetryable?: boolean;
+  outstandingHolds?: number;
   /** HTTP status from the failing call, when the envelope carried one. */
   httpStatus?: number;
 };
@@ -202,6 +221,15 @@ export function humanizeSwarmAttemptError(
     body = input.slice(envelope[0].length).trim();
   }
 
+  if (looksLikeErrorPage(body)) {
+    return {
+      code: "upstream_error_page",
+      message: `The request was answered with an HTML error page instead of a response${
+        httpStatus ? ` (HTTP ${httpStatus})` : ""
+      }. This usually means a proxy or CDN blocked it.`,
+      ...(httpStatus !== undefined ? { httpStatus } : {}),
+    };
+  }
   const parsed = parseJsonObject(body);
   if (!parsed) {
     const cleaned = scrub(body) || scrub(input);
@@ -227,6 +255,15 @@ export function humanizeSwarmAttemptError(
       MAX_ATTEMPT_ERROR_CHARS
     ),
     ...(code ? { code } : {}),
+    ...(str(parsed.refusalReason)
+      ? { refusalReason: str(parsed.refusalReason) }
+      : {}),
+    ...(typeof parsed.isRetryable === "boolean"
+      ? { isRetryable: parsed.isRetryable }
+      : {}),
+    ...(num(parsed.outstandingHolds) !== undefined
+      ? { outstandingHolds: num(parsed.outstandingHolds) }
+      : {}),
     ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
     ...(canTopUp ? { canTopUp } : {}),
     ...(httpStatus !== undefined ? { httpStatus } : {}),
@@ -268,6 +305,36 @@ export function isAccountLimit(
   message?: string | null,
   code?: string | null,
 ): boolean {
-  if (code && ACCOUNT_LIMIT_CODE.test(code)) return true;
-  return !!message && ACCOUNT_LIMIT_CODE.test(message);
+  if (accountLimitCode(message, code)) return true;
+  return !!message && MCPJAM_MODEL_LIMIT_SENTENCE.test(message);
+}
+
+/**
+ * The backend's own sentence for the free/credit model allowance
+ * (`user_rate_limit` in `convex/stream/routes.ts` and `lib/llmCallShell.ts`).
+ *
+ * Only for rows written before the runner kept the denial code: those stored
+ * this humanized sentence under the generic `rate_limited` code, so the
+ * sentence is the one signal left that MCPJam — not the user's provider —
+ * stopped the session.
+ */
+const MCPJAM_MODEL_LIMIT_SENTENCE =
+  /\b(?:Daily|Monthly) MCPJam model limit reached\b/i;
+
+/**
+ * The account-limit denial code carried by a code or a raw failure message, in
+ * its canonical lowercase spelling — or `undefined` when neither names one.
+ *
+ * The runner stores this as the attempt's `errorCode`. It has to be read off
+ * the RAW message: the humanized sentence it stores beside it has already lost
+ * the code.
+ */
+export function accountLimitCode(
+  message?: string | null,
+  code?: string | null,
+): string | undefined {
+  const match =
+    (code ? ACCOUNT_LIMIT_CODE.exec(code) : null) ??
+    (message ? ACCOUNT_LIMIT_CODE.exec(message) : null);
+  return match?.[0].toLowerCase();
 }

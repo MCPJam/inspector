@@ -435,6 +435,13 @@ const hostConfigSchema = z.record(z.string(), z.unknown());
  * client that cannot back a headless environment, and the failure would surface
  * at launch rather than at creation.
  *
+ * This public API deliberately rejects an explicit config with a blank model.
+ * Callers can select a catalog template instead when they want its defaults.
+ * The Convex `hosts:createHost` mutation has a compatibility exception for
+ * older browser seed callers: it fills a blank model from the client's catalog
+ * template at creation. That exception does not change this REST contract or
+ * permit model substitution at launch. Explicit model choices are preserved.
+ *
  * Deliberately a REFINEMENT over the passthrough record rather than a full
  * config schema: every other config field stays untyped here on purpose (the
  * authoritative validator is `ensureHostConfigV2` in the backend), and this

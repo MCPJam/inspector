@@ -876,7 +876,7 @@ export function ShareUsageThreadDetail({
                     frame="none"
                     interactive={false}
                     reasoningDisplayMode={reasoningDisplayMode}
-                    widgetPolicy="placeholder"
+                    widgetPolicy="live"
                   />
                 }
               >
@@ -892,7 +892,7 @@ export function ShareUsageThreadDetail({
                   frame="none"
                   interactive={false}
                   reasoningDisplayMode={reasoningDisplayMode}
-                  widgetPolicy="placeholder"
+                  widgetPolicy="live"
                 />
               </ErrorBoundary>
             ) : host.status === "loading" ? (

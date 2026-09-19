@@ -396,8 +396,13 @@ export class HostRunner implements HostExecutor {
     this.mcpjamLeaseScope = config.mcpjamLeaseScope;
     this.mcpjamProject = config.mcpjamProject;
     this.baseUrls = config.baseUrls;
+    // An EMPTY system prompt is treated as "none given", the same as the
+    // snapshot branch below already does. Anthropic refuses an empty system
+    // block outright ("system: text content blocks must be non-empty"), so a
+    // caller that passes `""` — a saved client with no system prompt, read by
+    // `runWithClient` — would otherwise 400 on every generation.
     this.systemPrompt =
-      config.systemPrompt ??
+      (config.systemPrompt ? config.systemPrompt : undefined) ??
       (this.hostSnapshot?.systemPrompt && this.hostSnapshot.systemPrompt !== ""
         ? this.hostSnapshot.systemPrompt
         : "You are a helpful assistant.");
