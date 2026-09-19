@@ -57,9 +57,21 @@ import {
 describe("agent op registry", () => {
   it("describes the concrete browser action and session with bounded quoted data", () => {
     const describe = proposalMetaFor("drive_chat_session_browser").description;
-    expect(describe({ op: "navigate", sessionId: "session", url: "https://example.com" })).toContain('Navigate to "https://example.com"');
-    expect(describe({ op: "invoke", sessionId: "session", toolKey: "submit" })).toContain('Invoke page tool "submit"');
-    const text = describe({ op: "act", sessionId: "session", command: { verb: "type", value: "x".repeat(10000) } });
+    expect(
+      describe({
+        op: "navigate",
+        sessionId: "session",
+        url: "https://example.com",
+      }),
+    ).toContain('Navigate to "https://example.com"');
+    expect(
+      describe({ op: "invoke", sessionId: "session", toolKey: "submit" }),
+    ).toContain('Invoke page tool "submit"');
+    const text = describe({
+      op: "act",
+      sessionId: "session",
+      command: { verb: "type", value: "x".repeat(10000) },
+    });
     expect(text).toContain('session "session"');
     expect(text.length).toBeLessThan(1000);
   });
@@ -155,6 +167,7 @@ describe("agent op registry", () => {
     // idempotency off the approval's action id instead.
     expect([...WRITE_OPERATION_NAMES].sort()).toEqual(
       [
+        "backtest_eval_run",
         // Stops a run. Reversible in the only sense that matters — it destroys
         // no record and spends nothing — so it needs no approval. Cancelling a
         // connection request reads the same way, and frees the slot it holds.
@@ -1902,6 +1915,80 @@ describe("tier derives from operation.risk", () => {
         "approves the start. confirmSeverity is none so the prompt does not " +
         "warn about money.",
     },
+    // ── PLATFORM-PAID MODEL CALLS ───────────────────────────────────────
+    //
+    // The eight below all run a model whose cost is MCPJam's, not the
+    // organization's: `risk` is `none` because there is no spend for a spend
+    // guard to warn about, and their descriptions say "no credits are
+    // consumed" rather than "COSTS MONEY".
+    //
+    // They stay GATED anyway, and the reason is the same for all eight, so it
+    // is stated once here: what they consume is a BOUNDED DAILY QUOTA that
+    // belongs to the whole organization (the `insightsPerDay` ledger for the
+    // insight ops, the organization's generation quota or MCPJam's daily analysis budget for the rest). A `direct`
+    // tool is one an agent may call without asking, and an agent that
+    // exhausted today's shared quota on its own initiative would have taken
+    // something a person was going to use, with no way to give it back until
+    // the UTC day rolls. Money is not the only thing worth an approval.
+    //
+    // Each entry carries the specific second reason too, because the shared
+    // one alone would not justify gating a read.
+    start_claude_readiness_run: {
+      tier: "gated",
+      reason:
+        "The optional model pass is platform-paid, so risk is none and " +
+        "would derive direct. Gated for the reason start_conformance_run is: " +
+        "a start dials a third party's server and persists a project row. " +
+        "confirmSeverity is none, so the prompt does not warn about money.",
+    },
+    start_openai_readiness_run: {
+      tier: "gated",
+      reason:
+        "The same as start_claude_readiness_run, plus submissionMode is " +
+        "never inferred — a person confirming the start is also confirming " +
+        "which submission shape is being graded.",
+    },
+    generate_eval_cases: {
+      tier: "gated",
+      reason:
+        "The authoring model is platform-paid, so risk is none and would " +
+        "derive direct. Gated because it PERSISTS generated cases into the " +
+        "suite — the one generation op that writes — and because it draws on " +
+        "the organization's shared daily generation quota.",
+    },
+    propose_eval_description_rewrite: {
+      tier: "gated",
+      reason:
+        "Platform-paid, so risk is none. Gated because it persists a " +
+        "proposing experiment row and draws on MCPJam's daily analysis " +
+        "budget; a caller that re-proposes in a loop exhausts it.",
+    },
+    generate_personas: {
+      tier: "gated",
+      reason:
+        "Platform-paid drafting, so risk is none. Gated on the shared daily " +
+        "generation quota: the drafts persist nothing, but the quota they " +
+        "consume is the organization's and does not come back until UTC " +
+        "midnight.",
+    },
+    generate_journeys: {
+      tier: "gated",
+      reason: "The same as generate_personas: platform-paid, shared quota.",
+    },
+    request_wave_insights: {
+      tier: "gated",
+      reason:
+        "Platform-paid, so risk is none. Gated on the insightsPerDay " +
+        "ledger, which is SHARED with user-testing and eval-run insights — " +
+        "a request here takes one from there, across the whole organization.",
+    },
+    request_user_testing_insights: {
+      tier: "gated",
+      reason:
+        "The same shared insightsPerDay ledger as request_wave_insights, " +
+        "plus a 409 until the window is mined, which a caller must not " +
+        "retry in a loop.",
+    },
   };
 
   const placementOf = (name: string): Placement | "unregistered" => {
@@ -2087,6 +2174,7 @@ const PROMPT_BEFORE_REGISTRY = [
   "- NEVER invent server names or ids. Call `list_project_servers` first and use exactly what it returns. If no server matches what the user described, ask which server they mean — do not guess and do not fabricate placeholders.",
   "- Before authoring tool-call assertions, check the server's real tool names with `list_server_tools`.",
   "- Author cases as `steps` arrays; prefer a `prompt` step plus `toolCalledWith`-style assertions on the tools the conversation showed. Set `expectedOutput` when the user stated one.",
+  "- For new AI-authored cases, use generate_eval_cases and its spend approval flow. Use create/update case tools only for explicit user payloads or already reviewed drafts. Keep each full workflow as ordered steps.",
   "- When creating a suite, set the suite `model` explicitly to `anthropic/claude-haiku-4.5` unless the user asks for a different model.",
   "- Some actions SPEND the user's quota or credits (running a suite or a case, generating cases, cancelling a run). Calling those tools does NOT perform them: it PROPOSES the action and returns an approval id, and a person must click to confirm. Say that you've proposed it and what it will do. NEVER say it has started, is running, or has been cancelled.",
   "- If a proposal tool is not available to you, you cannot run anything at all. Say so plainly and report the ids the user needs — do not imply you started something.",
@@ -2114,7 +2202,7 @@ const EXPECTED_PROMPT_NOTES = [
   "- `install_registry_server` writes a project servers row and stops — it is NOT a live connection. Calling it PROPOSES the install; a person approves it. After approval, follow with `get_project_server_connection_status`. OAuth servers need the browser connect-link; never write that URL into a shared channel.",
   "- When a server is erroring, won't connect, or behaves unexpectedly, run `diagnose_server` on it before guessing. It probes the URL, connects, initializes, and reports exactly what failed — which is usually the whole answer.",
   "- `start_claude_readiness_run` and `start_openai_readiness_run` return a RECEIPT, not a verdict. The run dials the target and takes minutes; poll `get_readiness_run` and report what it says, never the receipt.",
-  "- A readiness run answers three separate questions and they do not collapse. `status` is whether the run finished; `overallStatus` is the grade (a `completed` run can be `not-ready`, which is a finished run that failed the grade); `llmObservations` is whether the optional paid pass ran. A run whose observations were `billing-blocked` is still a complete, valid grade — say the observations were skipped for credit, never that the server has a problem.",
+  "- A readiness run answers three separate questions and they do not collapse. `status` is whether the run finished; `overallStatus` is the grade (a `completed` run can be `not-ready`, which is a finished run that failed the grade); `llmObservations` is whether the optional model pass ran. That pass is platform-paid, so a run whose observations were `billing-blocked` was not refused for the organization's money — it is still a complete, valid grade, and the honest report is that the observations were skipped, never that the server has a problem.",
   "- A run that FAILED produced no grade at all. Report it as a run that could not finish, and never as a verdict about the server.",
   '- When a readiness run reports `authMode: "headless"` and a lane\'s `missingInputs` names `authorizationRequests`, the server is auth-walled and the run carried no token. That is not a defect — challenging correctly earns the server green marks. Tell the user to connect the server with OAuth in the app (server menu), then start a NEW run: the platform uses the saved token automatically, and the not-evaluated checks will grade.',
   "- `start_openai_readiness_run` needs `submissionMode` and it is NEVER inferred: guessing turns a missing input into a clean bill of health. Ask which shape is being submitted. The two package shapes are not available here — they need a package on the user's machine, so point them at `mcpjam readiness check`.",
@@ -2125,16 +2213,16 @@ const EXPECTED_PROMPT_NOTES = [
   "- Before launching an eval run, `get_eval_run_disclosure` tells you (and lets you tell a human) what actually happens to the run's content — which models it calls, whether analyzers/judges fire and where their evidence goes, retention and region facts. It never gates the run; `run_eval_suite` already fetches and returns its own disclosure on `disclosure`, so call this separately only when you need it BEFORE deciding to launch.",
   "- When a suite's results change without an obvious cause, read `list_eval_suite_revisions` before blaming the server: it says who last edited the suite's settings, which stored fields moved, and when. A revision's `revisionNumber` is also what makes an edit safe — pass the one you read as `expectedRevisionNumber` on `update_eval_suite` and a suite someone else changed in between is refused instead of overwritten.",
   "- WHEN A RUN DOES NOT PASS, READ `decisionSummary` FIRST: it states the first failed stage in the user-value chain (connection → discovery → selection → call → response → userValue), the failure category, evidence scoped to that stage, and one next action. Authored step results (`get_eval_run_steps`) come second and a full trace (`get_eval_iteration_trace`) last — do not reconstruct the chain from raw tool calls when the summary already states it.",
-  '- Read `measurementUnit` before quoting a count: under verdict policy v2 the counts are CASE-EXECUTION VARIANTS with repetitions as trials inside them, and on a legacy run they are trials, so the same suite is legitimately "3" or "15" and a count without its unit is not a fact. And `verdict: "notEstablished"` is neither a failure nor `inconclusive` — no verdict exists at all (`undecided.reason` says why), so never report it as a regression.',
+  '- Read `measurementUnit` before quoting a count: under PER-CASE GRADING the counts are CASE-EXECUTION VARIANTS with iterations as trials inside them, and under a SUITE-WIDE ACCURACY THRESHOLD they are trials, so the same suite is legitimately "3" or "15" and a count without its unit is not a fact. The two criteria are not one number in two units — ten cases, nine always passing and one always failing, passes a 90% suite-wide bar and fails a 0.9 per-case one — so never convert one into the other. And `verdict: "notEstablished"` is neither a failure nor `inconclusive` — no verdict exists at all (`undecided.reason` says why), so never report it as a regression.',
   "- `diagnostics` is one PAGE and one KIND of claim. When `diagnostics.complete` is false, more failing trials went unexamined — say so instead of presenting the page as the run's failures, and pass `diagnosticsCursor` to continue. And a diagnostic says WHERE the chain stopped, not why: `firstFailedStage` is a location and `failureCategory` a bucket, so neither authorizes proposing a server change on its own.",
   "- `get_eval_run_stage_analytics` (one run) and `list_eval_suite_stage_analytics` (a suite's runs, newest first) return the MEASURED DESCRIPTION of a run — how many trials reached each stage, how many were measured there, and how many were excluded and why. Counts only: derive a rate with its denominator in hand, and read a zero denominator as NOT MEASURED, never as 0% or 100%. Never sum tallies across the six stages (one trial is counted in every stage's tally) and never merge documents across runs (each describes one run's population).",
   "- An ABSENT analytics document means the run predates stage measurement — there is no backfill, so it will never appear. Report it as unmeasured and NEVER render it as zeros. A deployment-does-not-serve error is a different fact entirely: it says nothing about the run, and reporting it as unmeasured would claim every run on that deployment was never measured.",
   "- `get_eval_run_gate` returns the stored suite quality-gate report for ONE run: passed, failed, non_gateable, or not_configured. `not_configured` means the suite has no active conditions — it is a real report, never an absent route. A deployment that does not serve the route is a different fact: do not report that as 'no policy'. A run waiver never covers this report.",
   "- `get_eval_run_route_facts` returns the MEASURED DESCRIPTION of which tool paths a run's trials took. The population is the trial. Substitution is named only for the one-to-one in-catalog shape (exactly one expected name missing and exactly one unexpected in-catalog name observed). Read `catalogState`: `loaded` means unexpected tools can be in- or outside-catalog; `notLoaded` forbids substitution and unexpected tools read as `catalogNotLoaded`. A zero denominator is NOT MEASURED, never 0%. `endedWithQuestion` is measured going forward on every trial the runner finalizes; there is no backfill, so a run that finished earlier stays notMeasured. Report-only: never a verdict.",
   "- An ABSENT route-facts document means the run predates route measurement — there is no backfill, so it will never appear. Report it as unmeasured and NEVER render it as zeros. A deployment-does-not-serve error is a different fact entirely: it says nothing about the run, and reporting it as unmeasured would claim every run on that deployment was never measured.",
-  "- `get_eval_run_server_facts` describes the SERVER a run was taken against: per server the tool count, the catalog's measured size, annotation and output-schema coverage, and the deterministic tool-metadata prechecks, plus what the setup phase observed. None of it is a verdict — a large tool surface is not a defect, a slow connect is not a failure, and only a precheck with `class: \"spec_required\"` names a violation. A row marked `protocolDependent` is a rule we could not tell applied; reporting it as a defect accuses a server that may be correct.",
+  '- `get_eval_run_server_facts` describes the SERVER a run was taken against: per server the tool count, the catalog\'s measured size, annotation and output-schema coverage, and the deterministic tool-metadata prechecks, plus what the setup phase observed. None of it is a verdict — a large tool surface is not a defect, a slow connect is not a failure, and only a precheck with `class: "spec_required"` names a violation. A row marked `protocolDependent` is a rule we could not tell applied; reporting it as a defect accuses a server that may be correct.',
   "- PAYLOAD SIZE IS THREE NUMBERS and only two are here. `payload.basis` says which: `aggregated_catalog_json` is the catalog as the client assembled it, `normalized_snapshot` is what we retained after redaction (smaller — `payload.complete` says so). What the model actually saw is a host fact and is NOT in this document. Never compare across bases, and never report any of them as context consumption. Tokens are `json_chars_div_4` against a REFERENCE window; quote the estimate with its caveat or not at all.",
-  "- `state: \"unavailable\"` is answered INSIDE the document with a reason, not as an absence: `snapshotMissing`, `snapshotPartial` (the servers that answered are still listed and their numbers are real), or `setupNotObserved` (unmeasured, NOT failed). A deployment that does not serve the route is a different fact and says nothing about the run. Related conformance and readiness runs are joined by server id ALONE — a different server version or environment is not excluded by that join, and none of them is this run's verdict.",
+  '- `state: "unavailable"` is answered INSIDE the document with a reason, not as an absence: `snapshotMissing`, `snapshotPartial` (the servers that answered are still listed and their numbers are real), or `setupNotObserved` (unmeasured, NOT failed). A deployment that does not serve the route is a different fact and says nothing about the run. Related conformance and readiness runs are joined by server id ALONE — a different server version or environment is not excluded by that join, and none of them is this run\'s verdict.',
   "- `get_eval_description_experiment` returns one description-rewrite experiment: status, the proposed rewrite, the two arm run ids when launched, and the report-only comparison once both arms are terminal. Report-only: never a verdict. A missing report is unmeasured, never zeros.",
   '- A listing is a TREND SERIES, not an aggregate. Before claiming any trend, partition on every parity field: `runGroupId`, `configRevision`, `caseSetFingerprint`, `stageAnalyzerVersion`, `measurementsSchemaVersion`, and `materializationState: "final"`. An ABSENT `runGroupId`, `configRevision` or `caseSetFingerprint` BLOCKS comparability rather than being assumed compatible — two runs that both record nothing compare equal while sharing nothing. "Which stage has been failing this month" is answerable only WITHIN one partition; across partitions it reports a change in what was measured as a change in the server.',
   "- A scorer whose `definitionChanged` is true was graded by a DIFFERENT definition on each side. Its delta is not a regression — the two runs did not measure the same thing — so do not report it as one.",
@@ -2142,7 +2230,7 @@ const EXPECTED_PROMPT_NOTES = [
   "- `get_client` is the first step of every client edit, not an optional one: `update_client` and `set_client_servers` require the `configId` it returns as `expectedConfigId`, and a rename requires the `name` it returns as `expectedName`.",
   "- To run an eval suite against a specific client/model/computer/skills combination, compose it with `ensure_adhoc_environment` (or `run_eval_suite`'s `compose`) rather than `create_project_environment`. A composed environment is unnamed and deduplicated by content, so repeating the same stack reuses one row instead of littering the project's environment list with throwaway entries. Promote one with `name_environment` only when the user asks to keep it.",
   "- `request_eval_run_judge` returns a pending receipt, not results. Read the grades from `get_eval_run`'s `judges.goalCompletion` once its `status` is `completed`; requesting again only spends again.",
-  "- `propose_eval_description_rewrite` returns a proposing receipt, not a finished rewrite. Poll `get_eval_description_experiment` until status is proposed (or failed). Requesting again spends again.",
+  "- `propose_eval_description_rewrite` returns a proposing receipt, not a finished rewrite. Poll `get_eval_description_experiment` until status is proposed (or failed). Requesting again runs another analysis against MCPJam's daily analysis budget.",
   "- `start_eval_description_experiment` launches TWO replayed runs (original + rewrite) and spends eval-iteration credits for both. Poll `get_eval_description_experiment`. Emulated engine only; a harness source is refused.",
   "- `connect_eval_github_repo` affects everyone who opens a pull request on that repository, and `outagePolicy: fail_closed` can block their merges. Ask which policy the user wants — never pick one for them — and check `list_eval_github_repos` first: a repository missing from `connectable` needs the MCPJam GitHub App installed on it, which no tool here can do. `connect_eval_check_repo` and `list_eval_check_repos` are the pre-rename spellings of the same two operations — a `check` there is a GITHUB check, never a case's grading check.",
   "- `call_server_tool` runs a real tool on the user's MCP server, as them, with effects MCPJam cannot undo. Calling it PROPOSES the call; a person approves it. Read the tool's schema from `list_server_tools` first and pass exactly the arguments you mean — the arguments you send are shown to the approver and are what will run, so a placeholder is a lie they will act on. Never call a tool to 'test' or 'see what happens'.",
@@ -2155,7 +2243,8 @@ const EXPECTED_PROMPT_NOTES = [
   "- `get_swarms_overview` is the right first read for 'how are our swarms doing'. Every rate in it is over GRADED sessions, never attempted ones, and `passRate: null` means nothing has been graded yet — it does not mean everything failed.",
   "- To explain why a run failed, read `get_journey_run_scorecard` first. It is deterministic, free, and usually the whole answer. `failedGradingCount` is grading that BROKE — never add it to `failCount`, or you will report a crashed judge as a product regression.",
   "- Launching a journey fans out real model conversations and spends credits for every one. Calling `launch_journey_run` PROPOSES the launch; a person approves it. Say how many sessions it will produce in the message around the proposal — you can compute it from `get_journey`.",
-  "- `request_wave_insights` spends against a daily budget SHARED with user-testing insights — burning it here takes it from there. Read the run scorecards first; they are free and usually explain the failure without a model pass.",
+  "- `request_wave_insights` consumes no credits, but it counts against a daily insight QUOTA shared with user-testing insights — a request here takes one from there. Read the run scorecards first; they cost no quota and usually explain the failure without a model pass.",
+  "- Included operations (generation and insights) can be refused with `RATE_LIMITED`. `canTopUp` is false on those refusals: tell the user when it lifts (`retryAfterSeconds`, or 00:00 UTC for a daily budget), and do not retry sooner, suggest topping up credits, or switch identities to get around it.",
   "- For user testing, read `get_user_testing_metrics` and `list_user_testing_findings` first. They answer how a scenario is going without pulling real visitors' conversations into the turn, which is both the privacy-preserving move and the cheaper one.",
   "- `get_user_testing_usage` carries a `scan.truncated` flag. When it is true the rates were computed over the most recent sessions rather than all of them — say so if you quote them, or you turn a conditional number into a claim about the whole scenario.",
   "- `set_user_testing_guest_execution` REPLACES every cap at once, so send all of them: read the current values first, or you will silently reset a limit someone set deliberately.",

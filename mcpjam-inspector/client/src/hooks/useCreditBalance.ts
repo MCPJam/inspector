@@ -5,6 +5,9 @@ import { readStoredActiveOrganizationId } from "@/lib/active-organization-storag
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 
 export interface CreditBalanceState {
+  platformPaidFallback?: boolean;
+  platformFreeBudgetExhausted?: boolean;
+  platformFreeBudgetResetAt?: number | null;
   /** Shared paid top-up credits currently available to the organization. */
   paidCreditsRemaining: number;
   /**
@@ -32,7 +35,11 @@ export interface CreditBalanceState {
    * free per-day bucket (free orgs + guests); "monthly_per_seat" is the team
    * monthly allowance. Absent/unknown is treated as "daily".
    */
-  billingModel: "daily" | "monthly_per_seat";
+  billingModel: "daily" | "monthly_per_seat" | "monthly_flat";
+  topUpEligible?: boolean;
+  outstandingDeficitCredits?: number;
+  rolloverCreditsRemaining?: number;
+  rolloverCapCredits?: number | null;
   /** Team monthly allowance granted this period. Only set when monthly. */
   monthlyAllowanceTotal?: number;
   /** Team monthly allowance still available this period. Only set when monthly. */
@@ -66,11 +73,22 @@ const optionalNumber = (value: unknown, fallback = 0): number =>
 const optionalNumberOrUndefined = (value: unknown): number | undefined =>
   typeof value === "number" && Number.isFinite(value) ? value : undefined;
 
-const normalizeBalance = (raw: unknown): CreditBalanceState | undefined => {
+export const normalizeBalance = (
+  raw: unknown,
+): CreditBalanceState | undefined => {
   if (!raw || typeof raw !== "object") return undefined;
   const r = raw as Record<string, unknown>;
   return {
+    platformPaidFallback: r.platformPaidFallback === true,
+    platformFreeBudgetExhausted: r.platformFreeBudgetExhausted === true,
+    platformFreeBudgetResetAt: optionalNumberOrUndefined(r.platformFreeBudgetResetAt) ?? null,
     paidCreditsRemaining: optionalNumber(r.paidCreditsRemaining),
+    outstandingDeficitCredits: optionalNumberOrUndefined(
+      r.outstandingDeficitCredits,
+    ),
+    rolloverCreditsRemaining: optionalNumberOrUndefined(
+      r.rolloverCreditsRemaining,
+    ),
     hasPurchaseHistory: r.hasPurchaseHistory === true,
     freeDailyPercentUsed: clampPercent(r.freeDailyPercentUsed),
     freeDailyResetAt: optionalNumber(r.freeDailyResetAt),
@@ -80,10 +98,18 @@ const normalizeBalance = (raw: unknown): CreditBalanceState | undefined => {
     // Discriminant: only the explicit "monthly_per_seat" opts into the monthly
     // view; anything else (including absent) falls back to daily.
     billingModel:
-      r.billingModel === "monthly_per_seat" ? "monthly_per_seat" : "daily",
+      r.billingModel === "monthly_per_seat" || r.billingModel === "monthly_flat"
+        ? r.billingModel
+        : "daily",
+    topUpEligible:
+      typeof r.topUpEligible === "boolean" ? r.topUpEligible : undefined,
+    rolloverCapCredits:
+      r.rolloverCapCredits === null
+        ? null
+        : optionalNumberOrUndefined(r.rolloverCapCredits),
     monthlyAllowanceTotal: optionalNumberOrUndefined(r.monthlyAllowanceTotal),
     monthlyAllowanceRemaining: optionalNumberOrUndefined(
-      r.monthlyAllowanceRemaining
+      r.monthlyAllowanceRemaining,
     ),
     monthlyResetAt: optionalNumberOrUndefined(r.monthlyResetAt) ?? null,
     // Absent (older backend) → undefined so the mic falls back to the global
@@ -116,7 +142,7 @@ export function useCreditBalance({
   const queryArgs = organizationId ? { organizationId } : {};
   const raw = useQuery(
     "billing:getCreditBalance" as any,
-    shouldFetchBalance ? (queryArgs as any) : "skip"
+    shouldFetchBalance ? (queryArgs as any) : "skip",
   ) as unknown | undefined;
   // Memoize on the raw query reference. Convex returns a stable reference
   // when the underlying data is unchanged, so the normalized object stays
@@ -145,11 +171,14 @@ export function useCreditBalance({
  * backend handling.
  */
 export function isOutOfCredits(
-  balance: CreditBalanceState | undefined
+  balance: CreditBalanceState | undefined,
 ): boolean {
   if (!balance) return false;
   const paidRemaining = balance.paidCreditsRemaining;
-  if (balance.billingModel === "monthly_per_seat") {
+  if (
+    balance.billingModel === "monthly_per_seat" ||
+    balance.billingModel === "monthly_flat"
+  ) {
     return (balance.monthlyAllowanceRemaining ?? 0) <= 0 && paidRemaining <= 0;
   }
   return balance.freeDailyCreditsRemaining <= 0 && paidRemaining <= 0;
@@ -174,7 +203,7 @@ export function useOutOfCredits(organizationId?: string | null): boolean {
   });
   const balanceOutOfCredits = isOutOfCredits(balance);
   const outOfCreditsHit = useMCPJamLimitDialogStore(
-    (state) => state.outOfCreditsHit
+    (state) => state.outOfCreditsHit,
   );
   const locallyLimited = useMCPJamLimitDialogStore((state) => {
     if (!state.outOfCreditsHit) return false;
@@ -183,7 +212,7 @@ export function useOutOfCredits(organizationId?: string | null): boolean {
     return state.outOfCreditsOrganizationId === resolvedOrganizationId;
   });
   const clearOutOfCreditsHit = useMCPJamLimitDialogStore(
-    (state) => state.clearOutOfCreditsHit
+    (state) => state.clearOutOfCreditsHit,
   );
 
   useEffect(() => {

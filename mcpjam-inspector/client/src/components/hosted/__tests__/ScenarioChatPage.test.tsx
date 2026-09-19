@@ -1,4 +1,10 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ScenarioChatPage } from "../ScenarioChatPage";
@@ -17,12 +23,15 @@ import {
   clearHostedOAuthResumeMarker,
   writeHostedOAuthResumeMarker,
 } from "@/lib/hosted-oauth-resume";
+import { useFrontierSignInDialogStore } from "@/stores/frontier-sign-in-dialog-store";
 
 const {
   mockConvexAuthState,
   mockWorkOsAuthState,
   mockGetAccessToken,
   mockSignIn,
+  mockSignUp,
+  mockSignOut,
   mockGetStoredTokens,
   mockInitiateOAuth,
   mockValidateHostedServer,
@@ -43,6 +52,8 @@ const {
   },
   mockGetAccessToken: vi.fn(),
   mockSignIn: vi.fn(),
+  mockSignUp: vi.fn(),
+  mockSignOut: vi.fn(),
   mockGetStoredTokens: vi.fn(),
   mockInitiateOAuth: vi.fn(async () => ({ success: false })),
   mockValidateHostedServer: vi.fn(),
@@ -69,6 +80,8 @@ vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({
     getAccessToken: mockGetAccessToken,
     signIn: mockSignIn,
+    signUp: mockSignUp,
+    signOut: mockSignOut,
     user: mockWorkOsAuthState.user,
     isLoading: mockWorkOsAuthState.isLoading,
   }),
@@ -150,8 +163,9 @@ vi.mock("@/lib/oauth/mcp-oauth", () => ({
 // jsdom can't put the page inside a real same-origin iframe, so stub the
 // embed detector; the hash-sync helpers keep their real implementations.
 vi.mock("@/lib/embedded-preview", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("@/lib/embedded-preview")>();
+  const actual = await importOriginal<
+    typeof import("@/lib/embedded-preview")
+  >();
   return {
     ...actual,
     isEmbeddedPreview: () => mockIsEmbeddedPreview(),
@@ -211,6 +225,8 @@ describe("ScenarioChatPage", () => {
     mockWorkOsAuthState.isLoading = false;
     mockGetAccessToken.mockReset();
     mockSignIn.mockReset();
+    mockSignUp.mockReset();
+    mockSignOut.mockReset();
     mockGetStoredTokens.mockReset();
     mockInitiateOAuth.mockReset();
     mockValidateHostedServer.mockReset();
@@ -266,6 +282,337 @@ describe("ScenarioChatPage", () => {
     vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it("gates account-required links on the backend guest-bearer refusal without loading a preview", async () => {
+    mockConvexAuthState.isAuthenticated = false;
+    mockWorkOsAuthState.user = null as any;
+    mockAuthFetch.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          code: "SCENARIO_SIGN_IN_REQUIRED",
+          error: "Sign in to preview this scenario.",
+        }),
+        { status: 401 },
+      ),
+    );
+    window.history.replaceState(
+      {},
+      "",
+      "/user-testing/study/private-token?surface=preview",
+    );
+    render(<ScenarioChatPage pathToken="private-token" />);
+    expect(
+      await screen.findByRole("heading", {
+        name: "Sign in to preview this scenario",
+      }),
+    ).toBeInTheDocument();
+    expect(mockAuthFetch).toHaveBeenCalledOnce();
+    expect(mockChatTabV2).not.toHaveBeenCalled();
+    expect(mockValidateHostedServer).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Create an account" }));
+    expect(mockSignUp).toHaveBeenCalledOnce();
+    expect(localStorage.getItem(SCENARIO_SIGN_IN_RETURN_PATH_STORAGE_KEY)).toBe(
+      "/user-testing/scenario/private-token?surface=preview",
+    );
+    expect(
+      mockPosthogCapture.mock.calls.flat().map(String).join(" "),
+    ).not.toContain("private-token");
+  });
+
+  it("keeps account-required iframe previews free of authentication actions", async () => {
+    mockIsEmbeddedPreview.mockReturnValue(true);
+    mockConvexAuthState.isAuthenticated = false;
+    mockWorkOsAuthState.user = null;
+    mockAuthFetch.mockResolvedValue(
+      new Response(JSON.stringify({ code: "SCENARIO_SIGN_IN_REQUIRED" }), {
+        status: 401,
+      }),
+    );
+    render(<ScenarioChatPage pathToken="private-token" />);
+    expect(
+      await screen.findByRole("heading", {
+        name: "Sign in to preview this scenario",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Sign in" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Create an account" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Open in App" }),
+    ).toBeInTheDocument();
+    expect(mockSignIn).not.toHaveBeenCalled();
+    expect(mockSignUp).not.toHaveBeenCalled();
+    expect(mockAuthFetch).toHaveBeenCalledOnce();
+    expect(mockChatTabV2).not.toHaveBeenCalled();
+  });
+
+  it.each(["", "?surface=preview"])(
+    "preserves the return surface through switching accounts and signing in: %s",
+    async (query) => {
+      window.history.replaceState(
+        {},
+        "",
+        `/user-testing/study/switch-token${query}`,
+      );
+      mockAuthFetch.mockResolvedValueOnce(
+        createFetchResponse(
+          {
+            code: "FORBIDDEN",
+            details: { code: "SCENARIO_INVITE_ONLY" },
+            message:
+              "This scenario is invite-only - ask the owner to invite you.",
+          },
+          { ok: false, status: 403 },
+        ),
+      );
+      const view = render(<ScenarioChatPage pathToken="switch-token" />);
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Switch accounts" }),
+      );
+      const returnTo = mockSignOut.mock.calls[0][0].returnTo;
+      const destination = new URL(returnTo);
+      expect(destination.pathname).toBe("/user-testing/scenario/switch-token");
+      expect(destination.search).toBe(query);
+      view.unmount();
+
+      // Follow the logout return as a signed-out visitor, then choose sign-in.
+      window.history.replaceState(
+        {},
+        "",
+        destination.pathname + destination.search,
+      );
+      mockConvexAuthState.isAuthenticated = false;
+      mockWorkOsAuthState.user = null;
+      mockAuthFetch.mockResolvedValue(
+        new Response(JSON.stringify({ code: "SCENARIO_SIGN_IN_REQUIRED" }), {
+          status: 401,
+        }),
+      );
+      render(<ScenarioChatPage pathToken="switch-token" />);
+      fireEvent.click(await screen.findByRole("button", { name: "Sign in" }));
+      expect(
+        localStorage.getItem(SCENARIO_SIGN_IN_RETURN_PATH_STORAGE_KEY),
+      ).toBe(`/user-testing/scenario/switch-token${query}`);
+    },
+  );
+
+  it.each(["", "?surface=preview"])(
+    "returns from sign-in and redeems with the account bearer: %s",
+    async (query) => {
+      const bootstrap = await (await mockAuthFetch()).json();
+      mockAuthFetch.mockClear();
+      mockConvexAuthState.isAuthenticated = false;
+      mockWorkOsAuthState.user = null;
+      mockAuthFetch.mockResolvedValueOnce(
+        createFetchResponse(
+          {
+            code: "UNAUTHORIZED",
+            details: { code: "SCENARIO_SIGN_IN_REQUIRED" },
+          },
+          { ok: false, status: 401 },
+        ),
+      );
+      window.history.replaceState(
+        {},
+        "",
+        `/user-testing/study/return-token${query}`,
+      );
+      const view = render(<ScenarioChatPage pathToken="return-token" />);
+      fireEvent.click(await screen.findByRole("button", { name: "Sign in" }));
+      expect(mockSignIn).toHaveBeenCalledOnce();
+      const destination = localStorage.getItem(
+        SCENARIO_SIGN_IN_RETURN_PATH_STORAGE_KEY,
+      )!;
+      expect(destination).toBe(`/user-testing/scenario/return-token${query}`);
+      expect(mockChatTabV2).not.toHaveBeenCalled();
+      view.unmount();
+      // App's callback suite verifies restoring this destination after AuthKit.
+      window.history.replaceState({}, "", destination);
+      mockWorkOsAuthState.user = { id: "signed-in-tester" };
+      mockConvexAuthState.isAuthenticated = true;
+      mockAuthFetch.mockResolvedValue(
+        createFetchResponse({
+          ...bootstrap,
+          bootstrap: { ...bootstrap.bootstrap, requiresSignIn: true },
+        }),
+      );
+      render(<ScenarioChatPage pathToken="return-token" />);
+      await waitFor(() =>
+        expect(readScenarioSession()?.authenticatedUserId).toBe(
+          "signed-in-tester",
+        ),
+      );
+      expect(mockAuthFetch).toHaveBeenLastCalledWith(
+        "/api/web/scenarios/redeem",
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: "Bearer workos-token",
+          }),
+          body: JSON.stringify({ scenarioToken: "return-token" }),
+        }),
+      );
+      expect(readScenarioSession()?.surface).toBe(
+        query ? "preview" : "share_link",
+      );
+      expect(
+        screen.queryByRole("heading", {
+          name: "Sign in to preview this scenario",
+        }),
+      ).not.toBeInTheDocument();
+    },
+  );
+
+  it("opens guest-permitted links without an anonymous probe or account sign-in", async () => {
+    const bootstrap = await (await mockAuthFetch()).json();
+    mockAuthFetch.mockClear();
+    mockConvexAuthState.isAuthenticated = false;
+    mockWorkOsAuthState.user = null;
+    vi.mocked(global.fetch).mockResolvedValue(
+      new Response(JSON.stringify({ code: "SCENARIO_SIGN_IN_REQUIRED" }), {
+        status: 401,
+      }),
+    );
+    mockAuthFetch.mockResolvedValue(
+      createFetchResponse({
+        ...bootstrap,
+        bootstrap: {
+          ...bootstrap.bootstrap,
+          mode: "anyone_with_link",
+          requiresSignIn: false,
+          allowGuestAccess: true,
+        },
+      }),
+    );
+    consentAlreadyGiven();
+    render(<ScenarioChatPage pathToken="guest-link" />);
+    expect(await screen.findByTestId("scenario-chat-tab")).toBeInTheDocument();
+    expect(mockAuthFetch).toHaveBeenCalledOnce();
+    expect(
+      new Headers(mockAuthFetch.mock.calls[0][1].headers).has("Authorization"),
+    ).toBe(false);
+    expect(readScenarioSession()?.payload.allowGuestAccess).toBe(true);
+    expect(mockGetAccessToken).not.toHaveBeenCalled();
+    expect(mockSignIn).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalledWith(
+      "/api/web/scenarios/redeem",
+      expect.anything(),
+    );
+  });
+
+  it("does not carry the account requirement to a different guest-permitted link", async () => {
+    const body = await (await mockAuthFetch()).json();
+    mockAuthFetch.mockResolvedValue(
+      createFetchResponse({
+        ...body,
+        bootstrap: { ...body.bootstrap, requiresSignIn: true },
+      }),
+    );
+    const view = render(<ScenarioChatPage pathToken="restricted-link" />);
+    await waitFor(() =>
+      expect(readScenarioSession()?.payload.requiresSignIn).toBe(true),
+    );
+    mockWorkOsAuthState.user = null;
+    mockConvexAuthState.isAuthenticated = false;
+    mockAuthFetch.mockResolvedValue(
+      createFetchResponse({
+        ...body,
+        bootstrap: {
+          ...body.bootstrap,
+          requiresSignIn: false,
+          allowGuestAccess: true,
+          mode: "anyone_with_link",
+        },
+      }),
+    );
+    view.rerender(<ScenarioChatPage pathToken="guest-link" />);
+    await waitFor(() =>
+      expect(readScenarioSession()?.shareToken).toBe("guest-link"),
+    );
+    expect(readScenarioSession()?.payload.allowGuestAccess).toBe(true);
+    expect(
+      screen.queryByRole("button", { name: "Sign in" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("preserves preview return after the URL is stripped and the account logs out", async () => {
+    const body = await (await mockAuthFetch()).json();
+    mockAuthFetch.mockResolvedValue(
+      createFetchResponse({
+        ...body,
+        bootstrap: { ...body.bootstrap, requiresSignIn: true },
+      }),
+    );
+    window.history.replaceState(
+      {},
+      "",
+      "/user-testing/study/preview-token?surface=preview",
+    );
+    const view = render(<ScenarioChatPage pathToken="preview-token" />);
+    await waitFor(() => expect(readScenarioSession()?.surface).toBe("preview"));
+    view.rerender(<ScenarioChatPage />);
+    await waitFor(() => expect(readScenarioSession()?.surface).toBe("preview"));
+    mockWorkOsAuthState.user = null;
+    mockConvexAuthState.isAuthenticated = false;
+    view.rerender(<ScenarioChatPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Sign in" }));
+    expect(localStorage.getItem(SCENARIO_SIGN_IN_RETURN_PATH_STORAGE_KEY)).toBe(
+      "/user-testing/scenario/preview-token?surface=preview",
+    );
+    expect(readScenarioSession()).toBeNull();
+  });
+
+  it("clears protected preview data on logout and re-redeems after account changes", async () => {
+    const base = await mockAuthFetch();
+    const body = await base.json();
+    const response = () =>
+      createFetchResponse({
+        ...body,
+        bootstrap: {
+          ...body.bootstrap,
+          requiresSignIn: true,
+          allowGuestAccess: false,
+        },
+      });
+    mockAuthFetch.mockClear();
+    mockAuthFetch.mockImplementation(async () => response());
+    const view = render(<ScenarioChatPage pathToken="account-token" />);
+    await waitFor(() =>
+      expect(readScenarioSession()?.authenticatedUserId).toBe("user_123"),
+    );
+    mockWorkOsAuthState.user = null as any;
+    mockConvexAuthState.isAuthenticated = false;
+    view.rerender(<ScenarioChatPage pathToken="account-token" />);
+    expect(
+      await screen.findByRole("heading", {
+        name: "Sign in to preview this scenario",
+      }),
+    ).toBeInTheDocument();
+    expect(readScenarioSession()).toBeNull();
+    const callsAtLogout = mockAuthFetch.mock.calls.length;
+    mockWorkOsAuthState.user = { id: "different-account" };
+    mockConvexAuthState.isAuthenticated = true;
+    view.rerender(<ScenarioChatPage pathToken="account-token" />);
+    await waitFor(() =>
+      expect(readScenarioSession()?.authenticatedUserId).toBe(
+        "different-account",
+      ),
+    );
+    expect(mockAuthFetch.mock.calls.length).toBeGreaterThan(callsAtLogout);
+  });
+
+  it("never falls back to guests when the account token expires", async () => {
+    mockGetAccessToken.mockRejectedValue(new Error("Login required"));
+    render(<ScenarioChatPage pathToken="expired-account" />);
+    expect(
+      await screen.findByRole("heading", {
+        name: "Sign in to preview this scenario",
+      }),
+    ).toBeInTheDocument();
+    expect(mockAuthFetch).not.toHaveBeenCalled();
   });
 
   it("applies scenario host style data attributes while keeping MCPJam branding", async () => {
@@ -741,6 +1088,89 @@ describe("ScenarioChatPage", () => {
     );
   });
 
+  describe("guest refused a frontier model", () => {
+    function renderGuestLinkScenario() {
+      mockWorkOsAuthState.user = null;
+      consentAlreadyGiven();
+      window.history.replaceState({}, "", "/user-testing/test/token-guest");
+      mockAuthFetch.mockResolvedValueOnce(
+        createFetchResponse({
+          scenarioId: "sbx_1",
+          accessVersion: 1,
+          bootstrap: {
+            projectId: "ws_1",
+            scenarioId: "sbx_1",
+            name: "Guest Scenario",
+            hostStyle: "claude",
+            mode: "anyone_with_link",
+            allowGuestAccess: true,
+            viewerIsProjectMember: false,
+            systemPrompt: "",
+            modelId: "anthropic/claude-sonnet-4.5",
+            temperature: 0.7,
+            requireToolApproval: false,
+            servers: [],
+          },
+        }),
+      );
+      return render(<ScenarioChatPage pathToken="token-guest" />);
+    }
+
+    afterEach(() => {
+      useFrontierSignInDialogStore.setState({ isOpen: false, override: null });
+    });
+
+    it("shows the scenario sign-in gate instead of the model dialog", async () => {
+      renderGuestLinkScenario();
+      expect(
+        await screen.findByTestId("scenario-chat-tab"),
+      ).toBeInTheDocument();
+
+      act(() => useFrontierSignInDialogStore.getState().open());
+
+      expect(
+        await screen.findByRole("heading", {
+          name: "Sign in to preview this scenario",
+        }),
+      ).toBeInTheDocument();
+      expect(useFrontierSignInDialogStore.getState().isOpen).toBe(false);
+      fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+      expect(mockSignIn).toHaveBeenCalledOnce();
+      expect(
+        localStorage.getItem(SCENARIO_SIGN_IN_RETURN_PATH_STORAGE_KEY),
+      ).toBe("/user-testing/scenario/token-guest");
+    });
+
+    it("hands the dialog back once the page unmounts", async () => {
+      const { unmount } = renderGuestLinkScenario();
+      expect(
+        await screen.findByTestId("scenario-chat-tab"),
+      ).toBeInTheDocument();
+      unmount();
+
+      useFrontierSignInDialogStore.getState().open();
+
+      expect(useFrontierSignInDialogStore.getState().isOpen).toBe(true);
+    });
+
+    it("leaves a signed-in visitor on the model dialog", async () => {
+      consentAlreadyGiven();
+      render(<ScenarioChatPage pathToken="token-signed-in" />);
+      expect(
+        await screen.findByTestId("scenario-chat-tab"),
+      ).toBeInTheDocument();
+
+      act(() => useFrontierSignInDialogStore.getState().open());
+
+      expect(useFrontierSignInDialogStore.getState().isOpen).toBe(true);
+      expect(
+        screen.queryByRole("heading", {
+          name: "Sign in to preview this scenario",
+        }),
+      ).not.toBeInTheDocument();
+    });
+  });
+
   it("keeps the access denied sign-in path intact", async () => {
     mockConvexAuthState.isAuthenticated = false;
     mockWorkOsAuthState.user = null;
@@ -770,7 +1200,7 @@ describe("ScenarioChatPage", () => {
 
     expect(mockSignIn).toHaveBeenCalledTimes(1);
     expect(localStorage.getItem(SCENARIO_SIGN_IN_RETURN_PATH_STORAGE_KEY)).toBe(
-      "/user-testing/test/token-denied",
+      "/user-testing/scenario/token-denied",
     );
   });
 
@@ -917,8 +1347,6 @@ describe("ScenarioChatPage", () => {
         status: 500,
         code: "INTERNAL_ERROR",
         message: "Internal database exploded",
-        rawMessage:
-          "Uncaught Error: Internal database exploded at handler (../../convex/scenarios.ts:1088:6)",
       }),
     );
   });
@@ -1469,8 +1897,11 @@ describe("ScenarioChatPage", () => {
       render(<ScenarioChatPage />);
 
       const trigger = await screen.findByTestId("scenario-tasks-trigger");
+      // The accessible name must keep "What to try": the consent dialog tells
+      // every tester to look for that name, and a voice-control user says it.
+      expect(screen.getByRole("button", { name: /What to try/ })).toBe(trigger);
       expect(screen.getByTestId("scenario-tasks-remaining")).toHaveTextContent(
-        "3 left",
+        "3 unchecked",
       );
 
       await userEvent.click(trigger);
@@ -1479,7 +1910,7 @@ describe("ScenarioChatPage", () => {
       );
 
       expect(screen.getByTestId("scenario-tasks-remaining")).toHaveTextContent(
-        "2 left",
+        "2 unchecked",
       );
       // Check state is the tester's own bookkeeping — kept in their tab and
       // sent nowhere.
@@ -1490,7 +1921,39 @@ describe("ScenarioChatPage", () => {
       ).toEqual(["t1"]);
     });
 
-    it("reads Done rather than 0 left once everything is ticked", async () => {
+    it("says What to try once, and does not call it optional", async () => {
+      // The popover used to open on "Optional things to try" over a footnote
+      // leading with "Try any, in any order" — telling a tester the list was
+      // skippable, every single time they opened it. The list still IS
+      // optional (nothing gates the composer, nothing reports completion); it
+      // is just not what the heading should say.
+      writeStudyWithTasks("sbx_copy", [{ id: "t1", title: "Only task" }]);
+
+      render(<ScenarioChatPage />);
+
+      const trigger = await screen.findByTestId("scenario-tasks-trigger");
+      // Read the attribute rather than passing an asymmetric matcher to
+      // `toHaveAccessibleName`: that overload takes a string or a regex, and a
+      // matcher object there can pass without ever comparing anything.
+      expect(trigger.getAttribute("aria-label")).toMatch(/^What to try — /);
+      expect(trigger.getAttribute("aria-label")).not.toMatch(/optional/i);
+
+      await userEvent.click(trigger);
+      expect(
+        await screen.findByTestId("scenario-tasks-item-t1"),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/Optional things to try/i)).toBeNull();
+      expect(screen.queryByText(/in any order/i)).toBeNull();
+      // The footnote's other half stays. It is not framing — it is the one
+      // thing about this control a tester cannot work out by looking at it.
+      expect(
+        screen.getByText("This checklist is only for you."),
+      ).toBeInTheDocument();
+      // The heading is the trigger's name, so both now read "What to try".
+      expect(screen.getAllByText("What to try").length).toBeGreaterThan(1);
+    });
+
+    it("reads All checked rather than 0 unchecked once everything is ticked", async () => {
       writeStudyWithTasks("sbx_done", [{ id: "t1", title: "Only task" }]);
       sessionStorage.setItem(
         "scenario-tasks-checked-sbx_done",
@@ -1501,7 +1964,7 @@ describe("ScenarioChatPage", () => {
 
       expect(
         await screen.findByTestId("scenario-tasks-remaining"),
-      ).toHaveTextContent("Done");
+      ).toHaveTextContent("All checked");
     });
 
     it("hides the control for a study with no tasks", async () => {
@@ -1570,7 +2033,8 @@ describe("ScenarioChatPage", () => {
     function latestHostedContext() {
       const calls = mockChatTabV2.mock.calls;
       const last = calls[calls.length - 1]?.[0] as
-        { hostedContext?: Record<string, unknown> } | undefined;
+        | { hostedContext?: Record<string, unknown> }
+        | undefined;
       return last?.hostedContext;
     }
 
@@ -1777,6 +2241,70 @@ describe("ScenarioChatPage", () => {
       // The committed session is the navigation's (version 3), never the
       // resolved-but-stale refresh's (version 8).
       await waitFor(() => expect(readScenarioSession()?.accessVersion).toBe(3));
+    });
+
+    it("ignores an old account refusal and preserves the new account refresh latch", async () => {
+      const view = await renderPostStrip();
+      let refuseOld!: (response: Response) => void;
+      let finishNew!: (response: Response) => void;
+      mockAuthFetch.mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            refuseOld = resolve;
+          }),
+      );
+      const oldRefresh = latestHostedContext()!
+        .refreshAccessSession as () => Promise<unknown>;
+      const oldPending = oldRefresh();
+      await waitFor(() => expect(mockAuthFetch).toHaveBeenCalledOnce());
+      mockAuthFetch.mockResolvedValue(
+        createFetchResponse({
+          scenarioId: "sbx_recover",
+          accessVersion: 2,
+          bootstrap: bootstrapPayload(),
+        }),
+      );
+      mockWorkOsAuthState.user = { id: "new-account" };
+      view.rerender(<ScenarioChatPage />);
+      await waitFor(() =>
+        expect(readScenarioSession()?.authenticatedUserId).toBe("new-account"),
+      );
+      mockAuthFetch.mockClear();
+      mockAuthFetch.mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            finishNew = resolve;
+          }),
+      );
+      const newRefresh = latestHostedContext()!
+        .refreshAccessSession as () => Promise<unknown>;
+      const newPending = newRefresh();
+      await waitFor(() => expect(mockAuthFetch).toHaveBeenCalledOnce());
+      let oldResult: unknown;
+      await act(async () => {
+        refuseOld(
+          createFetchResponse(
+            { code: "SCENARIO_SIGN_IN_REQUIRED" },
+            { ok: false, status: 401 },
+          ),
+        );
+        oldResult = await oldPending;
+      });
+      expect(oldResult).toEqual({ ok: false, reason: "transient" });
+      expect(readScenarioSession()?.authenticatedUserId).toBe("new-account");
+      await act(async () => {
+        const coalesced = newRefresh();
+        finishNew(
+          createFetchResponse({
+            scenarioId: "sbx_recover",
+            accessVersion: 3,
+            bootstrap: bootstrapPayload(),
+          }),
+        );
+        await Promise.all([newPending, coalesced]);
+      });
+      expect(mockAuthFetch).toHaveBeenCalledOnce();
+      expect(readScenarioSession()?.accessVersion).toBe(3);
     });
 
     it("tears down to the denied landing when onAccessRevoked fires", async () => {
@@ -2248,17 +2776,25 @@ describe("ScenarioChatPage", () => {
         "/user-testing/demo/scenario-token?surface=preview",
       );
 
-      render(<ScenarioChatPage pathToken="scenario-token" />);
+      const view = render(<ScenarioChatPage pathToken="scenario-token" />);
 
-      expect(await screen.findByTestId("scenario-chat-tab")).toBeInTheDocument();
+      expect(
+        await screen.findByTestId("scenario-chat-tab"),
+      ).toBeInTheDocument();
       await waitFor(() => {
         expect(window.location.hash).toBe("#resolved-scenario");
       });
       expect(window.location.search).toBe("");
-      expect(readScenarioSession()?.surface).toBe("preview");
+      view.rerender(<ScenarioChatPage />);
+      await waitFor(() => expect(mockAuthFetch).toHaveBeenCalledTimes(2));
+      await waitFor(() =>
+        expect(readScenarioSession()?.surface).toBe("preview"),
+      );
       expect(mockChatTabV2).toHaveBeenLastCalledWith(
         expect.objectContaining({
-          hostedContext: expect.objectContaining({ scenarioSurface: "preview" }),
+          hostedContext: expect.objectContaining({
+            scenarioSurface: "preview",
+          }),
         }),
       );
     });
@@ -2296,7 +2832,9 @@ describe("ScenarioChatPage", () => {
       await userEvent.click(
         await screen.findByRole("button", { name: "Continue" }),
       );
-      expect(await screen.findByTestId("scenario-chat-tab")).toBeInTheDocument();
+      expect(
+        await screen.findByTestId("scenario-chat-tab"),
+      ).toBeInTheDocument();
 
       await userEvent.click(
         screen.getByRole("button", { name: "Back to study" }),
@@ -2315,11 +2853,15 @@ describe("ScenarioChatPage", () => {
 
       render(<ScenarioChatPage />);
 
-      expect(await screen.findByTestId("scenario-chat-tab")).toBeInTheDocument();
+      expect(
+        await screen.findByTestId("scenario-chat-tab"),
+      ).toBeInTheDocument();
       expect(
         screen.queryByRole("button", { name: "Back to study" }),
       ).not.toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "MCPJam" })).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "MCPJam" }),
+      ).toBeInTheDocument();
     });
 
     it("routes consent Leave back to the study on the preview surface", async () => {

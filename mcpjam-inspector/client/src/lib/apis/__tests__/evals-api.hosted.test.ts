@@ -258,6 +258,45 @@ describe("evals-api hosted mode", () => {
     expect(useMCPJamLimitDialogStore.getState().intent).toBe("topup");
   });
 
+  it("opens the topup dialog when generation is refused inside a wrapped 500", async () => {
+    // The generate route wraps the backend refusal in its own message —
+    // `Failed to generate test cases: {…}` — under a generic code, so the
+    // limit has to be read out of the JSON suffix, not the envelope.
+    useMCPJamLimitDialogStore.setState({
+      authStatus: "signedIn",
+      hasPendingLimit: false,
+      outOfCreditsHit: false,
+      outOfCreditsOrganizationId: null,
+      isOpen: false,
+      intent: null,
+      organizationId: null,
+      pendingInput: null,
+    });
+    authFetchMock.mockResolvedValueOnce(
+      createFetchResponse(
+        {
+          code: "INTERNAL_ERROR",
+          message:
+            'Failed to generate test cases: {"ok":false,"code":"user_rate_limit","limitKind":"total","error":"Daily MCPJam model limit reached. Use BYOK or try again tomorrow.","isRetryable":true,"organizationId":"org_1"}',
+        },
+        500
+      )
+    );
+
+    await expect(
+      generateEvalTests({
+        projectId: "project-1",
+        serverIds: ["Server A"],
+        convexAuthToken: "convex-token",
+      })
+    ).rejects.toThrow("Failed to generate test cases");
+
+    const state = useMCPJamLimitDialogStore.getState();
+    expect(state.isOpen).toBe(true);
+    expect(state.intent).toBe("topup");
+    expect(state.organizationId).toBe("org_1");
+  });
+
   it("rebuilds the eval-iteration billing error so getBillingErrorMessage renders the upgrade message", async () => {
     // The server forwards the original Convex billing payload on `details`
     // (HTTP 402). runEvals must rethrow it as a ConvexError so the shared

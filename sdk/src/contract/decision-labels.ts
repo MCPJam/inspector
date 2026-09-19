@@ -49,6 +49,17 @@ import {
 } from "./friction-signals.js";
 import type { EvalStageCoverageDetail } from "./stage-analytics.js";
 import {
+  SWARM_FINDING_DISPOSITIONS,
+  SWARM_FINDING_COVERAGE_NOTES,
+  SWARM_FINDING_SUMMARY_KINDS,
+  SWARM_FINDING_BASES,
+  SWARM_FINDING_SCOPE_LEVELS,
+  type SwarmFindingDisposition,
+  type SwarmFindingCoverageNote,
+  type SwarmFindingSummaryKind,
+  type SwarmFindingBasis,
+} from "./swarm-finding.js";
+import {
   EVAL_VERDICT_DECISION_REASONS,
   type EvalVerdictDecisionReason,
 } from "./verdict-policy.js";
@@ -185,7 +196,7 @@ export const STAGE_REASON_LABELS = Object.freeze({
   toolError: "the server reported a tool error",
   protocolError: "the call never produced a result",
   renderFailed: "the widget did not render",
-  predicateFailed: "a check on the result did not hold",
+  predicateFailed: "an assertion on the result did not hold",
   observed: "the evidence was inspected and the stage held",
   impliedByLaterEvidence: "a later stage's success implies it",
   // "LLM judge", not "judge". These five are the only reasons in the
@@ -502,7 +513,7 @@ export const FRICTION_NOT_MEASURED_REASON_LABELS = Object.freeze({
   noToolCalls: "no tool calls to look at",
   resultsUnavailable: "tool results were not retained",
   orderingUnknown: "the calls cannot be placed in a causal order",
-  evidenceIncomplete: "the evidence for this trial has a known hole",
+  evidenceIncomplete: "the evidence for this iteration has a known hole",
   truncated: "too many tool calls to measure",
 } satisfies Record<FrictionNotMeasuredReason, string>);
 
@@ -546,8 +557,53 @@ export const SUSPECTED_CONDITION_CONFIDENCE_LABELS = Object.freeze({
   high: "high confidence",
 } satisfies Record<SuspectedConditionConfidence, string>);
 
+export const SWARM_FINDING_DISPOSITION_LABELS = Object.freeze({
+  notRun: "Not run",
+  blockedConnecting: "Stuck",
+  lostFindingTool: "Lost",
+  blockedCallingTool: "Annoyed",
+  blockedByResponse: "Frustrated",
+  goalMissed: "Stalled",
+  goalMetWithFriction: "Uneasy",
+  goalMet: "Relieved",
+  notMeasured: "Unscored",
+} satisfies Record<SwarmFindingDisposition, string>);
+export const SWARM_FINDING_COVERAGE_NOTE_LABELS = Object.freeze({
+  sessionScanCapped: "Session scan limit reached",
+  budgetExhausted: "Analysis budget exhausted",
+  transcriptMissing: "Transcript unavailable",
+  contextTooLarge: "Transcript exceeds analysis limits",
+  extractionRejected: "Analysis could not be verified",
+  chainUnmeasured: "Journey stages not measured",
+  judgeNotRun: "Judge did not run",
+  sessionsWithdrawn: "Some sessions were withdrawn",
+  sessionsRateLimited: "Some sessions were rate limited",
+  partialRead: "Only part of this wave was read",
+  toolCatalogMissing: "Tool catalog unavailable",
+} satisfies Record<SwarmFindingCoverageNote, string>);
+export const SWARM_FINDING_SUMMARY_KIND_LABELS = Object.freeze({
+  notLaunched: "Not launched",
+  broken: "Goals blocked",
+  friction: "Goals met with friction",
+  landed: "Goals met",
+  ungraded: "Not graded",
+  unread: "Not fully read",
+} satisfies Record<SwarmFindingSummaryKind, string>);
+export const SWARM_FINDING_BASIS_LABELS = Object.freeze({
+  verifiedMechanism: "Verified explanation",
+  sessionReport: "Session report",
+  populationFact: "Population fact",
+} satisfies Record<SwarmFindingBasis, string>);
+
 /** Every vocabulary this module renders, for tests that assert totality. */
 export const DECISION_LABEL_VOCABULARIES = Object.freeze({
+  swarmFindingDispositions: SWARM_FINDING_DISPOSITIONS,
+  swarmFindingCoverageNotes: SWARM_FINDING_COVERAGE_NOTES,
+  swarmFindingSummaryKinds: SWARM_FINDING_SUMMARY_KINDS,
+  swarmFindingBases: SWARM_FINDING_BASES,
+  swarmFindingScopeLevels: SWARM_FINDING_SCOPE_LEVELS,
+  // Tones are presentation vocabulary shared with unrelated UI schemas.
+  // Their totality is tested directly against the disposition-to-tone map.
   stages: USER_VALUE_STAGES,
   stageStates: STAGE_STATES,
   failureCategories: FAILURE_CATEGORIES,

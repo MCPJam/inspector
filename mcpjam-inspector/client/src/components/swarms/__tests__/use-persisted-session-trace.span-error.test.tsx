@@ -19,7 +19,22 @@ const { mockHydrate, mockTraces, STABLE_THREAD } = vi.hoisted(() => ({
   // OBJECT. The real Convex hook holds a reference across renders; a fresh
   // literal per render would re-run the effect forever and the loop would be
   // the mock's, not the hook's.
-  STABLE_THREAD: { messagesBlobUrl: "https://storage.example.com/t.json" },
+  STABLE_THREAD: {
+    messagesBlobUrl: "https://storage.example.com/t.json",
+    recordedContext: {
+      modelId: "model-at-run-time",
+      toolSnapshots: [
+        {
+          hash: "frozen",
+          snapshot: {
+            servers: [
+              { serverId: "recorded-server", tools: [{ name: "search" }] },
+            ],
+          },
+        },
+      ],
+    },
+  },
 }));
 
 vi.mock("@/hooks/useSharedChatThreads", () => ({
@@ -67,6 +82,12 @@ beforeEach(() => {
 });
 
 describe("usePersistedSessionTrace — span load failures", () => {
+  it("includes the archived context in Raw without reconstructing it from messages", async () => {
+    mockHydrate.mockResolvedValue([]);
+    render(<Probe threadId="t1" />);
+    await waitFor(() => expect(last?.trace).not.toBeNull());
+    expect(last?.trace?.recordedContext).toEqual(STABLE_THREAD.recordedContext);
+  });
   it("reports a total span failure even though the transcript loaded", async () => {
     // The case a single `error` slot swallowed: `trace` is non-null because
     // the messages arrived, so a caller that only renders `error` in its
@@ -124,7 +145,7 @@ describe("usePersistedSessionTrace — span load failures", () => {
     render(<Probe threadId="t1" />);
 
     await waitFor(() =>
-      expect(last?.spanError).toMatch(/could not load the recorded trace/i)
+      expect(last?.spanError).toMatch(/could not load the recorded trace/i),
     );
   });
 });
@@ -164,5 +185,46 @@ describe("usePersistedSessionTrace — wall-clock anchor", () => {
     await waitFor(() => expect(last?.trace).not.toBeNull());
     expect(last?.trace).not.toHaveProperty("traceStartedAtMs");
     expect(last?.trace).not.toHaveProperty("traceEndedAtMs");
+  });
+});
+
+it("hydrates saved per-step requests into the swarm envelope", async () => {
+  const requestPayloads = [
+    {
+      turnId: "t1",
+      promptIndex: 0,
+      stepIndex: 0,
+      payload: {
+        system: "original swarm system",
+        tools: { search: { name: "search" } },
+        messages: [],
+      },
+    },
+  ];
+  mockTraces.traces = [
+    {
+      promptIndex: 0,
+      spanCount: 0,
+      startedAt: 0,
+      endedAt: 1,
+      requestPayloadsBlobUrl: "https://storage.example.com/requests.json",
+    },
+  ];
+  mockHydrate.mockResolvedValue([]);
+  global.fetch = vi.fn(async (url) => ({
+    ok: true,
+    json: async () =>
+      String(url).includes("requests.json")
+        ? requestPayloads
+        : [{ role: "user", content: "hi" }],
+  })) as any;
+  render(<Probe threadId="t1" />);
+  await waitFor(() =>
+    expect(last?.trace?.requestPayloads?.[0]?.payload.system).toBe(
+      "original swarm system",
+    ),
+  );
+  expect(last?.trace?.requestPayloads?.[0]?.payload.tools).toEqual({
+    search: { name: "search" },
   });
 });
