@@ -1,6 +1,15 @@
 /**
- * Client-side fulfillment for WebMCP UI tool calls streamed back by the
- * server (which registered them as no-execute AI SDK tools).
+ * The ASK MCPJAM adapter: client-side fulfillment for `ui_*` tool calls
+ * streamed back by the server (which registered them as no-execute AI SDK
+ * tools).
+ *
+ * One of two adapters over `ui-tool-execution.ts` — the other is
+ * `native-tool-publisher.ts`, which serves browser-native WebMCP agents. What
+ * lives HERE is everything that only exists because there is a conversation:
+ * the approval pill handshake, the transcript output, duplicate-call
+ * suppression, outcome telemetry, and the navigation handoff to the side
+ * panel. A native call creates no conversation and opens no panel, so none of
+ * it runs for one.
  *
  * Called first from each chat surface's `useChat.onToolCall`; returns `false`
  * for names that aren't ours so the app-tool and server-tool paths run
@@ -21,12 +30,14 @@
 
 import { assertEvalToolAllowed } from "@/lib/mcpjam-agent/eval-scope";
 import { uiToolCallNeedsApproval } from "@/shared/client-fulfilled-tools.js";
-import type { InspectorCommandErrorCode } from "@/shared/inspector-command.js";
 import { track } from "@/lib/analytics";
 import { pathnameToActiveTab } from "@/lib/app-navigation";
 import {
+  executeUiToolCall,
+  uiToolUnavailableResult,
+} from "./ui-tool-execution";
+import {
   useUiToolsRegistry,
-  type UiToolDefinition,
   type UiToolResult,
 } from "./ui-tools-registry";
 
@@ -298,31 +309,6 @@ function completeUiToolCallTelemetry(
   });
 }
 
-/**
- * Structured error codes only: the leading `code:` prefix of a command-bus
- * error (see `commandResponseToActionResult`), validated against the CLOSED
- * `InspectorCommandErrorCode` set so a free-text message can never be
- * emitted. Unrecognized error texts emit no code at all.
- */
-const INSPECTOR_COMMAND_ERROR_CODES = new Set<string>([
-  "no_active_client",
-  "unknown_server",
-  "disconnected_server",
-  "unknown_tool",
-  "unknown_command_id",
-  "timeout",
-  "unsupported_in_mode",
-  "invalid_request",
-  "execution_failed",
-] satisfies InspectorCommandErrorCode[]);
-
-function structuredErrorCode(output: UiToolResult): string | undefined {
-  if (!output.isError) return undefined;
-  const first = output.content?.[0];
-  const text = first?.type === "text" ? first.text : "";
-  const code = text.split(":", 1)[0]?.trim();
-  return code && INSPECTOR_COMMAND_ERROR_CODES.has(code) ? code : undefined;
-}
 // --- End outcome telemetry ---------------------------------------------
 
 /** Deferred calls, for the orphaned-defer fallback (see ui-tool-approval). */
@@ -374,8 +360,17 @@ export function settleDeniedUiToolCall(
   completeUiToolCallTelemetry(toolCallId, "denied", "denied");
 }
 
+/**
+ * Run a claimed call and settle its transcript entry + telemetry.
+ *
+ * Takes the NAME, not the definition the caller resolved: shared execution
+ * looks the tool up again at dispatch time, so an approval the user clicks
+ * minutes later runs whatever is registered then rather than a stale closure
+ * (and reports "no longer available" when the answer is nothing). Identity of
+ * the call and the conversation scope travel with it — the tools that park on
+ * user input key their state on both.
+ */
 async function executeResolvedUiTool(
-  def: UiToolDefinition,
   opts: Pick<
     HandleUiToolCallOptions,
     "toolName" | "toolCallId" | "input" | "addToolOutput" | "telemetryScope"
@@ -385,56 +380,27 @@ async function executeResolvedUiTool(
   const { toolName, toolCallId, input, addToolOutput } = opts;
   settledOrInFlightToolCallIds.add(toolCallId);
   deferredUiToolCalls.delete(toolCallId);
-  let output: UiToolResult;
-  let threw = false;
-  try {
-    assertEvalToolAllowed(opts.telemetryScope, toolName);
-    const args =
-      input && typeof input === "object" && !Array.isArray(input)
-        ? (input as Record<string, unknown>)
-        : {};
-    // Identity of the call, not just its arguments: tools that park on user
-    // input (`ui_ask_user`) key their pending state on the tool-call id, and
-    // scope cancellation to the asking conversation.
-    output = await def.execute(args, {
-      toolCallId,
-      ...(opts.telemetryScope !== undefined
-        ? { scope: opts.telemetryScope }
-        : {}),
-    });
-  } catch (error) {
-    threw = true;
-    output = {
-      content: [
-        {
-          type: "text",
-          text: `UI tool failed: ${
-            error instanceof Error ? error.message : "Unknown error"
-          }`,
-        },
-      ],
-      isError: true,
-    };
-  }
-  addToolOutput({ tool: toolName, toolCallId, output });
+  const { result, status, errorCode } = await executeUiToolCall({
+    toolName,
+    input,
+    caller: "ask_mcpjam",
+    invocationId: toolCallId,
+    ...(opts.telemetryScope !== undefined
+      ? { scope: opts.telemetryScope }
+      : {}),
+  });
+  addToolOutput({ tool: toolName, toolCallId, output: result });
   completeUiToolCallTelemetry(
     toolCallId,
-    output.isError ? "error" : "success",
+    status === "ok" ? "success" : "error",
     approval,
-    threw ? "tool_threw" : structuredErrorCode(output),
+    errorCode,
   );
 }
 
+/** Same wording on both transports — see `ui-tool-execution.ts`. */
 function unavailableOutput(toolName: string): UiToolResult {
-  return {
-    content: [
-      {
-        type: "text",
-        text: `UI tool "${toolName}" is no longer available.`,
-      },
-    ],
-    isError: true,
-  };
+  return uiToolUnavailableResult(toolName);
 }
 
 /**
@@ -462,12 +428,28 @@ export async function handleUiToolCall(
   // re-stash.
   if (deferredUiToolCalls.has(toolCallId)) return true;
 
-  try { assertEvalToolAllowed(opts.telemetryScope, toolName); } catch (error) {
+  try {
+    assertEvalToolAllowed(opts.telemetryScope, toolName);
+  } catch (error) {
     settledOrInFlightToolCallIds.add(toolCallId);
-    addToolOutput({ tool: toolName, toolCallId, output: { isError: true, content: [{ type: "text", text: error instanceof Error ? error.message : "Tool is outside eval scope." }] } });
+    addToolOutput({
+      tool: toolName,
+      toolCallId,
+      output: {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text:
+              error instanceof Error
+                ? error.message
+                : "Tool is outside eval scope.",
+          },
+        ],
+      },
+    });
     return true;
   }
-
 
   if (!def) {
     // The name was advertised to the server in an earlier snapshot but the
@@ -526,8 +508,10 @@ export async function handleUiToolCall(
   }
 
   if (def.mayNavigate) {
-    try { assertEvalToolAllowed(opts.telemetryScope, toolName); } catch {
-      await executeResolvedUiTool(def, { ...opts, toolName, input }, "not_required");
+    try {
+      assertEvalToolAllowed(opts.telemetryScope, toolName);
+    } catch {
+      await executeResolvedUiTool({ ...opts, toolName, input }, "not_required");
       return true;
     }
     try {
@@ -542,7 +526,6 @@ export async function handleUiToolCall(
   }
 
   await executeResolvedUiTool(
-    def,
     {
       toolName,
       toolCallId,
@@ -610,8 +593,21 @@ export async function fulfillApprovedUiToolCall(opts: {
   }
 
   if (def.mayNavigate) {
-    try { assertEvalToolAllowed(opts.telemetryScope ?? stashed?.telemetryScope, toolName); } catch {
-      await executeResolvedUiTool(def, { ...opts, toolName, input, telemetryScope: opts.telemetryScope ?? stashed?.telemetryScope }, "approved");
+    try {
+      assertEvalToolAllowed(
+        opts.telemetryScope ?? stashed?.telemetryScope,
+        toolName,
+      );
+    } catch {
+      await executeResolvedUiTool(
+        {
+          ...opts,
+          toolName,
+          input,
+          telemetryScope: opts.telemetryScope ?? stashed?.telemetryScope,
+        },
+        "approved",
+      );
       return;
     }
     try {
@@ -625,7 +621,6 @@ export async function fulfillApprovedUiToolCall(opts: {
   }
 
   await executeResolvedUiTool(
-    def,
     {
       toolName,
       toolCallId,

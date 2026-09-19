@@ -1,4 +1,5 @@
 import { authFetch } from "@/lib/session-token";
+import { notifyMCPJamLimitError } from "@/lib/mcpjam-limit";
 import { HOSTED_MODE } from "@/lib/config";
 import { getApiAuthorizationHeader } from "@/lib/apis/web/context";
 import {
@@ -37,13 +38,38 @@ async function readImportResponse(response: Response) {
     );
   }
   if (!response.ok) {
-    throw new Error(
+    const message =
       typeof data?.error === "string"
         ? data.error
         : (data?.error?.message ??
-            data?.message ??
-            "Markdown import failed. Please try again."),
-    );
+          data?.message ??
+          "Markdown import failed. Please try again.");
+    // Import is the third surface that can be refused for a spent MCPJam
+    // allowance, and the only one that never raised the wall — the module
+    // posts through `authFetch` directly rather than `postEvalRequest`, which
+    // is where chat and the eval routes get this for free. Both `post()`
+    // callers funnel through here, so `saveMarkdownCases` (and its second
+    // consumer in `mcpjam-agent/eval-workspace.ts`) is covered too.
+    //
+    // Deliberately NOT `notifyMCPJamLimitErrorFromResponse`: the body is
+    // already consumed by the `response.text()` above, so the `.clone()`
+    // inside that helper would throw — and it swallows the throw, leaving a
+    // message that matches no limit pattern and a wall that never opens. The
+    // parsed body carries everything the classifier needs.
+    notifyMCPJamLimitError({
+      code: typeof data?.code === "string" ? data.code : undefined,
+      // The whole body, so the deep scan can find `organizationId` and route
+      // the dialog's "Buy credits" at the org that actually hit the cap.
+      details: data,
+      message,
+      // Forwarded so a transient concurrency throttle keeps its inline retry
+      // instead of being sold credits it cannot spend.
+      limitKind:
+        data?.limitKind === "total" || data?.limitKind === "concurrency"
+          ? data.limitKind
+          : undefined,
+    });
+    throw new Error(message);
   }
   return data;
 }
