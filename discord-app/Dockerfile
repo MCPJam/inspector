@@ -15,6 +15,9 @@ COPY mcp/package.json mcp/
 COPY slack-app/package.json slack-app/
 COPY surface-core/package.json surface-core/
 COPY discord-app/package.json discord-app/
+COPY evaluators/package.json ./evaluators/package.json
+COPY vitest/package.json ./vitest/package.json
+
 RUN npm ci --legacy-peer-deps --workspace @mcpjam/discord-app --include-workspace-root --omit=dev
 COPY surface-core surface-core
 COPY discord-app discord-app

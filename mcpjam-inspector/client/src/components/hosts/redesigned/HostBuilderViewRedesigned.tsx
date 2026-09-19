@@ -293,25 +293,18 @@ export function HostBuilderViewRedesigned({
   const sharedAppState = useSharedAppState();
   const connectionStatusByName = sharedAppState.servers;
 
-  // Auto-connect this host's REQUIRED servers once per session. Optional
-  // servers stay disconnected until the user manually flips them — we
-  // don't connect anything the host's saved config doesn't claim to need.
-  // Resolve saved `serverIds` (Convex ids) to runtime names via the
-  // project servers list. Using the SAVED config (not the draft) means
-  // unsaved checkbox toggles in the Servers tab don't trigger a fresh
-  // batch; saving the host re-fires the dedupe key once and only once.
-  const requiredServerNames = useMemo(() => {
-    const requiredIds = host?.config?.serverIds ?? [];
-    if (requiredIds.length === 0 || !servers) return [];
-    const byId = new Map(servers.map((s) => [s._id, s.name] as const));
-    return requiredIds
-      .map((id) => byId.get(id))
-      .filter((name): name is string => !!name);
-  }, [host?.config?.serverIds, servers]);
+  // Auto-connect every project server once per session (personal
+  // preference; see `useAutoConnectProjectServers`). The host being edited
+  // only supplies the scope key, so opening a different client re-runs the
+  // handshake under that identity.
+  const projectServerNames = useMemo(
+    () => (servers ?? []).map((s) => s.name),
+    [servers],
+  );
   useAutoConnectProjectServers({
     projectId,
     hostScopeKey: hostId,
-    requiredServerNames,
+    serverNames: projectServerNames,
   });
 
   // `availableServers` (the focus-panel-shaped catalog) was retired
@@ -562,8 +555,8 @@ export function HostBuilderViewRedesigned({
         // We intentionally do NOT append to draftConfig.serverIds here
         // (that's the bypass the audit flagged) and we do NOT open the
         // now-removed Servers focus tab. The new server lands in the
-        // project catalog; if Auto-connect is ON on the Servers tab,
-        // toggle OFF/ON to refresh and include the new server.
+        // project catalog, which is what auto-connect reads, so it
+        // connects on its own if the personal Auto-connect switch is on.
         setSelectedNodeId(`server-card:${serverId}`);
         toast.success(`Server "${formData.name}" added`);
       } catch (err) {

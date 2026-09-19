@@ -298,6 +298,7 @@ export async function markJudgeStageFanout(report: {
   goalCompletionJobId: string | number;
   outcomes: Array<{ iterationId: string; outcome: JudgeDerivationOutcome }>;
   failed?: boolean;
+  noop?: boolean;
 }): Promise<{ outcome: string }> {
   return await postJson<{ outcome: string }>("/runs/judge-stage-fanout", {
     ...report,
@@ -351,6 +352,7 @@ export async function markMetadataAttributionStageFanout(report: {
   metadataAttributionJobId: string | number;
   outcomes: Array<{ iterationId: string; outcome: JudgeDerivationOutcome }>;
   failed?: boolean;
+  noop?: boolean;
 }): Promise<{ outcome: string }> {
   return await postJson<{ outcome: string }>(
     "/runs/metadata-attribution-stage-fanout",

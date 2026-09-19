@@ -125,27 +125,26 @@ describe("authorization", () => {
 });
 
 describe("the mode gate", () => {
-  it("at off, answers benignly and never starts the pass", async () => {
+  it("at off, starts the pass so it can settle no-op fanouts", async () => {
     vi.stubEnv(ENV_KEY, "off");
 
     const res = await ring(createApp(), { runId: "run1" }, authed);
 
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(202);
     await expect(res.json()).resolves.toEqual({
       ok: true,
-      accepted: false,
-      mode: "off",
+      accepted: true,
     });
-    expect(worker.runJudgeSecondPass).not.toHaveBeenCalled();
+    expect(worker.runJudgeSecondPass).toHaveBeenCalledWith("run1");
   });
 
-  it("an unset env var is off, so an unconfigured deployment does nothing", async () => {
+  it("an unset env var still dispatches the no-op settlement", async () => {
     vi.stubEnv(ENV_KEY, "");
 
     const res = await ring(createApp(), { runId: "run1" }, authed);
 
-    expect(res.status).toBe(200);
-    expect(worker.runJudgeSecondPass).not.toHaveBeenCalled();
+    expect(res.status).toBe(202);
+    expect(worker.runJudgeSecondPass).toHaveBeenCalledWith("run1");
   });
 
   it("at shadow the pass is entered — and no-ops there, where the run is known", async () => {

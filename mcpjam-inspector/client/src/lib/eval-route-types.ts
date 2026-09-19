@@ -1,8 +1,5 @@
 export type SuiteOverviewView =
-  | "runs"
-  | "test-cases"
-  | "executions"
-  | "cross-host";
+  "runs" | "test-cases" | "executions" | "cross-host";
 
 /**
  * Unified eval routes for both Evaluate modes: Suites (`/evals`) and Runs
@@ -46,7 +43,7 @@ export type EvalRoute =
       /** Return to the Eval my server first-run preview after editing. */
       fromEvalServer?: string;
     }
-  | { type: "suite-edit"; suiteId: string }
+  | { type: "suite-edit"; suiteId: string; fromCaseChecks?: string }
   | {
       type: "commit-detail";
       commitSha: string;

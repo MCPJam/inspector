@@ -167,6 +167,7 @@ import webRoutes from "./routes/web/index";
 import internalServerConnections from "./routes/internal/server-connections.js";
 import internalEvalJudgeCompletions from "./routes/internal/eval-judge-completions.js";
 import internalChatStageDerivations from "./routes/internal/chat-stage-derivations.js";
+import internalAgentTurns from "./routes/internal/agent-turns.js";
 import internalComputerBrowserDebug from "./routes/internal/computer-browser-debug.js";
 import computerBrowserPanel from "./routes/web/computer-browser-panel.js";
 import { createComputerBrowserStreamWsHandler } from "./routes/web/computer-browser-stream.js";
@@ -541,6 +542,7 @@ app.route("/api/internal/evals", internalEvalJudgeCompletions);
 // judge doorbell above — the ring is a wake-up, and the pass claims from the
 // backend's own queue rather than from anything the caller named.
 app.route("/api/internal/chat-stage", internalChatStageDerivations);
+app.route("/api/internal/agent-turns", internalAgentTurns);
 // W1 hosted-browser debug probe — mounted only when explicitly enabled (it
 // provisions a desktop and boots browserd end to end), service-token gated.
 // Mirror of the mount in server/app.ts.

@@ -116,6 +116,33 @@ describe("EvalExportModal", () => {
     ).toBeInTheDocument();
   });
 
+  it("finds a server the suite attached through a host", async () => {
+    renderWithProviders(
+      <EvalExportModal
+        {...baseProps}
+        suite={{
+          ...baseProps.suite,
+          // How a suite carries its server once it picks one through a host:
+          // the legacy flat list stays empty, and reading only that reported
+          // a configured suite as having no server at all.
+          environment: { servers: [] },
+          hostAttachments: [
+            { namedHostId: "host-1", resolvedServerNames: ["weather"] },
+          ],
+        }}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("tab", { name: "Prompt for agent" }),
+      ).toBeEnabled(),
+    );
+    expect(
+      screen.queryByText(/does not have a server configured yet/i),
+    ).toBeNull();
+  });
+
   it("downloads the generated SDK test file", async () => {
     const user = userEvent.setup();
 

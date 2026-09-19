@@ -34,8 +34,10 @@ vi.mock("convex/browser", () => ({
 import v1Routes from "../index.js";
 
 const PROJECT_ID = "proj_1";
-const SUITE_ID = "suite_1";
-const RUN_ID = "run_1";
+const SUITE_ID = "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx";
+// Id-SHAPED: `:runId` is checked for the Convex id shape before it is
+// forwarded, so a `run_1` label would exercise the gate, not this route.
+const RUN_ID = "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx";
 const BEARER = "caller-bearer-token";
 const PATH = `/projects/${PROJECT_ID}/eval-runs/${RUN_ID}/gate`;
 

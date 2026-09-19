@@ -6,12 +6,14 @@
 
 import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { SectionLabel } from "@/components/shared/section-label";
 import { PersonaPixelAvatar } from "@/components/swarms/persona-pixel-avatar";
 import { SentimentPill } from "./findings-sentiment-pill";
 import { FindingsGoalInspect } from "./findings-goal-inspect";
 import type { FindingsSessionScope } from "./findings-goal-sessions";
 import type { JourneyStageId } from "./journey-stages";
 import type { PersonaFindingsModel } from "./findings-derivation";
+import { FindingText } from "@/components/shared/actionable-insights/finding-text";
 
 export function FindingsPersonaCard({
   persona,
@@ -68,14 +70,12 @@ export function FindingsPersonaCard({
           className="mt-[18px] border-t border-border pt-4 text-[15px] leading-snug text-foreground"
           data-testid="findings-persona-issue"
         >
-          {persona.issue}
+          <FindingText text={persona.issue} />
         </p>
       </aside>
 
       <div className="px-5 pb-5 pt-4">
-        <p className="pb-2 text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
-          Goals they tried
-        </p>
+        <SectionLabel className="pb-2">Goals they tried</SectionLabel>
         {persona.goals.map((goal) => {
           const expanded = goal.runId === expandedGoalRunId;
           return (

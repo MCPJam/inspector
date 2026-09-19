@@ -95,3 +95,88 @@ export class PlatformApiError extends SdkError {
 export function isPlatformApiError(error: unknown): error is PlatformApiError {
   return error instanceof PlatformApiError;
 }
+
+/**
+ * What a caller may safely say about a RATE_LIMITED refusal, read from the
+ * error rather than its prose.
+ *
+ * Included operations (generation, insights) refuse on usage limits that
+ * credits cannot lift, and the backend says so in the envelope it forwards as
+ * `details`: its own refusal `code`, which bucket refused (`gatedBy`), whether
+ * a top-up would help (`canTopUp`), and when to come back. Surfaces that show
+ * an error to a person or a model (MCP, CLI, agents) read it here so they give
+ * the same answer.
+ *
+ * Allowlisted on purpose: `details` is a server envelope, and only these
+ * fields, shape-checked, are passed on.
+ */
+export interface PlatformRefusal {
+  /** HTTP status of the refusal. */
+  status: number;
+  /** The stable v1 wire code, e.g. `RATE_LIMITED`. */
+  code: string;
+  /** The backend's own refusal code, e.g. `platform_capacity`. */
+  reason?: string;
+  /** Which limit refused, e.g. `burst`, `organization`. */
+  gatedBy?: string;
+  /** False when buying credits would not lift the refusal. */
+  canTopUp?: boolean;
+  /** Whether the same request can succeed later. */
+  retryable?: boolean;
+  /** Seconds until retrying can succeed, from `Retry-After` or the envelope. */
+  retryAfterSeconds?: number;
+}
+
+const REFUSAL_REASON_PATTERN = /^[a-z0-9_]{1,64}$/;
+
+export function describePlatformRefusal(
+  error: unknown
+): PlatformRefusal | undefined {
+  if (!isPlatformApiError(error)) return undefined;
+  if (error.status !== 429 && error.code !== "RATE_LIMITED") return undefined;
+  const details = error.details ?? {};
+  const text = (key: string): string | undefined => {
+    const value = details[key];
+    return typeof value === "string" && REFUSAL_REASON_PATTERN.test(value)
+      ? value
+      : undefined;
+  };
+  const flag = (key: string): boolean | undefined =>
+    typeof details[key] === "boolean" ? (details[key] as boolean) : undefined;
+  const retryAfterMs = details.retryAfterMs;
+  const retryAfterSeconds =
+    error.retryAfter !== undefined
+      ? error.retryAfter
+      : typeof retryAfterMs === "number" &&
+          Number.isFinite(retryAfterMs) &&
+          retryAfterMs >= 0
+        ? Math.ceil(retryAfterMs / 1000)
+        : undefined;
+  const refusal: PlatformRefusal = { status: error.status, code: error.code };
+  const reason = text("code");
+  if (reason) refusal.reason = reason;
+  const gatedBy = text("gatedBy");
+  if (gatedBy) refusal.gatedBy = gatedBy;
+  const canTopUp = flag("canTopUp");
+  if (canTopUp !== undefined) refusal.canTopUp = canTopUp;
+  const retryable = flag("isRetryable");
+  if (retryable !== undefined) refusal.retryable = retryable;
+  if (retryAfterSeconds !== undefined)
+    refusal.retryAfterSeconds = retryAfterSeconds;
+  return refusal;
+}
+
+/**
+ * One sentence telling a reader what to do about a refusal: when to come
+ * back, and — when the server said so — that credits will not help. Never
+ * suggests a top-up, another identity, or a retry loop.
+ */
+export function platformRefusalHint(refusal: PlatformRefusal): string {
+  const when =
+    refusal.retryAfterSeconds !== undefined
+      ? `Retry after ${refusal.retryAfterSeconds}s, not sooner.`
+      : "Wait before retrying; do not retry in a loop.";
+  return refusal.canTopUp === false
+    ? `${when} This is a usage limit: topping up credits does not lift it.`
+    : when;
+}

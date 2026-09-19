@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   descriptionExperimentHeader,
   evidenceCaveat,
+  experimentFailureText,
   frozenDifferencesLabel,
   frozenFieldsLabel,
   intervalBoundPhrase,
@@ -99,7 +100,7 @@ describe("frozen arms", () => {
         engine: "emulated",
       }),
     ).toBe(
-      " with frozen model and engine; host, catalog, and grader not recorded",
+      " with frozen model and engine; host, catalog, and judge not recorded",
     );
     expect(
       frozenFieldsLabel({
@@ -109,9 +110,7 @@ describe("frozen arms", () => {
         hostConfigId: "host_1",
         toolSnapshotHash: "snap_1",
       }),
-    ).toBe(
-      " with frozen model, engine, host, and catalog; grader not recorded",
-    );
+    ).toBe(" with frozen model, engine, host, and catalog; judge not recorded");
     expect(
       frozenFieldsLabel({
         equal: true,
@@ -121,9 +120,9 @@ describe("frozen arms", () => {
         toolSnapshotHash: "snap_1",
         judgeConfigHash: "judge_1",
       }),
-    ).toBe(" with frozen model, engine, host, catalog, and grader");
+    ).toBe(" with frozen model, engine, host, catalog, and judge");
     expect(frozenFieldsLabel({ equal: true, model: [] })).toBe(
-      "; model, engine, host, catalog, and grader not recorded",
+      "; model, engine, host, catalog, and judge not recorded",
     );
   });
 
@@ -134,14 +133,28 @@ describe("frozen arms", () => {
       engine: "emulated",
     });
     expect(partial).toContain("with frozen model and engine");
-    expect(partial).toContain("host, catalog, and grader not recorded");
+    expect(partial).toContain("host, catalog, and judge not recorded");
     expect(partial).not.toContain("frozen model, engine, host, and catalog");
     expect(evidenceCaveat("reproducible", { equal: true })).toContain(
-      "model, engine, host, catalog, and grader not recorded",
+      "model, engine, host, catalog, and judge not recorded",
     );
     expect(evidenceCaveat("reproducible")).toContain(
-      "model, engine, host, catalog, and grader not recorded",
+      "model, engine, host, catalog, and judge not recorded",
     );
+  });
+});
+
+describe("experimentFailureText", () => {
+  it("says whose budget a platform refusal was, without pointing at credits", () => {
+    expect(experimentFailureText("PLATFORM_CAP_EXCEEDED")).toBe(
+      "MCPJam's daily analysis budget is used up. Try again after 00:00 UTC",
+    );
+    // A guard that failed closed promises no reset time.
+    expect(experimentFailureText("PLATFORM_UNAVAILABLE")).not.toMatch(/UTC/);
+    expect(experimentFailureText("BILLING_NO_BILLING_SUBJECT")).toBe(
+      "BILLING_NO_BILLING_SUBJECT",
+    );
+    expect(experimentFailureText(undefined)).toBe("failed");
   });
 });
 
