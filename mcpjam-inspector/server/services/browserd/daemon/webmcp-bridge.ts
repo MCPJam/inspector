@@ -957,6 +957,16 @@ export class WebMcpBridge {
       .map((session) => session.frameId);
   }
 
+  /**
+   * The attached child-frame sessions (never the main one), for the a11y
+   * reader, which needs them to see iframe content. Never triggers an attach.
+   */
+  attachedFrameSessions(): ReadonlyArray<{ frameId: string; cdp: CdpLike }> {
+    return [...this.sessions.values()]
+      .filter((session) => !session.isMain)
+      .map((session) => ({ frameId: session.frameId, cdp: session.cdp }));
+  }
+
   /** Record a session's frame URLs, for origins we missed by attaching late. */
   private async seedFrames(cdp: CdpLike): Promise<void> {
     const tree = (await cdp.send("Page.getFrameTree")) as {

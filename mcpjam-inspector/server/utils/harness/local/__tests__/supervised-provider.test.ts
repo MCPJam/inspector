@@ -12,7 +12,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { HarnessV1NetworkSandboxSession } from "@ai-sdk/harness";
-import { nonLoopbackLocalAddresses } from "../bridge-endpoint.js";
+import {
+  nonLoopbackLocalAddresses,
+  reserveLoopbackPort,
+} from "../bridge-endpoint.js";
 import { LOCAL_HARNESS_MANIFEST } from "../compatibility.js";
 import { resolveNodeLauncher } from "../node-launcher.js";
 import {
@@ -120,8 +123,6 @@ afterAll(() => {
   else process.env.HOME = realHome;
 });
 
-let nextPort = 39271;
-
 async function buildSession(
   sessionId: string,
   supervisor: LocalHarnessSupervisor,
@@ -184,7 +185,10 @@ async function buildSession(
     sessionId,
   );
   await mkdir(sessionStateDir, { recursive: true, mode: 0o700 });
-  const bridgePort = nextPort++;
+  // The OS picks the port. A fixed counter lands in the ephemeral range,
+  // where a stray socket on a CI runner takes the port first and the bridge
+  // fails to bind with EADDRINUSE.
+  const bridgePort = await reserveLoopbackPort();
 
   const provider = createSupervisedLocalHarnessProvider({
     harnessId: "claude-code",

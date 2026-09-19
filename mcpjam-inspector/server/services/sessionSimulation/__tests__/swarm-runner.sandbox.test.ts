@@ -30,6 +30,7 @@ const heartbeatJourneyRunMock = vi.fn();
 const provisionJourneySandboxMock = vi.fn();
 const releaseSandboxMock = vi.fn();
 const resolveHostToolsMock = vi.fn();
+const resolveBrowserSecretsMock = vi.fn();
 const resolveHarnessSandboxMock = vi.fn();
 const dataPlaneConfiguredMock = vi.fn(() => true);
 
@@ -75,6 +76,11 @@ vi.mock("../../../utils/chat-v2-orchestration.js", async () => {
   };
 });
 
+vi.mock("../../../utils/secrets/browser-secrets.js", () => ({
+  resolveBrowserSecrets: (...args: unknown[]) =>
+    resolveBrowserSecretsMock(...args),
+}));
+
 vi.mock("../../browser-session-context.js", async () => {
   const actual = await vi.importActual<
     typeof import("../../browser-session-context.js")
@@ -92,6 +98,7 @@ vi.mock("../../swarm-agent.js", async () => {
   );
   return {
     ...actual,
+    reportTargetGrounding: vi.fn(async () => ({})),
     reportAttempt: (...args: unknown[]) => reportAttemptMock(...args),
     swarmPersonaNextTurn: (...args: unknown[]) =>
       swarmPersonaNextTurnMock(...args),
@@ -368,6 +375,7 @@ beforeEach(() => {
   outboxFlushMock.mockReset();
   dataPlaneConfiguredMock.mockReset().mockReturnValue(true);
   resolveHostToolsMock.mockReset();
+  resolveBrowserSecretsMock.mockReset().mockResolvedValue([]);
   resolveHarnessSandboxMock.mockReset();
   reportAttemptMock.mockReset().mockResolvedValue({ ok: true, applied: true });
   heartbeatJourneyRunMock.mockReset().mockResolvedValue(undefined);
@@ -416,15 +424,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-/**
- * Make the persona drive exactly ONE turn per session, then stop.
- *
- * The default persona mock ends every session before the first turn, which is
- * fine for the provisioning assertions (they read the ctx `resolveHostTools`
- * was built with, which happens before any turn) — but the HARNESS binding
- * travels on the turn's handler options, so it only becomes observable once a
- * turn actually executes.
- */
+/** A successful fixture must send a message and exercise the assistant. */
 function personaDrivesOneTurn(): void {
   // Keyed on the transcript, not a counter: a counter would be shared across
   // the run's sessions and silently end the second one before its first turn.
@@ -448,6 +448,21 @@ function turnOptions(index = 0): Record<string, unknown> {
 }
 
 describe("swarm runner — per-attempt ephemeral sandbox", () => {
+  it.each([undefined, false, true])(
+    "carries pinned hosted=%s into assistant turns",
+    async (hosted) => {
+      personaDrivesOneTurn();
+      await startJourneyRun(baseOpts({ modelId: "gpt-5-nano", hosted }));
+      expect(turnOptions().modelDefinition).toMatchObject({
+        id: "gpt-5-nano",
+        provider: "openai",
+      });
+      expect((turnOptions().modelDefinition as { hosted?: boolean }).hosted).toBe(
+        hosted,
+      );
+    },
+  );
+
   it("provisions after the claim, binds the box, and releases it", async () => {
     await startJourneyRun(baseOpts());
 
@@ -489,6 +504,7 @@ describe("swarm runner — per-attempt ephemeral sandbox", () => {
   });
 
   it("retries a 2xx whose body is unusable instead of throwing", async () => {
+    personaDrivesOneTurn();
     // `postJson` swallows a body-parse failure and returns
     // `{ok: true, value: null}` on any 2xx — reachable when the request
     // deadline fires after the headers arrive. Dereferencing that would throw
@@ -709,6 +725,28 @@ describe("swarm runner — per-attempt ephemeral sandbox", () => {
     });
   });
 
+  it("wires onBrowserSecretDelivered only when browser secrets resolved", async () => {
+    const opts = {
+      builtInToolIds: ["browser"],
+      browserToolPolicy: {
+        mode: "allowlist",
+        originAllowlist: ["example.com"],
+      },
+    };
+    await startJourneyRun(baseOpts(opts));
+    expect(resolverContexts()[0]!.onBrowserSecretDelivered).toBeUndefined();
+
+    resolveHostToolsMock.mockClear();
+    resolveBrowserSecretsMock.mockResolvedValue([{ name: "PW", value: "x" }]);
+    await startJourneyRun(baseOpts(opts));
+    expect(resolverContexts()[0]!.browserSecrets).toEqual([
+      { name: "PW", value: "x" },
+    ]);
+    expect(typeof resolverContexts()[0]!.onBrowserSecretDelivered).toBe(
+      "function"
+    );
+  });
+
   it("passes NO delivery when the target declares no policy (fail-closed)", async () => {
     await startJourneyRun(baseOpts({ builtInToolIds: ["bash", "browser"] }));
     expect(resolverContexts()[0]!.browserApprovalDelivery).toBeUndefined();
@@ -866,6 +904,7 @@ describe("swarm runner — targets that want no sandbox", () => {
   });
 
   it("skips provisioning when no image is pinned, and surfaces the frozen reason", async () => {
+    personaDrivesOneTurn();
     await startJourneyRun(
       baseOpts({
         computerEnvironment: undefined,
@@ -881,6 +920,7 @@ describe("swarm runner — targets that want no sandbox", () => {
   });
 
   it("treats a PRE-B-isolation snapshot (both fields absent) as legacy, not as unavailable", async () => {
+    personaDrivesOneTurn();
     // Absence alone cannot distinguish an old backend from a new backend with
     // no image; the old backend must keep today's silent suppression.
     await startJourneyRun(
@@ -911,6 +951,7 @@ describe("swarm runner — targets that want no sandbox", () => {
   });
 
   it("an unconfigured data plane does NOT fail a target that wants no shell", async () => {
+    personaDrivesOneTurn();
     // Only targets that would have provisioned are affected; everything else
     // runs exactly as before.
     dataPlaneConfiguredMock.mockReturnValue(false);
@@ -966,6 +1007,7 @@ describe("swarm runner — harness targets run on an ephemeral box (phase 6)", (
   });
 
   it("provisions for a harness target that advertises NO bash tool", async () => {
+    personaDrivesOneTurn();
     // A harness executes on a machine whether or not the host also exposes a
     // shell, so `bash` in the tool list is not what decides this.
     await startJourneyRun(
@@ -1066,6 +1108,18 @@ describe("swarm runner — harness targets run on an ephemeral box (phase 6)", (
  * to the chat preflight later applies here without a second edit.
  */
 describe("swarm runner — harness preflight parity with interactive chat", () => {
+  it("refuses an explicitly BYOK hosted alias before provisioning a brokered harness", async () => {
+    await startJourneyRun(
+      baseOpts({ harness: "claude-code", modelId: "gpt-5-nano", hosted: false }),
+    );
+    expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
+    expect(runAssistantTurnMock).not.toHaveBeenCalled();
+    expect(terminalReports()[0]).toMatchObject({
+      status: "failed",
+      errorMessage: expect.stringMatching(/MCPJam-provided/i),
+    });
+  });
+
   it("refuses a BYOK / non-catalog model before booting anything", async () => {
     // `resolveTurnRuntime` sends a non-MCPJam model on a local-runtime BYOK
     // provider to the DIRECT engine, whose branch never forwards `harness` or
@@ -1217,6 +1271,7 @@ describe("swarm runner — harness preflight parity with interactive chat", () =
   });
 
   it("leaves NON-harness targets untouched by the preflight", async () => {
+    personaDrivesOneTurn();
     // The gate is scoped to harness targets; a plain bash target on a BYOK
     // model is none of its business.
     await startJourneyRun(baseOpts({ modelId: "acme/private-llm" }));

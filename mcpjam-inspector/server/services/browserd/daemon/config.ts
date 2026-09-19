@@ -107,6 +107,54 @@ export interface BrowserdConfig {
   profileArchivePath?: string;
 }
 
+/**
+ * Per-deployment browser behaviours. Additive ones default on (disable via
+ * `MCPJAM_BROWSERD_DISABLE_FEATURES`); `keystrokeTyping` changes page behaviour,
+ * so it is opt-in via `MCPJAM_BROWSERD_FEATURES`.
+ */
+export interface BrowserdFeatures {
+  /** Read child frames' accessibility trees and splice them in. */
+  a11yFrames?: boolean;
+  /** Type by key events rather than `Input.insertText`. */
+  keystrokeTyping?: boolean;
+  /** Keep scroll containers in the tree and mark them `[scrollable]`. */
+  scrollableMarkers?: boolean;
+}
+
+const DEFAULT_ON_FEATURES = [
+  "a11yFrames",
+  "scrollableMarkers",
+] as const satisfies ReadonlyArray<keyof BrowserdFeatures>;
+
+const OPT_IN_FEATURES = [
+  "keystrokeTyping",
+] as const satisfies ReadonlyArray<keyof BrowserdFeatures>;
+
+function namedIn(raw: string | undefined): Set<string> {
+  return new Set(
+    (raw ?? "")
+      .split(",")
+      .map((name) => name.trim())
+      .filter((name) => name.length > 0),
+  );
+}
+
+/** Read features from the environment; unknown names are ignored, not fatal. */
+export function parseBrowserdFeatures(
+  env: NodeJS.ProcessEnv = process.env,
+): BrowserdFeatures {
+  const enabled = namedIn(env.MCPJAM_BROWSERD_FEATURES);
+  const disabled = namedIn(env.MCPJAM_BROWSERD_DISABLE_FEATURES);
+  const features: BrowserdFeatures = {};
+  for (const name of DEFAULT_ON_FEATURES) {
+    if (!disabled.has(name)) features[name] = true;
+  }
+  for (const name of OPT_IN_FEATURES) {
+    if (enabled.has(name) && !disabled.has(name)) features[name] = true;
+  }
+  return features;
+}
+
 export const DEFAULT_BROWSERD_PORT = 8791;
 export const DEFAULT_BROWSERD_HOST = "0.0.0.0";
 export const DEFAULT_BROWSERD_USER_DATA_DIR = "/home/user/.mcpjam-browserd";

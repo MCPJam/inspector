@@ -140,6 +140,35 @@ interface CommandRequestBody {
    * so a replay against a fresh boot is rejected rather than re-executed.
    */
   expectedBootId?: string;
+  /**
+   * Values for the command's `{{secret:NAME}}` placeholders. Outside `command`
+   * so no ledger, trace or mirror writer is ever handed them.
+   */
+  secrets?: Array<{ name: string; value: string }>;
+}
+
+/** How many secrets one command may carry. */
+const MAX_COMMAND_SECRETS = 32;
+/** The backend's own charset for a secret name. */
+const SECRET_NAME = /^[A-Z_][A-Z0-9_]*$/;
+
+/**
+ * Read the `secrets` sibling. Malformed entries are dropped, not refused, so
+ * the act fails later with the more precise `secret_unresolved`.
+ */
+function readCommandSecrets(
+  raw: unknown,
+): Array<{ name: string; value: string }> | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const secrets: Array<{ name: string; value: string }> = [];
+  for (const entry of raw.slice(0, MAX_COMMAND_SECRETS)) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const { name, value } = entry as { name?: unknown; value?: unknown };
+    if (typeof name !== "string" || !SECRET_NAME.test(name)) continue;
+    if (typeof value !== "string" || value.length === 0) continue;
+    secrets.push({ name, value });
+  }
+  return secrets.length > 0 ? secrets : undefined;
 }
 
 export interface BrowserdHandlerDeps {
@@ -1323,6 +1352,27 @@ export class BrowserdRequestHandler {
         body: { error: "invalid_command", bootId: this.bootId },
       };
     }
+    // Protocol check first. Before the lease gate, so a mismatch is not
+    // answered `lease_held`; before `lastActivityAt`, so a caller that will
+    // relaunch this daemon does not keep it looking busy.
+    if (
+      parsed.command.protocolVersion !== undefined &&
+      parsed.command.protocolVersion !== BROWSERD_PROTOCOL_VERSION
+    ) {
+      this.recordRow(parsed.command, startedAt, {
+        outcome: "refused",
+        errorCode: "protocol_mismatch",
+      });
+      return {
+        status: 409,
+        body: {
+          error: "protocol_mismatch",
+          protocolVersion: BROWSERD_PROTOCOL_VERSION,
+          bootId: this.bootId,
+        },
+      };
+    }
+
     // Recorded BEFORE the lease gate, on purpose. A command the lease refuses
     // is still evidence that somebody is trying to use this browser right now,
     // and an upgrade that relaunched the daemon between an agent's refusal and
@@ -1422,7 +1472,11 @@ export class BrowserdRequestHandler {
       });
     }
 
-    const outcome = await this.queue.submit(parsed.command);
+    const secrets = readCommandSecrets(parsed.secrets);
+    const outcome = await this.queue.submit(
+      parsed.command,
+      secrets ? { secrets } : undefined,
+    );
     const response = this.mapOutcome(outcome);
     this.recordOutcome(parsed.command, outcome, startedAt);
     // AFTER the command ran, so the boost covers the repaint it caused rather

@@ -41,6 +41,16 @@
   --ring: 15.1 55.5% 52.3%;
   --warning: 43 100% 45.8%;
   --warning-foreground: 26.6 100% 10%;
+  /* JSON syntax colors for the token spans JsonView emits. Raw, not HSL
+     triplets: these are consumed as `var(--json-key)` directly, not through
+     `hsl(var(…))` like the role tokens above. */
+  --json-key: oklch(0.55 0.2 255);
+  --json-string: oklch(0.5 0.1 55);
+  --json-number: oklch(0.5 0.1 55);
+  --json-boolean: oklch(0.5 0.15 145);
+  --json-boolean-false: oklch(0.55 0.18 25);
+  --json-null: oklch(0.55 0.02 270);
+  --json-punctuation: oklch(0.55 0.01 270);
 }
 /* END GENERATED: light */
 
@@ -76,6 +86,16 @@
   --ring: 14.8 63.1% 59.6%;
   --warning: 30.5 100% 52.7%;
   --warning-foreground: 37.1 100% 88.3%;
+  /* JSON syntax colors for the token spans JsonView emits. Raw, not HSL
+     triplets: these are consumed as `var(--json-key)` directly, not through
+     `hsl(var(…))` like the role tokens above. */
+  --json-key: oklch(0.7 0.18 255);
+  --json-string: oklch(0.7 0.1 55);
+  --json-number: oklch(0.7 0.1 55);
+  --json-boolean: oklch(0.65 0.15 145);
+  --json-boolean-false: oklch(0.68 0.16 25);
+  --json-null: oklch(0.6 0.02 270);
+  --json-punctuation: oklch(0.5 0.01 270);
 }
 /* END GENERATED: dark */
 
@@ -84,6 +104,45 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   tab-size: 2;
+}
+
+/*
+ * JSON syntax colours for the token spans `JsonView` emits. The `--json-*`
+ * values themselves are in the generated blocks above, synced from
+ * design-system/src/tokens.css like every other token.
+ *
+ * WHERE THIS APPLIES. Only where `@mcpjam/chat-ui/styles.css` is loaded, which
+ * the inspector does not do — in the app the transcript paints from the global
+ * `.json-*` rules in `mcpjam-inspector/client/src/index.css`, which is what
+ * gives Sessions the Playground's exact colours. This block is for standalone
+ * embedders, who would otherwise get the monochrome payload Sessions used to
+ * show (BB-239).
+ *
+ * Where it IS loaded it WINS: `.mcpjam-chat-ui .json-key` is two classes
+ * against the host's one. A host theming `.json-key` at single-class
+ * specificity has to raise its own, or re-theme by overriding `--json-*` on
+ * `.mcpjam-chat-ui` — the supported route.
+ */
+.mcpjam-chat-ui .json-key {
+  color: var(--json-key);
+}
+.mcpjam-chat-ui .json-string {
+  color: var(--json-string);
+}
+.mcpjam-chat-ui .json-number {
+  color: var(--json-number);
+}
+.mcpjam-chat-ui .json-boolean {
+  color: var(--json-boolean);
+}
+.mcpjam-chat-ui .json-boolean-false {
+  color: var(--json-boolean-false);
+}
+.mcpjam-chat-ui .json-null {
+  color: var(--json-null);
+}
+.mcpjam-chat-ui .json-punctuation {
+  color: var(--json-punctuation);
 }
 
 .mcpjam-chat-ui .mcpjam-chat-markdown {
