@@ -262,6 +262,11 @@ export {
   normalizeRetryPolicy,
   retryWithPolicy,
 } from "./retry.js";
+// The other half of the retry contract: `isRetryableTransientError` already
+// consults this marker, and a caller composing its own classification on top
+// has to consult it too — the marking is a WeakSet keyed on object IDENTITY,
+// so anything that reshapes an error must check the ORIGINAL first.
+export { isNonRetryableMarkedError } from "./mcp-client-manager/error-utils.js";
 export { EvalReportingError, SdkError } from "./errors.js";
 export { probeMcpServer } from "./server-probe.js";
 export type {
@@ -395,6 +400,30 @@ export type {
   SuiteFileLoadSuccess,
   SuiteFileLocation,
 } from "./suite-file-loader.js";
+
+// ── the one grading policy: SDK integration seam ────────────────────────────
+/**
+ * How a suite file, a hosted suite read and a reported run each reach the
+ * canonical grading-policy contract, and how an edit gets back to the hosted
+ * API. The model and the pure adapters live in `@mcpjam/sdk/contract`; these
+ * are the functions that connect them to the loader, the platform DTO and the
+ * PATCH body — including the capability refusal for a deployment that cannot
+ * say which criterion decides a suite.
+ */
+export {
+  GRADING_POLICY_READ_REFUSALS,
+  LEGACY_SUITE_WIDE_THRESHOLD_PERCENT,
+  gradingPolicyForReportedRun,
+  gradingPolicyFromLoadedSuiteFile,
+  gradingPolicyFromPlatformSuiteSettings,
+  planPlatformSuiteGradingUpdate,
+} from "./eval-grading-policy.js";
+export type {
+  GradingPolicyReadRefusal,
+  GradingPolicyReadResult,
+  GradingPolicyUpdateBody,
+  GradingPolicyUpdatePlan,
+} from "./eval-grading-policy.js";
 export type { LatencyStats } from "./percentiles.js";
 export {
   validateToolCallEnvelope,
@@ -897,6 +926,7 @@ export type {
 // EvalSuite - Groups multiple EvalTests
 export { EvalSuite } from "./EvalSuite.js";
 export type {
+  EvalSuiteClientOptions,
   EvalSuiteConfig,
   EvalSuiteResult,
   TestResult,
@@ -931,6 +961,7 @@ export type {
   EvalWidgetSnapshotInput,
   EvalResultInput,
   MCPServerReplayConfig,
+  SelectedEvalClient,
   MCPJamReportingConfig,
   ReportEvalResultsInput,
   ReportEvalResultsOutput,
@@ -942,6 +973,14 @@ export {
   traceIndicatesToolExecutionFailure,
   traceMessagePartIndicatesToolFailure,
 } from "./eval-tool-execution.js";
+
+// `executeTool` returns `CallToolResult | Record<string, unknown>`, so reading
+// `.content` off it does not type-check. These are the narrowings the manager
+// itself uses; a caller in TypeScript needs one of them to get past the union.
+export {
+  assertCallToolResult,
+  isCallToolResult,
+} from "./mcp-client-manager/result-guards.js";
 export type { FinalizeEvalPassedParams } from "./eval-tool-execution.js";
 
 // Eval result mapping utilities
@@ -1390,6 +1429,41 @@ export type {
   ResolvedEvalValidityPolicy,
 } from "./contract/index.js";
 
+// Execution budgets — the eval/swarm clock contract (§3.1). Re-exported from
+// the main entry because the inspector server and the CLI both resolve budgets,
+// and `@mcpjam/sdk/contract` is the browser-safe subset the client uses.
+export {
+  EXECUTION_BUDGET_CEILINGS,
+  EXECUTION_BUDGET_DEFAULTS,
+  EXECUTION_BUDGET_EXCEEDS_CEILING,
+  RESOLVED_EXECUTION_BUDGET_FIELDS,
+  UNIT_TIMEOUT_FIELD,
+  evalExecutionBudgetsSchema,
+  lowerExecutionBudgetCeilings,
+  platformExecutionBudgetCeilings,
+  platformExecutionBudgetDefaults,
+  resolveExecutionBudgets,
+  resolveExecutionBudgetsForSurface,
+  resolvedExecutionBudgetsSchema,
+  swarmExecutionBudgetsSchema,
+} from "./contract/index.js";
+export type {
+  AuthoredExecutionBudgets,
+  EvalExecutionBudgets,
+  ExecutionBudgetResolution,
+  ExecutionBudgetSource,
+  ExecutionBudgetSurface,
+  ExecutionBudgetViolation,
+  ResolvedExecutionBudgetField,
+  ResolvedExecutionBudgets,
+  ResolvedExecutionBudgetValues,
+  SwarmExecutionBudgets,
+} from "./contract/index.js";
+
+// The run supervisor's signal plumbing. `withDeadline` in the inspector server
+// composes with this, and the swarm runner's hand-rolled twin is replaced by it.
+export { composeAbortSignals } from "./compose-abort-signals.js";
+
 // The scorer runtime. Main-entry only — `judgeScorer` reaches the model
 // factory, which is not browser-safe.
 export {
@@ -1675,6 +1749,19 @@ export type { EvalVariantEntry } from "./eval-variants.js";
 export type { EvalSelectionManifest } from "./eval-selection.js";
 export { formatRunSummaryTable } from "./eval-summary.js";
 export { buildRunUrl } from "./report-eval-results.js";
+
+// MCPJam-hosted inference for `mcpjam/…` models — the eval that needs no
+// provider key. `EvalSuite.run` already revokes at teardown; export the
+// release so a suite built by hand (a vitest `afterAll`, say) can too.
+export {
+  releaseMcpjamModelLeases,
+  McpjamLeaseClient,
+  McpjamLeaseError,
+} from "./mcpjam-model-lease.js";
+export type {
+  McpjamModelLease,
+  McpjamLeaseClientOptions,
+} from "./mcpjam-model-lease.js";
 export type { EvaluatorOverride } from "./EvalTest.js";
 export type {
   EvalExecutionContext,

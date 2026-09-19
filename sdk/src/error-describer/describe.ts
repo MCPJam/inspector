@@ -160,6 +160,15 @@ function maybePromoteRawMessage(
   return { ...entry, oneLine: truncateOneLine(rawMessage) };
 }
 
+/**
+ * `describeEmptyStepFailure` (inspector engine) and the eval runner's fallback
+ * open every empty-model-step message with one of these, verbatim.
+ */
+const EMPTY_STEP_SENTINELS = [
+  "Backend step returned no content (stream error or empty response)",
+  "Backend step returned no messages (stream error or empty response)",
+] as const;
+
 function inspectorSentinelSlug(message: string): string | undefined {
   if (/NotYetSupportedInStateless/i.test(message)) {
     return "sdk/not_yet_supported_in_stateless";
@@ -351,8 +360,10 @@ function oauthResponseErrorCode(error: unknown): string | undefined {
 }
 
 function pickOauthBody(
-  error: unknown,
-): { error?: unknown; error_code?: unknown; error_description?: unknown } | undefined {
+  error: unknown
+):
+  | { error?: unknown; error_code?: unknown; error_description?: unknown }
+  | undefined {
   if (!error || typeof error !== "object") return undefined;
   // Some sources stash the body under `.body` or `.data`.
   const body =
@@ -443,9 +454,23 @@ function resolveSlug(error: unknown): {
   rawCode?: number | string;
 } {
   const message = getErrorMessage(error);
+  const record =
+    error && typeof error === "object"
+      ? (error as { code?: unknown; data?: { code?: unknown } })
+      : null;
+  const platformCode = record?.data?.code ?? record?.code;
+  if (platformCode === "platform_free_budget_exhausted") return { slug: "provider/mcpjam_platform_budget", rawCode: platformCode };
+  if (platformCode === "account_suspended") return { slug: "account/suspended", rawCode: platformCode };
 
   // (a) Inspector sentinel sniff first — these are SDK-thrown Errors whose
   // class identity is lost across realm boundaries; match on stable text.
+  // The empty-step sentinel is matched as a literal prefix: the engine and
+  // the eval runner both open with exactly this sentence and append detail.
+  if (
+    EMPTY_STEP_SENTINELS.some((sentinel) => message.startsWith(sentinel))
+  ) {
+    return { slug: "provider/empty_response" };
+  }
   const sentinel = inspectorSentinelSlug(message);
   if (sentinel) return { slug: sentinel };
 
@@ -508,20 +533,8 @@ function resolveSlug(error: unknown): {
   // The gap is bounded because `[\w\s-]` matches "mcpjam" too: unbounded, a
   // message of repeated "mcpjam" with no "model limit" backtracks quadratically,
   // and this message comes off the wire. Real copy puts one space here.
-  const limitPeriod = /\b(daily|monthly)\s+mcpjam[\w\s-]{0,40}model limit/i.exec(
-    message,
-  );
-  if (limitPeriod) {
-    return {
-      slug:
-        limitPeriod[1]!.toLowerCase() === "monthly"
-          ? "provider/mcpjam_limit_monthly"
-          : "provider/mcpjam_limit_daily",
-    };
-  }
-  if (/mcpjam[\w\s-]{0,40}model limit/i.test(message)) {
-    return { slug: "provider/mcpjam_limit" };
-  }
+  const limitSlug = mcpjamLimitSlugForMessage(message);
+  if (limitSlug) return { slug: limitSlug };
 
   // (e) HTTP status field (`statusCode` / `status`).
   const httpStatus = getHttpStatus(error);
@@ -541,6 +554,17 @@ function resolveSlug(error: unknown): {
   // Refresh-failed phrasing.
   if (/refresh\s+token/i.test(message) && /(failed|invalid|expired|revoked)/i.test(message)) {
     return { slug: "auth/oauth_refresh_failed" };
+  }
+
+  // MCPJam's own consent-prompt wording. The orchestrator now attaches a
+  // normalized block directly, so a live consent state never reaches here —
+  // this catches the strings already persisted in client state from earlier
+  // sessions, and any future caller that still hands over bare prose.
+  if (
+    /consent\s+is\s+required/i.test(message) ||
+    /^\s*reauthenticate\b[\s\S]*\bto\s+continue\b/i.test(message)
+  ) {
+    return { slug: "auth/consent_required" };
   }
   // Note: "missing bearer" wording is checked earlier (step d.5) so it
   // wins over the generic HTTP status check; no duplicate here.
@@ -871,4 +895,24 @@ function crashFallback(error: unknown, emptyPlaceholder: string): NormalizedErro
     ...maybePromoteRawMessage(fallback, "internal/unknown", rawMessage),
     rawMessage,
   };
+}
+
+export function mcpjamLimitSlugForMessage(
+  message: string
+):
+  | "provider/mcpjam_limit"
+  | "provider/mcpjam_limit_daily"
+  | "provider/mcpjam_limit_monthly"
+  | undefined {
+  const limitPeriod =
+    /\b(daily|monthly)\s+mcpjam[\w\s-]{0,40}model limit/i.exec(message);
+  if (limitPeriod) {
+    return limitPeriod[1]!.toLowerCase() === "monthly"
+      ? "provider/mcpjam_limit_monthly"
+      : "provider/mcpjam_limit_daily";
+  }
+  if (/mcpjam[\w\s-]{0,40}model limit/i.test(message)) {
+    return "provider/mcpjam_limit";
+  }
+  return undefined;
 }

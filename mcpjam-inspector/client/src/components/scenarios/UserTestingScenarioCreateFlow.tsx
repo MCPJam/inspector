@@ -27,6 +27,8 @@ import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useHostList, type HostListItem } from "@/hooks/useClients";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
+import { useProjectMembers } from "@/hooks/useProjects";
+import { convexErrMessage } from "@/lib/convex-error";
 import { saveEnvironmentDraftSeed } from "@/lib/environment-draft-seed";
 import { environmentLabel } from "@/lib/environment-label";
 import { useEffectiveSharePolicy } from "@/hooks/useOrgSharePolicy";
@@ -47,6 +49,7 @@ import type {
   ScenarioPerTurnFeedbackStyle,
   ScenarioTaskItem,
 } from "@/types/chatUi";
+import { useGuestSharingSignUp } from "@/hooks/useGuestSharingSignUp";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 
@@ -289,6 +292,21 @@ export function UserTestingScenarioCreateFlow({
     projectId,
   });
   const { policy: effectiveSharePolicy } = useEffectiveSharePolicy(projectId);
+  /**
+   * Publishing a study is PROJECT-ADMIN gated on the backend — a study is
+   * shared mutable execution config and a spend surface, so
+   * `scenarios:publishEnvironmentScenario` refuses anyone below
+   * `canManageProjectMembers`. `canManageMembers` resolves to that SAME
+   * authority, so asking here means an editor is told on the step that holds
+   * the choices instead of at the last click, with a task list they then have
+   * to retype somewhere else.
+   *
+   * Fails closed while the query is in flight, and `roleLoading` keeps that
+   * window out of the copy: showing the refusal before the role is known
+   * would tell an admin they are not one for as long as the round trip takes.
+   */
+  const { canManageMembers: canPublish, isLoading: roleLoading } =
+    useProjectMembers({ isAuthenticated, projectId });
   const [step, setStep] = useState<CreateStep>("study");
   const [target, setTarget] =
     useState<EnvironmentComposerState>(emptyComposerState);
@@ -446,6 +464,8 @@ export function UserTestingScenarioCreateFlow({
   const canAdvance =
     environmentsSettled &&
     !hostsLoading &&
+    !roleLoading &&
+    canPublish &&
     hasTarget &&
     setupHasServers !== false &&
     !isSaving;
@@ -457,14 +477,30 @@ export function UserTestingScenarioCreateFlow({
    * the message the moment it is fixed rather than leaving an error standing
    * over a form that no longer has one.
    */
-  const continueBlocker: "loading" | "client" | "servers" | null =
-    !environmentsSettled || hostsLoading
+  const continueBlocker:
+    "loading" | "permission" | "client" | "servers" | null =
+    !environmentsSettled || hostsLoading || roleLoading
       ? "loading"
-      : !hasTarget
-        ? "client"
-        : setupHasServers === false
-          ? "servers"
-          : null;
+      : // Ranked above the two choices, because it is not one: telling an
+        // editor to pick a client first would send them to fix something that
+        // was never the reason this screen cannot finish.
+        !canPublish
+        ? "permission"
+        : !hasTarget
+          ? "client"
+          : setupHasServers === false
+            ? "servers"
+            : null;
+  /**
+   * Whether to say, on sight, that this account cannot publish here.
+   *
+   * Unlike the client and server messages this is NOT press-triggered. Those
+   * name a choice the creator can still make on this screen, so they wait
+   * until Continue asks the question. This one names something no control
+   * here can change, and a creator who fills in a whole study before learning
+   * that is a creator whose work we wasted.
+   */
+  const publishForbidden = !roleLoading && !canPublish;
   /**
    * Whether Continue has been pressed on a setup it could not carry.
    *
@@ -529,6 +565,8 @@ export function UserTestingScenarioCreateFlow({
     });
     onCreateEnvironment();
   };
+
+  const { handleGuestSharingError, guestSharingPrompt } = useGuestSharingSignUp();
 
   const handleSave = async () => {
     if (!hasTarget || savingRef.current) return;
@@ -601,6 +639,11 @@ export function UserTestingScenarioCreateFlow({
         toast.success("Study created");
       }
     } catch (err) {
+      if (handleGuestSharingError(err)) {
+        savingRef.current = false;
+        setIsSaving(false);
+        return;
+      }
       // A taken name is not a failure to report and walk away from — it is one
       // input to change. The message goes ON the field, the draft stays whole,
       // and the step with the field is the one we land on: refusing from step 2
@@ -624,9 +667,15 @@ export function UserTestingScenarioCreateFlow({
       // "it failed". `ComposerResolveError` is an Error too, and its message
       // already tells a user on an older backend to pick a saved environment
       // instead.
-      toast.error(
-        err instanceof Error ? err.message : "Failed to create the study",
-      );
+      //
+      // Through `convexErrMessage`, NOT `err.message`. A production Convex
+      // deployment redacts the message of EVERY throw, `ConvexError`
+      // included, to "[Request ID: …] Server Error"; only `err.data` crosses.
+      // Reading `.message` here printed that banner over a refusal that had
+      // said exactly what was wrong ("requires project admin"), so the one
+      // person who could act on it — the creator — was the only one who never
+      // saw it.
+      toast.error(convexErrMessage(err, "Failed to create the study"));
       savingRef.current = false;
       setIsSaving(false);
     }
@@ -641,6 +690,7 @@ export function UserTestingScenarioCreateFlow({
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto">
+      {guestSharingPrompt}
       <div className="mx-auto w-full max-w-2xl px-6 py-6 sm:px-8">
         <button
           type="button"
@@ -686,6 +736,16 @@ export function UserTestingScenarioCreateFlow({
               Users try your server in ChatGPT, Claude, or another client. You
               read what happened.
             </p>
+            {publishForbidden ? (
+              <p
+                className="mt-3 text-sm text-destructive"
+                role="alert"
+                data-testid="user-testing-create-admin-required"
+              >
+                Creating a study needs project admin. Ask an admin of this
+                project to create it, or to give you that role.
+              </p>
+            ) : null}
 
             <div className="mt-6 space-y-5">
               <div className="space-y-2">

@@ -1,3 +1,13 @@
+import { gradingPolicyFromPlatformSuiteSettings } from "../eval-grading-policy.js";
+import { planEvalGradingPolicyEdit } from "../contract/grading-policy.js";
+import {
+  caseJudgeSettingsSchema,
+  judgeRubricSchema,
+} from "../contract/judge-settings.js";
+import {
+  judgeBacktestRequestSchema,
+  type JudgeBacktestReport,
+} from "../contract/judge-backtest.js";
 import {
   evalBacktestDraftSchema,
   evalBacktestContinuationSchema,
@@ -1902,15 +1912,22 @@ export const checkHostCompatibilityOperation: PlatformOperation<
  * operations has to say so — a model told "start a run" and handed a receipt
  * will otherwise report the receipt as the answer.
  *
- * ## Why the starts declare `risk: "spend"` when the default is free
+ * ## Why the starts declare `risk: "none"`
  *
- * `includeLlmObservations` is the only field that costs anything and it
- * defaults off, so most runs are free. But `risk` is a static declaration read
- * by five surfaces to decide how much ceremony a call needs, and a field that
- * described the cheap case would be describing the case that does not need
- * describing. The worst case is what a spend guard has to be told; the
- * agent's `confirmSeverity` is a function precisely so the approval copy can
- * still say "this one is free" when the flag is off.
+ * `includeLlmObservations` is the only field that runs a model, and that model
+ * call is PLATFORM-PAID: it consumes no organization credits, so there is no
+ * money for a spend guard to warn about and no invoice to be surprised by.
+ * `risk` is a static declaration read by five surfaces to decide how much
+ * ceremony a call needs, and declaring `spend` for a call that cannot spend
+ * puts a money warning on every one of them.
+ *
+ * NOT free of consequence, though: the model pass draws on MCPJam's own daily
+ * budget for the feature, and a start dials somebody else's server and
+ * persists a project row either way. That is why the agent surface keeps these
+ * GATED rather than deriving `direct` from the risk — see `TIER_EXCEPTIONS` in
+ * the inspector's `agent-op-registry.test.ts`, where `start_conformance_run`
+ * already sits for exactly this reason at exactly this risk. A person approves
+ * the start; they are simply not told it costs money, because it does not.
  */
 
 const readinessRunScopedInput = z.object({
@@ -1930,7 +1947,7 @@ const startReadinessInput = serverScopedInput.extend({
     .boolean()
     .optional()
     .describe(
-      "Ask a model for optional experience observations. COSTS the organization's MCPJam credits. Defaults false; the deterministic grade is complete without it."
+      "Ask a model for optional experience observations. Included with MCPJam; no customer credits consumed; subject to MCPJam's daily analysis budget. Defaults false; the deterministic grade is complete without it."
     ),
   idempotencyKey: z
     .string()
@@ -1969,9 +1986,9 @@ export const startClaudeReadinessRunOperation: PlatformOperation<
   name: "start_claude_readiness_run",
   title: "Start a Claude directory readiness run",
   description:
-    "Grade a saved MCP server against Anthropic's connector-directory rules. Starts a durable run and returns its id — poll `get_readiness_run` for the verdict, which is NOT in this response. Deterministic grading is free; `includeLlmObservations` adds an optional model pass that consumes MCPJam credits.",
+    "Grade a saved MCP server against Anthropic's connector-directory rules. Starts a durable run and returns its id — poll `get_readiness_run` for the verdict, which is NOT in this response. `includeLlmObservations` adds an optional model pass: included with MCPJam, so no customer credits are consumed either way; it is subject to MCPJam's daily analysis budget.",
   readOnly: false,
-  risk: "spend",
+  risk: "none",
   permalink: noPermalink(
     "route-not-addressable",
     "No `conformance/readiness/:runId` route: the readiness section rediscovers the LATEST run for a server and has no run-selection UI, so `/conformance?readinessRun=` is read by nothing. A link carrying it would switch the reader's project and then show them a different run — the wrong-resource landing this contract exists to end."
@@ -2018,9 +2035,9 @@ export const startOpenAIReadinessRunOperation: PlatformOperation<
   name: "start_openai_readiness_run",
   title: "Start an OpenAI directory readiness run",
   description:
-    "Grade a saved MCP server against OpenAI's app-directory rules. Requires an explicit `submissionMode` — it is never inferred, because guessing turns a missing input into a clean bill of health. Starts a durable run and returns its id; poll `get_readiness_run` for the verdict. Deterministic grading is free; `includeLlmObservations` consumes MCPJam credits.",
+    "Grade a saved MCP server against OpenAI's app-directory rules. Requires an explicit `submissionMode` — it is never inferred, because guessing turns a missing input into a clean bill of health. Starts a durable run and returns its id; poll `get_readiness_run` for the verdict. `includeLlmObservations` adds an optional model pass: included with MCPJam, so no customer credits are consumed either way; it is subject to MCPJam's daily analysis budget.",
   readOnly: false,
-  risk: "spend",
+  risk: "none",
   permalink: noPermalink(
     "route-not-addressable",
     "No `conformance/readiness/:runId` route: the readiness section rediscovers the LATEST run for a server and has no run-selection UI, so `/conformance?readinessRun=` is read by nothing. A link carrying it would switch the reader's project and then show them a different run — the wrong-resource landing this contract exists to end."
@@ -5177,6 +5194,7 @@ const caseModelSchema = z.object({
 // Per-case editable fields, shared by create and update. All optional so a
 // PATCH carries only what changes; create layers required fields on top.
 const caseFieldsShape = {
+  judge: caseJudgeSettingsSchema.nullable().optional(),
   title: z.string().trim().min(1).optional().describe("Short case label."),
   intent: caseIntentSchema
     .optional()
@@ -5642,31 +5660,11 @@ const updateEvalSuiteInput = z
               .describe(
                 "Presentation severity for an advisory judge: flag it without failing the run. Legal only with role: advisory."
               ),
-            rubric: z
-              .union([
-                z.strictObject({
-                  criteria: z
-                    .array(
-                      z.strictObject({
-                        id: z
-                          .string()
-                          .regex(/^[A-Za-z0-9_-]{1,64}$/)
-                          .describe(
-                            "Stable id the judge cites in its reasons. Unique within the rubric; editing it retires the suite's calibration."
-                          ),
-                        label: z.string().trim().min(1).max(200),
-                        description: z.string().max(1000).optional(),
-                        required: z.boolean().optional(),
-                      })
-                    )
-                    .min(1)
-                    .max(25),
-                }),
-                z.null(),
-              ])
+            rubric: judgeRubricSchema
+              .nullable()
               .optional()
               .describe(
-                "The suite's own grading criteria, handed to the judge alongside each case's expected output. null CLEARS them; an empty criteria array is refused, because a rubric that asks nothing still changes what the judge was asked. Editing this retires the suite's judge calibration."
+                "Optional grading instructions and structured criteria, alongside each case's task and expected output. null clears both. Editing either retires judge calibration."
               ),
           })
           .optional(),
@@ -5763,7 +5761,7 @@ export const updateEvalSuiteOperation: PlatformOperation<
   name: "update_eval_suite",
   title: "Update MCPJam eval suite",
   description:
-    "Edit an eval suite's settings: name, description, environment servers, computer image, execution config (model/system prompt/temperature), hosts, minimum accuracy, minimum iterations, match options, checks, LLM-as-judge (enabled/model/autoRun/threshold — autoRun is what makes grading happen; enabled alone only makes the judge available), and the verdict policy v2 fields (repetitions/passThreshold/validity — fractions, and the v2 replacement for minimumAccuracy). Only the fields you pass change.",
+    "Edit an eval suite's settings: name, description, environment servers, computer image, execution config (model/system prompt/temperature), hosts, minimum accuracy, minimum iterations, match options, checks, LLM-as-judge (enabled/model/autoRun/threshold — autoRun is what makes grading happen; enabled alone only makes the judge available), and the per-case grading fields (repetitions/passThreshold/validity — FRACTIONS). minimumAccuracy is the suite-wide accuracy threshold, a PERCENT over the whole run; passThreshold is the per-case criterion, a fraction each case must meet over its own iterations. They are different criteria, not two units of one number — ten cases, nine always passing and one always failing, passes a 90% suite-wide bar and fails a 0.9 per-case one — so send whichever one the suite already uses (settings.policy on a read says which) and never convert between them. The operation reads the current criterion first and refuses repetitions (including the repetitions/passThreshold pair) on a suite-wide suite, and minimumIterations on a per-case suite. Changing criterion is API-only for now. Only the fields you pass change.",
   readOnly: false,
   permalink: derivePermalinks((result) => [
     { type: "eval_suite", id: result.id, ...projectIdOf(result) },
@@ -5793,6 +5791,31 @@ export const updateEvalSuiteOperation: PlatformOperation<
       input.project
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
+    const settings = input.settings;
+    if (
+      settings &&
+      ["passThreshold", "repetitions", "minimumIterations", "validity"].some(
+        (key) => settings[key as keyof typeof settings] !== undefined
+      )
+    ) {
+      const detail = await client.getEvalSuite(
+        { projectId: project.id, suiteId: suite.id },
+        { signal }
+      );
+      const read = gradingPolicyFromPlatformSuiteSettings(detail.settings);
+      if (!read.ok) throw operationInputError(read.message);
+      // Use the canonical refusals without translating the caller's wire fields.
+      // A lone passThreshold on a suite-wide suite is refused by the route.
+      const plan = planEvalGradingPolicyEdit(read.policy, {
+        ...(settings.repetitions !== undefined
+          ? { iterations: settings.repetitions }
+          : {}),
+        ...(settings.minimumIterations !== undefined
+          ? { minimumIterations: settings.minimumIterations }
+          : {}),
+      });
+      if (!plan.ok) throw operationInputError(plan.message);
+    }
     const body: Record<string, unknown> = {};
     for (const key of [
       "name",
@@ -6542,7 +6565,7 @@ const generateEvalCasesInput = z.object({
     .max(256)
     .optional()
     .describe(
-      "Retry-safety key: pass one, because generating spends model credits and a retry must not pay for a second generation. Repeating a call with the same key replays the first attempt's drafts and returns the cases it already created."
+      "Retry-safety key: pass one, because a retry must not take a second slice of the organization's daily generation quota. Repeating a call with the same key replays the first attempt's drafts and returns the cases it already created."
     ),
 });
 export type GenerateEvalCasesInput = z.infer<typeof generateEvalCasesInput>;
@@ -6552,10 +6575,10 @@ export const generateEvalCasesOperation: PlatformOperation<
   GenerateEvalCasesResult
 > = {
   name: "generate_eval_cases",
-  risk: "spend",
+  risk: "none",
   title: "Generate MCPJam eval cases",
   description:
-    "AI-generate test cases from the suite's server tools and persist them into the suite. Connects the servers to discover tools and spends the organization's credits. For a suite with attached project environments, tools are discovered from the environment's closed server set — pass environment to choose which one. The authoring model is platform-controlled; set caseModels to choose the generated cases' execution models. IDEMPOTENT on idempotencyKey: pass one, because generating spends model credits and a retry must not pay for a second generation.",
+    "AI-generate test cases from the suite's server tools and persist them into the suite. Connects the servers to discover tools. Included with MCPJam; no customer credits consumed; subject to usage limits: a per-minute burst limit and the organization's daily generation quota. A refusal is RATE_LIMITED with a retry time — wait until then; topping up credits does not lift it. For a suite with attached project environments, tools are discovered from the environment's closed server set — pass environment to choose which one. The authoring model is platform-controlled; set caseModels to choose the generated cases' execution models. IDEMPOTENT on idempotencyKey: pass one, because a retry must not take a second slice of that quota.",
   readOnly: false,
   permalink: derivePermalinks((result) =>
     result.created.flatMap((testCase) =>
@@ -6709,7 +6732,7 @@ export const getEvalRunOperation: PlatformOperation<
   name: "get_eval_run",
   title: "Get MCPJam eval run",
   description:
-    "Get the status, verdict, and — once the run is terminal — its `decisionSummary`: START THERE when a run did not pass. It carries the verdict and where it came from (`verdictSource`), the counts with the population they count (`measurementUnit`: caseVariant under verdict policy v2, trial on legacy runs — never assume one), the authoritative `decision` with the exact reasons a v2 run passed, failed, or was withheld as inconclusive, and per-trial `diagnostics` giving the user-value chain, the first failed stage, the failure category, the evidence for THAT stage, and one next action. `verdict: \"notEstablished\"` means no verdict exists (still running, stopped early, or undecidable) — it is not a failure. THE CHAIN, IN ORDER: connection → discovery → selection → call → response → userValue; a stage is only ever about the link it names, and the order is what makes `notReached` mean anything. Each diagnostic's `chain.status` is a THREE-WAY discriminant and only one of them carries rows: `verified` — the stored derivation validated, so `stages`, `firstFailedStage` and `failureCategory` are present and may be read; `unverified` — a derivation was stored and did not validate, so the rows and both claims derived from them are withheld deliberately (substituting your own reading of the trace for the withheld claim is the one thing this state exists to stop); `absent` — no derivation was ever stored, which is a DIFFERENT fact from one that was rejected. A row's `state` is one of five, and the three non-verdicts are three different facts that must never be collapsed: `passed` — measured, and it passed; `failed` — measured, and it failed; `notReached` — it never ran, because an earlier stage failed; `notMeasured` — this run captured nothing that could decide it; `notApplicable` — the stage does not apply to this case at all. Reporting a `notMeasured` or `notReached` stage as healthy is the misreading the five-state vocabulary exists to prevent. `firstFailedStage` IS A LOCATION, NOT A CAUSE: it names where the chain stopped, and the nearest thing to a cause is `reason` on that same stage's row. `failureCategory` is a coarse bucket, and it can be present with NO `firstFailedStage` at all — a setup abort and an evaluator error are real answers about a trial that never reached a stage. Neither the location nor the bucket on its own authorizes proposing a change to the server under test. The `user-value-chain-glossary` skill on this server defines every member of all six vocabularies — the stages, the five states, the twenty-nine stage reasons, the seven categories, the four verdicts and the analytics exclusion classes — along with the population rules that decide what a count means; fetch it rather than guessing a member's meaning from its spelling. Read authored step results (get_eval_run_steps) second and a full trace (get_eval_iteration_trace) last; you should not need to infer the chain from raw tool calls. Diagnostics are paginated: pass diagnosticsCursor to continue, and treat `diagnostics.complete: false` as a partial list, never as the full set of failures. The detail also carries an `insights` envelope with findings AGGREGATED across iterations (exemplar evidence attached); only a finding with actionTarget mcp_server AND actionability ready authorizes proposing a server change — other action targets name agent/test/environment work and must not be 'fixed' in server code.",
+    "Get the status, verdict, and — once the run is terminal — its `decisionSummary`: START THERE when a run did not pass. It carries the verdict and where it came from (`verdictSource`), the counts with the population they count (`measurementUnit`: caseVariant under per-case grading, trial under a suite-wide accuracy threshold — never assume one), the authoritative `decision` with the exact reasons a per-case-graded run passed, failed, or was withheld as inconclusive, and per-trial `diagnostics` giving the user-value chain, the first failed stage, the failure category, the evidence for THAT stage, and one next action. `verdict: \"notEstablished\"` means no verdict exists (still running, stopped early, or undecidable) — it is not a failure. THE CHAIN, IN ORDER: connection → discovery → selection → call → response → userValue; a stage is only ever about the link it names, and the order is what makes `notReached` mean anything. Each diagnostic's `chain.status` is a THREE-WAY discriminant and only one of them carries rows: `verified` — the stored derivation validated, so `stages`, `firstFailedStage` and `failureCategory` are present and may be read; `unverified` — a derivation was stored and did not validate, so the rows and both claims derived from them are withheld deliberately (substituting your own reading of the trace for the withheld claim is the one thing this state exists to stop); `absent` — no derivation was ever stored, which is a DIFFERENT fact from one that was rejected. A row's `state` is one of five, and the three non-verdicts are three different facts that must never be collapsed: `passed` — measured, and it passed; `failed` — measured, and it failed; `notReached` — it never ran, because an earlier stage failed; `notMeasured` — this run captured nothing that could decide it; `notApplicable` — the stage does not apply to this case at all. Reporting a `notMeasured` or `notReached` stage as healthy is the misreading the five-state vocabulary exists to prevent. `firstFailedStage` IS A LOCATION, NOT A CAUSE: it names where the chain stopped, and the nearest thing to a cause is `reason` on that same stage's row. `failureCategory` is a coarse bucket, and it can be present with NO `firstFailedStage` at all — a setup abort and an evaluator error are real answers about a trial that never reached a stage. Neither the location nor the bucket on its own authorizes proposing a change to the server under test. The `user-value-chain-glossary` skill on this server defines every member of all six vocabularies — the stages, the five states, the twenty-nine stage reasons, the seven categories, the four verdicts and the analytics exclusion classes — along with the population rules that decide what a count means; fetch it rather than guessing a member's meaning from its spelling. Read authored step results (get_eval_run_steps) second and a full trace (get_eval_iteration_trace) last; you should not need to infer the chain from raw tool calls. Diagnostics are paginated: pass diagnosticsCursor to continue, and treat `diagnostics.complete: false` as a partial list, never as the full set of failures. The detail also carries an `insights` envelope with findings AGGREGATED across iterations (exemplar evidence attached); only a finding with actionTarget mcp_server AND actionability ready authorizes proposing a server change — other action targets name agent/test/environment work and must not be 'fixed' in server code.",
   readOnly: true,
   permalink: derivePermalinks((result) => [
     evalRunRef(result.run.id, result.run.suiteId, result.project?.id),
@@ -7402,9 +7425,9 @@ export const proposeEvalDescriptionRewriteOperation: PlatformOperation<
   name: "propose_eval_description_rewrite",
   title: "Propose an eval description rewrite",
   description:
-    "Draft a rewritten tool description from a finished eval run's failed trials: the tool's current description and input schema, sibling tool names, the expected vs observed calls, and the failing prompts. SPENDS a small model budget (worst case about $0.10) and returns immediately with a proposing receipt — poll get_eval_description_experiment until status is proposed (or failed). Does not launch runs, write a verdict, or change a gate. Report-only throughout.",
+    "Draft a rewritten tool description from a finished eval run's failed trials: the tool's current description and input schema, sibling tool names, the expected vs observed calls, and the failing prompts. Included with MCPJam; no customer credits consumed; subject to MCPJam's daily analysis budget. Returns immediately with a proposing receipt — poll get_eval_description_experiment until status is proposed (or failed). Does not launch runs, write a verdict, or change a gate. Report-only throughout.",
   readOnly: false,
-  risk: "spend",
+  risk: "none",
   permalink: noPermalink("mutation-only"),
   inputSchema: proposeEvalDescriptionRewriteInput,
   async execute(input, { client, signal, onScopeResolved }) {
@@ -7888,6 +7911,12 @@ export const revokeEvalGateWaiverOperation: PlatformOperation<
 };
 
 const requestEvalRunJudgeInput = evalRunScopedInput.extend({
+  scope: z
+    .enum(["all", "failed"])
+    .optional()
+    .describe(
+      "Retry failed or ungraded iterations without rerunning measured iterations. Failed-only retries keep their original grading settings."
+    ),
   force: z
     .boolean()
     .optional()
@@ -7917,6 +7946,55 @@ export type RequestEvalRunJudgeInput = z.infer<typeof requestEvalRunJudgeInput>;
 export type RequestEvalRunJudgeResult = {
   project: SelectedProjectInfo;
   judge: PlatformEvalRunJudgeRequested;
+};
+
+const backtestEvalRunJudgeInput = evalRunScopedInput.extend(
+  judgeBacktestRequestSchema.shape
+);
+export const backtestEvalRunJudgeOperation: PlatformOperation<
+  z.infer<typeof backtestEvalRunJudgeInput>,
+  {
+    project: SelectedProjectInfo;
+    runId: string;
+    suiteId: string;
+    report: JudgeBacktestReport;
+  }
+> = {
+  name: "backtest_eval_run_judge",
+  title: "Preview MCPJam judge grading",
+  description:
+    "Grade one recorded iteration against a draft rubric using the full evidence. Uses model budget; leaves the run verdict unchanged. Supply rubric.instructions and optional criteria, or null for objective-only grading. Continue with the same rubric and the returned cursor, sourceHash and reservationId. Completed page retries reuse the cached result. CLI: mcpjam cloud eval judge-backtest --run <id> --json <request>.",
+  readOnly: false,
+  risk: "spend",
+  permalink: derivePermalinks((result) => [
+    evalRunRef(result.runId, result.suiteId, result.project.id),
+  ]),
+  inputSchema: backtestEvalRunJudgeInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const run = await client.getEvalRun(
+      { projectId: project.id, runId: input.runId },
+      { signal }
+    );
+    const report = await client.backtestEvalRunJudge(
+      {
+        projectId: project.id,
+        runId: input.runId,
+        rubric: input.rubric,
+        continuation: input.continuation,
+      },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      runId: run.id,
+      suiteId: run.suiteId,
+      report,
+    };
+  },
 };
 
 const backtestEvalRunInput = evalRunScopedInput.extend({
@@ -7977,7 +8055,7 @@ export const requestEvalRunJudgeOperation: PlatformOperation<
   name: "request_eval_run_judge",
   title: "Request MCPJam eval run grading",
   description:
-    "Run LLM-as-judge grading over a finished eval run: each case's final answer is scored against its expected output. SPENDS the organization's model budget. Returns immediately with a pending receipt — read the results from get_eval_run's `judges.goalCompletion`, do not re-request. Pass `enable: true` to grade a run recorded while the judge was off; a run's grading config is pinned when it starts, so enabling the judge on the suite does not reach it.",
+    "Run LLM-as-judge grading over a finished eval run: each iteration’s full recorded trace and tool definitions are graded against its task and grading instructions. SPENDS the organization's model budget. Returns immediately with a pending receipt — read the results from get_eval_run's `judges.goalCompletion`, do not re-request. Pass `enable: true` to grade a run recorded while the judge was off; a run's grading config is pinned when it starts, so enabling the judge on the suite does not reach it.",
   readOnly: false,
   risk: "spend",
   permalink: noPermalink("mutation-only"),
@@ -7991,6 +8069,7 @@ export const requestEvalRunJudgeOperation: PlatformOperation<
       {
         projectId: project.id,
         runId: input.runId,
+        ...(input.scope ? { scope: input.scope } : {}),
         ...(input.force !== undefined ? { force: input.force } : {}),
         ...(input.enable !== undefined ? { enable: input.enable } : {}),
         ...(input.model !== undefined ? { model: input.model } : {}),
@@ -12351,7 +12430,7 @@ export const listJourneyRunSessionsOperation: PlatformOperation<
   name: "list_journey_run_sessions",
   title: "List the sessions a journey run produced",
   description:
-    "The chat sessions a journey run produced — one per persona attempt against each target — with readiness, goal scores and a first-message preview. Transcript bodies are not on this API yet; use the returned `id` in the app to open a session.",
+    "The chat sessions a journey run produced — one per persona attempt against each target — with graded verdicts, check observations, readiness, goal scores and a first-message preview. `verdict` is the graded goal result; `outcome` is execution lifecycle. A broken execution may have met its goal. Transcript bodies are not on this API yet; use the returned `id` in the app to open a session.",
   readOnly: true,
   permalink: derivePermalinks((result) =>
     result.items.map((session) => ({
@@ -12673,13 +12752,15 @@ function requireExactlyOneGrounding(input: {
 function requireConfigPair(input: {
   sessionsPerTarget?: number;
   maxTurns?: number;
+  setupWrites?: boolean;
 }): void {
   if (
     (input.sessionsPerTarget === undefined) !==
-    (input.maxTurns === undefined)
+      (input.maxTurns === undefined) ||
+    (input.setupWrites !== undefined && input.sessionsPerTarget === undefined)
   ) {
     throw operationInputError(
-      "sessionsPerTarget and maxTurns must be sent together — they are one execution config upstream."
+      "sessionsPerTarget and maxTurns must be sent together; setupWrites requires that pair."
     );
   }
 }
@@ -13746,6 +13827,12 @@ const createJourneyInput = z.object({
       "Sessions per target. TOTAL sessions = targets x this, and the total is what spends."
     ),
   maxTurns: z.number().int().min(1).max(200),
+  setupWrites: z
+    .boolean()
+    .optional()
+    .describe(
+      "Attempt prerequisite creation with creation-like tools annotated non-destructive; requests prefixed names and leaves created data. Off unless set. Use a test account."
+    ),
   idempotencyKey: z.string().trim().min(1).max(200).optional(),
 });
 
@@ -13782,6 +13869,9 @@ export const createJourneyOperation: PlatformOperation<
         personaId: input.persona,
         sessionsPerTarget: input.sessionsPerTarget,
         maxTurns: input.maxTurns,
+        ...(input.setupWrites !== undefined
+          ? { setupWrites: input.setupWrites }
+          : {}),
         ...(input.name !== undefined ? { name: input.name } : {}),
         ...(input.swarm !== undefined ? { swarmId: input.swarm } : {}),
         ...(input.environmentIds !== undefined
@@ -13808,6 +13898,12 @@ const updateJourneyInput = journeySelectorInput.extend({
     .describe("null clears the fan-out and returns the journey to its hosts."),
   sessionsPerTarget: z.number().int().min(1).max(100).optional(),
   maxTurns: z.number().int().min(1).max(200).optional(),
+  setupWrites: z
+    .boolean()
+    .optional()
+    .describe(
+      "Attempt prerequisite creation with creation-like tools annotated non-destructive; requests prefixed names and leaves created data. Off unless set. Replacing sessionsPerTarget/maxTurns without this field clears it; send its current value to preserve it. Use a test account."
+    ),
 });
 
 export type UpdateJourneyInput = z.infer<typeof updateJourneyInput>;
@@ -13820,7 +13916,7 @@ export const updateJourneyOperation: PlatformOperation<
   name: "update_journey",
   title: "Update an MCPJam journey",
   description:
-    "Edit a journey. sessionsPerTarget and maxTurns must be sent together — they are one execution config upstream. A run already in flight keeps the config it launched with.",
+    "Edit a journey. sessionsPerTarget and maxTurns must be sent together; setupWrites requires that pair. A run already in flight keeps the config it launched with.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink(
@@ -13847,6 +13943,9 @@ export const updateJourneyOperation: PlatformOperation<
           ? { sessionsPerTarget: input.sessionsPerTarget }
           : {}),
         ...(input.maxTurns !== undefined ? { maxTurns: input.maxTurns } : {}),
+        ...(input.setupWrites !== undefined
+          ? { setupWrites: input.setupWrites }
+          : {}),
       },
       { signal }
     );
@@ -13969,6 +14068,12 @@ const createSwarmInput = z.object({
   environmentIds: z.array(z.string().min(1)).min(1).optional(),
   sessionsPerTarget: z.number().int().min(1).max(100),
   maxTurns: z.number().int().min(1).max(200),
+  setupWrites: z
+    .boolean()
+    .optional()
+    .describe(
+      "Attempt prerequisite creation with creation-like tools annotated non-destructive; requests prefixed names and leaves created data. Off unless set. Use a test account."
+    ),
   idempotencyKey: z.string().trim().min(1).max(200).optional(),
 });
 
@@ -14004,6 +14109,9 @@ export const createSwarmOperation: PlatformOperation<
         name: input.name,
         sessionsPerTarget: input.sessionsPerTarget,
         maxTurns: input.maxTurns,
+        ...(input.setupWrites !== undefined
+          ? { setupWrites: input.setupWrites }
+          : {}),
         ...(input.description !== undefined
           ? { description: input.description }
           : {}),
@@ -14030,6 +14138,12 @@ const updateSwarmInput = swarmSelectorInput.extend({
     .optional(),
   sessionsPerTarget: z.number().int().min(1).max(100).optional(),
   maxTurns: z.number().int().min(1).max(200).optional(),
+  setupWrites: z
+    .boolean()
+    .optional()
+    .describe(
+      "Attempt prerequisite creation with creation-like tools annotated non-destructive; requests prefixed names and leaves created data. Off unless set. Replacing sessionsPerTarget/maxTurns without this field clears it; send its current value to preserve it. Use a test account."
+    ),
 });
 
 export type UpdateSwarmInput = z.infer<typeof updateSwarmInput>;
@@ -14071,6 +14185,9 @@ export const updateSwarmOperation: PlatformOperation<
           ? { sessionsPerTarget: input.sessionsPerTarget }
           : {}),
         ...(input.maxTurns !== undefined ? { maxTurns: input.maxTurns } : {}),
+        ...(input.setupWrites !== undefined
+          ? { setupWrites: input.setupWrites }
+          : {}),
       },
       { signal }
     );
@@ -14166,9 +14283,9 @@ export const generatePersonasOperation: PlatformOperation<
   name: "generate_personas",
   title: "Draft MCPJam personas with a model",
   description:
-    "Draft candidate personas grounded in what the project's servers actually do. NOTHING IS SAVED — pick what you want and pass it to create_persona. Runs a model on the organization's account, so it spends. Exactly one of environmentId or serverAttachmentId.",
+    "Draft candidate personas grounded in what the project's servers actually do. NOTHING IS SAVED — pick what you want and pass it to create_persona. Runs a model. Included with MCPJam; no customer credits consumed; subject to usage limits: a per-minute burst limit and the organization's daily generation quota. A refusal is RATE_LIMITED with a retry time — wait until then; topping up credits does not lift it. Exactly one of environmentId or serverAttachmentId.",
   readOnly: false,
-  risk: "spend",
+  risk: "none",
   permalink: noPermalink(
     "route-not-addressable",
     "No `swarms/personas/:personaId` route: personas are edited inside the Swarms surface as component state."
@@ -14229,9 +14346,9 @@ export const generateJourneysOperation: PlatformOperation<
   name: "generate_journeys",
   title: "Draft MCPJam journeys with a model",
   description:
-    "Draft candidate journeys for a persona, grounded in the project's servers. NOTHING IS SAVED — pass what you want to create_journey. Spends. Exactly one of environmentId or serverAttachmentId.",
+    "Draft candidate journeys for a persona, grounded in the project's servers. NOTHING IS SAVED — pass what you want to create_journey. Included with MCPJam; no customer credits consumed; subject to usage limits: a per-minute burst limit and the organization's daily generation quota. A refusal is RATE_LIMITED with a retry time — wait until then; topping up credits does not lift it. Exactly one of environmentId or serverAttachmentId.",
   readOnly: false,
-  risk: "spend",
+  risk: "none",
   permalink: noPermalink(
     "route-not-addressable",
     "No `swarms/journeys/:journeyId` route: journeys are edited inside the Swarms surface as component state."
@@ -14456,6 +14573,14 @@ export type GetWaveInsightsResult = {
   insights: PlatformWaveInsights;
 };
 
+/**
+ * What a FAILED included analysis means, for the insight getters. The codes
+ * are the backend's stored `errorCode`; an agent reading one needs to know
+ * which failures lift on their own and which are not the caller's to fix.
+ */
+const INCLUDED_ANALYSIS_FAILURE_NOTE =
+  "A failed analysis carries errorCode: `platform_cap_exceeded` means MCPJam's own daily budget for this analysis is used up — nothing was charged, it resets at 00:00 UTC, and neither re-requesting nor topping up credits helps before then; `platform_unavailable` means MCPJam could not reserve capacity — try again later, not in a loop.";
+
 export const getWaveInsightsOperation: PlatformOperation<
   GetWaveInsightsInput,
   GetWaveInsightsResult
@@ -14463,7 +14588,7 @@ export const getWaveInsightsOperation: PlatformOperation<
   name: "get_wave_insights",
   title: "Get an MCPJam wave's insights",
   description:
-    "The model's analysis of a whole wave, if one has been requested. Poll this after request_wave_insights — status goes pending → completed. Not-found means nobody has requested it, which is different from 'requested and still working'.",
+    "The model's analysis of a whole wave, if one has been requested. Poll this after request_wave_insights — status goes pending → completed. Not-found means nobody has requested it, which is different from 'requested and still working'. " + INCLUDED_ANALYSIS_FAILURE_NOTE,
   readOnly: true,
   permalink: derivePermalinks((result) => [
     // A wave IS a journey run on the Swarms surface: `/swarms/<waveId>`.
@@ -14492,7 +14617,7 @@ const requestWaveInsightsInput = waveSelectorInput.extend({
     .boolean()
     .optional()
     .describe(
-      "Regenerate over a wave that already has insights. SPENDS AGAIN — the usual reason a wave looks stuck is a caller that did not poll, so read get_wave_insights before reaching for this."
+      "Regenerate over a wave that already has insights. TAKES ANOTHER SLICE of the daily insight quota (no credits either way) — the usual reason a wave looks stuck is a caller that did not poll, so read get_wave_insights before reaching for this."
     ),
 });
 
@@ -14509,9 +14634,9 @@ export const requestWaveInsightsOperation: PlatformOperation<
   name: "request_wave_insights",
   title: "Request MCPJam wave insights",
   description:
-    "Ask a model to analyze a whole wave. Returns immediately with status pending; poll get_wave_insights. SPENDS against the organization's daily insights budget, which is SHARED with user-testing insights — burning it here takes it from there. Read the run scorecards first; they are free and usually explain the failure.",
+    "Ask a model to analyze a whole wave. Returns immediately with status pending; poll get_wave_insights. Included with MCPJam; no customer credits consumed; subject to usage limits: it COUNTS against the organization's daily insight quota, which is SHARED with user-testing insights, so a request here takes one from there. Read the run scorecards first; they cost no quota and usually explain the failure.",
   readOnly: false,
-  risk: "spend",
+  risk: "none",
   permalink: noPermalink("mutation-only"),
   inputSchema: requestWaveInsightsInput,
   async execute(input, { client, signal, onScopeResolved }) {
@@ -14544,7 +14669,7 @@ export const cancelWaveInsightsOperation: PlatformOperation<
   name: "cancel_wave_insights",
   title: "Cancel an MCPJam wave insights request",
   description:
-    "Stop an in-flight insights generation. This is the recovery path for a wave stuck in pending — without it the only way forward is force, which spends again.",
+    "Stop an in-flight insights generation. This is the recovery path for a wave stuck in pending — without it the only way forward is force, which takes another slice of the daily insight quota.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink("mutation-only"),
@@ -14637,7 +14762,7 @@ export const getUserTestingScenarioOperation: PlatformOperation<
   name: "get_user_testing_scenario",
   title: "Get a user-testing scenario",
   description:
-    "Scenario detail plus its actionable-insights envelope: findings AGGREGATED over the latest analyzed window of real visitor sessions, each with exemplar evidence. Only a finding with actionTarget mcp_server AND actionability ready authorizes proposing a server change; agent_configuration / eval_case / environment / investigate findings name other work and must not be 'fixed' in server code. Reads never trigger generation — request_user_testing_insights does, and spends.",
+    "Scenario detail plus its actionable-insights envelope: findings AGGREGATED over the latest analyzed window of real visitor sessions, each with exemplar evidence. Only a finding with actionTarget mcp_server AND actionability ready authorizes proposing a server change; agent_configuration / eval_case / environment / investigate findings name other work and must not be 'fixed' in server code. Reads never trigger generation — request_user_testing_insights does, and it takes a slice of the daily insight quota.",
   readOnly: true,
   permalink: derivePermalinks((result) => [
     {
@@ -15017,7 +15142,7 @@ export const getUserTestingInsightsOperation: PlatformOperation<
   name: "get_user_testing_insights",
   title: "Get a user-testing window's insights",
   description:
-    "The model's analysis of one analysis window, if one has been requested. Not-found means nobody has requested it, which is different from requested-and-still-working.",
+    "The model's analysis of one analysis window, if one has been requested. Not-found means nobody has requested it, which is different from requested-and-still-working. " + INCLUDED_ANALYSIS_FAILURE_NOTE,
   readOnly: true,
   permalink: noPermalink(
     "no-addressable-resource",
@@ -15047,7 +15172,7 @@ const requestUserTestingInsightsInput = userTestingScenarioSelectorInput.extend(
       .boolean()
       .optional()
       .describe(
-        "Regenerate over a window that already has insights. Spends again."
+        "Regenerate over a window that already has insights. Takes another slice of the daily insight quota; no credits are consumed."
       ),
   }
 );
@@ -15067,9 +15192,9 @@ export const requestUserTestingInsightsOperation: PlatformOperation<
   name: "request_user_testing_insights",
   title: "Request insights for a user-testing scenario",
   description:
-    "Ask a model to analyze the scenario's current window. Returns immediately with the windowId and status pending; poll get_user_testing_insights. SPENDS against the organization's daily insights budget, which is SHARED with swarm wave insights. A 409 means the window has not been mined yet — wait, do not retry in a loop.",
+    "Ask a model to analyze the scenario's current window. Returns immediately with the windowId and status pending; poll get_user_testing_insights. Included with MCPJam; no customer credits consumed; subject to usage limits: it COUNTS against the organization's daily insight quota, which is SHARED with swarm wave insights. A 409 means the window has not been mined yet — wait, do not retry in a loop.",
   readOnly: false,
-  risk: "spend",
+  risk: "none",
   permalink: noPermalink("mutation-only"),
   inputSchema: requestUserTestingInsightsInput,
   async execute(input, { client, signal, onScopeResolved }) {
@@ -15104,7 +15229,7 @@ export const cancelUserTestingInsightsOperation: PlatformOperation<
   name: "cancel_user_testing_insights",
   title: "Cancel a user-testing insights request",
   description:
-    "Stop an in-flight insights generation. The recovery path for a window stuck pending — without it the only way forward is force, which spends again.",
+    "Stop an in-flight insights generation. The recovery path for a window stuck pending — without it the only way forward is force, which takes another slice of the daily insight quota.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink("mutation-only"),
@@ -16286,6 +16411,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   getEvalGateWaiverOperation,
   revokeEvalGateWaiverOperation,
   backtestEvalRunOperation,
+  backtestEvalRunJudgeOperation,
   requestEvalRunJudgeOperation,
   listEvalGithubReposOperation,
   connectEvalGithubRepoOperation,

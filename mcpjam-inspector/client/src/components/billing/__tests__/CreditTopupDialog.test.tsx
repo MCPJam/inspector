@@ -4,6 +4,28 @@ import userEvent from "@testing-library/user-event";
 
 import { CreditTopupDialog } from "../CreditTopupDialog";
 
+vi.mock("@/hooks/useCreditTopupPricing", () => ({
+  useCreditTopupPricing: () =>
+    Object.assign((preset: unknown) => preset, {
+      canPurchase: pricingState.canPurchase,
+      error: pricingState.error,
+      requiresUpgrade: pricingState.requiresUpgrade,
+      isLoading: pricingState.isLoading,
+    }),
+}));
+
+const pricingState = vi.hoisted(() => ({
+  canPurchase: true,
+  requiresUpgrade: false,
+  isLoading: false,
+  error: null as Error | null,
+}));
+
+const navigateMock = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/app-navigation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/app-navigation")>()),
+  useAppNavigate: () => navigateMock,
+}));
 const startCheckoutMock = vi.fn();
 const trackMock = vi.hoisted(() => vi.fn());
 
@@ -57,6 +79,10 @@ const DEFAULT_PRESETS = [
 
 describe("CreditTopupDialog", () => {
   beforeEach(() => {
+    pricingState.canPurchase = true;
+    pricingState.requiresUpgrade = false;
+    pricingState.isLoading = false;
+    pricingState.error = null;
     startCheckoutMock.mockReset();
     trackMock.mockReset();
     presetsState = DEFAULT_PRESETS;
@@ -64,6 +90,21 @@ describe("CreditTopupDialog", () => {
     isStartingCheckoutState = false;
   });
 
+  it("blocks ineligible manual purchases", async () => {
+    pricingState.canPurchase = false;
+    render(
+      <CreditTopupDialog
+        open
+        onOpenChange={vi.fn()}
+        organizationId="org-1"
+        source="chat_banner"
+      />,
+    );
+    const button = screen.getByRole("button", { name: /Continue/ });
+    expect(button).toBeDisabled();
+    await userEvent.click(button);
+    expect(startCheckoutMock).not.toHaveBeenCalled();
+  });
   it("renders three preset chips with the correct labels", () => {
     render(
       <CreditTopupDialog
@@ -346,4 +387,85 @@ describe("CreditTopupDialog", () => {
       screen.getByRole("button", { name: /Continue with \$5/ }),
     ).toBeDisabled();
   });
+});
+
+it("keeps pricing failures in the dialog and allows dismissal", async () => {
+  pricingState.error = new Error("Server Error");
+  pricingState.canPurchase = false;
+  const onOpenChange = vi.fn();
+  render(
+    <CreditTopupDialog
+      open
+      onOpenChange={onOpenChange}
+      organizationId="org-1"
+      chatSessionId=""
+      lastUserMessage=""
+      source="billing_page"
+    />,
+  );
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Credit pricing is unavailable",
+  );
+  expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Continue/ })).toBeDisabled();
+  await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(onOpenChange).toHaveBeenCalledWith(false);
+});
+
+it("routes Free organizations to Plans instead of checkout", async () => {
+  const onOpenChange = vi.fn();
+  navigateMock.mockClear();
+  startCheckoutMock.mockClear();
+  pricingState.error = null;
+  pricingState.requiresUpgrade = true;
+  pricingState.canPurchase = false;
+  render(
+    <CreditTopupDialog
+      open
+      onOpenChange={onOpenChange}
+      organizationId="org-1"
+      chatSessionId=""
+      lastUserMessage=""
+      source="billing_page"
+    />,
+  );
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Upgrade to Pro or Team to buy credits.",
+  );
+  expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: /Continue/ }),
+  ).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Explore plan" }));
+  expect(onOpenChange).toHaveBeenCalledWith(false);
+  expect(navigateMock).toHaveBeenCalledWith("/organizations/org-1/plans");
+  expect(startCheckoutMock).not.toHaveBeenCalled();
+});
+
+it("waits for organization pricing before showing Free plan credit options", () => {
+  pricingState.error = null;
+  pricingState.requiresUpgrade = false;
+  pricingState.isLoading = true;
+  pricingState.canPurchase = false;
+  const props = {
+    open: true,
+    onOpenChange: vi.fn(),
+    organizationId: "org-1",
+    chatSessionId: "",
+    lastUserMessage: "",
+    source: "billing_page" as const,
+  };
+  const { rerender } = render(<CreditTopupDialog {...props} />);
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Loading credit options",
+  );
+  expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+  expect(screen.queryByText("Price at checkout")).not.toBeInTheDocument();
+  pricingState.isLoading = false;
+  pricingState.requiresUpgrade = true;
+  rerender(<CreditTopupDialog {...props} />);
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Upgrade to Pro or Team to buy credits.",
+  );
+  expect(screen.queryByRole("radio")).not.toBeInTheDocument();
 });

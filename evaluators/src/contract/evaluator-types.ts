@@ -1,3 +1,4 @@
+import type { JudgeEvidenceProvenance } from "./types.js";
 /**
  * The canonical evaluator vocabulary, as types.
  *
@@ -78,7 +79,7 @@ export type EvaluatorIdSource = ScorerIdSource;
  * place — so this is the whole of what an implementation gets to assert.
  */
 export type EvaluatorRawOutcome =
-  | {
+  | (JudgeEvidenceProvenance & {
       kind: "scored";
       /** Must be a finite number in [0,1]; anything else finalizes to `error`. */
       score: number;
@@ -87,7 +88,7 @@ export type EvaluatorRawOutcome =
       model?: string;
       promptHash?: string;
       scope?: AssertionScope;
-    }
+    })
   | { kind: "skipped"; explanation?: string; scope?: AssertionScope }
   | { kind: "not_applicable"; explanation?: string; scope?: AssertionScope };
 
@@ -115,7 +116,7 @@ export const EVALUATOR_RESULT_SCHEMA_VERSION = 1 as const;
  *     snapshot on `definitionHash`, because two copies of "does this gate" is
  *     precisely the disagreement you cannot afford.
  */
-export type EvaluatorResult = {
+export type EvaluatorResult = JudgeEvidenceProvenance & {
   schemaVersion: typeof EVALUATOR_RESULT_SCHEMA_VERSION;
   /** Stable identity. The same opaque value the score contract has always used. */
   evaluatorId: string;

@@ -1,3 +1,7 @@
+import type {
+  SuiteJudgeSettings,
+  CaseJudgeSettings,
+} from "./contract/judge-settings.js";
 /**
  * Read and write eval **suite files** — the loader the contract module says is
  * a separate concern (`./contract/suite-file.ts:7-9`).
@@ -57,6 +61,11 @@ import {
   type EvalSuiteFileValidity,
   type EvalSuiteSchemaVersion,
 } from "./contract/suite-file.js";
+import {
+  SUITE_FILE_DEFAULT_COVERAGE,
+  SUITE_FILE_VALIDITY_DEFAULTS,
+  resolveEvalGradingValidityPolicy,
+} from "./contract/grading-policy.js";
 import type { EvalValidityCoverage } from "./contract/verdict-policy.js";
 
 // ── the input cap ────────────────────────────────────────────────────────────
@@ -75,32 +84,17 @@ export const MAX_SUITE_FILE_BYTES = 1_048_576;
 // ── documented defaults (contract §"defaults", suite-file.ts:165-179) ─────────
 
 /**
- * The validity defaults the contract documents and deliberately does not
- * materialize. Applied HERE, onto the resolved value, never onto the file.
+ * The validity defaults, re-exported under the names they ship as.
  *
- * `minEligibleTrials` has no NUMBER here on purpose, because its default is not
- * a number: omitting it selects the coverage RULE in
- * {@link SUITE_FILE_DEFAULT_COVERAGE} — every configured trial attempted, and
- * at least one gradeable trial. Picking a numeric stand-in (`1`, say) is the
- * bug this shape exists to prevent: it would let a suite that graded a single
- * trial out of thirty report a confident pass.
+ * DEFINED in `contract/grading-policy.ts`, because a hosted suite resolves the
+ * same three declarations from a different storage shape and the backend
+ * mirrors the same table again. Three copies of "omitting `minEligibleTrials`
+ * selects the stricter rule" is three places for one of them to become `?? 1`,
+ * so the loader resolves through
+ * {@link resolveEvalGradingValidityPolicy} and re-exports the constants rather
+ * than keeping its own.
  */
-export const SUITE_FILE_VALIDITY_DEFAULTS = {
-  minCompletionRate: 0.8,
-  maxEvaluatorErrorRate: 0.1,
-} as const;
-
-/**
- * The coverage rule an omitted `minEligibleTrials` resolves to.
- *
- * `minGradeableTrials: 1` carries the "at least one gradeable trial" half of
- * the rule in the value rather than in prose, so a consumer reading the
- * resolved suite does not have to know this comment exists.
- */
-export const SUITE_FILE_DEFAULT_COVERAGE = {
-  kind: "allConfiguredTrialsAttempted",
-  minGradeableTrials: 1,
-} as const satisfies EvalValidityCoverage;
+export { SUITE_FILE_VALIDITY_DEFAULTS, SUITE_FILE_DEFAULT_COVERAGE };
 
 /** The only implemented capture level, and therefore the resolved default. */
 export const SUITE_FILE_DEFAULT_CAPTURE_LEVEL = "full" as const;
@@ -162,6 +156,7 @@ export type SuiteFileFailureStage = "input" | "parse" | "contract";
 
 /** A case with every suite default resolved onto it. */
 export type ResolvedEvalSuiteFileCase = {
+  judge?: CaseJudgeSettings;
   id: string;
   title: string;
   /** Authored analytics grouping label; absent remains unlabelled. */
@@ -267,6 +262,7 @@ export type ResolvedEvalSuiteFile = {
   suite: EvalSuiteFile["suite"];
   target: EvalSuiteFileTarget;
   defaults: {
+    judge?: SuiteJudgeSettings;
     model: string;
     provider?: string;
     systemPrompt?: string;
@@ -612,6 +608,7 @@ export function resolveEvalSuiteFile(
     suite: authored.suite,
     target: authored.target,
     defaults: {
+      ...(defaults.judge === undefined ? {} : { judge: defaults.judge }),
       model: defaults.model,
       ...(defaults.provider === undefined
         ? {}
@@ -628,21 +625,7 @@ export function resolveEvalSuiteFile(
       ...(defaults.toolPolicy === undefined
         ? {}
         : { toolPolicy: defaults.toolPolicy }),
-      validity: {
-        coverage:
-          defaults.validity.minEligibleTrials === undefined
-            ? { ...SUITE_FILE_DEFAULT_COVERAGE }
-            : {
-                kind: "minEligibleTrials",
-                minEligibleTrials: defaults.validity.minEligibleTrials,
-              },
-        minCompletionRate:
-          defaults.validity.minCompletionRate ??
-          SUITE_FILE_VALIDITY_DEFAULTS.minCompletionRate,
-        maxEvaluatorErrorRate:
-          defaults.validity.maxEvaluatorErrorRate ??
-          SUITE_FILE_VALIDITY_DEFAULTS.maxEvaluatorErrorRate,
-      },
+      validity: resolveEvalGradingValidityPolicy(defaults.validity),
     },
     ...(authored.provenance === undefined
       ? {}
@@ -671,6 +654,7 @@ function resolveCase(
   defaults: InheritableDefaults
 ): ResolvedEvalSuiteFileCase {
   return {
+    ...(authoredCase.judge === undefined ? {} : { judge: authoredCase.judge }),
     id: authoredCase.id,
     title: authoredCase.title,
     ...(typeof authoredCase.intent === "string"
@@ -733,6 +717,7 @@ const SERVER_KEY_ORDER = ["name", "id"] as const;
  * order a dialect-1 author already knows.
  */
 const DEFAULTS_KEY_ORDER = [
+  "judge",
   "model",
   "provider",
   "repetitions",
@@ -742,6 +727,7 @@ const DEFAULTS_KEY_ORDER = [
   "validity",
 ] as const;
 const DEFAULTS_KEY_ORDER_V2 = [
+  "judge",
   "model",
   "provider",
   "iterations",
@@ -768,6 +754,7 @@ const PROVENANCE_KEY_ORDER = [
   "importedAt",
 ] as const;
 const CASE_KEY_ORDER = [
+  "judge",
   "id",
   "title",
   "intent",
@@ -788,6 +775,7 @@ const CASE_KEY_ORDER = [
   "import",
 ] as const;
 const CASE_KEY_ORDER_V2 = [
+  "judge",
   "id",
   "title",
   "intent",

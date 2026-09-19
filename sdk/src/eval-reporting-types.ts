@@ -139,7 +139,17 @@ export type MCPServerReplayConfig = {
   clientSecret?: string;
 };
 
+export interface SelectedEvalClient {
+  id: string;
+  name: string;
+  configId: string;
+  versionId: string;
+  versionNumber: number;
+}
+
 export type MCPJamReportingConfig = {
+  /** Saved client selected at the beginning of this run. */
+  selectedClient?: SelectedEvalClient;
   /** Explicitly end a partial run without certifying its incomplete population. Requires target termination support. */
   terminalStatus?: "cancelled" | "timed_out";
   enabled?: boolean;
@@ -160,6 +170,7 @@ export type MCPJamReportingConfig = {
    * works too). Defaults to the API key org's Default project.
    */
   project?: string;
+  /** Defaults to server IDs from resolved replay configs; pass [] to opt out. */
   serverNames?: string[];
   serverReplayConfigs?: MCPServerReplayConfig[];
   suiteName?: string;
@@ -175,6 +186,12 @@ export type MCPJamReportingConfig = {
    */
   failOnToolError?: boolean;
   externalRunId?: string;
+  /**
+   * Links sibling runs launched together so they share a run number and group
+   * in MCPJam. Set by `runWithClient` when given several clients; a
+   * caller-supplied value is used as-is. 1-128 characters.
+   */
+  runGroupId?: string;
   framework?: string;
   /** Auto-detected when omitted. An explicit object is preserved; `{}` opts out. */
   ci?: EvalCiMetadata;

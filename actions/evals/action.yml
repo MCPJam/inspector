@@ -1,15 +1,20 @@
 name: MCPJam evals
-description: Run a hosted MCPJam eval suite, optionally gate it, and save reports.
+description: Run MCPJam evals, publish a checks summary, and optionally comment on a pull request.
 inputs:
   api-key:
     description: MCPJam API key, supplied from GitHub Actions secrets.
     required: true
   project:
     description: Existing project name or ID.
-    required: true
   suite:
     description: Existing eval suite name or ID.
-    required: true
+  command:
+    description: Local command that runs and uploads SDK evals. Cannot accompany project or suite.
+  comment:
+    description: Post or update the MCPJam result comment on pull requests.
+    default: "false"
+  github-token:
+    description: GitHub token used for PR comments. Defaults to the workflow token.
   gate:
     description: Use the gate result, including existing waivers, to decide success.
     default: "false"
@@ -63,6 +68,10 @@ runs:
         MCPJAM_ACTION_WAIT_TIMEOUT: ${{ inputs.wait-timeout-ms }}
         MCPJAM_ACTION_CLI_VERSION: ${{ inputs.cli-version }}
         MCPJAM_ACTION_IDEMPOTENCY_KEY: ${{ inputs.idempotency-key }}
+        MCPJAM_ACTION_COMMAND: ${{ inputs.command }}
+        MCPJAM_ACTION_COMMENT: ${{ inputs.comment }}
+        MCPJAM_ACTION_GITHUB_TOKEN: ${{ inputs.github-token || github.token }}
+        MCPJAM_ACTION_PULL_REQUEST: ${{ github.event.pull_request.number }}
         MCPJAM_ACTION_INVOCATION: ${{ github.action }}
         MCPJAM_ACTION_MATRIX: ${{ toJSON(matrix) }}
       run: node "$MCPJAM_ACTION_PATH/run.mjs"

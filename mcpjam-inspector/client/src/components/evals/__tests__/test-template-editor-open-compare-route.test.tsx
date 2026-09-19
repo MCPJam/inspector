@@ -13,6 +13,7 @@ import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provi
 import { TestTemplateEditor } from "../test-template-editor";
 import type { EvalIteration } from "../types";
 import { STAGE_ANALYZER_VERSION } from "@mcpjam/sdk/contract";
+import { toast } from "sonner";
 
 function renderWithProviders(
   ui: ReactElement,
@@ -972,6 +973,18 @@ describe("TestTemplateEditor run view from route", () => {
       />,
     );
 
+  it("shows code-owned cases in the workspace without authoring controls", async () => {
+    activeCaseDoc = { ...goldenCaseDoc, lastMessageRun: undefined } as any;
+    renderGoldenCase({readOnly: true});
+    expect(await screen.findByText("Who am I signed in as?")).toBeVisible();
+    expect(screen.queryByRole("button", {name: /Setup Run/i})).toBeNull();
+    expect(screen.queryByRole("button", {name: /Configure test case evaluators/i})).toBeNull();
+    for (const input of screen.getAllByRole("textbox")) {
+      expect(input).toHaveAttribute("readonly");
+    }
+    expect(updateTestCaseMutationMock).not.toHaveBeenCalled();
+  });
+
   it("keeps unsaved case edits while iteration evidence opens in the drawer", async () => {
     activeCaseDoc = { ...goldenCaseDoc, lastMessageRun: undefined } as any;
     const trial = {
@@ -1030,18 +1043,148 @@ describe("TestTemplateEditor run view from route", () => {
     );
   });
 
-  it("saves judge overrides from the dedicated UVC page", async () => {
+  it("automatically saves judge overrides from the dedicated UVC page", async () => {
     activeCaseDoc = goldenCaseDoc;
     renderGoldenCase({ observeFirst: true, checksPage: true });
     fireEvent.click(
       await screen.findByRole("checkbox", { name: "Goal completion judge" }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Save overrides" }));
     await waitFor(() => expect(updateTestCaseMutationMock).toHaveBeenCalled());
     expect(updateTestCaseMutationMock.mock.calls.at(-1)?.[0]).toMatchObject({
       judgeConfigOverride: { goalCompletion: { enabled: false } },
     });
     expect(screen.queryByTestId("case-workspace")).not.toBeInTheDocument();
+  });
+
+  it("saves rapid evaluator changes in order, including clearing the judge override", async () => {
+    activeCaseDoc = goldenCaseDoc;
+    let finishFirstSave!: () => void;
+    updateTestCaseMutationMock.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishFirstSave = resolve;
+        }),
+    );
+    renderGoldenCase({ observeFirst: true, checksPage: true });
+    const judge = await screen.findByRole("checkbox", {
+      name: "Goal completion judge",
+    });
+    fireEvent.click(judge);
+    await waitFor(() =>
+      expect(updateTestCaseMutationMock).toHaveBeenCalledTimes(1),
+    );
+    fireEvent.click(judge);
+    expect(updateTestCaseMutationMock).toHaveBeenCalledTimes(1);
+    finishFirstSave();
+    await waitFor(() =>
+      expect(updateTestCaseMutationMock).toHaveBeenCalledTimes(2),
+    );
+    expect(updateTestCaseMutationMock.mock.calls[1][0]).toMatchObject({
+      judgeConfigOverride: null,
+    });
+  });
+
+  it("keeps a failed autosave visible and includes it in the next edit", async () => {
+    activeCaseDoc = goldenCaseDoc;
+    updateTestCaseMutationMock.mockRejectedValueOnce(new Error("Offline"));
+    renderGoldenCase({ observeFirst: true, checksPage: true });
+    fireEvent.click(
+      await screen.findByRole("checkbox", { name: "Goal completion judge" }),
+    );
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "could not be saved",
+    );
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Goal completion judge" }),
+    );
+    await waitFor(() =>
+      expect(updateTestCaseMutationMock).toHaveBeenCalledTimes(2),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("status")).not.toBeInTheDocument(),
+    );
+    expect(updateTestCaseMutationMock.mock.calls[1][0]).toMatchObject({
+      judgeConfigOverride: null,
+    });
+  });
+
+  it.each(["switch", "unmount"])(
+    "invalidates a previous case's Retry action on %s",
+    async (transition) => {
+      activeCaseDoc = goldenCaseDoc;
+      const errorToast = vi.spyOn(toast, "error");
+      updateTestCaseMutationMock.mockRejectedValueOnce(new Error("Offline"));
+      function CaseSwitcher() {
+        const [caseId, setCaseId] = useState("case-1");
+        return (
+          <>
+            <button
+              onClick={() => {
+                activeCaseDoc = { ...goldenCaseDoc, _id: "case-2" };
+                setCaseId("case-2");
+              }}
+            >
+              Switch case
+            </button>
+            <TestTemplateEditor
+              simpleCaseEditor
+              observeFirst
+              checksPage
+              suiteIterations={[]}
+              suiteId="suite-1"
+              selectedTestCaseId={caseId}
+              connectedServerNames={new Set(["srv"])}
+              projectId={null}
+              availableModels={[]}
+            />
+          </>
+        );
+      }
+      const view = renderWithProviders(<CaseSwitcher />);
+      try {
+        fireEvent.click(
+          await screen.findByRole("checkbox", {
+            name: "Goal completion judge",
+          }),
+        );
+        await screen.findByText(
+          "Changes could not be saved. Edit again or retry.",
+        );
+        const action = errorToast.mock.calls.at(-1)?.[1]?.action;
+        expect(action).toMatchObject({ label: "Retry" });
+        const retry = (action as { onClick: (event: unknown) => void }).onClick;
+        if (transition === "switch") {
+          fireEvent.click(screen.getByRole("button", { name: "Switch case" }));
+          expect(screen.queryByRole("status")).not.toBeInTheDocument();
+        } else {
+          view.unmount();
+        }
+        await act(async () => {
+          retry({});
+        });
+        expect(updateTestCaseMutationMock).toHaveBeenCalledTimes(1);
+      } finally {
+        errorToast.mockRestore();
+      }
+    },
+  );
+
+  it("does not autosave unfinished assertion fields", async () => {
+    activeCaseDoc = {
+      ...goldenCaseDoc,
+      predicates: {
+        mode: "extend",
+        list: [{ type: "toolLatencyUnder", ms: -1 }],
+      },
+    };
+    renderGoldenCase({ observeFirst: true, checksPage: true });
+    fireEvent.click(
+      await screen.findByRole("checkbox", { name: "Goal completion judge" }),
+    );
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Complete the assertion fields",
+    );
+    expect(updateTestCaseMutationMock).not.toHaveBeenCalled();
   });
 
   it("Run test case saves the latest keystrokes", async () => {
@@ -1075,59 +1218,6 @@ describe("TestTemplateEditor run view from route", () => {
     expect(streamEvalTestCaseMock).not.toHaveBeenCalled();
   });
 
-  it("accepting a no-tool suggestion persists a restriction", async () => {
-    const noToolSteps = [{ id: "s1", kind: "prompt", prompt: "Say hello" }];
-    activeCaseDoc = {
-      ...goldenCaseDoc,
-      steps: noToolSteps,
-      predicates: { mode: "extend", list: [{ type: "noToolErrors" }] },
-      expectedOutput: "A greeting",
-      lastMessageRun: undefined,
-    } as any;
-    const trial = {
-      ...baseIteration,
-      blob: "blob-1",
-      testCaseSnapshot: {
-        ...baseIteration.testCaseSnapshot,
-        steps: noToolSteps,
-        predicates: [{ type: "noToolErrors" }],
-        expectedOutput: "A greeting",
-      },
-    };
-    renderGoldenCase({ observeFirst: true, suiteIterations: [trial] });
-    fireEvent.click((await screen.findAllByTestId("case-run-row"))[0]);
-    fireEvent.click(await screen.findByText("Suggested assertions"));
-    const text = await screen
-      .findByText("Require that no tool is called")
-      .catch(() => {
-        throw new Error(document.body.textContent ?? "no text");
-      });
-    const row = text.closest("li")!;
-    fireEvent.click(
-      within(row).getByRole("button", { name: "Add", exact: true }),
-    );
-    await waitFor(() =>
-      expect(
-        screen.queryByText("Require that no tool is called"),
-      ).not.toBeInTheDocument(),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Close", exact: true }));
-    fireEvent.click(screen.getAllByRole("button", { name: /save/i })[0]!);
-    await waitFor(() => expect(updateTestCaseMutationMock).toHaveBeenCalled());
-    const payload = updateTestCaseMutationMock.mock.calls.at(-1)?.[0];
-    expect(
-      payload.isNegativeTest === true ||
-        payload.predicates?.list?.some(
-          (p: any) => p.type === "onlyToolsCalled" && p.toolNames.length === 0,
-        ) ||
-        payload.steps.some(
-          (s: any) =>
-            s.assertion?.type === "onlyToolsCalled" &&
-            s.assertion.toolNames.length === 0,
-        ),
-    ).toBe(true);
-  });
-
   it("mounts the FORM by default — observe-first is opt-in", async () => {
     activeCaseDoc = goldenCaseDoc;
     renderGoldenCase();
@@ -1152,6 +1242,40 @@ describe("TestTemplateEditor run view from route", () => {
       screen.queryByTestId("case-pass-criteria-toggle"),
     ).not.toBeInTheDocument();
     expect(screen.getAllByTestId("spine-action-row").length).toBeGreaterThan(0);
+    const defaultChecks = screen.getByRole("button", {
+      name: "Configure test case evaluators",
+    });
+    expect(screen.getByTestId("case-spine")).not.toContainElement(
+      defaultChecks,
+    );
+    expect(defaultChecks.parentElement).toContainElement(
+      screen.getByRole("button", { name: "Setup Run" }),
+    );
+  });
+
+  it("deletes the open case from the header, after confirming", async () => {
+    activeCaseDoc = goldenCaseDoc;
+    const onDeleteCase = vi.fn().mockResolvedValue(undefined);
+    renderGoldenCase({ observeFirst: true, onDeleteCase });
+
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("button", { name: "Delete test case" }),
+    );
+    await user.click(screen.getByTestId("case-header-delete-confirm"));
+
+    await waitFor(() => {
+      expect(onDeleteCase).toHaveBeenCalledWith("case-1");
+    });
+  });
+
+  it("offers no header delete when the surface passes no handler", async () => {
+    activeCaseDoc = goldenCaseDoc;
+    renderGoldenCase({ observeFirst: true });
+    await waitFor(() => {
+      expect(screen.getByTestId("case-spine")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("case-header-delete")).not.toBeInTheDocument();
   });
 
   it("shows a step-authored case in the workspace and leaves its flag alone", async () => {

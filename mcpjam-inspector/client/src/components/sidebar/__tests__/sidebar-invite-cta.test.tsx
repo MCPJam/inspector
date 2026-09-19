@@ -43,10 +43,24 @@ vi.mock("@/stores/preferences/preferences-provider", () => ({
     selector({ themeMode: "light" }),
 }));
 
+// Mutable so the update-pill tests below can drive the status without a
+// second copy of this file's mock stack.
+const mockUpdateState: {
+  status: { kind: string; [key: string]: unknown };
+  restartAndInstall: ReturnType<typeof vi.fn>;
+  downloadManually: ReturnType<typeof vi.fn>;
+} = {
+  status: { kind: "idle" },
+  restartAndInstall: vi.fn(),
+  downloadManually: vi.fn(),
+};
+
 vi.mock("@/hooks/useUpdateNotification", () => ({
   useUpdateNotification: () => ({
-    status: { kind: "idle" },
-    restartAndInstall: vi.fn(),
+    status: mockUpdateState.status,
+    restartRequested: false,
+    restartAndInstall: mockUpdateState.restartAndInstall,
+    downloadManually: mockUpdateState.downloadManually,
     simulateUpdate: vi.fn(),
   }),
 }));
@@ -447,5 +461,47 @@ describe("MCPSidebar — one left margin down the rail", () => {
     // The collapse control's slot is still reserved, so a wider logo can never
     // slide under its hit target.
     expect(button?.className).toContain("pr-10");
+  });
+});
+
+describe("sidebar update pill", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockUpdateState.status = { kind: "idle" };
+    mockUseConvexAuth.mockReturnValue({
+      isAuthenticated: true,
+      isLoading: false,
+    });
+    mockUseAuth.mockReturnValue({
+      user: { id: "user-1", email: "sophie@mcpjam.com" },
+      isLoading: false,
+    });
+  });
+
+  it("offers an in-app install while a download is genuinely running", () => {
+    mockUpdateState.status = { kind: "pending", installRequested: false };
+
+    renderSidebar();
+
+    fireEvent.click(screen.getByRole("button", { name: "Update" }));
+
+    expect(mockUpdateState.restartAndInstall).toHaveBeenCalledTimes(1);
+    expect(mockUpdateState.downloadManually).not.toHaveBeenCalled();
+  });
+
+  it("sends the user to the releases page once auto-update has failed", () => {
+    // The fix for the reported bug: after the main process gives up on the
+    // download the pill stops pretending an install is one click away. It
+    // used to keep saying "Update" and do nothing — 17 clicks in 124
+    // seconds, no error, no progress.
+    mockUpdateState.status = { kind: "manual", version: "3.5.2" };
+
+    renderSidebar();
+
+    fireEvent.click(screen.getByRole("button", { name: /Download update/ }));
+
+    expect(mockUpdateState.downloadManually).toHaveBeenCalledTimes(1);
+    expect(mockUpdateState.restartAndInstall).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Update" })).toBeNull();
   });
 });

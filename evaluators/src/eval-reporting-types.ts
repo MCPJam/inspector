@@ -4,7 +4,12 @@ export type EvalExpectedToolCall = {
 };
 
 export type EvalTraceSpanCategory =
-  "step" | "llm" | "tool" | "error" | "connection" | "discovery";
+  | "step"
+  | "llm"
+  | "tool"
+  | "error"
+  | "connection"
+  | "discovery";
 export type EvalTraceSpanStatus = "ok" | "error";
 
 export type EvalTraceSpanInput = {
@@ -51,6 +56,8 @@ export type EvalTraceInput =
   | string
   | Array<{ role: string; content: unknown }>
   | {
+      recordedContext?: unknown;
+      widgetSnapshots?: unknown[];
       messages?: Array<{ role: string; content: unknown }>;
       spans?: EvalTraceSpanInput[];
       prompts?: unknown[];

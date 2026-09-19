@@ -50,6 +50,7 @@ jobs:
       inspector_version: ${{ steps.plan.outputs.inspector_version }}
       release_tag: ${{ steps.plan.outputs.release_tag }}
       scope: ${{ steps.plan.outputs.scope }}
+      evals_action_changed: ${{ steps.evals_action.outputs.changed }}
     steps:
       - name: Enforce main branch
         run: |
@@ -62,6 +63,25 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      # The evals GitHub Action ships on its own tags, not on npm, so it has no
+      # changeset to read. Compare the folder against what `evals-v1` already
+      # points at instead. README-only edits are excluded deliberately: a live
+      # smoke spends eval credits, and prose does not change what users run.
+      - name: Detect evals action changes since evals-v1
+        id: evals_action
+        run: |
+          git fetch origin '+refs/tags/evals-v1:refs/tags/evals-v1' 2>/dev/null || true
+          if ! git rev-parse -q --verify 'refs/tags/evals-v1^{commit}' >/dev/null; then
+            echo "evals-v1 is unpublished; this release would be its first."
+            changed=true
+          elif git diff --quiet evals-v1 HEAD -- actions/evals ':(exclude)actions/evals/README.md'; then
+            changed=false
+          else
+            changed=true
+          fi
+          echo "actions/evals changed since evals-v1: $changed"
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -375,6 +395,94 @@ jobs:
       # unsupported: artifacts that exist and cannot be installed.
       enforce_committed_digests: true
     secrets: inherit
+
+  # The evals GitHub Action's release, independent of npm and the app deploys:
+  # it ships as a git tag other repos point `uses:` at. Both jobs sit out every
+  # release that did not touch `actions/evals`, so the usual release is
+  # unchanged. Needs only `preflight` and the smoke — `finalize` and
+  # `publish-packages` are skipped for scopes that publish nothing, and the
+  # action does not depend on either.
+  evals-action-smoke:
+    needs: preflight
+    # The repo variables are what make the live smoke possible. While they are
+    # unset, the smoke SKIPS instead of failing the whole release. Set both
+    # variables to turn the gate back on.
+    if: >-
+      needs.preflight.outputs.evals_action_changed == 'true' &&
+      vars.EVALS_SMOKE_PROJECT != '' && vars.EVALS_SMOKE_SUITE != ''
+    uses: ./.github/workflows/evals-action-smoke.yml
+    with:
+      project: ${{ vars.EVALS_SMOKE_PROJECT }}
+      suite: ${{ vars.EVALS_SMOKE_SUITE }}
+    secrets: inherit
+
+  publish-evals-action:
+    needs: [preflight, evals-action-smoke]
+    # The smoke is a GATE, not a dependency: a SKIPPED smoke (its repo
+    # variables are unset) still lets the tag ship, while a FAILED smoke still
+    # holds it back. Without `!cancelled()` a skipped `needs` would skip this
+    # job along with it — but that also stops a FAILED `needs` from skipping
+    # it, so `preflight` is re-asserted by hand. It must be: the change
+    # detection runs before preflight's green-CI gate, so a preflight that
+    # fails later still reports `evals_action_changed: true`.
+    if: >-
+      !cancelled() &&
+      needs.preflight.result == 'success' &&
+      needs.preflight.outputs.evals_action_changed == 'true' &&
+      needs.evals-action-smoke.result != 'failure'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: evals-action-release
+      cancel-in-progress: false
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # The token `finalize` pushes refs with.
+          token: ${{ secrets.RELEASE_PUSH_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Choose the version tag
+        id: tag
+        run: |
+          git fetch --tags --force origin
+          version_tag="$(node actions/evals/release-tags.mjs "$GITHUB_SHA")"
+          echo "version_tag=$version_tag" >> "$GITHUB_OUTPUT"
+
+      # Tags the commit the smoke actually ran against, NOT the version commit
+      # `finalize` pushes later: that commit has never been smoke tested, and
+      # users pinned to `evals-v1` run whatever this tag points at.
+      - name: Publish the version tag, then move evals-v1
+        env:
+          VERSION_TAG: ${{ steps.tag.outputs.version_tag }}
+        run: |
+          # Never move `evals-v1` backwards. The concurrency group stops two
+          # publishers running at once, but not two releases FINISHING out of
+          # order: one dispatched at an older commit could otherwise overwrite
+          # a newer release and hand every pinned user code that was already
+          # superseded.
+          if git rev-parse -q --verify 'refs/tags/evals-v1^{commit}' >/dev/null &&
+             ! git merge-base --is-ancestor evals-v1 "$GITHUB_SHA"; then
+            echo "::error::evals-v1 points at $(git rev-parse evals-v1), which is not an ancestor of $GITHUB_SHA. A newer release already published; re-run this one from the current main."
+            exit 1
+          fi
+          # Immutable tag first. A second run racing this one fails here, on a
+          # tag that already exists, before it can move the floating tag.
+          if git rev-parse -q --verify "refs/tags/$VERSION_TAG" >/dev/null; then
+            echo "$VERSION_TAG already points at this commit; moving evals-v1 to match."
+          else
+            git tag "$VERSION_TAG" "$GITHUB_SHA"
+            git push origin "refs/tags/$VERSION_TAG"
+          fi
+          git tag -f evals-v1 "$GITHUB_SHA"
+          git push --force origin refs/tags/evals-v1
+          echo "Published $VERSION_TAG and moved evals-v1 to $GITHUB_SHA." >> "$GITHUB_STEP_SUMMARY"
 
   artifact-gate:
     needs:

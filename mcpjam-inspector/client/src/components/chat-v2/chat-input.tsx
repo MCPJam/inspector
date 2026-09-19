@@ -1500,6 +1500,11 @@ export function ChatInput({
 
   return (
     <>
+      {creditBalance?.platformPaidFallback && (
+        <p role="status" className="px-2 py-1 text-sm text-muted-foreground">
+          MCPJam&apos;s shared free allowance is unavailable; this chat is using your credits.
+        </p>
+      )}
       <form
         ref={formRef}
         className={cn("w-full", className)}
@@ -2004,6 +2009,7 @@ export function ChatInput({
               ) : null}
               {!minimalMode && (
                 <ModelSelector
+                  platformPaidFallback={creditBalance?.platformPaidFallback}
                   currentModel={currentModel}
                   availableModels={availableModels}
                   onModelChange={onModelChange}

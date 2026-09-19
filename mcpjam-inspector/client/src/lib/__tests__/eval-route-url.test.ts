@@ -7,12 +7,28 @@ import {
 import { parseEvalRouteFromUrl } from "../eval-route-url";
 
 describe("eval-route-url", () => {
+  it("preserves the originating case checks when opening suite evaluators", () => {
+    const route = {
+      type: "suite-edit" as const,
+      suiteId: "suite-1",
+      fromCaseChecks: "case-1",
+    };
+    const [path, search] = buildEvaluatePath(route).split("?");
+    expect(parseEvalRouteFromUrl("/evaluate", path, `?${search}`)).toEqual(
+      route,
+    );
+  });
   it("roundtrips the case UVC checks page", () => {
-    const route = { type: "test-edit" as const, suiteId: "suite-1", testId: "case-1", checks: true };
+    const route = {
+      type: "test-edit" as const,
+      suiteId: "suite-1",
+      testId: "case-1",
+      checks: true,
+    };
     const url = buildEvalsPath(route);
     const [path, search] = url.split("?");
     expect(url).toContain("checks=1");
-    expect(parseEvalRouteFromUrl("/evals", path, `?${search}`)).toEqual(route);
+    expect(parseEvalRouteFromUrl("/evaluate", path, `?${search}`)).toEqual(route);
   });
   it("parses eval list and create routes", () => {
     expect(parseEvalRouteFromUrl("/evals", "/evals")).toEqual({
@@ -33,7 +49,7 @@ describe("eval-route-url", () => {
       view: "runs",
     });
     expect(
-      parseEvalRouteFromUrl("/evals", "/evals/suite/s_123", "?view=runs")
+      parseEvalRouteFromUrl("/evals", "/evals/suite/s_123", "?view=runs"),
     ).toEqual({
       type: "suite-overview",
       suiteId: "s_123",
@@ -43,8 +59,8 @@ describe("eval-route-url", () => {
       parseEvalRouteFromUrl(
         "/evals",
         "/evals/suite/s_123",
-        "?view=test-cases&fromCommit=abc123"
-      )
+        "?view=test-cases&fromCommit=abc123",
+      ),
     ).toEqual({
       type: "suite-overview",
       suiteId: "s_123",
@@ -52,7 +68,7 @@ describe("eval-route-url", () => {
       fromCommit: "abc123",
     });
     expect(
-      parseEvalRouteFromUrl("/evals", "/evals/suite/s_123", "?view=cross-host")
+      parseEvalRouteFromUrl("/evals", "/evals/suite/s_123", "?view=cross-host"),
     ).toEqual({
       type: "suite-overview",
       suiteId: "s_123",
@@ -68,14 +84,14 @@ describe("eval-route-url", () => {
         type: "suite-overview",
         suiteId: "s_abc",
         view: "executions",
-      })
+      }),
     ).toBe("/evals/suite/s_abc?view=executions");
     expect(
       buildEvalsPath({
         type: "suite-overview",
         suiteId: "s_abc",
         fromCommit: "manual-xyz",
-      })
+      }),
     ).toBe("/evals/suite/s_abc?fromCommit=manual-xyz");
   });
 
@@ -84,8 +100,8 @@ describe("eval-route-url", () => {
       parseEvalRouteFromUrl(
         "/evals",
         "/evals/suite/s_123/runs/r_456",
-        "?iteration=i_1&insights=1"
-      )
+        "?iteration=i_1&insights=1",
+      ),
     ).toEqual({
       type: "run-detail",
       suiteId: "s_123",
@@ -97,8 +113,8 @@ describe("eval-route-url", () => {
       parseEvalRouteFromUrl(
         "/evals",
         "/evals/suite/s_123/runs/r_456",
-        "?compareTo=r_123"
-      )
+        "?compareTo=r_123",
+      ),
     ).toEqual({
       type: "run-detail",
       suiteId: "s_123",
@@ -130,9 +146,9 @@ describe("eval-route-url", () => {
         iteration: "i_3",
         insightsFocus: true,
         compareToRunId: "r_base",
-      })
+      }),
     ).toBe(
-      "/evals/suite/s_abc/runs/r_def?iteration=i_3&insights=1&compareTo=r_base"
+      "/evals/suite/s_abc/runs/r_def?iteration=i_3&insights=1&compareTo=r_base",
     );
   });
 
@@ -141,8 +157,8 @@ describe("eval-route-url", () => {
       parseEvalRouteFromUrl(
         "/evals",
         "/evals/suite/s_123/test/t_789",
-        "?iteration=i_2"
-      )
+        "?iteration=i_2",
+      ),
     ).toEqual({
       type: "test-detail",
       suiteId: "s_123",
@@ -150,7 +166,7 @@ describe("eval-route-url", () => {
       iteration: "i_2",
     });
     expect(
-      parseEvalRouteFromUrl("/evals", "/evals/suite/s_123/test/t_789/edit")
+      parseEvalRouteFromUrl("/evals", "/evals/suite/s_123/test/t_789/edit"),
     ).toEqual({
       type: "test-edit",
       suiteId: "s_123",
@@ -160,8 +176,8 @@ describe("eval-route-url", () => {
       parseEvalRouteFromUrl(
         "/evals",
         "/evals/suite/s_123/test/t_789/edit",
-        "?compare=1"
-      )
+        "?compare=1",
+      ),
     ).toEqual({
       type: "test-edit",
       suiteId: "s_123",
@@ -172,8 +188,8 @@ describe("eval-route-url", () => {
       parseEvalRouteFromUrl(
         "/evals",
         "/evals/suite/s_123/test/t_789/edit",
-        "?compare=true&iteration=i_42"
-      )
+        "?compare=true&iteration=i_42",
+      ),
     ).toEqual({
       type: "test-edit",
       suiteId: "s_123",
@@ -195,8 +211,8 @@ describe("eval-route-url", () => {
         testId: "t_def",
         openCompare: true,
         iteration: "i_42",
-      })
-    ).toBe("/evals/suite/s_abc/test/t_def/edit?compare=1&iteration=i_42");
+      }),
+    ).toBe("/evaluate/suite/s_abc/test/t_def/edit?compare=1&iteration=i_42");
     expect(
       buildEvaluatePath({
         type: "test-edit",
@@ -229,8 +245,8 @@ describe("eval-route-url", () => {
       parseEvalRouteFromUrl(
         "/evals/runs",
         "/evals/runs/commit/abc1234567890",
-        "?suite=s_abc&iteration=i_4"
-      )
+        "?suite=s_abc&iteration=i_4",
+      ),
     ).toEqual({
       type: "commit-detail",
       commitSha: "abc1234567890",
@@ -246,7 +262,7 @@ describe("eval-route-url", () => {
         commitSha: "abc1234567890",
         suite: "s_abc",
         iteration: "i_4",
-      })
+      }),
     ).toBe("/evals/runs/commit/abc1234567890?suite=s_abc&iteration=i_4");
     expect(
       buildEvalsRunsPath({
@@ -254,7 +270,7 @@ describe("eval-route-url", () => {
         suiteId: "s_abc",
         view: "test-cases",
         fromCommit: "sha9abcdef",
-      })
+      }),
     ).toBe("/evals/runs/suite/s_abc?view=test-cases&fromCommit=sha9abcdef");
   });
 
@@ -263,8 +279,8 @@ describe("eval-route-url", () => {
       parseEvalRouteFromUrl(
         "/evals/runs",
         "/evals/runs/suite/s_123/test/t_789/edit",
-        "?compare=1"
-      )
+        "?compare=1",
+      ),
     ).toEqual({
       type: "test-edit",
       suiteId: "s_123",
@@ -275,7 +291,7 @@ describe("eval-route-url", () => {
 
   it("returns null outside the requested prefix", () => {
     expect(
-      parseEvalRouteFromUrl("/evals/runs", "/evals/suite/s_123")
+      parseEvalRouteFromUrl("/evals/runs", "/evals/suite/s_123"),
     ).toBeNull();
   });
 
@@ -285,17 +301,17 @@ describe("eval-route-url", () => {
     // letting the Runs route match.
     expect(parseEvalRouteFromUrl("/evals", "/evals/runs")).toBeNull();
     expect(
-      parseEvalRouteFromUrl("/evals", "/evals/runs/suite/s_123")
+      parseEvalRouteFromUrl("/evals", "/evals/runs/suite/s_123"),
     ).toBeNull();
     expect(
-      parseEvalRouteFromUrl("/evals", "/evals/runs/commit/abc123")
+      parseEvalRouteFromUrl("/evals", "/evals/runs/commit/abc123"),
     ).toBeNull();
   });
 
   it("degrades a commit route built in Suites mode to that mode's list", () => {
     // Commits are a Runs-only lens; Suites has no cross-suite SHA view.
     expect(
-      buildEvalsPath({ type: "commit-detail", commitSha: "abc1234567890" })
+      buildEvalsPath({ type: "commit-detail", commitSha: "abc1234567890" }),
     ).toBe("/evals");
   });
 
@@ -316,19 +332,16 @@ describe("eval-route-url", () => {
       type: "create",
     });
     expect(
-      parseEvalRouteFromUrl(
-        "/evaluate",
-        "/evaluate/eval-server/srv-a",
-      ),
+      parseEvalRouteFromUrl("/evaluate", "/evaluate/eval-server/srv-a"),
     ).toEqual({
       type: "eval-server",
       serverId: "srv-a",
     });
+    expect(parseEvalRouteFromUrl("/evals", "/evals/eval-server/srv-a")).toEqual(
+      { type: "list" },
+    );
     expect(
-      parseEvalRouteFromUrl("/evals", "/evals/eval-server/srv-a"),
-    ).toEqual({ type: "list" });
-    expect(
-      parseEvalRouteFromUrl("/evaluate", "/evaluate/suite/s_123/runs/r_9")
+      parseEvalRouteFromUrl("/evaluate", "/evaluate/suite/s_123/runs/r_9"),
     ).toEqual({
       type: "run-detail",
       suiteId: "s_123",
@@ -341,18 +354,18 @@ describe("eval-route-url", () => {
   it("builds /evaluate paths and degrades its commit route to the list", () => {
     expect(buildEvaluatePath({ type: "list" })).toBe("/evaluate");
     expect(buildEvaluatePath({ type: "create" })).toBe("/evaluate/create");
-    expect(
-      buildEvaluatePath({ type: "eval-server", serverId: "srv-a" }),
-    ).toBe("/evaluate/eval-server/srv-a");
+    expect(buildEvaluatePath({ type: "eval-server", serverId: "srv-a" })).toBe(
+      "/evaluate/eval-server/srv-a",
+    );
     expect(buildEvalsPath({ type: "eval-server", serverId: "srv-a" })).toBe(
       "/evals",
     );
     expect(
-      buildEvaluatePath({ type: "suite-overview", suiteId: "s_123" })
+      buildEvaluatePath({ type: "suite-overview", suiteId: "s_123" }),
     ).toBe("/evaluate/suite/s_123");
     // Commits are a Runs-mode lens; Evaluate (New) has no cross-suite SHA view.
     expect(
-      buildEvaluatePath({ type: "commit-detail", commitSha: "abc1234567890" })
+      buildEvaluatePath({ type: "commit-detail", commitSha: "abc1234567890" }),
     ).toBe("/evaluate");
   });
 
@@ -382,7 +395,7 @@ describe("eval-route-url", () => {
 
   it("decodes path params", () => {
     expect(
-      parseEvalRouteFromUrl("/evals", "/evals/suite/suite%20one/test/case%202")
+      parseEvalRouteFromUrl("/evals", "/evals/suite/suite%20one/test/case%202"),
     ).toEqual({
       type: "test-detail",
       suiteId: "suite one",

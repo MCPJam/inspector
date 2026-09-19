@@ -19,11 +19,15 @@ import type {
 } from "./eval-reporting-types.js";
 import { EvalReportingError } from "./errors.js";
 import { buildAppPermalink } from "./platform/permalinks.js";
+import { writeGithubActionReceipt } from "./github-action-receipt.js";
 import {
   isEvalRunVerdict,
   evalVerdictDecisionSchema,
 } from "./contract/verdict-policy.js";
-import { resolveServerReplayConfigs } from "./server-replay-configs.js";
+import {
+  resolveServerNames,
+  resolveServerReplayConfigs,
+} from "./server-replay-configs.js";
 import { addBreadcrumb, captureEvalReportingFailure } from "./sentry.js";
 import {
   buildSdkEvalsWireHostConfig,
@@ -43,6 +47,24 @@ const DEFAULT_RETRY_DELAYS_MS = [250, 750, 1750];
 const CHUNK_SIZE_LIMIT = 200;
 const ONE_SHOT_RESULT_LIMIT = 200;
 const CHUNK_TARGET_BYTES = 1024 * 1024;
+
+/**
+ * Headroom left when weighing one result against {@link CHUNK_TARGET_BYTES}:
+ * the ids and framing a result picks up after the widget-offload decision, plus
+ * a margin so the decision is never a byte away from wrong.
+ */
+const RESULT_ENVELOPE_SLACK = 4096;
+
+/** Hosts that never leave the machine, so plain http to them is not on a wire. */
+function isLoopbackHostname(hostname: string): boolean {
+  const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  return (
+    host === "localhost" ||
+    host === "::1" ||
+    host === "0.0.0.0" ||
+    /^127(?:\.\d{1,3}){3}$/.test(host)
+  );
+}
 
 export const DEFAULT_MCPJAM_BASE_URL = "https://app.mcpjam.com";
 
@@ -111,8 +133,8 @@ export function projectRunVerdict(
     result: isEvalRunVerdict(run.result)
       ? run.result
       : run.result === "pending"
-      ? "pending"
-      : "failed",
+        ? "pending"
+        : "failed",
     ...(run.verdictPolicyVersion !== undefined
       ? {
           verdictPolicyVersion:
@@ -206,10 +228,7 @@ export function __resetPrintedRunUrls(): void {
  * project, and then the right suite. One line makes the upload's destination
  * addressable.
  *
- * The route is the UNFLAGGED `/evals/suite/:suiteId/runs/:runId`, not
- * `/ci-evals/…`: the latter sits behind the `evaluate-ci` flag and its
- * redirect drops the run path, so a link there lands flag-less readers on a
- * bare list instead of their run.
+ * Links open the exact uploaded run in the public Evaluate experience.
  *
  * `?project=` prefers the id the BACKEND resolved, falling back to a
  * caller-configured project and omitting the param entirely for the
@@ -254,7 +273,7 @@ export function buildRunUrl(
         // at all. Built through `URL` rather than concatenation so it stays
         // encoded and stays out of the string-building this module retired.
         new URL(
-          `/evals/suite/${encodeURIComponent(
+          `/evaluate/suite/${encodeURIComponent(
             suiteId
           )}/runs/${encodeURIComponent(runId)}`,
           appOrigin
@@ -678,8 +697,14 @@ function validateReportingResponse(
     if (!id("uploadUrl")) invalid();
     try {
       const url = new URL(body.uploadUrl as string);
+      // A widget snapshot is a whole built app, and this URL is now reached
+      // automatically, so it must not carry one in cleartext across a network.
+      // Loopback keeps `npx convex dev` and a self-hosted deployment working,
+      // where the upload URL is http://127.0.0.1 by construction.
+      const cleartextIsLocal =
+        url.protocol === "http:" && isLoopbackHostname(url.hostname);
       if (
-        !["https:", "http:"].includes(url.protocol) ||
+        (url.protocol !== "https:" && !cleartextIsLocal) ||
         url.username ||
         url.password
       )
@@ -789,8 +814,8 @@ async function requestWithRetry<T>(
       typeof value.error === "string"
         ? value.error
         : typeof value.message === "string"
-        ? value.message
-        : "Reporting request was rejected"
+          ? value.message
+          : "Reporting request was rejected"
     );
   try {
     return await reportingRequest(
@@ -1014,6 +1039,56 @@ async function uploadWidgetSnapshots(
   return rewrittenResults;
 }
 
+/**
+ * Send widget HTML to blob storage when leaving it inline would make a single
+ * result too large to upload. Only the results that do not fit are rewritten —
+ * every other snapshot stays inline, in the one request it always did.
+ *
+ * A result is weighed inside the request that will actually carry it: the
+ * reporting envelope around it, plus room for the per-result fields added after
+ * this point (`externalIterationId`), so a result that only just fits here does
+ * not become one that only just fails on the wire.
+ */
+async function offloadOversizedWidgetSnapshots(
+  config: RuntimeConfig,
+  input: ReportEvalResultsInput,
+  results: EvalResultInput[]
+): Promise<EvalResultInput[]> {
+  const envelopeBytes = getByteLength(
+    JSON.stringify({ ...buildReportingBody(input), results: [] })
+  );
+  const budget = CHUNK_TARGET_BYTES - envelopeBytes - RESULT_ENVELOPE_SLACK;
+  const oversized = new Set<number>();
+  results.forEach((result, index) => {
+    if (
+      Array.isArray(result.widgetSnapshots) &&
+      result.widgetSnapshots.length > 0 &&
+      getByteLength(JSON.stringify(result)) > budget
+    ) {
+      oversized.add(index);
+    }
+  });
+  if (oversized.size === 0) {
+    return results;
+  }
+  const rewritten = await uploadWidgetSnapshots(
+    config,
+    results.filter((_result, index) => oversized.has(index))
+  );
+  // Put each rewritten result back at its own index so order is unchanged.
+  // A short list would silently reinstate the oversized result this whole
+  // function exists to remove, so treat it as the contract break it is.
+  if (rewritten.length !== oversized.size) {
+    throw new ReportingProtocolError(
+      "Widget snapshot upload returned a different number of results"
+    );
+  }
+  const queue = [...rewritten];
+  return results.map((result, index) =>
+    oversized.has(index) ? queue.shift()! : result
+  );
+}
+
 function shouldUseOneShotUpload(
   input: ReportEvalResultsInput,
   config: RuntimeConfig
@@ -1125,11 +1200,23 @@ async function reportEvalResultsInternal(
   const config = createRuntimeConfig(input);
   await requireReportingCapabilities(config, input);
   const terminalStatus = await resolveTerminationStatus(config, input);
-  // Backend stores inline widget evidence after content hashing and authorization.
-  // Pre-uploading fresh blob IDs would change identical retry payloads.
-  const uploadedResults = input.results;
+  // Backend stores inline widget evidence after content hashing and
+  // authorization, and inline keeps a retry resending identical bytes — so that
+  // stays the default. But widget HTML is a whole built app, and two tool calls
+  // of one can push a single result past the 1MB request-body limit, which
+  // chunking cannot fix because it only splits BETWEEN results. Those offload
+  // to blob storage instead, once, before the retry loop below.
+  const uploadedResults = await offloadOversizedWidgetSnapshots(
+    config,
+    input,
+    input.results
+  );
   const externalRunId = input.externalRunId ?? generateExternalRunId();
   const serverReplayConfigs = resolveServerReplayConfigs(input);
+  input = {
+    ...input,
+    serverNames: resolveServerNames(input, serverReplayConfigs),
+  };
   const resultsWithIterationIds = resultsWithFrozenPolicySpelling(
     withExternalIterationIds(uploadedResults, externalRunId)
   );
@@ -1340,18 +1427,22 @@ function resultsWithFrozenPolicySpelling(
   let changed = false;
   const out = results.map((result) => {
     const metadata = result.metadata as
-      | { evaluationConfig?: { definitions?: unknown } }
-      | undefined;
+      { evaluationConfig?: { definitions?: unknown } } | undefined;
     const definitions = metadata?.evaluationConfig?.definitions;
     if (!Array.isArray(definitions)) return result;
     // `definitionsForDeployment` with no advertised capability IS the freeze:
     // one function decides the legacy spelling for both paths, so they cannot
     // drift apart.
-    const frozen = definitionsForDeployment(
-      definitions as { role: ScorerRole }[],
-      undefined
+    const frozen = definitions.map((definition) =>
+      definition == null
+        ? definition
+        : definitionsForDeployment(
+            [definition as { role: ScorerRole }],
+            undefined
+          )[0]
     );
-    if (frozen === definitions) return result;
+    if (frozen.every((definition, index) => definition === definitions[index]))
+      return result;
     changed = true;
     return {
       ...result,
@@ -1378,9 +1469,7 @@ export async function requireReportingCapabilities(
   // resolver caches a failed probe as `null` and only rethrows an explicit
   // upload cancellation.
   const capabilities = (await resolveTargetCapabilities(config)) as
-    | { evalsRunMetadata?: number }
-    | null
-    | undefined;
+    { evalsRunMetadata?: number } | null | undefined;
   if (capabilities?.evalsRunMetadata === 1) return;
   omitRunMetadata(input);
   addReportingWarning(config, {
@@ -1402,7 +1491,9 @@ async function finishReportedRun(
       input.externalRunId!,
       input.runEvaluations
     );
-  return attachReportingWarnings(config, report);
+  const completed = attachReportingWarnings(config, report);
+  await writeGithubActionReceipt(config, input, completed);
+  return completed;
 }
 
 export async function reportCaseRunEvaluations(

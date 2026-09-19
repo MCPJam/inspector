@@ -305,7 +305,7 @@ describe("the eval vocabulary block", () => {
       assertionKinds: EVAL_VOCABULARY_CAPABILITY.assertionKinds,
       fields: {
         assertions: ["checks", "predicates"],
-        defaultAssertions: ["defaultPredicates"],
+        defaultAssertions: ["defaultPredicates", "checks"],
         iterations: ["repetitions"],
         legacyIterations: ["runs"],
       },

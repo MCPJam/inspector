@@ -79,7 +79,7 @@ export function decisionVerdictLabel(verdict: EvalRunDecisionVerdict): string {
   return DECISION_VERDICT_BADGE_LABELS[verdict];
 }
 
-/** "verdict policy v2" / "legacy percent-threshold run" / "no verdict source". */
+/** "per-case grading" / "suite accuracy threshold" / "no verdict source". */
 export function decisionVerdictSourceLabel(
   summary: EvalRunDecisionSummary,
 ): string {

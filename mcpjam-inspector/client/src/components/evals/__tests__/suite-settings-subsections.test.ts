@@ -14,23 +14,33 @@ describe("getSubsectionsForGroup", () => {
     showDelete: true,
   };
 
-  it("lists quality gate and the scorers table", () => {
+  it("lists one entry per grading row, in the order the rows render", () => {
+    // The rail used to read "Quality gate, Assertions" while the page held the
+    // criterion, the count, the gate and the evaluators — three of the four
+    // had no jump link, and the one link that existed named the wrong one.
     const subs = getSubsectionsForGroup("grading", base);
     expect(subs.map((sub) => sub.label)).toEqual([
+      "Pass criteria",
+      "Iterations",
       "Quality gate",
-      "Assertions",
+      "Evaluators",
     ]);
     expect(subs.some((sub) => sub.target.type === "stage")).toBe(false);
   });
 
-  it("keeps the same rail on a legacy suite", () => {
+  it("keeps the same rail whichever criterion decides the suite", () => {
+    // The SCOPE changes which control a row shows, never which rows exist: a
+    // rail that gained and lost entries would move the jump links under a
+    // reader depending on a fact about their suite they did not choose.
     const subs = getSubsectionsForGroup("grading", {
       ...base,
       isVerdictPolicyV2: false,
     });
     expect(subs.map((sub) => sub.label)).toEqual([
+      "Pass criteria",
+      "Iterations",
       "Quality gate",
-      "Assertions",
+      "Evaluators",
     ]);
   });
 
@@ -42,18 +52,45 @@ describe("getSubsectionsForGroup", () => {
     }
   });
 
-  it("routes quality-gate and nested validity keys to the policy subsection", () => {
-    for (const key of [
-      "validity",
-      "qualityGateBaseline",
-      "qualityGateAllowedDrop",
-      "qualityGateNoDeterministicRegressions",
-      "qualityGateMaximumP95LatencyIncreaseMs",
-      "qualityGateNoGatingScoreErrors",
-    ] as const) {
-      expect(subsectionForSettingKey(key, "grading", base)?.id, key).toBe(
-        "policy",
-      );
+  it("labels the checks rail entry with the section's own name", () => {
+    // History worth keeping: #5085 renamed the section heading and left the
+    // manifest's `checks` row saying "Assertions", so this rail link named one
+    // thing and scrolled to another. Nothing caught it, because the rail read
+    // the manifest and this test asserted the manifest — the two agreed with
+    // each other while both disagreed with the page.
+    //
+    // Both labels now read "Evaluators", so
+    // the manifest is trustworthy here again and the literal below is the
+    // section's real heading rather than a second opinion about it.
+    const subs = getSubsectionsForGroup("grading", base);
+    const checks = subs.find((sub) => sub.target.type === "passOrFailChecks");
+    expect(checks?.label).toBe("Evaluators");
+  });
+
+  it("routes every grading key to the ONE row that owns it", () => {
+    // The partition is the property: each key belongs to exactly one row, so
+    // a deep link lands on the heading that actually holds the field. The
+    // quality-gate conditions used to route to `policy` — the criterion row —
+    // because one row held both, and `validity` needed a hand-written line
+    // here to reach the same place.
+    const owner: Record<string, string> = {
+      minimumAccuracy: "policy",
+      passThreshold: "policy",
+      validity: "policy",
+      minimumIterations: "iterations",
+      repetitions: "iterations",
+      // The baseline keys are no longer on the page, so they own nothing.
+      qualityGateNoGatingScoreErrors: "qualityGate",
+    };
+    for (const [key, expected] of Object.entries(owner)) {
+      expect(
+        subsectionForSettingKey(
+          key as Parameters<typeof subsectionForSettingKey>[0],
+          "grading",
+          base,
+        )?.id,
+        key,
+      ).toBe(expected);
     }
   });
 

@@ -22,6 +22,7 @@ import {
   formatRunHistoryDate,
   formatRunHistoryDateRange,
   formatRunHistoryMetric,
+  sumToolCalls,
   type SuiteRunHistoryRow,
 } from "../evaluate/suite-detail-model";
 
@@ -81,11 +82,9 @@ export function projectRunRollup(
     total,
     passed,
     passRate: total > 0 ? Math.round((passed / total) * 100) : null,
-    toolCalls:
-      iterations.reduce(
-        (sum, iteration) => sum + (iteration.actualToolCalls?.length ?? 0),
-        0,
-      ) || null,
+    // A launch that made no tool calls made none; only a launch whose
+    // iterations recorded no counter at all has nothing to report.
+    toolCalls: sumToolCalls(iterations),
   };
 }
 

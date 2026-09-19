@@ -36,6 +36,8 @@ export function ClientSelectionSync({ projectId }: { projectId: string }) {
     createHost({
       projectId,
       name: defaultName,
+      // First-run guests can try the client before signing up to share.
+      scenarioMode: "project_members",
       input: cloneHostTemplateInput(template, { themeMode }),
     }).catch(() => {
       seededProjects.current.delete(projectId);

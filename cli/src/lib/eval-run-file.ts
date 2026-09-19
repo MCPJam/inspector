@@ -38,6 +38,13 @@ import {
   validateImportToolReferences,
   type ImportToolFinding,
 } from "./eval-import-live-validation.js";
+import {
+  CASE_WIRE_KEYS,
+  caseFromWire,
+  negotiateEvalVocabulary,
+  suiteDetailFromWire,
+  type EvalVocabulary,
+} from "./eval-vocabulary.js";
 import { cliError, usageError } from "./output.js";
 
 /** Hosted runs refuse more than this many iterations — named, not clamped. */
@@ -99,31 +106,63 @@ function fileCaseModels(testCase: ResolvedEvalSuiteFileCase) {
   ];
 }
 
+/**
+ * The three case fields whose wire KEY depends on the vocabulary, spelled for
+ * the one the command negotiated.
+ *
+ * Both count keys carry the file's ONE configured count: the exact count is
+ * what the file authored, and the floor is what the legacy resolver would
+ * have floored to anyway (the contract's own rule for a create that names no
+ * floor). The rules key is the file's assertion list as a `replace` override;
+ * `create` omits it when the list is empty (nothing to override), `update`
+ * sends an explicit `null` because a PATCH reads omission as "leave the
+ * stored value" and a file whose author deleted the list must clear it.
+ *
+ * One builder for both vocabularies, keyed by {@link CASE_WIRE_KEYS}: the
+ * vocabulary-1 body is byte-for-byte what it was, and the vocabulary-2 body
+ * is the same three facts under the canonical names.
+ */
+function caseCountAndRules(
+  vocabulary: EvalVocabulary,
+  testCase: ResolvedEvalSuiteFileCase,
+  mode: "create" | "update"
+): Record<string, unknown> {
+  const keys = CASE_WIRE_KEYS[vocabulary];
+  const rules =
+    testCase.assertions.length > 0
+      ? { mode: "replace", list: testCase.assertions }
+      : null;
+  return {
+    [keys.floor]: testCase.iterations,
+    [keys.exact]: testCase.iterations,
+    ...(rules !== null || mode === "update" ? { [keys.rules]: rules } : {}),
+  };
+}
+
 export function fileCaseToCreateBody(
-  testCase: ResolvedEvalSuiteFileCase
+  testCase: ResolvedEvalSuiteFileCase,
+  vocabulary: EvalVocabulary = 1
 ): Record<string, unknown> {
   return {
+    ...(testCase.judge === undefined ? {} : { judge: testCase.judge }),
     id: testCase.id,
     title: testCase.title,
     ...(testCase.intent !== undefined ? { intent: testCase.intent } : {}),
     ...(testCase.kind !== undefined ? { kind: testCase.kind } : {}),
     steps: testCase.steps,
-    ...(testCase.suppressedSuiteStandardCheckIds !== undefined ? { suppressedSuiteStandardCheckIds: testCase.suppressedSuiteStandardCheckIds } : {}),
-    // Both wire keys carry the file's ONE configured count. The v1 API reads
-    // `iterations` as the legacy floor and `repetitions` as the exact count;
-    // the resolved file has only the canonical `iterations`, so the exporter
-    // spells it both ways until the wire speaks the same vocabulary.
-    iterations: testCase.iterations,
-    repetitions: testCase.iterations,
+    ...(testCase.suppressedSuiteStandardCheckIds !== undefined
+      ? {
+          suppressedSuiteStandardCheckIds:
+            testCase.suppressedSuiteStandardCheckIds,
+        }
+      : {}),
+    ...caseCountAndRules(vocabulary, testCase, "create"),
     passThreshold: testCase.passThreshold,
     ...(testCase.expectedOutput !== undefined
       ? { expectedOutput: testCase.expectedOutput }
       : {}),
     ...(testCase.isNegativeTest ? { isNegative: true } : {}),
     models: fileCaseModels(testCase),
-    ...(testCase.assertions.length > 0
-      ? { checks: { mode: "replace", list: testCase.assertions } }
-      : {}),
     // The converter's CLAIM, carried through to the hosted row.
     //
     // Omitted for a native case rather than sent as an empty block: "authored
@@ -140,30 +179,29 @@ export function fileCaseToCreateBody(
  */
 export function fileCaseToUpdateBody(
   testCase: ResolvedEvalSuiteFileCase,
-  previousSuppression?: readonly string[]
+  previousSuppression?: readonly string[],
+  vocabulary: EvalVocabulary = 1
 ): Record<string, unknown> {
   return {
+    judge: testCase.judge ?? null,
     title: testCase.title,
     // A file re-sync is authoritative: unlike an ordinary PATCH, a missing
     // label must clear the old one rather than preserve stale attribution.
     intent: testCase.intent ?? null,
     kind: testCase.kind ?? null,
     steps: testCase.steps,
-    ...(testCase.suppressedSuiteStandardCheckIds !== undefined || previousSuppression?.length ? { suppressedSuiteStandardCheckIds: testCase.suppressedSuiteStandardCheckIds ?? [] } : {}),
-    // Both wire keys carry the file's ONE configured count. The v1 API reads
-    // `iterations` as the legacy floor and `repetitions` as the exact count;
-    // the resolved file has only the canonical `iterations`, so the exporter
-    // spells it both ways until the wire speaks the same vocabulary.
-    iterations: testCase.iterations,
-    repetitions: testCase.iterations,
+    ...(testCase.suppressedSuiteStandardCheckIds !== undefined ||
+    previousSuppression?.length
+      ? {
+          suppressedSuiteStandardCheckIds:
+            testCase.suppressedSuiteStandardCheckIds ?? [],
+        }
+      : {}),
+    ...caseCountAndRules(vocabulary, testCase, "update"),
     passThreshold: testCase.passThreshold,
     expectedOutput: testCase.expectedOutput ?? "",
     isNegative: testCase.isNegativeTest,
     models: fileCaseModels(testCase),
-    checks:
-      testCase.assertions.length > 0
-        ? { mode: "replace", list: testCase.assertions }
-        : null,
     // Explicit `null` when the file dropped the block, for the same reason
     // every other field above is restated: PATCH reads omission as "leave the
     // stored value", so a re-sync of a file whose author deleted the import
@@ -485,6 +523,13 @@ export async function syncFileOwnedCases(
      * exactly as loudly as naming none.
      */
     declaredSuiteId: string;
+    /**
+     * The vocabulary `client` speaks (see `negotiateEvalVocabulary`). It
+     * decides which keys the bodies below are written under and which keys
+     * the listed rows are read under; a client that speaks 2 with bodies
+     * spelled for 1 is the both-spellings refusal the route pins.
+     */
+    vocabulary?: EvalVocabulary;
     signal?: AbortSignal;
   }
 ): Promise<{
@@ -495,12 +540,16 @@ export async function syncFileOwnedCases(
   enabledCaseIds: string[];
   enabledCases: Array<{ id: string; declaredId: string; title: string }>;
 }> {
+  const vocabulary = params.vocabulary ?? 1;
   const existing = await client.listEvalCases(
     { projectId: params.projectId, suiteId: params.suiteId },
     { signal: params.signal }
   );
   const byDeclaredId = new Map<string, PlatformEvalCase>();
-  for (const row of existing.items) {
+  const existingRows = existing.items.map((row) =>
+    caseFromWire(vocabulary, row)
+  );
+  for (const row of existingRows) {
     if (row.declaredId) byDeclaredId.set(row.declaredId, row);
   }
 
@@ -515,7 +564,7 @@ export async function syncFileOwnedCases(
     if (row) toUpdate.push({ row, file: testCase });
     else toCreate.push(testCase);
   }
-  for (const row of existing.items) {
+  for (const row of existingRows) {
     // Stale means "the file no longer declares this case" — NOT "the file does
     // not run it right now". A row the file still declares as `disabled` is
     // kept, with its history, and simply left out of `enabledCaseIds`.
@@ -547,7 +596,9 @@ export async function syncFileOwnedCases(
           projectId: params.projectId,
           suiteId: params.suiteId,
           body: {
-            cases: chunk.map(fileCaseToCreateBody),
+            cases: chunk.map((testCase) =>
+              fileCaseToCreateBody(testCase, vocabulary)
+            ),
             declaredSuiteId: params.declaredSuiteId,
           },
         },
@@ -589,7 +640,11 @@ export async function syncFileOwnedCases(
           suiteId: params.suiteId,
           caseId: row.id,
           body: {
-            ...fileCaseToUpdateBody(file, row.suppressedSuiteStandardCheckIds),
+            ...fileCaseToUpdateBody(
+              file,
+              row.suppressedSuiteStandardCheckIds,
+              vocabulary
+            ),
             declaredSuiteId: params.declaredSuiteId,
           },
         },
@@ -987,6 +1042,14 @@ export async function executeEvalRunFromFile(
   }
   const project = resolution.project;
 
+  // Which vocabulary this deployment speaks, asked ONCE, before anything is
+  // written: every request from here on goes through `negotiated.client`, so
+  // the suite sync, the case sync and the run launch all speak the same one.
+  const negotiated = await negotiateEvalVocabulary(context.client, {
+    projectId: project.id,
+    signal: context.signal,
+  });
+
   if (looksLikeCreateEvalApiJson(params.source.text)) {
     throw usageError(
       "That looks like an eval create API body, not a versioned suite file. Use `eval create --file` to author a suite from that JSON."
@@ -1038,10 +1101,16 @@ export async function executeEvalRunFromFile(
   });
 
   const servers = authored.target.servers ?? [];
-  const synced = await context.client.syncFileOwnedEvalSuite(
+  // The from-file route speaks the suite's RAW storage names
+  // (`verdictPolicyDefaults.repetitions`, `minIterations`) under every
+  // vocabulary — its body is not one the negotiation re-spells — so this body
+  // is the same in both. Only its RESPONSE follows the header, hence the
+  // projection below.
+  const syncedOnWire = await negotiated.client.syncFileOwnedEvalSuite(
     {
       projectId: project.id,
       body: {
+        judge: authored.defaults.judge ?? null,
         declaredSuiteId: authored.suite.id,
         name: authored.suite.name,
         ...(authored.suite.description !== undefined
@@ -1087,8 +1156,12 @@ export async function executeEvalRunFromFile(
     },
     { signal: context.signal }
   );
+  const synced = {
+    ...syncedOnWire,
+    suite: suiteDetailFromWire(negotiated.vocabulary, syncedOnWire.suite),
+  };
 
-  const syncedCases = await syncFileOwnedCases(context.client, {
+  const syncedCases = await syncFileOwnedCases(negotiated.client, {
     projectId: project.id,
     suiteId: synced.suite.id,
     cases: outgoingCases,
@@ -1096,6 +1169,7 @@ export async function executeEvalRunFromFile(
     // The suite is CI-owned by virtue of this very id, so every write below
     // has to name it. See `syncFileOwnedCases`.
     declaredSuiteId: authored.suite.id,
+    vocabulary: negotiated.vocabulary,
     signal: context.signal,
   });
 
@@ -1129,7 +1203,7 @@ export async function executeEvalRunFromFile(
             : {}),
         })),
       },
-      { client: context.client, signal: context.signal }
+      { client: negotiated.client, signal: context.signal }
     );
   }
   if (fileEnvironment) {
@@ -1140,7 +1214,7 @@ export async function executeEvalRunFromFile(
         declaredSuiteId: authored.suite.id,
         environments: [fileEnvironment],
       },
-      { client: context.client, signal: context.signal }
+      { client: negotiated.client, signal: context.signal }
     );
   }
   const runCases = selectEnabledRunCases(
@@ -1202,7 +1276,7 @@ export async function executeEvalRunFromFile(
       ...(importApprovals ? { importApprovals } : {}),
     },
     {
-      client: context.client,
+      client: negotiated.client,
       signal: context.signal,
       onDisclosure: context.onDisclosure,
       onDisclosureUnavailable: context.onDisclosureUnavailable,

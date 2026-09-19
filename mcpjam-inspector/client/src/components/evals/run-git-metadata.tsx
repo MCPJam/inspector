@@ -28,11 +28,14 @@ export function readRunPullRequest(
 
 export function RunPlatformBadge({
   run,
+  neutral = false,
 }: {
   /** The run row (or a `{ source }` stand-in). See `RunSourceBadge`. */
   run: RunOriginInput;
+  /** Drop the per-origin colour where the column already says "Platform". */
+  neutral?: boolean;
 }) {
-  return <RunSourceBadge run={run} />;
+  return <RunSourceBadge run={run} neutral={neutral} />;
 }
 
 function safeHttpUrl(raw: string | null | undefined): string | null {

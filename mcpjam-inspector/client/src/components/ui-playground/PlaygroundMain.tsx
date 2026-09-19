@@ -5844,6 +5844,14 @@ export function PlaygroundMain({
                                 ? { hostId: previewedHostId }
                                 : {}),
                             }}
+                            // The same org provider config the tab root and
+                            // the multi-host columns get. Each column builds
+                            // its own model list from this, so without it a
+                            // "Your providers" model is missing from the
+                            // column's list, its provider gets guessed from
+                            // the bare id (which reads as Ollama), and the
+                            // turn fails.
+                            hostedOrgModelConfig={hostedOrgModelConfig}
                             personalBrowserEngine={personalBrowserEngineOption}
                             personalComputerEngine={
                               personalComputerEngineOption

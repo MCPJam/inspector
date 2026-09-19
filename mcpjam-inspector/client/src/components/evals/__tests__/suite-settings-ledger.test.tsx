@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, screen, within } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import { SettingsRow } from "@/components/setting/SettingsRow";
 import { render } from "@testing-library/react";
-import { QUALITY_GATE_THRESHOLD_HINT } from "../suite-policy-controls";
+import { PASS_THRESHOLD_HINT } from "../suite-policy-controls";
 import {
   openSettingsRow,
   renderSettingsSheet,
@@ -28,8 +28,9 @@ vi.mock("convex/react", () => ({
 }));
 
 vi.mock("@/hooks/use-suite-capabilities", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("@/hooks/use-suite-capabilities")>();
+  const actual = await importOriginal<
+    typeof import("@/hooks/use-suite-capabilities")
+  >();
   return {
     ...actual,
     useSuiteCapabilities: () => ({
@@ -95,7 +96,9 @@ vi.mock("../suite-header", () => ({
   ),
 }));
 vi.mock("@/components/evals/suite-clients-settings", () => ({
-  SuiteClientsSettings: () => <div data-testid="suite-clients-table">Client table</div>,
+  SuiteClientsSettings: () => (
+    <div data-testid="suite-clients-table">Client table</div>
+  ),
 }));
 vi.mock("@/components/evals/suite-environment-composer-bar", () => ({
   SuiteEnvironmentComposerBar: () => (
@@ -129,14 +132,19 @@ describe("suite settings ledger", () => {
     composeCapability.value = true;
   });
 
-  it("shows the header name editor and every row for the active tab", () => {
+  it("shows the header name editor and every visible section on one page", () => {
     const { container } = renderSettingsSheet();
     expect(container.querySelector('[data-setting-key="name"]')).toBeTruthy();
-    expect(container.querySelector('nav[aria-label="Settings sections"]')?.textContent).not.toContain("Delete suite");
-    expect(container.querySelector('[data-setting-key="deleteSuite"]')).toBeNull();
-    expect(container.querySelector('nav[aria-label="Settings sections"]')?.textContent).toBe("GradingWhere it runs");
+    expect(
+      container.querySelector('[data-setting-key="deleteSuite"]'),
+    ).toBeNull();
+    expect(
+      container.querySelector('nav[aria-label="Settings sections"]'),
+    ).toBeNull();
     expect(container.querySelector('[data-setting-key="schedule"]')).toBeNull();
-    expect(container.querySelector('[data-setting-key="githubChecks"]')).toBeNull();
+    expect(
+      container.querySelector('[data-setting-key="githubChecks"]'),
+    ).toBeNull();
     expect(container.querySelector('[data-setting-key="policy"]')).toBeTruthy();
     expect(
       container.querySelector('[data-stage-group="selection"]'),
@@ -144,7 +152,7 @@ describe("suite settings ledger", () => {
     expect(container.querySelector('[data-setting-key="checks"]')).toBeTruthy();
     expect(
       container.querySelector('[data-setting-key="environments"]'),
-    ).toBeNull();
+    ).toBeTruthy();
   });
 
   it("shows the user-value chain under Grading without not measured copy", () => {
@@ -155,18 +163,45 @@ describe("suite settings ledger", () => {
     expect(container.textContent?.toLowerCase()).not.toContain("not measured");
   });
 
-  it("keeps v2 rows from claiming every case uses the default", () => {
+  it("keeps the per-case criterion row from claiming every case uses the default", () => {
     const { container } = renderSettingsSheet({ suite: v2Suite });
     const policy = container.querySelector('[data-setting-key="policy"]');
-    expect(policy?.textContent).toContain(QUALITY_GATE_THRESHOLD_HINT);
+    expect(policy?.textContent).toContain(PASS_THRESHOLD_HINT);
     expect(policy?.textContent?.toLowerCase()).not.toContain("every case uses");
+  });
+
+  it("splits the grading rows so each names one question", () => {
+    // One row titled "Quality gate" used to hold the criterion, the count and
+    // the gate. A reader looking for the threshold their runs are decided
+    // against had to open a heading about regressions to find it.
+    const { container } = renderSettingsSheet({ suite: v2Suite });
+    for (const [key, heading] of [
+      ["policy", "Pass criteria"],
+      ["iterations", "Iterations"],
+      ["qualityGate", "Quality gate"],
+    ] as const) {
+      const row = container.querySelector(`[data-setting-key="${key}"]`);
+      expect(row, key).toBeTruthy();
+      expect(row?.textContent, key).toContain(heading);
+    }
+  });
+
+  it("offers no scope switch beside the threshold", () => {
+    // The switch re-decides every multi-case suite: its own proposal divided
+    // the stored percent by 100, which moves the bar even though the number
+    // looks preserved. Changing it takes a hand-written PATCH rather than any
+    // affordance this app ships — and no copy on this page names a policy
+    // version.
+    const { container } = renderSettingsSheet({ suite: v2Suite });
+    const text = container.textContent?.toLowerCase() ?? "";
+    expect(text).not.toContain("verdict policy v2");
+    expect(text).not.toContain("switch to verdict policy");
+    expect(text).not.toContain("upgrade");
   });
 
   it("omits the immediate-save badge for environments", () => {
     const { container } = renderSettingsSheet();
-    for (const key of [
-      "environments",
-    ]) {
+    for (const key of ["environments"]) {
       openSettingsRow(container, key);
       const row = container.querySelector(`[data-setting-key="${key}"]`);
       expect(row?.textContent, key).not.toContain("Applies immediately");
@@ -188,17 +223,14 @@ describe("suite settings ledger", () => {
     // that actually run, and the judge, rubric and matcher editors are on the
     // page again rather than asserted absent.
     const { container } = renderSettingsSheet({ suite: v2Suite });
-    expect(screen.getByRole("heading", { name: "Assertions" })).toBeTruthy();
+    expect(
+      screen.getByRole("heading", { name: "Evaluators" }),
+    ).toBeTruthy();
     expect(container.querySelectorAll("[data-stage-group]")).toHaveLength(6);
     expect(
       screen.queryByRole("tablist", { name: "User value chain" }),
     ).toBeNull();
-    for (const key of [
-      "judge",
-      "judgeRubric",
-      "matchOptions",
-      "validity",
-    ]) {
+    for (const key of ["judge", "judgeRubric", "matchOptions", "validity"]) {
       expect(
         container.querySelector(`[data-setting-key="${key}"]`),
         key,
@@ -207,27 +239,16 @@ describe("suite settings ledger", () => {
   });
 
   it("titles the Where-it-runs row for the axes it can edit", () => {
-    // Capable and legacy both title the row Clients — the axes differ,
-    // the word on screen does not.
+    // Legacy deployments keep their client-only label.
     const capable = renderSettingsSheet();
-    fireEvent.click(
-      within(
-        screen.getByRole("navigation", { name: "Settings sections" }),
-      ).getByRole("button", { name: "Where it runs" }),
-    );
     expect(
       capable.container.querySelector('[data-setting-key="environments"]')
         ?.textContent,
-    ).toContain("Clients");
+    ).toContain("Where it runs");
     capable.unmount();
 
     composeCapability.value = false;
     const legacy = renderSettingsSheet();
-    fireEvent.click(
-      within(
-        screen.getByRole("navigation", { name: "Settings sections" }),
-      ).getByRole("button", { name: "Where it runs" }),
-    );
     expect(
       legacy.container.querySelector('[data-setting-key="environments"]')
         ?.textContent,
@@ -236,10 +257,6 @@ describe("suite settings ledger", () => {
 
   it("shows the client table beside the computer image row", () => {
     const { container } = renderSettingsSheet();
-    const tabs = screen.getByRole("navigation", { name: "Settings sections" });
-    fireEvent.click(
-      within(tabs).getByRole("button", { name: "Where it runs" }),
-    );
     const keys = [...container.querySelectorAll("[data-setting-key]")].map(
       (node) => node.getAttribute("data-setting-key"),
     );

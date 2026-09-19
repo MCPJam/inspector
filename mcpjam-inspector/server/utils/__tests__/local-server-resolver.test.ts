@@ -325,7 +325,6 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
       authMethod?: "auto" | "oauth" | "xaa" | "bearer" | "none";
       headers?: Record<string, string>;
       hasHeaders?: boolean;
-      secretsBoundOrigin?: string;
     };
     oauthAccessToken: string | null;
   }) {
@@ -619,10 +618,6 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
           serverConfig: {
             transportType: "http",
             url: "https://header.example.com/mcp",
-            // MJ-003: a row whose stored headers are bound to its own origin.
-            // Absent, the connect gate refuses — which is why the backend
-            // backfill gates the deploy that turns this on.
-            secretsBoundOrigin: "https://header.example.com",
             useOAuth: false,
             headers: { Authorization: "Bearer static-token" },
             hasHeaders: true,
@@ -657,10 +652,6 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
           serverConfig: {
             transportType: "http",
             url: "https://hidden-header.example.com/mcp",
-            // MJ-003: bound to its own origin, as a post-backfill row is. The
-            // gate runs before the reveal below, so an unbound row would 403
-            // instead of decrypting.
-            secretsBoundOrigin: "https://hidden-header.example.com",
             useOAuth: false,
             headers: {},
             hasHeaders: true,
@@ -683,7 +674,6 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
             success: true,
             env: null,
             headers: { Authorization: "Bearer revealed-token" },
-            secretsBoundOrigin: "https://hidden-header.example.com",
           }),
           { status: 200, headers: { "Content-Type": "application/json" } }
         );
@@ -1032,10 +1022,6 @@ describe("resolveLocalServerForConnect — backend-resolved XAA identity error",
                 serverConfig: {
                   transportType: "http",
                   url: "https://xaa.example.com/mcp",
-                  // MJ-003: bound to its own origin. Without it the gate
-                  // refuses this preregistered row before the identity check,
-                  // which is not the contract under test here.
-                  secretsBoundOrigin: "https://xaa.example.com",
                   headers: {},
                   useOAuth: false,
                   useXaa: true,
@@ -1401,6 +1387,7 @@ describe("resolveLocalStdioServerConfig — web-route stdio divert", () => {
       process.env.CONVEX_HTTP_URL = ORIGINAL_CONVEX_HTTP_URL;
     }
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   });
 
   function localBatchResponse(serverConfig: Record<string, unknown>) {
@@ -1489,6 +1476,7 @@ describe("resolveLocalStdioServerConfig — web-route stdio divert", () => {
   // the reveal must run and its env must land on the SDK config, carrying
   // the same scope fields the hosted mint path would send.
   it("reveals deferred secrets (hasEnv with empty env) with the caller's scope", async () => {
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-token");
     let revealInit: RequestInit | undefined;
     const fetchMock = vi.fn(async (input: any, init?: RequestInit) => {
       const url = String(input);
@@ -1534,6 +1522,9 @@ describe("resolveLocalStdioServerConfig — web-route stdio divert", () => {
       accessScope: "chat_v2",
       scenarioId: "scenario-1",
       accessVersion: 7,
+    });
+    expect(revealInit?.headers).toMatchObject({
+      "x-inspector-service-token": "service-token",
     });
   });
 

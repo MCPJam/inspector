@@ -351,6 +351,18 @@ An expired OAuth access token could not be refreshed.
 **Next steps**
 - Click **Reconnect** on the server card to run a fresh OAuth flow.
 
+### Consent required
+
+`auth/consent_required`
+
+This server needs your permission before it can connect.
+
+**Likely causes**
+- Reconnect ran without opening the sign-in prompt, so no OAuth token exists for this server yet.
+
+**Next steps**
+- Click **Reconnect** and approve the request in the window that opens.
+
 ### Missing bearer
 
 `auth/missing_bearer`
@@ -599,6 +611,19 @@ Your LLM provider rejected the request because you hit a rate limit or quota. Th
 
 > **MCPJam account limit vs. provider throttle** — If the session pane shows a billing or credit message instead of this card, the limit is on your MCPJam account, not your provider key. Adding credits or switching to BYOK resolves that case; the steps above do not apply.
 
+### Frontier model sign-in required
+
+`provider/guest_model_not_allowed`
+
+A frontier model was selected but the request requires a signed-in account.
+
+**Likely causes**
+- You are browsing as a guest and selected a frontier model that requires authentication.
+
+**Next steps**
+- A sign-in prompt appears automatically. Click **Sign in** to authenticate and get access to frontier models.
+- Click **Not now** to dismiss and continue with a standard model. Your credit balance is not affected.
+
 ### MCPJam model limit reached
 
 `provider/mcpjam_limit_daily` · `provider/mcpjam_limit_monthly` · `provider/mcpjam_limit`
@@ -609,9 +634,9 @@ daily bucket per organization, Team plans spend a monthly per-seat allowance
 that renews with the billing period. The error card names the one you hit.
 
 **Next steps**
-- Top up credits or upgrade the plan — the limit dialog offers both.
-- Wait for the daily reset, or for the billing period to renew.
-- Add your own API key under **Settings → LLM Providers** for chat.
+- **Free plan** — The limit dialog shows **Explore plans** to upgrade, and **Learn more about BYOK** to understand how provider keys and MCPJam credits work separately.
+- **Paid plan** — The limit dialog shows **Buy credits** to top up, or wait for the daily reset or billing period to renew.
+- Add your own API key under **Settings → LLM Providers** for chat (BYOK does not cover Swarm, Evals, or other MCPJam-billed features).
 
 <Warning>
   Bring-your-own-key covers chat. Swarm persona generation and persona-driver
@@ -679,6 +704,16 @@ This environment's server group is gone.
 - Attach a different server group, or clear the attachment.
 
 ---
+
+## Model empty response
+
+`provider/empty_response`
+
+The model request ended without usable content, so the turn could not complete.
+The recorded error names the provider's finish reason where one was reported.
+
+Rerun the affected cases. If the error recurs on an MCPJam model, report it with
+those run details. For BYOK, check the recorded provider error and account configuration.
 
 ## Unknown error
 

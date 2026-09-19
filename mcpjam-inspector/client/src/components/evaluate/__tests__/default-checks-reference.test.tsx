@@ -13,7 +13,7 @@ describe("Default checks navigation and page", () => {
     const navigate = vi.fn();
     render(<DefaultChecksReference onOverride={navigate} />);
     await user.click(
-      screen.getByRole("button", { name: "Show default assertions" }),
+      screen.getByRole("button", { name: "Configure test case evaluators" }),
     );
     expect(navigate).toHaveBeenCalledOnce();
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
@@ -37,27 +37,28 @@ describe("Default checks navigation and page", () => {
           onChecksChange={onChecksChange}
           judgeSkipped={skipped}
           onJudgeSkippedChange={setSkipped}
-          onSave={vi.fn()}
-          saveDisabled={false}
         />
       );
     }
     const { container } = render(<Page />);
     // The same numbered table the suite settings page renders.
     expect(
-      screen.getByRole("heading", { name: "User Value Chain Assertions" }),
+      screen.getByRole("heading", { name: "Test Case Evaluators" }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByText("Show default assertions"),
+      screen.queryByText("Configure test case evaluators"),
     ).not.toBeInTheDocument();
     expect(container.querySelectorAll("[data-stage-group]").length).toBe(6);
     // Runner-measured stages are rows without an On box: nothing to author.
     for (const stage of ["connection", "discovery"]) {
       const observed = container.querySelector(
-        `[data-stage-group="${stage}"] tr[data-scorer-row="observed"]`,
+        `[data-stage-group="${stage}"] [data-scorer-row="observed"]`,
       );
-      expect(observed?.textContent, stage).toContain("Observed by the runner");
-      expect(observed?.querySelector('[role="checkbox"]'), stage).toBeNull();
+      expect(observed?.textContent, stage).toContain("Required");
+      expect(
+        observed?.querySelector('[role="checkbox"]'),
+        stage,
+      ).toBeDisabled();
     }
     expect(
       screen.queryByRole("checkbox", { name: "OAuth connection" }),
@@ -78,16 +79,19 @@ describe("Default checks navigation and page", () => {
       (c) => c.id === "response.performance",
     )!;
     expect(
-      screen.getByRole("checkbox", { name: latency.label }),
+      screen.getByRole("checkbox", { name: latency.name }),
     ).not.toBeChecked();
-    await user.click(screen.getByRole("checkbox", { name: latency.label }));
+    await user.click(screen.getByRole("checkbox", { name: latency.name }));
     expect(onChecksChange).toHaveBeenCalledWith({
       predicates: { mode: "extend", list: [latency.preset] },
       suppressedSuiteStandardCheckIds: [],
     });
-    // The save path is the case's own; the page never blocks it on a preview.
+    // Changes persist through the change callbacks; navigation uses breadcrumbs.
     expect(
-      screen.getByRole("button", { name: "Save overrides" }),
-    ).toBeEnabled();
+      screen.queryByRole("button", { name: "Save overrides" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Back to case" }),
+    ).not.toBeInTheDocument();
   });
 });

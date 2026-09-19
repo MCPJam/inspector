@@ -19,6 +19,7 @@ import {
   SheetTitle,
 } from "@mcpjam/design-system/sheet";
 import { cn } from "@mcpjam/design-system/cn";
+import { hostSnapshotFromStyle } from "@/lib/host-snapshot";
 import { resolveHostLogoByName } from "@/lib/host-logo";
 import {
   average,
@@ -29,6 +30,7 @@ import {
   iterationLatencyP50,
   iterationLatencyP95,
   runClientLogo,
+  runClientIdentity,
 } from "../evals/helpers";
 import { usePreferencesStoreWithDefaults } from "@/stores/preferences/preferences-provider";
 import { formatRunCaseLatencyMs } from "../evals/run-case-groups";
@@ -42,10 +44,11 @@ import { runHistoryFilterClass } from "../evals/run-history-table";
 import {
   buildRunResultsMatrix,
   resultCounts,
+  cellResult,
   type RunResultsMatrixData,
 } from "./run-results-matrix-model";
 import { IterationDetails } from "../evals/iteration-details";
-import { TrialScorecard } from "./case-scorecard/trial-scorecard";
+import { IterationReportScorecard } from "./case-scorecard/iteration-report-subscriber";
 import { authoredForTrial } from "./case-scorecard/trial-authored";
 
 type StatusFilter = "failed" | "passed" | "pending" | "cancelled";
@@ -85,20 +88,16 @@ type MatrixView = "results" | "metrics";
 
 function CellResults({ items }: { items: EvalIteration[] }) {
   const counts = resultCounts(items);
-  const status = counts.pending
-    ? "Running"
-    : counts.failed
-      ? "Fail"
-      : counts.cancelled
-        ? "Cancelled"
-        : "Pass";
-  const statusTone = counts.pending
-    ? "text-pending"
-    : counts.failed
-      ? "text-destructive"
-      : counts.cancelled
-        ? "text-muted-foreground"
-        : "text-success";
+  const result = cellResult(items);
+  const status =
+    result === "pending"
+      ? "Running"
+      : result === "failed"
+        ? "Fail"
+        : result === "cancelled"
+          ? "Cancelled"
+          : "Pass";
+  const statusTone = outcomeTextTone(result ?? "passed");
   const breakdown = `${counts.passed} passed, ${counts.failed} failed, ${counts.pending} in progress, ${counts.cancelled} cancelled`;
   return (
     <span className="w-full space-y-2">
@@ -106,7 +105,7 @@ function CellResults({ items }: { items: EvalIteration[] }) {
         <span className="flex min-w-0 items-center gap-2">
           <span
             className={cn(
-              "flex items-center gap-1.5 text-xs font-semibold",
+              "flex items-center gap-1.5 text-[12px] font-semibold",
               statusTone,
             )}
           >
@@ -118,7 +117,7 @@ function CellResults({ items }: { items: EvalIteration[] }) {
           </span>
         </span>
         <span
-          className="shrink-0 text-[11px] text-muted-foreground"
+          className="shrink-0 text-lg font-semibold leading-6 text-card-foreground"
           aria-label={`${counts.passed} of ${items.length} iterations passed`}
         >
           {counts.passed}/{items.length}
@@ -204,7 +203,10 @@ function CellMetricValues({ items }: { items: EvalIteration[] }) {
           {tokenAverage === null ? "—" : compactMetric(tokenAverage)}
         </span>
       </span>
-      <span className={cn(metric, "pl-2")} title="Average tool calls per iteration">
+      <span
+        className={cn(metric, "pl-2")}
+        title="Average tool calls per iteration"
+      >
         <span className={metricLabel}>Calls</span>
         <span
           className="text-base font-semibold leading-5"
@@ -233,6 +235,9 @@ export function RunResultsMatrix({
   toolbarExtra,
   extraFiltersActive = false,
   onClearExtraFilters,
+  onFilterChange,
+  onEditCase,
+  onEditEvaluator,
 }: {
   modelIds?: readonly string[];
   run: EvalSuiteRun;
@@ -245,6 +250,9 @@ export function RunResultsMatrix({
   toolbarExtra?: ReactNode;
   extraFiltersActive?: boolean;
   onClearExtraFilters?: () => void;
+  onFilterChange?: (filters: { search: string; status: string }) => void;
+  onEditCase?: (testCaseId: string) => void;
+  onEditEvaluator?: (testCaseId: string) => void;
 }) {
   const theme = usePreferencesStoreWithDefaults((state) => state.themeMode);
   const data = useMemo(() => {
@@ -270,20 +278,30 @@ export function RunResultsMatrix({
   const counts = resultCounts(
     data.targets.flatMap((target) => target.iterations),
   );
-  const statusOptions = (
-    ["failed", "passed", "pending", "cancelled"] as const
-  ).filter((value) =>
-    value === "pending"
-      ? showPending
-      : value === "cancelled"
-        ? counts.cancelled > 0
-        : true,
-  );
+  const query = search.trim().toLowerCase();
+  const statusOptions = (["failed", "passed", "pending", "cancelled"] as const)
+    .filter((value) =>
+      value === "pending"
+        ? showPending
+        : value === "cancelled"
+          ? counts.cancelled > 0
+          : true,
+    )
+    .filter((value) =>
+      data.rows.some(
+        (row) =>
+          row.title.toLowerCase().includes(query) &&
+          data.targets.some(
+            (target) => cellResult(target.cells.get(row.key) ?? []) === value,
+          ),
+      ),
+    );
+  const activeStatus = statusOptions.includes(status as StatusFilter)
+    ? status
+    : ALL_EVAL_FILTER_VALUES;
   useEffect(() => {
-    if (status === "pending" && !showPending) setStatus(ALL_EVAL_FILTER_VALUES);
-    if (status === "cancelled" && counts.cancelled === 0)
-      setStatus(ALL_EVAL_FILTER_VALUES);
-  }, [showPending, status, counts.cancelled]);
+    if (status !== activeStatus) setStatus(activeStatus);
+  }, [status, activeStatus]);
   const [selection, setSelection] = useState<{
     caseKey: string;
     targetKey: string;
@@ -291,22 +309,16 @@ export function RunResultsMatrix({
   const [selectedIterationId, setSelectedIterationId] = useState<string | null>(
     null,
   );
-  const activeStatus =
-    status === "pending" && !showPending
-      ? ALL_EVAL_FILTER_VALUES
-      : status === "cancelled" && counts.cancelled === 0
-        ? ALL_EVAL_FILTER_VALUES
-        : status;
-  const query = search.trim().toLowerCase();
+  useEffect(() => {
+    onFilterChange?.({ search: query, status: activeStatus });
+  }, [query, activeStatus, onFilterChange]);
   const rows = data.rows.filter(
     (row) =>
       row.title.toLowerCase().includes(query) &&
       (activeStatus === ALL_EVAL_FILTER_VALUES ||
         data.targets.some(
           (target) =>
-            resultCounts(target.cells.get(row.key) ?? [])[
-              activeStatus as StatusFilter
-            ] > 0,
+            cellResult(target.cells.get(row.key) ?? []) === activeStatus,
         )),
   );
   const hasActiveFilters =
@@ -452,10 +464,7 @@ export function RunResultsMatrix({
                   </div>
                   <div className="mt-3 flex items-baseline gap-1">
                     <span className="text-lg font-semibold tabular-nums">
-                      {target.counts.passed}
-                      <span className="text-muted-foreground">
-                        /{target.iterations.length}
-                      </span>
+                      {target.counts.passed}/{target.iterations.length}
                     </span>
                     <span className="text-[10px] text-muted-foreground">
                       iters passed
@@ -491,11 +500,25 @@ export function RunResultsMatrix({
               >
                 <th
                   scope="row"
-                  className="sticky left-0 z-10 bg-card p-4 align-top font-medium"
+                  className={cn(
+                    "sticky left-0 z-10 bg-card p-0 align-top font-medium",
+                    onEditCase && row.testCaseId && "hover:bg-muted/50",
+                  )}
                 >
-                  <span className="block break-words text-[13px] leading-5">
-                    {row.title}
-                  </span>
+                  {onEditCase && row.testCaseId ? (
+                    <button
+                      type="button"
+                      className="block min-h-16 w-full break-words p-4 text-left text-[13px] leading-5 text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                      aria-label={`Open test case: ${row.title}`}
+                      onClick={() => onEditCase(row.testCaseId!)}
+                    >
+                      {row.title}
+                    </button>
+                  ) : (
+                    <span className="block break-words p-4 text-[13px] leading-5">
+                      {row.title}
+                    </span>
+                  )}
                 </th>
                 {data.targets.map((target) => {
                   const items = target.cells.get(row.key) ?? [];
@@ -582,6 +605,15 @@ export function RunResultsMatrix({
                 )}
                 chain={chains?.get(selectedIteration._id)}
                 onBack={() => setSelectedIterationId(null)}
+                onEditEvaluator={
+                  onEditEvaluator && selectedRow.testCaseId
+                    ? () => {
+                        setSelection(null);
+                        setSelectedIterationId(null);
+                        onEditEvaluator(selectedRow.testCaseId!);
+                      }
+                    : undefined
+                }
               />
             ) : (
               <>
@@ -631,6 +663,18 @@ export function RunResultsMatrix({
                     caseKey={selectedRow.key}
                     onSelectIteration={setSelectedIterationId}
                   />
+                  {onEditCase && selectedRow.testCaseId && (
+                    <div className="mt-4 flex justify-end">
+                      <Button
+                        onClick={() => {
+                          setSelection(null);
+                          onEditCase(selectedRow.testCaseId!);
+                        }}
+                      >
+                        Edit test case
+                      </Button>
+                    </div>
+                  )}
                 </div>
               </>
             ))}
@@ -650,6 +694,13 @@ function CaseIterations({
   onSelectIteration: (iterationId: string) => void;
 }) {
   const items = target.cells.get(caseKey) ?? [];
+  if (!items.length) {
+    return (
+      <p className="py-6 text-sm text-muted-foreground">
+        No recorded iterations for this case on this client and model.
+      </p>
+    );
+  }
   const counts = resultCounts(items);
   const tokenAverage = average(
     items.flatMap((item) =>
@@ -785,11 +836,6 @@ function CaseIterations({
           })}
         </div>
       </div>
-      {!items.length && (
-        <p className="py-6 text-sm text-muted-foreground">
-          No recorded iterations for this case on this client and model.
-        </p>
-      )}
     </>
   );
 }
@@ -803,6 +849,7 @@ function IterationDrawer({
   diagnostic,
   chain,
   onBack,
+  onEditEvaluator,
 }: {
   iteration: EvalIteration;
   iterationNumber: number;
@@ -812,6 +859,7 @@ function IterationDrawer({
   diagnostic?: EvalRunDecisionDiagnostic;
   chain?: EvalRunDecisionChain;
   onBack: () => void;
+  onEditEvaluator?: () => void;
 }) {
   const result = computeIterationResult(iteration);
   const authored = authoredForTrial({
@@ -859,23 +907,40 @@ function IterationDrawer({
           · {formatRunId(iteration._id)}
         </SheetDescription>
       </SheetHeader>
-      <div className="min-h-0 flex-1 overflow-y-auto p-6">
+      {/* Must be a flex column: `layoutMode="full"` makes IterationDetails and
+          its TraceViewer (fillContent) flex-1 items. Without a flex parent the
+          nested flex-1 / min-h-0 inside TraceTimeline collapses to 0 and the
+          Trace tab paints only its resize handle. */}
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-6">
         <IterationDetails
+          hostSnapshot={hostSnapshotFromStyle(
+            runClientIdentity(target.run).hostStyle,
+          )}
           iteration={iteration}
           testCase={null}
           layoutMode="full"
           trialVerdictWord={outcomeLabel(result)}
           scorecard={{
             render: (context) => (
-              <TrialScorecard
-                authored={authored}
-                iteration={iteration}
-                steps={authored.steps}
-                chain={decisionChain}
-                envelope={context.envelope}
-                scoresSection={context.scoresSection}
-                judgeHidden={context.judgeHidden}
-              />
+              <>
+                <IterationReportScorecard
+                  authored={authored}
+                  iteration={iteration}
+                  steps={authored.steps}
+                  chain={decisionChain}
+                  envelope={context.envelope}
+                  trace={context.trace}
+                  scoresSection={context.scoresSection}
+                  judgeHidden={context.judgeHidden}
+                />
+                {onEditEvaluator && (
+                  <div className="mt-4 flex justify-end">
+                    <Button onClick={onEditEvaluator}>
+                      Configure test case evaluators
+                    </Button>
+                  </div>
+                )}
+              </>
             ),
           }}
         />

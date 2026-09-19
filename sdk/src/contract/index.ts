@@ -627,8 +627,72 @@ export {
  */
 export { evalVerdictPolicyJsonSchema } from "./eval-verdict-policy.schema.generated.js";
 
+// ── the one grading policy (canonical read model + boundary adapters) ────────
+/**
+ * ONE policy, read out of every contract that has expressed one.
+ *
+ * `verdict-policy.ts` above pins what a DECISION looks like; this pins the
+ * RULES a producer is handed to reach one, so a suite file, a per-case hosted
+ * suite and a suite-wide hosted suite can be described in a single vocabulary
+ * without any of them being restated under another's semantics. The criterion
+ * SCOPE travels with the threshold precisely because `minimumAccuracy` and
+ * `passThreshold` are not one number in two units.
+ *
+ * `planEvalGradingPolicyEdit` is the only sanctioned way an edit against that
+ * model reaches the wire: it writes the field the current scope already uses,
+ * writes nothing at all for an edit that changes nothing, and refuses whole
+ * rather than dropping a field it cannot represent.
+ */
+export type {
+  EvalEmptyPopulationRate,
+  EvalGradingCaseOverride,
+  EvalGradingPolicyEdit,
+  EvalGradingPolicyOrigin,
+  EvalGradingPolicyRefusal,
+  EvalGradingPolicySettingsPatch,
+  EvalGradingPolicyWritePlan,
+  EvalGradingValidity,
+  EvalIterationRule,
+  EvalPassCriterion,
+  EvalPassCriterionScope,
+  EvalRunReportingProducer,
+  EvalSuiteWidePopulation,
+  HostedSuiteGradingStorage,
+  ResolvedEvalGradingPolicy,
+  SuiteFileGradingInput,
+} from "./grading-policy.js";
+export {
+  EVAL_GRADING_POLICY_ORIGINS,
+  EVAL_GRADING_POLICY_REFUSALS,
+  EVAL_RUN_REPORTING_PRODUCERS,
+  EVAL_SUITE_WIDE_POPULATIONS,
+  LEGACY_SUITE_WIDE_THRESHOLD_PERCENT,
+  MAX_MINIMUM_ITERATIONS,
+  SUITE_FILE_DEFAULT_COVERAGE,
+  SUITE_FILE_VALIDITY_DEFAULTS,
+  evalEmptyPopulationRateSchema,
+  evalGradingCaseOverrideSchema,
+  evalGradingPolicySchema,
+  evalGradingPolicyStructuralSchema,
+  evalGradingValiditySchema,
+  evalIterationRuleSchema,
+  evalPassCriterionFraction,
+  evalPassCriterionSchema,
+  hostedGradingStorageFromDto,
+  planEvalGradingPolicyEdit,
+  resolveEvalGradingIterations,
+  resolveEvalGradingValidityPolicy,
+  resolveGradingPolicyFromHostedSuite,
+  resolveGradingPolicyFromRunReporting,
+  resolveGradingPolicyFromSuiteFile,
+} from "./grading-policy.js";
+
 // ── user-facing words for the closed vocabularies ────────────────────────────
 export {
+  SWARM_FINDING_DISPOSITION_LABELS,
+  SWARM_FINDING_COVERAGE_NOTE_LABELS,
+  SWARM_FINDING_SUMMARY_KIND_LABELS,
+  SWARM_FINDING_BASIS_LABELS,
   DECISION_LABEL_VOCABULARIES,
   DECISION_SUMMARY_FALLBACK_NEXT_ACTION,
   DECISION_SUMMARY_STALE_ANALYZER_DISAGREEMENT_NEXT_ACTION,
@@ -651,6 +715,36 @@ export {
   describeExcludedTrialDetail,
 } from "./decision-labels.js";
 export type { EvalStageCoverageDetailKey } from "./decision-labels.js";
+
+// ── the words for ONE grading policy ─────────────────────────────────────────
+/**
+ * The authoring and rendering vocabulary for `./grading-policy.ts`, exported
+ * next to `decision-labels` rather than merged into it: that module renders
+ * what a run DECIDED, this renders what a suite is CONFIGURED with, and the
+ * second audience is about to edit what it reads. No label here names a policy
+ * version or offers a scope conversion.
+ */
+export {
+  EVAL_EMPTY_POPULATION_RATE_LABELS,
+  EVAL_GRADING_POLICY_ORIGIN_LABELS,
+  EVAL_GRADING_POLICY_READ_REFUSAL_LABELS,
+  EVAL_GRADING_POLICY_REFUSAL_LABELS,
+  EVAL_GRADING_VALIDITY_FIELD_HINTS,
+  EVAL_GRADING_VALIDITY_FIELD_LABELS,
+  EVAL_GRADING_VALIDITY_HINTS,
+  EVAL_GRADING_VALIDITY_LABELS,
+  EVAL_ITERATION_RULE_HINTS,
+  EVAL_ITERATION_RULE_LABELS,
+  EVAL_PASS_CRITERION_SCOPE_HINTS,
+  EVAL_PASS_CRITERION_SCOPE_LABELS,
+  EVAL_PASS_CRITERION_SCOPE_UNITS,
+  EVAL_RUN_REPORTING_PRODUCER_LABELS,
+  EVAL_SUITE_WIDE_POPULATION_HINTS,
+  EVAL_SUITE_WIDE_POPULATION_LABELS,
+  SUITE_GRADING_LABEL_VOCABULARIES,
+  describeEvalIterationRule,
+  describeEvalPassCriterion,
+} from "./suite-grading-labels.js";
 
 // ── the canonical run decision summary ───────────────────────────────────────
 export type {
@@ -1030,6 +1124,35 @@ export {
 export { caseSourceSchema, type CaseSource } from "./case-source.js";
 
 export {
+  EXECUTION_BUDGET_CEILINGS,
+  EXECUTION_BUDGET_DEFAULTS,
+  EXECUTION_BUDGET_EXCEEDS_CEILING,
+  RESOLVED_EXECUTION_BUDGET_FIELDS,
+  UNIT_TIMEOUT_FIELD,
+  evalExecutionBudgetsSchema,
+  executionBudgetCoreShape,
+  lowerExecutionBudgetCeilings,
+  platformExecutionBudgetCeilings,
+  platformExecutionBudgetDefaults,
+  resolveExecutionBudgets,
+  resolveExecutionBudgetsForSurface,
+  resolvedExecutionBudgetsSchema,
+  swarmExecutionBudgetsSchema,
+} from "./execution-budgets.js";
+export type {
+  AuthoredExecutionBudgets,
+  EvalExecutionBudgets,
+  ExecutionBudgetResolution,
+  ExecutionBudgetSource,
+  ExecutionBudgetSurface,
+  ExecutionBudgetViolation,
+  ResolvedExecutionBudgetField,
+  ResolvedExecutionBudgets,
+  ResolvedExecutionBudgetValues,
+  SwarmExecutionBudgets,
+} from "./execution-budgets.js";
+
+export {
   evalBacktestDraftSchema,
   evalBacktestRequestSchema,
   evalBacktestContinuationSchema,
@@ -1042,3 +1165,9 @@ export type {
 } from "./eval-backtest.js";
 export * from "./standard-check-ids.js";
 export * from "./standard-checks.js";
+export * from "./goal-completion.js";
+export * from "./judge-settings.js";
+export * from "./swarm-session-verdict.js";
+export * from "./swarm-report.js";
+export * from "./eval-authoring.js";
+export * from "./swarm-finding.js";

@@ -1,3 +1,8 @@
+import {
+  modelDisplayName,
+  ModelDisplayNamesContext,
+} from "@/lib/model-display-name";
+import { useContext } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
 import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
@@ -35,6 +40,7 @@ export function CompactIterationRow({
   isOpen = false,
   onToggle,
 }: IterationRowProps) {
+  const availableModels = useContext(ModelDisplayNamesContext);
   const startedAt = iteration.startedAt ?? iteration.createdAt;
   const completedAt = iteration.updatedAt ?? iteration.createdAt;
   const durationMs =
@@ -54,17 +60,16 @@ export function CompactIterationRow({
   const scores = parseIterationScores(iteration.metadata);
   const evaluationConfig = parseEvaluationConfig(iteration.metadata);
   const gatingScores = scores
-    ? scores.filter((score) =>
-        isGatingScore(score, evaluationConfig),
-      )
+    ? scores.filter((score) => isGatingScore(score, evaluationConfig))
     : [];
   const predicates = parseIterationPredicates(iteration.metadata);
   const checksBadge =
     gatingScores.length > 0
       ? {
           total: gatingScores.length,
-          passed: gatingScores.filter((score) => !scoreFailsGate(score, evaluationConfig))
-            .length,
+          passed: gatingScores.filter(
+            (score) => !scoreFailsGate(score, evaluationConfig),
+          ).length,
         }
       : predicates && predicates.length > 0
         ? {
@@ -105,9 +110,14 @@ export function CompactIterationRow({
             {testCase?.title || "—"}
           </span>
           <span className="text-xs text-muted-foreground min-w-[140px] max-w-[140px] truncate">
-            {iteration.testCaseSnapshot?.model ||
-              iterationTestCase?.models?.[0]?.model ||
-              "—"}
+            {modelDisplayName(
+              iteration.testCaseSnapshot?.model
+                ? `${iteration.testCaseSnapshot.provider}/${iteration.testCaseSnapshot.model}`
+                : iterationTestCase?.models?.[0]?.model
+                  ? `${iterationTestCase.models[0].provider}/${iterationTestCase.models[0].model}`
+                  : "—",
+              availableModels,
+            )}
           </span>
           <span className="text-xs font-mono text-muted-foreground min-w-[60px] max-w-[60px] text-right">
             {actualToolCalls.length}

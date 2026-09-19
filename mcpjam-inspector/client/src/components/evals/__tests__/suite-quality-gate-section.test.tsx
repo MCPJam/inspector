@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
   QUALITY_GATE_CLI_ENFORCEMENT,
@@ -89,140 +89,71 @@ function renderGate(
 }
 
 describe("SuiteQualityGateSection", () => {
-  it("simplifies settings without changing hidden policy values", () => {
-    const policy = {
-      baseline: { kind: "run" as const, runId: "baseline-run" },
-      maximumPassRateDrop: 0.05,
-      noDeterministicRegressions: true,
-      maximumP95LatencyIncreaseMs: 100,
-      noGatingScoreErrors: true,
-    };
-    const { onChange } = renderGate({ simplified: true, policy });
-    expect(screen.queryByRole("switch")).toBeNull();
-    expect(screen.queryByText(/Gate, Warn, and Report/)).toBeNull();
-    expect(screen.queryByText(/Applied by mcpjam/)).toBeNull();
-    expect(onChange).not.toHaveBeenCalled();
-    const drop = screen.getByLabelText(
-      "Maximum required evaluator pass-rate drop",
-    );
-    fireEvent.change(drop, { target: { value: "10" } });
-    fireEvent.blur(drop);
-    expect(onChange).toHaveBeenLastCalledWith({
-      ...policy,
-      maximumPassRateDrop: 0.1,
-    });
-    fireEvent.change(screen.getByLabelText("Baseline run id"), {
-      target: { value: "another-run" },
-    });
-    expect(onChange).toHaveBeenLastCalledWith({
-      ...policy,
-      baseline: { kind: "run", runId: "another-run" },
-    });
-  });
-
-  it("lets the absolute error switch work without a baseline", async () => {
+  it("edits the absolute error switch, the only condition this page owns", async () => {
     const user = userEvent.setup();
     const { onChange } = renderGate();
+    const errored = screen.getByRole("switch", {
+      name: "Any required evaluator errored",
+    });
+    expect(errored).toBeEnabled();
+    await user.click(errored);
+    expect(onChange).toHaveBeenCalledWith({ noGatingScoreErrors: true });
+  });
+
+  it("no longer offers a baseline or the conditions that need one", () => {
+    const { container } = renderGate({
+      policy: { baseline: { kind: "run", runId: "run_abc" } },
+    });
+    expect(screen.queryByLabelText("Quality gate baseline")).toBeNull();
+    expect(screen.queryByLabelText("Baseline run id")).toBeNull();
+    expect(screen.queryByLabelText("Baseline commit SHA")).toBeNull();
+    expect(
+      screen.queryByLabelText("Maximum required evaluator pass-rate drop"),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("switch", { name: "No deterministic regressions" }),
+    ).toBeNull();
+    expect(
+      screen.queryByLabelText("Maximum p95 latency increase in milliseconds"),
+    ).toBeNull();
+    expect(
+      container.querySelector('[data-setting-key="qualityGateBaseline"]'),
+    ).toBeNull();
+  });
+
+  /**
+   * A comparison condition set through the API still gates this suite's runs.
+   * The page cannot edit it any more, so it has to at least say it is there —
+   * a page that lists only what it owns under-reports the gate that runs.
+   */
+  it("lists a stored comparison condition read-only rather than dropping it", () => {
+    const { container, onChange } = renderGate({
+      simplified: true,
+      policy: {
+        baseline: { kind: "run", runId: "baseline-run" },
+        maximumPassRateDrop: 0.05,
+        noDeterministicRegressions: true,
+        maximumP95LatencyIncreaseMs: 100,
+        noGatingScoreErrors: true,
+      },
+    });
+    expect(onChange).not.toHaveBeenCalled();
+    const readOnly = Array.from(
+      container.querySelectorAll("[data-readonly='true']"),
+    ).map((row) => row.textContent);
+    expect(readOnly).toEqual([
+      "Allowed drop5 pp",
+      "Deterministic regressionsFail",
+      "p95 latency increase100 ms",
+    ]);
+  });
+
+  it("keeps the absolute condition editable on the simplified page", () => {
+    const { container } = renderGate({ simplified: true, policy: undefined });
     expect(
       screen.getByRole("switch", { name: "Any required evaluator errored" }),
     ).toBeEnabled();
-    expect(
-      screen.getByRole("switch", { name: "No deterministic regressions" }),
-    ).toBeDisabled();
-    await user.click(
-      screen.getByRole("switch", { name: "Any required evaluator errored" }),
-    );
-    expect(onChange).toHaveBeenCalledWith({ noGatingScoreErrors: true });
-  });
-
-  it("clears comparative fields when the baseline selector is cleared", async () => {
-    const user = userEvent.setup();
-    const { onChange } = renderGate({
-      policy: {
-        baseline: { kind: "run", runId: "run_abc" },
-        maximumPassRateDrop: 0.03,
-        noDeterministicRegressions: true,
-        maximumP95LatencyIncreaseMs: 250,
-        noGatingScoreErrors: true,
-      },
-    });
-    await user.selectOptions(
-      screen.getByLabelText("Quality gate baseline"),
-      "none",
-    );
-    expect(onChange).toHaveBeenCalledWith({ noGatingScoreErrors: true });
-  });
-
-  it("keeps the comparative conditions while a baseline id is being retyped", async () => {
-    // Backspacing the run id to retype it is mid-edit, not a choice of None.
-    // Rebuilding the policy from one field there would silently discard the
-    // ceilings the person set beside it.
-    const user = userEvent.setup();
-    const { onChange } = renderGate({
-      policy: {
-        baseline: { kind: "run", runId: "run_abc" },
-        maximumPassRateDrop: 0.03,
-        noDeterministicRegressions: true,
-        maximumP95LatencyIncreaseMs: 250,
-        noGatingScoreErrors: true,
-      },
-    });
-    await user.clear(screen.getByLabelText("Baseline run id"));
-    expect(onChange).toHaveBeenCalledWith({
-      maximumPassRateDrop: 0.03,
-      noDeterministicRegressions: true,
-      maximumP95LatencyIncreaseMs: 250,
-      noGatingScoreErrors: true,
-    });
-  });
-
-  it("treats zero as a configured threshold", async () => {
-    const user = userEvent.setup();
-    const { onChange } = renderGate({
-      policy: { baseline: { kind: "run", runId: "run_abc" } },
-    });
-    const drop = screen.getByLabelText(
-      "Maximum required evaluator pass-rate drop",
-    ) as HTMLInputElement;
-    await user.clear(drop);
-    await user.type(drop, "0");
-    await user.tab();
-    expect(onChange).toHaveBeenCalledWith({
-      baseline: { kind: "run", runId: "run_abc" },
-      maximumPassRateDrop: 0,
-    });
-
-    const latency = screen.getByLabelText(
-      "Maximum p95 latency increase in milliseconds",
-    );
-    await user.clear(latency);
-    await user.type(latency, "0");
-    await user.tab();
-    expect(onChange).toHaveBeenCalledWith({
-      baseline: { kind: "run", runId: "run_abc" },
-      maximumP95LatencyIncreaseMs: 0,
-    });
-  });
-
-  it("hides Previous run unless the backend advertises it", () => {
-    const hidden = renderGate();
-    expect(
-      hidden.container.querySelector('option[value="previous_completed"]'),
-    ).toBeNull();
-    hidden.unmount();
-
-    const shown = renderGate({
-      capabilities: readyCapabilities({
-        qualityGate: {
-          storage: true,
-          evaluator: true,
-          previousRunBaseline: true,
-        },
-      }),
-    });
-    expect(
-      shown.container.querySelector('option[value="previous_completed"]'),
-    ).toBeTruthy();
+    expect(container.querySelector("[data-readonly='true']")).toBeNull();
   });
 
   it("disables with permission copy when baseline.set is absent", () => {
@@ -244,7 +175,9 @@ describe("SuiteQualityGateSection", () => {
     expect(container.querySelector("[data-disabled-reason]")?.textContent).toBe(
       PERMISSION_REASON_COPY,
     );
-    expect(screen.getByLabelText("Quality gate baseline")).toBeDisabled();
+    expect(
+      screen.getByRole("switch", { name: "Any required evaluator errored" }),
+    ).toBeDisabled();
   });
 
   it("disables with deployment copy when the evaluator capability is absent", () => {
@@ -262,7 +195,9 @@ describe("SuiteQualityGateSection", () => {
       capabilitiesState: "unavailable",
     });
     expect(container.querySelector("[data-disabled-reason]")).toBeNull();
-    expect(screen.getByLabelText("Quality gate baseline")).toBeDisabled();
+    expect(
+      screen.getByRole("switch", { name: "Any required evaluator errored" }),
+    ).toBeDisabled();
     expect(container.textContent).toContain(DEPLOYMENT_REASON_COPY);
   });
 
@@ -284,13 +219,5 @@ describe("SuiteQualityGateSection", () => {
     expect(github.container.textContent).toContain(
       QUALITY_GATE_GITHUB_ENFORCEMENT,
     );
-  });
-
-  it("keeps an unresolved run label honest", () => {
-    renderGate();
-    fireEvent.change(screen.getByLabelText("Quality gate baseline"), {
-      target: { value: "run" },
-    });
-    expect(screen.getByText("No run selected")).toBeTruthy();
   });
 });

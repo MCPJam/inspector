@@ -46,6 +46,7 @@ ARG VITE_MCPJAM_HOSTED_MODE
 ARG VITE_MCPJAM_NONPROD_LOCKDOWN
 ARG VITE_MCPJAM_EMPLOYEE_EMAIL_DOMAINS
 ARG VITE_WORKOS_API_HOSTNAME
+ARG VITE_STRIPE_PUBLISHABLE_KEY
 ARG VITE_CONVEX_URL
 ARG VITE_WORKOS_CLIENT_ID
 ARG VITE_MCPJAM_SANDBOX_ORIGIN
@@ -125,7 +126,8 @@ RUN npm run bundle:browser-harness -w @mcpjam/inspector && \
 # Dockerfile builds. Without it this bundle's events resolve against the npm or
 # desktop artifacts, which share the same bare `release`. See
 # SENTRY_BUILD_SURFACES in shared/sentry-config.ts.
-RUN if [ -n "$VITE_MCPJAM_HOSTED_MODE" ]; then export VITE_MCPJAM_HOSTED_MODE; fi; \
+RUN if [ -n "$VITE_STRIPE_PUBLISHABLE_KEY" ]; then export VITE_STRIPE_PUBLISHABLE_KEY; fi; \
+    if [ -n "$VITE_MCPJAM_HOSTED_MODE" ]; then export VITE_MCPJAM_HOSTED_MODE; fi; \
     if [ -n "$VITE_MCPJAM_NONPROD_LOCKDOWN" ]; then export VITE_MCPJAM_NONPROD_LOCKDOWN; fi; \
     if [ -n "$VITE_MCPJAM_EMPLOYEE_EMAIL_DOMAINS" ]; then export VITE_MCPJAM_EMPLOYEE_EMAIL_DOMAINS; fi; \
     if [ -n "$VITE_WORKOS_API_HOSTNAME" ]; then export VITE_WORKOS_API_HOSTNAME; fi; \

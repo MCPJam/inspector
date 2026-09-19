@@ -1,3 +1,4 @@
+import type { JudgeRubric } from "@mcpjam/sdk/contract";
 import type { CaseSource } from "@mcpjam/sdk/contract";
 import type {
   EvalSuiteFileCaseImport,
@@ -43,7 +44,7 @@ export type EvalJudgeRubricCriterion = {
   required?: boolean;
 };
 
-export type EvalJudgeRubric = { criteria: EvalJudgeRubricCriterion[] };
+export type EvalJudgeRubric = JudgeRubric;
 
 /**
  * Host identity an eval run executed against. Hand-mirrored from the Convex
@@ -189,6 +190,8 @@ export type ImportEligibility = {
 
 /** Mirrors backend convex/lib/runClientDescriptor.ts. */
 export type RunClientDescriptor = {
+  versionId?: string;
+  versionNumber?: number;
   namedHostId?: string;
   hostConfigId?: string;
   name: string;
@@ -1139,6 +1142,12 @@ export type EvalSuiteRun = {
   // answer against its expectedOutput. Mirrors the Convex `v.object` by hand.
   // Advisory only — never changes the run's deterministic `passed`/`result`.
   goalCompletionJobId?: string;
+  goalCompletionProgress?: {
+    total: number;
+    completed: number;
+    errors: number;
+    skipped: number;
+  };
   goalCompletionStatus?: "pending" | "completed" | "failed";
   goalCompletion?: {
     summary: string;

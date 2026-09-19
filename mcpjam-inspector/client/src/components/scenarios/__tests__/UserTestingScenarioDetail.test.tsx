@@ -1,3 +1,4 @@
+import { ConvexError } from "convex/values";
 /**
  * Scenario detail. Two behaviours are load-bearing beyond layout:
  *
@@ -17,7 +18,6 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ScenarioSettings } from "@/hooks/useScenarios";
 
@@ -164,24 +164,6 @@ vi.mock("@/components/scenarios/ScenarioShareDialog", () => ({
   ScenarioShareDialog: ({ open }: { open: boolean }) =>
     open ? <div data-testid="stub-share-dialog" /> : null,
 }));
-
-// Provider reads Convex for pattern findings; these specs only care that the
-// workbench mounts under it, not the rail lifecycle.
-vi.mock("@/components/shared/usage-insights/run-insights", () => ({
-  RunInsightsProvider: ({ children }: { children: ReactNode }) => (
-    <>{children}</>
-  ),
-  RunInsightsRecommendations: () => null,
-}));
-
-// The envelope hook subscribes to Convex; these specs render without a
-// provider, so it is stubbed exactly like the rail above. `undefined` is the
-// real "still loading / no envelope" value, and the panel renders nothing for
-// it — the mount is what these specs care about.
-vi.mock(
-  "@/components/shared/actionable-insights/use-insights-envelope",
-  () => ({ useInsightsEnvelope: () => undefined }),
-);
 
 vi.mock("@/components/scenarios/ScenarioDeleteConfirmDialog", () => ({
   ScenarioDeleteConfirmDialog: ({ open }: { open: boolean }) =>
@@ -712,6 +694,22 @@ describe("UserTestingScenarioDetail", () => {
       await screen.findByText("Payments beta");
     });
 
+    it("toasts the collaborative editing denial when saving a description", async () => {
+      updateScenarioMock.mockRejectedValueOnce(
+        new ConvexError({ code: "COLLABORATIVE_EDITING_REQUIRED" }),
+      );
+      renderEdit({ description: "Old copy" });
+      fireEvent.change(screen.getByTestId("user-testing-description"), {
+        target: { value: "New copy" },
+      });
+      fireEvent.blur(screen.getByTestId("user-testing-description"));
+      await waitFor(() =>
+        expect(toast.error).toHaveBeenCalledWith(
+          "Editing another member's work requires Team or Enterprise.",
+        ),
+      );
+    });
+
     it("persists the description on blur, only when it changed", () => {
       // BB-202 moved this field off the header row and into Edit.
       renderEdit({ description: "Old copy" });
@@ -1232,7 +1230,6 @@ describe("UserTestingScenarioDetail — settings layout", () => {
     const order = [
       "user-testing-description-section",
       "user-testing-tasks-section",
-      "scenario-grading-section",
       "user-testing-delete",
     ].map((id) =>
       Array.prototype.indexOf.call(
@@ -1258,7 +1255,6 @@ describe("UserTestingScenarioDetail — settings layout", () => {
     expect(
       screen.getByRole("heading", { name: "Ratings" }),
     ).toBeInTheDocument();
-    expect(screen.getByTestId("scenario-grading-section")).toBeInTheDocument();
     expect(
       screen.getByTestId("user-testing-tasks-section"),
     ).toBeInTheDocument();
@@ -1393,3 +1389,11 @@ describe("UserTestingScenarioDetail — the setup of a study with results", () =
     expect(composerProps().lockedSlots).toBeUndefined();
   });
 });
+
+// These tests exercise the settings form after access is granted. The plan and
+// creator matrix is covered by SharedSettingsGate.test.tsx.
+vi.mock("@/components/billing/SharedSettingsGate", () => ({
+  SharedSettingsGate: ({ children }: { children: React.ReactNode }) => (
+    <>{children}</>
+  ),
+}));

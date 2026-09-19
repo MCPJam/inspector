@@ -17,6 +17,11 @@
  */
 import { logger } from "../logger.js";
 import { type ExecutionScope } from "../execution-scope.js";
+import {
+  EVAL_SANDBOX_CAPACITY_POLICY,
+  PLAYGROUND_CAPACITY_POLICY,
+  withCapacityRetry,
+} from "../run-supervisor/capacity-retry.js";
 
 export type ComputerStatus =
   | "requested"
@@ -238,23 +243,90 @@ export interface EvalSandbox {
  *       is written for a human: surface it, do not retry.
  *   503 — at capacity; `resource` says which budget. Retryable with backoff.
  */
+/**
+ * Provision the sandbox for ONE eval iteration.
+ *
+ * Retries `503 at_capacity` rather than failing the iteration on it. A full
+ * pool is a queue, not a verdict: before this, a suite that happened to launch
+ * while the pool was saturated recorded its iterations as genuine failures,
+ * and a capacity blip read as a quality regression on the run's chart.
+ *
+ * The LOOP is `withCapacityRetry`, shared with the Playground path; the POLICY
+ * is {@link EVAL_SANDBOX_CAPACITY_POLICY}, which is deliberately not the
+ * Playground's — see that constant for why a suite needs jitter and a much
+ * shorter ceiling than one waiting user does.
+ *
+ * Every other failure (409, auth, a malformed body) is returned untouched on
+ * the first attempt: only capacity is worth waiting on.
+ */
 export async function provisionEvalSandbox(args: {
   bearer: string;
   runId: string;
   iterationId?: string;
   runtimeKind?: RuntimeKind;
   signal?: AbortSignal;
+  /**
+   * Shorter aggregate wait than the policy's default. The caller knows what is
+   * LEFT of the iteration's clock; this function only knows the policy, and a
+   * capacity wait that outlives the iteration it is blocking is pure waste.
+   */
+  timeoutMs?: number;
+  onWait?: (info: { delayMs: number; resource?: string }) => void;
 }): Promise<ControlPlaneResult<EvalSandbox>> {
-  return postJson<EvalSandbox>(
-    "/evals/sandbox/provision",
-    bearerHeader(args.bearer),
+  type Result = ControlPlaneResult<EvalSandbox>;
+  const atCapacity = (result: Result): boolean =>
+    !result.ok && result.status === 503 && result.code === "at_capacity";
+
+  const outcome = await withCapacityRetry<Result>(
+    // The attempt signal, not `args.signal`: `postJson` sets no timeout of its
+    // own, so a control plane that accepts the connection and then stalls must
+    // cost ONE attempt rather than the whole budget.
+    (_attempt, signal) =>
+      postJson<EvalSandbox>(
+        "/evals/sandbox/provision",
+        bearerHeader(args.bearer),
+        {
+          runId: args.runId,
+          ...(args.iterationId ? { iterationId: args.iterationId } : {}),
+          ...(args.runtimeKind ? { runtimeKind: args.runtimeKind } : {}),
+        },
+        signal,
+      ),
     {
-      runId: args.runId,
-      ...(args.iterationId ? { iterationId: args.iterationId } : {}),
-      ...(args.runtimeKind ? { runtimeKind: args.runtimeKind } : {}),
+      ...EVAL_SANDBOX_CAPACITY_POLICY,
+      totalBudgetMs:
+        args.timeoutMs ?? EVAL_SANDBOX_CAPACITY_POLICY.totalBudgetMs,
+      shouldRetry: atCapacity,
+      retryAfterMsOf: (result) =>
+        !result.ok && typeof result.retryAfterMs === "number"
+          ? result.retryAfterMs
+          : undefined,
+      ...(args.signal ? { signal: args.signal } : {}),
+      onWait: ({ delayMs, result }) => {
+        const resource =
+          result && !result.ok && typeof result.resource === "string"
+            ? result.resource
+            : undefined;
+        args.onWait?.({ delayMs, ...(resource ? { resource } : {}) });
+      },
     },
-    args.signal,
   );
+
+  if (outcome.kind === "settled") return outcome.result;
+  // Out of attempts or out of clock. The LAST result is returned when there is
+  // one, so the caller sees the control plane's own words (and its `resource`)
+  // rather than a message this function invented about a failure it only
+  // relayed.
+  if (outcome.lastResult) return outcome.lastResult;
+  if (outcome.reason === "aborted") {
+    return { ok: false, status: 499, error: "cancelled" };
+  }
+  return {
+    ok: false,
+    status: 503,
+    error: "Eval sandbox capacity did not become available in time",
+    code: "at_capacity",
+  };
 }
 
 export interface ResolvedEvalAttachment {
@@ -366,6 +438,11 @@ export async function wakePlaygroundSandbox(args: {
  * cannot accidentally invent different retry loops. The ten-minute ceiling is
  * intentionally finite: a full queue should become a user-visible notice,
  * not an unbounded tool call.
+ *
+ * The LOOP is `withCapacityRetry` (`server/utils/run-supervisor/`), shared with
+ * the swarm and eval sandbox paths; the POLICY and the terminal shapes stay
+ * here, because they are this surface's and no two of the three agree. See
+ * {@link PLAYGROUND_CAPACITY_POLICY} for the numbers.
  */
 export async function provisionPlaygroundSandbox(args: {
   bearer: string;
@@ -376,81 +453,78 @@ export async function provisionPlaygroundSandbox(args: {
   timeoutMs?: number;
   onWait?: (info: { delayMs: number; resource?: string }) => void;
 }): Promise<ControlPlaneResult<PlaygroundSandbox>> {
-  const deadline = Date.now() + (args.timeoutMs ?? 10 * 60_000);
-  let delayMs = 30_000;
-  for (;;) {
-    // Bound each ATTEMPT, not only the sleeps. `postJson` sets no timeout of
-    // its own and `args.signal` fires only on a caller-level cancel, so a
-    // control plane that accepts the connection and then stalls parks this
-    // await well past the ceiling. 30s is the per-request deadline
-    // `swarm-sandbox.ts` already puts on `provisionJourneySandbox` — but
-    // capped by what is LEFT of the aggregate budget, so a caller that asked
-    // for less than 30s (or a last attempt with seconds to spare) still gets
-    // the deadline it asked for rather than a flat 30 on top of it.
-    const remainingMs = deadline - Date.now();
-    if (remainingMs <= 0) {
-      return {
-        ok: false,
-        status: 503,
-        error: "Playground browser capacity did not become available in time",
-        code: "at_capacity",
-      };
-    }
-    const attemptDeadline = AbortSignal.timeout(Math.min(30_000, remainingMs));
-    const result = await postJson<PlaygroundSandbox>(
-      "/playground/sandbox/provision",
-      {
-        ...bearerHeader(args.bearer),
-        ...(getServiceToken()
-          ? { "x-inspector-service-token": getServiceToken()! }
-          : {}),
-      },
-      {
-        projectId: args.projectId,
-        chatSessionId: args.chatSessionId,
-        ...(args.hostId ? { hostId: args.hostId } : {}),
-      },
-      args.signal
-        ? AbortSignal.any([args.signal, attemptDeadline])
-        : attemptDeadline,
-    );
-    if (result.ok || result.status !== 503 || result.code !== "at_capacity") {
-      return result;
-    }
-    const retryMs = Math.min(
-      5 * 60_000,
-      Math.max(30_000, result.retryAfterMs ?? delayMs),
-    );
-    if (Date.now() + retryMs > deadline || args.signal?.aborted) {
-      return {
-        ok: false,
-        status: 503,
-        error: "Playground browser capacity did not become available in time",
-        code: "at_capacity",
-        ...(result.resource ? { resource: result.resource } : {}),
-        retryAfterMs: retryMs,
-      };
-    }
-    args.onWait?.({
-      delayMs: retryMs,
-      ...(result.resource ? { resource: result.resource } : {}),
-    });
-    await new Promise<void>((resolve) => {
-      const timer = setTimeout(resolve, retryMs);
-      args.signal?.addEventListener(
-        "abort",
-        () => {
-          clearTimeout(timer);
-          resolve();
+  type Result = ControlPlaneResult<PlaygroundSandbox>;
+  const atCapacity = (result: Result): boolean =>
+    !result.ok && result.status === 503 && result.code === "at_capacity";
+  const resourceOf = (result: Result | undefined): string | undefined =>
+    result && !result.ok && typeof result.resource === "string"
+      ? result.resource
+      : undefined;
+  /** The one message every give-up path has always used. */
+  const outOfTime = (
+    extra: Partial<Extract<Result, { ok: false }>> = {},
+  ): Result => ({
+    ok: false,
+    status: 503,
+    error: "Playground browser capacity did not become available in time",
+    code: "at_capacity",
+    ...extra,
+  });
+
+  const outcome = await withCapacityRetry<Result>(
+    // `postJson` sets no timeout of its own and `args.signal` fires only on a
+    // caller-level cancel, so a control plane that accepts the connection and
+    // then stalls would park this await well past the ceiling. The policy's
+    // per-attempt deadline — capped by what is LEFT of the aggregate budget —
+    // is what bounds it.
+    (_attempt, signal) =>
+      postJson<PlaygroundSandbox>(
+        "/playground/sandbox/provision",
+        {
+          ...bearerHeader(args.bearer),
+          ...(getServiceToken()
+            ? { "x-inspector-service-token": getServiceToken()! }
+            : {}),
         },
-        { once: true },
-      );
-    });
-    delayMs = Math.min(5 * 60_000, delayMs * 2);
-    if (args.signal?.aborted) {
-      return { ok: false, status: 499, error: "cancelled" };
-    }
+        {
+          projectId: args.projectId,
+          chatSessionId: args.chatSessionId,
+          ...(args.hostId ? { hostId: args.hostId } : {}),
+        },
+        signal,
+      ),
+    {
+      ...PLAYGROUND_CAPACITY_POLICY,
+      totalBudgetMs: args.timeoutMs ?? PLAYGROUND_CAPACITY_POLICY.totalBudgetMs,
+      shouldRetry: atCapacity,
+      retryAfterMsOf: (result) =>
+        !result.ok && typeof result.retryAfterMs === "number"
+          ? result.retryAfterMs
+          : undefined,
+      ...(args.signal ? { signal: args.signal } : {}),
+      onWait: ({ delayMs, result }) => {
+        const resource = resourceOf(result);
+        args.onWait?.({ delayMs, ...(resource ? { resource } : {}) });
+      },
+    },
+  );
+
+  if (outcome.kind === "settled") return outcome.result;
+  if (outcome.reason === "aborted") {
+    return { ok: false, status: 499, error: "cancelled" };
   }
+  if (outcome.reason === "budget_before_delay") {
+    // Gave up in FRONT of a wait, so we know how long that wait would have
+    // been and which budget was full — both worth telling the caller.
+    const resource = resourceOf(outcome.lastResult);
+    return outOfTime({
+      ...(resource ? { resource } : {}),
+      ...(outcome.plannedDelayMs !== undefined
+        ? { retryAfterMs: outcome.plannedDelayMs }
+        : {}),
+    });
+  }
+  return outOfTime();
 }
 
 /**

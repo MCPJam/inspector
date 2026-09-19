@@ -1,3 +1,4 @@
+import type { PlatformEvalIterationReport } from "@mcpjam/sdk/platform";
 /**
  * What actually happened to each authored scorer, on one trial.
  *
@@ -103,6 +104,7 @@ export type TrialRowEvidence = {
 
 export type JoinedScorecardRow = ScorecardRow & {
   result: TrialRowResult;
+  narrative?: { text: string; stale: boolean; citations: string[] };
   evidence?: TrialRowEvidence;
 };
 
@@ -111,6 +113,7 @@ export type JoinedScorecardGroup = Omit<ScorecardGroup, "rows"> & {
 };
 
 export type TrialFacts = {
+  report?: PlatformEvalIterationReport | null;
   iteration: EvalIteration | null;
   /** Authored steps as they were when the trial ran. */
   steps: readonly TestStep[];
@@ -246,6 +249,9 @@ function isTerminal(iteration: EvalIteration | null): boolean {
  *
  * Pure. Every branch either names a source or returns `notMeasured`.
  */
+/** Keyed once per key, so a re-render does not repeat the warning. */
+const warnedAmbiguousJoinKeys = new Set<string>();
+
 export function joinTrialResults(
   groups: readonly ScorecardGroup[],
   trial: TrialFacts,
@@ -290,8 +296,8 @@ export function joinTrialResults(
 
   return groups.map((group) => ({
     ...group,
-    rows: group.rows.map((row) =>
-      joinRow(row, {
+    rows: group.rows.map((row) => {
+      const joined = joinRow(row, {
         stepRows,
         byCriterionId,
         scores,
@@ -299,8 +305,47 @@ export function joinTrialResults(
         judgeCase: trial.judgeCase ?? null,
         liveStepStatusById: trial.liveStepStatusById,
         terminal,
-      }),
-    ),
+      });
+      const join = row.join;
+      // A widget-assert step row mints no scorer id — the server never graded
+      // it as a named scorer — so it has no key and legitimately never
+      // receives a narrative. Undefined here means "nothing to match", NOT
+      // "match anything".
+      const joinKey = !join
+        ? undefined
+        : join.kind === "predicate"
+        ? `predicate:${join.criterionId}`
+        : join.kind === "step"
+        ? join.criterionId
+          ? `predicate:${join.criterionId}`
+          : undefined
+        : join.scorerId;
+      const matches = joinKey
+        ? (trial.report?.rows.filter((note) => note.joinKey === joinKey) ?? [])
+        : [];
+      // Two notes for one key would make the narrative a coin flip, so the row
+      // keeps its recorded observation instead. The server de-dupes scorer
+      // definitions by id, so this is a bug in the producer if it ever fires.
+      if (matches.length > 1 && !warnedAmbiguousJoinKeys.has(joinKey!)) {
+        warnedAmbiguousJoinKeys.add(joinKey!);
+        console.warn(
+          `[scorecard] ${matches.length} trace narratives claim the scorer "${joinKey}"; showing the recorded observation instead.`,
+        );
+      }
+      const note = matches.length === 1 ? matches[0] : undefined;
+      return note
+        ? {
+            ...joined,
+            narrative: {
+              text: note.actual,
+              citations: note.citations,
+              stale:
+                trial.report?.status !== "ready" ||
+                note.verdictSeen !== joined.result.state,
+            },
+          }
+        : joined;
+    }),
   }));
 }
 

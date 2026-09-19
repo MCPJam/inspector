@@ -76,22 +76,7 @@ describe("EvaluateRunPage", () => {
     expect(screen.queryByRole("menuitem", { name: "New run" })).toBeNull();
     expect(within(header).queryByText("Failed")).toBeNull();
     expect(within(header).queryByText("Passed")).toBeNull();
-    const pill = screen.getByTestId("run-header-decision-pill");
-    expect(pill).toHaveAttribute("data-decision", "hold");
-    expect(within(header).queryByText(/\d+ of \d+/)).toBeNull();
-    expect(pill).toHaveClass("h-8", "rounded-full");
-    expect(pill).toHaveClass(
-      "border-warning/30",
-      "bg-warning/10",
-      "text-warning",
-    );
-    expect(pill).not.toHaveClass("border-destructive/30", "text-destructive");
-    expect(
-      within(pill).getByTestId("run-header-pairing-decision"),
-    ).toHaveTextContent("HOLD");
-    const mark = within(pill).getByLabelText("Claude · Client default");
-    expect(mark).toHaveClass("bg-background", "rounded-full");
-    expect(mark.querySelector("img")).toHaveAttribute("alt", "");
+    expect(screen.queryByTestId("run-header-decision-pill")).toBeNull();
     expect(screen.queryByTestId("run-header-pairing")).toBeNull();
   });
 
@@ -118,6 +103,12 @@ describe("EvaluateRunPage", () => {
         </EvaluateRunPage>,
       );
       const header = screen.getByTestId("evaluate-run-header");
+      if (label === "HOLD" || label === "SHIP") {
+        expect(
+          within(header).queryByTestId("run-header-decision-pill"),
+        ).toBeNull();
+        return;
+      }
       const pill = within(header).getByTestId("run-header-decision-pill");
       expect(pill).toHaveClass("h-8", "rounded-full");
       expect(
@@ -133,8 +124,7 @@ describe("EvaluateRunPage", () => {
     },
   );
 
-  it("uses a stable run title and removes individual client report switching", async () => {
-    const user = userEvent.setup();
+  it("uses a stable run title and removes individual client report switching", () => {
     render(
       <EvaluateRunPage
         run={makeRun({
@@ -164,38 +154,9 @@ describe("EvaluateRunPage", () => {
     );
     expect(screen.getByRole("heading", { name: "Run #1" })).toBeVisible();
     expect(screen.queryByText(/client\/model pairing/)).toBeNull();
-    const pairings = screen.getByTestId("run-header-pairings");
-    const pills = within(pairings).getAllByTestId("run-header-decision-pill");
-    expect(pills).toHaveLength(2);
-    expect(pills[0]).toHaveAttribute("data-decision", "hold");
-    expect(pills[1]).toHaveAttribute("data-decision", "ship");
-    expect(pills[0]).toHaveClass("h-8", "rounded-full");
-    expect(pills[1]).toHaveClass("h-8", "rounded-full");
-    expect(pills[0]).toHaveClass(
-      "border-warning/30",
-      "bg-warning/10",
-      "text-warning",
-    );
-    expect(pills[0]).not.toHaveClass("text-destructive");
-    expect(pills[1]).toHaveClass("border-success/30", "bg-success/10");
-    expect(
-      within(pills[0]).getByTestId("run-header-pairing-decision"),
-    ).toHaveTextContent("HOLD");
-    expect(
-      within(pills[1]).getByTestId("run-header-pairing-decision"),
-    ).toHaveTextContent("SHIP");
-    expect(within(pills[0]).getByLabelText("Claude · sonnet")).toBeVisible();
-    expect(within(pills[0]).getByLabelText("Claude · sonnet")).toHaveClass(
-      "bg-background",
-      "rounded-full",
-    );
-    expect(within(pills[1]).getByLabelText("Claude · opus")).toBeVisible();
-    expect(within(pills[0]).queryByLabelText("Claude · opus")).toBeNull();
-    expect(within(pills[1]).queryByLabelText("Claude · sonnet")).toBeNull();
-    await user.hover(within(pills[0]).getByLabelText("Claude · sonnet"));
-    expect(
-      await screen.findByRole("tooltip", { hidden: true }),
-    ).toHaveTextContent("Claude · sonnet");
+    expect(screen.queryByTestId("run-header-pairings")).toBeNull();
+    expect(screen.queryByText("HOLD")).toBeNull();
+    expect(screen.queryByText("SHIP")).toBeNull();
     expect(screen.queryByRole("button", { name: /Client report/ })).toBeNull();
     expect(screen.queryByRole("button", { name: "Run actions" })).toBeNull();
     expect(screen.queryByRole("menuitem", { name: "Run details" })).toBeNull();
@@ -203,7 +164,7 @@ describe("EvaluateRunPage", () => {
     expect(screen.queryByText("opus")).toBeNull();
   });
 
-  it("stacks every Hold client in one pill and omits an empty Ship pill", () => {
+  it("omits Hold badges for all failed pairings", () => {
     render(
       <EvaluateRunPage
         run={makeRun({
@@ -233,22 +194,14 @@ describe("EvaluateRunPage", () => {
         body
       </EvaluateRunPage>,
     );
-    const pills = screen.getAllByTestId("run-header-decision-pill");
-    expect(pills).toHaveLength(1);
-    expect(pills[0]).toHaveAttribute("data-decision", "hold");
-    expect(within(pills[0]).getAllByLabelText(/ · /)).toHaveLength(2);
-    expect(screen.queryByText("SHIP")).toBeNull();
-    expect(screen.queryByText("Hold:")).toBeNull();
-    expect(screen.queryByText("HOLD:")).toBeNull();
-    expect(
-      within(pills[0]).getByTestId("run-header-pairing-decision"),
-    ).toHaveTextContent("HOLD");
+    expect(screen.queryByTestId("run-header-pairings")).toBeNull();
+    expect(screen.queryByText("HOLD")).toBeNull();
   });
 
   it("recovers the pairing model from iterations when the run omitted it", () => {
     render(
       <EvaluateRunPage
-        run={makeRun({ _id: "run-1" })}
+        run={makeRun({ _id: "run-1", status: "running", result: "pending" })}
         iterations={
           [
             {
@@ -546,5 +499,137 @@ describe("run heading and scope", () => {
     );
 
     expect(screen.queryByTestId("evaluate-run-scope")).toBeNull();
+  });
+});
+
+describe("EvaluateRunPage cancel", () => {
+  const running = (id: string, overrides: Partial<EvalSuiteRun> = {}) =>
+    makeRun({
+      _id: id,
+      status: "running",
+      result: "pending",
+      completedAt: undefined,
+      runGroupId: "launch-1",
+      ...overrides,
+    });
+
+  it("cancels every still-running pairing of the launch, not just this run", async () => {
+    const user = userEvent.setup();
+    const onCancelRun = vi.fn();
+    render(
+      <EvaluateRunPage
+        run={running("run-a")}
+        hostNamesById={hostNamesById}
+        otherRuns={[]}
+        relatedRuns={[
+          running("run-a"),
+          running("run-b"),
+          // Same launch, already finished: cancelling it would throw.
+          makeRun({
+            _id: "run-c",
+            runGroupId: "launch-1",
+            status: "completed",
+          }),
+        ]}
+        defaultCompareRunId={null}
+        onCompareWithRun={vi.fn()}
+        onCancelRun={onCancelRun}
+      >
+        <div>run body</div>
+      </EvaluateRunPage>,
+    );
+
+    // Cancel takes the primary slot, so "Run again" is not offered beside a
+    // run that is still going.
+    expect(screen.queryByRole("button", { name: "Run again" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Cancel run" }));
+    expect(onCancelRun).toHaveBeenCalledWith(["run-a", "run-b"]);
+  });
+
+  it("gives the primary slot back to Run again once the run settles", () => {
+    render(
+      <EvaluateRunPage
+        run={makeRun({ _id: "run-a" })}
+        hostNamesById={hostNamesById}
+        otherRuns={[]}
+        defaultCompareRunId={null}
+        onCompareWithRun={vi.fn()}
+        onCancelRun={vi.fn()}
+        launchReview={{ onStart: vi.fn() } as never}
+      >
+        <div>run body</div>
+      </EvaluateRunPage>,
+    );
+
+    expect(screen.getByRole("button", { name: "Run again" })).toBeTruthy();
+    expect(screen.queryByTestId("evaluate-run-page-cancel")).toBeNull();
+  });
+
+  it("offers no cancel once the run has finished", () => {
+    render(
+      <EvaluateRunPage
+        run={makeRun({ _id: "run-a" })}
+        hostNamesById={hostNamesById}
+        otherRuns={[]}
+        defaultCompareRunId={null}
+        onCompareWithRun={vi.fn()}
+        onCancelRun={vi.fn()}
+      >
+        <div>run body</div>
+      </EvaluateRunPage>,
+    );
+
+    expect(screen.queryByTestId("evaluate-run-page-cancel")).toBeNull();
+  });
+
+  it("cancels a grading run — the judge is still billing", () => {
+    render(
+      <EvaluateRunPage
+        run={running("run-a", { status: "grading" })}
+        hostNamesById={hostNamesById}
+        otherRuns={[]}
+        defaultCompareRunId={null}
+        onCompareWithRun={vi.fn()}
+        onCancelRun={vi.fn()}
+      >
+        <div>run body</div>
+      </EvaluateRunPage>,
+    );
+
+    expect(screen.getByTestId("evaluate-run-page-cancel")).toBeTruthy();
+  });
+
+  it("disables the button while the cancel is in flight", () => {
+    render(
+      <EvaluateRunPage
+        run={running("run-a")}
+        hostNamesById={hostNamesById}
+        otherRuns={[]}
+        defaultCompareRunId={null}
+        onCompareWithRun={vi.fn()}
+        onCancelRun={vi.fn()}
+        cancellingRunId="run-a"
+      >
+        <div>run body</div>
+      </EvaluateRunPage>,
+    );
+
+    expect(screen.getByRole("button", { name: "Cancel run" })).toBeDisabled();
+  });
+
+  it("stays out of the way when the page has no cancel handler", () => {
+    render(
+      <EvaluateRunPage
+        run={running("run-a")}
+        hostNamesById={hostNamesById}
+        otherRuns={[]}
+        defaultCompareRunId={null}
+        onCompareWithRun={vi.fn()}
+      >
+        <div>run body</div>
+      </EvaluateRunPage>,
+    );
+
+    expect(screen.queryByTestId("evaluate-run-page-cancel")).toBeNull();
   });
 });

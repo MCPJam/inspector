@@ -759,11 +759,19 @@ describe("the evaluator-vocabulary scanner", () => {
     expect(unscoped.json.violations[0].reason).toBe("protected field");
   });
 
-  it("retires `repetitions` in the committed mapping, legacy floor first", async () => {
-    // `repetitions` is the legacy spelling of the configured count. The count
-    // becomes `iterations`, but only after the legacy per-case field that
-    // already answers to `iterations` (read as a FLOOR) has moved out of the
-    // way, and the revision-payload key never moves at all.
+  it("has retired the two count rows, and keeps the flag rows and the frozen keys", async () => {
+    // `repetitions` is the legacy spelling of the configured count, and the
+    // count rename was ORDERED: the legacy per-case field that answered to
+    // `iterations` (read as a FLOOR) became `legacyIterations` first, then
+    // `repetitions` became `iterations`. Both rows are gone now, on purpose:
+    // the wire speaks both spellings under `x-mcpjam-eval-vocabulary`, and
+    // the SDK types, the CLI and the v1 route hold the legacy floor beside
+    // the exact count BY DESIGN (`PlatformEvalCaseV2.legacyIterations` next
+    // to `PlatformEvalCase.iterations`) — the shape the per-file
+    // target-in-use guard reads as two fields merging into one. A committed
+    // row would refuse the expand phase it was written to sequence. The flag
+    // rows stay (they name what a user types), and the revision-payload key
+    // never moves at all.
     const dir = dirname(SCANNER);
     const mapping = JSON.parse(
       readFileSync(join(dir, "mapping.json"), "utf8")
@@ -789,17 +797,8 @@ describe("the evaluator-vocabulary scanner", () => {
           sameMeaning: r.sameMeaning,
         }));
 
-    expect(pick("iterations")).toEqual([
-      { from: "iterations", to: "legacyIterations", scope: "wire-field" },
-    ]);
-    expect(pick("repetitions")).toEqual([
-      {
-        from: "repetitions",
-        to: "iterations",
-        scope: "wire-field",
-        after: "iterations",
-      },
-    ]);
+    expect(pick("iterations")).toEqual([]);
+    expect(pick("repetitions")).toEqual([]);
     expect(pick("--repetitions")).toEqual([
       { from: "--repetitions", to: "--iterations", scope: "flag" },
     ]);
@@ -1252,6 +1251,9 @@ describe("the evaluator-vocabulary scanner", () => {
       // Not an eval adapter at all: outside the rename's paths.
       "sdk/src/platform/show-servers.ts":
         "export const f = (report: any) => report.checks.tools;\n",
+      // A list of iteration RECORDS. With the count rows retired this is no
+      // longer anybody's rename target, so it is neither proposed nor set
+      // aside — it is simply not in the inventory.
       "mcpjam-inspector/server/routes/v1/evals.ts":
         "export const page = { iterations: (rows ?? []).map(toIterationDto) };\n",
     });
@@ -1264,7 +1266,6 @@ describe("the evaluator-vocabulary scanner", () => {
       "sdk/src/platform/operations.ts:1 checks",
     ]);
     expect(json.excludedByRule.map(key).sort()).toEqual([
-      "mcpjam-inspector/server/routes/v1/evals.ts:1 iterations",
       "sdk/src/platform/operations.ts:2 checks",
     ]);
   });

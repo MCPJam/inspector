@@ -28,7 +28,10 @@ const STAGE_ANALYTICS_DOCUMENT = {
   ...(JSON.parse(
     readFileSync(
       fileURLToPath(
-        new URL("../../sdk/tests/fixtures/stage-analytics-golden.json", import.meta.url)
+        new URL(
+          "../../sdk/tests/fixtures/stage-analytics-golden.json",
+          import.meta.url
+        )
       ),
       "utf8"
     )
@@ -277,6 +280,8 @@ interface EvalFixtureOptions {
    */
   environmentSecretGrants?: boolean;
   suiteDetail?: {
+    settings?: Record<string, unknown>;
+    revisionNumber?: number;
     environmentIds?: string[];
     hosts?: Array<{ id: string; name: string }>;
   };
@@ -783,7 +788,11 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
           executionConfig: null,
           hosts: options.suiteDetail?.hosts ?? [],
           environmentIds: options.suiteDetail?.environmentIds ?? [],
-          settings: {},
+          settings: options.suiteDetail?.settings ?? {
+            policy: "legacy",
+            minimumIterations: 2,
+          },
+          revisionNumber: options.suiteDetail?.revisionNumber,
           schedule: {},
           createdAt: 1,
           updatedAt: 2,
@@ -2652,7 +2661,7 @@ test("eval run appends a View link in human format", async () => {
       lines.at(-1),
       "View: http://127.0.0.1:" +
         new URL(fixture.baseUrl).port +
-        "/evals/suite/suite-1/runs/run-case?project=proj-alpha"
+        "/evaluate/suite/suite-1/runs/run-case?project=proj-alpha"
     );
   } finally {
     await fixture.close();
@@ -2686,7 +2695,7 @@ test("eval status appends a View link in human format", async () => {
       lines.at(-1),
       "View: http://127.0.0.1:" +
         new URL(fixture.baseUrl).port +
-        "/evals/suite/suite-1/runs/run-1?project=proj-alpha"
+        "/evaluate/suite/suite-1/runs/run-1?project=proj-alpha"
     );
   } finally {
     await fixture.close();
@@ -2716,12 +2725,13 @@ test("eval status renders an actionable decision summary for failed runs", async
 
     assert.equal(run.result.exitCode, 0);
     // The canonical contract, rendered through its labels. The count carries
-    // the population it counted — this run predates verdict policy v2, so its
+    // the population it counted — this run was decided by the suite-wide
+    // accuracy threshold, so its
     // stored summary counts TRIALS, and saying "cases" would be a different
     // claim about the same numbers.
     assert.match(
       run.stdout,
-      /Decision summary: failed \(legacy percent-threshold run\) — 0\/1 iteration passed/
+      /Decision summary: failed \(suite accuracy threshold\) — 0\/1 iteration passed/
     );
     assert.match(run.stdout, /First failed stage: Tool call/);
     assert.match(run.stdout, /Failure category: call arguments/);
@@ -3270,7 +3280,10 @@ test("eval status leads with the first break, and expands the chain on --stages"
 
     assert.match(detailed.stdout, /Chain:/);
     assert.match(detailed.stdout, /Connection: passed/);
-    assert.match(detailed.stdout, /Response: never ran \(an earlier stage failed\)/);
+    assert.match(
+      detailed.stdout,
+      /Response: never ran \(an earlier stage failed\)/
+    );
     // Every value through the label maps, on the detailed layer too.
     assert.equal(detailed.stdout.includes("notReached"), false);
     assert.equal(detailed.stdout.includes("argumentMismatch"), false);
@@ -3988,7 +4001,10 @@ test("eval run --wait --format json carries the decision summary", async () => {
     );
 
     const receipt = JSON.parse(run.stdout.trim());
-    assert.ok(receipt.decisionSummary, "expected a decisionSummary in the receipt");
+    assert.ok(
+      receipt.decisionSummary,
+      "expected a decisionSummary in the receipt"
+    );
     // The CONTRACT shape, not a CLI-local restatement of it: same schema
     // version, same verdict vocabulary, same diagnostics envelope the API
     // returns and `get_eval_run` hands a model.
@@ -4045,8 +4061,17 @@ test("eval run --wait --format human never leaks the wire enums", async () => {
       false,
       "the raw summary must not ride on the human receipt"
     );
-    for (const wire of ["notEstablished", "caseVariant", "argumentMismatch", "userValue"]) {
-      assert.equal(run.stdout.includes(wire), false, `raw ${wire} leaked into human output`);
+    for (const wire of [
+      "notEstablished",
+      "caseVariant",
+      "argumentMismatch",
+      "userValue",
+    ]) {
+      assert.equal(
+        run.stdout.includes(wire),
+        false,
+        `raw ${wire} leaked into human output`
+      );
     }
   } finally {
     process.exitCode = 0;
@@ -4636,7 +4661,7 @@ test("eval compare prints the compare side's decision summary to stderr", async 
     assert.doesNotMatch(run.stderr, /\/80 iterations passed/);
     assert.match(
       run.stderr,
-      /Decision summary: failed \(legacy percent-threshold run\) — 1\/2 iterations passed/
+      /Decision summary: failed \(suite accuracy threshold\) — 1\/2 iterations passed/
     );
     // One parseable document on stdout, as every `--format human` command
     // promises.
@@ -5765,6 +5790,189 @@ test("eval update rejects an out-of-range --min-iterations before any write", as
         /--min-iterations must be a whole number from 1 to 10/
       );
     }
+    assert.equal(fixture.createBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval update --pass-threshold sends the per-case fraction", async () => {
+  const fixture = await startEvalFixture({
+    suiteDetail: {
+      settings: {
+        policy: "v2",
+        verdictPolicyVersion: 2,
+        verdictPolicyDefaults: { repetitions: 1, passThreshold: 1 },
+      },
+    },
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "update",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--pass-threshold",
+          "0.9"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+    assert.equal(run.result.exitCode, 0);
+    const patchBody = fixture.createBodies.at(-1) as {
+      settings?: { passThreshold?: number; minimumAccuracy?: number };
+    };
+    assert.equal(patchBody.settings?.passThreshold, 0.9);
+    // The suite-wide percent is NOT written alongside it. Sending both is what
+    // the route refuses, and they are different criteria rather than two units
+    // of one number.
+    assert.equal(patchBody.settings?.minimumAccuracy, undefined);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval update --iterations sends the per-case default count", async () => {
+  const fixture = await startEvalFixture({
+    suiteDetail: {
+      settings: {
+        policy: "v2",
+        verdictPolicyVersion: 2,
+        verdictPolicyDefaults: { repetitions: 1, passThreshold: 1 },
+      },
+    },
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "update",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--iterations",
+          "5"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+    assert.equal(run.result.exitCode, 0);
+    const patchBody = fixture.createBodies.at(-1) as {
+      settings?: { repetitions?: number; minimumIterations?: number | null };
+    };
+    assert.equal(patchBody.settings?.repetitions, 5);
+    assert.equal(patchBody.settings?.minimumIterations, undefined);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval update rejects a percent typed into --pass-threshold", async () => {
+  // `--pass-threshold 90` would reach the wire as a 9000% per-case bar. The
+  // route refuses it, but only after the request, and its error would name a
+  // field the caller did spell correctly.
+  const fixture = await startEvalFixture();
+  try {
+    for (const value of ["90", "-0.1", "1.5"]) {
+      const run = await captureProcessOutput(() =>
+        main(
+          evalArgv(
+            fixture.baseUrl,
+            "update",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--pass-threshold",
+            value
+          ),
+          { telemetry: telemetryDisabled }
+        )
+      );
+      assert.notEqual(run.result.exitCode, 0);
+      assert.match(
+        run.stderr,
+        /--pass-threshold must be a fraction from 0 to 1 \(0\.9, not 90\)/
+      );
+    }
+    assert.equal(fixture.createBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval update refuses both criterion flags rather than preferring one", async () => {
+  // A precedence rule here is invisible: a script that passes both because
+  // somebody half-finished a migration keeps running, and the suite it edits is
+  // decided by whichever of two DIFFERENT bars this happened to prefer, with
+  // the other flag reported as accepted.
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "update",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--min-accuracy",
+          "90",
+          "--pass-threshold",
+          "0.9"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+    assert.notEqual(run.result.exitCode, 0);
+    assert.match(
+      run.stderr,
+      /Use either --min-accuracy or --pass-threshold, not both/
+    );
+    // And the sentence says WHY, so a reader does not conclude the two are the
+    // same number in different units.
+    assert.match(run.stderr, /different criteria, not two units of one number/);
+    assert.equal(fixture.createBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval update refuses both iteration flags rather than preferring one", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "update",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--min-iterations",
+          "3",
+          "--iterations",
+          "5"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+    assert.notEqual(run.result.exitCode, 0);
+    assert.match(
+      run.stderr,
+      /Use either --min-iterations or --iterations, not both/
+    );
+    // A floor RAISES a case's own count and a default REPLACES it, so a case at
+    // 7 resolves to 7 under a floor of 3 and to 3 under a default of 3.
+    assert.match(run.stderr, /raises a case's own count/);
     assert.equal(fixture.createBodies.length, 0);
   } finally {
     await fixture.close();
@@ -8085,7 +8293,9 @@ const SUITE_GATE_FAILED = {
 };
 
 test("a stored suite-gate failure fails a passing run, and names the condition", async () => {
-  const fixture = await startEvalFixture({ runOneSuiteGate: SUITE_GATE_FAILED });
+  const fixture = await startEvalFixture({
+    runOneSuiteGate: SUITE_GATE_FAILED,
+  });
   try {
     const run = await captureProcessOutput(() =>
       main(
@@ -8176,4 +8386,116 @@ test("a suite-gate read failure never rewrites a measured verdict", async () => 
 
 function fixture0(f: { baseUrl: string }): string {
   return f.baseUrl;
+}
+
+for (const scenario of [
+  {
+    name: "refuses implicit scope change",
+    settings: { policy: "legacy" },
+    flags: ["--iterations", "5", "--pass-threshold", "0.9"],
+    error: /no default iteration count/,
+  },
+  {
+    name: "preserves suite-wide scope and revision",
+    settings: { policy: "legacy", minimumAccuracy: 100 },
+    flags: ["--pass-threshold", "0.9"],
+    patch: { minimumAccuracy: 90 },
+  },
+  {
+    name: "refuses a floor on per-case suites",
+    settings: {
+      policy: "v2",
+      verdictPolicyVersion: 2,
+      verdictPolicyDefaults: { repetitions: 1, passThreshold: 1 },
+    },
+    flags: ["--min-iterations", "3"],
+    error: /no iteration minimum/,
+  },
+  {
+    name: "skips unchanged grading",
+    settings: { policy: "legacy", minimumAccuracy: 90 },
+    flags: ["--pass-threshold", "0.9"],
+    noop: true,
+  },
+  {
+    name: "keeps other edits when grading is unchanged",
+    settings: { policy: "legacy", minimumAccuracy: 90 },
+    flags: ["--pass-threshold", "0.9", "--name", "Renamed"],
+    patch: {},
+    rename: true,
+  },
+  {
+    name: "lets an unchanged flag override a different JSON threshold",
+    settings: { policy: "legacy", minimumAccuracy: 90 },
+    flags: [
+      "--json",
+      '{"settings":{"minimumAccuracy":80}}',
+      "--pass-threshold",
+      "0.9",
+    ],
+    noop: true,
+  },
+  {
+    name: "preserves an explicit revision precondition",
+    settings: { policy: "legacy", minimumAccuracy: 100 },
+    flags: [
+      "--json",
+      '{"expectedRevisionNumber":6}',
+      "--pass-threshold",
+      "0.9",
+    ],
+    patch: { minimumAccuracy: 90 },
+    expectedRevisionNumber: 6,
+  },
+  {
+    name: "refuses an ambiguous deployment",
+    settings: {},
+    flags: ["--pass-threshold", "0.9"],
+    error: /deployment does not report/,
+  },
+]) {
+  test(`eval update ${scenario.name}`, async () => {
+    const fixture = await startEvalFixture({
+      suiteDetail: { settings: scenario.settings, revisionNumber: 7 },
+    });
+    try {
+      const run = await captureProcessOutput(() =>
+        main(
+          evalArgv(
+            fixture.baseUrl,
+            "update",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            ...scenario.flags
+          ),
+          { telemetry: telemetryDisabled }
+        )
+      );
+      if (scenario.error) {
+        assert.notEqual(run.result.exitCode, 0);
+        assert.match(run.stderr, scenario.error);
+        assert.equal(fixture.createBodies.length, 0);
+      } else {
+        assert.equal(run.result.exitCode, 0);
+        if (scenario.noop) {
+          assert.equal(fixture.createBodies.length, 0);
+          assert.match(run.stdout, /No grading change/);
+          assert.equal(JSON.parse(run.stdout).noop, true);
+        } else {
+          assert.equal(fixture.createBodies.length, 1);
+          const body = fixture.createBodies[0] as any;
+          assert.deepEqual(body.settings, scenario.patch);
+          assert.equal(
+            body.expectedRevisionNumber,
+            scenario.expectedRevisionNumber ?? 7
+          );
+          if (scenario.rename) assert.equal(body.name, "Renamed");
+        }
+      }
+    } finally {
+      await fixture.close();
+    }
+  });
 }

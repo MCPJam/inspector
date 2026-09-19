@@ -1,3 +1,4 @@
+import type { GoalJudgePolicy } from "@/shared/judge-defaults";
 /**
  * The Scorers table as configuration — what will grade each link of the chain.
  *
@@ -7,6 +8,7 @@
  */
 
 import {
+  STANDARD_CHECKS,
   authoredRequiredRole,
   GRADER_PRESENTATION_GROUP,
   PREDICATE_KINDS,
@@ -303,6 +305,7 @@ export type ScorerTableRowKind =
  */
 export type ScorerTableFamily = {
   id: AssertionCheck["id"];
+  name: string;
   label: string;
   suiteRules: number;
 };
@@ -360,6 +363,7 @@ const STAGE_CONFIG_CHIP_LABEL: Record<StageConfigState["state"], string> = {
   judgeOnRequest: "Judge on request",
   judgeAutomatic: "Judge automatic",
   judgeOff: "Judge off",
+  judgeUnknown: "Grading state unavailable",
 };
 
 /**
@@ -432,12 +436,31 @@ function hasAuthoredThreshold(predicate: Predicate): boolean {
   );
 }
 
+/**
+ * What the runner measures at a stage without any authored assertion: named
+ * like one ("Successful connection"), because that is how it reads beside the
+ * assertions, but never a box — it is on for every iteration and cannot be
+ * turned off.
+ */
+export const RUNNER_MEASUREMENT_LABELS: Record<UserValueStage, string> = {
+  connection: STANDARD_CHECKS.find(
+    (check) => check.id === "connection.success",
+  )!.name,
+  discovery: STANDARD_CHECKS.find(
+    (check) => check.id === "discovery.toolsList",
+  )!.name,
+  selection: "A tool was selected",
+  call: "Tool call completed",
+  response: "Result returned to the model",
+  userValue: "Observed by the runner",
+};
+
 function observedRow(stage: UserValueStage): ScorerTableRow {
   return {
     id: `observed:${stage}`,
     kind: "observed",
     enabled: true,
-    name: "Observed by the runner",
+    name: RUNNER_MEASUREMENT_LABELS[stage],
     kindLabel: "Runner",
     threshold: "",
     thresholdKind: "none",
@@ -470,6 +493,7 @@ function familyOf(
   if (!check) return undefined;
   return {
     id: check.id,
+    name: check.name,
     label: check.label,
     suiteRules: rules.filter(
       (rule) =>
@@ -514,7 +538,12 @@ function presetTableRow(check: AssertionCheck): ScorerTableRow {
     id: `preset:${check.id}`,
     kind: "preset",
     enabled: false,
-    family: { id: check.id, label: check.label, suiteRules: 0 },
+    family: {
+      id: check.id,
+      name: check.name,
+      label: check.label,
+      suiteRules: 0,
+    },
     preset,
     name: formatCriterion({ predicate: preset }),
     kindLabel: predicateKindLabel(preset),
@@ -671,6 +700,7 @@ export function buildScorerTable(input: {
   /** Overrides the judge row's On state; a case's judge-skipped flag. */
   judgeEnabled?: boolean;
   judgeCapabilities?: SuiteCapabilities["judge"];
+  judgePolicy?: GoalJudgePolicy;
   /** List the standard checks nothing authors yet as off rows. Default on. */
   listPresets?: boolean;
 }): ScorerTableView {
@@ -684,7 +714,7 @@ export function buildScorerTable(input: {
       suppressed: false,
     }));
   // A case can skip the judge, never switch on one the suite turned off.
-  const configuredMode = judgeMode(input.judgeConfig);
+  const configuredMode = judgeMode(input.judgeConfig, input.judgePolicy);
   const judgeEnabled = configuredMode !== "off" && (input.judgeEnabled ?? true);
   const mode: JudgeMode = judgeEnabled ? configuredMode : "off";
   const groups = USER_VALUE_STAGES.map((stage, index) => ({

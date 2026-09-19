@@ -16,6 +16,7 @@ import type { Predicate } from "@mcpjam/sdk/predicates";
 import { groupGradersByStage } from "../suite-grading-model";
 import {
   LEGACY_PREDICATE_KINDS,
+  RUNNER_MEASUREMENT_LABELS,
   ROLE_LEGEND,
   authorablePredicateKinds,
   buildScorerTable,
@@ -169,7 +170,7 @@ describe("buildScorerTable groups", () => {
           kind: "observed",
           muted: true,
           enabled: true,
-          name: "Observed by the runner",
+          name: RUNNER_MEASUREMENT_LABELS[stage],
         }),
       );
       expect(
@@ -413,4 +414,19 @@ it("requires advertised runner support before offering responseCloseTo", () => {
   expect(authorablePredicateKinds(["responseCloseTo"])).toEqual([
     "responseCloseTo",
   ]);
+});
+
+it("uses the catalog name for authored and preset families", () => {
+  const predicates = [STANDARD_ASSERTION_CHECKS[0].preset];
+  const table = buildScorerTable({
+    model: groupGradersByStage({ predicates }),
+    predicates,
+  });
+  for (const row of table.groups.flatMap((group) => group.rows)) {
+    if (row.family)
+      expect(row.family.name).toBe(
+        STANDARD_ASSERTION_CHECKS.find((check) => check.id === row.family!.id)!
+          .name,
+      );
+  }
 });

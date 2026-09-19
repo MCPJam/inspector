@@ -105,6 +105,9 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   // Default only. A refresh failure on a credential MCPJam itself holds is
   // ours — callers pass `credentialOwner: "mcpjam"` to say so.
   "auth/oauth_refresh_failed": "user_config",
+  // Nothing has failed on the wire: the user simply has not granted consent
+  // yet. Config-side because only the user can complete it.
+  "auth/consent_required": "user_config",
   "oauth/invalid_client": "user_config",
   "oauth/invalid_grant": "user_config",
   "oauth/redirect_mismatch": "user_config",
@@ -115,6 +118,8 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   // Deliberately NOT credential-owned: MCPJam holds the key, but a spent
   // allowance is an account state the user resolves, never an outage of ours.
   "provider/mcpjam_limit": "user_config",
+  "provider/mcpjam_platform_budget": "user_config",
+  "account/suspended": "user_config",
   "provider/mcpjam_limit_daily": "user_config",
   "provider/mcpjam_limit_monthly": "user_config",
   // The MCP server under test throttled US. That is the server's own
@@ -171,6 +176,7 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   // noise problem this field exists to remove. Callers that know the failure
   // happened on an internal boundary escalate it themselves.
   "internal/unknown": "ambiguous",
+  "provider/empty_response": "ambiguous",
 };
 
 function entry(
@@ -524,6 +530,26 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     ],
     "oauth-refresh-failed",
   ),
+  /**
+   * Not a failure. The server is reachable and nothing was rejected — the
+   * user has simply not authorized MCPJam yet, or a reconnect ran on a path
+   * that deliberately refuses to open the consent window unprompted.
+   *
+   * `warning`, not `error`: rendering an expected, one-click state in the
+   * same red as a dead transport is what made this surface read as broken.
+   */
+  "auth/consent_required": entry(
+    "auth/consent_required",
+    "Sign-in required",
+    "This server needs your permission before it can connect.",
+    [
+      "Reconnect ran without opening the sign-in prompt, so no OAuth token exists for this server yet.",
+    ],
+    ["Click Reconnect and approve the request in the window that opens."],
+    "consent-required",
+    "warning",
+  ),
+
   "auth/missing_bearer": entry(
     "auth/missing_bearer",
     "Missing bearer token",
@@ -790,6 +816,18 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     "mcpjam-model-limit-reached",
     "warning",
   ),
+  "provider/mcpjam_platform_budget": entry(
+    "provider/mcpjam_platform_budget", "MCPJam shared free allowance unavailable",
+    "The shared free allowance is exhausted or temporarily paused.",
+    ["This limit applies across free usage, not just your account."],
+    ["Wait until the supplied reset time, if present.", "Use purchased credits or your own provider key for chat."],
+    "mcpjam-platform-budget", "warning",
+  ),
+  "account/suspended": entry(
+    "account/suspended", "Account suspended",
+    "This account has been suspended by MCPJam.", ["Support has suspended this account."],
+    ["Contact founders@mcpjam.com for support."], "account-suspended", "warning",
+  ),
   "provider/mcpjam_limit": entry(
     "provider/mcpjam_limit",
     "MCPJam model limit reached",
@@ -838,6 +876,15 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     ],
     "server-rate-limited",
     "warning",
+  ),
+
+  "provider/empty_response": entry(
+    "provider/empty_response",
+    "Model returned no response",
+    "The model returned no response, so the turn could not complete.",
+    ["The model request ended without usable content."],
+    ["Rerun the affected cases. If this recurs, report it with the run details."],
+    "model-empty-response",
   ),
 
   // --- Internal / unknown ---

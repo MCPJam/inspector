@@ -264,7 +264,8 @@ export function CaseRunTimeline({
           ))}
         </div>
       </div>
-      <div className="grid grid-cols-5 rounded-xl border border-border bg-popover px-4 py-4 text-popover-foreground">
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,5rem),1fr))] gap-x-2 gap-y-4 rounded-xl border border-border bg-background px-4 py-4 text-foreground"
+        data-testid="case-run-averages">
         {[
           {
             label: "Passed",
@@ -309,7 +310,7 @@ export function CaseRunTimeline({
           </div>
         ))}
       </div>
-      <div className="overflow-x-auto rounded-lg border border-border bg-popover text-popover-foreground">
+      <div className="overflow-x-auto rounded-lg border border-border bg-background text-foreground">
         <div className="min-w-[620px]">
           <div className="grid grid-cols-[minmax(110px,.8fr)_minmax(150px,1fr)_80px_80px_80px_52px] gap-2 border-b border-border bg-muted px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
             <span>Iteration</span>
@@ -431,6 +432,7 @@ export function CaseRunTimeline({
         >
           <SheetHeader className="shrink-0 border-b border-border pr-12">
             <div className="flex flex-wrap items-center gap-2">
+              <SheetTitle>{runLabel(selected)}</SheetTitle>
               <span
                 data-testid="case-run-status"
                 className={cn(
@@ -446,7 +448,6 @@ export function CaseRunTimeline({
               >
                 {verdict}
               </span>
-              <SheetTitle>{runLabel(selected)}</SheetTitle>
             </div>
             <SheetDescription>
               {selected

@@ -30,10 +30,8 @@ export function CaseChecksPage({
   capabilities,
   judgeSkipped,
   onJudgeSkippedChange,
-  onSave,
-  saveDisabled,
-  onBack,
   onConfigureSuite,
+  saveStatus,
 }: {
   title: string;
   predicates?: CasePredicates;
@@ -45,35 +43,37 @@ export function CaseChecksPage({
   capabilities?: SuiteCapabilities | null;
   judgeSkipped: boolean;
   onJudgeSkippedChange: (skipped: boolean) => void;
-  onSave: () => void;
-  saveDisabled: boolean;
-  onBack?: () => void;
   onConfigureSuite?: () => void;
+  saveStatus?: string | null;
 }) {
   const draft = { predicates, suppressedSuiteStandardCheckIds };
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
+    <div className="min-h-0 flex-1 overflow-y-auto px-6 py-8 sm:px-10 sm:py-10 lg:px-12">
       <div className="mx-auto max-w-4xl space-y-6">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h2 className="text-lg font-semibold">
-              User Value Chain Assertions
-            </h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Overrides for {title}. Step assertions are configured in the case
-              flow.
-            </p>
-          </div>
-          <div className="flex gap-2">
-            <Button variant="ghost" onClick={onBack}>
-              Back to case
-            </Button>
-            <Button onClick={onSave} disabled={saveDisabled}>
-              Save overrides
-            </Button>
-          </div>
-        </div>
         <SuiteScorerTable
+          headerContent={
+            <h2 className="text-lg font-semibold">Test Case Evaluators</h2>
+          }
+          headerDescription={
+            <div className="space-y-2">
+              <p className="text-sm leading-relaxed text-foreground/80">
+                Overrides for {title}. Step assertions are authored in the case
+                flow.
+              </p>
+              {saveStatus ? (
+                <p role="status" className="text-sm text-muted-foreground">
+                  {saveStatus}
+                </p>
+              ) : null}
+            </div>
+          }
+          headerActions={
+            onConfigureSuite ? (
+              <Button variant="outline" size="sm" onClick={onConfigureSuite}>
+                Configure suite assertions
+              </Button>
+            ) : null
+          }
           scope={{
             kind: "case",
             suitePredicates,
@@ -87,11 +87,6 @@ export function CaseChecksPage({
           passOrFailHint={PASS_OR_FAIL_HINT}
           judgeHint={JUDGE_HINT}
         />
-        {onConfigureSuite ? (
-          <Button variant="outline" size="sm" onClick={onConfigureSuite}>
-            Configure suite assertions
-          </Button>
-        ) : null}
       </div>
     </div>
   );

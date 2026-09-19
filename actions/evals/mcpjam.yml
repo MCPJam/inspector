@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write
 
 jobs:
   evals:
@@ -20,6 +21,7 @@ jobs:
           api-key: ${{ secrets.MCPJAM_API_KEY }}
           project: "My project"
           suite: "My eval suite"
+          comment: true
 
           # Optional: let the gate decide pass or fail.
           # gate: true

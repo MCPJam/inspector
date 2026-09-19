@@ -208,6 +208,16 @@ describe("buildSuiteRunHistoryRows", () => {
     expect(rows[0].date).toBe(200);
   });
 
+  it("preserves the recorded SDK client name and version after a rename", () => {
+    const rows = buildSuiteRunHistoryRows([makeRun({
+      _id: "sdk-run", source: "sdk", client: {
+        source: "sdk", name: "Original name", namedHostId: "client1",
+        hostConfigId: "config1", versionId: "version1", versionNumber: 1,
+      },
+    })], [], makeSuite(), new Map([["client1", "Renamed client"]]), false);
+    expect(rows[0]).toMatchObject({ client: "Original name", clientId: "client1", clientVersionId: "version1", clientVersionNumber: 1 });
+  });
+
   it("shows the frozen client model before any iterations arrive", () => {
     const rows = buildSuiteRunHistoryRows(
       [makeRun({ _id: "pending", effectiveModelId: "claude-sonnet", status: "pending" })],
@@ -594,4 +604,32 @@ describe("resolveRunHistoryVerdict — a run held for its judge", () => {
       ),
     ).toEqual({ verdict: "running", label: "Grading" });
   });
+});
+
+it("averages each measurement over only runs that report it", () => {
+  const runs = ["r1", "r2", "r3"].map((_id) => makeRun({ _id }));
+  const result = buildSuiteRunHistoryAggregates(runs, [
+    makeIteration({
+      _id: "i1",
+      suiteRunId: "r1",
+      tokensUsed: 100,
+      actualToolCalls: undefined,
+    }),
+    makeIteration({
+      _id: "i2",
+      suiteRunId: "r1",
+      tokensUsed: 100,
+      actualToolCalls: undefined,
+    }),
+    makeIteration({
+      _id: "i3",
+      suiteRunId: "r2",
+      tokensUsed: undefined,
+      actualToolCalls: [],
+    }),
+  ]);
+  expect(result.tokensPerRun).toBe(200);
+  expect(result.toolCallsPerRun).toBe(0);
+  expect(buildSuiteRunHistoryAggregates(runs, []).tokensPerRun).toBeNull();
+  expect(buildSuiteRunHistoryAggregates(runs, []).toolCallsPerRun).toBeNull();
 });

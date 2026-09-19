@@ -19,6 +19,7 @@ export function SuiteScorerLibraryMenu({
   authorableKinds,
   triggerLabel = "Add assertion",
   triggerClassName,
+  primary = false,
   onAddWidgetCheck,
 }: {
   onAdd: (kind: Predicate["type"]) => void;
@@ -49,6 +50,7 @@ export function SuiteScorerLibraryMenu({
    */
   triggerLabel?: string;
   triggerClassName?: string;
+  primary?: boolean;
   /**
    * Offers DOM-level widget assertions alongside the predicates, under their
    * own category. Only a surface that can place a check at a position can
@@ -65,6 +67,7 @@ export function SuiteScorerLibraryMenu({
       authorableKinds={authorableKinds}
       className={triggerClassName}
       triggerLabel={triggerLabel}
+      primary={primary}
       onSelect={(choice) => {
         if (choice.kind === "check") onAdd(choice.predicateKind);
         else if (choice.kind === "widget-check")

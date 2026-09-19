@@ -180,6 +180,59 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
         systemPrompt: { type: "string" },
         temperature: { type: "number" },
         repetitions: { type: "integer", minimum: 1, maximum: 100 },
+        judge: {
+          type: "object",
+          properties: {
+            enabled: { type: "boolean" },
+            model: { type: "string", minLength: 1 },
+            autoRun: { type: "boolean" },
+            threshold: { type: "number", minimum: 0, maximum: 1 },
+            role: { type: "string", enum: ["advisory", "gating", "required"] },
+            severity: { type: "string", const: "warn" },
+            rubric: {
+              anyOf: [
+                {
+                  type: "object",
+                  properties: {
+                    criteria: {
+                      minItems: 1,
+                      maxItems: 25,
+                      type: "array",
+                      items: {
+                        type: "object",
+                        properties: {
+                          id: {
+                            type: "string",
+                            pattern: "^[A-Za-z0-9_-]{1,64}$",
+                          },
+                          label: {
+                            type: "string",
+                            minLength: 1,
+                            maxLength: 200,
+                          },
+                          description: { type: "string", maxLength: 1000 },
+                          required: { type: "boolean" },
+                        },
+                        required: ["id", "label"],
+                        additionalProperties: false,
+                      },
+                    },
+                    instructions: {
+                      description:
+                        "Grading instructions: extra rules applied alongside each case's task and expected outcome. They do not replace the expected outcome.",
+                      type: "string",
+                      minLength: 1,
+                      maxLength: 2000,
+                    },
+                  },
+                  additionalProperties: false,
+                },
+                { type: "null" },
+              ],
+            },
+          },
+          additionalProperties: false,
+        },
         passThreshold: { type: "number", minimum: 0, maximum: 1 },
         validity: {
           type: "object",
@@ -1246,6 +1299,7 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                             {
                               type: "object",
                               properties: { kind: { not: {} } },
+                              additionalProperties: {},
                             },
                           ],
                         },
@@ -2323,6 +2377,11 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                 },
               ],
             },
+          },
+          judge: {
+            type: "object",
+            properties: { enabled: { type: "boolean" } },
+            additionalProperties: false,
           },
           expectedOutput: { type: "string" },
           isNegativeTest: { type: "boolean" },

@@ -42,7 +42,7 @@ describe("ClientSelectionSync", () => {
     mocks.catalog.mockReturnValue({ status: "live", catalog: {} });
     mocks.create.mockResolvedValue("new-host");
   });
-  it("initializes an empty project once without rendering a global selector", () => {
+  it("initializes an empty guest project privately without rendering a global selector", () => {
     const { container, rerender } = render(
       <ClientSelectionSync projectId="p1" />,
     );
@@ -53,6 +53,7 @@ describe("ClientSelectionSync", () => {
       projectId: "p1",
       name: "MCPJam",
       input: { seeded: true },
+      scenarioMode: "project_members",
     });
   });
   it("initializes each project independently", () => {

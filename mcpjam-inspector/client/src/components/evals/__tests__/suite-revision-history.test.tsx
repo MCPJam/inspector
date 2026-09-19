@@ -73,7 +73,7 @@ function renderHistory(
 describe("SuiteRevisionHistory", () => {
   it("labels a storage key the way the settings page names it", () => {
     renderHistory([row()]);
-    expect(screen.getByText("Assertions")).toBeTruthy();
+    expect(screen.getByText("Evaluators")).toBeTruthy();
     // The storage spelling never reaches a reader.
     expect(screen.queryByText("defaultPredicates")).toBeNull();
   });
@@ -138,7 +138,11 @@ describe("SuiteRevisionHistory", () => {
     });
     // Only the key that MOVED. Listing a field whose value is identical on
     // both sides asks a reader to look for a difference that is not there.
-    expect(screen.getByText("Minimum iterations")).toBeTruthy();
+    //
+    // "per case" is load-bearing: `minIterations` is a FLOOR that raises a
+    // case's own count, and the shared grading vocabulary keeps it one word
+    // apart from the default count that replaces it.
+    expect(screen.getByText("Minimum iterations per case")).toBeTruthy();
     expect(screen.queryByText("Name")).toBeNull();
   });
 
@@ -167,7 +171,13 @@ describe("fieldLabel", () => {
         (entry) => entry.key === "verdictPolicyDefaults",
       ),
     ).toBe(false);
-    expect(fieldLabel("verdictPolicyDefaults")).toBe("Quality gate defaults");
+    // Not "Quality gate defaults": this one stored object holds the per-case
+    // threshold, the per-case count and the evidence requirements, and the
+    // quality gate is `gatePolicy` — a different setting. A reader auditing a
+    // threshold change used to find a history row naming the gate.
+    expect(fieldLabel("verdictPolicyDefaults")).toBe(
+      "Pass criteria and iterations",
+    );
     expect(fieldLabel("unknownKey")).toBe("unknownKey");
   });
 });

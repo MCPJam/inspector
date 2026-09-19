@@ -1,7 +1,7 @@
 {
   "name": "@mcpjam/inspector",
   "productName": "MCPJam Inspector",
-  "version": "3.5.4",
+  "version": "3.8.1",
   "type": "module",
   "engines": {
     "node": ">=22.0.0"
@@ -111,7 +111,8 @@
     "ship": "bash scripts/ship.sh",
     "check:browser-viewer": "node client/scripts/check-browser-viewer-imports.mjs",
     "pretest:watch": "npm run build -w @mcpjam/evaluators",
-    "pretest:coverage": "npm run build -w @mcpjam/evaluators"
+    "pretest:coverage": "npm run build -w @mcpjam/evaluators",
+    "test:swarm-reporting:smoke": "playwright test --config playwright.swarm-reporting.config.ts"
   },
   "dependencies": {
     "@ai-sdk/amazon-bedrock": "^4.0.116",
@@ -146,7 +147,7 @@
     "@hookform/resolvers": "^3.10.0",
     "@lezer/highlight": "^1.2.3",
     "@mcp-ui/client": "^5.9.0",
-    "@mcpjam/sdk": "^8.7.1",
+    "@mcpjam/sdk": "^8.11.1",
     "@modelcontextprotocol/client": "2.0.0",
     "@modelcontextprotocol/ext-apps": "^1.7.4",
     "@novnc/novnc": "^1.7.0",
@@ -262,6 +263,7 @@
     "cross-env": "^10.1.0",
     "electron": "43.6.0",
     "esbuild": "^0.27.0",
+    "es-module-lexer": "1.7.0",
     "eslint": "^9",
     "jsdom": "^27.4.0",
     "node-abi": "^3.96.0",

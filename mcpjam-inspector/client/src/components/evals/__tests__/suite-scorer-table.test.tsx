@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { USER_VALUE_STAGE_QUESTIONS } from "@mcpjam/sdk/contract";
 import type { Predicate } from "@mcpjam/sdk/predicates";
 import { SuiteScorerTable } from "../suite-scorer-table";
 import { PASS_OR_FAIL_HINT, JUDGE_HINT } from "../suite-pass-or-fail-section";
@@ -71,6 +72,16 @@ function renderTable(
 }
 
 describe("SuiteScorerTable", () => {
+  it("shows disabled checked boxes for required match rules", () => {
+    const { container } = renderTable();
+    const rows = container.querySelectorAll('[data-scorer-row="match"]');
+    expect(rows.length).toBeGreaterThanOrEqual(2);
+    for (const row of rows) {
+      const checkbox = within(row as HTMLElement).getByRole("checkbox");
+      expect(checkbox).toBeChecked();
+      expect(checkbox).toBeDisabled();
+    }
+  });
   it("mounts muted observed rows with folded facts", () => {
     const { container } = renderTable({
       stageFacts: {
@@ -82,23 +93,13 @@ describe("SuiteScorerTable", () => {
       const group = container.querySelector(
         `[data-stage-group="${stage}"]`,
       ) as HTMLElement;
-      expect(group.textContent).toContain("Observed by the runner");
+      expect(group.textContent).toContain("Required");
       const details = group.querySelector("details");
       expect(details).toBeTruthy();
       expect(
         group.querySelector(`[data-testid="${stage}-facts"]`),
       ).toBeTruthy();
     }
-  });
-
-  it("marks the stage group when a chain card is selected", async () => {
-    const user = userEvent.setup();
-    const { container } = renderTable();
-    await user.click(screen.getByTestId("stage-chain-card-selection"));
-    const group = container.querySelector(
-      '[data-stage-group="selection"]',
-    ) as HTMLElement;
-    expect(group.getAttribute("data-selected")).toBe("true");
   });
 
   it("writes advisory with no severity when a predicate is set to Advisory", async () => {
@@ -130,6 +131,9 @@ describe("SuiteScorerTable", () => {
         revisionNumber: 1,
       },
     });
+    await user.click(
+      screen.getByRole("button", { name: "Tool errors (isError)" }),
+    );
     const assertionRole = screen.getByRole("group", { name: "Assertion role" });
     await user.click(
       within(assertionRole).getByRole("button", { name: "Advisory" }),
@@ -192,6 +196,9 @@ describe("SuiteScorerTable", () => {
         revisionNumber: 1,
       },
     });
+    await user.click(
+      screen.getByRole("button", { name: "Goal completion judge" }),
+    );
     const judgeRole = document.querySelector('[aria-label="Judge role"]');
     expect(within(judgeRole as HTMLElement).getByText("Advisory")).toBeTruthy();
     await user.click(within(judgeRole as HTMLElement).getByText("Advisory"));
@@ -238,6 +245,9 @@ describe("SuiteScorerTable", () => {
         revisionNumber: 1,
       },
     });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Goal completion judge" }),
+    );
     const judgeRole = container.querySelector('[aria-label="Judge role"]');
     expect(judgeRole).toBeTruthy();
     // Warn collapsed into Advisory, so there is no third tier for the
@@ -254,6 +264,7 @@ describe("SuiteScorerTable", () => {
       '[data-scorer-id="judge:groundedness"]',
     ) as HTMLElement;
     expect(row).toBeTruthy();
+    fireEvent.click(within(row).getByRole("button"));
     expect(within(row).getByText("Advisory")).toBeTruthy();
     expect(within(row).queryByRole("group", { name: "Judge role" })).toBeNull();
     expect(screen.getByText(/Groundedness runs on demand/)).toBeTruthy();
@@ -285,6 +296,9 @@ describe("SuiteScorerTable", () => {
         revisionNumber: 1,
       },
     });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Goal completion judge" }),
+    );
     const required = screen
       .getAllByRole("button", { name: "Required" })
       .find((button) => button.closest('[aria-label="Judge role"]'));
@@ -313,18 +327,8 @@ describe("SuiteScorerTable", () => {
 
   it("has no Last run or Trend column", () => {
     const { container } = renderTable();
-    const heads = Array.from(container.querySelectorAll("thead th")).map(
-      (head) => head.textContent?.trim(),
-    );
-    // "If it fails", not "Role": the column answers the reader's question
-    // rather than naming the field it reads.
-    expect(heads).toEqual([
-      "On",
-      "Evaluator",
-      "Kind",
-      "Threshold",
-      "If it fails",
-    ]);
+    // A list, not a grid: no column headers to grow a Last run into.
+    expect(container.querySelector("table")).toBeNull();
     expect(container.textContent).not.toMatch(/Last run/i);
     expect(container.textContent).not.toMatch(/Trend/i);
   });
@@ -337,6 +341,7 @@ describe("SuiteScorerTable", () => {
     const row = container.querySelector(
       '[data-scorer-id="predicate:0"]',
     ) as HTMLElement;
+    fireEvent.click(within(row).getByRole("button"));
     expect(within(row).getByText("Required")).toBeTruthy();
   });
 
@@ -354,6 +359,7 @@ describe("SuiteScorerTable", () => {
     const row = container.querySelector(
       '[data-scorer-id="predicate:0"]',
     ) as HTMLElement;
+    fireEvent.click(within(row).getByRole("button"));
     expect(within(row).getByText("Advisory")).toBeTruthy();
     expect(within(row).queryByText("Required")).toBeNull();
   });
@@ -370,6 +376,10 @@ describe("SuiteScorerTable — role colour", () => {
         { type: "noToolErrors", role: "advisory" } as never,
       ],
     });
+    for (const button of screen.getAllByRole("button", {
+      name: "Tool errors (isError)",
+    }))
+      fireEvent.click(button);
     const withSeverity = within(
       container.querySelector('[data-scorer-id="predicate:0"]') as HTMLElement,
     ).getByText("Advisory");
@@ -381,14 +391,56 @@ describe("SuiteScorerTable — role colour", () => {
 });
 
 it("keeps each standard numeric criterion in its own editable field", () => {
-  renderTable({ predicates: [
-    { type: "toolDescriptionsPresent", minLength: 31 },
-    { type: "toolLatencyUnder", ms: 1234 },
-    { type: "toolResultSizeUnder", maxBytes: 64000 },
-    { type: "toolCallCountUnder", count: 4 },
-  ] });
-  expect(screen.getByRole("spinbutton", { name: "Minimum tool description length" })).toHaveValue(31);
-  expect(screen.getByRole("spinbutton", { name: "Tool latency budget in ms" })).toHaveValue(1234);
-  expect(screen.getByRole("spinbutton", { name: "Tool result size budget in bytes" })).toHaveValue(64000);
-  expect(screen.getByRole("spinbutton", { name: "Tool call budget" })).toHaveValue(4);
+  renderTable({
+    predicates: [
+      { type: "toolDescriptionsPresent", minLength: 31 },
+      { type: "toolLatencyUnder", ms: 1234 },
+      { type: "toolResultSizeUnder", maxBytes: 64000 },
+      { type: "toolCallCountUnder", count: 4 },
+    ],
+  });
+  // Each row reads its number, and opens its own field from the title.
+  const cases: [string, string, number][] = [
+    ["Description quality", "Minimum description length", 31],
+    ["Tool latency", "Max time in ms (strictly under)", 1234],
+    ["Payload size", "Max result size in bytes (strictly under)", 64000],
+    ["Tool hops before the right tool", "Max tool calls (strictly under)", 4],
+  ];
+  for (const [title, field, value] of cases) {
+    fireEvent.click(screen.getByRole("button", { name: title }));
+    expect(screen.getByRole("spinbutton", { name: field })).toHaveValue(value);
+    fireEvent.click(screen.getByRole("button", { name: title }));
+  }
+});
+
+it("shows short names at rest and allows multiple role editors to stay open", () => {
+  const { container } = renderTable({
+    predicates: [
+      { type: "noToolErrors" },
+      { type: "toolLatencyUnder", ms: 1234 },
+    ],
+  });
+  for (const question of Object.values(USER_VALUE_STAGE_QUESTIONS))
+    expect(screen.queryByText(question)).toBeNull();
+  expect(
+    screen.getByRole("heading", { name: "Evaluators" }),
+  ).toBeInTheDocument();
+  const row = container.querySelector(
+    '[data-scorer-id="predicate:0"]',
+  ) as HTMLElement;
+  expect(
+    within(row).getByRole("checkbox", { name: "Tool errors (isError)" }),
+  ).toBeChecked();
+  expect(row.textContent).toBe("Tool errors (isError)");
+  expect(within(row).queryByRole("group")).toBeNull();
+  for (const name of ["Tool errors (isError)", "Tool latency"]) {
+    fireEvent.click(screen.getByRole("button", { name }));
+    expect(screen.getByRole("button", { name })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+  }
+  expect(container.querySelectorAll("[data-scorer-editor]")).toHaveLength(2);
+  expect(within(row).getByText("No tool returns an error")).toBeInTheDocument();
+  expect(within(row).getByText("Required")).toBeInTheDocument();
 });

@@ -4,7 +4,7 @@ import {
   readEvalToolMetadata,
   useEvalToolMetadata,
 } from "@/lib/mcpjam-agent/eval-tool-metadata";
-import { DEFAULTS } from "./constants";
+import { DEFAULTS, EVAL_DESTRUCTIVE_BUTTON_CLASS } from "./constants";
 import {
   caseViewModel,
   capturedCaseChanged,
@@ -34,10 +34,19 @@ import {
   RotateCw,
   Save,
   Square,
+  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { listEvalTools, streamEvalTestCase } from "@/lib/apis/evals-api";
 import { Button } from "@mcpjam/design-system/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@mcpjam/design-system/dialog";
 import {
   Tooltip,
   TooltipContent,
@@ -246,22 +255,16 @@ import { SimpleCaseForm } from "../evaluate/simple-case/simple-case-form";
 import { CaseSpine } from "../evaluate/case-spine/case-spine";
 import { CaseJudgeAnswer } from "../evaluate/case-scorecard/case-judge-answer";
 import {
-  appendCaseScorer,
   buildCaseScorecard,
   type CaseScorecardInput,
 } from "../evaluate/case-scorecard/case-scorecard-model";
 import { coverageDetailByStage } from "../evaluate/case-scorecard/case-coverage";
 import { NextQuestionLine } from "../evaluate/case-scorecard/next-question-line";
 import { groupCaseIterations } from "./runs/group-case-iterations";
-import {
-  SuggestedFromRunSection,
-  useSuggestedScorers,
-} from "../evaluate/case-scorecard/suggested-from-run-section";
-import type { Suggestion } from "../evaluate/case-scorecard/suggest-from-run";
+import { useSuggestedScorers } from "../evaluate/case-scorecard/suggested-from-run-section";
 import { CaseRunSetup } from "../evaluate/case-workspace/case-run-setup";
 import {
   caseHasOwnAssertion,
-  deriveCaseKind,
   initialToolsChoice,
   isToolCalledWithAssert,
   readSimpleCase,
@@ -294,8 +297,8 @@ import { parseStepStatusById } from "@/shared/eval-step-replay";
 import { chainForQuickRunIteration } from "../evaluate/simple-case/quick-run-chain";
 import { TrialJudgeReviewPanel } from "./trial-judge-review";
 import { TrialScorecard } from "../evaluate/case-scorecard/trial-scorecard";
+import { IterationReportScorecard } from "../evaluate/case-scorecard/iteration-report-subscriber";
 import { authoredForTrial } from "../evaluate/case-scorecard/trial-authored";
-import { adoptRouteFromIteration } from "../evaluate/simple-case/route-rollup";
 
 interface TestTemplate {
   title: string;
@@ -318,8 +321,16 @@ interface TestTemplate {
 }
 
 interface TestTemplateEditorProps {
+  /** View a code-owned case without enabling authoring. */
+  readOnly?: boolean;
   suiteId: string;
   selectedTestCaseId: string;
+  /**
+   * Delete this case and leave the editor. The caller owns both halves —
+   * the mutation is the suite list's batch delete, and only the caller knows
+   * where the editor should land afterwards. Absent hides the header trash.
+   */
+  onDeleteCase?: (testCaseId: string) => Promise<void>;
   connectedServerNames: Set<string>;
   projectId: string | null;
   /**
@@ -965,8 +976,10 @@ function CaseEditorTabs({
 }
 
 export function TestTemplateEditor({
+  readOnly = false,
   suiteId,
   selectedTestCaseId,
+  onDeleteCase,
   connectedServerNames,
   projectId,
   availableModels,
@@ -988,7 +1001,6 @@ export function TestTemplateEditor({
   onOpenSuiteSettings,
   checksPage = false,
   onOpenCaseChecks,
-  onCloseCaseChecks,
 }: TestTemplateEditorProps) {
   // Resolves the WorkOS token for signed-in users and the guest bearer for
   // guests (project-owning guests included). See use-convex-access-token.
@@ -1085,7 +1097,6 @@ export function TestTemplateEditor({
     iterationId: string;
     mode: "steps";
   } | null>(null);
-  const suggestionsRef = useRef<HTMLDivElement>(null);
   const [mobileVisibleModelValue, setMobileVisibleModelValue] = useState<
     string | null
   >(null);
@@ -1175,6 +1186,23 @@ export function TestTemplateEditor({
   // locally and only persist on Save. See ./draft-test-case.ts.
   const draftKind = parseDraftTestCaseId(selectedTestCaseId);
   const isDraft = draftKind !== null;
+  const [deleteCaseOpen, setDeleteCaseOpen] = useState(false);
+  const [isDeletingCase, setIsDeletingCase] = useState(false);
+
+  const confirmDeleteCase = async () => {
+    if (!onDeleteCase || isDeletingCase) return;
+    setIsDeletingCase(true);
+    try {
+      await onDeleteCase(selectedTestCaseId);
+      toast.success("Test case deleted");
+      setDeleteCaseOpen(false);
+    } catch (error) {
+      console.error("Failed to delete test case:", error);
+      toast.error("Failed to delete test case");
+    } finally {
+      setIsDeletingCase(false);
+    }
+  };
 
   // Same readiness gate the suite list upstream uses: a signed-in actor must
   // wait for its `users` row, while an actor that will never have one (a
@@ -1473,7 +1501,9 @@ export function TestTemplateEditor({
           hasChecks:
             Boolean(editForm?.predicates?.list?.length) ||
             (editForm?.steps ?? []).some((step) => step.kind === "assert"),
-          hasSuggestions: chainSuggestions.output.suggestions.length > 0,
+          // The suggestions section left the scorecard, so "Review the
+          // suggestions" has nothing to point at. The other prompts stand.
+          hasSuggestions: false,
           suiteHasGate: Boolean(
             suite?.defaultPredicates?.some(
               (p: Predicate) => p.role !== "advisory",
@@ -1494,11 +1524,6 @@ export function TestTemplateEditor({
           } else if (action === "gate") onOpenSuiteSettings?.();
           else if (action === "failure") {
             setTrialTabRequest({ iterationId: iteration._id, mode: "steps" });
-          } else if (action === "harden") {
-            suggestionsRef.current?.scrollIntoView?.({
-              block: "nearest",
-              behavior: "smooth",
-            });
           }
         }}
       />
@@ -2001,125 +2026,6 @@ export function TestTemplateEditor({
         chainSuggestions.output.suggestions,
       ),
     [chainCoverageInput, chainSuggestions.output.suggestions],
-  );
-
-  const [dismissedSuggestions, setDismissedSuggestions] = useState<
-    ReadonlySet<string>
-  >(() => new Set());
-  const [acceptedSuggestions, setAcceptedSuggestions] = useState<
-    ReadonlySet<string>
-  >(() => new Set());
-
-  /**
-   * Accept one or more suggestions, in ONE draft update.
-   *
-   * "Add all" cannot be a loop of single accepts: `editFormStepsRef` only
-   * refreshes after a render, so the second insert would compute its anchor
-   * from the pre-insert list and the two would collide. Folding them means a
-   * later anchor still resolves against the steps the earlier one produced.
-   */
-  const acceptSuggestions = useCallback(
-    (list: Suggestion[], via: "row" | "all" | "chain") => {
-      if (list.length === 0) return;
-      const batchKey = suggestionBatch?.key ?? "";
-      setEditForm((current) => {
-        if (!current) return current;
-        let steps = current.steps;
-        let predicates = current.predicates;
-        for (const suggestion of list) {
-          if (suggestion.kind === "route" && suggestion.route) {
-            // "No tool should be called" is a CASE-LEVEL claim, not a step.
-            // `adoptRouteFromIteration` only removes tool assertions for an
-            // empty observed route, which leaves the case unrestricted — the
-            // row said "Added" while nothing was saved. The tool question is
-            // what carries it, and it is what `buildSavePayload` reads to send
-            // `isNegativeTest`.
-            if (suggestion.route.noTool) {
-              setSimpleToolsChoice("noTool");
-            } else {
-              setSimpleToolsChoice("tools");
-            }
-            const iteration = recentIterations.find(
-              (it) => it._id === suggestion.route!.iterationId,
-            );
-            if (iteration) {
-              steps = adoptRouteFromIteration(
-                steps,
-                iteration,
-                deriveCaseKind(
-                  resolveMatchOptions(
-                    suite?.defaultMatchOptions,
-                    current.matchOptions,
-                  ),
-                ),
-              );
-            }
-            continue;
-          }
-          if (suggestion.placement.kind === "afterStep") {
-            const anchor = suggestion.placement.anchorStepId;
-            const assertion =
-              suggestion.predicate ?? suggestion.widgetAssertion;
-            if (!assertion) continue;
-            // The anchor came from the trial's frozen snapshot; a draft edited
-            // since may no longer contain it. A turn-scoped check still means
-            // something as a whole-run check, so it falls back rather than
-            // being dropped; a widget assertion does not, and is skipped.
-            if (!steps.some((step) => step.id === anchor)) {
-              if (suggestion.predicate) {
-                predicates = appendCaseScorer(predicates, suggestion.predicate);
-              }
-              continue;
-            }
-            steps = insertStepAfter(steps, anchor, {
-              id: newStepId("assert"),
-              kind: "assert",
-              assertion,
-            } as TestStep);
-            continue;
-          }
-          if (suggestion.predicate) {
-            predicates = appendCaseScorer(predicates, suggestion.predicate);
-          }
-        }
-        return { ...current, steps, predicates };
-      });
-      setAcceptedSuggestions((current) => {
-        const next = new Set(current);
-        for (const suggestion of list) {
-          next.add(`${batchKey}|${suggestion.key}`);
-        }
-        return next;
-      });
-      for (const suggestion of list) {
-        track("eval_suggestion_accepted", {
-          kind: suggestion.predicate?.type ?? suggestion.kind,
-          role: suggestion.role,
-          stability_held: suggestion.stability.held,
-          stability_of: suggestion.stability.of,
-          placement: suggestion.placement.kind,
-          stage: suggestion.stage,
-          via,
-        });
-      }
-    },
-    [suggestionBatch?.key, recentIterations, suite?.defaultMatchOptions],
-  );
-
-  const dismissSuggestion = useCallback(
-    (suggestion: Suggestion) => {
-      const batchKey = suggestionBatch?.key ?? "";
-      setDismissedSuggestions((current) =>
-        new Set(current).add(`${batchKey}|${suggestion.key}`),
-      );
-      track("eval_suggestion_dismissed", {
-        kind: suggestion.predicate?.type ?? suggestion.kind,
-        role: suggestion.role,
-        placement: suggestion.placement.kind,
-        stage: suggestion.stage,
-      });
-    },
-    [suggestionBatch?.key],
   );
 
   /** Save the current draft before launching a judged, case-scoped run. */
@@ -2697,6 +2603,7 @@ export function TestTemplateEditor({
    * looking at.
    */
   const handleSave = async (): Promise<boolean> => {
+    if (readOnly) return false;
     if (isDraft) {
       await handleCreateFromDraft();
       return true;
@@ -2750,6 +2657,70 @@ export function TestTemplateEditor({
   };
   // Kept current so `runTest` never awaits a save built from a stale draft.
   handleSaveRef.current = handleSave;
+
+  // Serialize automatic saves so a slower request cannot overwrite a newer edit.
+  const checksSaveQueue = useRef<Promise<unknown>>(Promise.resolve());
+  const checksSaveRevision = useRef(0);
+  const [checksSaveStatus, setChecksSaveStatus] = useState<string | null>(null);
+  useEffect(() => {
+    setChecksSaveStatus(null);
+    return () => {
+      // Toast actions can outlive this editor or the case they were created for.
+      checksSaveRevision.current += 1;
+    };
+  }, [currentTestCase?._id]);
+  const saveCaseChecks = (
+    changes: Partial<Parameters<typeof updateTestCaseMutation>[0]>,
+  ) => {
+    if (readOnly || !currentTestCase || isDraft || !editForm) return;
+    const testCaseId = currentTestCase._id;
+    const revision = ++checksSaveRevision.current;
+    const payload = {
+      testCaseId,
+      predicates: editForm.predicates ?? null,
+      suppressedSuiteStandardCheckIds:
+        editForm.suppressedSuiteStandardCheckIds ?? [],
+      judgeConfigOverride: editForm.judgeConfigOverride ?? null,
+      ...changes,
+    };
+    const predicates = payload.predicates as typeof editForm.predicates;
+    if (
+      predicates &&
+      predicates.mode !== "inherit" &&
+      !areAllChecksValid(predicates.list)
+    ) {
+      setChecksSaveStatus(
+        "Complete the assertion fields to save your changes.",
+      );
+      return;
+    }
+    const enqueue = (retry = false) => {
+      if (revision !== checksSaveRevision.current) return;
+      setChecksSaveStatus("Saving…");
+      checksSaveQueue.current = checksSaveQueue.current
+        .then(() => {
+          if (retry && revision !== checksSaveRevision.current) return;
+          return updateTestCaseMutation(payload);
+        })
+        .then(() => {
+          if (revision === checksSaveRevision.current)
+            setChecksSaveStatus(null);
+        })
+        .catch((error) => {
+          if (revision !== checksSaveRevision.current) return;
+          setChecksSaveStatus(
+            "Changes could not be saved. Edit again or retry.",
+          );
+          toast.error(
+            getBillingErrorMessage(error, "Failed to save evaluator changes"),
+            {
+              action: { label: "Retry", onClick: () => enqueue(true) },
+            },
+          );
+        });
+    };
+    enqueue();
+  };
 
   const buildSelectedCompareModels = (
     modelValues: string[],
@@ -3015,6 +2986,7 @@ export function TestTemplateEditor({
     modelValues?: string[];
     sessionMode?: "new" | "reuse";
   }) => {
+    if (readOnly) return;
     // A draft has no Convex id to attach iterations to — Run is disabled in the
     // UI until the user saves; this guards the programmatic paths too.
     if (isDraft) {
@@ -3250,7 +3222,8 @@ export function TestTemplateEditor({
         predicates: resolveCasePredicates(
           (suite?.defaultPredicates ?? []) as Predicate[],
           savePayload.predicates,
-          savePayload.suppressedSuiteStandardCheckIds ?? currentTestCase?.suppressedSuiteStandardCheckIds,
+          savePayload.suppressedSuiteStandardCheckIds ??
+            currentTestCase?.suppressedSuiteStandardCheckIds,
         ),
         matchOptions: savePayload.matchOptions,
         expectedOutput: savePayload.expectedOutput,
@@ -3987,11 +3960,6 @@ export function TestTemplateEditor({
                 Undo
               </Button>
             )}
-            {draftKind === "describe" && (
-              <Button size="sm" variant="outline" onClick={evalAgent.open}>
-                Ask MCPJam
-              </Button>
-            )}
           </div>
         </div>
       )}
@@ -4013,30 +3981,37 @@ export function TestTemplateEditor({
           suitePredicates={(suite?.defaultPredicates ?? []) as Predicate[]}
           suiteJudgeConfig={suite?.judgeConfig}
           capabilities={caseCapabilities.capabilities}
-          onChecksChange={(next) =>
+          saveStatus={checksSaveStatus}
+          onChecksChange={(next) => {
             setEditForm((current) =>
               current ? { ...current, ...next } : current,
-            )
-          }
+            );
+            saveCaseChecks({
+              predicates: next.predicates ?? null,
+              suppressedSuiteStandardCheckIds:
+                next.suppressedSuiteStandardCheckIds ?? [],
+            });
+          }}
           judgeSkipped={
             editForm.judgeConfigOverride?.goalCompletion?.enabled === false
           }
-          onJudgeSkippedChange={(skipped) =>
+          onJudgeSkippedChange={(skipped) => {
+            const judgeConfigOverride = withCaseJudgeSkipped(
+              editForm.judgeConfigOverride,
+              skipped,
+            );
             setEditForm((current) =>
               current
                 ? {
                     ...current,
-                    judgeConfigOverride: withCaseJudgeSkipped(
-                      current.judgeConfigOverride,
-                      skipped,
-                    ),
+                    judgeConfigOverride,
                   }
                 : current,
-            )
-          }
-          onSave={() => void handleSave()}
-          saveDisabled={savePrimaryDisabled}
-          onBack={onCloseCaseChecks}
+            );
+            saveCaseChecks({
+              judgeConfigOverride: judgeConfigOverride ?? null,
+            });
+          }}
           onConfigureSuite={onOpenSuiteSettings}
         />
       ) : draftKind === "describe" &&
@@ -4120,7 +4095,7 @@ export function TestTemplateEditor({
                   <button
                     type="button"
                     className="min-w-0 w-full text-left"
-                    onClick={handleTitleClick}
+                    onClick={readOnly ? undefined : handleTitleClick}
                   >
                     <h2 className="text-base font-semibold tracking-tight transition-opacity hover:opacity-80">
                       {editForm?.title || currentTestCase.title}
@@ -4130,8 +4105,9 @@ export function TestTemplateEditor({
                 {(currentTestCase as { lastSdkWriteAt?: number })
                   ?.lastSdkWriteAt != null ? (
                   <p className="mt-0.5 text-[11px] text-muted-foreground">
-                    Synced from CI — the next CI report may overwrite manual
-                    edits.
+                    {readOnly
+                      ? "Managed in code. Update this test in your repository."
+                      : "Synced from CI — the next CI report may overwrite manual edits."}
                   </p>
                 ) : null}
                 {/*
@@ -4153,7 +4129,7 @@ export function TestTemplateEditor({
                   className="mt-2"
                 />
               </div>
-              <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+              {!readOnly && <div className="flex shrink-0 flex-wrap items-center gap-1.5">
                 {onExportDraft && !useWorkspace ? (
                   <Button
                     type="button"
@@ -4362,6 +4338,34 @@ export function TestTemplateEditor({
                     </TooltipContent>
                   </Tooltip>
                 )}
+                {onDeleteCase && !isDraft && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 px-2 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                        aria-label="Delete test case"
+                        data-testid="case-header-delete"
+                        onClick={() => setDeleteCaseOpen(true)}
+                      >
+                        <Trash2 className="size-3.5" aria-hidden />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent variant="muted" side="top" sideOffset={6}>
+                      Delete test case
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+                {useWorkspace &&
+                  useSpine &&
+                  workspaceLeftView.kind !== "inspecting" && (
+                    <DefaultChecksReference
+                      onConfigureSuite={onOpenSuiteSettings}
+                      onOverride={onOpenCaseChecks}
+                    />
+                  )}
                 {useWorkspace ? null : (
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -4403,21 +4407,32 @@ export function TestTemplateEditor({
                       <span className="inline-flex items-center gap-2">
                         <Button
                           type="button"
+                          variant={isRunningCompare ? "secondary" : "default"}
                           size="sm"
                           className="h-8"
+                          // While the run is going this IS the stop: a disabled
+                          // "Running…" pill spent the one button the eye lands on
+                          // saying what the spinner already said, and pushed the
+                          // only useful action into a second, quieter one.
                           onClick={() =>
-                            useWorkspace
-                              ? setRunSetupOpen(true)
-                              : handlePrimaryRun()
+                            isRunningCompare
+                              ? handleStopCompare()
+                              : useWorkspace
+                                ? setRunSetupOpen(true)
+                                : handlePrimaryRun()
                           }
                           disabled={
-                            useWorkspace ? isRunningCompare : runPrimaryDisabled
+                            isRunningCompare
+                              ? false
+                              : useWorkspace
+                                ? false
+                                : runPrimaryDisabled
                           }
                         >
                           {isRunningCompare ? (
                             <>
-                              <Loader2 className="size-3.5 animate-spin" />
-                              Running…
+                              <Square className="size-3.5" />
+                              Cancel
                             </>
                           ) : (
                             <>
@@ -4430,18 +4445,6 @@ export function TestTemplateEditor({
                             </>
                           )}
                         </Button>
-                        {isRunningCompare ? (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="h-8 px-2.5 text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-                            onClick={handleStopCompare}
-                          >
-                            <Square className="size-3.5 opacity-90" />
-                            Stop
-                          </Button>
-                        ) : null}
                       </span>
                     </TooltipTrigger>
                     <TooltipContent variant="muted" side="top" sideOffset={6}>
@@ -4452,21 +4455,32 @@ export function TestTemplateEditor({
                   <span className="inline-flex items-center gap-2">
                     <Button
                       type="button"
+                      variant={isRunningCompare ? "secondary" : "default"}
                       size="sm"
                       className="h-8"
+                      // While the run is going this IS the stop: a disabled
+                      // "Running…" pill spent the one button the eye lands on
+                      // saying what the spinner already said, and pushed the
+                      // only useful action into a second, quieter one.
                       onClick={() =>
-                        useWorkspace
-                          ? setRunSetupOpen(true)
-                          : handlePrimaryRun()
+                        isRunningCompare
+                          ? handleStopCompare()
+                          : useWorkspace
+                            ? setRunSetupOpen(true)
+                            : handlePrimaryRun()
                       }
                       disabled={
-                        useWorkspace ? isRunningCompare : runPrimaryDisabled
+                        isRunningCompare
+                          ? false
+                          : useWorkspace
+                            ? false
+                            : runPrimaryDisabled
                       }
                     >
                       {isRunningCompare ? (
                         <>
-                          <Loader2 className="size-3.5 animate-spin" />
-                          Running…
+                          <Square className="size-3.5" />
+                          Cancel
                         </>
                       ) : (
                         <>
@@ -4479,18 +4493,6 @@ export function TestTemplateEditor({
                         </>
                       )}
                     </Button>
-                    {isRunningCompare ? (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 px-2.5 text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-                        onClick={handleStopCompare}
-                      >
-                        <Square className="size-3.5 opacity-90" />
-                        Stop
-                      </Button>
-                    ) : null}
                   </span>
                 )}
                 {/* Draft-run estimate: priced against the models the button will
@@ -4524,7 +4526,7 @@ export function TestTemplateEditor({
                   }
                   side="top"
                 />
-              </div>
+              </div>}
             </div>
           </div>
           {useWorkspace ? (
@@ -4546,7 +4548,7 @@ export function TestTemplateEditor({
                         onStepsChange={
                           workspaceInspectSteps ? () => undefined : setSteps
                         }
-                        readOnly={Boolean(workspaceInspectSteps)}
+                        readOnly={readOnly || Boolean(workspaceInspectSteps)}
                         availableTools={assertableTools}
                         argumentMatching={
                           resolveMatchOptions(
@@ -4657,11 +4659,14 @@ export function TestTemplateEditor({
                     />
                   ) : editForm && useSpine ? (
                     <CaseSpine
+                      readOnly={readOnly}
                       defaultChecks={
-                        <DefaultChecksReference
-                          onConfigureSuite={onOpenSuiteSettings}
-                          onOverride={onOpenCaseChecks}
-                        />
+                        !useWorkspace ? (
+                          <DefaultChecksReference
+                            onConfigureSuite={onOpenSuiteSettings}
+                            onOverride={onOpenCaseChecks}
+                          />
+                        ) : undefined
                       }
                       key={`spine:${currentTestCase?._id ?? "none"}`}
                       steps={editForm.steps}
@@ -4776,6 +4781,7 @@ export function TestTemplateEditor({
                     />
                   ) : editForm ? (
                     <SimpleCaseForm
+                      readOnly={readOnly}
                       key={`simple-case:${currentTestCase?._id ?? "none"}`}
                       steps={editForm.steps}
                       onStepsChange={setSteps}
@@ -5116,7 +5122,7 @@ export function TestTemplateEditor({
                         }
                         scorecard={{
                           render: (ctx) => (
-                            <TrialScorecard
+                            <IterationReportScorecard
                               authored={
                                 authoredForTrial({
                                   trial: workspaceSelectedTrial,
@@ -5142,55 +5148,8 @@ export function TestTemplateEditor({
                                 workspacePersistedIteration,
                               )}
                               envelope={ctx.envelope}
+                              trace={ctx.trace}
                               judgeHidden={ctx.reviewActive && ctx.judgeHidden}
-                              suggestionsSlot={
-                                useSpine ? (
-                                  <div ref={suggestionsRef}>
-                                    <SuggestedFromRunSection
-                                      enabled
-                                      batch={suggestionBatch}
-                                      authored={
-                                        authoredForTrial({
-                                          trial: workspaceSelectedTrial,
-                                          draft: workspaceDraftScorecardInput,
-                                          run: workspaceTrialRun ?? null,
-                                        }).authored
-                                      }
-                                      judgeFor={(iteration) =>
-                                        resolveIterationJudge(
-                                          iteration,
-                                          suiteRuns,
-                                        )
-                                      }
-                                      selectedBlob={
-                                        ctx.envelope
-                                          ? {
-                                              iterationId:
-                                                workspacePersistedIteration._id,
-                                              blob: ctx.envelope as never,
-                                            }
-                                          : null
-                                      }
-                                      prompts={(editForm?.steps ?? [])
-                                        .filter(
-                                          (step) => step.kind === "prompt",
-                                        )
-                                        .map((step) =>
-                                          "prompt" in step ? step.prompt : "",
-                                        )}
-                                      dismissed={dismissedSuggestions}
-                                      accepted={acceptedSuggestions}
-                                      onAccept={(suggestion) =>
-                                        acceptSuggestions([suggestion], "row")
-                                      }
-                                      onAcceptAll={(all) =>
-                                        acceptSuggestions(all, "all")
-                                      }
-                                      onDismiss={dismissSuggestion}
-                                    />
-                                  </div>
-                                ) : null
-                              }
                               judgeSlot={
                                 // The tab owns launch-triggered judging; this
                                 // row owns presentation and the review control.
@@ -5558,16 +5517,20 @@ export function TestTemplateEditor({
                       <span className="inline-flex shrink-0 items-center gap-2">
                         <Button
                           type="button"
-                          variant="outline"
+                          variant={isRunningCompare ? "secondary" : "outline"}
                           size="sm"
                           className="h-8 shrink-0 text-xs"
-                          onClick={() => handlePrimaryRun()}
-                          disabled={runPrimaryDisabled}
+                          // While the run is going this IS the stop — same as the
+                          // primary Run button.
+                          onClick={() =>
+                            isRunningCompare ? handleStopCompare() : handlePrimaryRun()
+                          }
+                          disabled={isRunningCompare ? false : runPrimaryDisabled}
                         >
                           {isRunningCompare ? (
                             <>
-                              <Loader2 className="size-3.5 animate-spin" />
-                              Running…
+                              <Square className="size-3.5" />
+                              Cancel
                             </>
                           ) : (
                             <>
@@ -5576,18 +5539,6 @@ export function TestTemplateEditor({
                             </>
                           )}
                         </Button>
-                        {isRunningCompare ? (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="h-8 shrink-0 px-2.5 text-xs text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-                            onClick={handleStopCompare}
-                          >
-                            <Square className="size-3.5 opacity-90" />
-                            Stop
-                          </Button>
-                        ) : null}
                       </span>
                     </TooltipTrigger>
                     <TooltipContent
@@ -5602,16 +5553,20 @@ export function TestTemplateEditor({
                   <span className="inline-flex shrink-0 items-center gap-2">
                     <Button
                       type="button"
-                      variant="outline"
+                      variant={isRunningCompare ? "secondary" : "outline"}
                       size="sm"
                       className="h-8 shrink-0 text-xs"
-                      onClick={() => void handleRunCompare()}
-                      disabled={runPrimaryDisabled}
+                      // While the run is going this IS the stop — same as the
+                      // primary Run button.
+                      onClick={() =>
+                        isRunningCompare ? handleStopCompare() : void handleRunCompare()
+                      }
+                      disabled={isRunningCompare ? false : runPrimaryDisabled}
                     >
                       {isRunningCompare ? (
                         <>
-                          <Loader2 className="size-3.5 animate-spin" />
-                          Running…
+                          <Square className="size-3.5" />
+                          Cancel
                         </>
                       ) : (
                         <>
@@ -5620,18 +5575,6 @@ export function TestTemplateEditor({
                         </>
                       )}
                     </Button>
-                    {isRunningCompare ? (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 shrink-0 px-2.5 text-xs text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-                        onClick={handleStopCompare}
-                      >
-                        <Square className="size-3.5 opacity-90" />
-                        Stop
-                      </Button>
-                    ) : null}
                   </span>
                 )
               ) : null}
@@ -5754,6 +5697,42 @@ export function TestTemplateEditor({
           </div>
         </div>
       )}
+      <Dialog
+        open={deleteCaseOpen}
+        onOpenChange={(open) => {
+          if (!open && !isDeletingCase) setDeleteCaseOpen(false);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Trash2 className="size-5 text-destructive" aria-hidden />
+              Delete test case
+            </DialogTitle>
+            <DialogDescription>
+              Delete “{editForm?.title || "Untitled test case"}”? This cannot be
+              undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setDeleteCaseOpen(false)}
+              disabled={isDeletingCase}
+            >
+              Cancel
+            </Button>
+            <Button
+              className={EVAL_DESTRUCTIVE_BUTTON_CLASS}
+              data-testid="case-header-delete-confirm"
+              onClick={confirmDeleteCase}
+              disabled={isDeletingCase}
+            >
+              {isDeletingCase ? "Deleting…" : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

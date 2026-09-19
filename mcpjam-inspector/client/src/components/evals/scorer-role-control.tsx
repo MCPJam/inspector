@@ -25,7 +25,14 @@ import { STAGE_CHIP_TONE_CLASS } from "@/components/evaluate/stage-chain-model";
 import { ROLE_LEGEND, type ScorerUiRole } from "./suite-scorer-table-model";
 
 /** Read-only role, for a row whose role this surface cannot author. */
-export function RoleChip({ role }: { role: ScorerUiRole }) {
+export function RoleChip({
+  role,
+  note,
+}: {
+  role: ScorerUiRole;
+  /** Why this chip is not a control, when a reader would expect one. */
+  note?: string;
+}) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -46,6 +53,7 @@ export function RoleChip({ role }: { role: ScorerUiRole }) {
         </span>
       </TooltipTrigger>
       <TooltipContent className="max-w-72 space-y-2">
+        {note ? <p>{note}</p> : null}
         {Object.values(ROLE_LEGEND).map(({ label, meaning }) => (
           <p key={label}>
             <strong>{label}:</strong> {meaning}

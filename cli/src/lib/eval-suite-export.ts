@@ -499,17 +499,6 @@ function suiteLevelFindings(
     );
   }
 
-  if (settings.judge?.autoRun === true) {
-    findings.push(
-      unsupported(
-        ["settings", "judge"],
-        "suite automatically runs LLM-as-judge grading, and a suite file has " +
-          "no judge vocabulary. Exporting it would produce a file that " +
-          "grades with deterministic assertions alone."
-      )
-    );
-  }
-
   return findings;
 }
 
@@ -856,6 +845,31 @@ export function buildSuiteFileFromPlatform(
         : {}),
     },
     defaults: {
+      ...(detail.settings.judge
+        ? {
+            judge: {
+              enabled: detail.settings.judge.enabled,
+              ...(detail.settings.judge.model != null
+                ? { model: detail.settings.judge.model }
+                : {}),
+              ...(detail.settings.judge.autoRun !== undefined
+                ? { autoRun: detail.settings.judge.autoRun }
+                : {}),
+              ...(detail.settings.judge.threshold !== undefined
+                ? { threshold: detail.settings.judge.threshold }
+                : {}),
+              ...(detail.settings.judge.role !== undefined
+                ? { role: detail.settings.judge.role }
+                : {}),
+              ...(detail.settings.judge.severity !== undefined
+                ? { severity: detail.settings.judge.severity }
+                : {}),
+              ...(detail.settings.judge.rubric !== undefined
+                ? { rubric: detail.settings.judge.rubric }
+                : {}),
+            },
+          }
+        : {}),
       model: suiteModel,
       ...(hoistedProvider === undefined ? {} : { provider: hoistedProvider }),
       ...(executionConfig.systemPrompt === undefined
@@ -884,6 +898,7 @@ export function buildSuiteFileFromPlatform(
     // import status for it would assert a faithfulness claim about a mapping
     // that never happened.
     cases: cases.map((evalCase, index) => ({
+      ...(evalCase.judge !== undefined ? { judge: evalCase.judge } : {}),
       id: caseIds[index],
       title: evalCase.title,
       ...(evalCase.intent === undefined ? {} : { intent: evalCase.intent }),
@@ -904,7 +919,7 @@ export function buildSuiteFileFromPlatform(
         ? {
             assertions: filterSuppressedSuiteAssertions(
               assertions,
-              evalCase.suppressedSuiteStandardCheckIds,
+              evalCase.suppressedSuiteStandardCheckIds
             ),
           }
         : {}),

@@ -1,3 +1,13 @@
+import { randomUUID } from "node:crypto";
+import {
+  createSavedClientRunner,
+  type EvalSuiteClientOptions,
+  type EvalSuiteSingleClientOptions,
+} from "./saved-client-runner.js";
+export type {
+  EvalSuiteClientOptions,
+  EvalSuiteSingleClientOptions,
+} from "./saved-client-runner.js";
 import { composeAbortSignals } from "./compose-abort-signals.js";
 import { formatRunSummaryTable } from "./eval-summary.js";
 import type { EvalSelectionManifest } from "./eval-selection.js";
@@ -12,6 +22,7 @@ import type {
   EvalExpectedToolCall,
   EvalResultInput,
   MCPJamReportingConfig,
+  SelectedEvalClient,
 } from "./eval-reporting-types.js";
 import { EvalTest } from "./EvalTest.js";
 import type {
@@ -23,7 +34,11 @@ import {
   captureEvalReporting,
   notRequestedReceipt,
 } from "./eval-reporting-receipt.js";
-import { suiteTestResultsToEvalResultInputs } from "./eval-result-mapping.js";
+import { McpjamModelLeaseScope } from "./mcpjam-model-lease.js";
+import {
+  suiteTestResultsToEvalResultInputs,
+  variantFromExecutor,
+} from "./eval-result-mapping.js";
 import { aggregateEvaluationConfigHash } from "./contract/derive.js";
 import { resolveServerReplayConfigs } from "./server-replay-configs.js";
 import { buildHostSnapshotMetadata } from "./host-config/internal.js";
@@ -75,6 +90,46 @@ export interface EvalSuiteResult {
     };
   };
 }
+
+/** One client's run inside a multi-client `runWithClient` call. */
+export interface EvalSuiteClientRunResult extends EvalSuiteResult {
+  /** The saved client and version this run executed. */
+  client: SelectedEvalClient;
+  receipt: EvalReportingReceipt;
+}
+
+/** A client whose setup or run threw. The other clients were not cancelled. */
+export interface EvalSuiteClientRunFailure {
+  /** The name or ID as requested — resolution may be what failed. */
+  client: string;
+  error: unknown;
+}
+
+/**
+ * Result of `runWithClient` with several clients. The top-level fields
+ * aggregate every client that ran; `tests` is keyed `"<client> / <test>"`.
+ */
+export interface EvalSuiteMultiClientResult extends EvalSuiteResult {
+  runGroupId: string;
+  /** Keyed by the client name or ID as requested. */
+  clients: Record<string, EvalSuiteClientRunResult>;
+  failures: Record<string, EvalSuiteClientRunFailure>;
+}
+
+/** Same cap as a hosted multi-client launch. */
+const MAX_RUN_GROUP_CLIENTS = 10;
+
+type RunOptions = Omit<EvalTestRunOptions, "iterations"> & {
+  iterations?: number;
+};
+
+/** Everything one run reads and writes, so several can run side by side. */
+type RunScope = {
+  tests: Map<string, EvalTest>;
+  selection: EvalSelectionManifest;
+  receipt: EvalReportingReceipt;
+  result: EvalSuiteResult | null;
+};
 
 /**
  * EvalSuite - Groups multiple EvalTests and provides aggregate metrics
@@ -264,14 +319,126 @@ export class EvalSuite {
   }
 
   /**
-   * Run all tests in the suite with the given executor and options.
+   * Resolve the latest saved client once, then run against its frozen settings.
+   *
+   * Given several clients, runs the suite against each in parallel. Each
+   * client uploads its own run; the runs share one run group, so MCPJam shows
+   * them together with one run number. One client failing does not cancel the
+   * others — see `failures` on the result.
    */
+  async runWithClient(
+    client: EvalSuiteClientOptions & { client: string },
+    options?: RunOptions
+  ): Promise<EvalSuiteResult>;
+  async runWithClient(
+    client: EvalSuiteClientOptions & { client: readonly string[] },
+    options?: RunOptions
+  ): Promise<EvalSuiteMultiClientResult>;
+  async runWithClient(
+    client: EvalSuiteClientOptions,
+    options?: RunOptions
+  ): Promise<EvalSuiteResult | EvalSuiteMultiClientResult>;
+  async runWithClient(
+    client: EvalSuiteClientOptions,
+    options: RunOptions = {}
+  ): Promise<EvalSuiteResult | EvalSuiteMultiClientResult> {
+    const baseUrl =
+      client.baseUrl ?? options.mcpjam?.baseUrl ?? this.mcpjamConfig?.baseUrl;
+    if (typeof client.client !== "string")
+      return this.runClientGroup(
+        { ...client, baseUrl },
+        [...client.client],
+        options
+      );
+    const selection: EvalSuiteSingleClientOptions = {
+      ...client,
+      client: client.client,
+      baseUrl,
+    };
+    return this.runPrepared(async (signal) => {
+      const resolved = await createSavedClientRunner(selection, signal);
+      return {
+        executor: resolved.executor,
+        reporting: {
+          ...(options.mcpjam ?? this.mcpjamConfig),
+          apiKey: selection.apiKey,
+          project: selection.projectId,
+          baseUrl: selection.baseUrl,
+          selectedClient: resolved.selectedClient,
+        },
+      };
+    }, options);
+  }
+
   async run(
     executor: HostExecutor,
     options: Omit<EvalTestRunOptions, "iterations"> & {
       iterations?: number;
     } = {}
   ): Promise<EvalSuiteResult> {
+    return this.runPrepared(executor, options);
+  }
+
+  private async runPrepared(
+    source:
+      | HostExecutor
+      | ((signal: AbortSignal) => Promise<{
+          executor: HostExecutor;
+          reporting: MCPJamReportingConfig;
+        }>),
+    options: Omit<EvalTestRunOptions, "iterations"> & {
+      iterations?: number;
+    } = {}
+  ): Promise<EvalSuiteResult> {
+    this.assertCanStartRun(options);
+    this.running = true;
+    const leaseScope = new McpjamModelLeaseScope();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let dispose: (() => void) | undefined;
+    try {
+      const controller = new AbortController();
+      if (options.runTimeoutMs !== undefined)
+        timer = setTimeout(
+          () => controller.abort(new Error("Suite deadline exceeded")),
+          options.runTimeoutMs
+        );
+      let reporting = options.mcpjam ?? this.mcpjamConfig;
+      const composed = composeAbortSignals(
+        [controller.signal, options.signal].filter(
+          (signal): signal is AbortSignal => !!signal
+        )
+      );
+      dispose = composed.dispose;
+      const signal = composed.signal;
+      let executor: HostExecutor;
+      if (typeof source === "function") {
+        signal.throwIfAborted();
+        const prepared = await source(signal);
+        reporting = prepared.reporting;
+        executor = prepared.executor;
+        signal.throwIfAborted();
+      } else {
+        executor = source;
+      }
+      return await this.runInternal(
+        executor.withOptions({ mcpjamLeaseScope: leaseScope }),
+        {
+          ...options,
+          signal,
+          // Execution cancellation must still allow its evidence to be persisted.
+          // Only an explicitly authored transport signal cancels reporting.
+          mcpjam: reporting,
+        }
+      );
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+      dispose?.();
+      this.running = false;
+      await leaseScope.release();
+    }
+  }
+
+  private assertCanStartRun(options: RunOptions): void {
     if (this.running)
       throw new Error(
         "This EvalSuite is already running; create a separate suite for concurrent runs"
@@ -285,6 +452,30 @@ export class EvalSuite {
       throw new TypeError(
         "runTimeoutMs must be a positive timer-sized integer"
       );
+    this.validateRunOptions(options);
+  }
+
+  /**
+   * Run every client in parallel, each on its own copy of the cases, its own
+   * executor and model leases, and its own upload tagged with a shared
+   * `runGroupId` — the SDK equivalent of a hosted multi-client launch.
+   */
+  private async runClientGroup(
+    selection: Omit<EvalSuiteClientOptions, "client">,
+    clients: string[],
+    options: RunOptions
+  ): Promise<EvalSuiteMultiClientResult> {
+    if (clients.length === 0)
+      throw new TypeError("client must name at least one saved client");
+    if (clients.length > MAX_RUN_GROUP_CLIENTS)
+      throw new TypeError(
+        `runWithClient accepts at most ${MAX_RUN_GROUP_CLIENTS} clients`
+      );
+    if (clients.some((client) => typeof client !== "string" || !client.trim()))
+      throw new TypeError("Each client must be a non-empty name or ID");
+    if (new Set(clients).size !== clients.length)
+      throw new TypeError("Duplicate client in runWithClient");
+    this.assertCanStartRun(options);
     this.running = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let dispose: (() => void) | undefined;
@@ -295,7 +486,6 @@ export class EvalSuite {
           () => controller.abort(new Error("Suite deadline exceeded")),
           options.runTimeoutMs
         );
-      const reporting = options.mcpjam ?? this.mcpjamConfig;
       const composed = composeAbortSignals(
         [controller.signal, options.signal].filter(
           (signal): signal is AbortSignal => !!signal
@@ -303,13 +493,143 @@ export class EvalSuite {
       );
       dispose = composed.dispose;
       const signal = composed.signal;
-      return await this.runInternal(executor, {
-        ...options,
-        signal,
-        // Execution cancellation must still allow its evidence to be persisted.
-        // Only an explicitly authored transport signal cancels reporting.
-        mcpjam: reporting,
+
+      const iterations = options.iterations ?? this.defaults.iterations!;
+      this.lastReportingReceipt = notRequestedReceipt("disabled");
+      this.lastSelection = this.freezeSelection(iterations);
+      const selectionManifest = this.lastSelection;
+      const base = options.mcpjam ?? this.mcpjamConfig;
+      const runGroupId = base?.runGroupId ?? randomUUID();
+      const totalIterations = clients.length * this.tests.size * iterations;
+      const completedByClient = new Map<string, number>();
+
+      const settled = await Promise.allSettled(
+        clients.map(async (requested): Promise<EvalSuiteClientRunResult> => {
+          const leaseScope = new McpjamModelLeaseScope();
+          try {
+            signal.throwIfAborted();
+            const resolved = await createSavedClientRunner(
+              { ...selection, client: requested },
+              signal
+            );
+            signal.throwIfAborted();
+            // Each client gets fresh case instances: an EvalTest holds its own
+            // run state, and these run at the same time.
+            const tests = new Map(
+              [...this.tests].map(([name, test]) => {
+                const clone = test.clone();
+                clone.setDefaultMatchOptions(this.matchOptions);
+                return [name, clone] as const;
+              })
+            );
+            const scope: RunScope = {
+              tests,
+              selection: selectionManifest,
+              receipt: notRequestedReceipt("disabled"),
+              result: null,
+            };
+            const result = await this.executeRun(
+              scope,
+              resolved.executor.withOptions({ mcpjamLeaseScope: leaseScope }),
+              {
+                ...options,
+                signal,
+                summary: undefined,
+                mcpjam: {
+                  ...base,
+                  apiKey: selection.apiKey,
+                  project: selection.projectId,
+                  baseUrl: selection.baseUrl,
+                  selectedClient: resolved.selectedClient,
+                  runGroupId,
+                  // A caller's id names the launch; each client's run needs
+                  // its own, derived the same way on every retry.
+                  ...(base?.externalRunId
+                    ? { externalRunId: `${base.externalRunId}:${requested}` }
+                    : {}),
+                },
+                onProgress: options.onProgress
+                  ? (completed) => {
+                      completedByClient.set(requested, completed);
+                      let overall = 0;
+                      for (const count of completedByClient.values())
+                        overall += count;
+                      return options.onProgress!(overall, totalIterations);
+                    }
+                  : undefined,
+              }
+            );
+            return {
+              ...result,
+              client: resolved.selectedClient,
+              receipt: scope.receipt,
+            };
+          } finally {
+            await leaseScope.release();
+          }
+        })
+      );
+
+      const clientResults: Record<string, EvalSuiteClientRunResult> = {};
+      const failures: Record<string, EvalSuiteClientRunFailure> = {};
+      settled.forEach((outcome, index) => {
+        const requested = clients[index]!;
+        if (outcome.status === "fulfilled")
+          Object.defineProperty(clientResults, requested, {
+            value: outcome.value,
+            enumerable: true,
+            writable: true,
+            configurable: true,
+          });
+        else
+          Object.defineProperty(failures, requested, {
+            value: { client: requested, error: outcome.reason },
+            enumerable: true,
+            writable: true,
+            configurable: true,
+          });
       });
+      const ran = Object.entries(clientResults);
+      if (ran.length === 0) throw (settled[0] as PromiseRejectedResult).reason;
+
+      const union = new Map<string, EvalRunResult>();
+      for (const [requested, result] of ran)
+        for (const [name, testResult] of result.tests)
+          union.set(`${requested} / ${name}`, testResult);
+      const group: EvalSuiteMultiClientResult = {
+        ...this.aggregateResults(union),
+        selection: structuredClone(selectionManifest),
+        runGroupId,
+        clients: clientResults,
+        failures,
+      };
+      this.lastRunResult = group;
+      this.lastReportingReceipt = combineReceipts(
+        ran.map(([, result]) => result.receipt)
+      );
+      if (options.summary === "table") {
+        for (const [, result] of ran) {
+          try {
+            console.log(
+              `${result.client.name} · v${result.client.versionNumber}\n` +
+                formatRunSummaryTable(result, result.receipt)
+            );
+          } catch {
+            /* Formatting is observational. */
+          }
+        }
+        for (const failure of Object.values(failures))
+          console.log(
+            `${failure.client} · failed: ${errorMessage(failure.error)}`
+          );
+      }
+      const errors = Object.values(failures).map((failure) => failure.error);
+      if (errors.length && base?.strict)
+        throw new AggregateError(
+          errors,
+          `runWithClient failed for ${errors.length} of ${clients.length} clients`
+        );
+      return group;
     } finally {
       if (timer !== undefined) clearTimeout(timer);
       dispose?.();
@@ -317,13 +637,9 @@ export class EvalSuite {
     }
   }
 
-  private async runInternal(
-    executor: HostExecutor,
-    options: Omit<EvalTestRunOptions, "iterations"> & {
-      iterations?: number;
-    } = {}
-  ): Promise<EvalSuiteResult> {
-    this.lastReportingReceipt = notRequestedReceipt("disabled");
+  private validateRunOptions(
+    options: Omit<EvalTestRunOptions, "iterations"> & { iterations?: number }
+  ): void {
     const iterations = options.iterations ?? this.defaults.iterations;
     if (!Number.isSafeInteger(iterations) || iterations! < 1)
       throw new TypeError(
@@ -360,8 +676,40 @@ export class EvalSuite {
       throw new TypeError(
         "Choose evaluatorTimeoutMs or scorerTimeoutMs, not both"
       );
+  }
+
+  private async runInternal(
+    executor: HostExecutor,
+    options: RunOptions = {}
+  ): Promise<EvalSuiteResult> {
+    this.lastReportingReceipt = notRequestedReceipt("disabled");
+    const iterations = options.iterations ?? this.defaults.iterations;
     this.lastSelection = this.freezeSelection(iterations!);
-    const plannedIterations = this.tests.size * iterations!;
+    const scope: RunScope = {
+      tests: this.tests,
+      selection: this.lastSelection,
+      receipt: this.lastReportingReceipt,
+      result: null,
+    };
+    try {
+      return await this.executeRun(scope, executor, options);
+    } finally {
+      this.lastReportingReceipt = scope.receipt;
+      if (scope.result) this.lastRunResult = scope.result;
+    }
+  }
+
+  /**
+   * One run over `scope.tests`. Reads and writes only `scope`, never the
+   * suite's `last*` fields, so a multi-client launch can run several at once.
+   */
+  private async executeRun(
+    scope: RunScope,
+    executor: HostExecutor,
+    options: RunOptions
+  ): Promise<EvalSuiteResult> {
+    const iterations = options.iterations ?? this.defaults.iterations;
+    const plannedIterations = scope.tests.size * iterations!;
     const suiteReportingConfig = await prepareReportingConfig(
       options.mcpjam ?? this.mcpjamConfig ?? {}
     );
@@ -374,7 +722,7 @@ export class EvalSuite {
       );
     suiteReportingConfig.expectedIterations = plannedIterations;
     if (
-      this.lastSelection.scope === "selected" &&
+      scope.selection.scope === "selected" &&
       suiteReportingConfig.enabled !== false &&
       (suiteReportingConfig.apiKey ?? process.env.MCPJAM_API_KEY)
     )
@@ -388,7 +736,7 @@ export class EvalSuite {
     let completedIterations = 0;
 
     // Run each test sequentially to avoid overwhelming the system
-    for (const [name, test] of this.tests) {
+    for (const [name, test] of scope.tests) {
       const testOptions: EvalTestRunOptions = {
         ...options,
         iterations: iterations!,
@@ -414,20 +762,22 @@ export class EvalSuite {
     }
 
     // Aggregate results
-    this.lastRunResult = {
+    const runResult: EvalSuiteResult = {
       ...this.aggregateResults(testResults),
-      selection: structuredClone(this.lastSelection),
+      selection: structuredClone(scope.selection),
     };
+    scope.result = runResult;
     const runEvaluationsByCase = Object.fromEntries(
-      [...this.tests].flatMap(([name, test]) => {
+      [...scope.tests].flatMap(([name, test]) => {
         const envelope = testResults.get(name)?.runEvaluation;
         return envelope ? [[test.getId(), envelope]] : [];
       })
     );
     if (Object.keys(runEvaluationsByCase).length)
-      this.lastRunResult.runEvaluationsByCase = runEvaluationsByCase;
+      runResult.runEvaluationsByCase = runEvaluationsByCase;
     try {
       await this.autoSaveSuiteRunIfConfigured(
+        scope,
         testResults,
         suiteReportingConfig,
         executor
@@ -435,18 +785,17 @@ export class EvalSuite {
     } finally {
       if (options.summary === "table") {
         try {
-          console.log(
-            formatRunSummaryTable(this.lastRunResult, this.lastReportingReceipt)
-          );
+          console.log(formatRunSummaryTable(runResult, scope.receipt));
         } catch {
           /* Formatting is observational. */
         }
       }
     }
-    return this.lastRunResult;
+    return runResult;
   }
 
   private async autoSaveSuiteRunIfConfigured(
+    scope: RunScope,
     testResults: Map<string, EvalRunResult>,
     config: MCPJamReportingConfig | undefined,
     executor: HostExecutor
@@ -456,10 +805,10 @@ export class EvalSuite {
     }
     const apiKey = config?.apiKey ?? process.env.MCPJAM_API_KEY;
     if (!apiKey?.trim()) {
-      this.lastReportingReceipt = notRequestedReceipt("missing_api_key");
+      scope.receipt = notRequestedReceipt("missing_api_key");
       if (config?.strict) {
         const error = new Error("Strict eval reporting requires an API key");
-        this.lastReportingReceipt = {
+        scope.receipt = {
           schemaVersion: 1,
           state: "failed",
           acceptedIterations: 0,
@@ -478,12 +827,18 @@ export class EvalSuite {
           hostSnapshot as unknown as Record<string, unknown>
         )
       : undefined;
-    const results = this.buildEvalResultInputs(testResults, config, hostExtras);
+    const results = this.buildEvalResultInputs(
+      scope.tests,
+      testResults,
+      config,
+      hostExtras,
+      variantFromExecutor(executor)
+    );
     if (results.length === 0) {
       return;
     }
 
-    this.lastReportingReceipt = {
+    scope.receipt = {
       schemaVersion: 1,
       state: "pending",
       acceptedIterations: results.length,
@@ -493,8 +848,8 @@ export class EvalSuite {
     const reporting = await captureEvalReporting({
       ...config,
       executor,
-      runEvaluations: this.lastRunResult?.runEvaluationsByCase
-        ? Object.values(this.lastRunResult.runEvaluationsByCase)
+      runEvaluations: scope.result?.runEvaluationsByCase
+        ? Object.values(scope.result.runEvaluationsByCase)
         : undefined,
       expectedIterations:
         config?.expectedIterations ??
@@ -530,15 +885,17 @@ export class EvalSuite {
       })(),
       results,
     });
-    this.lastReportingReceipt = reporting.receipt;
+    scope.receipt = reporting.receipt;
     if (reporting.receipt.state === "failed" && config?.strict)
       throw reporting.error;
   }
 
   private buildEvalResultInputs(
+    tests: Map<string, EvalTest>,
     testResults: Map<string, EvalRunResult>,
     reporting?: MCPJamReportingConfig,
-    hostExtras?: Record<string, string | number | boolean>
+    hostExtras?: Record<string, string | number | boolean>,
+    variant?: { provider?: string; model?: string }
   ): EvalResultInput[] {
     // Null prototype on ALL FOUR of these: they are keyed by test NAME in the
     // same loop, so a test called `__proto__` would run the prototype setter
@@ -559,7 +916,7 @@ export class EvalSuite {
       string,
       import("./eval-result-mapping.js").EvalCaseIdentity | undefined
     > = Object.create(null);
-    for (const [name, test] of this.tests) {
+    for (const [name, test] of tests) {
       const expected = test.getConfig().expectedToolCalls;
       if (expected) {
         expectedToolCallsByTest[name] = expected;
@@ -604,7 +961,8 @@ export class EvalSuite {
       matchOptionsByTest,
       Object.keys(caseIdentityByTest).length > 0
         ? caseIdentityByTest
-        : undefined
+        : undefined,
+      variant
     );
   }
 
@@ -748,8 +1106,19 @@ export class EvalSuite {
         const expectedCount = test.getConfig().expectedToolCalls?.length ?? 0;
         if (expectedCount === 0) return totals;
         sawExpected = true;
-        const result = this.lastRunResult!.tests.get(name);
-        for (const iteration of result?.iterationDetails ?? []) {
+        // A multi-client result keys its union by "<client> / <test>", so read
+        // each client's own map instead.
+        const last = this.lastRunResult!;
+        const runs =
+          "clients" in last
+            ? Object.values((last as EvalSuiteMultiClientResult).clients).map(
+                (client) => client.tests
+              )
+            : [last.tests];
+        const iterations = runs.flatMap(
+          (tests) => tests.get(name)?.iterationDetails ?? []
+        );
+        for (const iteration of iterations) {
           const match = iteration.toolMatch;
           if (!match) continue;
           const mismatches = match.argumentMismatches.length;
@@ -802,4 +1171,42 @@ export class EvalSuite {
   size(): number {
     return this.tests.size;
   }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** One receipt for a group: failed beats persisted beats not requested. */
+function combineReceipts(
+  receipts: EvalReportingReceipt[]
+): EvalReportingReceipt {
+  const sum = (key: "acknowledgedIterations" | "pendingIterations") =>
+    receipts.some((receipt) => receipt[key] === null)
+      ? null
+      : receipts.reduce((total, receipt) => total + (receipt[key] ?? 0), 0);
+  const failed = receipts.find((receipt) => receipt.state === "failed");
+  const state = failed
+    ? "failed"
+    : receipts.some((receipt) => receipt.state === "pending")
+    ? "pending"
+    : receipts.every((receipt) => receipt.state === "persisted")
+    ? "persisted"
+    : receipts.every((receipt) => receipt.state === "not_requested")
+    ? "not_requested"
+    : "persisted";
+  return {
+    schemaVersion: 1,
+    state,
+    acceptedIterations: receipts.reduce(
+      (total, receipt) => total + receipt.acceptedIterations,
+      0
+    ),
+    acknowledgedIterations: sum("acknowledgedIterations"),
+    pendingIterations: sum("pendingIterations"),
+    ...(failed?.error ? { error: failed.error } : {}),
+    ...(state === "not_requested" && receipts[0]?.reason
+      ? { reason: receipts[0].reason }
+      : {}),
+  };
 }

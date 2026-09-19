@@ -1,92 +1,139 @@
 import { renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-
 const mocks = vi.hoisted(() => ({
-  isMember: undefined as boolean | undefined,
-  isUserReady: false,
+  member: true,
+  ready: true,
   raw: undefined as unknown,
-  set: vi.fn(),
-  clear: vi.fn(),
+  query: vi.fn(),
+  mutation: vi.fn(),
+  action: vi.fn(),
 }));
-const queryArgs = vi.fn();
-
 vi.mock("convex/react", () => ({
-  useQuery: (_name: string, args: unknown) => {
-    queryArgs(args);
+  useQuery: (name: string, args: unknown) => {
+    mocks.query(name, args);
     return mocks.raw;
   },
-  useMutation: (name: string) =>
-    name.endsWith("clearOrganizationAutoTopup") ? mocks.clear : mocks.set,
+  useMutation: (name: string) => (args: unknown) => mocks.mutation(name, args),
+  useAction: (name: string) => (args: unknown) => mocks.action(name, args),
 }));
 vi.mock("@/hooks/use-is-member-actor", () => ({
-  useIsMemberActor: () => mocks.isMember,
+  useIsMemberActor: () => mocks.member,
 }));
 vi.mock("@/contexts/db-user-ready-context", () => ({
-  useDbUserReady: () => mocks.isUserReady,
+  useDbUserReady: () => mocks.ready,
 }));
 vi.mock("@/hooks/useOrgScopedWrite", () => ({
-  useOrgScopedWrite: () => ({
-    error: null,
-    isSaving: false,
-    run: (work: () => Promise<unknown>) => work(),
-  }),
+  useOrgScopedWrite: () => ({ run: (work: () => Promise<unknown>) => work() }),
 }));
-
-import { normalizeAutoTopup, useAutoTopup } from "../useAutoTopup";
-
-describe("useAutoTopup", () => {
+import { useAutoTopup } from "../useAutoTopup";
+describe("automatic refill contract", () => {
   beforeEach(() => {
-    mocks.isMember = undefined;
-    mocks.isUserReady = false;
+    vi.clearAllMocks();
+    mocks.member = true;
+    mocks.ready = true;
     mocks.raw = undefined;
-    mocks.set.mockReset();
-    mocks.clear.mockReset();
-    queryArgs.mockClear();
   });
-  const lastQueryArg = () => queryArgs.mock.calls.at(-1)?.[0];
-
-  it("waits, and does not query, while the actor is still settling", () => {
-    const { result } = renderHook(() => useAutoTopup("org_1"));
-    expect(lastQueryArg()).toBe("skip");
-    expect(result.current.isLoading).toBe(true);
-    expect(result.current.querySkipped).toBe(false);
-  });
-  it("skips a resolved guest instead of spinning", () => {
-    mocks.isMember = false;
-    mocks.isUserReady = true;
-    const { result } = renderHook(() => useAutoTopup("org_1"));
-    expect(lastQueryArg()).toBe("skip");
-    expect(result.current.isLoading).toBe(false);
+  it("skips guests and unready actors", () => {
+    mocks.member = false;
+    const { result, rerender } = renderHook(() => useAutoTopup("org"));
+    expect(mocks.query).toHaveBeenLastCalledWith(
+      "billing/autoTopupPreferences:get",
+      "skip",
+    );
     expect(result.current.querySkipped).toBe(true);
+    mocks.member = true;
+    mocks.ready = false;
+    rerender();
+    expect(mocks.query).toHaveBeenLastCalledWith(
+      "billing/autoTopupPreferences:get",
+      "skip",
+    );
   });
-  it("queries for a ready member and normalizes the row", async () => {
-    mocks.isMember = true;
-    mocks.isUserReady = true;
-    mocks.raw = { thresholdCredits: 100, topupCredits: 500, extra: 1 };
-    const { result } = renderHook(() => useAutoTopup("org_1"));
-    expect(lastQueryArg()).toEqual({ organizationId: "org_1" });
-    expect(result.current.enrollment).toEqual({
+  it("reads the nested view without treating saved preferences as enrollment", () => {
+    mocks.raw = {
+      preferences: {
+        thresholdCredits: 100,
+        topupCredits: 1000,
+        monthlySpendLimitCents: 2700,
+      },
+      status: "not_active",
+      refillPriceCents: 900,
+      revision: 4,
+    };
+    const { result } = renderHook(() => useAutoTopup("org"));
+    expect(result.current.view).toEqual(mocks.raw);
+  });
+  it("saves cents and disables without clearing preferences", async () => {
+    const { result } = renderHook(() => useAutoTopup("org"));
+    const preferences = {
       thresholdCredits: 100,
-      topupCredits: 500,
-      monthlySpendLimitCredits: null,
-    });
-    await result.current.save({
-      thresholdCredits: 200,
       topupCredits: 1000,
-      monthlySpendLimitCredits: 5000,
-    });
-    expect(mocks.set).toHaveBeenCalledWith({
-      organizationId: "org_1",
-      thresholdCredits: 200,
-      topupCredits: 1000,
-      monthlySpendLimitCredits: 5000,
-    });
+      monthlySpendLimitCents: 2700,
+    };
+    await result.current.save(preferences);
+    expect(mocks.mutation).toHaveBeenLastCalledWith(
+      "billing/autoTopupPreferences:set",
+      { organizationId: "org", ...preferences },
+    );
     await result.current.disable();
-    expect(mocks.clear).toHaveBeenCalledWith({ organizationId: "org_1" });
+    expect(mocks.mutation).toHaveBeenLastCalledWith(
+      "billing/autoTopupActivation:disable",
+      { organizationId: "org" },
+    );
+    expect(mocks.action).not.toHaveBeenCalled();
   });
-  it("treats null and malformed rows as not enrolled", () => {
-    expect(normalizeAutoTopup(undefined)).toBeUndefined();
-    expect(normalizeAutoTopup(null)).toBeNull();
-    expect(normalizeAutoTopup({ thresholdCredits: "100" })).toBeNull();
+  it("clears saved preferences even when ineligible", async () => {
+    mocks.raw = { eligible: false, activationAllowed: false };
+    const { result } = renderHook(() => useAutoTopup("org"));
+    await result.current.clear();
+    expect(mocks.mutation).toHaveBeenLastCalledWith(
+      "billing/autoTopupPreferences:clear",
+      { organizationId: "org" },
+    );
+  });
+  it("binds consent to the server revision and quote; finish uses setup id", async () => {
+    mocks.raw = {
+      preferences: {},
+      activationAllowed: true,
+      eligible: true,
+      revision: 4,
+      refillPriceCents: 900,
+      consentVersion: "auto-topup-v1",
+    };
+    mocks.action.mockResolvedValue({
+      setupIntentId: "seti_1",
+      clientSecret: "secret",
+    });
+    const { result } = renderHook(() => useAutoTopup("org"));
+    await expect(result.current.begin()).resolves.toEqual({
+      setupIntentId: "seti_1",
+      clientSecret: "secret",
+    });
+    expect(mocks.action).toHaveBeenLastCalledWith(
+      "billing/autoTopupActivationNode:begin",
+      {
+        organizationId: "org",
+        consent: true,
+        expectedRevision: 4,
+        expectedPriceCents: 900,
+        consentVersion: "auto-topup-v1",
+      },
+    );
+    await result.current.finish("seti_1");
+    expect(mocks.action).toHaveBeenLastCalledWith(
+      "billing/autoTopupActivationNode:finish",
+      { organizationId: "org", setupIntentId: "seti_1" },
+    );
+  });
+  it("does not begin while the rollout is off or the quote is unavailable", async () => {
+    mocks.raw = {
+      activationAllowed: false,
+      eligible: true,
+      preferences: {},
+      refillPriceCents: 900,
+    };
+    const { result } = renderHook(() => useAutoTopup("org"));
+    await expect(result.current.begin()).rejects.toThrow();
+    expect(mocks.action).not.toHaveBeenCalled();
   });
 });

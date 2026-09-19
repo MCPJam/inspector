@@ -645,6 +645,132 @@ describe("web auth manager batching", () => {
     });
   });
 
+  // Every reason the backend names for a withheld token needs its own branch.
+  // Without one it falls through to the refusal above and tells the user to
+  // complete an OAuth flow — wrong for an authorization server that never
+  // answered, wrong for a refresh already in flight, and silent about the
+  // repointed URL that is what actually invalidated the credential.
+  function batchWithOAuthUnavailableReason(
+    reason: string,
+    extra: Record<string, unknown> = {}
+  ): typeof fetch {
+    return vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            results: {
+              "server-1": {
+                ok: true,
+                role: "member",
+                accessLevel: "project_member",
+                permissions: { chatOnly: false },
+                oauthUnavailableReason: reason,
+                ...extra,
+                serverConfig: {
+                  transportType: "http",
+                  url: "https://server-1.example.com/mcp",
+                  headers: {},
+                  useOAuth: true,
+                },
+              },
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        )
+    ) as typeof fetch;
+  }
+
+  async function captureConnectError(): Promise<WebRouteError> {
+    try {
+      await createAuthorizedManager(
+        callerContextFromHono(mockContext),
+        "bearer-token",
+        "project-1",
+        ["server-1"],
+        10_000,
+        undefined,
+        undefined,
+        { serverNames: ["Asana"] }
+      );
+    } catch (error) {
+      return error as WebRouteError;
+    }
+    throw new Error("expected createAuthorizedManager to reject");
+  }
+
+  it("tells the user the destination changed when the credential origin no longer matches", async () => {
+    global.fetch = batchWithOAuthUnavailableReason(
+      "credential_origin_mismatch"
+    );
+
+    const error = await captureConnectError();
+
+    expect(error).toMatchObject({
+      status: 401,
+      code: "UNAUTHORIZED",
+      message:
+        'Server "Asana" now points at a different destination, so its saved credentials no longer apply. Authorize it again for the new destination.',
+      details: {
+        oauthRequired: true,
+        serverId: "server-1",
+        serverName: "Asana",
+        serverUrl: "https://server-1.example.com/mcp",
+      },
+    });
+    expect(error.message).not.toContain("complete the OAuth flow first");
+  });
+
+  it("reports an unreachable authorization server as retryable, not as a missing authorization", async () => {
+    global.fetch = batchWithOAuthUnavailableReason(
+      "authorization_server_unreachable"
+    );
+
+    const error = await captureConnectError();
+
+    expect(error).toMatchObject({
+      status: 503,
+      code: "SERVER_UNREACHABLE",
+      message:
+        'The authorization server for "Asana" did not respond, so its access token could not be refreshed. Authorizing again will not change that. Try again shortly.',
+      details: {
+        serverId: "server-1",
+        serverName: "Asana",
+        serverUrl: "https://server-1.example.com/mcp",
+      },
+    });
+    expect(error.message).not.toContain("complete the OAuth flow first");
+    expect(error.details?.oauthRequired).toBeUndefined();
+  });
+
+  it("turns an in-flight refresh into a retry carrying the backend's oauthRetryAfterMs", async () => {
+    global.fetch = batchWithOAuthUnavailableReason("refresh_in_progress", {
+      oauthRetryAfterMs: 4200,
+    });
+
+    const error = await captureConnectError();
+
+    expect(error).toMatchObject({
+      status: 429,
+      code: "RATE_LIMITED",
+      message:
+        'Credentials for "Asana" are being refreshed by another request. Try again in 5 seconds.',
+    });
+    expect(error.headers).toEqual({ "Retry-After": "5" });
+    expect(error.message).not.toContain("complete the OAuth flow first");
+  });
+
+  it("omits the retry delay when the backend sends no oauthRetryAfterMs", async () => {
+    global.fetch = batchWithOAuthUnavailableReason("refresh_in_progress");
+
+    const error = await captureConnectError();
+
+    expect(error.status).toBe(429);
+    expect(error.message).toBe(
+      'Credentials for "Asana" are being refreshed by another request. Try again shortly.'
+    );
+    expect(error.headers).toBeUndefined();
+  });
+
   it("connects a tokenless auto (discover) server unauthenticated and tags a live 401", async () => {
     global.fetch = vi.fn(async () => {
       return new Response(

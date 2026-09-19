@@ -21,6 +21,7 @@
  */
 
 import type { Context } from "hono";
+import type { z } from "zod";
 import {
   EVALUATOR_KINDS,
   PREDICATE_KINDS,
@@ -331,8 +332,13 @@ export const CASE_FIELD_ALIASES_V2 = {
   legacyIterations: ["runs"],
 } as const;
 
+/**
+ * `checks` is listed beside `defaultPredicates` because it is the REST wire's
+ * own vocabulary-1 spelling of the suite's default rules (`settings.checks` →
+ * Convex `defaultPredicates`), and a vocabulary-2 body may still send it.
+ */
 export const SUITE_SETTINGS_ALIASES_V2 = {
-  defaultAssertions: ["defaultPredicates"],
+  defaultAssertions: ["defaultPredicates", "checks"],
   iterations: ["repetitions"],
 } as const;
 
@@ -352,3 +358,42 @@ export const EVAL_VOCABULARY_CAPABILITY = {
     legacyIterations: CASE_FIELD_ALIASES_V2.legacyIterations,
   },
 } as const;
+
+// ── both spellings of one field ──────────────────────────────────────────────
+
+/**
+ * The refusal for a body that spells one field twice — the contract's exact
+ * sentence, shared by every surface that accepts two spellings so a caller
+ * reads one message whichever route they hit.
+ */
+export function bothSpellingsMessage(
+  canonical: string,
+  legacy: string,
+): string {
+  return `Send ${canonical} or ${legacy}, not both — they are two spellings of one field.`;
+}
+
+/**
+ * Add one issue per pair a body spells twice.
+ *
+ * Decided by PRESENCE, not truthiness: an explicit `null` is a clear the
+ * storage layer must see, so it counts as "sent" here exactly as a value does.
+ * Refused rather than resolved by precedence — `{ runs: 3, legacyIterations:
+ * 5 }` is a caller who believes both landed, and picking one silently is the
+ * same class of bug as stripping it.
+ */
+export function addBothSpellingsIssues(
+  body: Record<string, unknown>,
+  ctx: z.RefinementCtx,
+  pairs: ReadonlyArray<readonly [canonical: string, legacy: string]>,
+): void {
+  for (const [canonical, legacy] of pairs) {
+    if (body[canonical] !== undefined && body[legacy] !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: [canonical],
+        message: bothSpellingsMessage(canonical, legacy),
+      });
+    }
+  }
+}

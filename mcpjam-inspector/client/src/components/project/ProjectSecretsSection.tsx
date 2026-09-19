@@ -1,3 +1,4 @@
+import { ProjectSecretsBoundary } from "./ProjectSecretsBoundary";
 import { SettingsPageDescription } from "@/components/settings/SettingsPageDescription";
 import { useSettingsDraft } from "../settings/SettingsDraftProvider";
 import { useMemo, useRef, useState } from "react";
@@ -70,7 +71,18 @@ import { environmentLabel } from "@/lib/environment-label";
  * CLI; a materialized one is printed by `env`. The radio group says both things
  * where the choice is made rather than in documentation nobody opens.
  */
-export function ProjectSecretsSection({
+export function ProjectSecretsSection(props: {
+  projectId: string;
+  canManageShared: boolean;
+}) {
+  return (
+    <ProjectSecretsBoundary key={props.projectId}>
+      <ProjectSecretsContent {...props} />
+    </ProjectSecretsBoundary>
+  );
+}
+
+function ProjectSecretsContent({
   projectId,
   canManageShared,
 }: {

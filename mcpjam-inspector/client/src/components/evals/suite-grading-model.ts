@@ -1,3 +1,4 @@
+import type { GoalJudgePolicy } from "@/shared/judge-defaults";
 /**
  * Which stage of the user-value chain each of a suite's graders measures.
  *
@@ -45,7 +46,11 @@ import {
   MATCH_OPTIONS_DEFAULTS,
   resolveMatchOptions,
 } from "@/shared/eval-matching";
-import { checkRole, checkSeverity, type Predicate } from "@mcpjam/sdk/predicates";
+import {
+  checkRole,
+  checkSeverity,
+  type Predicate,
+} from "@mcpjam/sdk/predicates";
 import {
   formatCriterion,
   PREDICATE_KIND_LABELS,
@@ -145,9 +150,9 @@ function matchRows(matchOptions: EvalMatchOptions | undefined): GraderRow[] {
     {
       id: "match:toolCallOrder",
       kind: "match",
-      label: `Tool call order — ${
+      label: `Tool call order (${
         ORDER_LABEL.get(resolved.toolCallOrder) ?? resolved.toolCallOrder
-      }`,
+      })`,
       role: "gating",
       matchField: "toolCallOrder",
     },
@@ -156,8 +161,8 @@ function matchRows(matchOptions: EvalMatchOptions | undefined): GraderRow[] {
       kind: "match",
       label:
         resolved.maxExtraToolCalls === null
-          ? "Extra tool calls — unlimited"
-          : `Extra tool calls — at most ${resolved.maxExtraToolCalls}`,
+          ? "Extra tool calls (unlimited)"
+          : `Extra tool calls (at most ${resolved.maxExtraToolCalls})`,
       role: "gating",
       matchField: "maxExtraToolCalls",
     },
@@ -171,9 +176,9 @@ function argumentRow(matchOptions: EvalMatchOptions | undefined): GraderRow {
   return {
     id: "match:argumentMatching",
     kind: "match",
-    label: `Arguments — ${
+    label: `Arguments (${
       ARGS_LABEL.get(resolved.argumentMatching) ?? resolved.argumentMatching
-    }`,
+    })`,
     role: "gating",
     matchField: "argumentMatching",
   };
@@ -230,10 +235,9 @@ export function groupGradersByStage(input: {
     id: "judge:goalCompletion",
     kind: "judge",
     label: "Goal completion judge",
-    role:
-      isRequiredRole(input.judgeConfig?.goalCompletion?.role)
-        ? "gating"
-        : "advisory",
+    role: isRequiredRole(input.judgeConfig?.goalCompletion?.role)
+      ? "gating"
+      : "advisory",
     severity: input.judgeConfig?.goalCompletion?.severity,
     judgeSlot: "goalCompletion",
   });
@@ -283,23 +287,19 @@ export function stageEmptyIsGap(stage: UserValueStage): boolean {
   return STAGE_EMPTY_COPY[stage] === "No evaluator";
 }
 
-/**
- * How the judge is configured, not what a run did.
- *
- * Absent config is `manual`: `enabled` defaults on and `autoRun` defaults off,
- * matching `judges-section.tsx`. The `gating` mode means the stored role is
- * required — under EITHER spelling. Storage said `"gating"` before the rename
- * and says `"required"` after it, and a comparator that took one word would
- * read a required judge as merely manual on one side of that line.
- */
-export type JudgeMode = "off" | "manual" | "automatic" | "gating";
+/** Inheritance is resolved by the backend, never by a frontend default. */
+export type JudgeMode = "off" | "manual" | "automatic" | "gating" | "unknown";
 
-export function judgeMode(judgeConfig: EvalJudgeConfig | undefined): JudgeMode {
+export function judgeMode(
+  judgeConfig: EvalJudgeConfig | undefined,
+  policy?: GoalJudgePolicy,
+): JudgeMode {
   const goal = judgeConfig?.goalCompletion;
-  if (goal?.enabled === false) return "off";
-  if (isRequiredRole(goal?.role)) return "gating";
-  if (goal?.autoRun === true) return "automatic";
-  return "manual";
+  if ((goal?.enabled ?? policy?.effective.enabled) === false) return "off";
+  if (isRequiredRole(goal?.role ?? policy?.effective.role)) return "gating";
+  const automatic = goal?.autoRun ?? policy?.effective.autoRun;
+  if (automatic === undefined) return "unknown";
+  return automatic ? "automatic" : "manual";
 }
 
 export type StageConfigState = {
@@ -310,7 +310,8 @@ export type StageConfigState = {
     | "gap"
     | "judgeOnRequest"
     | "judgeAutomatic"
-    | "judgeOff";
+    | "judgeOff"
+    | "judgeUnknown";
   /** Deterministic required rows (match + predicate). The judge is excluded. */
   required: number;
   /**
@@ -343,6 +344,9 @@ export function stageConfigStates(
     }
     if (judge === "automatic") {
       return { stage, state: "judgeAutomatic", required, advisory, judge };
+    }
+    if (judge === "unknown") {
+      return { stage, state: "judgeUnknown", required, advisory, judge };
     }
     if (judge === "manual") {
       return { stage, state: "judgeOnRequest", required, advisory, judge };

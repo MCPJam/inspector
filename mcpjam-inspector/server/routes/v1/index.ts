@@ -46,6 +46,7 @@ import shares from "./shares.js";
 import sandboxImages from "./images.js";
 import evalBacktest from "./eval-backtest.js";
 import evalIngest from "./eval-ingest.js";
+import modelLeases from "./model-leases.js";
 import conformanceIngest from "./conformance-ingest.js";
 import agent from "./agent.js";
 import proposedActionsRoutes from "./proposed-actions.js";
@@ -219,6 +220,11 @@ v1.route("/", shares);
 v1.route("/", sandboxImages);
 v1.route("/", evalBacktest);
 v1.route("/", evalIngest);
+// Model leases for SDK evals running outside the platform. Guest-DENIED by
+// default (no GUEST_ALLOWED_V1_RULES entry) — every lease this mints can
+// spend hosted-model credits. Mounted beside eval-ingest because the two are
+// the same CI caller: one asks for inference, the other reports the results.
+v1.route("/", modelLeases);
 v1.route("/", conformanceIngest);
 // Headless agent turn (Slack bot terminal). Guest-DENIED by default (no
 // GUEST_ALLOWED_V1_RULES entry) — every turn spends hosted-model credits.

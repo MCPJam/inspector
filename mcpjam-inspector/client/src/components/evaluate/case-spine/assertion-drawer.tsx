@@ -29,6 +29,7 @@ export function EvalAddDrawer({
   kinds,
   className,
   triggerLabel = "Add",
+  primary = false,
   wholeRunOnly = false,
   allowWidgetChecks = true,
   onOutcomeFocus,
@@ -38,6 +39,7 @@ export function EvalAddDrawer({
   kinds?: readonly PredicateKind[];
   className?: string;
   triggerLabel?: string;
+  primary?: boolean;
   wholeRunOnly?: boolean;
   allowWidgetChecks?: boolean;
   onOutcomeFocus?: () => void;
@@ -81,9 +83,9 @@ export function EvalAddDrawer({
       <SheetTrigger asChild>
         <Button
           type="button"
-          variant="outline"
+          variant={primary ? "default" : "outline"}
           size="sm"
-          className={`gap-1.5 border-dashed ${className ?? ""}`}
+          className={`gap-1.5 ${primary ? "" : "border-dashed"} ${className ?? ""}`}
           aria-label={triggerLabel}
         >
           <Plus className="size-3.5" aria-hidden />
@@ -102,7 +104,7 @@ export function EvalAddDrawer({
         }}
       >
         <SheetHeader className="shrink-0 pr-12">
-          <SheetTitle>Add actions and assertions</SheetTitle>
+          <SheetTitle>Add actions or assertions</SheetTitle>
           <SheetDescription>
             Choose what happens next or what this test verifies.
           </SheetDescription>
@@ -111,7 +113,7 @@ export function EvalAddDrawer({
           <Input
             autoFocus
             aria-label="Filter steps and assertions"
-            placeholder="Search all actions and assertions…"
+            placeholder="Search all actions or assertions…"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             className="bg-popover"

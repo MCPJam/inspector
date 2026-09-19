@@ -31,8 +31,6 @@ import {
   listProjectPluginsOperation,
   listProjectServersOperation,
   listProjectsOperation,
-  listServerPromptsOperation,
-  listServerResourcesOperation,
   listServerToolsOperation,
   PlatformApiClient,
   PlatformApiError,
@@ -40,7 +38,6 @@ import {
   publishScenarioOperation,
   readServerResourceOperation,
   runEvalSuiteOperation,
-  setEvalSuiteEnvironmentsOperation,
   showServersOperation,
 } from "../../src/platform/index.js";
 
@@ -2221,6 +2218,7 @@ describe("operation catalog consistency", () => {
     },
     get_eval_gate_waiver: { project: "p", runId: "r" },
     revoke_eval_gate_waiver: { project: "p", runId: "r", waiverId: "w" },
+    backtest_eval_run_judge: { project: "p", runId: "r", rubric: null },
     backtest_eval_run: {
       project: "p",
       runId: "r",
@@ -2498,6 +2496,7 @@ describe("operation catalog consistency", () => {
       // Stops a pending connection, releasing the slot it holds.
       "cancel_project_server_connection",
       "backtest_eval_run",
+      "backtest_eval_run_judge",
       "request_eval_run_judge",
       // Description-rewrite experiment. Propose spends a small model budget
       // to draft the rewrite; start launches two replay arms and spends

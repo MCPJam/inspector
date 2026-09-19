@@ -61,15 +61,49 @@ function view(overrides: Partial<RunVerdictHeroView> = {}): RunVerdictHeroView {
 }
 
 describe("RunVerdictHero", () => {
-  it("labels each insight as AI generated, not the body or heading icon", () => {
+  it.each(["loading", "Running", "Pending", "Queued", "pending iterations"])(
+    "hides comparisons while %s and restores them when finished",
+    (state) => {
+      const delta = { label: "+12", direction: "up", tone: "progress" } as const;
+      const row = pairing({
+        delta,
+        passRateDelta: delta,
+        statDeltas: {
+          latencyP50: delta,
+          latencyP95: delta,
+          tokens: delta,
+          toolCalls: delta,
+        },
+      });
+      const { rerender } = render(
+        <RunVerdictHero
+          view={view({
+            pending: state === "loading",
+            verdict: {
+              word: ["Running", "Pending", "Queued"].includes(state) ? state : "Failed",
+              tone: "neutral",
+              undecidedLine: null,
+            },
+            pairings: [{ ...row, pending: state === "pending iterations" ? 1 : 0 }],
+          })}
+        />,
+      );
+      expect(screen.queryByTestId("run-verdict-stat-delta")).toBeNull();
+      expect(screen.getByTestId("run-verdict-pairings")).toHaveTextContent("980k");
+      rerender(<RunVerdictHero view={view({ pairings: [row] })} />);
+      expect(screen.getAllByTestId("run-verdict-stat-delta")).toHaveLength(6);
+    },
+  );
+
+  it("keeps deterministic summaries free of AI attribution", () => {
     render(<RunVerdictHero view={view()} />);
 
     const sentence = screen.getByTestId("run-verdict-sentence");
     const remedy = screen.getByTestId("run-verdict-remedy");
     expect(within(sentence).queryByText("AI generated")).toBeNull();
     expect(within(remedy).queryByText("AI generated")).toBeNull();
-    expect(screen.getAllByText("AI generated")).toHaveLength(2);
-    expect(screen.getAllByTestId("run-verdict-ai-insight")).toHaveLength(2);
+    expect(screen.queryByText("AI generated")).toBeNull();
+    expect(screen.queryByTestId("run-verdict-ai-insight")).toBeNull();
 
     const whatBroke = screen.getByRole("heading", { name: "What broke" });
     const howToFix = screen.getByRole("heading", { name: "Next step" });
@@ -93,6 +127,20 @@ describe("RunVerdictHero", () => {
       "border-border",
     );
     expect(remedy.parentElement).not.toHaveClass("rounded-lg", "border-border");
+  });
+
+  it("keeps pairing measurements when findings replace the explanation", () => {
+    render(
+      <RunVerdictHero
+        view={view({ pairings: [pairing()] })}
+        explanation={null}
+      />,
+    );
+    expect(screen.getByTestId("run-verdict-pairing")).toHaveTextContent(
+      "Cursor",
+    );
+    expect(screen.queryByTestId("run-verdict-insights")).toBeNull();
+    expect(screen.queryByTestId("run-summary-loading")).toBeNull();
   });
 
   it("does not mark the loading skeletons as generated", () => {
@@ -162,6 +210,11 @@ describe("RunVerdictHero", () => {
     expect(within(row).getByText("64s")).toBeVisible();
     expect(within(row).getByText("980k")).toBeVisible();
     expect(within(row).getByText("68")).toBeVisible();
+    expect(within(row).getByText("88%")).toHaveClass("text-[34px]");
+    expect(within(row).getByText("21")).toHaveClass("text-[26px]");
+    expect(within(row).getByText("21s")).toHaveClass("text-lg");
+    expect(within(row).getByText("Cursor")).toHaveClass("text-base");
+    expect(within(row).getByText("sonnet")).toHaveClass("text-sm");
     expect(screen.queryByTestId("run-verdict-stats")).toBeNull();
 
     const delta = within(pairings).getByTestId("run-verdict-stat-delta");

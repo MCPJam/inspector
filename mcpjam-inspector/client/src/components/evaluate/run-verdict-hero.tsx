@@ -69,7 +69,7 @@ function StatDelta({ delta }: { delta: HeroStatDelta }) {
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-0.5 text-[11.5px] font-medium tabular-nums",
+        "inline-flex items-center gap-0.5 text-[13px] font-medium tabular-nums",
         DELTA_TONE_CLASS[delta.tone],
       )}
       aria-label={`${delta.label} vs previous run`}
@@ -94,6 +94,7 @@ function PairingStat({
   delta,
   tone = "neutral",
   unavailable = false,
+  count = false,
 }: {
   label: string;
   value: string;
@@ -101,16 +102,20 @@ function PairingStat({
   tone?: keyof typeof PAIRING_STAT_TONE_CLASS;
   /** Absent is not zero. The dash carries the reason for a screen reader. */
   unavailable?: boolean;
+  count?: boolean;
 }) {
   return (
     <div className="min-w-0" data-testid="run-verdict-pairing-stat">
-      <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
         {label}
       </div>
       <div className="mt-0.5 flex flex-wrap items-baseline gap-x-1">
         <span
           className={cn(
-            "text-[13px] font-semibold tabular-nums",
+            "tabular-nums",
+            count
+              ? "text-[26px] font-medium leading-8"
+              : "text-lg font-semibold leading-6",
             PAIRING_STAT_TONE_CLASS[tone],
           )}
           {...(unavailable ? { "aria-label": `${label} not recorded` } : {})}
@@ -123,18 +128,13 @@ function PairingStat({
   );
 }
 
-function AiGeneratedLabel() {
-  return (
-    <span
-      className="shrink-0 text-[10.5px] font-medium text-muted-foreground"
-      data-testid="run-verdict-ai-insight"
-    >
-      AI generated
-    </span>
-  );
-}
-
-function PairingPassList({ pairings }: { pairings: HeroPairingPass[] }) {
+function PairingPassList({
+  pairings,
+  showDeltas,
+}: {
+  pairings: HeroPairingPass[];
+  showDeltas: boolean;
+}) {
   const theme = usePreferencesStoreWithDefaults((state) => state.themeMode);
   return (
     <ul
@@ -147,32 +147,32 @@ function PairingPassList({ pairings }: { pairings: HeroPairingPass[] }) {
           className="flex min-w-0 flex-wrap items-center gap-x-6 gap-y-3 py-4"
           data-testid="run-verdict-pairing"
         >
-          <div className="flex w-48 min-w-0 shrink-0 items-center gap-2">
+          <div className="flex w-[250px] min-w-0 shrink-0 items-center gap-2">
             <img
               src={resolveHostLogoByName(pairing.client, theme)}
               alt=""
-              className="size-5 shrink-0 object-contain"
+              className="size-6 shrink-0 object-contain"
             />
             <span className="min-w-0">
-              <span className="block truncate text-[13px] font-semibold text-foreground">
+              <span className="block truncate text-base font-semibold text-foreground">
                 {pairing.client}
               </span>
-              <span className="block truncate font-mono text-[11px] text-muted-foreground">
+              <span className="block truncate text-sm text-muted-foreground">
                 {pairing.model}
               </span>
             </span>
           </div>
 
           <div
-            className="flex shrink-0 items-baseline gap-1.5"
+            className="flex min-w-[120px] shrink-0 items-baseline gap-2"
             data-testid="run-verdict-pairing-rate"
           >
-            <span className="text-[26px] font-bold leading-none tabular-nums text-foreground">
+            <span className="text-[34px] font-bold leading-none tabular-nums text-foreground">
               {pairing.passRate == null
                 ? "—"
                 : `${Math.round(pairing.passRate)}%`}
             </span>
-            {pairing.passRateDelta ? (
+            {showDeltas && pairing.pending === 0 && pairing.passRateDelta ? (
               <StatDelta delta={pairing.passRateDelta} />
             ) : null}
           </div>
@@ -180,12 +180,14 @@ function PairingPassList({ pairings }: { pairings: HeroPairingPass[] }) {
           <div className="flex shrink-0 items-start gap-5">
             <PairingStat
               label="Passed"
+              count
               value={String(pairing.passed)}
               tone="pass"
-              delta={pairing.delta}
+              delta={showDeltas && pairing.pending === 0 ? pairing.delta : null}
             />
             <PairingStat
               label="Failed"
+              count
               value={String(pairing.failed)}
               tone="fail"
             />
@@ -203,29 +205,29 @@ function PairingPassList({ pairings }: { pairings: HeroPairingPass[] }) {
             ) : null}
           </div>
 
-          <div className="flex min-w-0 flex-1 items-start gap-5 border-l border-border/60 pl-5">
+          <div className="flex min-w-0 flex-wrap items-start gap-x-8 gap-y-3 border-l border-border/60 pl-9">
             <PairingStat
               label="P50"
               value={formatRunCaseLatencyMs(pairing.stats.latencyP50Ms)}
-              delta={pairing.statDeltas.latencyP50}
+              delta={showDeltas && pairing.pending === 0 ? pairing.statDeltas.latencyP50 : null}
               unavailable={pairing.stats.latencyP50Ms == null}
             />
             <PairingStat
               label="P95"
               value={formatRunCaseLatencyMs(pairing.stats.latencyP95Ms)}
-              delta={pairing.statDeltas.latencyP95}
+              delta={showDeltas && pairing.pending === 0 ? pairing.statDeltas.latencyP95 : null}
               unavailable={pairing.stats.latencyP95Ms == null}
             />
             <PairingStat
               label="Tokens"
               value={formatCount(pairing.stats.tokens)}
-              delta={pairing.statDeltas.tokens}
+              delta={showDeltas && pairing.pending === 0 ? pairing.statDeltas.tokens : null}
               unavailable={pairing.stats.tokens == null}
             />
             <PairingStat
               label="Calls"
               value={formatCount(pairing.stats.toolCalls)}
-              delta={pairing.statDeltas.toolCalls}
+              delta={showDeltas && pairing.pending === 0 ? pairing.statDeltas.toolCalls : null}
               unavailable={pairing.stats.toolCalls == null}
             />
           </div>
@@ -235,28 +237,132 @@ function PairingPassList({ pairings }: { pairings: HeroPairingPass[] }) {
   );
 }
 
-export function RunVerdictHero({
-  view,
-  headerVerdict = view.verdict,
-  onOpenFailingTrace,
-  actions,
-}: {
-  view: RunVerdictHeroView;
-  headerVerdict?: RunVerdictHeroView["verdict"];
-  onOpenFailingTrace?: () => void;
-  /** The primary action slot, so the copy-prompt button can land here later. */
-  actions?: React.ReactNode;
-}) {
-  const inHeader = useRunHeaderVerdict(headerVerdict);
-  const showVerdict = !inHeader && view.verdict.word !== "Running";
-  const pairings = view.pairings ?? [];
-  const hasPairings = pairings.length > 0;
+/**
+ * The hero's own contract-derived explanation.
+ *
+ * Exported because the run page now hands the findings block into the
+ * explanation slot and needs THIS as the fallback: a run with no findings
+ * built must still say what broke, in the words prod already ships.
+ */
+export function HeroExplanation({ view }: { view: RunVerdictHeroView }) {
   const remedy = view.focus ? remedyForDiagnostic(view.focus.diagnostic) : null;
   const hasSentence = view.sentence.text.trim().length > 0;
   const summaryLoading =
     view.pending ||
     (!hasSentence &&
       ["Running", "Pending", "Queued"].includes(view.verdict.word));
+  return summaryLoading ? (
+    <div
+      className="grid divide-y divide-border/40 border-t border-border/60 pt-3 lg:grid-cols-2 lg:divide-x lg:divide-y-0"
+      role="status"
+      aria-label="Loading run summary"
+      data-testid="run-summary-loading"
+    >
+      {[0, 1].map((column) => (
+        <div
+          key={column}
+          className="min-w-0 space-y-3 py-3 lg:px-4 lg:py-2 lg:first:pl-0"
+          aria-hidden="true"
+        >
+          <Skeleton className="h-3 w-24" />
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-4 w-4/5" />
+        </div>
+      ))}
+    </div>
+  ) : hasSentence ? (
+    <div
+      className="grid divide-y divide-border/40 border-t border-border/60 pt-3 lg:grid-cols-2 lg:divide-x lg:divide-y-0"
+      data-testid="run-verdict-insights"
+    >
+      <div className="min-w-0 py-3 lg:px-4 lg:py-2 lg:first:pl-0">
+        <div className="flex items-baseline justify-between gap-3">
+          <h4 className="flex min-w-0 items-center gap-2 text-sm font-semibold">
+            {view.sentence.kind === "noFailure" ? (
+              <CircleCheck
+                className="size-4 text-muted-foreground"
+                aria-hidden
+              />
+            ) : view.sentence.kind === "brokeAt" ? (
+              <TriangleAlert
+                className="size-4 text-muted-foreground"
+                aria-hidden
+              />
+            ) : (
+              <CircleAlert
+                className="size-4 text-muted-foreground"
+                aria-hidden
+              />
+            )}
+            {view.sentence.kind === "noFailure"
+              ? "What passed"
+              : view.sentence.kind === "brokeAt"
+                ? "What broke"
+                : "What happened"}
+          </h4>
+        </div>
+        {hasSentence ? (
+          <p
+            className="mt-2 max-w-[72ch] text-sm leading-relaxed text-foreground"
+            data-testid="run-verdict-sentence"
+          >
+            {view.sentence.text}
+          </p>
+        ) : null}
+      </div>
+      <div className="min-w-0 py-3 lg:px-4 lg:py-2">
+        <div className="flex items-baseline justify-between gap-3">
+          <h4 className="flex min-w-0 items-center gap-2 text-sm font-semibold">
+            {remedy ? (
+              <Wrench className="size-4 text-muted-foreground" aria-hidden />
+            ) : (
+              <Lightbulb className="size-4 text-muted-foreground" aria-hidden />
+            )}
+            {remedy ? "How to fix" : "Next step"}
+          </h4>
+        </div>
+        <p
+          className="mt-2 text-sm leading-relaxed text-foreground"
+          data-testid="run-verdict-remedy"
+        >
+          {remedy?.text ??
+            (view.pending
+              ? "Results are still arriving. Inspect the live case matrix below as iterations complete."
+              : view.sentence.kind === "noFailure"
+                ? "Compare with a previous run to check for regressions, or export this report to share the evidence."
+                : "Open the case evidence to inspect the recorded result. No specific remediation has been established for this run.")}
+        </p>
+      </div>
+    </div>
+  ) : null;
+}
+
+export function RunVerdictHero({
+  view,
+  headerVerdict = view.verdict,
+  onOpenFailingTrace,
+  actions,
+  explanation,
+}: {
+  view: RunVerdictHeroView;
+  headerVerdict?: RunVerdictHeroView["verdict"];
+  onOpenFailingTrace?: () => void;
+  /** The primary action slot, so the copy-prompt button can land here later. */
+  actions?: React.ReactNode;
+  /**
+   * What sits under the pairing rows.
+   *
+   * `undefined` keeps the hero's own two columns — the shape prod ships, and
+   * what a surface with no findings block still gets. A node REPLACES them, so
+   * the run page renders exactly one explanation instead of the hero's and the
+   * findings block's side by side. `null` renders neither.
+   */
+  explanation?: React.ReactNode | null;
+}) {
+  const inHeader = useRunHeaderVerdict(headerVerdict);
+  const showVerdict = !inHeader && view.verdict.word !== "Running";
+  const pairings = view.pairings ?? [];
+  const hasPairings = pairings.length > 0;
   const canOpenTrace = Boolean(onOpenFailingTrace && view.focus);
 
   return (
@@ -286,102 +392,24 @@ export function RunVerdictHero({
 
         {hasPairings ? (
           <div className={cn(showVerdict && "mt-4")}>
-            <PairingPassList pairings={pairings} />
+            <PairingPassList
+              pairings={pairings}
+              showDeltas={
+                !view.pending &&
+                !["Running", "Pending", "Queued"].includes(headerVerdict.word) &&
+                !["Running", "Pending", "Queued"].includes(view.verdict.word)
+              }
+            />
           </div>
         ) : null}
 
-        {summaryLoading ? (
-          <div
-            className="grid divide-y divide-border/40 border-t border-border/60 pt-3 lg:grid-cols-2 lg:divide-x lg:divide-y-0"
-            role="status"
-            aria-label="Loading run summary"
-            data-testid="run-summary-loading"
-          >
-            {[0, 1].map((column) => (
-              <div
-                key={column}
-                className="min-w-0 space-y-3 py-3 lg:px-4 lg:py-2 lg:first:pl-0"
-                aria-hidden="true"
-              >
-                <Skeleton className="h-3 w-24" />
-                <Skeleton className="h-4 w-full" />
-                <Skeleton className="h-4 w-4/5" />
-              </div>
-            ))}
-          </div>
-        ) : hasSentence ? (
-          <div
-            className="grid divide-y divide-border/40 border-t border-border/60 pt-3 lg:grid-cols-2 lg:divide-x lg:divide-y-0"
-            data-testid="run-verdict-insights"
-          >
-            <div className="min-w-0 py-3 lg:px-4 lg:py-2 lg:first:pl-0">
-              <div className="flex items-baseline justify-between gap-3">
-                <h4 className="flex min-w-0 items-center gap-2 text-sm font-semibold">
-                  {view.sentence.kind === "noFailure" ? (
-                    <CircleCheck
-                      className="size-4 text-muted-foreground"
-                      aria-hidden
-                    />
-                  ) : view.sentence.kind === "brokeAt" ? (
-                    <TriangleAlert
-                      className="size-4 text-muted-foreground"
-                      aria-hidden
-                    />
-                  ) : (
-                    <CircleAlert
-                      className="size-4 text-muted-foreground"
-                      aria-hidden
-                    />
-                  )}
-                  {view.sentence.kind === "noFailure"
-                    ? "What passed"
-                    : view.sentence.kind === "brokeAt"
-                      ? "What broke"
-                      : "What happened"}
-                </h4>
-                <AiGeneratedLabel />
-              </div>
-              {hasSentence ? (
-                <p
-                  className="mt-2 max-w-[72ch] text-sm leading-relaxed text-foreground"
-                  data-testid="run-verdict-sentence"
-                >
-                  {view.sentence.text}
-                </p>
-              ) : null}
-            </div>
-            <div className="min-w-0 py-3 lg:px-4 lg:py-2">
-              <div className="flex items-baseline justify-between gap-3">
-                <h4 className="flex min-w-0 items-center gap-2 text-sm font-semibold">
-                  {remedy ? (
-                    <Wrench
-                      className="size-4 text-muted-foreground"
-                      aria-hidden
-                    />
-                  ) : (
-                    <Lightbulb
-                      className="size-4 text-muted-foreground"
-                      aria-hidden
-                    />
-                  )}
-                  {remedy ? "How to fix" : "Next step"}
-                </h4>
-                <AiGeneratedLabel />
-              </div>
-              <p
-                className="mt-2 text-sm leading-relaxed text-foreground"
-                data-testid="run-verdict-remedy"
-              >
-                {remedy?.text ??
-                  (view.pending
-                    ? "Results are still arriving. Inspect the live case matrix below as iterations complete."
-                    : view.sentence.kind === "noFailure"
-                      ? "Compare with a previous run to check for regressions, or export this report to share the evidence."
-                      : "Open the case evidence to inspect the recorded result. No specific remediation has been established for this run.")}
-              </p>
-            </div>
-          </div>
-        ) : null}
+        {explanation !== undefined ? (
+          explanation === null ? null : (
+            <div className="border-t border-border/60 pt-3">{explanation}</div>
+          )
+        ) : (
+          <HeroExplanation view={view} />
+        )}
 
         {actions || canOpenTrace ? (
           <div className="mt-4 flex flex-wrap items-center gap-2">

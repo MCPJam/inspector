@@ -1,3 +1,4 @@
+import { judgeBacktestRequestSchema } from "../../../../sdk/src/contract/judge-backtest.js";
 import { Hono } from "hono";
 import { ConvexHttpClient } from "convex/browser";
 import { evalBacktestRequestSchema } from "../../../../sdk/src/contract/eval-backtest.js";
@@ -114,4 +115,62 @@ router.post("/projects/:projectId/eval-runs/:runId/backtest", async (c) => {
     });
   }
 });
+router.post(
+  "/projects/:projectId/eval-runs/:runId/judge/backtest",
+  async (c) => {
+    const raw = await c.req.text();
+    if (Buffer.byteLength(raw) > 128 * 1024)
+      return v1Error(c, "VALIDATION_ERROR", "Backtest draft exceeds 128 KiB");
+    let body: unknown;
+    try {
+      body = JSON.parse(raw);
+    } catch {
+      return v1Error(c, "VALIDATION_ERROR", "Backtest draft must be JSON");
+    }
+    const parsed = judgeBacktestRequestSchema.safeParse(body);
+    if (!parsed.success)
+      return v1Error(
+        c,
+        "VALIDATION_ERROR",
+        "Supply a rubric with grading instructions or criteria, or null for objective-only grading.",
+      );
+    if (!process.env.CONVEX_URL)
+      return v1Error(c, "INTERNAL_ERROR", "Backtest service is unavailable");
+    const client = new ConvexHttpClient(process.env.CONVEX_URL);
+    client.setAuth(await getConvexBearerForRequest(c));
+    try {
+      const run = (await client.query(
+        "testSuites:getTestSuiteRun" as never,
+        { runId: c.req.param("runId") } as never,
+      )) as { projectId?: string; suiteId?: string } | null;
+      if (!run || run.projectId !== c.req.param("projectId") || !run.suiteId)
+        return v1Error(c, "NOT_FOUND", "Eval run not found");
+      const report = await client.action(
+        "goalCompletionAction:requestJudgeBacktest" as never,
+        {
+          suiteId: run.suiteId,
+          runId: c.req.param("runId"),
+          judgeRubricDraft: parsed.data.rubric,
+          ...parsed.data.continuation,
+        } as never,
+      );
+      return v1Resource(c, report);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (message.includes("EVAL_JUDGE_BACKTEST_COOLDOWN"))
+        return v1Error(
+          c,
+          "RATE_LIMITED",
+          "Wait one minute before starting another judge backtest",
+          undefined,
+          { "Retry-After": "60" },
+        );
+      throw translateConvexReadError(error, {
+        scope: "v1.eval-judge-backtest",
+        notFoundMessage:
+          "Eval run not found or judge backtest is not authorized",
+      });
+    }
+  },
+);
 export default router;

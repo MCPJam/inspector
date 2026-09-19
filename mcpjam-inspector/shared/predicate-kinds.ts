@@ -184,7 +184,7 @@ export const GLOBAL_GATES_SECTION_HELP = {
   title: "Whole-run checks",
   paragraphs: [
     "Whole-run rules evaluated after the scenario finishes, using the full transcript.",
-    "Step checks run inline at a specific point in the flow — use those for conversation and view assertions.",
+    "Step checks run inline at a specific point in the flow. Use those for conversation and view assertions.",
     "Case checks extend suite defaults. Add here only for policies that must hold across the entire run.",
   ],
 } as const;

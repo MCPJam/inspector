@@ -1,3 +1,7 @@
+import {
+  goalCompletionScorer,
+  type GoalCompletionScorerOptions,
+} from "../scorers/goal-completion-scorer.js";
 /**
  * The judge constructor.
  *
@@ -16,10 +20,13 @@ import { toEvaluatorRawOutcome } from "./outcome.js";
 import type { JudgeEvaluator } from "./types.js";
 
 /** Exactly `JudgeScorerOptions`, under the canonical name. */
-export type JudgeOptions = JudgeScorerOptions;
+export type JudgeOptions = JudgeScorerOptions | GoalCompletionScorerOptions;
 
 export function judge(options: JudgeOptions): JudgeEvaluator {
-  const scorer = judgeScorer(options);
+  const scorer =
+    "mode" in options && options.mode === "goalCompletion"
+      ? goalCompletionScorer(options)
+      : judgeScorer(options as JudgeScorerOptions);
   return {
     kind: "judge",
     definition: scorer.definition,

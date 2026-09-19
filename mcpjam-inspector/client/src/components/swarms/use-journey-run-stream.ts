@@ -200,12 +200,12 @@ export function useJourneyRunStream(
   const genRef = useRef(0);
 
   useEffect(() => {
+    const gen = ++genRef.current;
     if (!runId || !enabled) {
       setState(emptyRunStreamState());
       return;
     }
 
-    const gen = ++genRef.current;
     const controller = new AbortController();
     setState({
       ...emptyRunStreamState(),
@@ -235,6 +235,7 @@ export function useJourneyRunStream(
       });
 
     return () => {
+      if (genRef.current === gen) genRef.current += 1;
       controller.abort();
     };
   }, [runId, enabled]);

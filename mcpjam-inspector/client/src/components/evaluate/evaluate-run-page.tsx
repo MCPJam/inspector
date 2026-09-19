@@ -17,11 +17,13 @@ import {
 import { SuiteRunReview, type SuiteRunReviewProps } from "./suite-run-review";
 import type { RunVerdictHeroView } from "./run-verdict-hero-model";
 import { launchRuns } from "./run-results-matrix-model";
-import { runClientIdentity } from "../evals/helpers";
+import { cancellableRunIds, runClientIdentity } from "../evals/helpers";
 import {
   ArrowUpRight,
   Copy,
+  Loader2,
   Play,
+  Square,
   Download,
   MoreHorizontal,
   TrendingUp,
@@ -104,6 +106,8 @@ export function EvaluateRunPage({
   defaultCompareRunId,
   onCompareWithRun,
   onOpenComparison,
+  onCancelRun,
+  cancellingRunId = null,
   onExport,
   iterations,
   launchReview,
@@ -117,6 +121,13 @@ export function EvaluateRunPage({
   defaultCompareRunId: string | null;
   onCompareWithRun: (baseRunId: string) => void;
   onOpenComparison?: () => void;
+  /**
+   * Stops the run. Takes every cancellable id of the launch, not just
+   * `run._id`: this page is titled by the launch and shows all its pairings, so
+   * cancelling one would leave its siblings running under a cancelled heading.
+   */
+  onCancelRun?: (runIds: readonly string[]) => void;
+  cancellingRunId?: string | null;
   onExport?: () => void;
   /** Used to recover the model when the list projection omitted effectiveModelId. */
   iterations?: readonly EvalIteration[];
@@ -132,6 +143,12 @@ export function EvaluateRunPage({
   }, [run._id]);
   const targets = launchRuns(run, relatedRuns ?? otherRuns);
   const scope = runScopeSummary(targets, iterations);
+  const cancellableIds = cancellableRunIds(targets);
+  const canCancel = Boolean(onCancelRun) && cancellableIds.length > 0;
+  // Spinner only. The DISABLED state is the wider `cancellingRunId !== null`:
+  // the shared handler refuses a second cancel while one is in flight, so a
+  // sibling row left enabled is a button that quietly does nothing.
+  const isCancelling = cancellableIds.some((id) => id === cancellingRunId);
   const [headerActions, setHeaderActions] =
     useState<EvaluateRunPageHeaderActions | null>(null);
   const [, setHeaderVerdict] = useState<HeaderVerdict | null>(null);
@@ -183,19 +200,6 @@ export function EvaluateRunPage({
                   Export report
                 </Button>
               )}
-              {launchReview && (
-                <Button
-                  type="button"
-                  variant="default"
-                  size="sm"
-                  disabled={Boolean(launchReview.disabledReason)}
-                  title={launchReview.disabledReason ?? undefined}
-                  onClick={() => setReviewing(true)}
-                >
-                  <Play className="size-3.5" aria-hidden />
-                  Run again
-                </Button>
-              )}
               <Button
                 type="button"
                 variant="ghost"
@@ -212,6 +216,40 @@ export function EvaluateRunPage({
                 <TrendingUp className="size-3.5" aria-hidden />
                 Compare runs
               </Button>
+              {canCancel ? (
+                // The primary slot, not a button beside it: while the run is
+                // going, stopping it is the only action of that weight — and
+                // "Run again" next to a run that is still going reads as an
+                // invitation to launch a second one.
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  data-testid="evaluate-run-page-cancel"
+                  aria-label="Cancel run"
+                  disabled={cancellingRunId !== null}
+                  onClick={() => onCancelRun!(cancellableIds)}
+                >
+                  {isCancelling ? (
+                    <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                  ) : (
+                    <Square className="size-3.5" aria-hidden />
+                  )}
+                  Cancel run
+                </Button>
+              ) : launchReview ? (
+                <Button
+                  type="button"
+                  variant="default"
+                  size="sm"
+                  disabled={Boolean(launchReview.disabledReason)}
+                  title={launchReview.disabledReason ?? undefined}
+                  onClick={() => setReviewing(true)}
+                >
+                  <Play className="size-3.5" aria-hidden />
+                  Run again
+                </Button>
+              ) : null}
               {(headerActions?.onImprove ||
                 headerActions?.onOpenFailingTrace) && (
                 <DropdownMenu>
@@ -433,7 +471,11 @@ function RunPairingDecisions({
   iterations?: readonly EvalIteration[];
 }) {
   const theme = usePreferencesStoreWithDefaults((state) => state.themeMode);
-  const groups = groupPairingsByDecision(targets, hostNamesById, iterations);
+  const groups = groupPairingsByDecision(
+    targets,
+    hostNamesById,
+    iterations,
+  ).filter((group) => group.tone === "pending");
   if (!groups.length) return null;
   return (
     <span

@@ -93,7 +93,7 @@ describe("coverageForCase", () => {
     expect(c.userValue.runner).toBe(false);
   });
 
-  it("records the judge at user value when it runs for the case", () => {
+  it("records configured judge coverage while scheduling policy is unknown", () => {
     const c = coverageForCase(
       card({
         expectedOutput: "states the email",
@@ -102,6 +102,19 @@ describe("coverageForCase", () => {
     );
     expect(c.userValue.judge).toBe(true);
   });
+
+  it("does not count an explicitly disabled or skipped judge", () => {
+    for (const config of [
+      { suiteJudgeConfig: { goalCompletion: { enabled: false } } },
+      {
+        suiteJudgeConfig: { goalCompletion: { enabled: true } },
+        judgeConfigOverride: { goalCompletion: { enabled: false } },
+      },
+    ]) {
+      expect(coverageForCase(card(config)).userValue.judge).toBe(false);
+    }
+  });
+
 });
 
 describe("coverageDetail", () => {

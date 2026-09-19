@@ -299,7 +299,9 @@ export function runClientIdentity(
     // Use the persisted style, not the inspector's default: the backend's
     // historical fallback is Claude while the inspector defaults to MCPJam.
     const name =
-      (namedHostId && hostNamesById?.get(namedHostId)?.trim()) ||
+      (client.versionId
+        ? client.name.trim()
+        : namedHostId && hostNamesById?.get(namedHostId)?.trim()) ||
       (client.source === "suite_default" && findHostStyle(hostStyle)
         ? getScenarioHostLabel(hostStyle!)
         : client.name.trim()) ||
@@ -349,9 +351,7 @@ export function snapshotTestModels(
 /** Context groups retain environment identity, never its mutable revision. */
 export function runContextKey(run: RunContextSource): string {
   const ref = runEnvironmentRef(run);
-  return ref
-    ? `environment:${ref.environmentId}`
-    : runClientIdentity(run).key;
+  return ref ? `environment:${ref.environmentId}` : runClientIdentity(run).key;
 }
 
 /**
@@ -1550,4 +1550,30 @@ export function iterationCosts(
   return iterations
     .map((iteration) => iteration.usage?.estimatedCostUsd)
     .filter((value): value is number => typeof value === "number");
+}
+
+/**
+ * Statuses a run can still be cancelled from.
+ *
+ * Mirrors the backend gate in `cancelSuiteRunRows` (Convex `testSuites.ts`),
+ * which rejects anything else with `Cannot cancel run with status: …`.
+ * `grading` counts: the trials are done but the gating judge is still billing.
+ */
+export function isRunCancellable(run: { status?: string | null }): boolean {
+  return (
+    run.status === "pending" ||
+    run.status === "running" ||
+    run.status === "grading"
+  );
+}
+
+/**
+ * Ids of every still-cancellable run in `runs` — what a Cancel button hands to
+ * `handleCancelRun`. A launch fans out into one run per client-model pairing,
+ * so cancelling a launch means cancelling all of them.
+ */
+export function cancellableRunIds(
+  runs: readonly { _id: string; status?: string | null }[],
+): string[] {
+  return runs.filter(isRunCancellable).map((run) => run._id);
 }

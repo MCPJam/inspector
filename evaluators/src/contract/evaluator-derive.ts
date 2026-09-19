@@ -62,6 +62,18 @@ export function toEvaluatorResult(score: ScoreResult): EvaluatorResult {
     ...(score.model !== undefined ? { model: score.model } : {}),
     ...(score.promptHash !== undefined ? { promptHash: score.promptHash } : {}),
     ...(score.error !== undefined ? { error: score.error } : {}),
+    ...(score.judgeTemplateVersion !== undefined
+      ? { judgeTemplateVersion: score.judgeTemplateVersion }
+      : {}),
+    ...(score.judgeTemplateHash !== undefined
+      ? { judgeTemplateHash: score.judgeTemplateHash }
+      : {}),
+    ...(score.evidenceHash !== undefined
+      ? { evidenceHash: score.evidenceHash }
+      : {}),
+    ...(score.evidenceManifest !== undefined
+      ? { evidenceManifest: score.evidenceManifest }
+      : {}),
     ...(score.scope !== undefined ? { scope: score.scope } : {}),
   };
 }
@@ -94,13 +106,25 @@ export function fromEvaluatorResult(result: EvaluatorResult): ScoreResult {
       ? { promptHash: result.promptHash }
       : {}),
     ...(result.error !== undefined ? { error: result.error } : {}),
+    ...(result.judgeTemplateVersion !== undefined
+      ? { judgeTemplateVersion: result.judgeTemplateVersion }
+      : {}),
+    ...(result.judgeTemplateHash !== undefined
+      ? { judgeTemplateHash: result.judgeTemplateHash }
+      : {}),
+    ...(result.evidenceHash !== undefined
+      ? { evidenceHash: result.evidenceHash }
+      : {}),
+    ...(result.evidenceManifest !== undefined
+      ? { evidenceManifest: result.evidenceManifest }
+      : {}),
     ...(result.scope !== undefined ? { scope: result.scope } : {}),
   };
 }
 
 /** Project a canonical raw outcome onto the one the finalizer consumes. */
 export function toScoreRawOutcome(
-  outcome: EvaluatorRawOutcome,
+  outcome: EvaluatorRawOutcome
 ): ScoreRawOutcome {
   if (outcome.kind === "scored") {
     return {
@@ -113,6 +137,18 @@ export function toScoreRawOutcome(
       ...(outcome.model !== undefined ? { model: outcome.model } : {}),
       ...(outcome.promptHash !== undefined
         ? { promptHash: outcome.promptHash }
+        : {}),
+      ...(outcome.judgeTemplateVersion !== undefined
+        ? { judgeTemplateVersion: outcome.judgeTemplateVersion }
+        : {}),
+      ...(outcome.judgeTemplateHash !== undefined
+        ? { judgeTemplateHash: outcome.judgeTemplateHash }
+        : {}),
+      ...(outcome.evidenceHash !== undefined
+        ? { evidenceHash: outcome.evidenceHash }
+        : {}),
+      ...(outcome.evidenceManifest !== undefined
+        ? { evidenceManifest: outcome.evidenceManifest }
         : {}),
       ...(outcome.scope !== undefined ? { scope: outcome.scope } : {}),
     };
@@ -128,14 +164,14 @@ export function toScoreRawOutcome(
 
 /** Fill in every semantic default, then hash. Delegates; does not re-derive. */
 export function resolveEvaluatorDefinition(
-  definition: EvaluatorDefinition,
+  definition: EvaluatorDefinition
 ): ResolvedEvaluatorDefinition {
   return resolveScoreDefinition(definition);
 }
 
 /** The definition digest. The payload is unchanged — see `derive.ts`. */
 export function evaluatorDefinitionHash(
-  definition: ResolvedEvaluatorDefinition,
+  definition: ResolvedEvaluatorDefinition
 ): string {
   return definitionHash(definition);
 }
@@ -143,10 +179,10 @@ export function evaluatorDefinitionHash(
 /** The only sanctioned producer of a scored result, in canonical shape. */
 export function finalizeEvaluatorResult(
   definition: ResolvedEvaluatorDefinition,
-  outcome: EvaluatorRawOutcome,
+  outcome: EvaluatorRawOutcome
 ): EvaluatorResult {
   return toEvaluatorResult(
-    finalizeScoreResult(definition, toScoreRawOutcome(outcome)),
+    finalizeScoreResult(definition, toScoreRawOutcome(outcome))
   );
 }
 
@@ -154,7 +190,7 @@ export function finalizeEvaluatorResult(
 export function errorEvaluatorResult(
   definition: ResolvedEvaluatorDefinition,
   error: unknown,
-  options?: { scope?: EvaluatorResult["scope"] },
+  options?: { scope?: EvaluatorResult["scope"] }
 ): EvaluatorResult {
   return toEvaluatorResult(errorScoreResult(definition, error, options));
 }
@@ -163,10 +199,10 @@ export function errorEvaluatorResult(
 export function skippedEvaluatorResult(
   definition: ResolvedEvaluatorDefinition,
   explanation?: string,
-  options?: { scope?: EvaluatorResult["scope"] },
+  options?: { scope?: EvaluatorResult["scope"] }
 ): EvaluatorResult {
   return toEvaluatorResult(
-    skippedScoreResult(definition, explanation, options),
+    skippedScoreResult(definition, explanation, options)
   );
 }
 
@@ -174,10 +210,10 @@ export function skippedEvaluatorResult(
 export function notApplicableEvaluatorResult(
   definition: ResolvedEvaluatorDefinition,
   explanation?: string,
-  options?: { scope?: EvaluatorResult["scope"] },
+  options?: { scope?: EvaluatorResult["scope"] }
 ): EvaluatorResult {
   return toEvaluatorResult(
-    notApplicableScoreResult(definition, explanation, options),
+    notApplicableScoreResult(definition, explanation, options)
   );
 }
 
@@ -191,10 +227,10 @@ export function notApplicableEvaluatorResult(
  */
 export function allGatingEvaluatorsPassed(
   results: ReadonlyArray<EvaluatorResult | ScoreResult>,
-  config: EvaluationConfigSnapshot,
+  config: EvaluationConfigSnapshot
 ): ReturnType<typeof allGatingScorersPassed> {
   const scores = results.map((row) =>
-    "evaluatorId" in row ? fromEvaluatorResult(row) : row,
+    "evaluatorId" in row ? fromEvaluatorResult(row) : row
   );
   return allGatingScorersPassed(scores, config);
 }

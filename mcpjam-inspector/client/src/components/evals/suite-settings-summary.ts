@@ -133,8 +133,11 @@ export function describeGatePolicy(
 
 export function summarizeRubric(rubric: EvalJudgeRubric | undefined): string {
   const criteria = rubric?.criteria ?? [];
-  if (criteria.length === 0) return "None";
-  return criteria.map((criterion) => criterion.label).join(", ");
+  return (
+    [rubric?.instructions, ...criteria.map((criterion) => criterion.label)]
+      .filter(Boolean)
+      .join(", ") || "None"
+  );
 }
 
 const CONNECTION_LABEL: Record<GithubCheckConnectionStatus, string> = {

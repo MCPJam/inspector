@@ -32,5 +32,6 @@
   "registry_server_not_found": "NOT_FOUND",
   "registry_connection_not_found": "NOT_FOUND",
   "registry_server_not_approved": "FORBIDDEN",
-  "registry_project_org_mismatch": "FORBIDDEN"
+  "registry_project_org_mismatch": "FORBIDDEN",
+  "account_suspended": "FORBIDDEN"
 }

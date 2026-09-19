@@ -42,7 +42,9 @@ const toast = vi.hoisted(() => ({
 vi.mock("sonner", () => ({ toast }));
 vi.mock("@/lib/toast", () => ({ toast }));
 
-function createScenario(overrides: Partial<ScenarioSettings> = {}): ScenarioSettings {
+function createScenario(
+  overrides: Partial<ScenarioSettings> = {},
+): ScenarioSettings {
   return {
     scenarioId: "cb-1",
     projectId: "ws-1",
@@ -72,10 +74,31 @@ describe("ScenarioShareSection", () => {
     vi.clearAllMocks();
   });
 
-  it("renders the same section structure as the project share dialog", () => {
+  it("shows account-required link access without changing audience", () => {
     render(
-      <ScenarioShareSection scenario={createScenario()} projectName="Acme" />,
+      <ScenarioShareSection
+        scenario={createScenario({
+          mode: "anyone_with_link",
+          requiresSignIn: true,
+          allowGuestAccess: false,
+        })}
+      />,
     );
+    expect(
+      screen.getByRole("button", {
+        name: "Anyone with the link who is signed in",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Testers must sign in or create an account to preview and test this scenario.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Guest usage runs/)).not.toBeInTheDocument();
+  });
+
+  it("renders the same section structure as the project share dialog", () => {
+    render(<ScenarioShareSection scenario={createScenario()} />);
 
     // getByLabelText, not getByText: the "Tester link" label has to resolve to
     // a real labelable control, so the link reads as that label's value to
@@ -102,7 +125,7 @@ describe("ScenarioShareSection", () => {
   it("discloses guest credit usage only when link guest access is selected", () => {
     const creditNotice = /Guest usage runs on your organization's credits/i;
     const { rerender } = render(
-      <ScenarioShareSection scenario={createScenario()} projectName="Acme" />,
+      <ScenarioShareSection scenario={createScenario()} />,
     );
 
     expect(screen.queryByText(creditNotice)).not.toBeInTheDocument();
@@ -113,7 +136,6 @@ describe("ScenarioShareSection", () => {
           allowGuestAccess: true,
           mode: "anyone_with_link",
         })}
-        projectName="Acme"
       />,
     );
 
@@ -148,7 +170,6 @@ describe("ScenarioShareSection", () => {
             },
           ],
         })}
-        projectName="Acme"
       />,
     );
 
@@ -181,7 +202,7 @@ describe("ScenarioShareSection", () => {
       },
     });
 
-    render(<ScenarioShareSection scenario={scenario} projectName="Acme" />);
+    render(<ScenarioShareSection scenario={scenario} />);
 
     // The withheld copy, not just the absence of the link: asserting a path is
     // missing would stay green if the path shape ever changed under it.
@@ -259,22 +280,25 @@ describe("ScenarioShareSection", () => {
     render(
       <ScenarioShareSection
         scenario={createScenario({ maxShareMode: "invited_only" })}
-        projectName="Acme"
       />,
     );
 
     expect(
-      screen.getByText("Your organization limits sharing to invited users only."),
+      screen.getByText(
+        "Your organization limits sharing to invited users only.",
+      ),
     ).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /Invited users only/i }));
+    await user.click(
+      screen.getByRole("button", { name: /Invited users only/i }),
+    );
     expect(
       screen.getByRole("menuitemradio", {
         name: /Anyone with the link/i,
       }),
     ).toHaveAttribute("data-disabled");
     expect(
-      screen.getByRole("menuitemradio", { name: /Acme/i }),
+      screen.getByRole("menuitemradio", { name: /Team members/i }),
     ).not.toHaveAttribute("data-disabled");
   });
 

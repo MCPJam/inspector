@@ -721,6 +721,7 @@ export const APP_SURFACES = [
       "organizations/:orgId/api-keys",
       "organizations/:orgId/plans",
       "organizations/:orgId/billing",
+      "organizations/:orgId/billing/byok",
       "organizations/:orgId/models/usage",
       "organizations/:orgId/billing/usage",
       "organizations/:orgId/models",

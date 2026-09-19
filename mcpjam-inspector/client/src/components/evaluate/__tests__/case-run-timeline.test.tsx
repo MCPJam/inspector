@@ -64,6 +64,14 @@ describe("CaseRunTimeline", () => {
     );
     expect(screen.getAllByTestId("case-run-row")).toHaveLength(1);
     expect(screen.getByText("1/1")).toBeVisible();
+    expect(screen.getByTestId("case-run-averages")).toHaveClass(
+      "bg-background",
+      "text-foreground",
+    );
+    expect(
+      screen.getByTestId("case-run-row").closest(".overflow-x-auto"),
+    ).toHaveClass("bg-background", "text-foreground");
+    expect(screen.getByText("Iteration").parentElement).toHaveClass("bg-muted");
     await user.click(
       screen.getByRole("button", { name: "ChatGPT · actual-b", exact: true }),
     );
@@ -256,6 +264,7 @@ describe("CaseRunTimeline", () => {
       </CaseRunTimeline>,
     );
     const badge = screen.getByTestId("case-run-status");
+    expect(badge.previousElementSibling?.tagName).toBe("H2");
     expect(badge).toHaveTextContent("Running");
     expect(badge).toHaveClass("bg-warning/30");
     expect(badge.parentElement).toContainElement(

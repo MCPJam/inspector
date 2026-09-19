@@ -49,6 +49,16 @@ describe("TrialStageDetailCard", () => {
     );
   });
 
+  it("omits the reason line for `observed`, which every passing stage carries", () => {
+    render(
+      <TrialStageDetailCard row={row({ state: "passed", reason: "observed" })} />,
+    );
+    expect(screen.queryByTestId("trial-stage-reason")).toBeNull();
+    expect(
+      screen.getByTestId("trial-stage-detail-card").textContent,
+    ).not.toContain(STAGE_REASON_LABELS.observed);
+  });
+
   it("NEVER manufactures a rate from one observation", () => {
     const card = render(
       <TrialStageDetailCard row={row({ state: "passed" })} />,

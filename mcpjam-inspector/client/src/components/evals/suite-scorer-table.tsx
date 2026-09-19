@@ -1,12 +1,15 @@
 /**
- * Scorers as one table, in user-value-chain order.
+ * Evaluators as one checklist, stage by stage, in user-value-chain order.
  *
- * Configuration only. There is no Last run or Trend column — those are a
- * later slice that needs run data this page does not have.
+ * Configuration only. There is no Last run or Trend — those are a later
+ * slice that needs run data this page does not have.
  *
- * ONE TABLE, TWO PAGES. The suite settings page and a case's checks page
- * render this same component. The `scope` prop says which list a click
- * writes to:
+ * ONE LIST, TWO PAGES. The suite settings page and a case's assertions page
+ * render this same component. Each stage is a heading over rows of
+ * "box · name · one line of detail"; a row's title opens its editor
+ * (role, and the assertion's own fields) in place, so the resting page reads
+ * like a checklist rather than a grid. The `scope` prop says which list a
+ * click writes to:
  *
  *   - `suite`: every rule is the suite's. Off removes it; a preset row
  *     switched on appends the standard check's preset.
@@ -27,16 +30,15 @@ import type { Predicate } from "@mcpjam/sdk/predicates";
 import type { EvalMatchOptions } from "@/shared/eval-matching";
 import { MATCH_OPTIONS_DEFAULTS } from "@/shared/eval-matching";
 import { STAGE_CHIP_TONE_CLASS } from "@/components/evaluate/stage-chain-model";
-import { StageChainCards } from "@/components/evaluate/stage-chain-cards";
 import { cn } from "@/lib/utils";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
+import { Badge } from "@mcpjam/design-system/badge";
 import { Input } from "@mcpjam/design-system/input";
 import type { ModelDefinition } from "@/shared/types";
 import type { SuiteCapabilities } from "@/hooks/use-suite-capabilities";
 import { DEFAULT_JUDGE_THRESHOLD } from "@/components/shared/session-quality/judge-config";
 import { ValidatorsSection } from "./validators-section";
 import { CheckRow, blankPredicate } from "./checks-section";
-import { GlobalGatesSectionInfoHint } from "./global-gates-info";
 import { gateSwitchDisabledReason } from "./judge-gate-panel";
 import { SuiteScorerLibraryMenu } from "./suite-scorer-library-menu";
 import {
@@ -87,7 +89,7 @@ export type ScorerTableScope =
 
 /** The one sentence a disabled On box gives when the deployment is behind. */
 export const BACKEND_SUPPORT_HINT =
-  "Requires backend support before this check can be changed.";
+  "Requires backend support before this assertion can be changed.";
 
 export function SuiteScorerTable({
   scope,
@@ -105,6 +107,9 @@ export function SuiteScorerTable({
   passOrFailHint,
   judgeHint,
   groundednessEvidence,
+  headerContent,
+  headerDescription,
+  headerActions,
 }: {
   scope: ScorerTableScope;
   matchOptions?: EvalMatchOptions;
@@ -123,6 +128,9 @@ export function SuiteScorerTable({
   passOrFailHint: string;
   judgeHint: string;
   groundednessEvidence?: GroundednessRunEvidence;
+  headerContent?: React.ReactNode;
+  headerDescription?: React.ReactNode;
+  headerActions?: React.ReactNode;
 }) {
   const suitePredicates =
     scope.kind === "suite" ? scope.predicates : scope.suitePredicates;
@@ -164,6 +172,7 @@ export function SuiteScorerTable({
         judgeConfig,
         judgeEnabled,
         judgeCapabilities: capabilities?.judge,
+        judgePolicy: capabilities?.judges?.goalCompletion.policy,
       }),
     [
       model,
@@ -173,12 +182,10 @@ export function SuiteScorerTable({
       judgeConfig,
       judgeEnabled,
       capabilities?.judge,
+      capabilities?.judges?.goalCompletion.policy,
     ],
   );
-  const [selected, setSelected] = useState<UserValueStage | null>(null);
-  const [expandedPredicate, setExpandedPredicate] = useState<number | null>(
-    null,
-  );
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [matchEditorOpen, setMatchEditorOpen] = useState(false);
   const checkPolicy = capabilities?.scorers?.checkPolicy === true;
   const authorableKinds = authorablePredicateKinds(
@@ -220,7 +227,7 @@ export function SuiteScorerTable({
     } else {
       scope.onDraftChange(removeCaseRule(scope.draft, rule.index));
     }
-    setExpandedPredicate(null);
+    setExpanded(new Set());
   };
   const addPredicate = (predicate: Predicate) => {
     if (scope.kind === "suite") {
@@ -251,7 +258,7 @@ export function SuiteScorerTable({
           : undefined;
       if (rule?.source !== "suite") return undefined;
       if (!row.family) {
-        return "Only standard checks can be turned off per case. Edit this rule in suite settings.";
+        return "Only standard assertions can be turned off per case. Edit this one in suite settings.";
       }
       return suppressionSupported ? undefined : BACKEND_SUPPORT_HINT;
     }
@@ -315,32 +322,48 @@ export function SuiteScorerTable({
     }
   };
 
+  // The section title and hint are suite settings
+  // furniture. A case page has its own title and reads as a plain
+  // checklist: stage name on the left, boxes on the right.
+  const suiteChrome = scope.kind === "suite";
+
   return (
     <div>
-      <StageChainCards
-        cards={table.cards}
-        selected={selected}
-        onSelect={(stage) =>
-          setSelected((current) => (current === stage ? null : stage))
-        }
-      />
-
-      <div className="mt-6" data-setting-key="checks">
-        <div className="mb-4 flex items-start justify-between gap-4">
-          <div className="space-y-1">
-            <div className="flex items-center gap-1.5">
-              <h3 className="text-lg font-semibold tracking-tight text-foreground">
-                Assertions
-              </h3>
-              <GlobalGatesSectionInfoHint />
-            </div>
-            <p className="text-sm text-muted-foreground">{passOrFailHint}</p>
+      <div data-setting-key="checks">
+        <div
+          className={cn(
+            "flex flex-wrap items-center justify-between gap-4",
+            headerDescription ? "mb-2" : "mb-4",
+          )}
+        >
+          {headerContent ??
+            (suiteChrome ? (
+              <div className="space-y-1">
+                <div className="flex items-center gap-1.5">
+                  <h3 className="text-lg font-semibold tracking-tight text-foreground">
+                    Evaluators
+                  </h3>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  {passOrFailHint}
+                </p>
+              </div>
+            ) : (
+              <span />
+            ))}
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+            {headerActions}
+            <SuiteScorerLibraryMenu
+              primary
+              authorableKinds={authorableKinds}
+              triggerLabel="Add assertion"
+              onAdd={(kind) => addPredicate(blankPredicate(kind))}
+            />
           </div>
-          <SuiteScorerLibraryMenu
-            authorableKinds={authorableKinds}
-            onAdd={(kind) => addPredicate(blankPredicate(kind))}
-          />
         </div>
+        {headerDescription ? (
+          <div className="mb-6">{headerDescription}</div>
+        ) : null}
         {scenarioMigrationNotice ? (
           <div className="mb-4">{scenarioMigrationNotice}</div>
         ) : null}
@@ -349,196 +372,161 @@ export function SuiteScorerTable({
             className="mb-4 text-xs text-muted-foreground"
             data-testid="case-replaces-suite-rules"
           >
-            This case replaces the suite&apos;s rules. Only its own are listed.
+            This case replaces the suite&apos;s assertions. Only its own are
+            listed.
           </p>
         ) : null}
 
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[40rem] border-collapse text-left text-xs">
-            <thead>
-              <tr className="border-b border-border/60 text-[10px] uppercase tracking-[0.06em] text-muted-foreground">
-                <th className="w-8 py-2 pr-2 font-medium">On</th>
-                <th className="py-2 pr-3 font-medium">Evaluator</th>
-                <th className="py-2 pr-3 font-medium">Kind</th>
-                <th className="py-2 pr-3 font-medium">Threshold</th>
-                <th className="py-2 font-medium">If it fails</th>
-              </tr>
-            </thead>
-            {table.groups.map((group) => (
-              <tbody
-                key={group.stage}
-                data-stage-group={group.stage}
-                data-selected={selected === group.stage ? "true" : undefined}
-                className={cn(
-                  selected === group.stage &&
-                    "bg-muted/40 ring-1 ring-foreground/20",
-                )}
-              >
-                <tr>
-                  <th colSpan={5} className="pb-1 pt-5 text-left font-normal">
-                    <div className="space-y-0.5">
-                      <div className="flex items-baseline gap-2">
-                        <span className="text-[10px] tabular-nums text-muted-foreground/70">
-                          {group.ordinal}
-                        </span>
-                        <span className="text-sm font-semibold text-foreground">
-                          {group.label}
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-muted-foreground">
-                        {group.question}
-                      </p>
-                    </div>
-                  </th>
-                </tr>
+        <div>
+          <div className="grid grid-cols-1 gap-x-6 border-b border-border pb-2 text-sm text-muted-foreground sm:grid-cols-[minmax(10rem,1fr)_2fr]">
+            <span>Stage of user value chain</span>
+            <span className="hidden sm:block">Evaluators</span>
+          </div>
+          {table.groups.map((group) => (
+            <section
+              key={group.stage}
+              data-stage-group={group.stage}
+              className="grid grid-cols-1 gap-x-6 gap-y-3 border-b border-border py-5 sm:grid-cols-[minmax(10rem,1fr)_2fr]"
+            >
+              <div>
+                <h4 className="font-medium">{group.label}</h4>
+              </div>
+              <div className="min-w-0 space-y-3">
                 {group.rows.length === 0 ? (
-                  <tr>
-                    <td
-                      colSpan={5}
-                      className={cn(
-                        "pb-3 text-sm",
-                        STAGE_CHIP_TONE_CLASS.unmeasured,
-                      )}
-                      data-stage-empty={group.stage}
-                    >
-                      No evaluator
-                    </td>
-                  </tr>
+                  <p
+                    className={cn("text-sm", STAGE_CHIP_TONE_CLASS.unmeasured)}
+                    data-stage-empty={group.stage}
+                  >
+                    No evaluator
+                  </p>
                 ) : (
-                  group.rows.map((row) => (
-                    <ScorerRow
-                      key={row.id}
-                      row={row}
-                      rule={
-                        row.predicateIndex !== undefined
-                          ? rules[row.predicateIndex]
-                          : undefined
-                      }
-                      scope={scope.kind}
-                      onDisabledReason={onDisabledReason(row)}
-                      onEnabledChange={(enabled) => setRowEnabled(row, enabled)}
-                      checkPolicy={checkPolicy}
-                      judgeDisabledReason={judgeDisabledReason}
-                      judgeConfig={judgeConfig}
-                      expanded={
-                        row.predicateIndex !== undefined &&
-                        expandedPredicate === row.predicateIndex
-                      }
-                      onToggleExpand={() => {
-                        if (row.predicateIndex === undefined) return;
-                        setExpandedPredicate((current) =>
-                          current === row.predicateIndex
-                            ? null
-                            : row.predicateIndex ?? null,
-                        );
-                      }}
-                      editable={
-                        row.predicateIndex !== undefined &&
-                        editable(rules[row.predicateIndex])
-                      }
-                      onPredicateChange={updatePredicate}
-                      onPredicateRemove={removePredicate}
-                      onJudgeRoleChange={(role) => {
-                        onJudgeConfigChange?.({
-                          ...judgeConfig,
-                          goalCompletion: withGoalCompletionRole(
-                            judgeConfig?.goalCompletion ?? {},
-                            role,
-                          ),
-                        });
-                      }}
-                      onJudgeThresholdChange={(threshold) => {
-                        onJudgeConfigChange?.({
-                          ...judgeConfig,
-                          goalCompletion: {
-                            ...(judgeConfig?.goalCompletion ?? {}),
-                            threshold,
-                          },
-                        });
-                      }}
-                      facts={
-                        row.kind === "observed"
-                          ? stageFacts?.[group.stage]
-                          : undefined
-                      }
-                    />
-                  ))
+                  <ul className="space-y-3">
+                    {group.rows.map((row) => (
+                      <ScorerRow
+                        key={row.id}
+                        row={row}
+                        rule={
+                          row.predicateIndex !== undefined
+                            ? rules[row.predicateIndex]
+                            : undefined
+                        }
+                        scope={scope.kind}
+                        onDisabledReason={onDisabledReason(row)}
+                        onEnabledChange={(enabled) =>
+                          setRowEnabled(row, enabled)
+                        }
+                        checkPolicy={checkPolicy}
+                        judgeDisabledReason={judgeDisabledReason}
+                        judgeConfig={judgeConfig}
+                        expanded={expanded.has(row.id)}
+                        onToggleExpand={() =>
+                          setExpanded((current) => {
+                            const next = new Set(current);
+                            if (next.has(row.id)) next.delete(row.id);
+                            else next.add(row.id);
+                            return next;
+                          })
+                        }
+                        editable={
+                          row.predicateIndex !== undefined &&
+                          editable(rules[row.predicateIndex])
+                        }
+                        onPredicateChange={updatePredicate}
+                        onPredicateRemove={removePredicate}
+                        onJudgeRoleChange={(role) => {
+                          onJudgeConfigChange?.({
+                            ...judgeConfig,
+                            goalCompletion: withGoalCompletionRole(
+                              judgeConfig?.goalCompletion ?? {},
+                              role,
+                            ),
+                          });
+                        }}
+                        onJudgeThresholdChange={(threshold) => {
+                          onJudgeConfigChange?.({
+                            ...judgeConfig,
+                            goalCompletion: {
+                              ...(judgeConfig?.goalCompletion ?? {}),
+                              threshold,
+                            },
+                          });
+                        }}
+                        facts={
+                          row.kind === "observed"
+                            ? stageFacts?.[group.stage]
+                            : undefined
+                        }
+                      />
+                    ))}
+                  </ul>
                 )}
                 {scope.kind === "suite" &&
                 onMatchOptionsChange &&
                 group.stage === "selection" ? (
-                  <tr>
-                    <td colSpan={5} className="pb-3 pt-1">
-                      <details
-                        className="rounded-md border border-border/50 bg-muted/10 px-3 py-2"
-                        data-setting-key="matchOptions"
-                        open={matchEditorOpen}
-                        onToggle={(event) =>
-                          setMatchEditorOpen(
-                            (event.currentTarget as HTMLDetailsElement).open,
-                          )
-                        }
-                      >
-                        <summary className="cursor-pointer text-xs font-medium text-foreground">
-                          Edit tool-call matching
-                        </summary>
-                        <div className="mt-3 space-y-2">
-                          <p className="text-[11px] text-muted-foreground">
-                            Arguments is edited here and measured at Tool call.
-                          </p>
-                          <ValidatorsSection
-                            title=""
-                            value={matchOptions}
-                            inheritedFrom={MATCH_OPTIONS_DEFAULTS}
-                            onChange={onMatchOptionsChange}
-                          />
-                        </div>
-                      </details>
-                    </td>
-                  </tr>
+                  <details
+                    className="rounded-md border border-border/50 bg-muted/10 px-3 py-2"
+                    data-setting-key="matchOptions"
+                    open={matchEditorOpen}
+                    onToggle={(event) =>
+                      setMatchEditorOpen(
+                        (event.currentTarget as HTMLDetailsElement).open,
+                      )
+                    }
+                  >
+                    <summary className="cursor-pointer text-xs font-medium text-foreground">
+                      Edit tool-call matching
+                    </summary>
+                    <div className="mt-3 space-y-2">
+                      <p className="text-[11px] text-muted-foreground">
+                        Arguments is edited here and measured at Tool call.
+                      </p>
+                      <ValidatorsSection
+                        title=""
+                        value={matchOptions}
+                        inheritedFrom={MATCH_OPTIONS_DEFAULTS}
+                        onChange={onMatchOptionsChange}
+                      />
+                    </div>
+                  </details>
                 ) : null}
                 {scope.kind === "suite" &&
                 onJudgeConfigChange &&
                 group.stage === "userValue" ? (
-                  <tr>
-                    <td colSpan={5} className="pb-3 pt-1">
-                      <div
-                        className="space-y-5"
-                        data-setting-key="judge"
-                        data-subsection-id="judge"
-                      >
-                        <div>
-                          <h4 className="text-sm font-semibold text-foreground">
-                            Judge
-                          </h4>
-                          <p className="mt-1 text-sm text-muted-foreground">
-                            {judgeHint}
-                          </p>
-                        </div>
-                        <SuiteJudgeCard
-                          slot="goalCompletion"
-                          judgeConfig={judgeConfig}
-                          onJudgeConfigChange={onJudgeConfigChange}
-                          availableModels={availableModels}
-                          judgesCapabilities={capabilities?.judges}
-                          judgeAccessory={judgeAccessory}
-                          rubricEditor={rubricEditor}
-                        />
-                        <SuiteJudgeCard
-                          slot="groundedness"
-                          judgeConfig={judgeConfig}
-                          onJudgeConfigChange={onJudgeConfigChange}
-                          availableModels={availableModels}
-                          judgesCapabilities={capabilities?.judges}
-                          groundednessEvidence={groundednessEvidence}
-                        />
-                      </div>
-                    </td>
-                  </tr>
+                  <details
+                    className="space-y-5 pt-2"
+                    data-setting-key="judge"
+                    data-subsection-id="judge"
+                  >
+                    <summary className="cursor-pointer text-xs font-medium">
+                      Judge — model, criteria and gate
+                    </summary>
+                    <div>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        {judgeHint}
+                      </p>
+                    </div>
+                    <SuiteJudgeCard
+                      slot="goalCompletion"
+                      judgeConfig={judgeConfig}
+                      onJudgeConfigChange={onJudgeConfigChange}
+                      availableModels={availableModels}
+                      judgesCapabilities={capabilities?.judges}
+                      judgeAccessory={judgeAccessory}
+                      rubricEditor={rubricEditor}
+                    />
+                    <SuiteJudgeCard
+                      slot="groundedness"
+                      judgeConfig={judgeConfig}
+                      onJudgeConfigChange={onJudgeConfigChange}
+                      availableModels={availableModels}
+                      judgesCapabilities={capabilities?.judges}
+                      groundednessEvidence={groundednessEvidence}
+                    />
+                  </details>
                 ) : null}
-              </tbody>
-            ))}
-          </table>
+              </div>
+            </section>
+          ))}
         </div>
       </div>
     </div>
@@ -588,10 +576,20 @@ function ScorerRow({
   facts?: React.ReactNode;
 }) {
   const predicate = rule?.predicate;
-  // The family label names what the box switches; a rule outside any family
+  // The family name names what the box switches; a rule outside any family
   // is named by its criterion, the only name it has.
-  const onLabel = row.family?.label ?? row.name;
+  const onLabel = row.family?.name ?? row.name;
+  const title = onLabel;
   const inherited = scope === "case" && rule?.source === "suite";
+  // A row that is off says only its name. Everything else — the number it
+  // turns on, its role, its editor — appears once the box is ticked.
+  const on = hasOnControl(row) ? row.enabled : true;
+  // The suite page opens the judge's threshold and role; a case reads them.
+  const judgeEditable =
+    row.kind === "judge" &&
+    row.judgeSlot === "goalCompletion" &&
+    scope === "suite";
+  const opensEditor = on && row.kind !== "observed" && row.kind !== "match";
   const sourceLine =
     scope === "case" && row.kind === "predicate"
       ? row.suppressed
@@ -602,72 +600,88 @@ function ScorerRow({
       : null;
   const familyLine =
     inherited && row.family && row.family.suiteRules > 1
-      ? `Turns off all ${row.family.suiteRules} suite rules of this kind for this case.`
+      ? `Turns off all ${row.family.suiteRules} suite assertions of this kind for this case.`
       : null;
 
+  // One line under the title, holding only what the title does not already
+  // say: the number an assertion turns on. Match and judge titles name their
+  // own kind; a family title names its assertion, so its criterion is repeated
+  // only when it carries a threshold ("under 5,000 ms"). A bare assertion's title is
+  // its criterion, so no extra detail is needed.
+  let detail: string | null = null;
+  if (row.kind === "judge") {
+    if (row.thresholdKind === "judge") {
+      detail = `Threshold ${
+        judgeConfig?.goalCompletion?.threshold ?? DEFAULT_JUDGE_THRESHOLD
+      }`;
+    }
+  } else if (row.kind === "predicate") {
+    if (row.thresholdKind === "budget" && row.name !== title) {
+      detail = row.name;
+    }
+  }
+
   return (
-    <>
-      <tr
-        className={cn(
-          "border-b border-border/40 align-top",
-          row.muted && "text-muted-foreground",
+    <li
+      data-scorer-row={row.kind}
+      data-scorer-id={row.id}
+      data-scorer-source={rule?.source}
+      data-scorer-enabled={hasOnControl(row) ? String(row.enabled) : undefined}
+      data-stage-empty={row.kind === "observed" ? row.observedStage : undefined}
+      className={cn("text-sm", row.muted && "text-muted-foreground")}
+    >
+      <div className="flex items-start gap-2">
+        {hasOnControl(row) ? (
+          <Checkbox
+            className="mt-0.5"
+            aria-label={onLabel}
+            checked={row.enabled}
+            disabled={onDisabledReason !== undefined}
+            onCheckedChange={(next) => onEnabledChange(next === true)}
+          />
+        ) : row.kind === "observed" || row.kind === "match" ? (
+          <Checkbox className="mt-0.5" aria-label={title} checked disabled />
+        ) : (
+          <span aria-hidden className="mt-0.5 inline-block size-4 shrink-0" />
         )}
-        data-scorer-row={row.kind}
-        data-scorer-id={row.id}
-        data-scorer-source={rule?.source}
-        data-scorer-enabled={
-          hasOnControl(row) ? String(row.enabled) : undefined
-        }
-      >
-        <td className="py-2 pr-2">
-          {hasOnControl(row) ? (
-            <Checkbox
-              className="mt-0.5"
-              aria-label={onLabel}
-              checked={row.enabled}
-              disabled={onDisabledReason !== undefined}
-              onCheckedChange={(next) => onEnabledChange(next === true)}
-            />
-          ) : null}
-        </td>
-        <td className="py-2 pr-3">
-          {row.kind === "predicate" && editable ? (
-            <button
-              type="button"
-              className="text-left text-xs text-foreground hover:underline"
-              onClick={onToggleExpand}
-              aria-expanded={expanded}
-            >
-              {row.family ? row.family.label : row.name}
-            </button>
-          ) : (
-            <span
-              className="text-xs"
-              data-stage-empty={
-                row.kind === "observed" ? row.observedStage : undefined
-              }
-            >
-              {row.family ? row.family.label : row.name}
-            </span>
-          )}
-          {row.family ? (
-            <span className="block text-[11px] text-muted-foreground">
-              {row.name}
-            </span>
-          ) : null}
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
+            <div className="min-w-0 flex-1">
+              {opensEditor ? (
+                <button
+                  type="button"
+                  className="group inline-flex items-center gap-1 text-left hover:underline"
+                  onClick={onToggleExpand}
+                  aria-expanded={expanded}
+                >
+                  {title}
+                </button>
+              ) : (
+                <span>{title}</span>
+              )}
+              {on && detail ? (
+                <span className="block text-xs text-muted-foreground">
+                  {detail}
+                </span>
+              ) : null}
+            </div>
+            {row.kind === "observed" || row.kind === "match" ? (
+              <Badge variant="outline">Required</Badge>
+            ) : null}
+          </div>
           {sourceLine ? (
-            <span className="block text-[11px] text-muted-foreground">
+            <span className="block text-xs text-muted-foreground">
               {sourceLine}
             </span>
           ) : null}
           {familyLine ? (
-            <span className="block text-[11px] text-muted-foreground">
+            <span className="block text-xs text-muted-foreground">
               {familyLine}
             </span>
           ) : null}
           {onDisabledReason ? (
             <span
-              className="block text-[11px] text-muted-foreground"
+              className="block text-xs text-muted-foreground"
               data-testid="on-disabled-reason"
             >
               {onDisabledReason}
@@ -675,48 +689,46 @@ function ScorerRow({
           ) : null}
           {row.kind === "observed" && facts ? (
             <details className="mt-1">
-              <summary className="cursor-pointer text-[11px] text-muted-foreground">
+              <summary className="cursor-pointer text-xs text-muted-foreground">
                 How this stage is decided
               </summary>
               <div className="mt-2">{facts}</div>
             </details>
           ) : null}
-        </td>
-        <td className="py-2 pr-3 text-muted-foreground">{row.kindLabel}</td>
-        <td className="py-2 pr-3">
-          {editable || (row.kind === "judge" && scope === "suite") ? (
-            <ThresholdCell
-              row={row}
-              predicate={predicate}
-              judgeConfig={judgeConfig}
-              onPredicateChange={onPredicateChange}
-              onJudgeThresholdChange={onJudgeThresholdChange}
-            />
-          ) : row.threshold ? (
-            <span className="tabular-nums text-muted-foreground">
-              {row.threshold}
-            </span>
+        </div>
+      </div>
+      {expanded && opensEditor ? (
+        <div
+          className="ml-6 mt-2 space-y-3 rounded-md border border-border/50 bg-muted/10 p-3"
+          data-scorer-editor={row.id}
+        >
+          {row.family ? (
+            <p className="text-xs text-muted-foreground">{row.family.label}</p>
           ) : null}
-        </td>
-        <td className="py-2">
-          {editable || row.kind !== "predicate" ? (
-            <RoleCell
-              row={row}
-              predicate={predicate}
-              checkPolicy={checkPolicy}
-              judgeDisabledReason={judgeDisabledReason}
-              judgeEditable={scope === "suite"}
-              onPredicateChange={onPredicateChange}
-              onJudgeRoleChange={onJudgeRoleChange}
-            />
-          ) : (
-            <RoleChip role={row.role} />
-          )}
-        </td>
-      </tr>
-      {expanded && editable && predicate && row.predicateIndex !== undefined ? (
-        <tr className="border-b border-border/40">
-          <td colSpan={5} className="pb-3 pt-1">
+          <RoleCell
+            row={row}
+            predicate={predicate}
+            checkPolicy={checkPolicy}
+            judgeDisabledReason={judgeDisabledReason}
+            judgeEditable={judgeEditable}
+            editable={editable}
+            onPredicateChange={onPredicateChange}
+            onJudgeRoleChange={onJudgeRoleChange}
+          />
+          {judgeEditable && row.thresholdKind === "judge" ? (
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              Threshold
+              <JudgeThresholdInput
+                judgeConfig={judgeConfig}
+                onJudgeThresholdChange={onJudgeThresholdChange}
+              />
+            </label>
+          ) : null}
+          {row.kind === "predicate" &&
+          editable &&
+          predicate &&
+          predicateHasFields(predicate) &&
+          row.predicateIndex !== undefined ? (
             <CheckRow
               noun="assertion"
               embedded
@@ -724,160 +736,55 @@ function ScorerRow({
               onChange={(next) => onPredicateChange(row.predicateIndex!, next)}
               onRemove={() => onPredicateRemove(row.predicateIndex!)}
             />
-          </td>
-        </tr>
+          ) : null}
+        </div>
       ) : null}
-    </>
+    </li>
   );
 }
 
-function ThresholdCell({
-  row,
-  predicate,
+/** Keys every predicate carries; anything else is a field its editor shows. */
+const PREDICATE_ENVELOPE_KEYS = new Set(["type", "role", "severity"]);
+
+function predicateHasFields(predicate: Predicate): boolean {
+  return Object.keys(predicate).some(
+    (key) => !PREDICATE_ENVELOPE_KEYS.has(key),
+  );
+}
+
+/**
+ * The judge's threshold. Every other number an evaluator turns on is edited in
+ * its own `CheckRow` body, opened from the row's title.
+ */
+function JudgeThresholdInput({
   judgeConfig,
-  onPredicateChange,
   onJudgeThresholdChange,
 }: {
-  row: ScorerTableRow;
-  predicate: Predicate | undefined;
   judgeConfig: EvalJudgeConfig | undefined;
-  onPredicateChange: (index: number, next: Predicate) => void;
   onJudgeThresholdChange: (threshold: number) => void;
 }) {
-  if (row.thresholdKind === "none") return null;
-  if (row.thresholdKind === "fixed") {
-    return <span className="tabular-nums text-muted-foreground">1</span>;
-  }
-  if (row.thresholdKind === "judge") {
-    const value =
-      judgeConfig?.goalCompletion?.threshold ?? DEFAULT_JUDGE_THRESHOLD;
-    return (
-      <Input
-        type="number"
-        min={0}
-        max={1}
-        step={0.05}
-        value={value}
-        aria-label="Judge threshold"
-        className="h-7 w-20 text-xs"
-        onChange={(event) => {
-          // `Number("")` is 0. An emptied field is someone retyping, not a
-          // threshold of zero — which on a gating judge would pass any score.
-          const raw = event.target.value.trim();
-          if (raw === "") return;
-          const next = Number(raw);
-          if (!Number.isFinite(next)) return;
-          onJudgeThresholdChange(Math.min(1, Math.max(0, next)));
-        }}
-      />
-    );
-  }
-  if (
-    row.thresholdKind === "budget" &&
-    predicate &&
-    row.predicateIndex !== undefined
-  ) {
-    if (predicate.type === "tokenBudgetUnder") {
-      return (
-        <Input
-          type="number"
-          min={1}
-          step={1}
-          value={predicate.tokens}
-          aria-label="Token budget"
-          className="h-7 w-24 text-xs"
-          onChange={(event) => {
-            // An emptied or non-positive field is mid-edit, not a ceiling of
-            // zero — which the suite-file schema refuses, disabling Save with
-            // nothing on screen to explain it.
-            const raw = event.target.value.trim();
-            if (raw === "") return;
-            const next = Number(raw);
-            if (!Number.isFinite(next) || next < 1) return;
-            onPredicateChange(row.predicateIndex!, {
-              ...predicate,
-              tokens: Math.floor(next),
-            });
-          }}
-        />
-      );
-    }
-    if (
-      predicate.type === "toolDescriptionsPresent" ||
-      predicate.type === "toolLatencyUnder" ||
-      predicate.type === "toolResultSizeUnder" ||
-      predicate.type === "toolCallCountUnder"
-    ) {
-      const { field, value, label } =
-        predicate.type === "toolDescriptionsPresent"
-          ? {
-              field: "minLength" as const,
-              value: predicate.minLength ?? 20,
-              label: "Minimum tool description length",
-            }
-          : predicate.type === "toolLatencyUnder"
-            ? { field: "ms" as const, value: predicate.ms, label: "Tool latency budget in ms" }
-            : predicate.type === "toolResultSizeUnder"
-            ? {
-                field: "maxBytes" as const,
-                value: predicate.maxBytes,
-                label: "Tool result size budget in bytes",
-              }
-            : {
-                field: "count" as const,
-                value: predicate.count,
-                label: "Tool call budget",
-              };
-      return (
-        <Input
-          type="number"
-          min={1}
-          step={1}
-          value={value}
-          aria-label={label}
-          className="h-7 w-24 text-xs"
-          onChange={(event) => {
-            // An empty field is `Number("") === 0`, and a budget of 0 is a
-            // check nothing can pass — the same reason the backend now
-            // refuses a non-positive `tokens` or `minCount` at the write
-            // boundary. Leave the predicate alone until the field holds a
-            // usable number, exactly as the token and turn budgets do.
-            const raw = event.target.value.trim();
-            if (raw === "") return;
-            const next = Number(raw);
-            if (!Number.isFinite(next) || next < 1) return;
-            onPredicateChange(row.predicateIndex!, {
-              ...predicate,
-              [field]: Math.floor(next),
-            } as Predicate);
-          }}
-        />
-      );
-    }
-    if (predicate.type === "turnCountUnder") {
-      return (
-        <Input
-          type="number"
-          min={1}
-          step={1}
-          value={predicate.turns}
-          aria-label="Turn budget"
-          className="h-7 w-24 text-xs"
-          onChange={(event) => {
-            const raw = event.target.value.trim();
-            if (raw === "") return;
-            const next = Number(raw);
-            if (!Number.isFinite(next) || next < 1) return;
-            onPredicateChange(row.predicateIndex!, {
-              ...predicate,
-              turns: Math.floor(next),
-            });
-          }}
-        />
-      );
-    }
-  }
-  return <span className="tabular-nums text-muted-foreground">1</span>;
+  const value =
+    judgeConfig?.goalCompletion?.threshold ?? DEFAULT_JUDGE_THRESHOLD;
+  return (
+    <Input
+      type="number"
+      min={0}
+      max={1}
+      step={0.05}
+      value={value}
+      aria-label="Judge threshold"
+      className="h-7 w-20 text-xs"
+      onChange={(event) => {
+        // `Number("")` is 0. An emptied field is someone retyping, not a
+        // threshold of zero — which on a gating judge would pass any score.
+        const raw = event.target.value.trim();
+        if (raw === "") return;
+        const next = Number(raw);
+        if (!Number.isFinite(next)) return;
+        onJudgeThresholdChange(Math.min(1, Math.max(0, next)));
+      }}
+    />
+  );
 }
 
 function RoleCell({
@@ -886,6 +793,7 @@ function RoleCell({
   checkPolicy,
   judgeDisabledReason,
   judgeEditable,
+  editable,
   onPredicateChange,
   onJudgeRoleChange,
 }: {
@@ -895,6 +803,8 @@ function RoleCell({
   judgeDisabledReason: string | undefined;
   /** The suite page edits the judge's role; a case only reads it. */
   judgeEditable: boolean;
+  /** This page owns the assertion; an inherited one reads its role. */
+  editable: boolean;
   onPredicateChange: (index: number, next: Predicate) => void;
   onJudgeRoleChange: (role: ScorerUiRole) => void;
 }) {
@@ -934,11 +844,19 @@ function RoleCell({
       </div>
     );
   }
-  if (row.kind === "predicate" && predicate && row.predicateIndex !== undefined) {
+  if (
+    row.kind === "predicate" &&
+    predicate &&
+    row.predicateIndex !== undefined
+  ) {
+    if (!editable) {
+      return <RoleChip role={row.role} />;
+    }
     if (!checkPolicy) {
       // Read-only, but honest: an SDK- or CLI-authored advisory check still
-      // reads Advisory here rather than being relabelled Required.
-      return <RoleChip role={row.role} />;
+      // reads Advisory here rather than being relabelled Required — and the
+      // chip says why it is not a control.
+      return <RoleChip role={row.role} note={BACKEND_SUPPORT_HINT} />;
     }
     // Observations get one segment, the same way groundedness does: a
     // heuristic must not decide a release, and offering a Required the schema
@@ -962,4 +880,3 @@ function RoleCell({
   }
   return <RoleChip role={row.role} />;
 }
-
