@@ -18,9 +18,9 @@
  * the tab they were reading about.
  *
  * "Create free account" is primary because the whole surface exists to convert
- * a visitor with no account; "I already have an account" stays for someone
- * signed in on another device. Both return to the same place — the task they
- * came for is the same either way.
+ * a visitor with no account; "Sign in" stays for someone signed in on another
+ * device. Both return to the same place — the task they came for is the same
+ * either way.
  *
  * Only guests see this. A plan-locked user already HAS an account, so their
  * preview gets the billing upsell instead and never opens this dialog.
@@ -36,6 +36,7 @@ import {
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
 import { Button } from "@mcpjam/design-system/button";
+import { JamIllustration } from "@/components/billing/JamIllustration";
 import { track } from "@/lib/analytics";
 import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
@@ -96,10 +97,11 @@ export function FeatureSignUpNudgeDialog({
       }}
     >
       <DialogContent className="sm:max-w-md">
-        {/* No bullet list any more. It carried three sell lines I had written,
-            including "run your first swarm on us, no card needed", which was a
-            pricing promise nobody had made. The title and one true sentence
-            are what is left; REEV-11 owns whatever replaces them. */}
+        {feature === "swarms" && <JamIllustration />}
+        {/* No bullet list. It once carried three sell lines including "run
+            your first swarm on us, no card needed", a pricing promise nobody
+            had made. The title and one sentence about what the run teaches
+            are what is left. */}
         <DialogHeader>
           <DialogTitle>{copy.nudge.title}</DialogTitle>
           <DialogDescription>{copy.nudge.body}</DialogDescription>
@@ -113,7 +115,7 @@ export function FeatureSignUpNudgeDialog({
             Create free account
           </Button>
           <Button variant="outline" onClick={handleSignIn} className="flex-1">
-            I already have an account
+            Sign in
           </Button>
         </div>
       </DialogContent>

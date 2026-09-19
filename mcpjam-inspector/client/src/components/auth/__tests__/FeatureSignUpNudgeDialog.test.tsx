@@ -34,6 +34,34 @@ describe("FeatureSignUpNudgeDialog", () => {
 
     expect(screen.getByText(copy.title)).toBeInTheDocument();
     expect(screen.getByText(copy.body)).toBeInTheDocument();
+    expect(copy.title).toBe("Create an account to run your first swarm");
+    expect(copy.body).toBe(
+      "Test your MCP server with agent personas pursuing different user goals. See where they succeed, where they get stuck, and what to improve.",
+    );
+    expect(
+      screen.getByRole("button", { name: "Create free account" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sign in" })).toBeInTheDocument();
+  });
+
+  it("shows the jam artwork for Swarms only", () => {
+    const { rerender } = render(
+      <FeatureSignUpNudgeDialog feature="swarms" isOpen onClose={vi.fn()} />,
+    );
+    expect(
+      document.querySelector('img[src="/guest-credit-wall.png"]'),
+    ).not.toBeNull();
+
+    rerender(
+      <FeatureSignUpNudgeDialog
+        feature="user-testing"
+        isOpen
+        onClose={vi.fn()}
+      />,
+    );
+    expect(
+      document.querySelector('img[src="/guest-credit-wall.png"]'),
+    ).toBeNull();
   });
 
   // The bullets are gone, and this is what stops them coming back by habit.
@@ -108,7 +136,7 @@ describe("FeatureSignUpNudgeDialog", () => {
       <FeatureSignUpNudgeDialog feature="swarms" isOpen onClose={vi.fn()} />,
     );
 
-    screen.getByRole("button", { name: "I already have an account" }).click();
+    screen.getByRole("button", { name: "Sign in" }).click();
 
     expect(signInMock).toHaveBeenCalledTimes(1);
     expect(readAppSignInReturnPath()).toBe("/swarms");
@@ -144,9 +172,14 @@ describe("FeatureSignUpNudgeDialog", () => {
       />,
     );
 
-    expect(
-      screen.getByText(GATED_FEATURE_COPY["user-testing"].nudge.title),
-    ).toBeInTheDocument();
+    const copy = GATED_FEATURE_COPY["user-testing"].nudge;
+    expect(copy.title).toBe("Create an account to run your first study");
+    expect(copy.body).toBe(
+      "See how real users interact with your MCP server. Find out where they succeed, where they get stuck, and what to improve.",
+    );
+    expect(screen.getByText(copy.title)).toBeInTheDocument();
+    expect(screen.getByText(copy.body)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sign in" })).toBeInTheDocument();
 
     screen.getByRole("button", { name: "Create free account" }).click();
 

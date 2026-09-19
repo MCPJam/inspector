@@ -168,11 +168,10 @@ export const GATED_FEATURE_COPY: Record<GatedFeatureId, GatedFeatureCopy> = {
     },
     analyticsLocation: "swarms_guest_preview",
     nudge: {
-      title: "Create an account to run swarms",
-      // What is true and checkable: swarms run on our infrastructure and spend
-      // model credits, which is why they need an account. No claim about what
-      // that costs, and no free-run offer.
-      body: "Swarms run on our infrastructure and spend model credits, so they need an account behind them.",
+      title: "Create an account to run your first swarm",
+      // Sells what the run teaches, not why we need the account. Still no
+      // claim about what it costs, and no free-run offer.
+      body: "Test your MCP server with agent personas pursuing different user goals. See where they succeed, where they get stuck, and what to improve.",
     },
   },
   "user-testing": {
@@ -262,8 +261,8 @@ export const GATED_FEATURE_COPY: Record<GatedFeatureId, GatedFeatureCopy> = {
     },
     analyticsLocation: "user_testing_guest_preview",
     nudge: {
-      title: "Create an account to run a study",
-      body: "Studies hand out live sandboxes to your testers, so they need an account to attach the sessions to.",
+      title: "Create an account to run your first study",
+      body: "See how real users interact with your MCP server. Find out where they succeed, where they get stuck, and what to improve.",
     },
   },
 };
