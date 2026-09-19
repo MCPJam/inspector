@@ -1,3 +1,6 @@
+import { LegacyEvalRedirect } from "./components/routing/legacy-eval-redirect";
+import { LegacyEvalCaseRedirect } from "./components/routing/legacy-eval-case-redirect";
+import { ByokCreditsPage } from "./components/billing/ByokCreditsPage";
 import { CreditUsagePage } from "./components/billing/CreditUsagePage";
 import { createBrowserRouter, RouterProvider, redirect } from "react-router";
 import { RouteErrorScreen } from "./components/RouteErrorScreen";
@@ -55,7 +58,6 @@ import { NotFoundRoute } from "./components/routing/not-found-route";
 import { getAppRouter, setAppRouter } from "./router-ref";
 import {
   buildHostsPath,
-  legacyCiEvalsPathToRunsPath,
   routePaths,
 } from "./lib/app-navigation";
 import { APP_ROUTES, type AppRouteEntry } from "./lib/app-routes";
@@ -69,22 +71,6 @@ import {
 export { getAppRouter };
 
 type AppRouter = ReturnType<typeof createBrowserRouter>;
-
-/**
- * Legacy `/ci-evals/*` → `/evals/runs/*`, under a project or not.
- *
- * The project prefix comes off before the rewrite and goes back on after: the
- * rewrite is an anchored `^/ci-evals` replacement, so running it against
- * `/p/<id>/ci-evals/...` would match nothing, return the path unchanged, and
- * redirect the route to itself forever.
- */
-function ciEvalsRedirect({ request }: { request: Request }) {
-  const url = new URL(request.url);
-  const scoped = parseProjectPath(url.pathname);
-  const logical = scoped ? scoped.relativePath : url.pathname;
-  const target = legacyCiEvalsPathToRunsPath(logical, url.search, url.hash);
-  return redirect(scoped ? buildProjectPath(scoped.projectId, target) : target);
-}
 
 /**
  * A neutral landing for the routes that exist only to be redirected away
@@ -253,6 +239,13 @@ const ROUTE_ELEMENTS: Record<
   "client-config": { element: <ServersRedirectRoute /> },
   "organizations/:orgId/members": { element: <OrganizationsRoute /> },
   "organizations/:orgId/sharing": { element: <OrganizationsRoute /> },
+  "organizations/:orgId/billing/byok": {
+    element: (
+      <OrganizationsRoute>
+        <ByokCreditsPage />
+      </OrganizationsRoute>
+    ),
+  },
   "organizations/:orgId/billing/usage": {
     element: (
       <OrganizationsRoute>
@@ -281,46 +274,44 @@ const ROUTE_ELEMENTS: Record<
   "evals/create": { element: <EvalsRoute /> },
   "evals/suite/:suiteId": { element: <EvalsRoute /> },
   "evals/suite/:suiteId/runs/:runId": { element: <EvalsRoute /> },
-  "evals/suite/:suiteId/test/:testId": { element: <EvalsRoute /> },
-  "evals/suite/:suiteId/test/:testId/edit": { element: <EvalsRoute /> },
+  "evals/suite/:suiteId/test/:testId": { element: <LegacyEvalCaseRedirect /> },
+  "evals/suite/:suiteId/test/:testId/edit": { element: <LegacyEvalCaseRedirect /> },
   "evals/suite/:suiteId/edit": { element: <EvalsRoute /> },
   // Runs mode. `mode` comes from the route table rather than sniffing the URL
   // inside the component, so the two lenses stay one route element with one
   // billing gate.
   "evals/runs": { element: <EvalsRoute mode="runs" /> },
   "evals/runs/create": { element: <EvalsRoute mode="runs" /> },
-  "evals/runs/commit/:commitSha": { element: <EvalsRoute mode="runs" /> },
+  "evals/runs/commit/:commitSha": { element: <LegacyEvalRedirect /> },
   "evals/runs/suite/:suiteId": { element: <EvalsRoute mode="runs" /> },
   "evals/runs/suite/:suiteId/runs/:runId": {
     element: <EvalsRoute mode="runs" />,
   },
   "evals/runs/suite/:suiteId/test/:testId": {
-    element: <EvalsRoute mode="runs" />,
+    element: <LegacyEvalCaseRedirect />,
   },
   "evals/runs/suite/:suiteId/test/:testId/edit": {
-    element: <EvalsRoute mode="runs" />,
+    element: <LegacyEvalCaseRedirect />,
   },
   "evals/runs/suite/:suiteId/edit": { element: <EvalsRoute mode="runs" /> },
-  // Evaluate (New). Its own element, so nothing about the shipped Evaluate
-  // routes above changes while the redesign is behind a flag.
+  // Public Evaluate routes. Legacy access above is separately flagged.
   evaluate: { element: <EvaluateRoute /> },
   "evaluate/create": { element: <EvaluateRoute /> },
   "evaluate/eval-server/:serverId": { element: <EvaluateRoute /> },
   "evaluate/suite/:suiteId": { element: <EvaluateRoute /> },
   "evaluate/suite/:suiteId/runs/:runId": { element: <EvaluateRoute /> },
+  // Evaluate prefix only: the compare page mounts behind
+  // `showEvaluateRunPage`, and the `/evals` builders never set
+  // `comparison`, so there is no `/evals/.../compare` URL to register.
+  "evaluate/suite/:suiteId/runs/:runId/compare": { element: <EvaluateRoute /> },
   "evaluate/suite/:suiteId/test/:testId": { element: <EvaluateRoute /> },
   "evaluate/suite/:suiteId/test/:testId/edit": {
     element: <EvaluateRoute />,
   },
   "evaluate/suite/:suiteId/edit": { element: <EvaluateRoute /> },
-  // Legacy `/ci-evals/*` → `/evals/runs/*`. Rewrite the raw pathname rather
-  // than rebuilding from params: the sub-tree is matched with a splat, and the
-  // string form preserves commit SHAs and suite ids exactly as encoded.
-  // Search and hash come along — commit links carry `?suite=&iteration=`, run
-  // links carry `?iteration=&case=&compareTo=`, and anything can carry
-  // `?project=`.
-  "ci-evals": { loader: ciEvalsRedirect },
-  "ci-evals/*": { loader: ciEvalsRedirect },
+  // Old CI links always land in public Evaluate, with fragments intact.
+  "ci-evals": { element: <LegacyEvalRedirect /> },
+  "ci-evals/*": { element: <LegacyEvalRedirect /> },
   billing: { element: <AppEntryLandingRoute /> },
   // The WorkOS Initiate Login URL. Unlike the entries around it this renders a
   // component of its own rather than Servers: it must call `signIn()` so
@@ -347,10 +338,6 @@ const ROUTE_ELEMENTS: Record<
  *    `/p/none/servers`, which has no loader, correctly reports itself
  *    unavailable. Returning null leaves the URL alone so the boundary renders
  *    the same generic unavailable state for both.
- *
- *    It also breaks a redirect loop: `ciEvalsRedirect` rewrites an anchored
- *    `^/ci-evals`, which matches nothing in `/p/none/ci-evals`, so the loader
- *    handed back the path it was given and redirected the route to itself.
  *
  * 2. A redirect that comes back unscoped is re-scoped to the project in the
  *    URL. A legacy alias under `/p/A` must land WITHIN A: `/p/A/clients` →

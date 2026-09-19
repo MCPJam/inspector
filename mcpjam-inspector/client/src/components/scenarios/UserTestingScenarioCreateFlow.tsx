@@ -27,6 +27,8 @@ import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useHostList, type HostListItem } from "@/hooks/useClients";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
+import { useProjectMembers } from "@/hooks/useProjects";
+import { convexErrMessage } from "@/lib/convex-error";
 import { saveEnvironmentDraftSeed } from "@/lib/environment-draft-seed";
 import { environmentLabel } from "@/lib/environment-label";
 import { useEffectiveSharePolicy } from "@/hooks/useOrgSharePolicy";
@@ -47,6 +49,7 @@ import type {
   ScenarioPerTurnFeedbackStyle,
   ScenarioTaskItem,
 } from "@/types/chatUi";
+import { useGuestSharingSignUp } from "@/hooks/useGuestSharingSignUp";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 
@@ -131,6 +134,25 @@ export function composedSetupHasServers(args: {
   const host = args.hosts.find((h) => h.hostId === args.hostId);
   if (!host) return null;
   return (host.serverCount ?? 0) > 0;
+}
+
+/**
+ * Whether a failed publish is "that study name is taken".
+ *
+ * The backend answers with `{code: 'CONFLICT', field: 'name'}` so a client can
+ * put the message where the problem is instead of in a toast the reader then
+ * has to act on from memory. Matched on the STRUCTURE, not the copy: the
+ * sentence is the backend's to word, and a client that greps it breaks the
+ * next time someone improves it.
+ */
+export function isStudyNameTakenError(error: unknown): boolean {
+  const data =
+    error && typeof error === "object" && "data" in error
+      ? (error as { data?: unknown }).data
+      : undefined;
+  if (!data || typeof data !== "object") return false;
+  const shape = data as { code?: unknown; field?: unknown };
+  return shape.code === "CONFLICT" && shape.field === "name";
 }
 
 /**
@@ -270,6 +292,21 @@ export function UserTestingScenarioCreateFlow({
     projectId,
   });
   const { policy: effectiveSharePolicy } = useEffectiveSharePolicy(projectId);
+  /**
+   * Publishing a study is PROJECT-ADMIN gated on the backend — a study is
+   * shared mutable execution config and a spend surface, so
+   * `scenarios:publishEnvironmentScenario` refuses anyone below
+   * `canManageProjectMembers`. `canManageMembers` resolves to that SAME
+   * authority, so asking here means an editor is told on the step that holds
+   * the choices instead of at the last click, with a task list they then have
+   * to retype somewhere else.
+   *
+   * Fails closed while the query is in flight, and `roleLoading` keeps that
+   * window out of the copy: showing the refusal before the role is known
+   * would tell an admin they are not one for as long as the round trip takes.
+   */
+  const { canManageMembers: canPublish, isLoading: roleLoading } =
+    useProjectMembers({ isAuthenticated, projectId });
   const [step, setStep] = useState<CreateStep>("study");
   const [target, setTarget] =
     useState<EnvironmentComposerState>(emptyComposerState);
@@ -427,6 +464,8 @@ export function UserTestingScenarioCreateFlow({
   const canAdvance =
     environmentsSettled &&
     !hostsLoading &&
+    !roleLoading &&
+    canPublish &&
     hasTarget &&
     setupHasServers !== false &&
     !isSaving;
@@ -438,14 +477,30 @@ export function UserTestingScenarioCreateFlow({
    * the message the moment it is fixed rather than leaving an error standing
    * over a form that no longer has one.
    */
-  const continueBlocker: "loading" | "client" | "servers" | null =
-    !environmentsSettled || hostsLoading
+  const continueBlocker:
+    "loading" | "permission" | "client" | "servers" | null =
+    !environmentsSettled || hostsLoading || roleLoading
       ? "loading"
-      : !hasTarget
-        ? "client"
-        : setupHasServers === false
-          ? "servers"
-          : null;
+      : // Ranked above the two choices, because it is not one: telling an
+        // editor to pick a client first would send them to fix something that
+        // was never the reason this screen cannot finish.
+        !canPublish
+        ? "permission"
+        : !hasTarget
+          ? "client"
+          : setupHasServers === false
+            ? "servers"
+            : null;
+  /**
+   * Whether to say, on sight, that this account cannot publish here.
+   *
+   * Unlike the client and server messages this is NOT press-triggered. Those
+   * name a choice the creator can still make on this screen, so they wait
+   * until Continue asks the question. This one names something no control
+   * here can change, and a creator who fills in a whole study before learning
+   * that is a creator whose work we wasted.
+   */
+  const publishForbidden = !roleLoading && !canPublish;
   /**
    * Whether Continue has been pressed on a setup it could not carry.
    *
@@ -454,6 +509,14 @@ export function UserTestingScenarioCreateFlow({
    * missing beats scanning a form for whatever keeps a grey button grey.
    */
   const [continueAttempted, setContinueAttempted] = useState(false);
+  /**
+   * The name the backend refused as already taken.
+   *
+   * Held rather than only toasted: the fix is one field away, and a message
+   * that names the problem should sit next to the input that carries it.
+   * Cleared by typing, so it cannot outlive the name it was about.
+   */
+  const [nameTaken, setNameTaken] = useState<string | null>(null);
   const showClientError = continueAttempted && continueBlocker === "client";
   const showServersError = continueAttempted && continueBlocker === "servers";
 
@@ -503,6 +566,8 @@ export function UserTestingScenarioCreateFlow({
     onCreateEnvironment();
   };
 
+  const { handleGuestSharingError, guestSharingPrompt } = useGuestSharingSignUp();
+
   const handleSave = async () => {
     if (!hasTarget || savingRef.current) return;
     // Never an empty name in the database: the field is allowed to be empty,
@@ -531,15 +596,15 @@ export function UserTestingScenarioCreateFlow({
         mode: settingsFromScenarioAccessPreset(accessPreset).mode,
       });
 
-      // Nothing was created: this client and server already carry a study
-      // (publishing is idempotent per environment). This used to report it as
-      // a success and open that other study — which reads as "your study was
-      // created" while the screen fills with someone else's tasks, name and
-      // access. It is a refusal, so it stops here: the draft stays on screen,
-      // untouched and re-submittable once the setup changes.
+      // Nothing was created. On a CURRENT backend this cannot happen — a
+      // setup may back as many studies as you like, and the only refusal is a
+      // taken name (handled in the catch below). Against an older deployment
+      // publishing is still idempotent per environment, and the two repos ship
+      // separately, so this stays: reporting someone else's study as the one
+      // just created is the bug this whole path exists to stop.
       if (!created) {
         toast.error(
-          "This client and server already have a study. Change the setup, or open the existing study from User Testing.",
+          "This client and server already have a study on this deployment. Change the setup, or open the existing study from User Testing.",
         );
         savingRef.current = false;
         setIsSaving(false);
@@ -574,13 +639,43 @@ export function UserTestingScenarioCreateFlow({
         toast.success("Study created");
       }
     } catch (err) {
-      // Surface the backend's copy verbatim: publishing is project-admin
-      // gated, and "you need admin" is a different problem than "it failed".
-      // `ComposerResolveError` is an Error too, and its message already tells a
-      // user on an older backend to pick a saved environment instead.
-      toast.error(
-        err instanceof Error ? err.message : "Failed to create the study",
-      );
+      if (handleGuestSharingError(err)) {
+        savingRef.current = false;
+        setIsSaving(false);
+        return;
+      }
+      // A taken name is not a failure to report and walk away from — it is one
+      // input to change. The message goes ON the field, the draft stays whole,
+      // and the step with the field is the one we land on: refusing from step 2
+      // while the name lives on step 1 would be a correction nobody can reach.
+      if (isStudyNameTakenError(err)) {
+        setNameTaken(effectiveName);
+        setStep("study");
+        // Put the refused name IN the field. An empty field publishes under the
+        // placeholder, and quoting that name back at a blank input leaves
+        // nothing to correct — pressing Create again would send the same name
+        // and fail the same way. Where the field already held it this only
+        // trims, which is what was submitted anyway.
+        setName(effectiveName);
+        userEditedNameRef.current = true;
+        savingRef.current = false;
+        setIsSaving(false);
+        return;
+      }
+      // Otherwise surface the backend's copy verbatim: publishing is
+      // project-admin gated, and "you need admin" is a different problem than
+      // "it failed". `ComposerResolveError` is an Error too, and its message
+      // already tells a user on an older backend to pick a saved environment
+      // instead.
+      //
+      // Through `convexErrMessage`, NOT `err.message`. A production Convex
+      // deployment redacts the message of EVERY throw, `ConvexError`
+      // included, to "[Request ID: …] Server Error"; only `err.data` crosses.
+      // Reading `.message` here printed that banner over a refusal that had
+      // said exactly what was wrong ("requires project admin"), so the one
+      // person who could act on it — the creator — was the only one who never
+      // saw it.
+      toast.error(convexErrMessage(err, "Failed to create the study"));
       savingRef.current = false;
       setIsSaving(false);
     }
@@ -595,6 +690,7 @@ export function UserTestingScenarioCreateFlow({
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto">
+      {guestSharingPrompt}
       <div className="mx-auto w-full max-w-2xl px-6 py-6 sm:px-8">
         <button
           type="button"
@@ -640,6 +736,16 @@ export function UserTestingScenarioCreateFlow({
               Users try your server in ChatGPT, Claude, or another client. You
               read what happened.
             </p>
+            {publishForbidden ? (
+              <p
+                className="mt-3 text-sm text-destructive"
+                role="alert"
+                data-testid="user-testing-create-admin-required"
+              >
+                Creating a study needs project admin. Ask an admin of this
+                project to create it, or to give you that role.
+              </p>
+            ) : null}
 
             <div className="mt-6 space-y-5">
               <div className="space-y-2">
@@ -667,9 +773,20 @@ export function UserTestingScenarioCreateFlow({
                   }}
                   onChange={(e) => {
                     userEditedNameRef.current = true;
+                    setNameTaken(null);
                     setName(e.target.value);
                   }}
                 />
+                {nameTaken ? (
+                  <p
+                    className="text-xs text-destructive"
+                    role="alert"
+                    data-testid="user-testing-create-name-taken"
+                  >
+                    A study named &ldquo;{nameTaken}&rdquo; already exists in
+                    this project. Give this one a different name.
+                  </p>
+                ) : null}
               </div>
 
               <div className="space-y-2">

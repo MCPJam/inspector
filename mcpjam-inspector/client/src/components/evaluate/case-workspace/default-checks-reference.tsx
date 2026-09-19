@@ -5,7 +5,6 @@ export function DefaultChecksReference({
   onOverride,
   onConfigureSuite,
 }: {
-  disabledChecks?: readonly string[];
   onConfigureSuite?: () => void;
   onOverride?: () => void;
 }) {
@@ -18,7 +17,7 @@ export function DefaultChecksReference({
       onClick={onOverride ?? onConfigureSuite}
     >
       <ListChecks className="size-3.5" />
-      Show default assertions
+      Configure test case evaluators
     </Button>
   );
 }

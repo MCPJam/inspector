@@ -304,6 +304,39 @@ describe("buildHostedOAuthUnauthorizedHandler", () => {
     ).resolves.toEqual({ accessToken: "fresh-token" });
   });
 
+  it("tags actual refresh-service failures without changing their status or retry count", async () => {
+    const { classifySetupAttribution } = await import(
+      "../../services/evals/run-setup-signals.js"
+    );
+    for (const mode of ["authorization_server", "network"] as const) {
+      const fetch = vi.fn(async () => {
+        if (mode === "network") throw new Error("refresh service unavailable");
+        return new Response(
+          JSON.stringify({
+            code: "authorization_server_unreachable",
+            message: "Authorization server did not answer.",
+          }),
+          { status: 503 },
+        );
+      });
+      vi.stubGlobal("fetch", fetch);
+      const handler = buildHostedOAuthUnauthorizedHandler({
+        bearerToken: "token",
+        projectId: "project-1",
+        serverId: "server-1",
+        serverName: "Linear",
+      });
+      const error = await handler({
+        serverId: "server-1",
+        error: new Error("HTTP 401"),
+      }).catch((error) => error);
+      expect(error.setupFailureSource).toBe("oauth_refresh");
+      expect(error.status).toBe(mode === "network" ? 502 : 503);
+      expect(classifySetupAttribution(error)).toBe("ours");
+      expect(fetch).toHaveBeenCalledTimes(1);
+    }
+  });
+
   it("propagates refresh_token_invalid as a WebRouteError", async () => {
     vi.stubGlobal(
       "fetch",
@@ -333,6 +366,7 @@ describe("buildHostedOAuthUnauthorizedHandler", () => {
         error: Object.assign(new Error("HTTP 401"), { statusCode: 401 }),
       })
     ).rejects.toMatchObject({
+      setupFailureSource: "oauth_refresh",
       status: 401,
       code: "UNAUTHORIZED",
       details: {
@@ -946,6 +980,28 @@ describe("private authorization server fallback", () => {
     ).catch((e) => e);
 
     expect(error.status).toBe(502);
+  });
+
+  it("tags local authorization-server failures after the fallback", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => privateAuthServer409({ refresh: REFRESH_MATERIAL })),
+    );
+    localRefreshMock.mockRejectedValue(new Error("connect ECONNREFUSED"));
+    const handler = buildHostedOAuthUnauthorizedHandler({
+      bearerToken: "token",
+      projectId: "project-1",
+      serverId: "server-1",
+      serverName: "Local",
+      allowPrivateAuthorizationServerFallback: true,
+    });
+    await expect(
+      handler({ serverId: "server-1", error: new Error("HTTP 401") }),
+    ).rejects.toMatchObject({
+      status: 502,
+      setupFailureSource: "oauth_refresh",
+      details: { authorizationServerUnreachable: true },
+    });
   });
 
   it("only the local call site opts into the fallback", async () => {

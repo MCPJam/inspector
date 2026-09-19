@@ -105,29 +105,52 @@
   "fields": [
     {
       "name": "checks",
-      "paths": ["mcpjam-inspector/server/services/github-checks/"],
-      "pathSuffixes": ["mcpjam.yml", "mcpjam.yaml"],
+      "paths": [
+        "mcpjam-inspector/server/services/github-checks/"
+      ],
+      "pathSuffixes": [
+        "mcpjam.yml",
+        "mcpjam.yaml"
+      ],
       "why": "The customer-authored `checks:` section of mcpjam.yml, read in github-checks/resolver/mcpjamYaml.ts and documented in resolve-and-start.ts. Customers wrote this key into their own repositories; renaming the reader breaks all of them."
     },
     {
       "name": "repetitions",
-      "paths": ["convex/lib/evalConfigRevision.ts"],
+      "paths": [
+        "convex/lib/evalConfigRevision.ts"
+      ],
       "why": "A key inside the configuration-revision payload. The payload is a string that identifies every suite's configuration, so the literal stays frozen after the field it came from is renamed (contract invariant 3); moving it rotates every suite's revision with no authored change."
     },
     {
       "name": "runs",
-      "paths": ["convex/lib/evalConfigRevision.ts"],
+      "paths": [
+        "convex/lib/evalConfigRevision.ts"
+      ],
       "why": "A key inside the configuration-revision payload. The payload is a string that identifies every suite's configuration, so the literal stays frozen after the field it came from is renamed (contract invariant 3); moving it rotates every suite's revision with no authored change."
     },
     {
       "name": "predicates",
-      "paths": ["convex/lib/evalConfigRevision.ts"],
+      "paths": [
+        "convex/lib/evalConfigRevision.ts"
+      ],
       "why": "A key inside the configuration-revision payload. The payload is a string that identifies every suite's configuration, so the literal stays frozen after the field it came from is renamed (contract invariant 3); moving it rotates every suite's revision with no authored change."
     },
     {
       "name": "defaultPredicates",
-      "paths": ["convex/lib/evalConfigRevision.ts"],
+      "paths": [
+        "convex/lib/evalConfigRevision.ts"
+      ],
       "why": "A key inside the configuration-revision payload. The payload is a string that identifies every suite's configuration, so the literal stays frozen after the field it came from is renamed (contract invariant 3); moving it rotates every suite's revision with no authored change."
+    },
+    {
+      "name": "role",
+      "paths": [
+        "evaluators/src/contract/derive.ts",
+        "sdk/src/contract/derive.ts",
+        "convex/lib/scoreContract.ts",
+        "convex/lib/evalConfigRevision.ts"
+      ],
+      "why": "The policy role INSIDE a hash payload. `definitionHash` digests the value through `hashSpelling`, which is frozen at \"gating\" forever, and the configuration-revision signature puts it through the same storage canonicalizer — so both stay byte-identical while the value is renamed everywhere a human or a client can see it (contract invariant 2). A rename that reaches either payload turns the rename into a rehash: every stored score row stops joining to its definition and every `eval gate --baseline` reports its whole scorer set replaced."
     }
   ],
   "paths": [

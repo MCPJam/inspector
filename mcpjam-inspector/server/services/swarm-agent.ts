@@ -1,3 +1,4 @@
+import type { GroundingReport } from "../../shared/swarm-grounding";
 import type { Harness } from "@mcpjam/sdk";
 import type {
   HostConfigMcpProfileV1,
@@ -57,6 +58,8 @@ export interface PinnedHostExecutionSpec {
   hostName: string;
   hostConfigId: string;
   modelId: string;
+  /** Optional routing provenance from the immutable host snapshot. Omitted keeps legacy lookup. */
+  hosted?: boolean;
   systemPrompt: string;
   temperature?: number;
   requireToolApproval: boolean;
@@ -193,6 +196,7 @@ export interface JourneyCriterion {
 }
 
 export interface JourneySnapshot {
+  setupWrites?: boolean;
   hosts: PinnedHostExecutionSpec[];
   personaSnapshot: PersonaSnapshot;
   goal?: string;
@@ -204,6 +208,7 @@ export interface JourneySnapshot {
    * "no `criteria` stamp" mean "no rubric" downstream).
    */
   rubric?: JourneyCriterion[];
+  standardCheckProfile?: { version: 1; criteria: JourneyCriterion[] };
 }
 
 export interface CreateJourneyRunResult {
@@ -437,6 +442,7 @@ export async function createJourneyRun(
     projectId: string;
     journeyRefId: string;
     launchKey: string;
+    kind?: "swarm" | "user_testing";
     maxHosts?: number;
     /**
      * Opaque id shared by every run of one co-launched swarm wave. Omitted by
@@ -447,6 +453,8 @@ export async function createJourneyRun(
     swarmRunGroupId?: string;
     /** Per-run environment fan-out, overriding the journey's stored list. */
     environmentIds?: string[];
+    /** Iterations for THIS run, overriding the journey's stored fan-out. */
+    sessionsPerTarget?: number;
   },
 ): Promise<CreateJourneyRunResult> {
   const data = await postJson<{
@@ -466,6 +474,7 @@ export async function createJourneyRun(
       projectId: args.projectId,
       journeyRefId: args.journeyRefId,
       launchKey: args.launchKey,
+      kind: args.kind ?? "swarm",
       ...(args.maxHosts !== undefined ? { maxHosts: args.maxHosts } : {}),
       ...(args.swarmRunGroupId
         ? { swarmRunGroupId: args.swarmRunGroupId }
@@ -473,9 +482,12 @@ export async function createJourneyRun(
       ...(args.environmentIds?.length
         ? { environmentIds: args.environmentIds }
         : {}),
+      ...(args.sessionsPerTarget !== undefined
+        ? { sessionsPerTarget: args.sessionsPerTarget }
+        : {}),
       // Asserted by this process, never a caller: the runner is the only
       // honest source for what it can execute.
-      runnerCapabilities: [...runnerCapabilities()],
+      runnerCapabilities: [...runnerCapabilities(), "swarm-standard-checks-v1"],
     },
     NON_LLM_TIMEOUT_MS,
   );
@@ -586,6 +598,8 @@ export async function reportAttempt(
 export interface SwarmCriterionResult {
   criterionId: string;
   passed: boolean;
+  /** An evaluator error is unmeasured, not a failed assertion. */
+  status?: "scored" | "error";
   reason: string;
   scope?: { kind: "turn"; promptIndex: number };
 }
@@ -606,6 +620,8 @@ export interface SwarmChecksClaim {
     messages?: unknown[];
     spans?: unknown[];
     widgetRenderObservations?: unknown[];
+    traceComplete?: boolean;
+    recordedContext?: unknown;
   } | null;
   /**
    * Session-level token totals (Σ of turn-trace usage), or null when no turn
@@ -640,6 +656,7 @@ export async function claimSwarmChecks(
       projectId: args.projectId,
       runId: args.runId,
       chatSessionId: args.chatSessionId,
+      checkCapability: "swarm-standard-checks-v1",
     },
     NON_LLM_TIMEOUT_MS,
     signal,
@@ -748,12 +765,19 @@ export async function failSwarmChecks(
   }
 }
 
+type JourneyHeartbeatStatus =
+  "running" | "completed" | "partial" | "failed" | "rate_limited" | "missing";
+
 export async function heartbeatJourneyRun(
   convexHttpUrl: string,
   bearer: string,
   args: { projectId: string; runId: string },
-): Promise<void> {
-  const data = await postJson<{ ok?: boolean; error?: string }>(
+): Promise<JourneyHeartbeatStatus | undefined> {
+  const data = await postJson<{
+    ok?: boolean;
+    error?: string;
+    status?: JourneyHeartbeatStatus;
+  }>(
     `${convexHttpUrl}/journey-execution/runs/heartbeat`,
     bearer,
     { projectId: args.projectId, runId: args.runId },
@@ -766,6 +790,22 @@ export async function heartbeatJourneyRun(
       }`,
     );
   }
+  // Older backends only acknowledge the heartbeat. Missing status must not
+  // cancel a healthy run during a rolling upgrade.
+  if (
+    data.status !== undefined &&
+    ![
+      "running",
+      "completed",
+      "partial",
+      "failed",
+      "rate_limited",
+      "missing",
+    ].includes(data.status)
+  ) {
+    throw new Error("Invalid run status in backend heartbeat response");
+  }
+  return data.status;
 }
 
 /**
@@ -825,6 +865,13 @@ export async function swarmPersonaNextTurn(
     projectId: string;
     runId: string;
     hostId: string;
+    // Two env targets may resolve to the SAME host, so the backend cannot
+    // identify the target from `hostId` alone and refuses the turn as
+    // ambiguous. Absent only on legacy runs, where hosts are already unique.
+    targetId?: string;
+    // Billed per (target, session, turn): the backend validates this against
+    // the run's immutable fan-out and refuses the turn when it is missing.
+    sessionIdx: number;
     transcriptSoFar: Array<{ role: "user" | "assistant"; content: string }>;
     // Run abort signal. This call can PARK for up to LLM_TIMEOUT_MS (120s) in
     // an uncancellable place; forwarding the run's signal lets a shutdown/cancel
@@ -844,6 +891,10 @@ export async function swarmPersonaNextTurn(
       projectId: args.projectId,
       runId: args.runId,
       hostId: args.hostId,
+      ...(args.targetId ? { targetId: args.targetId } : {}),
+      // Unconditional: session 0 is the common case and a truthiness spread
+      // would drop exactly the index the backend validates most often.
+      sessionIdx: args.sessionIdx,
       transcriptSoFar: args.transcriptSoFar,
     },
     LLM_TIMEOUT_MS,
@@ -860,4 +911,26 @@ export async function swarmPersonaNextTurn(
     message: data.message,
     endSession: data.endSession === true,
   };
+}
+
+/** Old backends have no grounding route; discovery remains optional. */
+export async function reportTargetGrounding(
+  baseUrl: string,
+  bearer: string,
+  body: GroundingReport,
+  signal?: AbortSignal,
+): Promise<{ unavailable?: boolean }> {
+  try {
+    return await postJson(
+      `${baseUrl}/journey-execution/runs/grounding`,
+      bearer,
+      body,
+      LLM_TIMEOUT_MS,
+      signal,
+    );
+  } catch (error) {
+    if (error instanceof SwarmAgentError && error.status === 404)
+      return { unavailable: true };
+    throw error;
+  }
 }

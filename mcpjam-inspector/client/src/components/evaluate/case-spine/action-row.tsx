@@ -85,7 +85,8 @@ export function ActionRow({
       data-ordinal={action.ordinal}
       onMouseEnter={onHover ? () => onHover(step.id) : undefined}
       onMouseLeave={onHover ? () => onHover(null) : undefined}
-      className={cn("group space-y-2", isActive && "ring-1 ring-ring")}
+      className="group space-y-2"
+      data-active={isActive || undefined}
     >
       <div className="flex items-center gap-2 py-1">
         <span
@@ -104,7 +105,7 @@ export function ActionRow({
             aria-expanded={open}
             aria-label={`Edit step ${action.ordinal}`}
             onClick={() => setOpen((value) => !value)}
-            className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+            className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm text-left hover:bg-muted/50 focus-visible:outline focus-visible:outline-ring"
           >
             <ChevronRight
               className={cn(
@@ -180,7 +181,7 @@ export function ActionRow({
             aria-label={promptAriaLabel}
             readOnly={readOnly}
             className={cn(
-              "resize-none bg-background font-mono text-sm leading-relaxed focus-visible:border-foreground/50 focus-visible:ring-foreground/15",
+              "resize-none bg-background font-mono text-sm leading-relaxed hover:border-foreground/30 focus-visible:border-foreground/50 focus-visible:ring-foreground/15",
               !step.prompt.trim() && evalValidationBorderClass,
             )}
           />

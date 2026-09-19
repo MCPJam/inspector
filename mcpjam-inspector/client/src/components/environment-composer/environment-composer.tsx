@@ -24,7 +24,7 @@ import { useCallback, useMemo, type ReactNode } from "react";
 import { useConvexAuth } from "convex/react";
 import { toast } from "@/lib/toast";
 import { EnvironmentPicker } from "@/components/project-environments/environment-picker";
-import { ServerGroupPicker } from "@/components/hosts/ServerGroupPicker";
+import { ServerPicker } from "@/components/hosts/server-picker";
 import { ClientsPill } from "@/components/environment-composer/clients-pill";
 import { ModelsPill } from "@/components/environment-composer/models-pill";
 import { SkillsPill } from "@/components/environment-composer/skills-pill";
@@ -51,7 +51,12 @@ import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import { cn } from "@/lib/utils";
 
 export type ComposerSlot =
-  "environments" | "clients" | "servers" | "skills" | "computers" | "models";
+  | "environments"
+  | "clients"
+  | "servers"
+  | "skills"
+  | "computers"
+  | "models";
 
 /** Default strip: no models slot. Evals opt in via `slots`. */
 export const DEFAULT_COMPOSER_SLOTS: ComposerSlot[] = [
@@ -63,6 +68,11 @@ export const DEFAULT_COMPOSER_SLOTS: ComposerSlot[] = [
 ];
 
 export const EVALS_COMPOSER_SLOTS: ComposerSlot[] = [
+  ...DEFAULT_COMPOSER_SLOTS,
+  "models",
+];
+
+export const SWARM_COMPOSER_SLOTS: ComposerSlot[] = [
   ...DEFAULT_COMPOSER_SLOTS,
   "models",
 ];
@@ -80,8 +90,8 @@ export function EnvironmentComposer({
   className,
   slots = DEFAULT_COMPOSER_SLOTS,
   clientDefaultLabel,
-  emptyServerLabel = "Server group · client default",
-  serverInfoText = "Optional shared server group for every client in this setup.",
+  emptyServerLabel = "Servers · client default",
+  serverOptional = true,
   environmentsVocabulary = "environment",
   showTargetCount = true,
   lockedSlots,
@@ -96,8 +106,8 @@ export function EnvironmentComposer({
   disabled?: boolean;
   /**
    * Which pills to offer. `models` stays out of the default and is opted
-   * into by evals. Swarm / User Testing omit it so a model-bearing env
-   * cannot silently shed its override.
+   * into by Evals and Swarms. Surfaces without it lock model-bearing stacks
+   * so they cannot silently shed their override.
    */
   slots?: readonly ComposerSlot[];
   /**
@@ -106,14 +116,10 @@ export function EnvironmentComposer({
    * modelId becomes the pill label; mixed or missing models stay generic.
    */
   clientDefaultLabel?: string | null;
-  /**
-   * Empty-state label and info tooltip for the servers pill. The defaults are
-   * the strip's own wording, where the group is genuinely optional; a surface
-   * that makes it REQUIRED (evals create) must say so itself rather than
-   * offering "client default" for a choice it will then block on.
-   */
+  /** Empty-state label for the servers pill; a surface that REQUIRES one must say so. */
   emptyServerLabel?: string;
-  serverInfoText?: string;
+  /** `false` where submit gates on a server: the clear would only empty a field the form refuses. */
+  serverOptional?: boolean;
   /**
    * Slots this surface refuses to let anyone change, each with the reason.
    *
@@ -147,7 +153,7 @@ export function EnvironmentComposer({
    * Dialog. A portalled popover lands outside the dialog, where the modal
    * overlay's `pointer-events: none` swallows every click — so without this a
    * dialog's environment picker looks present and cannot be used. Same escape
-   * hatch, same name, as `EnvironmentPicker` and `ServerGroupPicker`.
+   * hatch, same name, as `EnvironmentPicker` and `ServerPicker`.
    */
   inModal?: boolean;
   /** Forwarded into the environment picker's popover footer. */
@@ -398,7 +404,7 @@ export function EnvironmentComposer({
                 projectId={projectId}
                 value={
                   maxTargets === 1
-                    ? (value.environmentIds[0] ?? null)
+                    ? value.environmentIds[0] ?? null
                     : value.environmentIds
                 }
                 onChange={(next: string | string[] | null) =>
@@ -415,8 +421,8 @@ export function EnvironmentComposer({
                       ? "Select a client"
                       : "No clients · pick some"
                     : maxTargets === 1
-                      ? "Select an environment"
-                      : "No environments · pick some"
+                    ? "Select an environment"
+                    : "No environments · pick some"
                 }
                 headingLabel={
                   environmentsVocabulary === "client"
@@ -478,7 +484,7 @@ export function EnvironmentComposer({
         {showServersSlot
           ? withLock(
               "servers",
-              <ServerGroupPicker
+              <ServerPicker
                 projectId={projectId}
                 value={value.stack.serverAttachmentId}
                 onChange={(serverAttachmentId) =>
@@ -486,11 +492,11 @@ export function EnvironmentComposer({
                 }
                 disabled={slotsDisabled || Boolean(lockedSlots?.servers)}
                 emptyTriggerLabel={emptyServerLabel}
-                infoText={serverInfoText}
                 triggerTestId={testId("servers-picker")}
                 onClearSelection={() =>
                   patchStack({ serverAttachmentId: null })
                 }
+                offerClear={serverOptional}
                 inModal={inModal}
               />,
             )
@@ -533,8 +539,8 @@ export function EnvironmentComposer({
           {stackEditBlock === "pins"
             ? "This selection pins plugin versions, which this strip can't carry — editing the stack would run without them. Change the environment selection instead."
             : stackEditBlock === "models"
-              ? "This selection pins a model override, which this strip can't carry — editing the stack would run the client default instead. Change the environment selection instead."
-              : "These environments don't share one setup — they differ by client or by their server group, skills or image — so editing the stack would change what some of them run. Change the environment selection instead."}
+            ? "This selection pins a model override, which this strip can't carry — editing the stack would run the client default instead. Change the environment selection instead."
+            : "These environments don't share one setup — they differ by client or by their server group, skills or image — so editing the stack would change what some of them run. Change the environment selection instead."}
         </p>
       ) : null}
       {modelsEnabled &&
