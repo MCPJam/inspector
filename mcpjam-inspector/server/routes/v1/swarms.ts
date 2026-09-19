@@ -54,7 +54,9 @@ type SwarmRow = {
   name: string;
   description: string | null;
   environmentIds: string[] | null;
-  config: { sessionsPerTarget?: number; maxTurns?: number } | undefined;
+  config:
+    | { sessionsPerTarget?: number; maxTurns?: number; setupWrites?: boolean }
+    | undefined;
   createdAt: number;
   updatedAt: number;
 };
@@ -69,6 +71,7 @@ function toSwarmDto(row: SwarmRow) {
     environmentIds: row.environmentIds ?? [],
     sessionsPerTarget: row.config?.sessionsPerTarget ?? null,
     maxTurns: row.config?.maxTurns ?? null,
+    setupWrites: row.config?.setupWrites ?? false,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -77,6 +80,7 @@ function toSwarmDto(row: SwarmRow) {
 const swarmConfigFields = {
   sessionsPerTarget: z.number().int().min(1).max(100),
   maxTurns: z.number().int().min(1).max(200),
+  setupWrites: z.boolean().optional(),
 };
 
 const createSwarmSchema = z.strictObject({
@@ -96,6 +100,7 @@ const updateSwarmSchema = z
       .optional(),
     sessionsPerTarget: swarmConfigFields.sessionsPerTarget.optional(),
     maxTurns: swarmConfigFields.maxTurns.optional(),
+    setupWrites: swarmConfigFields.setupWrites,
   })
   .refine((value) => Object.keys(value).length > 0, {
     message: "Provide at least one swarm field to update.",
@@ -103,12 +108,14 @@ const updateSwarmSchema = z
   .refine(
     (value) =>
       (value.sessionsPerTarget === undefined) ===
-      (value.maxTurns === undefined),
+        (value.maxTurns === undefined) &&
+      (value.setupWrites === undefined ||
+        value.sessionsPerTarget !== undefined),
     {
       // One `config` object upstream; a partial update would need a
       // read-modify-write and could silently clobber a concurrent edit.
       message:
-        "sessionsPerTarget and maxTurns must be updated together — they are one execution config upstream.",
+        "sessionsPerTarget and maxTurns must be updated together; setupWrites requires that pair.",
     }
   );
 
@@ -221,6 +228,9 @@ swarms.post("/projects/:projectId/swarms", async (c) => {
         config: {
           sessionsPerTarget: body.sessionsPerTarget,
           maxTurns: body.maxTurns,
+          ...(body.setupWrites !== undefined
+            ? { setupWrites: body.setupWrites }
+            : {}),
         },
         ...(idempotencyKey ? { idempotencyKey } : {}),
       } as never
@@ -259,6 +269,9 @@ swarms.patch("/projects/:projectId/swarms/:swarmId", async (c) => {
               config: {
                 sessionsPerTarget: body.sessionsPerTarget,
                 maxTurns: body.maxTurns,
+                ...(body.setupWrites !== undefined
+                  ? { setupWrites: body.setupWrites }
+                  : {}),
               },
             }
           : {}),

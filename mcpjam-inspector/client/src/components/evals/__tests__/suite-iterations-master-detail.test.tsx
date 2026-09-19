@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
   useQuery: vi.fn(),
   suiteHeader: vi.fn(),
   runOverview: vi.fn(),
+  evaluateRunContent: vi.fn(),
+  runDetailView: vi.fn(),
 }));
 
 const cloudState = vi.hoisted(() => ({
@@ -24,6 +26,10 @@ vi.mock("@/hooks/useProjectComputer", () => ({
 }));
 vi.mock("@/hooks/useProjectEnvironments", () => ({
   useProjectEnvironments: () => cloudState.environments,
+}));
+
+vi.mock("../test-template-editor", () => ({
+  TestTemplateEditor: ({ readOnly, openCompareIterationId }: {readOnly?: boolean; openCompareIterationId?: string}) => <div data-testid="case-workspace" data-readonly={String(readOnly)} data-iteration={openCompareIterationId} />,
 }));
 
 vi.mock("convex/react", () => ({
@@ -143,8 +149,15 @@ vi.mock("../suite-dashboard", () => ({
   ),
 }));
 
+vi.mock("../../evaluate/evaluate-run-content", () => ({
+  EvaluateRunContent: (props: Record<string, unknown>) => {
+    mocks.evaluateRunContent(props);
+    return <div data-testid="evaluate-run-content" />;
+  },
+}));
+
 vi.mock("../run-detail-view", () => ({
-  RunDetailView: () => <div data-testid="run-detail-view" />,
+  RunDetailView: (props: unknown) => { mocks.runDetailView(props); return <div data-testid="run-detail-view" />; },
 }));
 
 vi.mock("../test-cases-overview", () => ({
@@ -913,6 +926,43 @@ describe("SuiteIterationsView suiteDetailOverview", () => {
     createdAt: 1,
     completedAt: 2,
   };
+
+  it.each(["test-edit", "test-detail"] as const)("opens locked SDK %s routes in the new read-only workspace", (type) => {
+    renderOverview({
+      suite: { ...baseSuite, source: "sdk" },
+      suiteDetailOverview: true,
+      evaluateCaseEditor: true,
+      route: { type, suiteId: "suite-1", testId: "case-1", iteration: "iter-1" },
+    });
+    expect(screen.getByTestId("case-workspace")).toHaveAttribute("data-readonly", "true");
+    expect(screen.getByTestId("case-workspace")).toHaveAttribute("data-iteration", "iter-1");
+    expect(screen.queryByTestId("evaluate-run-page")).toBeNull();
+  });
+
+  it("opens a locked SDK case from the run sidebar in the workspace", () => {
+    const navigation = {...noopNav, toTestEdit: vi.fn()};
+    renderOverview({suite: {...baseSuite, source: "sdk"}, evaluateCaseEditor: true, suiteDetailOverview: true,
+      runs: [detailRun], route: {type: "run-detail", suiteId: "suite-1", runId: "run-1"}}, navigation);
+    mocks.runDetailView.mock.calls.at(-1)![0].onSelectTestCase({testCaseId: "case-1"});
+    expect(navigation.toTestEdit).toHaveBeenCalledWith("suite-1", "case-1");
+  });
+
+  it("lets locked SDK run titles open their definition without enabling evaluator edits", () => {
+    const navigation = { ...noopNav, toTestEdit: vi.fn() };
+    renderOverview({
+      suite: { ...baseSuite, source: "sdk" },
+      configLocked: true,
+      projectId: "project-1",
+      suiteDetailOverview: true,
+      runs: [{ ...detailRun, source: "sdk" }],
+      route: { type: "run-detail", suiteId: "suite-1", runId: "run-1" },
+    }, navigation);
+    const props = mocks.evaluateRunContent.mock.calls.at(-1)?.[0];
+    expect(props.onEditCase).toEqual(expect.any(Function));
+    expect(props.onEditEvaluator).toBeUndefined();
+    props.onEditCase("case-1");
+    expect(navigation.toTestEdit).toHaveBeenCalledWith("suite-1", "case-1");
+  });
 
   it("opens Evaluate (New) run page instead of the unified split", () => {
     renderOverview({

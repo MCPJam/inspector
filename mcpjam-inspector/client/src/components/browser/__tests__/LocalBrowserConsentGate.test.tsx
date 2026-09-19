@@ -12,6 +12,11 @@ vi.mock("@/lib/config", () => ({
   },
 }));
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
+const navigate = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/app-navigation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/app-navigation")>()),
+  useAppNavigate: () => navigate,
+}));
 
 beforeEach(() => {
   mode.hosted = false;
@@ -39,13 +44,19 @@ describe("LocalBrowserConsentGate", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByText(/Page content may be sent to your model/),
-    ).toHaveTextContent(
-      "all clients in projects you manage, including shared clients",
-    );
-    expect(
-      screen.getByText(/each client's Connect settings/),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Browser settings" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Connect settings/)).toBeNull();
     expect(onAllow).not.toHaveBeenCalled();
+  });
+
+  it("opens the clients list from Browser settings when no handler is passed", () => {
+    navigate.mockClear();
+    render(<LocalBrowserConsentGate onAllow={() => true} />);
+    fireEvent.click(screen.getByRole("button", { name: "Browser settings" }));
+    expect(navigate).toHaveBeenCalledWith("/hosts");
   });
 
   it("requires Allow and reports failed setup for an explicit retry", async () => {

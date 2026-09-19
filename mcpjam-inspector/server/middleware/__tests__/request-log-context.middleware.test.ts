@@ -59,6 +59,84 @@ describe("requestLogContextMiddleware", () => {
     expect(capturedCtx.environment).toBeDefined();
   });
 
+  it("records the caller's user-agent", async () => {
+    const app = createTestApp();
+    let capturedCtx: any;
+    app.get("/api/web/test", (c) => {
+      capturedCtx = c.var.requestLogContext;
+      return c.json({ ok: true });
+    });
+
+    await app.request("/api/web/test", {
+      headers: { "user-agent": "mcpjam-cli/5.7.1 mcpjam-sdk/8.7.1" },
+    });
+
+    expect(capturedCtx.userAgent).toBe("mcpjam-cli/5.7.1 mcpjam-sdk/8.7.1");
+  });
+
+  it("omits the field when the caller sent no user-agent", async () => {
+    const app = createTestApp();
+    let capturedCtx: any;
+    app.get("/api/web/test", (c) => {
+      capturedCtx = c.var.requestLogContext;
+      return c.json({ ok: true });
+    });
+
+    await app.request("/api/web/test", { method: "GET" });
+
+    // Omitted, not defaulted: a caller who sent none is not an "unknown
+    // client", and a row that says so would be counted as one.
+    expect(capturedCtx).not.toHaveProperty("userAgent");
+  });
+
+  it("flattens tabs and whitespace runs into single spaces", async () => {
+    const app = createTestApp();
+    let capturedCtx: any;
+    app.get("/api/web/test", (c) => {
+      capturedCtx = c.var.requestLogContext;
+      return c.json({ ok: true });
+    });
+
+    // Tabs are legal in a header value, so they are what actually reaches the
+    // sanitizer. NUL and CRLF — the characters that would forge a log line —
+    // are rejected by the HTTP parser before this middleware runs, which is
+    // why there is no test for them here: it could only assert that the
+    // platform still does its job.
+    await app.request("/api/web/test", {
+      headers: { "user-agent": "agent/1.0\t\tbuild   42" },
+    });
+
+    expect(capturedCtx.userAgent).toBe("agent/1.0 build 42");
+  });
+
+  it("caps an unbounded user-agent rather than indexing all of it", async () => {
+    const app = createTestApp();
+    let capturedCtx: any;
+    app.get("/api/web/test", (c) => {
+      capturedCtx = c.var.requestLogContext;
+      return c.json({ ok: true });
+    });
+
+    await app.request("/api/web/test", {
+      headers: { "user-agent": "a".repeat(4096) },
+    });
+
+    expect(capturedCtx.userAgent).toHaveLength(256);
+  });
+
+  it("treats a blank user-agent as none at all", async () => {
+    const app = createTestApp();
+    let capturedCtx: any;
+    app.get("/api/web/test", (c) => {
+      capturedCtx = c.var.requestLogContext;
+      return c.json({ ok: true });
+    });
+
+    await app.request("/api/web/test", { headers: { "user-agent": "   " } });
+
+    expect(capturedCtx).not.toHaveProperty("userAgent");
+  });
+
   it("sets x-request-id response header via c.header()", async () => {
     const app = createTestApp();
     app.get("/api/web/test", (c) => c.json({ ok: true }));

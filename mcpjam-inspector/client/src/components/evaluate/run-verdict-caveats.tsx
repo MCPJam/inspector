@@ -2,7 +2,7 @@
  * How this verdict was counted — the honesty, one level down.
  *
  * Every sentence here was previously in the run-decision card's headline, where
- * it read as a disclaimer: "from legacy percent-threshold run", "counted in
+ * it read as a disclaimer: "from suite accuracy threshold", "counted in
  * trials — so these are trials, not cases", "1 non-passing of 3 trials
  * examined". Each is TRUE and worth keeping, and none of them is what a reader
  * opening a failed run needs first. Folding them under a disclosure keeps the
@@ -46,13 +46,13 @@ export function RunVerdictCaveats({
   );
 
   if (summary.counts?.measurementUnit === "trial") {
-    // The distinction the old card shouted and this one states: a legacy run
+    // The distinction the old card shouted and this one states: a suite-wide run
     // counts executions, so its "2 of 3" is not a count of case variants.
     lines.push(
       `Counts are ${measurementUnitLabel("trial", 0)}, not ${measurementUnitLabel(
         "caseVariant",
         0,
-      )}. A legacy run tallies each execution, so a case that ran twice is counted twice.`,
+      )}. A run decided by the suite accuracy threshold tallies each execution, so a case that ran twice is counted twice.`,
     );
   } else if (summary.counts?.measurementUnit === "caseVariant") {
     lines.push(

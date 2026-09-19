@@ -19,10 +19,13 @@ import {
   selectServerAction,
 } from "../ui-actions";
 import {
+  PUBLISH_NATIVE,
+  PUBLISH_NATIVE_UNTRUSTED,
   asOptionalString,
   ensurePlaygroundOpen,
   errorResult,
   fromActionResult,
+  nativeInternal,
   okResult,
 } from "./shared";
 import {
@@ -168,6 +171,7 @@ export function buildCoreUiTools(): UiToolDefinition[] {
         idempotentHint: false,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE,
       mayNavigate: true,
       execute: async (args) => {
         const target = asOptionalString(args.target);
@@ -194,6 +198,7 @@ export function buildCoreUiTools(): UiToolDefinition[] {
         idempotentHint: true,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE,
       execute: async (args) => {
         const serverName = asOptionalString(args.serverName);
         if (!serverName) {
@@ -235,6 +240,7 @@ export function buildCoreUiTools(): UiToolDefinition[] {
         idempotentHint: true,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE,
       // Auto-opens the playground when its handler isn't mounted — from a
       // non-playground route that is a navigation.
       mayNavigate: true,
@@ -293,6 +299,7 @@ export function buildCoreUiTools(): UiToolDefinition[] {
         idempotentHint: true,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE_UNTRUSTED,
       execute: async (args) => {
         const surface = asOptionalString(args.surface);
         const response = await dispatchInspectorCommand({
@@ -350,10 +357,19 @@ export function buildCoreUiTools(): UiToolDefinition[] {
         readOnlyHint: true,
         destructiveHint: false,
         // NOT idempotent: each call paints a new card and demands the user's
-        // attention. A native agent retrying freely would nag.
+        // attention. An agent retrying freely would nag.
         idempotentHint: false,
         openWorldHint: false,
       },
+      // The one core tool browser-native agents do NOT get. Everything it
+      // does happens inside an MCPJam conversation: it paints a card into
+      // that transcript and parks the turn on the answer. A native agent has
+      // no transcript to paint into and no turn to park, so publishing this
+      // would advertise a question nobody could be asked — an external agent
+      // asks its own user in its own UI instead.
+      nativePublication: nativeInternal(
+        "Renders a question card into the Ask MCPJam transcript and parks that turn until the user answers — a native call has neither.",
+      ),
       execute: async (args, ctx) => {
         // The card resolves the parked promise by tool-call id, so a call
         // that arrived without one can never be answered — fail it now
