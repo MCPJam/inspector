@@ -39,7 +39,11 @@ import {
   deriveScenarioFindingsModel,
 } from "./scenario-findings-derivation";
 import { composeScenarioFindingsSummary } from "./scenario-findings-summary";
-import { ScenarioGoalChain } from "./scenario-goal-chain";
+import {
+  ScenarioGoalChain,
+  type ScenarioGoalChainAnswerFor,
+  type ScenarioGoalChainHandler,
+} from "./scenario-goal-chain";
 import type { ScenarioGoalStages } from "./scenario-findings-stages";
 
 /**
@@ -129,15 +133,17 @@ export function ScenarioFindingsTab({
     goalId: string;
     stage: JourneyStageId;
   } | null>(null);
-  // The open goal's chain, and the goal it describes. Stored as a pair so an
-  // answer for a goal the reader has since closed cannot paint the new one.
-  const [chain, setChain] = useState<{
-    goalId: string;
-    stages: ScenarioGoalStages | null;
-  } | null>(null);
-  const handleChain = useCallback(
-    (goalId: string, stages: ScenarioGoalStages | null) =>
-      setChain({ goalId, stages }),
+  // The open goal's chain, and the POPULATION it describes. Stored together so
+  // an answer about a goal the reader has since closed — or about a persona
+  // they have since switched away from — cannot paint the new one.
+  const [chain, setChain] = useState<
+    | (ScenarioGoalChainAnswerFor & {
+        stages: ScenarioGoalStages | null;
+      })
+    | null
+  >(null);
+  const handleChain = useCallback<ScenarioGoalChainHandler>(
+    (about, stages) => setChain({ ...about, stages }),
     [],
   );
 
@@ -183,10 +189,18 @@ export function ScenarioFindingsTab({
     expandedChoice && expandedChoice.personaName === persona?.name
       ? expandedChoice.goalId
       : null;
-  // Only the goal that is open has a chain, and only while it is still the
-  // goal that asked for it.
+  // Only the goal that is open has a chain, and only while it still describes
+  // the population on screen.
+  //
+  // Switching persona closes the goal, but the answer survives in state, so
+  // matching on the goal alone would repaint the previous persona's stages the
+  // moment the reader reopened the same goal — for as long as the new query
+  // took to answer. Same failure the goal check exists to stop, one axis over.
   const goalChain =
-    chain && expandedGoalId && chain.goalId === expandedGoalId
+    chain &&
+    expandedGoalId &&
+    chain.goalId === expandedGoalId &&
+    chain.sentiment === personaSentiment
       ? chain.stages
       : null;
 
@@ -282,6 +296,10 @@ export function ScenarioFindingsTab({
         <ScenarioGoalChain
           scenarioId={scenarioId}
           goalId={expandedGoalId}
+          // The SAME value the session list is scoped by. The card's count, its
+          // list and its chain all describe one persona, or the reader is shown
+          // three numbers about two different populations.
+          sentiment={personaSentiment}
           onResolved={handleChain}
         />
       ) : null}
